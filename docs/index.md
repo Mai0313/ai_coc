@@ -15,7 +15,7 @@ The application is packaged as a PyInstaller one-directory build. Its automation
 ## Project
 
 - [Handoff](handoff.md) is the current status, known problems and next work.
-- [Roadmap](todo.md) tracks remaining implementation work.
+- [GitHub Issues](https://github.com/Mai0313/CoC-AI-Controller/issues) track remaining implementation work.
 - [Changelog](changelog.md) lists what shipped in each version.
 - [Development Session Log](dev-session.md) records what each working session produced.
 - [Reference Audit](reference-audit.md) holds the reference-project and local MuMu findings.

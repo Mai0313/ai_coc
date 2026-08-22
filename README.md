@@ -32,6 +32,6 @@ Start with:
 - [docs/handoff.md](docs/handoff.md) for current project status and next work.
 - [docs/reference-audit.md](docs/reference-audit.md) for the reference-project and local MuMu findings.
 - [docs/architecture.md](docs/architecture.md) and [docs/requirements.md](docs/requirements.md) for the approved V1 direction.
-- [docs/decisions.md](docs/decisions.md) and [docs/todo.md](docs/todo.md) for constraints and planned work.
+- [docs/decisions.md](docs/decisions.md) for constraints, and [GitHub Issues](https://github.com/Mai0313/CoC-AI-Controller/issues) for planned work.
 
 Security: never commit API keys, ADB keys, private account JSON, personal screenshots or local emulator configuration.

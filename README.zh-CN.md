@@ -32,6 +32,6 @@ uv run pytest
 - [docs/handoff.md](docs/handoff.md)：当前的项目状态与下一步工作。
 - [docs/reference-audit.md](docs/reference-audit.md)：参考项目与本机 MuMu 的调查结果。
 - [docs/architecture.md](docs/architecture.md) 与 [docs/requirements.md](docs/requirements.md)：已确认的 V1 方向。
-- [docs/decisions.md](docs/decisions.md) 与 [docs/todo.md](docs/todo.md)：限制条件与规划中的工作。
+- [docs/decisions.md](docs/decisions.md)：限制条件；规划中的工作追踪于 [GitHub Issues](https://github.com/Mai0313/CoC-AI-Controller/issues)。
 
 安全性：绝对不要 commit API key、ADB key、私人账号 JSON、个人截图或本机模拟器配置。
