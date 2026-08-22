@@ -104,3 +104,8 @@ class Database:
         with closing(self.connect()) as con, con:
             con.execute("INSERT INTO knowledge(emulator_id,frame_id,statement,status,created_at) VALUES(?,?,?,?,?)",
                         (emulator_id, frame_id, statement, status, datetime.now(timezone.utc).isoformat()))
+
+    def recent_knowledge(self, limit: int = 50) -> list[dict[str, Any]]:
+        with closing(self.connect()) as con:
+            rows = con.execute("SELECT * FROM knowledge ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
+            return [dict(row) for row in reversed(rows)]

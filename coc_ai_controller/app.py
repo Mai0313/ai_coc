@@ -347,6 +347,10 @@ class MainWindow(QMainWindow):
         if not self.current_account_tag: return "No Village JSON imported."
         return json.dumps(self.db.account_rows(self.current_account_tag)[:40], ensure_ascii=False)
 
+    def knowledge_context(self) -> str:
+        items = self.db.recent_knowledge(40)
+        return "\n".join(f"- [{item['status']}] {item['statement']}" for item in items) or "尚無使用者教學。"
+
     def analyze_frame(self) -> None:
         if not self.current_frame:
             self.capture(); QMessageBox.information(self, "Screenshot", "已開始取得畫面；完成後請再按 Analyze。") ; return
@@ -377,12 +381,15 @@ class MainWindow(QMainWindow):
     def send_chat(self) -> None:
         text = self.chat_input.text().strip()
         if not text: return
+        should_remember = any(word in text for word in ("記住", "記下", "以後要", "下次要", "我教你"))
+        if should_remember:
+            self.db.add_knowledge(self.active.emulator_id if self.active else "", self.current_frame.frame_id if self.current_frame else "", text, "USER_CONFIRMED")
         recent = self.chat_history.toPlainText()[-3500:]
         self.chat_input.clear(); self.chat_history.appendPlainText(f"\n你\n{text}\n\nAI 正在思考，請稍候…")
         if any(word in text for word in ("打開", "開啟", "點擊", "按下", "進入", "返回", "關閉")) and self.active:
             self.execute_agent_command(text); return
         frame = self.current_frame if self.chat_image_pending else None
-        context = (f"{AGENT_PROFILE}\n請用繁體中文簡潔回答。\nCurrent account: {self.account_context()}\n"
+        context = (f"{AGENT_PROFILE}\n請用繁體中文簡潔回答。\n使用者已確認、必須長期遵守的教學：\n{self.knowledge_context()}\nCurrent account: {self.account_context()}\n"
                    f"Current emulator={self.active.emulator_id if self.active else 'none'}\nRecent conversation:\n{recent}\nUser: {text}")
         def done(result: str) -> None:
             self.chat_history.appendPlainText(f"\nAI 回覆\n{result}\n")
@@ -400,6 +407,7 @@ class MainWindow(QMainWindow):
             for step in range(5):
                 last_png = m.screenshot(active)
                 prompt = (f"你正在控制部落衝突。使用者指令：{command}\n"
+                          f"使用者過去確認的操作教學：\n{self.knowledge_context()}\n"
                           "檢查目前畫面是否已完成。只回傳單一 JSON，不要 markdown："
                           '{"done":false,"action":"tap|back|none","x_pct":50.0,"y_pct":50.0,"message":"繁體中文說明"}。'
                           "若已完成 done=true。禁止購買、花費資源、攻擊、刪除或確認不可逆操作。")
