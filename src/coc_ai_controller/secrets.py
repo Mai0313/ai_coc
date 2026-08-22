@@ -24,7 +24,9 @@ class SecretStore:
     def save(self, value: str) -> None:
         source, keep = _blob(value.encode("utf-8"))
         output = DATA_BLOB()
-        if not ctypes.windll.crypt32.CryptProtectData(ctypes.byref(source), "CoC AI Controller", None, None, None, 0, ctypes.byref(output)):
+        if not ctypes.windll.crypt32.CryptProtectData(
+            ctypes.byref(source), "CoC AI Controller", None, None, None, 0, ctypes.byref(output)
+        ):
             raise ctypes.WinError()
         try:
             encrypted = ctypes.string_at(output.pbData, output.cbData)
@@ -38,7 +40,9 @@ class SecretStore:
         encrypted = base64.b64decode(self.path.read_bytes())
         source, keep = _blob(encrypted)
         output = DATA_BLOB()
-        if not ctypes.windll.crypt32.CryptUnprotectData(ctypes.byref(source), None, None, None, None, 0, ctypes.byref(output)):
+        if not ctypes.windll.crypt32.CryptUnprotectData(
+            ctypes.byref(source), None, None, None, None, 0, ctypes.byref(output)
+        ):
             raise ctypes.WinError()
         try:
             return ctypes.string_at(output.pbData, output.cbData).decode("utf-8")

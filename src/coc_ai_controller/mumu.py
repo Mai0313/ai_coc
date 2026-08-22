@@ -1,16 +1,20 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import subprocess
 import time
 import winreg
-import xml.etree.ElementTree as ET
 from pathlib import Path
+
+from defusedxml import ElementTree as ET
 
 from .constants import COC_PACKAGE
 from .models import EmulatorInstance
+
+logger = logging.getLogger(__name__)
 
 
 class MuMuError(RuntimeError):
@@ -30,8 +34,10 @@ class MuMuAdapter:
     @staticmethod
     def detect_install_path() -> Path:
         candidates: list[Path] = []
-        for hive, key in ((winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall"),
-                          (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall")):
+        for hive, key in (
+            (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall"),
+            (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall"),
+        ):
             try:
                 with winreg.OpenKey(hive, key) as parent:
                     for i in range(winreg.QueryInfoKey(parent)[0]):
@@ -65,8 +71,13 @@ class MuMuAdapter:
 
     def _run(self, command: list[str], timeout: float = 15) -> bytes:
         try:
-            result = subprocess.run(command, capture_output=True, timeout=timeout,
-                                    creationflags=self._flags(), env=self._clean_environment())
+            result = subprocess.run(
+                command,
+                capture_output=True,
+                timeout=timeout,
+                creationflags=self._flags(),
+                env=self._clean_environment(),
+            )
         except subprocess.TimeoutExpired as exc:
             raise MuMuError(f"命令逾時：{' '.join(command[1:])}") from exc
         if result.returncode != 0:
@@ -110,22 +121,32 @@ class MuMuAdapter:
                     match = re.findall(r"(\d+)x(\d+)", size)
                     if match:
                         width, height = map(int, match[-1])
-                        resolution = f"{max(width,height)}x{min(width,height)}"
+                        resolution = f"{max(width, height)}x{min(width, height)}"
                     density = self.adb_run(serial, "shell", "wm", "density", timeout=5).decode(errors="replace")
                     match_dpi = re.findall(r"(\d+)", density)
                     if match_dpi:
                         dpi = match_dpi[-1]
                     coc_running = bool(self.adb_run(serial, "shell", "pidof", COC_PACKAGE, timeout=5).strip())
                 except Exception:
-                    pass
-            instances.append(EmulatorInstance(
-                emulator_id=f"mumu:{index}", index=index, name=str(value.get("name", f"MuMu {index}")),
-                android_version=str(value.get("android_version", "unknown")), adb_serial=serial,
-                process_started=bool(value.get("is_process_started")), android_started=bool(value.get("is_android_started")),
-                state=str(value.get("player_state", "unknown")), pid=int(value.get("pid", 0) or 0),
-                main_hwnd=int(str(value.get("main_wnd", "0")), 16), render_hwnd=int(str(value.get("render_wnd", "0")), 16),
-                resolution=resolution, dpi=dpi, coc_running=coc_running,
-            ))
+                    logger.debug("Unable to inspect MuMu instance %s", index, exc_info=True)
+            instances.append(
+                EmulatorInstance(
+                    emulator_id=f"mumu:{index}",
+                    index=index,
+                    name=str(value.get("name", f"MuMu {index}")),
+                    android_version=str(value.get("android_version", "unknown")),
+                    adb_serial=serial,
+                    process_started=bool(value.get("is_process_started")),
+                    android_started=bool(value.get("is_android_started")),
+                    state=str(value.get("player_state", "unknown")),
+                    pid=int(value.get("pid", 0) or 0),
+                    main_hwnd=int(str(value.get("main_wnd", "0")), 16),
+                    render_hwnd=int(str(value.get("render_wnd", "0")), 16),
+                    resolution=resolution,
+                    dpi=dpi,
+                    coc_running=coc_running,
+                )
+            )
         return sorted(instances, key=lambda item: item.index)
 
     def launch_instance(self, index: int) -> None:
@@ -139,7 +160,17 @@ class MuMuAdapter:
 
     def launch_coc(self, instance: EmulatorInstance) -> None:
         self.connect(instance.adb_serial)
-        self.adb_run(instance.adb_serial, "shell", "monkey", "-p", COC_PACKAGE, "-c", "android.intent.category.LAUNCHER", "1", timeout=15)
+        self.adb_run(
+            instance.adb_serial,
+            "shell",
+            "monkey",
+            "-p",
+            COC_PACKAGE,
+            "-c",
+            "android.intent.category.LAUNCHER",
+            "1",
+            timeout=15,
+        )
 
     def ensure_coc(self, index: int) -> EmulatorInstance:
         """Bring one MuMu instance to a running CoC screen, recovering stale launches."""
@@ -190,7 +221,18 @@ class MuMuAdapter:
         self.adb_run(instance.adb_serial, "shell", "input", "tap", str(int(x)), str(int(y)), timeout=5)
 
     def swipe(self, instance: EmulatorInstance, x1: int, y1: int, x2: int, y2: int, duration_ms: int) -> None:
-        self.adb_run(instance.adb_serial, "shell", "input", "swipe", str(x1), str(y1), str(x2), str(y2), str(duration_ms), timeout=8)
+        self.adb_run(
+            instance.adb_serial,
+            "shell",
+            "input",
+            "swipe",
+            str(x1),
+            str(y1),
+            str(x2),
+            str(y2),
+            str(duration_ms),
+            timeout=8,
+        )
 
     def back(self, instance: EmulatorInstance) -> None:
         self.adb_run(instance.adb_serial, "shell", "input", "keyevent", "4", timeout=5)
@@ -204,18 +246,27 @@ class MuMuAdapter:
         except MuMuError as exc:
             if "dumped to" not in str(exc).lower():
                 return elements
-        xml_data = self.adb_run(instance.adb_serial, "shell", "cat", "/sdcard/coc_ui.xml", timeout=5).decode("utf-8", errors="replace")
+        xml_data = self.adb_run(instance.adb_serial, "shell", "cat", "/sdcard/coc_ui.xml", timeout=5).decode(
+            "utf-8", errors="replace"
+        )
         try:
-            root = ET.fromstring(xml_data[xml_data.find("<?xml"):])
+            root = ET.fromstring(xml_data[xml_data.find("<?xml") :])
         except (ET.ParseError, ValueError):
             return elements
         for node in root.iter("node"):
             text = (node.get("text") or node.get("content-desc") or "").strip()
             bounds = node.get("bounds", "")
             match = re.fullmatch(r"\[(\d+),(\d+)\]\[(\d+),(\d+)\]", bounds)
-            if not match or not (text or node.get("clickable") == "true"): continue
+            if not match or not (text or node.get("clickable") == "true"):
+                continue
             left, top, right, bottom = map(int, match.groups())
-            elements.append({"text": text, "resource_id": node.get("resource-id", ""),
-                             "clickable": node.get("clickable") == "true",
-                             "x": (left + right) // 2, "y": (top + bottom) // 2})
+            elements.append(
+                {
+                    "text": text,
+                    "resource_id": node.get("resource-id", ""),
+                    "clickable": node.get("clickable") == "true",
+                    "x": (left + right) // 2,
+                    "y": (top + bottom) // 2,
+                }
+            )
         return elements[:120]

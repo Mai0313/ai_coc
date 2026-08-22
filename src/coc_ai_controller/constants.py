@@ -1,6 +1,6 @@
-from pathlib import Path
 import os
 import sys
+from pathlib import Path
 
 APP_NAME = "CoC AI Controller"
 VERSION = "0.1.0"

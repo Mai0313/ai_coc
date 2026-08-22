@@ -4,7 +4,7 @@ import json
 import sqlite3
 import threading
 from contextlib import closing
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -61,9 +61,10 @@ class Database:
                 created_at TEXT NOT NULL, updated_at TEXT NOT NULL
             );
             """)
-            con.executemany("INSERT OR REPLACE INTO metadata(key,value) VALUES(?,?)", [
-                ("schema_version", SCHEMA_VERSION), ("master_db_version", MASTER_DB_VERSION)
-            ])
+            con.executemany(
+                "INSERT OR REPLACE INTO metadata(key,value) VALUES(?,?)",
+                [("schema_version", SCHEMA_VERSION), ("master_db_version", MASTER_DB_VERSION)],
+            )
             seeds = [
                 (1000055, "Crusher", "builder_base", "building"),
                 (1000041, "Double Cannon", "builder_base", "building"),
@@ -72,43 +73,74 @@ class Database:
                 (28000003, "Battle Machine", "builder_base", "hero"),
                 (28000005, "Battle Copter", "builder_base", "hero"),
             ]
-            con.executemany("""
+            con.executemany(
+                """
                 INSERT OR IGNORE INTO id_registry
                 (data_id,name,world,category,source_url,verification_status)
                 VALUES(?,?,?,?,?,?)
-            """, [(i,n,w,c,"https://gist.github.com/rahulkhatri137/a8449943df45100c5f1e1359cd9ec67a","SEED") for i,n,w,c in seeds])
+            """,
+                [
+                    (i, n, w, c, "https://gist.github.com/rahulkhatri137/a8449943df45100c5f1e1359cd9ec67a", "SEED")
+                    for i, n, w, c in seeds
+                ],
+            )
 
     def lookup(self, data_id: int) -> sqlite3.Row | None:
         with closing(self.connect()) as con:
             return con.execute("SELECT * FROM id_registry WHERE data_id=?", (data_id,)).fetchone()
 
     def save_account(self, tag: str, raw: dict[str, Any], entities: list[dict[str, Any]]) -> None:
-        imported = datetime.now(timezone.utc).isoformat()
+        imported = datetime.now(UTC).isoformat()
         with self._lock, closing(self.connect()) as con, con:
-            con.execute("INSERT OR REPLACE INTO account_snapshots VALUES(?,?,?)", (tag, imported, json.dumps(raw, ensure_ascii=False)))
+            con.execute(
+                "INSERT OR REPLACE INTO account_snapshots VALUES(?,?,?)",
+                (tag, imported, json.dumps(raw, ensure_ascii=False)),
+            )
             con.execute("DELETE FROM account_entities WHERE tag=?", (tag,))
             for entity in entities:
-                con.execute("""INSERT OR REPLACE INTO account_entities
+                con.execute(
+                    """INSERT OR REPLACE INTO account_entities
                     (tag,section,data_id,level,count,raw_json) VALUES(?,?,?,?,?,?)""",
-                    (tag, entity["section"], entity["data_id"], entity.get("level"), entity.get("count", 1), json.dumps(entity["raw"], ensure_ascii=False)))
+                    (
+                        tag,
+                        entity["section"],
+                        entity["data_id"],
+                        entity.get("level"),
+                        entity.get("count", 1),
+                        json.dumps(entity["raw"], ensure_ascii=False),
+                    ),
+                )
                 if self.lookup(entity["data_id"]) is None:
-                    con.execute("""INSERT OR IGNORE INTO unknown_entities
+                    con.execute(
+                        """INSERT OR IGNORE INTO unknown_entities
                         (data_id,section,first_seen_at,sample_json,status) VALUES(?,?,?,?,?)""",
-                        (entity["data_id"], entity["section"], imported, json.dumps(entity["raw"], ensure_ascii=False), "UNKNOWN"))
+                        (
+                            entity["data_id"],
+                            entity["section"],
+                            imported,
+                            json.dumps(entity["raw"], ensure_ascii=False),
+                            "UNKNOWN",
+                        ),
+                    )
 
     def account_rows(self, tag: str) -> list[dict[str, Any]]:
         with closing(self.connect()) as con:
-            rows = con.execute("""SELECT ae.*, ir.name, ir.world, ir.category,
+            rows = con.execute(
+                """SELECT ae.*, ir.name, ir.world, ir.category,
                 el.next_level, el.upgrade_cost, el.resource_type, el.upgrade_seconds, el.requirement
                 FROM account_entities ae LEFT JOIN id_registry ir ON ir.data_id=ae.data_id
                 LEFT JOIN entity_levels el ON el.data_id=ae.data_id AND el.level=ae.level
-                WHERE ae.tag=? ORDER BY ae.section, COALESCE(ir.name, ae.data_id)""", (tag,)).fetchall()
+                WHERE ae.tag=? ORDER BY ae.section, COALESCE(ir.name, ae.data_id)""",
+                (tag,),
+            ).fetchall()
             return [dict(r) for r in rows]
 
     def add_knowledge(self, emulator_id: str, frame_id: str, statement: str, status: str) -> None:
         with closing(self.connect()) as con, con:
-            con.execute("INSERT INTO knowledge(emulator_id,frame_id,statement,status,created_at) VALUES(?,?,?,?,?)",
-                        (emulator_id, frame_id, statement, status, datetime.now(timezone.utc).isoformat()))
+            con.execute(
+                "INSERT INTO knowledge(emulator_id,frame_id,statement,status,created_at) VALUES(?,?,?,?,?)",
+                (emulator_id, frame_id, statement, status, datetime.now(UTC).isoformat()),
+            )
 
     def recent_knowledge(self, limit: int = 50) -> list[dict[str, Any]]:
         with closing(self.connect()) as con:
@@ -116,10 +148,12 @@ class Database:
             return [dict(row) for row in reversed(rows)]
 
     def add_task(self, instruction: str) -> int:
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         with closing(self.connect()) as con, con:
-            cursor = con.execute("INSERT INTO tasks(instruction,status,progress,created_at,updated_at) VALUES(?,?,?,?,?)",
-                                 (instruction, "PENDING", "等待執行", now, now))
+            cursor = con.execute(
+                "INSERT INTO tasks(instruction,status,progress,created_at,updated_at) VALUES(?,?,?,?,?)",
+                (instruction, "PENDING", "等待執行", now, now),
+            )
             return int(cursor.lastrowid)
 
     def pending_tasks(self) -> list[dict[str, Any]]:
@@ -128,6 +162,8 @@ class Database:
             return [dict(row) for row in rows]
 
     def update_task(self, task_id: int, status: str, progress: str) -> None:
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         with closing(self.connect()) as con, con:
-            con.execute("UPDATE tasks SET status=?,progress=?,updated_at=? WHERE id=?", (status, progress, now, task_id))
+            con.execute(
+                "UPDATE tasks SET status=?,progress=?,updated_at=? WHERE id=?", (status, progress, now, task_id)
+            )

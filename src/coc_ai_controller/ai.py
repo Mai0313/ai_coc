@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import base64
 import json
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
-import time
 from abc import ABC, abstractmethod
 from typing import Any
 
@@ -28,15 +28,16 @@ class GoogleGeminiProvider(AIProvider):
 
     def _openai_request(self, path: str, payload: dict | None = None, timeout: int | None = None) -> dict:
         data = json.dumps(payload).encode("utf-8") if payload is not None else None
-        request = urllib.request.Request(
+        request = urllib.request.Request(  # noqa: S310 - endpoint is an HTTPS API configured by the user
             self.base_url + path,
             data=data,
             headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"},
-            method="GET" if payload is None else "POST")
+            method="GET" if payload is None else "POST",
+        )
         request_timeout = timeout or (180 if payload is not None else 30)
         for attempt in range(3):
             try:
-                with urllib.request.urlopen(request, timeout=request_timeout) as response:
+                with urllib.request.urlopen(request, timeout=request_timeout) as response:  # noqa: S310
                     return json.loads(response.read().decode("utf-8"))
             except urllib.error.HTTPError as exc:
                 detail = exc.read().decode("utf-8", errors="replace")[:1200]
@@ -55,32 +56,44 @@ class GoogleGeminiProvider(AIProvider):
         if not self.api_key:
             raise ValueError("尚未設定 Gemini API Key")
         if self.openai_compatible:
-            return [{"name": item.get("id", ""), "supportedGenerationMethods": ["generateContent"]}
-                    for item in self._openai_request("/models").get("data", [])]
+            return [
+                {"name": item.get("id", ""), "supportedGenerationMethods": ["generateContent"]}
+                for item in self._openai_request("/models").get("data", [])
+            ]
         key = urllib.parse.quote(self.api_key, safe="")
         request = urllib.request.Request(
             f"https://generativelanguage.googleapis.com/v1beta/models?key={key}",
-            headers={"Accept": "application/json"}, method="GET")
+            headers={"Accept": "application/json"},
+            method="GET",
+        )
         try:
-            with urllib.request.urlopen(request, timeout=20) as response:
+            with urllib.request.urlopen(request, timeout=20) as response:  # noqa: S310 - fixed Google HTTPS endpoint
                 raw = json.loads(response.read().decode("utf-8"))
         except urllib.error.HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="replace")[:1000]
             raise RuntimeError(f"Gemini model list HTTP {exc.code}: {detail}") from exc
-        return [item for item in raw.get("models", [])
-                if "generateContent" in item.get("supportedGenerationMethods", [])]
+        return [
+            item for item in raw.get("models", []) if "generateContent" in item.get("supportedGenerationMethods", [])
+        ]
 
     def _generate_once(self, model_name: str, prompt: str, image_png: bytes | None) -> str:
         parts: list[dict[str, Any]] = [{"text": prompt}]
         if image_png:
-            parts.append({"inline_data": {"mime_type": "image/png", "data": base64.b64encode(image_png).decode("ascii")}})
-        payload = json.dumps({"contents": [{"role": "user", "parts": parts}], "generationConfig": {"temperature": 0.2}}).encode("utf-8")
+            parts.append(
+                {"inline_data": {"mime_type": "image/png", "data": base64.b64encode(image_png).decode("ascii")}}
+            )
+        payload = json.dumps(
+            {"contents": [{"role": "user", "parts": parts}], "generationConfig": {"temperature": 0.2}}
+        ).encode("utf-8")
         model = urllib.parse.quote(model_name, safe="-._")
         key = urllib.parse.quote(self.api_key, safe="")
         request = urllib.request.Request(
             f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={key}",
-            data=payload, headers={"Content-Type": "application/json"}, method="POST")
-        with urllib.request.urlopen(request, timeout=45) as response:
+            data=payload,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(request, timeout=45) as response:  # noqa: S310 - fixed Google HTTPS endpoint
             raw = json.loads(response.read().decode("utf-8"))
         candidates = raw.get("candidates") or []
         if not candidates:
@@ -101,7 +114,12 @@ class GoogleGeminiProvider(AIProvider):
                 self.model = preferred[0]
             content: list[dict[str, Any]] = [{"type": "text", "text": prompt}]
             if image_png:
-                content.append({"type": "image_url", "image_url": {"url": "data:image/png;base64," + base64.b64encode(image_png).decode("ascii")}})
+                content.append(
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": "data:image/png;base64," + base64.b64encode(image_png).decode("ascii")},
+                    }
+                )
             payload = {"model": self.model, "messages": [{"role": "user", "content": content}], "temperature": 0.2}
             try:
                 raw = self._openai_request("/chat/completions", payload)
@@ -115,7 +133,9 @@ class GoogleGeminiProvider(AIProvider):
                 preferred = [n for n in text_names if "flash" in n.lower()] or text_names
                 fallback = next((n for n in preferred if n != self.model), None)
                 if not fallback:
-                    raise RuntimeError(f"模型 {self.model} 不存在，且端點沒有回傳可用模型。請在 Settings 填入 CC Switch 顯示的模型名稱。") from exc
+                    raise RuntimeError(
+                        f"模型 {self.model} 不存在，且端點沒有回傳可用模型。請在 Settings 填入 CC Switch 顯示的模型名稱。"
+                    ) from exc
                 payload["model"] = fallback
                 raw = self._openai_request("/chat/completions", payload)
                 self.last_model = fallback
@@ -138,7 +158,9 @@ class GoogleGeminiProvider(AIProvider):
             models = self.list_models()
             preferred = ("gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash")
             candidates = [str(item.get("name", "")).removeprefix("models/") for item in models]
-            fallback = next((name for name in preferred if name in candidates), None) or (candidates[0] if candidates else None)
+            fallback = next((name for name in preferred if name in candidates), None) or (
+                candidates[0] if candidates else None
+            )
             if not fallback:
                 raise RuntimeError(f"指定模型 {self.model} 不可用，且 API 沒有可用 generateContent 模型。") from exc
             result = self._generate_once(fallback, prompt, image_png)

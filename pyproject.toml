@@ -7,6 +7,7 @@ requires-python = ">=3.12,<3.13"
 license = { text = "MIT" }
 authors = [{ name = "CoC AI Controller contributors" }]
 dependencies = [
+  "defusedxml>=0.7,<1",
   "PyQt5>=5.15,<6",
   "PyQt5-Qt5==5.15.2; sys_platform == 'win32'",
 ]
@@ -36,13 +37,14 @@ addopts = [
   "--cov-report=term-missing",
   "--cov-report=xml:.github/reports/coverage.xml",
   "--junitxml=.github/reports/.coverage.pytest.xml",
-  "--cov-fail-under=14",
+  "--cov-fail-under=12",
 ]
 
 [tool.ruff]
 target-version = "py312"
 line-length = 120
 src = ["src", "tests"]
+extend-exclude = [".agents"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "S"]

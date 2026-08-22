@@ -27,7 +27,9 @@ def load_battle_script(path: str | Path) -> BattleScript:
             raise ValueError(f"army_requirements.{key} must be a list")
         normalized[key] = [v for v in values if isinstance(v, dict)]
     return BattleScript(
-        script_id=str(raw.get("script_id") or ""), name=str(raw.get("name") or raw.get("script_id") or "Unnamed"),
-        world=str(raw.get("world") or "unknown"), requirements=normalized,
+        script_id=str(raw.get("script_id") or ""),
+        name=str(raw.get("name") or raw.get("script_id") or "Unnamed"),
+        world=str(raw.get("world") or "unknown"),
+        requirements=normalized,
         battle_controller=str((raw.get("battle_controller") or {}).get("type") or "RESERVED_RL"),
     )

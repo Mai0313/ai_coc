@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 
@@ -32,8 +32,8 @@ class Frame:
     png: bytes
 
     @classmethod
-    def create(cls, emulator_id: str, account_tag: str, png: bytes, sequence: int) -> "Frame":
-        now = datetime.now(timezone.utc)
+    def create(cls, emulator_id: str, account_tag: str, png: bytes, sequence: int) -> Frame:
+        now = datetime.now(UTC)
         return cls(
             frame_id=f"{emulator_id}:{sequence}:{int(now.timestamp() * 1000)}",
             emulator_id=emulator_id,

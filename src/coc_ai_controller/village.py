@@ -6,7 +6,20 @@ from typing import Any
 
 from .models import AccountSnapshot
 
-SECTIONS = ("buildings", "buildings2", "traps", "traps2", "units", "units2", "heroes", "heroes2", "pets", "spells", "equipment", "siege_machines")
+SECTIONS = (
+    "buildings",
+    "buildings2",
+    "traps",
+    "traps2",
+    "units",
+    "units2",
+    "heroes",
+    "heroes2",
+    "pets",
+    "spells",
+    "equipment",
+    "siege_machines",
+)
 
 
 def _integer(value: Any, default: int | None = None) -> int | None:
@@ -36,11 +49,13 @@ def parse_village_text(text: str) -> AccountSnapshot:
             data_id = _integer(item.get("data", item.get("data_id", item.get("id"))))
             if data_id is None:
                 continue
-            entities.append({
-                "section": section,
-                "data_id": data_id,
-                "level": _integer(item.get("lvl", item.get("level"))),
-                "count": _integer(item.get("cnt", item.get("count")), 1) or 1,
-                "raw": item,
-            })
+            entities.append(
+                {
+                    "section": section,
+                    "data_id": data_id,
+                    "level": _integer(item.get("lvl", item.get("level"))),
+                    "count": _integer(item.get("cnt", item.get("count")), 1) or 1,
+                    "raw": item,
+                }
+            )
     return AccountSnapshot(tag=tag, raw=raw, entities=entities)
