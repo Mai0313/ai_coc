@@ -1,0 +1,13 @@
+{
+  "script_id": "BH10_BABY_DRAGON_01",
+  "name": "Builder Base Baby Dragon",
+  "world": "builder_base",
+  "army_requirements": {
+    "troops": [{"data_id": 4000041, "name": "Baby Dragon", "required": true}],
+    "heroes": [{"data_id": 28000005, "name": "Battle Copter", "required": true}],
+    "spells": [],
+    "siege": [],
+    "reinforcements": []
+  },
+  "battle_controller": {"type": "RESERVED_RL"}
+}

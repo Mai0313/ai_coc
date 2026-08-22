@@ -13,7 +13,8 @@ data/accounts/
 data/runtime/
 screenshots/
 captures/
-logs/
+logs/*
+!logs/dev-session.md
 *.log
 adbkey
 adbkey.pub
@@ -27,6 +28,7 @@ build/
 dist/
 release/
 *.spec.local
+CoC_AI_Controller_VER_*.spec
 
 # IDE/OS files
 .idea/
@@ -38,4 +40,3 @@ desktop.ini
 # Codex projectless workspace artifacts
 work/
 outputs/
-

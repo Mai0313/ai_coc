@@ -12,10 +12,10 @@ Updated: 2026-08-22
 
 ## Phase 1 — Project skeleton
 
-- [ ] Select Windows UI/runtime stack using a tested async/packaging spike.
-- [ ] Create modules for domain, application, infrastructure and UI with dependency direction enforced.
-- [ ] Define typed IDs/contracts for emulator session, frame, observation, semantic action and outcome.
-- [ ] Add tests, lint/type checks, structured logging and CI/build entry point.
+- [x] Select PyQt5/Python 3.12/PyInstaller through a tested async/packaging spike.
+- [x] Create initial domain, database, emulator, AI and UI modules.
+- [x] Define typed emulator instance and frame identities.
+- [x] Add unit tests and a reproducible Windows build entry point.
 - [x] Initialize a dedicated Git repository with `.gitignore` and a source/documentation-only initial commit.
 - [x] Create private `Hsien0818666/CoC-AI-Controller` and send `Mai0313` a write-access invitation.
 - [ ] Confirm that `Mai0313` accepted the GitHub invitation before relying on collaborator access.
@@ -23,22 +23,25 @@ Updated: 2026-08-22
 
 ## Phase 2 — Version/logging/handoff
 
-- [ ] Add canonical `VERSION`, updated-date metadata, CHANGELOG and dev-session log.
-- [ ] Generate About/build/handoff metadata from one source.
-- [ ] Add `docs/chatgpt-handoff.md` and versioned AI handoff generator.
+- [x] Add canonical `VERSION`, updated-date metadata, CHANGELOG and dev-session log.
+- [x] Show synchronized version/schema/master/profile metadata in About and EXE file metadata.
+- [x] Add `docs/chatgpt-handoff.md` and a versioned AI handoff document.
 - [ ] Add release workflow: test → metadata/handoff sync → build → verify → commit/tag → GitHub push → GitHub Release artifact.
 
 ## Phase 3 onward
 
-- [ ] Database boundaries/schema/migrations and repositories.
+- [x] Initial SQLite boundaries/schema and repositories.
 - [ ] Seed ID registry with source/provenance validation.
 - [ ] Research and load sourced master data and version diffs.
 - [ ] Research/version GemCostCalculator rules.
-- [ ] Tolerant Village JSON parser and per-account progress joins.
-- [ ] Implement/test MuMuAdapter and lifecycle manager.
+- [x] Tolerant Village JSON parser and per-account registry joins.
+- [x] Implement/test initial MuMuAdapter and lifecycle controls.
 - [ ] Benchmark capture methods and resolution/profile options.
-- [ ] Implement provider interface, Gemini, secure secret storage and async test connection.
-- [ ] Versioned agent profile, chat/teaching/discovery and semantic vision.
+- [x] Implement provider interface, Gemini, DPAPI secret storage and async test connection.
+- [x] Versioned agent profile, chat/USER_CONFIRMED teaching and semantic vision MVP.
+- [x] Load and validate Battle Script requirements with reserved RL handoff.
+- [ ] Populate source-verified per-level master data and gem rules.
+- [ ] Implement safe autonomous navigation and Battle Preparation through Enemy Preview.
 - [ ] Verified general navigation, Battle Script preparation and Enemy Preview handoff.
 - [ ] Reserve RL port only; do not implement battle tactics in V1.
 
