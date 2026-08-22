@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 import traceback
 from pathlib import Path
@@ -278,6 +279,9 @@ class MainWindow(QMainWindow):
             self.frame_sequence += 1
             self.current_frame = Frame.create(a.emulator_id, self.current_account_tag, png, self.frame_sequence)
             self.chat_history.appendPlainText(f"\n實機 AI 回覆\n{answer}\n")
+            proof_path = os.environ.get("COC_LIVE_TEST_SCREENSHOT", "").strip()
+            if proof_path:
+                QTimer.singleShot(800, lambda: self.grab().save(proof_path, "PNG"))
         self.run_async("實機 AI 測試進行中，請等待回覆…", task, done)
 
     def send_chat(self) -> None:
