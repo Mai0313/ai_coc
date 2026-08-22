@@ -90,7 +90,9 @@ class GoogleGeminiProvider(AIProvider):
                     raise
                 available = self.list_models()
                 names = [str(item.get("name", "")).removeprefix("models/") for item in available]
-                fallback = next((n for n in names if n), None)
+                text_names = [n for n in names if n and not any(tag in n.lower() for tag in ("tts", "audio", "speech"))]
+                preferred = [n for n in text_names if "flash" in n.lower()] or text_names
+                fallback = next(iter(preferred), None)
                 if not fallback:
                     raise RuntimeError(f"模型 {self.model} 不存在，且端點沒有回傳可用模型。請在 Settings 填入 CC Switch 顯示的模型名稱。") from exc
                 payload["model"] = fallback
