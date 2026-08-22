@@ -12,6 +12,8 @@ permissions:
   security-events: write
   # codeql-action resolves its own workflow run through the Actions API.
   actions: read
+  # gitleaks-action lists a pull request's commits to pick the scan range.
+  pull-requests: read
 
 jobs:
   secret-scanning:
