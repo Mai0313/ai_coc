@@ -5,8 +5,9 @@ on:
     branches:
       - main
       - master
-    tags:
-      - v*
+    # No tag trigger: the github-pages environment only accepts deployments from
+    # main, so a tag push fails before any step runs. Publishing from main
+    # already covers every tagged commit.
 
 permissions:
   contents: read
