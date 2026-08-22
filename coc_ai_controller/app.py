@@ -6,7 +6,7 @@ import traceback
 from pathlib import Path
 from typing import Any, Callable
 
-from PyQt5.QtCore import QObject, QRunnable, QSettings, Qt, QThreadPool, pyqtSignal
+from PyQt5.QtCore import QObject, QRunnable, QSettings, Qt, QThreadPool, QTimer, pyqtSignal
 from PyQt5.QtGui import QPixmap
 from PyQt5.QtWidgets import (
     QApplication, QComboBox, QFileDialog, QFormLayout, QGroupBox, QHBoxLayout,
@@ -309,4 +309,7 @@ class MainWindow(QMainWindow):
 
 def main() -> int:
     app = QApplication(sys.argv); app.setApplicationName(APP_NAME); app.setApplicationVersion(VERSION_LABEL)
-    window = MainWindow(); window.show(); return app.exec_()
+    window = MainWindow(); window.show()
+    if "--live-test" in sys.argv:
+        QTimer.singleShot(2500, window.live_ai_test)
+    return app.exec_()
