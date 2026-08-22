@@ -48,13 +48,6 @@
       "sourceType": "github",
       "skillPath": "skills/gh-spawn-task/SKILL.md",
       "computedHash": "4307e7cc63506b7f65a3c87773ea0593e5d9fe401a4018f369d9984dc00ae645"
-    },
-    "mumu-control": {
-      "source": "skills.mumu.163.com",
-      "sourceUrl": "https://skills.mumu.163.com/mumu-control",
-      "sourceType": "well-known",
-      "computedHash": "cf7ab7a65277ae33a108efcb9ada0a4f81184c96a6d7d6020ba70118f532dc4d",
-      "wellKnownDigest": "sha256:a114074b45c51d2b7d97731b1d2d0e4a6266ee8009e6764c0107a3331172c6b1"
     }
   }
 }
