@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import io
 import os
 import re
 from typing import TYPE_CHECKING
@@ -10,12 +9,14 @@ import adbutils
 from pydantic import BaseModel
 from defusedxml import ElementTree as ET  # noqa: N817 - the conventional alias for ElementTree
 
-from coc_ai_controller.models import UiElement, AdbEndpoint
+from coc_ai_controller.models import UiElement, AdbEndpoint, DisplayTarget
 
 if TYPE_CHECKING:
     from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
+PNG_MAGIC = b"\x89PNG"
 
 
 class AdbControlError(RuntimeError):
@@ -26,6 +27,32 @@ def use_adb_executable(path: Path) -> None:
     """Point adbutils at the emulator's own adb.exe instead of whatever is on PATH."""
     os.environ["ADBUTILS_ADB_PATH"] = str(path)
     logger.info("adbutils will use %s", path)
+
+
+def focused_display(window_dump: str, package: str) -> str:
+    """Read `dumpsys window displays` for the logical display holding a package's window.
+
+    Only the topmost display carries `mCurrentFocus`, so `mFocusedApp` counts too: the
+    game keeps that one on its own display while anything else holds the focus.
+    """
+    blocks = re.split(r"Display: mDisplayId=(\d+)", window_dump)
+    for logical, block in zip(blocks[1::2], blocks[2::2], strict=True):
+        focus = re.findall(r"m(?:CurrentFocus|FocusedApp)=(.+)", block)
+        if any(package in line for line in focus):
+            return logical
+    return ""
+
+
+def physical_display(display_dump: str, logical_id: str) -> str:
+    """Bridge `dumpsys display`'s two id schemes through the display name they share."""
+    names = {
+        logical: name
+        for name, logical in re.findall(r'DisplayInfo\{"([^"]*)", displayId (\d+)', display_dump)
+    }
+    physical = dict(
+        re.findall(r'DisplayDeviceInfo\{"([^"]*)": uniqueId="local:(\d+)"', display_dump)
+    )
+    return physical.get(names.get(logical_id, ""), "")
 
 
 class AdbController(BaseModel):
@@ -59,31 +86,55 @@ class AdbController(BaseModel):
         except adbutils.AdbError as exc:
             raise AdbControlError(f"ADB 指令失敗 {' '.join(command)}：{exc}") from exc
 
-    def screenshot(self) -> bytes:
+    def display_for(self, package: str) -> DisplayTarget:
+        """Locate the display holding a package; MuMu leaves display 0 on its own launcher."""
+        logical = focused_display(self.shell(["dumpsys", "window", "displays"]), package)
+        if not logical:
+            raise AdbControlError(f"{package} 目前沒有出現在任何 display 上")
+        physical = physical_display(self.shell(["dumpsys", "display"]), logical)
+        if not physical:
+            raise AdbControlError(f"找不到 display {logical} 的實體編號")
+        logger.debug("%s is on display %s (physical %s)", package, logical, physical)
+        return DisplayTarget(logical_id=logical, physical_id=physical)
+
+    def screenshot(self, display: DisplayTarget) -> bytes:
+        """Name the display: with several of them screencap prefixes the PNG with a warning."""
         device = self.connect()
         try:
-            image = device.screenshot(error_ok=False)
+            data = device.shell(
+                ["screencap", "-p", "-d", display.physical_id], encoding=None, timeout=20
+            )
         except adbutils.AdbError as exc:
             raise AdbControlError(f"ADB 截圖失敗 {self.serial}：{exc}") from exc
-        buffer = io.BytesIO()
-        image.save(buffer, format="PNG")
-        data = buffer.getvalue()
+        if not data.startswith(PNG_MAGIC):
+            raise AdbControlError(f"ADB 截圖失敗 {self.serial}：{data[:120]!r}")
         logger.info(
-            "Captured %s %dx%d (%d bytes)", self.serial, image.width, image.height, len(data)
+            "Captured %s display %s (%d bytes)", self.serial, display.logical_id, len(data)
         )
         return data
 
-    def tap(self, x: int, y: int) -> None:
-        logger.info("Tap %s at (%d, %d)", self.serial, x, y)
-        self.connect().click(int(x), int(y))
+    def tap(self, x: int, y: int, display: DisplayTarget) -> None:
+        logger.info("Tap %s display %s at (%d, %d)", self.serial, display.logical_id, x, y)
+        self.input(display, "tap", str(int(x)), str(int(y)))
 
-    def swipe(self, start: tuple[int, int], end: tuple[int, int], duration_ms: int) -> None:
+    def swipe(
+        self,
+        start: tuple[int, int],
+        end: tuple[int, int],
+        duration_ms: int,
+        display: DisplayTarget,
+    ) -> None:
         logger.info("Swipe %s %s -> %s in %d ms", self.serial, start, end, duration_ms)
-        self.connect().swipe(start[0], start[1], end[0], end[1], duration=duration_ms / 1000)
+        coordinates = [str(start[0]), str(start[1]), str(end[0]), str(end[1])]
+        self.input(display, "swipe", *coordinates, str(duration_ms))
 
-    def back(self) -> None:
-        logger.info("Back key on %s", self.serial)
-        self.connect().keyevent("BACK")
+    def back(self, display: DisplayTarget) -> None:
+        logger.info("Back key on %s display %s", self.serial, display.logical_id)
+        self.input(display, "keyevent", "BACK")
+
+    def input(self, display: DisplayTarget, *arguments: str) -> None:
+        """`input` defaults to display 0, which under MuMu is the launcher, not the game."""
+        self.shell(["input", "-d", display.logical_id, *arguments])
 
     def screen_geometry(self) -> tuple[str, str]:
         """Landscape resolution and density, both `unknown` when ADB will not say."""

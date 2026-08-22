@@ -28,6 +28,7 @@ Phase 0 and the first runnable Windows MVP are complete. The PyQt5 application i
 - Made every structured value a Pydantic model in `models.py`, including the database's inputs and outputs.
 - Split the package into `adapters/`, `parsers/` and `ui/`, matching the three layers the architecture already described.
 - Streamed the AI replies, rendered them as Markdown, and put the run log through `rich` in both the panel and stderr.
+- Pointed capture and input at the display MuMu opens the game on, instead of display 0, which holds the emulator's own launcher.
 
 ## Important files
 
@@ -53,6 +54,8 @@ Versioned Agent Profile, Gemini provider, semantic screenshot analysis, contextu
 
 ## Known problems
 
+- `_apply_agent_action` converts Gemini's percentages with `x_pct * 16, y_pct * 9`, assuming a 1600×900 screen; the sampled instance captures at 1920×1080, so AI taps land short of their target.
+- `ui_elements()` and `screen_geometry()` still read display 0, which under MuMu is the launcher rather than the game.
 - ADB `wm size` reports 900×1600 while the rotated screenshot is 1600×900; the transform must use observed orientation/frame dimensions.
 - CLI mutation/lifecycle failure behavior and HWND stability have not been integration-tested.
 - ADB PNG capture averages about 381 ms on the sampled system; faster paths require benchmarking.

@@ -22,6 +22,8 @@
 
 ### Fixed
 
+- Screen capture works again. MuMu runs several Android displays, so an unqualified `screencap -p` prefixed the PNG with a multi-display warning and the decode failed. `AdbController` now locates the display holding Clash of Clans and names it on every capture.
+- Taps, swipes and Back reach the game instead of MuMu's own launcher: `input` defaults to display 0, which is never the display the game is on.
 - Background failures no longer disappear: `Worker` logs the traceback before the message box, and `sys.excepthook` records what Qt used to swallow.
 
 ## VER 0.1.0 — 2026-08-22
