@@ -10,6 +10,8 @@ SCHEMA_VERSION = "1"
 MASTER_DB_VERSION = "seed-2026-08-22"
 AGENT_PROFILE_VERSION = "0.1.0"
 COC_PACKAGE = "com.supercell.clashofclans"
+DEFAULT_GEMINI_MODEL = "gemini-3.5-flash"
+DEFAULT_ADB_HOST = "127.0.0.1"
 
 
 def bundle_root() -> Path:
@@ -32,3 +34,6 @@ FRAME_DIR = data_root() / "frames"
 FRAME_DIR.mkdir(parents=True, exist_ok=True)
 ACCOUNT_JSON_DIR = data_root() / "account_json"
 ACCOUNT_JSON_DIR.mkdir(parents=True, exist_ok=True)
+LOG_DIR = data_root() / "logs"
+LOG_DIR.mkdir(parents=True, exist_ok=True)
+LOG_PATH = LOG_DIR / "controller.log"

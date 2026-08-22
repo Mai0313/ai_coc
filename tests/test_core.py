@@ -23,17 +23,28 @@ class CoreTests(unittest.TestCase):
             )
             snapshot = parse_village(source)
             assert snapshot.tag == "#TEST"
-            assert snapshot.entities[0]["count"] == 2
+            assert snapshot.entities[0].count == 2
             db = Database(root / "test.sqlite3")
-            db.save_account(snapshot.tag, snapshot.raw, snapshot.entities)
+            db.save_account(snapshot)
             rows = db.account_rows("#TEST")
-            assert rows[0]["name"] == "Crusher"
+            assert rows[0].name == "Crusher"
+
+    def test_saved_snapshot_can_be_reimported(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            source = Path(td) / "village.json"
+            source.write_text(
+                json.dumps({"tag": "#TEST", "buildings2": [{"data": 1000055, "lvl": 8}]}),
+                encoding="utf-8",
+            )
+            saved = Path(td) / "saved.json"
+            saved.write_text(parse_village(source).model_dump_json(), encoding="utf-8")
+            assert parse_village(saved).entities[0].data_id == 1000055
 
     def test_battle_script_requires_army(self) -> None:
         script = load_battle_script(
             Path(__file__).parents[1] / "battle_scripts" / "BH10_BABY_DRAGON_01.json"
         )
-        assert script.requirements["troops"][0]["data_id"] == 4000041
+        assert script.requirements["troops"][0].data_id == 4000041
 
 
 if __name__ == "__main__":
