@@ -10,6 +10,8 @@ on:
 permissions:
   contents: read
   security-events: write
+  # codeql-action resolves its own workflow run through the Actions API.
+  actions: read
 
 jobs:
   secret-scanning:
@@ -43,6 +45,9 @@ jobs:
   codeql-scanning:
     name: CodeQL Scanning
     runs-on: ubuntu-latest
+    # Code scanning needs GitHub Advanced Security on a private repository, so
+    # the upload fails outright while this one stays private.
+    if: github.event.repository.visibility == 'public'
 
     steps:
       - name: Checkout
