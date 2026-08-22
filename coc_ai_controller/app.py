@@ -88,6 +88,7 @@ class MainWindow(QMainWindow):
         tabs.addTab(self._battle_tab(), "戰鬥準備")
         tabs.addTab(self._settings_tab(), "設定")
         tabs.addTab(self._about_tab(), "關於")
+        self.tabs = tabs
         self.setCentralWidget(tabs)
         self.setStatusBar(QStatusBar())
 
@@ -267,6 +268,7 @@ class MainWindow(QMainWindow):
 
     def live_ai_test(self) -> None:
         m, a = self._require()
+        self.tabs.setCurrentIndex(2)
         self.chat_history.appendPlainText("\n實機測試：正在啟動 CoC、擷取畫面並等待 AI 回覆…")
         def task() -> tuple[bytes, str]:
             active = m.ensure_coc(a.index)
