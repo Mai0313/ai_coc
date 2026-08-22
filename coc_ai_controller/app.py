@@ -7,7 +7,7 @@ import traceback
 from pathlib import Path
 from typing import Any, Callable
 
-from PyQt5.QtCore import QObject, QRunnable, QSettings, Qt, QThreadPool, QTimer, pyqtSignal
+from PyQt5.QtCore import QBuffer, QByteArray, QIODevice, QObject, QRunnable, QSettings, Qt, QThreadPool, QTimer, pyqtSignal
 from PyQt5.QtGui import QPixmap
 from PyQt5.QtWidgets import (
     QApplication, QComboBox, QFileDialog, QFormLayout, QGroupBox, QHBoxLayout,
@@ -63,6 +63,7 @@ class MainWindow(QMainWindow):
         self.current_frame: Frame | None = None
         self.frame_sequence = 0
         self.current_account_tag = ""
+        self.setAcceptDrops(True)
         self._build_ui()
         self.statusBar().showMessage("Ready — 偵測 MuMu 以開始")
         self.refresh_instances()
@@ -132,12 +133,48 @@ class MainWindow(QMainWindow):
         analyze = QPushButton("分析目前截圖"); analyze.clicked.connect(self.analyze_frame)
         teach = QPushButton("儲存為使用者教學"); teach.clicked.connect(self.save_teaching)
         live_test = QPushButton("實機測試 AI"); live_test.clicked.connect(self.live_ai_test)
-        buttons.addWidget(analyze); buttons.addWidget(live_test); buttons.addWidget(teach); buttons.addStretch(); layout.addLayout(buttons)
+        choose_image = QPushButton("選擇圖片"); choose_image.clicked.connect(self.choose_chat_image)
+        paste_image = QPushButton("貼上圖片"); paste_image.clicked.connect(self.paste_chat_image)
+        buttons.addWidget(analyze); buttons.addWidget(live_test); buttons.addWidget(choose_image); buttons.addWidget(paste_image); buttons.addWidget(teach); buttons.addStretch(); layout.addLayout(buttons)
+        self.chat_image_preview = QLabel("尚未附加圖片（也可以將圖片拖進視窗）")
+        self.chat_image_preview.setAlignment(Qt.AlignCenter); self.chat_image_preview.setMaximumHeight(180)
+        self.chat_image_preview.setStyleSheet("background:#0e141f;border:1px dashed #486083;border-radius:6px;padding:8px;color:#91a3c0")
+        layout.addWidget(self.chat_image_preview)
         self.chat_history = QPlainTextEdit(); self.chat_history.setReadOnly(True); layout.addWidget(self.chat_history)
         row = QHBoxLayout(); self.chat_input = QLineEdit(); self.chat_input.setPlaceholderText("Ask or teach the CoC Agent…")
         self.chat_input.returnPressed.connect(self.send_chat); send = QPushButton("送出"); send.clicked.connect(self.send_chat)
         row.addWidget(self.chat_input); row.addWidget(send); layout.addLayout(row)
         return page
+
+    def _set_chat_image(self, png: bytes, label: str) -> None:
+        pix = QPixmap();
+        if not pix.loadFromData(png): raise ValueError("無法讀取圖片")
+        self.frame_sequence += 1
+        self.current_frame = Frame.create("uploaded-image", self.current_account_tag, png, self.frame_sequence)
+        self.chat_image_preview.setPixmap(pix.scaled(900, 170, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+        self.chat_image_preview.setToolTip(label)
+        self.chat_history.appendPlainText(f"\n已附加圖片：{label}")
+
+    def choose_chat_image(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(self, "選擇要傳給 AI 的圖片", "", "圖片 (*.png *.jpg *.jpeg *.webp *.bmp)")
+        if path:
+            try: self._set_chat_image(Path(path).read_bytes(), Path(path).name)
+            except Exception as exc: self._error("圖片載入失敗", str(exc))
+
+    def paste_chat_image(self) -> None:
+        image = QApplication.clipboard().image()
+        if image.isNull(): self._error("貼上圖片", "剪貼簿裡沒有圖片"); return
+        data = QByteArray(); buffer = QBuffer(data); buffer.open(QIODevice.WriteOnly); image.save(buffer, "PNG")
+        self._set_chat_image(bytes(data), "剪貼簿圖片")
+
+    def dragEnterEvent(self, event) -> None:
+        urls = event.mimeData().urls()
+        if urls and Path(urls[0].toLocalFile()).suffix.lower() in {".png", ".jpg", ".jpeg", ".webp", ".bmp"}: event.acceptProposedAction()
+
+    def dropEvent(self, event) -> None:
+        path = Path(event.mimeData().urls()[0].toLocalFile())
+        try: self._set_chat_image(path.read_bytes(), path.name); self.tabs.setCurrentIndex(2); event.acceptProposedAction()
+        except Exception as exc: self._error("圖片載入失敗", str(exc))
 
     def _battle_tab(self) -> QWidget:
         page = QWidget(); layout = QVBoxLayout(page)
