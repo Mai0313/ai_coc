@@ -88,6 +88,14 @@ class MainWindow(QMainWindow):
             QHeaderView::section { background: #243149; color: #dbe6fa; padding: 6px; border: 0; }
             QStatusBar { background: #0d121b; color: #91a3c0; }
         """)
+        central = QWidget(); central_layout = QVBoxLayout(central)
+        launcher = QHBoxLayout()
+        launch_game = QPushButton("一鍵啟動《部落衝突》"); launch_game.clicked.connect(self.launch_coc)
+        launch_auto = QPushButton("啟動自主循環"); launch_auto.clicked.connect(self.start_automation)
+        stop_auto = QPushButton("停止自主循環"); stop_auto.clicked.connect(self.stop_automation)
+        self.launch_summary = QLabel("啟動後會檢查 MuMu、ADB、遊戲與未完成任務")
+        launcher.addWidget(launch_game); launcher.addWidget(launch_auto); launcher.addWidget(stop_auto); launcher.addWidget(self.launch_summary, 1)
+        central_layout.addLayout(launcher)
         tabs = QTabWidget()
         tabs.addTab(self._emulator_tab(), "模擬器")
         tabs.addTab(self._account_tab(), "帳號進度")
@@ -97,17 +105,16 @@ class MainWindow(QMainWindow):
         tabs.addTab(self._settings_tab(), "設定")
         tabs.addTab(self._about_tab(), "關於")
         self.tabs = tabs
-        self.setCentralWidget(tabs)
+        central_layout.addWidget(tabs, 1)
+        self.setCentralWidget(central)
         self.setStatusBar(QStatusBar())
 
     def _emulator_tab(self) -> QWidget:
         page = QWidget(); layout = QVBoxLayout(page)
         toolbar = QHBoxLayout()
         self.instance_combo = QComboBox(); self.instance_combo.currentIndexChanged.connect(self._select_instance)
-        for text, fn in (("重新整理", self.refresh_instances), ("啟動模擬器", self.launch_instance),
-                         ("連線／截圖", self.capture), ("開啟部落衝突", self.launch_coc),
-                         ("重啟部落衝突", self.restart_coc), ("返回", self.back),
-                         ("重啟模擬器", self.restart_emulator), ("關閉模擬器", self.close_emulator)):
+        for text, fn in (("重新整理狀態", self.refresh_instances), ("一鍵啟動遊戲", self.launch_coc),
+                         ("擷取目前畫面", self.capture), ("關閉模擬器", self.close_emulator)):
             button = QPushButton(text); button.clicked.connect(fn); toolbar.addWidget(button)
         layout.addWidget(QLabel("目前 AI 目標")); layout.addWidget(self.instance_combo); layout.addLayout(toolbar)
         splitter = QSplitter(Qt.Horizontal)
@@ -137,12 +144,10 @@ class MainWindow(QMainWindow):
     def _agent_tab(self) -> QWidget:
         page = QWidget(); layout = QVBoxLayout(page)
         buttons = QHBoxLayout()
-        analyze = QPushButton("分析目前截圖"); analyze.clicked.connect(self.analyze_frame)
         teach = QPushButton("儲存為使用者教學"); teach.clicked.connect(self.save_teaching)
-        live_test = QPushButton("實機測試 AI"); live_test.clicked.connect(self.live_ai_test)
         choose_image = QPushButton("選擇圖片"); choose_image.clicked.connect(self.choose_chat_image)
         paste_image = QPushButton("貼上圖片"); paste_image.clicked.connect(self.paste_chat_image)
-        buttons.addWidget(analyze); buttons.addWidget(live_test); buttons.addWidget(choose_image); buttons.addWidget(paste_image); buttons.addWidget(teach); buttons.addStretch(); layout.addLayout(buttons)
+        buttons.addWidget(choose_image); buttons.addWidget(paste_image); buttons.addWidget(teach); buttons.addStretch(); layout.addLayout(buttons)
         self.chat_image_preview = QLabel("尚未附加圖片（也可以將圖片拖進視窗）")
         self.chat_image_preview.setAlignment(Qt.AlignCenter); self.chat_image_preview.setMaximumHeight(180)
         self.chat_image_preview.setStyleSheet("background:#0e141f;border:1px dashed #486083;border-radius:6px;padding:8px;color:#91a3c0")
