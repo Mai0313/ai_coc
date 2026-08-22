@@ -33,7 +33,7 @@ class GoogleGeminiProvider(AIProvider):
             headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"},
             method="GET" if payload is None else "POST")
         try:
-            with urllib.request.urlopen(request, timeout=45) as response:
+            with urllib.request.urlopen(request, timeout=20) as response:
                 return json.loads(response.read().decode("utf-8"))
         except urllib.error.HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="replace")[:1200]
@@ -50,7 +50,7 @@ class GoogleGeminiProvider(AIProvider):
             f"https://generativelanguage.googleapis.com/v1beta/models?key={key}",
             headers={"Accept": "application/json"}, method="GET")
         try:
-            with urllib.request.urlopen(request, timeout=30) as response:
+            with urllib.request.urlopen(request, timeout=20) as response:
                 raw = json.loads(response.read().decode("utf-8"))
         except urllib.error.HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="replace")[:1000]
@@ -79,6 +79,14 @@ class GoogleGeminiProvider(AIProvider):
         if not self.api_key:
             raise ValueError("尚未設定 Gemini API Key")
         if self.openai_compatible:
+            # CC Switch's compatibility endpoint may expose different model IDs
+            # than Google's native endpoint. Resolve a text-capable model first.
+            available = self.list_models()
+            names = [str(item.get("name", "")).removeprefix("models/") for item in available]
+            text_names = [n for n in names if n and not any(tag in n.lower() for tag in ("tts", "audio", "speech"))]
+            if text_names and self.model not in text_names:
+                preferred = [n for n in text_names if "flash" in n.lower()] or text_names
+                self.model = preferred[0]
             content: list[dict[str, Any]] = [{"type": "text", "text": prompt}]
             if image_png:
                 content.append({"type": "image_url", "image_url": {"url": "data:image/png;base64," + base64.b64encode(image_png).decode("ascii")}})
@@ -87,12 +95,13 @@ class GoogleGeminiProvider(AIProvider):
                 raw = self._openai_request("/chat/completions", payload)
             except RuntimeError as exc:
                 if "HTTP 404" not in str(exc):
-                    raise
+                    if "HTTP 503" not in str(exc) and "HTTP 400" not in str(exc):
+                        raise
                 available = self.list_models()
                 names = [str(item.get("name", "")).removeprefix("models/") for item in available]
                 text_names = [n for n in names if n and not any(tag in n.lower() for tag in ("tts", "audio", "speech"))]
                 preferred = [n for n in text_names if "flash" in n.lower()] or text_names
-                fallback = next(iter(preferred), None)
+                fallback = next((n for n in preferred if n != self.model), None)
                 if not fallback:
                     raise RuntimeError(f"模型 {self.model} 不存在，且端點沒有回傳可用模型。請在 Settings 填入 CC Switch 顯示的模型名稱。") from exc
                 payload["model"] = fallback
