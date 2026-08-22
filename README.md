@@ -29,9 +29,9 @@ Run `scripts/build.ps1` to execute tests and create the PyInstaller onedir build
 
 Start with:
 
-- `HANDOFF.md` for current project status and next work.
-- `docs/reference-audit.md` for the reference-project and local MuMu findings.
-- `docs/architecture.md` and `docs/requirements.md` for the approved V1 direction.
-- `docs/decisions.md` and `docs/todo.md` for constraints and planned work.
+- [docs/handoff.md](docs/handoff.md) for current project status and next work.
+- [docs/reference-audit.md](docs/reference-audit.md) for the reference-project and local MuMu findings.
+- [docs/architecture.md](docs/architecture.md) and [docs/requirements.md](docs/requirements.md) for the approved V1 direction.
+- [docs/decisions.md](docs/decisions.md) and [docs/todo.md](docs/todo.md) for constraints and planned work.
 
 Security: never commit API keys, ADB keys, private account JSON, personal screenshots or local emulator configuration.

@@ -13,8 +13,7 @@ data/accounts/
 data/runtime/
 screenshots/
 captures/
-logs/*
-!logs/dev-session.md
+logs/
 *.log
 adbkey
 adbkey.pub
@@ -43,3 +42,7 @@ desktop.ini
 work/
 outputs/
 site/
+
+# API reference pages rebuilt by `make gen-docs`
+docs/Reference/
+docs/Scripts/
