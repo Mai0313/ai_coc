@@ -18,7 +18,7 @@ from PyQt5.QtWidgets import (
 
 from .ai import AGENT_PROFILE, GoogleGeminiProvider, vision_prompt
 from .battle import load_battle_script
-from .constants import (AGENT_PROFILE_VERSION, APP_NAME, MASTER_DB_VERSION,
+from .constants import (ACCOUNT_JSON_DIR, AGENT_PROFILE_VERSION, APP_NAME, MASTER_DB_VERSION,
                         SCHEMA_VERSION, UPDATED_DATE, VERSION_LABEL, bundle_root)
 from .database import Database
 from .models import EmulatorInstance, Frame
@@ -295,6 +295,9 @@ class MainWindow(QMainWindow):
 
     def _apply_village_snapshot(self, snapshot) -> None:
         self.db.save_account(snapshot.tag, snapshot.raw, snapshot.entities)
+        safe_tag = "".join(ch for ch in snapshot.tag if ch.isalnum() or ch in "-_#") or "UNKNOWN"
+        saved_path = ACCOUNT_JSON_DIR / f"{safe_tag}.json"
+        saved_path.write_text(json.dumps(snapshot.raw, ensure_ascii=False, indent=2), encoding="utf-8")
         self.current_account_tag = snapshot.tag; rows = self.db.account_rows(snapshot.tag)
         self.account_label.setText(f"帳號：{snapshot.tag} — {len(rows)} 筆資料")
         self.account_table.setRowCount(len(rows))
@@ -303,7 +306,7 @@ class MainWindow(QMainWindow):
                       row.get("category") or "—", row.get("level"), row.get("count"), row.get("next_level"),
                       row.get("upgrade_cost"), row.get("upgrade_seconds")]
             for column, value in enumerate(values): self.account_table.setItem(row_index, column, QTableWidgetItem("—" if value is None else str(value)))
-        self.account_summary.setPlainText(f"已從剪貼簿匯入村莊 JSON。已知／未知資料都已保存，共 {len(rows)} 筆。")
+        self.account_summary.setPlainText(f"已匯入村莊 JSON，共 {len(rows)} 筆。\n資料庫與 JSON 檔都已保存：{saved_path}")
 
     def import_clipboard_village(self) -> None:
         try:
@@ -400,16 +403,21 @@ class MainWindow(QMainWindow):
 
     def execute_agent_command(self, command: str) -> None:
         m, a = self._require(); provider = self.provider()
+        reference_frame = self.current_frame if self.chat_image_pending else None
         def task() -> tuple[bytes, str]:
             import time
+            reference = ""
+            if reference_frame:
+                reference = provider.generate(
+                    "這是使用者提供的操作參考圖片。請用繁體中文描述目標按鈕文字、外觀、位置，以及要完成的操作。", reference_frame.png)
             active = m.ensure_coc(a.index)
             last_png = b""
             for step in range(5):
                 last_png = m.screenshot(active)
                 prompt = (f"你正在控制部落衝突。使用者指令：{command}\n"
-                          f"使用者過去確認的操作教學：\n{self.knowledge_context()}\n"
+                          f"使用者附圖提供的參考：{reference}\n使用者過去確認的操作教學：\n{self.knowledge_context()}\n"
                           "檢查目前畫面是否已完成。只回傳單一 JSON，不要 markdown："
-                          '{"done":false,"action":"tap|back|none","x_pct":50.0,"y_pct":50.0,"message":"繁體中文說明"}。'
+                          '{"done":false,"action":"tap|back|swipe_up|swipe_down|none","x_pct":50.0,"y_pct":50.0,"message":"繁體中文說明"}。'
                           "若已完成 done=true。禁止購買、花費資源、攻擊、刪除或確認不可逆操作。")
                 raw = provider.generate(prompt, last_png).strip().replace("```json", "").replace("```", "")
                 data = json.loads(raw[raw.find("{"):raw.rfind("}") + 1])
@@ -419,12 +427,15 @@ class MainWindow(QMainWindow):
                 if action == "tap":
                     m.tap(active, int(float(data["x_pct"]) * 16), int(float(data["y_pct"]) * 9))
                 elif action == "back": m.back(active)
+                elif action == "swipe_up": m.swipe(active, 800, 720, 800, 220, 500)
+                elif action == "swipe_down": m.swipe(active, 800, 220, 800, 720, 500)
                 else: return last_png, str(data.get("message") or "AI 無法安全執行這個操作")
                 time.sleep(2)
             return last_png, "已執行操作，但五次畫面確認後仍無法確認完成。"
         def done(result: tuple[bytes, str]) -> None:
             png, message = result
             self.frame_sequence += 1; self.current_frame = Frame.create(a.emulator_id, self.current_account_tag, png, self.frame_sequence)
+            self.chat_image_pending = False
             self.chat_history.appendPlainText(f"\nAI 操作結果\n{message}\n")
             proof_path = os.environ.get("COC_AGENT_SCREENSHOT", "").strip()
             if proof_path: QTimer.singleShot(800, lambda: self.grab().save(proof_path, "PNG"))
