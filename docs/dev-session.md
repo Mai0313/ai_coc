@@ -1,5 +1,17 @@
 # Development Session Log
 
+## 2026-08-23 — Reaching the Village JSON export, and naming what it holds
+
+Task: 取得村莊 JSON ended in `AI 找不到複製完整 JSON 到剪貼簿的按鈕`, and the entities that did import all showed as UNKNOWN.
+
+Cause: two unrelated gaps. The export control sits behind 設定 → 更多設定 and at the bottom of a scrolling list, while `ai_import_village` tapped the gear and then asked for the copy button on the very next frame — a screen that genuinely does not have one, which Gemini reported accurately before the run raised. Names were the second gap: `id_registry` only ever held six seeded rows, so the `account_rows` join had nothing to supply.
+
+Changed: the import now names each step it takes, taps the gear and 更多設定, swipes to the bottom of the list and locates the 複製 button on the 「以 JSON 格式匯出村莊數據」 row. `adapters/mapping.py` downloads the community `cocMapping.json` gist into `~/.coc_ai\`, falling back to the cached copy so a dead network cannot stop startup; `EntityMapping.registry_entries` turns its six groups into `RegistryEntry` rows, `Database.import_registry` writes them, and `MainWindow.refresh_entity_mapping` runs the whole thing through `run_async` at startup. The gist's groups only separate home village from builder base, so the entity kind comes from the data_id block instead (`ENTITY_CATEGORIES` in `constants.py`).
+
+Tests: `uv run pytest` (23 passed). Against the live instance: the path reached the copy button (Gemini put it at 70.7%/62.4%, one pixel off the measured position), the clipboard came back with 5893 characters of village JSON, and the 205 mapping rows named 124 of the 158 imported entities.
+
+Known issues: hero equipment (`90000xxx`) is not in the gist, so those 34 rows still import without a name. The import assumes the game sits on the village screen; a session left inside a settings dialog mis-taps the first step.
+
 ## 2026-08-22 — Capturing the display the game is actually on
 
 Task: 擷取目前畫面 failed with `ADB 截圖失敗 … screencap error`, and nothing in the log said why.

@@ -4,6 +4,7 @@
 
 ### Added
 
+- Entity names: the community `cocMapping.json` gist is downloaded on startup into `~/.coc_ai\cocMapping.json` and imported into `id_registry`, so an imported village shows names instead of UNKNOWN. A failed download falls back to the cached copy. Hero equipment (`90000xxx`) is absent from that source and still imports without a name.
 - Streamed AI replies: chat, screen analysis and the live AI test grow their answer as Gemini sends it, through `GeminiClient.stream` and `MainWindow.run_stream`.
 - Markdown rendering in the AI 助手 tab. Headings, lists, tables, inline code and code blocks are rendered by `markdown-it-py` into a `QTextBrowser`; raw HTML in a reply is escaped, never trusted.
 - Colour in the 執行紀錄 panel and on stderr: records go through `rich`, so levels, logger names and tracebacks are readable at a glance. The log file stays plain text.
@@ -23,6 +24,7 @@
 
 ### Fixed
 
+- AI Village JSON import reaches the export button. It sits behind 設定 → 更多設定 and at the bottom of a scrolling list, so a two-step lookup asking for a "複製 JSON" button never had it on screen.
 - Screen capture works again. MuMu runs several Android displays, so an unqualified `screencap -p` prefixed the PNG with a multi-display warning and the decode failed. `AdbController` now locates the display holding Clash of Clans and names it on every capture.
 - Taps, swipes and Back reach the game instead of MuMu's own launcher: `input` defaults to display 0, which is never the display the game is on.
 - Background failures no longer disappear: `Worker` logs the traceback before the message box, and `sys.excepthook` records what Qt used to swallow.

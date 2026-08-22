@@ -30,6 +30,7 @@ Phase 0 and the first runnable Windows MVP are complete. The PyQt5 application i
 - Streamed the AI replies, rendered them as Markdown, and put the run log through `rich` in both the panel and stderr.
 - Pointed capture and input at the display MuMu opens the game on, instead of display 0, which holds the emulator's own launcher.
 - Moved storage from `%LOCALAPPDATA%\CoC_AI_Controller\` to `~/.coc_ai\`.
+- Walked the AI Village JSON import through 設定 → 更多設定 to the export row, and filled `id_registry` from the community `cocMapping.json` gist so imported entities carry names.
 
 ## Important files
 
