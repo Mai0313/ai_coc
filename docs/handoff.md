@@ -23,10 +23,13 @@ Phase 0 and the first runnable Windows MVP are complete. The PyQt5 application i
 - Added runnable desktop UI, MuMu CLI/ADB adapter, SQLite database, Village JSON import, Gemini/DPAPI support, semantic vision/chat/teaching and Battle Script reader.
 - Built and smoke-tested `CoC_AI_Controller_VER_0.1.0.exe`.
 - Fixed and rebuilt the MuMu CLI Qt-plugin conflict found in user testing; packaged CLI now receives a sanitized environment.
+- Made the application observable: rotating log file, live 執行紀錄 panel with a level selector, tracebacks for background failures.
+- Moved Gemini onto the `google-genai` SDK with structured output, and every ADB call onto `adbutils` in `adb.py`.
+- Made every structured value a Pydantic model in `models.py`, including the database's inputs and outputs.
 
 ## Important files
 
-`src/coc_ai_controller/app.py`, `mumu.py`, `ai.py`, `database.py`, `village.py`, `battle.py`, `battle_scripts/`, `tests/`, `scripts/build.ps1` and [Architecture](architecture.md).
+`src/coc_ai_controller/app.py`, `mumu.py`, `adb.py`, `ai.py`, `models.py`, `logging_setup.py`, `database.py`, `village.py`, `battle.py`, `battle_scripts/`, `tests/`, `scripts/build.ps1` and [Architecture](architecture.md).
 
 For an emulator or runtime review, start from `src/coc_ai_controller/mumu.py`, `src/coc_ai_controller/app.py` and [Database Schema](database-schema.md).
 
