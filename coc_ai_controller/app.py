@@ -64,10 +64,12 @@ class MainWindow(QMainWindow):
         self.chat_image_pending = False
         self.frame_sequence = 0
         self.current_account_tag = ""
+        self.running_task_id: int | None = None
         self.setAcceptDrops(True)
         self._build_ui()
         self.statusBar().showMessage("Ready — 偵測 MuMu 以開始")
         self.refresh_instances()
+        QTimer.singleShot(6000, self.resume_pending_tasks)
 
     def _build_ui(self) -> None:
         self.setStyleSheet("""
@@ -390,7 +392,8 @@ class MainWindow(QMainWindow):
         recent = self.chat_history.toPlainText()[-3500:]
         self.chat_input.clear(); self.chat_history.appendPlainText(f"\n你\n{text}\n\nAI 正在思考，請稍候…")
         if any(word in text for word in ("打開", "開啟", "點擊", "按下", "進入", "返回", "關閉")) and self.active:
-            self.execute_agent_command(text); return
+            task_id = self.db.add_task(text)
+            self.execute_agent_command(text, task_id); return
         frame = self.current_frame if self.chat_image_pending else None
         context = (f"{AGENT_PROFILE}\n請用繁體中文簡潔回答。\n使用者已確認、必須長期遵守的教學：\n{self.knowledge_context()}\nCurrent account: {self.account_context()}\n"
                    f"Current emulator={self.active.emulator_id if self.active else 'none'}\nRecent conversation:\n{recent}\nUser: {text}")
@@ -401,10 +404,21 @@ class MainWindow(QMainWindow):
                 self.chat_image_preview.clear(); self.chat_image_preview.setText("尚未附加圖片（也可以將圖片拖進視窗）")
         self.run_async("AI 正在思考…", lambda: self.provider().generate(context, frame.png if frame else None), done)
 
-    def execute_agent_command(self, command: str) -> None:
+    def resume_pending_tasks(self) -> None:
+        if self.running_task_id is not None or not self.active: return
+        pending = self.db.pending_tasks()
+        if pending:
+            item = pending[0]
+            self.chat_history.appendPlainText(f"\n自動繼續未完成任務 #{item['id']}：{item['instruction']}")
+            self.tabs.setCurrentIndex(2)
+            self.execute_agent_command(str(item["instruction"]), int(item["id"]))
+
+    def execute_agent_command(self, command: str, task_id: int) -> None:
         m, a = self._require(); provider = self.provider()
+        self.running_task_id = task_id
+        self.db.update_task(task_id, "RUNNING", "正在觀察目前畫面")
         reference_frame = self.current_frame if self.chat_image_pending else None
-        def task() -> tuple[bytes, str]:
+        def task() -> tuple[bytes, str, bool]:
             import time
             reference = ""
             if reference_frame:
@@ -413,6 +427,7 @@ class MainWindow(QMainWindow):
             active = m.ensure_coc(a.index)
             last_png = b""
             for step in range(5):
+                self.db.update_task(task_id, "RUNNING", f"第 {step + 1} 步：截圖、判斷與驗證")
                 last_png = m.screenshot(active)
                 prompt = (f"你正在控制部落衝突。使用者指令：{command}\n"
                           f"使用者附圖提供的參考：{reference}\n使用者過去確認的操作教學：\n{self.knowledge_context()}\n"
@@ -422,23 +437,26 @@ class MainWindow(QMainWindow):
                 raw = provider.generate(prompt, last_png).strip().replace("```json", "").replace("```", "")
                 data = json.loads(raw[raw.find("{"):raw.rfind("}") + 1])
                 if data.get("done"):
-                    return last_png, str(data.get("message") or "指令已完成")
+                    return last_png, str(data.get("message") or "指令已完成"), True
                 action = data.get("action")
                 if action == "tap":
                     m.tap(active, int(float(data["x_pct"]) * 16), int(float(data["y_pct"]) * 9))
                 elif action == "back": m.back(active)
                 elif action == "swipe_up": m.swipe(active, 800, 720, 800, 220, 500)
                 elif action == "swipe_down": m.swipe(active, 800, 220, 800, 720, 500)
-                else: return last_png, str(data.get("message") or "AI 無法安全執行這個操作")
+                else: return last_png, str(data.get("message") or "AI 無法安全執行這個操作"), False
                 time.sleep(2)
-            return last_png, "已執行操作，但五次畫面確認後仍無法確認完成。"
-        def done(result: tuple[bytes, str]) -> None:
-            png, message = result
+            return last_png, "已執行操作，但五次畫面確認後仍無法確認完成。", False
+        def done(result: tuple[bytes, str, bool]) -> None:
+            png, message, completed = result
             self.frame_sequence += 1; self.current_frame = Frame.create(a.emulator_id, self.current_account_tag, png, self.frame_sequence)
             self.chat_image_pending = False
             self.chat_history.appendPlainText(f"\nAI 操作結果\n{message}\n")
+            self.db.update_task(task_id, "COMPLETED" if completed else "PENDING", message)
+            self.running_task_id = None
             proof_path = os.environ.get("COC_AGENT_SCREENSHOT", "").strip()
             if proof_path: QTimer.singleShot(800, lambda: self.grab().save(proof_path, "PNG"))
+            if completed: QTimer.singleShot(1200, self.resume_pending_tasks)
         self.run_async("AI 正在操作並確認 MuMu 畫面…", task, done)
 
     def save_teaching(self) -> None:

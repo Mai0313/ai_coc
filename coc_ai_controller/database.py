@@ -55,6 +55,11 @@ class Database:
                 id INTEGER PRIMARY KEY AUTOINCREMENT, emulator_id TEXT, frame_id TEXT,
                 statement TEXT NOT NULL, status TEXT NOT NULL, created_at TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS tasks(
+                id INTEGER PRIMARY KEY AUTOINCREMENT, instruction TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'PENDING', progress TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+            );
             """)
             con.executemany("INSERT OR REPLACE INTO metadata(key,value) VALUES(?,?)", [
                 ("schema_version", SCHEMA_VERSION), ("master_db_version", MASTER_DB_VERSION)
@@ -109,3 +114,20 @@ class Database:
         with closing(self.connect()) as con:
             rows = con.execute("SELECT * FROM knowledge ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
             return [dict(row) for row in reversed(rows)]
+
+    def add_task(self, instruction: str) -> int:
+        now = datetime.now(timezone.utc).isoformat()
+        with closing(self.connect()) as con, con:
+            cursor = con.execute("INSERT INTO tasks(instruction,status,progress,created_at,updated_at) VALUES(?,?,?,?,?)",
+                                 (instruction, "PENDING", "等待執行", now, now))
+            return int(cursor.lastrowid)
+
+    def pending_tasks(self) -> list[dict[str, Any]]:
+        with closing(self.connect()) as con:
+            rows = con.execute("SELECT * FROM tasks WHERE status IN ('PENDING','RUNNING') ORDER BY id").fetchall()
+            return [dict(row) for row in rows]
+
+    def update_task(self, task_id: int, status: str, progress: str) -> None:
+        now = datetime.now(timezone.utc).isoformat()
+        with closing(self.connect()) as con, con:
+            con.execute("UPDATE tasks SET status=?,progress=?,updated_at=? WHERE id=?", (status, progress, now, task_id))
