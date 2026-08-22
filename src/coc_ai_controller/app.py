@@ -1,69 +1,74 @@
 from __future__ import annotations
 
-import json
-import logging
 import os
 import sys
-from collections.abc import Callable
+import json
+import time
+from typing import TYPE_CHECKING, Any
+import logging
 from pathlib import Path
-from typing import Any
 
+from PyQt5.QtGui import QPixmap
 from PyQt5.QtCore import (
-    QBuffer,
-    QByteArray,
+    Qt,
     QEvent,
-    QIODevice,
+    QTimer,
+    QBuffer,
     QObject,
+    QIODevice,
     QRunnable,
     QSettings,
-    Qt,
+    QByteArray,
     QThreadPool,
-    QTimer,
     pyqtSignal,
 )
-from PyQt5.QtGui import QPixmap
 from PyQt5.QtWidgets import (
-    QApplication,
+    QLabel,
+    QWidget,
+    QSpinBox,
     QCheckBox,
     QComboBox,
-    QFileDialog,
-    QFormLayout,
     QGroupBox,
-    QHBoxLayout,
-    QHeaderView,
-    QLabel,
     QLineEdit,
-    QMainWindow,
-    QMessageBox,
-    QPlainTextEdit,
-    QPushButton,
-    QSpinBox,
     QSplitter,
     QStatusBar,
-    QTableWidget,
-    QTableWidgetItem,
     QTabWidget,
+    QFileDialog,
+    QFormLayout,
+    QHBoxLayout,
+    QHeaderView,
+    QMainWindow,
+    QMessageBox,
+    QPushButton,
     QVBoxLayout,
-    QWidget,
+    QApplication,
+    QTableWidget,
+    QPlainTextEdit,
+    QTableWidgetItem,
 )
 
 from .ai import AGENT_PROFILE, GoogleGeminiProvider, vision_prompt
-from .battle import load_battle_script
-from .constants import (
-    ACCOUNT_JSON_DIR,
-    AGENT_PROFILE_VERSION,
-    APP_NAME,
-    MASTER_DB_VERSION,
-    SCHEMA_VERSION,
-    UPDATED_DATE,
-    VERSION_LABEL,
-    bundle_root,
-)
-from .database import Database
-from .models import EmulatorInstance, Frame
 from .mumu import MuMuAdapter
+from .battle import load_battle_script
+from .models import Frame, AccountSnapshot, EmulatorInstance
 from .secrets import SecretStore
 from .village import parse_village, parse_village_text
+from .database import Database
+from .constants import (
+    APP_NAME,
+    UPDATED_DATE,
+    VERSION_LABEL,
+    SCHEMA_VERSION,
+    ACCOUNT_JSON_DIR,
+    MASTER_DB_VERSION,
+    AGENT_PROFILE_VERSION,
+    bundle_root,
+)
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from PyQt5.QtGui import QDropEvent, QDragEnterEvent
 
 logger = logging.getLogger(__name__)
 
@@ -114,7 +119,9 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage("Ready — 偵測 MuMu 以開始")
         self.refresh_instances()
         QTimer.singleShot(6000, self.resume_pending_tasks)
-        QTimer.singleShot(8000, lambda: self.start_automation() if self.auto_on_start.isChecked() else None)
+        QTimer.singleShot(
+            8000, lambda: self.start_automation() if self.auto_on_start.isChecked() else None
+        )
 
     def _build_ui(self) -> None:
         self.setStyleSheet("""
@@ -213,9 +220,18 @@ class MainWindow(QMainWindow):
         row.addStretch()
         layout.addLayout(row)
         self.account_table = QTableWidget(0, 10)
-        self.account_table.setHorizontalHeaderLabels(
-            ["Section", "Data ID", "Name", "World", "Category", "Level", "Count", "Next", "Cost", "Time"]
-        )
+        self.account_table.setHorizontalHeaderLabels([
+            "Section",
+            "Data ID",
+            "Name",
+            "World",
+            "Category",
+            "Level",
+            "Count",
+            "Next",
+            "Cost",
+            "Time",
+        ])
         self.account_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
         self.account_table.horizontalHeader().setStretchLastSection(True)
         layout.addWidget(self.account_table)
@@ -262,12 +278,16 @@ class MainWindow(QMainWindow):
         layout.addLayout(row)
         return page
 
-    def eventFilter(self, watched, event) -> bool:
-        if watched is getattr(self, "chat_input", None) and event.type() == QEvent.KeyPress:
-            if event.key() == Qt.Key_V and event.modifiers() & Qt.ControlModifier:
-                if not QApplication.clipboard().image().isNull():
-                    self.paste_chat_image()
-                    return True
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:  # noqa: N802 - Qt override
+        if (
+            watched is getattr(self, "chat_input", None)
+            and event.type() == QEvent.KeyPress
+            and event.key() == Qt.Key_V
+            and event.modifiers() & Qt.ControlModifier
+            and not QApplication.clipboard().image().isNull()
+        ):
+            self.paste_chat_image()
+            return True
         return super().eventFilter(watched, event)
 
     def _set_chat_image(self, png: bytes, label: str) -> None:
@@ -275,9 +295,13 @@ class MainWindow(QMainWindow):
         if not pix.loadFromData(png):
             raise ValueError("無法讀取圖片")
         self.frame_sequence += 1
-        self.current_frame = Frame.create("uploaded-image", self.current_account_tag, png, self.frame_sequence)
+        self.current_frame = Frame.create(
+            "uploaded-image", self.current_account_tag, png, self.frame_sequence
+        )
         self.chat_image_pending = True
-        self.chat_image_preview.setPixmap(pix.scaled(900, 170, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+        self.chat_image_preview.setPixmap(
+            pix.scaled(900, 170, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        )
         self.chat_image_preview.setToolTip(label)
         self.chat_history.appendPlainText(f"\n已附加圖片：{label}")
 
@@ -302,12 +326,18 @@ class MainWindow(QMainWindow):
         image.save(buffer, "PNG")
         self._set_chat_image(bytes(data), "剪貼簿圖片")
 
-    def dragEnterEvent(self, event) -> None:
+    def dragEnterEvent(self, event: QDragEnterEvent) -> None:  # noqa: N802 - Qt override
         urls = event.mimeData().urls()
-        if urls and Path(urls[0].toLocalFile()).suffix.lower() in {".png", ".jpg", ".jpeg", ".webp", ".bmp"}:
+        if urls and Path(urls[0].toLocalFile()).suffix.lower() in {
+            ".png",
+            ".jpg",
+            ".jpeg",
+            ".webp",
+            ".bmp",
+        }:
             event.acceptProposedAction()
 
-    def dropEvent(self, event) -> None:
+    def dropEvent(self, event: QDropEvent) -> None:  # noqa: N802 - Qt override
         path = Path(event.mimeData().urls()[0].toLocalFile())
         try:
             self._set_chat_image(path.read_bytes(), path.name)
@@ -324,7 +354,9 @@ class MainWindow(QMainWindow):
         load.clicked.connect(self.load_battle)
         example = QPushButton("載入範例")
         example.clicked.connect(
-            lambda: self._show_battle(bundle_root() / "battle_scripts" / "BH10_BABY_DRAGON_01.json")
+            lambda: self._show_battle(
+                bundle_root() / "battle_scripts" / "BH10_BABY_DRAGON_01.json"
+            )
         )
         row.addWidget(load)
         row.addWidget(example)
@@ -340,9 +372,7 @@ class MainWindow(QMainWindow):
         )
         return page
 
-    def _automation_tab(self) -> QWidget:
-        page = QWidget()
-        layout = QVBoxLayout(page)
+    def _automation_behavior_group(self) -> QGroupBox:
         behavior = QGroupBox("自主行為")
         form = QFormLayout(behavior)
         self.auto_on_start = QCheckBox("開啟 EXE 後自動啟動 MuMu、CoC 並開始巡檢")
@@ -361,7 +391,9 @@ class MainWindow(QMainWindow):
         ):
             widget.setChecked(str(self.settings.value(key, "false")).lower() == "true")
             form.addRow(widget)
-        layout.addWidget(behavior)
+        return behavior
+
+    def _automation_battle_group(self) -> QGroupBox:
         battle = QGroupBox("進攻與資源門檻")
         battle_form = QFormLayout(battle)
         self.auto_script = QComboBox()
@@ -395,7 +427,13 @@ class MainWindow(QMainWindow):
         battle_form.addRow("最低黑水", self.min_dark)
         battle_form.addRow("金幣達到此值停止刷資源", self.stop_gold)
         battle_form.addRow("巡檢間隔（分鐘）", self.cycle_minutes)
-        layout.addWidget(battle)
+        return battle
+
+    def _automation_tab(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.addWidget(self._automation_behavior_group())
+        layout.addWidget(self._automation_battle_group())
         row = QHBoxLayout()
         save = QPushButton("儲存自動化設定")
         save.clicked.connect(self.save_automation)
@@ -458,7 +496,9 @@ class MainWindow(QMainWindow):
             jobs.append("檢查保留資源門檻後，使用超出保留量的資源升級一段城牆")
         if self.auto_attack.isChecked():
             script_path = Path(str(self.auto_script.currentData() or ""))
-            script_text = script_path.read_text(encoding="utf-8-sig") if script_path.is_file() else "{}"
+            script_text = (
+                script_path.read_text(encoding="utf-8-sig") if script_path.is_file() else "{}"
+            )
             jobs.append(
                 f"使用以下戰鬥腳本搜尋資源村並執行：{script_text}；門檻金幣 {self.min_gold.value()}、聖水 {self.min_elixir.value()}、黑水 {self.min_dark.value()}，符合才進攻並按腳本結束條件收尾"
             )
@@ -483,7 +523,11 @@ class MainWindow(QMainWindow):
         self.api_key.setPlaceholderText("Stored with Windows DPAPI")
         self.model_name = QLineEdit(str(self.settings.value("gemini_model", "gemini-2.5-flash")))
         self.endpoint = QLineEdit(
-            str(self.settings.value("gemini_endpoint", "https://generativelanguage.googleapis.com/v1beta/openai"))
+            str(
+                self.settings.value(
+                    "gemini_endpoint", "https://generativelanguage.googleapis.com/v1beta/openai"
+                )
+            )
         )
         try:
             self.api_key.setText(self.secrets.load())
@@ -494,7 +538,11 @@ class MainWindow(QMainWindow):
         form.addRow("Model", self.model_name)
         form.addRow("Endpoint", self.endpoint)
         buttons = QHBoxLayout()
-        for text, fn in (("儲存設定", self.save_api), ("測試連線", self.test_api), ("清除 API Key", self.clear_api)):
+        for text, fn in (
+            ("儲存設定", self.save_api),
+            ("測試連線", self.test_api),
+            ("清除 API Key", self.clear_api),
+        ):
             b = QPushButton(text)
             b.clicked.connect(fn)
             buttons.addWidget(b)
@@ -516,7 +564,9 @@ class MainWindow(QMainWindow):
         layout.addStretch()
         return page
 
-    def run_async(self, label: str, fn: Callable[[], Any], done: Callable[[Any], None] | None = None) -> None:
+    def run_async(
+        self, label: str, fn: Callable[[], Any], done: Callable[[Any], None] | None = None
+    ) -> None:
         self.statusBar().showMessage(label)
         worker = Worker(fn)
         if done:
@@ -529,21 +579,25 @@ class MainWindow(QMainWindow):
         QMessageBox.critical(self, title, message)
 
     def refresh_instances(self) -> None:
-        def task():
+        def task() -> tuple[MuMuAdapter, str, list[EmulatorInstance]]:
             adapter = MuMuAdapter()
             return adapter, adapter.version(), adapter.enumerate_instances()
 
-        def done(result):
+        def done(result: tuple[MuMuAdapter, str, list[EmulatorInstance]]) -> None:
             self.mumu, version, self.instances = result
             self.instance_combo.blockSignals(True)
             self.instance_combo.clear()
             for item in self.instances:
-                self.instance_combo.addItem(f"{item.name} — {item.state} — ADB {item.adb_serial}", item.emulator_id)
+                self.instance_combo.addItem(
+                    f"{item.name} — {item.state} — ADB {item.adb_serial}", item.emulator_id
+                )
             self.instance_combo.blockSignals(False)
             if self.instances:
                 self.instance_combo.setCurrentIndex(0)
                 self._select_instance(0)
-            self.statusBar().showMessage(f"MuMu {version}: {len(self.instances)} instance(s)", 6000)
+            self.statusBar().showMessage(
+                f"MuMu {version}: {len(self.instances)} instance(s)", 6000
+            )
 
         self.run_async("Detecting MuMu instances…", task, done)
 
@@ -565,23 +619,41 @@ class MainWindow(QMainWindow):
 
     def launch_instance(self) -> None:
         m, a = self._require()
-        self.run_async("Launching MuMu…", lambda: m.launch_instance(a.index), lambda _: self.refresh_instances())
+        self.run_async(
+            "Launching MuMu…",
+            lambda: m.launch_instance(a.index),
+            lambda _: self.refresh_instances(),
+        )
 
     def restart_emulator(self) -> None:
         m, a = self._require()
-        self.run_async("Restarting MuMu…", lambda: m.restart_instance(a.index), lambda _: self.refresh_instances())
+        self.run_async(
+            "Restarting MuMu…",
+            lambda: m.restart_instance(a.index),
+            lambda _: self.refresh_instances(),
+        )
 
     def close_emulator(self) -> None:
         m, a = self._require()
-        self.run_async("Closing MuMu…", lambda: m.close_instance(a.index), lambda _: self.refresh_instances())
+        self.run_async(
+            "Closing MuMu…", lambda: m.close_instance(a.index), lambda _: self.refresh_instances()
+        )
 
     def launch_coc(self) -> None:
         m, a = self._require()
-        self.run_async("正在自動啟動部落衝突…", lambda: m.ensure_coc(a.index), lambda _: self.refresh_instances())
+        self.run_async(
+            "正在自動啟動部落衝突…",
+            lambda: m.ensure_coc(a.index),
+            lambda _: self.refresh_instances(),
+        )
 
     def restart_coc(self) -> None:
         m, a = self._require()
-        self.run_async("Restarting Clash of Clans…", lambda: m.restart_coc(a), lambda _: self.refresh_instances())
+        self.run_async(
+            "Restarting Clash of Clans…",
+            lambda: m.restart_coc(a),
+            lambda _: self.refresh_instances(),
+        )
 
     def back(self) -> None:
         m, a = self._require()
@@ -590,18 +662,24 @@ class MainWindow(QMainWindow):
     def capture(self) -> None:
         m, a = self._require()
 
-        def done(png: bytes):
+        def done(png: bytes) -> None:
             self.frame_sequence += 1
-            self.current_frame = Frame.create(a.emulator_id, self.current_account_tag, png, self.frame_sequence)
+            self.current_frame = Frame.create(
+                a.emulator_id, self.current_account_tag, png, self.frame_sequence
+            )
             pix = QPixmap()
             pix.loadFromData(png)
-            self.frame_label.setPixmap(pix.scaled(self.frame_label.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation))
+            self.frame_label.setPixmap(
+                pix.scaled(self.frame_label.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            )
             self.statusBar().showMessage(f"Captured {self.current_frame.frame_id}", 7000)
 
         self.run_async("Capturing current MuMu frame…", lambda: m.screenshot(a), done)
 
     def import_village(self) -> None:
-        path, _ = QFileDialog.getOpenFileName(self, "Import Village JSON", "", "JSON (*.json);;All Files (*)")
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Import Village JSON", "", "JSON (*.json);;All Files (*)"
+        )
         if not path:
             return
         try:
@@ -637,11 +715,13 @@ class MainWindow(QMainWindow):
         except Exception as exc:
             self._error("Village JSON import failed", str(exc))
 
-    def _apply_village_snapshot(self, snapshot) -> None:
+    def _apply_village_snapshot(self, snapshot: AccountSnapshot) -> None:
         self.db.save_account(snapshot.tag, snapshot.raw, snapshot.entities)
         safe_tag = "".join(ch for ch in snapshot.tag if ch.isalnum() or ch in "-_#") or "UNKNOWN"
         saved_path = ACCOUNT_JSON_DIR / f"{safe_tag}.json"
-        saved_path.write_text(json.dumps(snapshot.raw, ensure_ascii=False, indent=2), encoding="utf-8")
+        saved_path.write_text(
+            json.dumps(snapshot.raw, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
         self.current_account_tag = snapshot.tag
         rows = self.db.account_rows(snapshot.tag)
         self.account_label.setText(f"帳號：{snapshot.tag} — {len(rows)} 筆資料")
@@ -660,7 +740,9 @@ class MainWindow(QMainWindow):
                 row.get("upgrade_seconds"),
             ]
             for column, value in enumerate(values):
-                self.account_table.setItem(row_index, column, QTableWidgetItem("—" if value is None else str(value)))
+                self.account_table.setItem(
+                    row_index, column, QTableWidgetItem("—" if value is None else str(value))
+                )
         self.account_summary.setPlainText(
             f"已匯入村莊 JSON，共 {len(rows)} 筆。\n資料庫與 JSON 檔都已保存：{saved_path}"
         )
@@ -695,8 +777,6 @@ class MainWindow(QMainWindow):
             png = m.screenshot(active)
             x, y = locate(png, "可開啟村莊 JSON 資料的入口")
             m.tap(active, x, y)
-            import time
-
             time.sleep(2)
             png = m.screenshot(active)
             x, y = locate(png, "複製完整 JSON 到剪貼簿的按鈕")
@@ -709,7 +789,9 @@ class MainWindow(QMainWindow):
         self.run_async("AI 正在取得村莊 JSON…", task, done)
 
     def provider(self) -> GoogleGeminiProvider:
-        return GoogleGeminiProvider(self.api_key.text(), self.model_name.text(), self.endpoint.text())
+        return GoogleGeminiProvider(
+            self.api_key.text(), self.model_name.text(), self.endpoint.text()
+        )
 
     def save_api(self) -> None:
         try:
@@ -739,7 +821,10 @@ class MainWindow(QMainWindow):
 
     def knowledge_context(self) -> str:
         items = self.db.recent_knowledge(40)
-        return "\n".join(f"- [{item['status']}] {item['statement']}" for item in items) or "尚無使用者教學。"
+        return (
+            "\n".join(f"- [{item['status']}] {item['statement']}" for item in items)
+            or "尚無使用者教學。"
+        )
 
     def analyze_frame(self) -> None:
         if not self.current_frame:
@@ -753,7 +838,9 @@ class MainWindow(QMainWindow):
         self.run_async(
             "AI 正在分析目前畫面…",
             lambda: provider.generate(prompt, frame.png),
-            lambda result: self.chat_history.appendPlainText(f"\n畫面分析 [{frame.frame_id}]\n{result}\n"),
+            lambda result: self.chat_history.appendPlainText(
+                f"\n畫面分析 [{frame.frame_id}]\n{result}\n"
+            ),
         )
 
     def live_ai_test(self) -> None:
@@ -765,14 +852,17 @@ class MainWindow(QMainWindow):
             active = m.ensure_coc(a.index)
             png = m.screenshot(active)
             answer = self.provider().generate(
-                "你是部落衝突助手。請用繁體中文簡短回答：你現在看到什麼畫面？列出兩個可見重點。", png
+                "你是部落衝突助手。請用繁體中文簡短回答：你現在看到什麼畫面？列出兩個可見重點。",
+                png,
             )
             return png, answer
 
         def done(result: tuple[bytes, str]) -> None:
             png, answer = result
             self.frame_sequence += 1
-            self.current_frame = Frame.create(a.emulator_id, self.current_account_tag, png, self.frame_sequence)
+            self.current_frame = Frame.create(
+                a.emulator_id, self.current_account_tag, png, self.frame_sequence
+            )
             self.chat_history.appendPlainText(f"\n實機 AI 回覆\n{answer}\n")
             proof_path = os.environ.get("COC_LIVE_TEST_SCREENSHOT", "").strip()
             if proof_path:
@@ -784,7 +874,9 @@ class MainWindow(QMainWindow):
         text = self.chat_input.text().strip()
         if not text:
             return
-        should_remember = any(word in text for word in ("記住", "記下", "以後要", "下次要", "我教你"))
+        should_remember = any(
+            word in text for word in ("記住", "記下", "以後要", "下次要", "我教你")
+        )
         if should_remember:
             self.db.add_knowledge(
                 self.active.emulator_id if self.active else "",
@@ -832,7 +924,11 @@ class MainWindow(QMainWindow):
                 self.chat_image_preview.clear()
                 self.chat_image_preview.setText("尚未附加圖片（也可以將圖片拖進視窗）")
 
-        self.run_async("AI 正在思考…", lambda: self.provider().generate(context, frame.png if frame else None), done)
+        self.run_async(
+            "AI 正在思考…",
+            lambda: self.provider().generate(context, frame.png if frame else None),
+            done,
+        )
 
     def resume_pending_tasks(self) -> None:
         if self.running_task_id is not None or not self.active:
@@ -840,9 +936,28 @@ class MainWindow(QMainWindow):
         pending = self.db.pending_tasks()
         if pending:
             item = pending[0]
-            self.chat_history.appendPlainText(f"\n自動繼續未完成任務 #{item['id']}：{item['instruction']}")
+            self.chat_history.appendPlainText(
+                f"\n自動繼續未完成任務 #{item['id']}：{item['instruction']}"
+            )
             self.tabs.setCurrentIndex(2)
             self.execute_agent_command(str(item["instruction"]), int(item["id"]))
+
+    def _apply_agent_action(
+        self, m: MuMuAdapter, active: EmulatorInstance, data: dict[str, Any]
+    ) -> bool:
+        """Perform one AI-proposed action; False when the action is not executable."""
+        action = data.get("action")
+        if action == "tap":
+            m.tap(active, int(float(data["x_pct"]) * 16), int(float(data["y_pct"]) * 9))
+        elif action == "back":
+            m.back(active)
+        elif action == "swipe_up":
+            m.swipe(active, (800, 720), (800, 220), 500)
+        elif action == "swipe_down":
+            m.swipe(active, (800, 220), (800, 720), 500)
+        else:
+            return False
+        return True
 
     def execute_agent_command(self, command: str, task_id: int) -> None:
         m, a = self._require()
@@ -852,8 +967,6 @@ class MainWindow(QMainWindow):
         reference_frame = self.current_frame if self.chat_image_pending else None
 
         def task() -> tuple[bytes, str, bool]:
-            import time
-
             reference = ""
             if reference_frame:
                 reference = provider.generate(
@@ -862,7 +975,9 @@ class MainWindow(QMainWindow):
                 )
             active = m.ensure_coc(a.index)
             last_png = b""
-            max_steps = 25 if any(word in command for word in ("進攻", "戰鬥", "搜尋資源村")) else 8
+            max_steps = (
+                25 if any(word in command for word in ("進攻", "戰鬥", "搜尋資源村")) else 8
+            )
             for step in range(max_steps):
                 self.db.update_task(task_id, "RUNNING", f"第 {step + 1} 步：截圖、判斷與驗證")
                 last_png = m.screenshot(active)
@@ -876,20 +991,17 @@ class MainWindow(QMainWindow):
                     f"若已完成 done=true。授權狀態：自主升級={self.auto_upgrade.isChecked()}，刷牆={self.auto_walls.isChecked()}，自主進攻={self.auto_attack.isChecked()}。"
                     "只有對應授權為 true 才能花費遊戲資源或進攻；禁止花費寶石、現金、刪除或帳號操作。"
                 )
-                raw = provider.generate(prompt, last_png).strip().replace("```json", "").replace("```", "")
+                raw = (
+                    provider
+                    .generate(prompt, last_png)
+                    .strip()
+                    .replace("```json", "")
+                    .replace("```", "")
+                )
                 data = json.loads(raw[raw.find("{") : raw.rfind("}") + 1])
                 if data.get("done"):
                     return last_png, str(data.get("message") or "指令已完成"), True
-                action = data.get("action")
-                if action == "tap":
-                    m.tap(active, int(float(data["x_pct"]) * 16), int(float(data["y_pct"]) * 9))
-                elif action == "back":
-                    m.back(active)
-                elif action == "swipe_up":
-                    m.swipe(active, 800, 720, 800, 220, 500)
-                elif action == "swipe_down":
-                    m.swipe(active, 800, 220, 800, 720, 500)
-                else:
+                if not self._apply_agent_action(m, active, data):
                     return last_png, str(data.get("message") or "AI 無法安全執行這個操作"), False
                 time.sleep(2)
             return last_png, f"已執行操作，但 {max_steps} 次畫面確認後仍無法確認完成。", False
@@ -897,7 +1009,9 @@ class MainWindow(QMainWindow):
         def done(result: tuple[bytes, str, bool]) -> None:
             png, message, completed = result
             self.frame_sequence += 1
-            self.current_frame = Frame.create(a.emulator_id, self.current_account_tag, png, self.frame_sequence)
+            self.current_frame = Frame.create(
+                a.emulator_id, self.current_account_tag, png, self.frame_sequence
+            )
             self.chat_image_pending = False
             self.chat_history.appendPlainText(f"\nAI 操作結果\n{message}\n")
             self.db.update_task(task_id, "COMPLETED" if completed else "PENDING", message)
@@ -969,7 +1083,7 @@ def main() -> int:
         if argument.startswith("--agent-command="):
             command = argument.split("=", 1)[1]
 
-            def run_command(text=command):
+            def run_command(text: str = command) -> None:
                 window.tabs.setCurrentIndex(2)
                 window.chat_input.setText(text)
                 window.send_chat()

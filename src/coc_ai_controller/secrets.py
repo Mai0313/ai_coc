@@ -3,12 +3,15 @@ from __future__ import annotations
 import base64
 import ctypes
 from ctypes import wintypes
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 from .constants import data_root
 
+if TYPE_CHECKING:
+    from pathlib import Path
 
-class DATA_BLOB(ctypes.Structure):
+
+class DATA_BLOB(ctypes.Structure):  # noqa: N801 - mirrors the Win32 struct name
     _fields_ = [("cbData", wintypes.DWORD), ("pbData", ctypes.POINTER(ctypes.c_byte))]
 
 
@@ -22,7 +25,7 @@ class SecretStore:
         self.path = path or data_root() / "gemini.key.dpapi"
 
     def save(self, value: str) -> None:
-        source, keep = _blob(value.encode("utf-8"))
+        source, _keep = _blob(value.encode("utf-8"))
         output = DATA_BLOB()
         if not ctypes.windll.crypt32.CryptProtectData(
             ctypes.byref(source), "CoC AI Controller", None, None, None, 0, ctypes.byref(output)
@@ -38,7 +41,7 @@ class SecretStore:
         if not self.path.is_file():
             return ""
         encrypted = base64.b64decode(self.path.read_bytes())
-        source, keep = _blob(encrypted)
+        source, _keep = _blob(encrypted)
         output = DATA_BLOB()
         if not ctypes.windll.crypt32.CryptUnprotectData(
             ctypes.byref(source), None, None, None, None, 0, ctypes.byref(output)

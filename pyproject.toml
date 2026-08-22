@@ -1,61 +1,536 @@
+[tool.pytest.ini_options]
+addopts = [
+    "--color=yes",
+    "--durations=0",
+    "--durations-min=0.1",
+    "--strict-markers",
+    "--doctest-modules",
+    "--quiet",
+    "--cov=src",
+    "--cov-report=term-missing:skip-covered",
+    "--cov-report=xml:./.github/reports/coverage.xml",
+    "--junitxml=./.github/reports/.coverage.pytest.xml",
+    "--cache-clear",
+    "-n=auto",
+    "--no-header",
+    # The template asks for 80. Actual coverage is 12: almost everything here is
+    # the PyQt shell and the MuMu/Gemini adapters, none of which has tests yet.
+    # Raise this as those grow instead of leaving the gate permanently red.
+    "--cov-fail-under=12",
+]
+filterwarnings = [
+    "ignore::DeprecationWarning",
+    "ignore::FutureWarning",
+    "ignore::UserWarning",
+]
+log_cli = true
+log_cli_level = "INFO"
+log_file = "./.github/reports/pytest_logs.log"
+log_file_level = "INFO"
+markers = [
+    "slow: slow tests",
+    "skip_when_ci: Skip when CI/CD",
+]
+minversion = "8.2"
+testpaths = "tests/"
+python_files = "test_*.py"
+cache_dir = "~/.cache/pytest"
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: nocover",
+    "raise NotImplementedError",
+    "raise NotImplementedError()",
+    "raise ValueError()",
+    "raise AssertionError()",
+    "update_function_signature",
+    "update_tool_signature",
+    "if __name__ == .__main__.:",
+    "if user_id is None and default_headers:",
+]
+
+[tool.coverage.html]
+directory = "./.github/coverage_html_report"
+
+[tool.coverage.run]
+data_file = './.github/reports/.coverage'
+omit = ["*/__init__.py"]
+
+# ================== #
+#        uv          #
+# ================== #
+
 [project]
 name = "coc-ai-controller"
 version = "0.1.0"
 description = "AI-driven Clash of Clans automation controller for MuMu Player on Windows"
+authors = [
+    { name = "CoC AI Controller contributors" },
+]
+dependencies = [
+    "defusedxml>=0.7,<1",
+    "PyQt5>=5.15,<6",
+    "PyQt5-Qt5==5.15.2; sys_platform == 'win32'",
+]
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
 license = { text = "MIT" }
-authors = [{ name = "CoC AI Controller contributors" }]
-dependencies = [
-  "defusedxml>=0.7,<1",
-  "PyQt5>=5.15,<6",
-  "PyQt5-Qt5==5.15.2; sys_platform == 'win32'",
-]
 
 [project.urls]
+Homepage = "https://mai0313.github.io/CoC-AI-Controller"
 Repository = "https://github.com/Mai0313/CoC-AI-Controller"
+
+[dependency-groups]
+dev = [
+    "ipykernel",
+    "ipywidgets",
+    "notebook",
+    "poethepoet",
+    "pre-commit",
+]
+test = [
+    "genbadge[all]",
+    "pytest",
+    "pytest-asyncio",
+    "pytest-cov",
+    "pytest-xdist[psutil]",
+]
+build = [
+    "pyinstaller>=6.21",
+]
+docs = [
+    "anyio",
+    "fire",
+    "griffe-typingdoc",
+    "markdown-exec[ansi]",
+    "mkdocs-autorefs",
+    "mkdocstrings[python]",
+    "rich",
+    "ruff",
+    "tabulate",
+    "zensical",
+]
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[tool.hatch.build]
+include = [
+    "src/coc_ai_controller"
+]
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/coc_ai_controller"]
 
-[dependency-groups]
-dev = ["pre-commit", "ruff", "ty"]
-test = ["pytest", "pytest-cov", "pytest-xdist"]
-build = ["pyinstaller>=6.21"]
-docs = ["zensical", "mkdocstrings[python]", "ruff"]
-
-[tool.pytest.ini_options]
-testpaths = ["tests"]
-pythonpath = ["src"]
-addopts = [
-  "--strict-markers",
-  "--cov=src/coc_ai_controller",
-  "--cov-report=term-missing",
-  "--cov-report=xml:.github/reports/coverage.xml",
-  "--junitxml=.github/reports/.coverage.pytest.xml",
-  "--cov-fail-under=12",
+[tool.hatch.build.targets.sdist]
+# Basically everything except hidden files/directories (such as .github, .devcontainers, .python-version, etc)
+include = [
+    "/*.toml",
+    "/*.json",
+    "/*.lock",
+    "/*.md",
+    "/noxfile.py",
+    "bin/*",
+    "examples/*",
+    "src/*",
+    "tests/*",
+]
+exclude = [
+    "/.github",
+    "/.devcontainers",
+    "/.python-version",
+    "/.vscode",
+    "/.nox",
+    "/.cache",
+    "/.pytest_cache",
+    "/.tox",
+    "/.venv",
+    "/.git",
+    "/.gitignore",
+    "/.gitattributes",
+    "/.gitmodules",
+    "/.gitlab-ci.yml",
+    "/.dockerignore",
+    "/.docker",
+    "/.docker-compose",
+    "/.cache",
 ]
 
+[tool.poe.tasks]
+cli = "python ./app.py"
+api = "python ./app.py"
+main = "python ./app.py"
+
+# Documentation
+docs_gen = "make gen-docs"
+docs_deploy = "zensical build"
+docs_run = "zensical serve"
+gen = ["docs_gen", "docs_deploy"]
+docs = ["docs_gen", "docs_run"]
+
+# https://docs.astral.sh/uv/reference/settings
+[tool.uv]
+managed = true
+# If you don't want to use the `uv` CLI, you can set this to false.
+package = true
+check-url = "https://pypi.org/simple"
+publish-url = "https://upload.pypi.org/legacy/"
+compile-bytecode = true
+# concurrent-builds = 4
+# concurrent-downloads = 4
+# concurrent-installs = 4
+index-strategy = "first-index"
+system-certs = false
+offline = false
+prerelease = "if-necessary"
+preview-features = true
+
+# https://docs.astral.sh/uv/reference/settings/#index
+[[tool.uv.index]]
+name = "default"
+url = "https://pypi.org/simple"
+default = true
+
+# [[tool.uv.index]]
+# name = "pytorch"
+# url = "https://download.pytorch.org/whl/cu118"
+
+[tool.uv.pip]
+universal = true
+annotation-style = "split"
+compile-bytecode = true
+index-url = "https://pypi.org/simple"
+output-file = "requirements.txt"
+prerelease = "if-necessary"
+
+
+# ================== #
+#        RUFF        #
+# ================== #
 [tool.ruff]
-target-version = "py312"
-line-length = 120
+
+# Enable preview features.
+preview = true
+
+# Enable Auto Fixing.
+fix = true
+unsafe-fixes = true
+
+# Whether to automatically exclude files that are ignored by .ignore, .gitignore, .git/info/exclude, and global gitignore files. Enabled by default.
+respect-gitignore = true
+
+# Enumerate all fixed violations.
+show-fixes = true
+
+# In addition to the standard set of exclusions, omit all tests, plus a specific file.
+extend-exclude = [
+    # Vendored MuMu skill scripts; they are upstream code, not ours to restyle.
+    ".agents",
+    "logs",
+    "data",
+    "*.svg",
+    "*.sql",
+]
+
+# In addition to the standard set of inclusions, include `.pyw` files.
+extend-include = ["**/*.ipynb", "*.sh"]
+
+# Allow imports relative to the "src" and "test" directories.
 src = ["src", "tests"]
-extend-exclude = [".agents"]
+
+# Set the cache directory to `logs/ruff_cache`.
+cache-dir = "~/.cache/ruff"  # default: ".ruff_cache", now it is not allowed to create cache dir in logs
+
+# Group violations by containing file.
+# This is output message format; nothing about coding
+# Type: "full" | "concise" | "grouped" | "json" | "junit" | "github" | "gitlab" | "pylint" | "azure"
+output-format = "pylint"
+
+# Same as Google Python Style Guide.
+line-length = 99
+
+[tool.ruff.analyze]
+# Enable preview features.
+preview = true
+detect-string-imports = true
+direction = "dependencies"
+
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "UP", "B", "S"]
-ignore = ["E501", "S603", "S607"]
+# Enable preview features.
+preview = true
+
+task-tags = ["TODO", "FIXME", "BUG", "XXX", "REFACT", "NOTE", "MARK", "HACK"]
+
+# Allow unused variables when underscore-prefixed.
+dummy-variable-rgx = "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$"
+
+# Allow autofix for all enabled rules (when `--fix`) is provided.
+# Ref: https://beta.ruff.rs/docs/rules/#ruff-specific-rules-ruf
+fixable = ["ALL"]
+unfixable = ["T201", "F841"]
+
+# Allow minus-sign (U+2212), greek-small-letter-rho (U+03C1), and the asterisk-operator (U+2217),
+# which could be confused for "-", "p", and "*", respectively.
+# `／` and `？` are not in the template's list; the Traditional Chinese UI strings
+# in this application use them.
+allowed-confusables = ["。", "，", "*", "；", "：", "、", "「", "」", "『", "』", "（", "）", "〔", "〕", "【", "】", "《", "》", "〈", "〉", "〖", "〗", "／", "？"]
+
+# Require explicit selection of preview rules.
+explicit-preview-rules = true
+
+select = [
+    "F",  # pyflakes
+    "E", "W",  # pycodestyle
+    "C90",  # mccabe
+    "I",  # isort
+    "N", # pep8-naming
+    "D",  # pydocstyle
+    "UP",  # pyupgrade
+    # "YTT",  # flake8-2020
+    "ANN",  # flake8-annotations
+    "ASYNC",  # flake8-async
+    "S",  # flake8-bandit
+    # "BLE",  # flake8-blind-except
+    # "FBT",  # flake8-boolean-trap
+    "B",  # bugbear
+    "A",  # flake8-builtins
+    # "COM",  # flake8-commas
+    # "CPY",  # flake8-copyright
+    "C4",  # flake8-comprehensions
+    # "DTZ",  # flake8-datetimez
+    "T10",  # flake8-debugger
+    # "DJ",  # flake8-django
+    # "EM",  # flake8-errmsg
+    "EXE",  # flake8-executable
+    "FA",  # flake8-future-annotations
+    # "ISC",  # flake8-implicit-str-concat
+    # "ICN",  # flake8-import-conventions
+    "LOG",  # flake8-logging
+    # "G",  # flake8-logging-format
+    "INP",  # flake8-no-pep420
+    # "PIE",  # flake8-pie
+    "T20",  # flake8-print
+    "PYI",  # flake8-pyi
+    "PT",  # flake8-pytest-style
+    "Q",  # flake8-quotes
+    "RSE",  # flake8-raise
+    "RET",  # flake8-return
+    "SLF",  # flake8-self
+    "SLOT",  # flake8-slots
+    "SIM",  # flake8-simplify
+    "TID",  # flake8-tidy-imports
+    "TC",  # flake8-type-checking
+    "INT",  # flake8-gettext
+    # "ARG",  # flake8-unused-arguments
+    # "PTH",  # flake8-use-pathlib
+    # "TD",  # flake8-todos
+    # "FIX",  # flake8-fixme
+    # "ERA",  # eradicate
+    "PD",  # pandas-vet
+    # "PGH",  # pygrep-hooks
+    "PGH003",  # pygrep-hooks: blanket-type-ignore
+    "PL",  # Pylint
+    # "TRY",  # tryceratops
+    "FLY",  # flynt
+    "NPY",  # NumPy-specific rules
+    "FAST",  # FastAPI
+    # "AIR",  # Airflow
+    "PERF",  # Perflint
+    # "FURB",  # refurb
+    "DOC",  # pydoclint
+    "RUF",  # Ruff Specific Rules
+]
+
+ignore = [
+    # Additional ignore
+    "E501",
+    # Missing Docs in functions
+    "D100", "D101", "D102", "D103", "D107", "D205", "D415",
+    # Doc line too long
+    "W505",
+    # "N804",
+    "E266",
+    # No need annotation for `__init__`
+    "ANN204",
+    # no need timeout for requests
+    "S113",
+    # using async without await or async features.
+    "RUF029",
+    # Unnecessary assignment before `return` statement
+    "RET504",
+    # Use a list comprehension to create a transformed list
+    "PERF401",
+    # Use `list` or `list.copy` to create a copy of a list
+    "PERF402",
+    # constants ("magic") values in comparisons
+    "PLR2004",
+]
+
+[tool.ruff.lint.pycodestyle]
+# Ignore long comments for TODO, FIXME, XXX
+ignore-overlong-task-comments = true
+max-doc-length = 99
+max-line-length = 99
+
+[tool.ruff.lint.pydocstyle]
+# Use Google-style docstrings.
+# Accepts: "google", "numpy", or "pep257".
+convention = "google"
+ignore-decorators = []
+property-decorators = []
+
+[tool.ruff.lint.pyflakes]
+extend-generics = ["pyrootutils", "autorootcwd", "autoroot"]
+
+[tool.ruff.lint.pyupgrade]
+# Preserve types, even if a file imports `from __future__ import annotations`.
+keep-runtime-typing = true
 
 [tool.ruff.lint.per-file-ignores]
-"tests/*" = ["S101"]
+"__init__.py" = ["F401", "D104"]
+"*.ipynb" = ["T201", "F401", "S105", "F811", "ANN", "PERF", "SLF"]
+"tests/*" = ["S101", "SLF001"]
+"notebooks/*.ipynb" = ["UP", "DOC", "RUF", "D", "C", "F401", "T201"]
+"examples/*.py" = ["UP", "DOC", "RUF", "D", "C", "F401", "T201"]
 
+[tool.ruff.lint.isort]
+case-sensitive = true
+classes = []
+combine-as-imports = false
+constants = []
+default-section = "third-party"
+detect-same-package = true
+extra-standard-library = []
+force-single-line = false
+force-sort-within-sections = true
+force-to-top = []
+force-wrap-aliases = false
+forced-separate = ["tests"]
+from-first = false
+known-first-party = ["src", "tests"]
+known-local-folder = []
+known-third-party = []
+length-sort = true
+length-sort-straight = true
+lines-after-imports = -1
+lines-between-types = 0
+no-lines-before = ["future"]
+no-sections = false
+order-by-type = true
+relative-imports-order = "furthest-to-closest"
+required-imports = []
+section-order = ["future", "standard-library", "third-party", "first-party", "local-folder"]
+single-line-exclusions = []
+split-on-trailing-comma=false
+variables = []
+
+[tool.ruff.lint.pylint]
+allow-dunder-method-names = ["__tablename__", "__table_args__"]
+allow-magic-value-types = ["int"]
+max-args = 5
+max-bool-expr = 5
+max-branches = 12
+max-public-methods = 20
+max-returns = 6
+max-statements = 50
+
+[tool.ruff.format]
+# Enable preview style formatting.
+preview = true
+# Enable reformatting of code snippets in docstrings.
+docstring-code-format = true
+# Format all docstring code snippets with a line length of 60.
+docstring-code-line-length = "dynamic"
+exclude = ["generated"]
+indent-style = "space"
+line-ending = "auto"
+quote-style = "double"
+skip-magic-trailing-comma = true
+
+
+# ================== #
+#      Logfire       #
+# ================== #
+
+# For more info:
+# https://docs.pydantic.dev/logfire/api/logfire/#logfire.configure
+[tool.logfire]
+service_name = "coc_ai_controller"
+trace_sample_rate = 1.0
+console_colors = "auto"
+console_span_style = "show-parents"
+console_include_timestamps = true
+console_verbose = true
+console_min_log_level = "debug"
+show_summary = true
+data_dir = "~/.cache/logfire"
+# base_url = ""
+collect_system_metrics = false
+id_generator = true
+fast_shutdown = true
+
+
+# ================== #
+#     CodeSpell      #
+# ================== #
+
+[tool.codespell]
+skip = "pyproject.toml,poetry.lock,notebook/.*,uv.lock"
+count = false
+quiet-level = 3
+# the correct one is Amoeba, but we use pronunciation in Chinese to name it.
+ignore-words-list = ["ameba", "mke"]
+
+
+# ================== #
+#         ty         #
+# ================== #
+
+# ty is the only type checker. mypy was dropped because its pre-commit hook ran in an
+# isolated venv that could not resolve this package, so it reported success on code it
+# never checked; see #406.
+# https://docs.astral.sh/ty/reference/configuration
+# https://docs.astral.sh/ty/reference/rules
+# Based on: https://docs.astral.sh/ty/coming-from-mypy-or-pyright/#stricter-checking-with-ty
+
+# This application only ever runs on Windows: it drives MuMu Player through winreg
+# and protects the API key with DPAPI. Without pinning the platform, ty resolves
+# `winreg` and `ctypes.windll` against whatever host CI runs on and reports them as
+# missing on the Linux runners.
 [tool.ty.environment]
 python-version = "3.12"
+python-platform = "win32"
 
+# PyQt5 ships its own inaccurate stubs, so ty rejects correct calls into the GUI
+# shell. That file is covered by Ruff; the framework-independent core is checked
+# here.
 [tool.ty.src]
 include = ["src/coc_ai_controller"]
 exclude = ["src/coc_ai_controller/app.py"]
+
+[tool.ty.rules]
+blanket-ignore-comment = "error"
+missing-type-argument = "error"
+possibly-unresolved-reference = "warn"
+unsupported-dynamic-base = "warn"
+
+# `error-on-warning` has been ty's default since 0.0.52, so warn-level rules gate too.
+# These two are stated as errors so they keep gating if that 0.0.x default flips back.
+pydantic-discarded-extra-argument = "error"
+redundant-cast = "error"
+
+# NOTE: the following rules are known to have a significant number of false positives,
+# which is mostly unavoidable. Enable them at your own risk!
+division-by-zero = "warn"
+possibly-missing-attribute = "warn"
+possibly-missing-import = "warn"
+
+[tool.ty.analysis]
+strict-literal-narrowing = true
