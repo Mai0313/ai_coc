@@ -66,6 +66,7 @@ from coc_ai_controller.constants import (
     SCHEMA_VERSION,
     ACCOUNT_JSON_DIR,
     MASTER_DB_VERSION,
+    ENTITY_MAPPING_URL,
     DEFAULT_GEMINI_MODEL,
     AGENT_PROFILE_VERSION,
     bundle_root,
@@ -74,6 +75,7 @@ from coc_ai_controller.adapters.ai import AGENT_PROFILE, GeminiClient, vision_pr
 from coc_ai_controller.adapters.mumu import MuMuAdapter
 from coc_ai_controller.parsers.battle import load_battle_script
 from coc_ai_controller.parsers.village import parse_village, parse_village_text
+from coc_ai_controller.adapters.mapping import fetch_entity_mapping
 from coc_ai_controller.adapters.secrets import SecretStore
 from coc_ai_controller.adapters.database import Database
 
@@ -119,6 +121,7 @@ class MainWindow(QMainWindow):
         self._attach_log_panel()
         self.statusBar().showMessage("Ready — 偵測 MuMu 以開始")
         self.refresh_instances()
+        self.refresh_entity_mapping()
         QTimer.singleShot(6000, self.resume_pending_tasks)
         QTimer.singleShot(
             8000, lambda: self.start_automation() if self.auto_on_start.isChecked() else None
@@ -828,6 +831,17 @@ class MainWindow(QMainWindow):
         )
         self._select_instance(self.instance_combo.currentIndex())
 
+    def refresh_entity_mapping(self) -> None:
+        def task() -> int:
+            entries = fetch_entity_mapping().registry_entries(ENTITY_MAPPING_URL)
+            self.db.import_registry(entries)
+            return len(entries)
+
+        def done(count: int) -> None:
+            logger.info("Entity registry now holds %d community names", count)
+
+        self.run_async("正在更新實體名稱對照表…", task, done)
+
     def import_clipboard_village(self) -> None:
         try:
             text = QApplication.clipboard().text().strip()
@@ -857,12 +871,18 @@ class MainWindow(QMainWindow):
 
         def task() -> None:
             active = m.ensure_coc(a.index)
+            # 匯出村莊 JSON 藏在設定 → 更多設定底下，是這兩層都要點過才會出現的。
+            for goal in ("畫面右側直排圖示裡的設定齒輪按鈕", "設定視窗中的「更多設定」按鈕"):
+                png = m.screenshot(active)
+                x, y = locate(png, goal)
+                m.tap(active, x, y)
+                time.sleep(2)
+            # 「更多設定」開啟時停在列表最上面，數據匯出那一段在最底下，捲到底才看得到。
+            for _ in range(5):
+                m.swipe(active, (800, 650), (800, 250), 400)
+                time.sleep(1)
             png = m.screenshot(active)
-            x, y = locate(png, "可開啟村莊 JSON 資料的入口")
-            m.tap(active, x, y)
-            time.sleep(2)
-            png = m.screenshot(active)
-            x, y = locate(png, "複製完整 JSON 到剪貼簿的按鈕")
+            x, y = locate(png, "「以 JSON 格式匯出村莊數據」這一列右邊的「複製」按鈕")
             m.tap(active, x, y)
             time.sleep(2)
 

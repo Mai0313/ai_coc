@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 
 from pydantic import Field, BaseModel, RootModel, ConfigDict, AliasChoices, field_validator
 
-from .constants import DEFAULT_ADB_HOST, DEFAULT_GEMINI_MODEL
+from .constants import DEFAULT_ADB_HOST, ENTITY_CATEGORIES, DEFAULT_GEMINI_MODEL
 
 # Village JSON, Battle Scripts and the MuMu CLI all gain fields between game and
 # emulator releases. Models that mirror them allow extras so an unknown field is
@@ -254,6 +254,24 @@ class RegistryEntry(BaseModel):
     category: str
     source_url: str | None = None
     verification_status: str
+
+
+class EntityMapping(RootModel[dict[str, dict[int, str]]]):
+    """The community data_id → name table, keyed by group such as `th_buildings`."""
+
+    def registry_entries(self, source_url: str) -> list[RegistryEntry]:
+        return [
+            RegistryEntry(
+                data_id=data_id,
+                name=name,
+                world="builder_base" if group.startswith("bh_") else "home",
+                category=ENTITY_CATEGORIES.get(data_id // 1_000_000, "other"),
+                source_url=source_url,
+                verification_status="COMMUNITY",
+            )
+            for group, entries in self.root.items()
+            for data_id, name in entries.items()
+        ]
 
 
 class KnowledgeItem(BaseModel):

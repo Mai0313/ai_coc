@@ -103,6 +103,17 @@ class Database(BaseModel):
                 ],
             )
 
+    def import_registry(self, entries: list[RegistryEntry]) -> None:
+        with self._lock, closing(self.connect()) as con, con:
+            con.executemany(
+                """INSERT OR REPLACE INTO id_registry
+                (data_id,name,world,category,source_url,verification_status) VALUES(?,?,?,?,?,?)""",
+                [
+                    (e.data_id, e.name, e.world, e.category, e.source_url, e.verification_status)
+                    for e in entries
+                ],
+            )
+
     def lookup(self, data_id: int) -> RegistryEntry | None:
         with closing(self.connect()) as con:
             row = con.execute("SELECT * FROM id_registry WHERE data_id=?", (data_id,)).fetchone()
