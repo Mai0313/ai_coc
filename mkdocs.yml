@@ -20,7 +20,6 @@ nav:
       - Decisions: decisions.md
   - Project:
       - Handoff: handoff.md
-      - Roadmap: todo.md
       - Changelog: changelog.md
       - Development Session Log: dev-session.md
       - Reference Audit: reference-audit.md
