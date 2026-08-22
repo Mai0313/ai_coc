@@ -61,6 +61,7 @@ class MainWindow(QMainWindow):
         self.instances: list[EmulatorInstance] = []
         self.active: EmulatorInstance | None = None
         self.current_frame: Frame | None = None
+        self.chat_image_pending = False
         self.frame_sequence = 0
         self.current_account_tag = ""
         self.setAcceptDrops(True)
@@ -151,6 +152,7 @@ class MainWindow(QMainWindow):
         if not pix.loadFromData(png): raise ValueError("無法讀取圖片")
         self.frame_sequence += 1
         self.current_frame = Frame.create("uploaded-image", self.current_account_tag, png, self.frame_sequence)
+        self.chat_image_pending = True
         self.chat_image_preview.setPixmap(pix.scaled(900, 170, Qt.KeepAspectRatio, Qt.SmoothTransformation))
         self.chat_image_preview.setToolTip(label)
         self.chat_history.appendPlainText(f"\n已附加圖片：{label}")
@@ -335,7 +337,7 @@ class MainWindow(QMainWindow):
 
     def account_context(self) -> str:
         if not self.current_account_tag: return "No Village JSON imported."
-        return json.dumps(self.db.account_rows(self.current_account_tag)[:250], ensure_ascii=False)
+        return json.dumps(self.db.account_rows(self.current_account_tag)[:40], ensure_ascii=False)
 
     def analyze_frame(self) -> None:
         if not self.current_frame:
@@ -367,9 +369,17 @@ class MainWindow(QMainWindow):
     def send_chat(self) -> None:
         text = self.chat_input.text().strip()
         if not text: return
+        recent = self.chat_history.toPlainText()[-3500:]
         self.chat_input.clear(); self.chat_history.appendPlainText(f"\n你\n{text}\n\nAI 正在思考，請稍候…")
-        frame = self.current_frame; context = f"{AGENT_PROFILE}\nCurrent account: {self.account_context()}\nCurrent emulator={self.active.emulator_id if self.active else 'none'}, frame={frame.frame_id if frame else 'none'}\nUser: {text}"
-        self.run_async("AI 正在思考…", lambda: self.provider().generate(context, frame.png if frame else None), lambda result: self.chat_history.appendPlainText(f"\nAI 回覆\n{result}\n"))
+        frame = self.current_frame if self.chat_image_pending else None
+        context = (f"{AGENT_PROFILE}\n請用繁體中文簡潔回答。\nCurrent account: {self.account_context()}\n"
+                   f"Current emulator={self.active.emulator_id if self.active else 'none'}\nRecent conversation:\n{recent}\nUser: {text}")
+        def done(result: str) -> None:
+            self.chat_history.appendPlainText(f"\nAI 回覆\n{result}\n")
+            if frame:
+                self.chat_image_pending = False
+                self.chat_image_preview.clear(); self.chat_image_preview.setText("尚未附加圖片（也可以將圖片拖進視窗）")
+        self.run_async("AI 正在思考…", lambda: self.provider().generate(context, frame.png if frame else None), done)
 
     def save_teaching(self) -> None:
         statement = self.chat_input.text().strip()
