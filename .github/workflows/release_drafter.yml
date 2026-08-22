@@ -9,6 +9,8 @@ on:
 
 permissions:
   contents: write
+  # git-cliff reads closed pull requests to build the changelog.
+  pull-requests: read
 
 jobs:
   update_release_draft:

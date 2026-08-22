@@ -15,6 +15,9 @@ jobs:
   dependency-review:
     name: Dependency Review
     runs-on: ubuntu-latest
+    # Dependency review needs GitHub Advanced Security on a private repository,
+    # so the action refuses to run while this one stays private.
+    if: github.event.repository.visibility == 'public'
 
     steps:
       - name: Checkout
@@ -30,7 +33,10 @@ jobs:
     name: Dependabot Auto Merge
     needs: dependency-review
     runs-on: ubuntu-latest
-    if: github.event.pull_request.user.login == 'dependabot[bot]'
+    if: >-
+      always()
+      && (needs.dependency-review.result == 'success' || needs.dependency-review.result == 'skipped')
+      && github.event.pull_request.user.login == 'dependabot[bot]'
 
     steps:
       - name: Dependabot metadata

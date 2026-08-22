@@ -113,9 +113,8 @@ repos:
     rev: v0.0.73
     hooks:
       - id: ty
-        # PyQt5's legacy stubs do not model its runtime enum attributes, so the
-        # GUI shell is linted by Ruff while the framework-independent core is
-        # additionally checked by ty.
+        # ty checks the whole repo (src, tests, scripts), so its environment
+        # needs every dependency group, not just the default ones.
         args: ["--all-groups"]
 
   - repo: https://github.com/gitleaks/gitleaks

@@ -1,18 +1,19 @@
 from __future__ import annotations
 
-import json
-import logging
 import os
 import re
-import subprocess
+import json
 import time
+from typing import Any
 import winreg
+import logging
 from pathlib import Path
+import subprocess
 
-from defusedxml import ElementTree as ET
+from defusedxml import ElementTree as ET  # noqa: N817 - the conventional alias for ElementTree
 
-from .constants import COC_PACKAGE
 from .models import EmulatorInstance
+from .constants import COC_PACKAGE
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +37,10 @@ class MuMuAdapter:
         candidates: list[Path] = []
         for hive, key in (
             (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall"),
-            (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall"),
+            (
+                winreg.HKEY_LOCAL_MACHINE,
+                r"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall",
+            ),
         ):
             try:
                 with winreg.OpenKey(hive, key) as parent:
@@ -45,12 +49,17 @@ class MuMuAdapter:
                             with winreg.OpenKey(parent, winreg.EnumKey(parent, i)) as child:
                                 name = str(winreg.QueryValueEx(child, "DisplayName")[0])
                                 if "MuMuPlayer" in name:
-                                    candidates.append(Path(str(winreg.QueryValueEx(child, "InstallLocation")[0])))
+                                    candidates.append(
+                                        Path(str(winreg.QueryValueEx(child, "InstallLocation")[0]))
+                                    )
                         except OSError:
                             continue
             except OSError:
                 pass
-        candidates.extend([Path(r"C:\Program Files\Netease\MuMuPlayer"), Path(r"D:\Program Files\Netease\MuMuPlayer")])
+        candidates.extend([
+            Path(r"C:\Program Files\Netease\MuMuPlayer"),
+            Path(r"D:\Program Files\Netease\MuMuPlayer"),
+        ])
         for candidate in candidates:
             if (candidate / "nx_main" / "mumu-cli.exe").is_file():
                 return candidate
@@ -65,18 +74,26 @@ class MuMuAdapter:
         # The packaged controller contains PyQt's Qt plugin paths. MuMu CLI is
         # a separate Qt application and must not inherit those paths.
         environment = os.environ.copy()
-        for key in ("QT_PLUGIN_PATH", "QT_QPA_PLATFORM", "QT_QPA_PLATFORM_PLUGIN_PATH", "QML2_IMPORT_PATH"):
+        for key in (
+            "QT_PLUGIN_PATH",
+            "QT_QPA_PLATFORM",
+            "QT_QPA_PLATFORM_PLUGIN_PATH",
+            "QML2_IMPORT_PATH",
+        ):
             environment.pop(key, None)
         return environment
 
     def _run(self, command: list[str], timeout: float = 15) -> bytes:
         try:
-            result = subprocess.run(
+            result = subprocess.run(  # noqa: S603 - command is the located MuMu CLI or ADB plus literal arguments
                 command,
                 capture_output=True,
                 timeout=timeout,
                 creationflags=self._flags(),
                 env=self._clean_environment(),
+                # The exit code is turned into a MuMuError below, with the
+                # emulator's own message attached.
+                check=False,
             )
         except subprocess.TimeoutExpired as exc:
             raise MuMuError(f"命令逾時：{' '.join(command[1:])}") from exc
@@ -85,7 +102,7 @@ class MuMuAdapter:
             raise MuMuError(message or f"命令失敗 ({result.returncode})")
         return result.stdout
 
-    def cli_json(self, *args: str, timeout: float = 15) -> dict:
+    def cli_json(self, *args: str, timeout: float = 15) -> dict[str, Any]:
         data = self._run([str(self.cli), *args], timeout)
         try:
             return json.loads(data.decode("utf-8-sig"))
@@ -117,16 +134,22 @@ class MuMuAdapter:
             if value.get("is_android_started") and not serial.endswith(":0"):
                 try:
                     self.connect(serial)
-                    size = self.adb_run(serial, "shell", "wm", "size", timeout=5).decode(errors="replace")
+                    size = self.adb_run(serial, "shell", "wm", "size", timeout=5).decode(
+                        errors="replace"
+                    )
                     match = re.findall(r"(\d+)x(\d+)", size)
                     if match:
                         width, height = map(int, match[-1])
                         resolution = f"{max(width, height)}x{min(width, height)}"
-                    density = self.adb_run(serial, "shell", "wm", "density", timeout=5).decode(errors="replace")
+                    density = self.adb_run(serial, "shell", "wm", "density", timeout=5).decode(
+                        errors="replace"
+                    )
                     match_dpi = re.findall(r"(\d+)", density)
                     if match_dpi:
                         dpi = match_dpi[-1]
-                    coc_running = bool(self.adb_run(serial, "shell", "pidof", COC_PACKAGE, timeout=5).strip())
+                    coc_running = bool(
+                        self.adb_run(serial, "shell", "pidof", COC_PACKAGE, timeout=5).strip()
+                    )
                 except Exception:
                     logger.debug("Unable to inspect MuMu instance %s", index, exc_info=True)
             instances.append(
@@ -182,25 +205,33 @@ class MuMuAdapter:
             self.launch_instance(index)
             for _ in range(18):
                 time.sleep(2)
-                current = next((item for item in self.enumerate_instances() if item.index == index), current)
+                current = next(
+                    (item for item in self.enumerate_instances() if item.index == index), current
+                )
                 if current.android_started and not current.adb_serial.endswith(":0"):
                     break
         self.launch_coc(current)
         for _ in range(5):
             time.sleep(2)
-            current = next((item for item in self.enumerate_instances() if item.index == index), current)
+            current = next(
+                (item for item in self.enumerate_instances() if item.index == index), current
+            )
             if current.coc_running:
                 return current
         # MuMu can report Android ready while the first monkey launch is ignored.
         self.restart_instance(index)
         for _ in range(18):
             time.sleep(2)
-            current = next((item for item in self.enumerate_instances() if item.index == index), current)
+            current = next(
+                (item for item in self.enumerate_instances() if item.index == index), current
+            )
             if current.android_started and not current.adb_serial.endswith(":0"):
                 break
         self.launch_coc(current)
         time.sleep(3)
-        refreshed = next((item for item in self.enumerate_instances() if item.index == index), current)
+        refreshed = next(
+            (item for item in self.enumerate_instances() if item.index == index), current
+        )
         if not refreshed.coc_running:
             raise MuMuError("已重啟模擬器，但部落衝突仍未啟動")
         return refreshed
@@ -218,18 +249,26 @@ class MuMuAdapter:
         return data
 
     def tap(self, instance: EmulatorInstance, x: int, y: int) -> None:
-        self.adb_run(instance.adb_serial, "shell", "input", "tap", str(int(x)), str(int(y)), timeout=5)
+        self.adb_run(
+            instance.adb_serial, "shell", "input", "tap", str(int(x)), str(int(y)), timeout=5
+        )
 
-    def swipe(self, instance: EmulatorInstance, x1: int, y1: int, x2: int, y2: int, duration_ms: int) -> None:
+    def swipe(
+        self,
+        instance: EmulatorInstance,
+        start: tuple[int, int],
+        end: tuple[int, int],
+        duration_ms: int,
+    ) -> None:
         self.adb_run(
             instance.adb_serial,
             "shell",
             "input",
             "swipe",
-            str(x1),
-            str(y1),
-            str(x2),
-            str(y2),
+            str(start[0]),
+            str(start[1]),
+            str(end[0]),
+            str(end[1]),
             str(duration_ms),
             timeout=8,
         )
@@ -242,13 +281,20 @@ class MuMuAdapter:
         self.connect(instance.adb_serial)
         elements: list[dict[str, object]] = []
         try:
-            self.adb_run(instance.adb_serial, "shell", "uiautomator", "dump", "/sdcard/coc_ui.xml", timeout=8)
+            self.adb_run(
+                instance.adb_serial,
+                "shell",
+                "uiautomator",
+                "dump",
+                "/sdcard/coc_ui.xml",
+                timeout=8,
+            )
         except MuMuError as exc:
             if "dumped to" not in str(exc).lower():
                 return elements
-        xml_data = self.adb_run(instance.adb_serial, "shell", "cat", "/sdcard/coc_ui.xml", timeout=5).decode(
-            "utf-8", errors="replace"
-        )
+        xml_data = self.adb_run(
+            instance.adb_serial, "shell", "cat", "/sdcard/coc_ui.xml", timeout=5
+        ).decode("utf-8", errors="replace")
         try:
             root = ET.fromstring(xml_data[xml_data.find("<?xml") :])
         except (ET.ParseError, ValueError):
@@ -260,13 +306,11 @@ class MuMuAdapter:
             if not match or not (text or node.get("clickable") == "true"):
                 continue
             left, top, right, bottom = map(int, match.groups())
-            elements.append(
-                {
-                    "text": text,
-                    "resource_id": node.get("resource-id", ""),
-                    "clickable": node.get("clickable") == "true",
-                    "x": (left + right) // 2,
-                    "y": (top + bottom) // 2,
-                }
-            )
+            elements.append({
+                "text": text,
+                "resource_id": node.get("resource-id", ""),
+                "clickable": node.get("clickable") == "true",
+                "x": (left + right) // 2,
+                "y": (top + bottom) // 2,
+            })
         return elements[:120]

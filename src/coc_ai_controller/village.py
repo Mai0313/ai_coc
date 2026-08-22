@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 from typing import Any
+from pathlib import Path
 
 from .models import AccountSnapshot
 
@@ -22,7 +22,7 @@ SECTIONS = (
 )
 
 
-def _integer(value: Any, default: int | None = None) -> int | None:
+def _integer(value: Any, default: int | None = None) -> int | None:  # noqa: ANN401 - arbitrary JSON value
     try:
         return int(value)
     except (TypeError, ValueError):
@@ -49,13 +49,11 @@ def parse_village_text(text: str) -> AccountSnapshot:
             data_id = _integer(item.get("data", item.get("data_id", item.get("id"))))
             if data_id is None:
                 continue
-            entities.append(
-                {
-                    "section": section,
-                    "data_id": data_id,
-                    "level": _integer(item.get("lvl", item.get("level"))),
-                    "count": _integer(item.get("cnt", item.get("count")), 1) or 1,
-                    "raw": item,
-                }
-            )
+            entities.append({
+                "section": section,
+                "data_id": data_id,
+                "level": _integer(item.get("lvl", item.get("level"))),
+                "count": _integer(item.get("cnt", item.get("count")), 1) or 1,
+                "raw": item,
+            })
     return AccountSnapshot(tag=tag, raw=raw, entities=entities)

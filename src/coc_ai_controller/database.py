@@ -1,14 +1,16 @@
 from __future__ import annotations
 
 import json
+from typing import TYPE_CHECKING, Any
 import sqlite3
+from datetime import UTC, datetime
 import threading
 from contextlib import closing
-from datetime import UTC, datetime
-from pathlib import Path
-from typing import Any
 
-from .constants import DB_PATH, MASTER_DB_VERSION, SCHEMA_VERSION
+from .constants import DB_PATH, SCHEMA_VERSION, MASTER_DB_VERSION
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 class Database:
@@ -80,7 +82,14 @@ class Database:
                 VALUES(?,?,?,?,?,?)
             """,
                 [
-                    (i, n, w, c, "https://gist.github.com/rahulkhatri137/a8449943df45100c5f1e1359cd9ec67a", "SEED")
+                    (
+                        i,
+                        n,
+                        w,
+                        c,
+                        "https://gist.github.com/rahulkhatri137/a8449943df45100c5f1e1359cd9ec67a",
+                        "SEED",
+                    )
                     for i, n, w, c in seeds
                 ],
             )
@@ -144,7 +153,9 @@ class Database:
 
     def recent_knowledge(self, limit: int = 50) -> list[dict[str, Any]]:
         with closing(self.connect()) as con:
-            rows = con.execute("SELECT * FROM knowledge ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
+            rows = con.execute(
+                "SELECT * FROM knowledge ORDER BY id DESC LIMIT ?", (limit,)
+            ).fetchall()
             return [dict(row) for row in reversed(rows)]
 
     def add_task(self, instruction: str) -> int:
@@ -160,12 +171,15 @@ class Database:
 
     def pending_tasks(self) -> list[dict[str, Any]]:
         with closing(self.connect()) as con:
-            rows = con.execute("SELECT * FROM tasks WHERE status IN ('PENDING','RUNNING') ORDER BY id").fetchall()
+            rows = con.execute(
+                "SELECT * FROM tasks WHERE status IN ('PENDING','RUNNING') ORDER BY id"
+            ).fetchall()
             return [dict(row) for row in rows]
 
     def update_task(self, task_id: int, status: str, progress: str) -> None:
         now = datetime.now(UTC).isoformat()
         with closing(self.connect()) as con, con:
             con.execute(
-                "UPDATE tasks SET status=?,progress=?,updated_at=? WHERE id=?", (status, progress, now, task_id)
+                "UPDATE tasks SET status=?,progress=?,updated_at=? WHERE id=?",
+                (status, progress, now, task_id),
             )

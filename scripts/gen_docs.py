@@ -11,19 +11,19 @@
 """Generate and execute Markdown documentation from source files."""
 
 import ast
-import asyncio
 import shutil
-from functools import cached_property
-from pathlib import Path
 from typing import Literal
+import asyncio
+from pathlib import Path
+from functools import cached_property
 
 import anyio
 import nbformat
+from pydantic import Field, BaseModel, ConfigDict, computed_field
 from nbconvert import MarkdownExporter
-from nbconvert.preprocessors import ExecutePreprocessor
-from pydantic import BaseModel, ConfigDict, Field, computed_field
 from rich.console import Console
-from rich.progress import Progress, TaskID
+from rich.progress import TaskID, Progress
+from nbconvert.preprocessors import ExecutePreprocessor
 
 console = Console()
 
@@ -57,7 +57,9 @@ def _build_nav_section(title: str, dir_path: Path, level: int, docs_root: Path) 
         return []
 
     subdirs = sorted([p for p in dir_path.iterdir() if p.is_dir()])
-    files = sorted([p for p in dir_path.iterdir() if p.is_file() and p.suffix == ".md" and p.name != "index.md"])
+    files = sorted([
+        p for p in dir_path.iterdir() if p.is_file() and p.suffix == ".md" and p.name != "index.md"
+    ])
 
     children: list[str] = []
     for sub in subdirs:
@@ -71,7 +73,9 @@ def _build_nav_section(title: str, dir_path: Path, level: int, docs_root: Path) 
     return [f"{_nav_indent(level)}- {title}:", *children]
 
 
-def _rebuild_nav(docs_dir: str, config_path: str, sections: tuple[str, ...] | list[str] | str) -> None:
+def _rebuild_nav(
+    docs_dir: str, config_path: str, sections: tuple[str, ...] | list[str] | str
+) -> None:
     """Rewrite the marker-bounded nav block in `config_path` from `docs_dir`.
 
     Args:
@@ -199,12 +203,16 @@ class DocsGenerator(BaseModel):
             exclude_list = [ex.strip() for ex in self.exclude.split(",")]
             need_to_exclude = list({*exclude_list, ".venv", "__init__.py"})
             all_files = self._get_all_files(suffix="py,ipynb")
-            all_files = [file for file in all_files if not any(f in file.parts for f in need_to_exclude)]
+            all_files = [
+                file for file in all_files if not any(f in file.parts for f in need_to_exclude)
+            ]
         elif self.source_path.is_file():
             all_files = [self.source_path]
         else:
             all_files = []
-            console.log(f"[red]Source path {self.source_path} does not exist or is not a valid file or directory.")
+            console.log(
+                f"[red]Source path {self.source_path} does not exist or is not a valid file or directory."
+            )
         return all_files
 
     async def _prepare_docs_path(self, file: Path) -> Path:
@@ -247,7 +255,9 @@ class DocsGenerator(BaseModel):
             note_content = ""
             for node in ast.walk(tree):
                 if isinstance(node, ast.ClassDef):
-                    note_content += f"::: {file.with_suffix('').as_posix().replace('/', '.')}.{node.name}\n"
+                    note_content += (
+                        f"::: {file.with_suffix('').as_posix().replace('/', '.')}.{node.name}\n"
+                    )
         else:
             raise ValueError("Invalid mode")
         if not note_content:
@@ -278,7 +288,9 @@ class DocsGenerator(BaseModel):
             )
             if not isinstance(execute_preprocessor, ExecutePreprocessor):
                 raise TypeError("ExecutePreprocessor is not a valid type")
-            execute_preprocessor.preprocess(notebook_content, {"metadata": {"path": file.parent.as_posix()}})
+            execute_preprocessor.preprocess(
+                notebook_content, {"metadata": {"path": file.parent.as_posix()}}
+            )
 
         markdown_exporter = MarkdownExporter(template_name="markdown")
         if not isinstance(markdown_exporter, MarkdownExporter):
@@ -315,7 +327,9 @@ class DocsGenerator(BaseModel):
             progress.update(task, advance=1, description=f"[red]Failed {file.name}")
             return ""
 
-    async def _process_batch(self, files: list[Path], progress: Progress, task: TaskID) -> list[str]:
+    async def _process_batch(
+        self, files: list[Path], progress: Progress, task: TaskID
+    ) -> list[str]:
         """Process a batch of files with the configured concurrency limit.
 
         Args:
