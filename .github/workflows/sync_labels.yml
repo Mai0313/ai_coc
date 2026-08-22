@@ -1,0 +1,44 @@
+name: Sync Labels
+
+on:
+  push:
+    branches:
+      - main
+      - master
+    paths:
+      - .github/workflows/sync_labels.yml
+  workflow_dispatch:
+
+permissions: write-all
+
+jobs:
+  sync_labels:
+    name: Sync Labels
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Sync
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          # --force creates a missing label and updates the color and description
+          # of one that already exists. Without this step actions/labeler still
+          # creates the labels it needs, but it can only supply a name, so every
+          # label ends up the same default grey.
+          sync() { gh label create "$1" --color "$2" --description "$3" --force; }
+
+          sync breaking      B60205 "Breaks compatibility and bumps the major version"
+          sync bug           D73A4A "Something isn't working"
+          sync feature       0E8A16 "New functionality"
+          sync perf          FBCA04 "Performance improvement"
+          sync refactor      5319E7 "Code restructuring without a behavior change"
+          sync test          006B75 "Tests and test infrastructure"
+          sync documentation 0075CA "Improvements or additions to documentation"
+          sync chore         CFD3D7 "Maintenance, CI, build and tooling"
+
+          # Dependabot creates this one itself and labeler.yml leaves it alone.
+          # Syncing it here only keeps the color the same across repos.
+          sync dependencies  0366D6 "Pull requests that update a dependency file"

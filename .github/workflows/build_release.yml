@@ -1,0 +1,51 @@
+name: Build and Release Windows EXE
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: uv sync --group test --group build
+      - name: Run tests
+        run: uv run pytest
+      - name: Build Windows application
+        shell: pwsh
+        run: |
+          uv run pyinstaller --noconfirm --clean --windowed --onedir `
+            --name CoC_AI_Controller `
+            --version-file version_info.txt `
+            --add-data "battle_scripts;battle_scripts" app.py
+      - name: Upload unpacked application
+        uses: actions/upload-artifact@v7
+        with:
+          name: CoC_AI_Controller-Windows-x64
+          path: dist/CoC_AI_Controller/
+          if-no-files-found: error
+      - name: Create release archive
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: pwsh
+        run: Compress-Archive -Path dist/CoC_AI_Controller/* -DestinationPath dist/CoC_AI_Controller-${{ github.ref_name }}-Windows-x64.zip
+      - name: Publish GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v3
+        with:
+          files: dist/CoC_AI_Controller-${{ github.ref_name }}-Windows-x64.zip

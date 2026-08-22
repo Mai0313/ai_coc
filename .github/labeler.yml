@@ -1,0 +1,46 @@
+# Applies one type label to a pull request, based on the name of its branch.
+#
+# Only head-branch is matched, never file paths, because a path cannot say
+# whether a change is a bugfix or a new feature. The single exception is chore:
+# a pull request that touches nothing but tooling really is maintenance, and
+# any-glob-to-all-files requires *every* changed file to match, so it will not
+# fire on a change that merely happens to touch one of these paths.
+#
+# Colors and descriptions cannot be declared here; the labels themselves are
+# owned by .github/workflows/sync_labels.yml.
+#
+# These rules are language agnostic, so every template and every downstream
+# repository carries this file unchanged.
+
+breaking:
+  - head-branch: ["^breaking/"]
+
+feature:
+  - head-branch: ["^feat/"]
+
+bug:
+  - head-branch: ["^fix/"]
+
+refactor:
+  - head-branch: ["^refactor/"]
+
+documentation:
+  - head-branch: ["^docs?/"]
+
+test:
+  - head-branch: ["^tests?/"]
+
+perf:
+  - head-branch: ["^perf/"]
+
+chore:
+  - head-branch: ["^chore/", "^ci/", "^build/", "^style/", "^config/"]
+  - changed-files:
+      - any-glob-to-all-files:
+          - ".github/**"
+          - ".devcontainer/**"
+          - "docker/**"
+          - "Dockerfile*"
+          - "Makefile"
+          - ".pre-commit-config.yaml"
+          - ".gitignore"
