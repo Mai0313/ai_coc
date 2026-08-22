@@ -6,6 +6,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 A Windows-only PyQt5 desktop application that drives Clash of Clans running inside MuMu Player 12. Gemini does the semantic screen reading; the app turns its answers into ADB taps and verifies the outcome on the next screenshot. Live battle tactics are deliberately out of scope: `battle.py` validates army requirements and stops at a reserved `RESERVED_RL` handoff boundary.
 
+## Development flow
+
+Read `gh-dev-flow` before starting; it owns the path from a task landing to the change being merged. In this repo that path always ends the same way: open the PR as a draft, run `code-review` over the branch and fix what holds up, then merge once CI is green. Merging on green needs no further approval.
+
 ## Commands
 
 ```bash

@@ -65,6 +65,9 @@ repos:
     rev: 1.0.0
     hooks:
       - id: mdformat
+        # Vendored skills are upstream markdown, the same reason ruff skips
+        # `.agents`. Without this every run rewrites them and the hook fails.
+        exclude: ^\.(agents|claude)/skills/
         args:
           - --number
           - --no-validate
