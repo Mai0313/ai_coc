@@ -6,11 +6,19 @@ from typing import TYPE_CHECKING, Any, TypeVar, cast
 import logging
 
 from google import genai
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, PrivateAttr, ValidationError
 from google.genai import types, errors, interactions
 
+from coc_ai_controller.models import (
+    GeminiRequest,
+    GeminiSettings,
+    GeminiTextPart,
+    GeminiImagePart,
+    GeminiResponseFormat,
+)
+
 if TYPE_CHECKING:
-    from .models import GeminiSettings
+    from collections.abc import Iterator
 
 logger = logging.getLogger(__name__)
 
@@ -31,12 +39,12 @@ NON_TEXT_MODEL_TAGS = (
 )
 
 
-class GeminiClient:
+class GeminiClient(BaseModel):
     """The single place the application talks to Gemini, through google-genai."""
 
-    def __init__(self, settings: GeminiSettings) -> None:
-        self.settings = settings
-        self._client: genai.Client | None = None
+    settings: GeminiSettings
+
+    _client: genai.Client | None = PrivateAttr(default=None)
 
     @property
     def client(self) -> genai.Client:
@@ -52,19 +60,15 @@ class GeminiClient:
             )
         return self._client
 
-    def _create(
-        self, prompt: str, image_png: bytes | None, response_format: dict[str, Any] | None = None
-    ) -> str:
-        content: list[dict[str, Any]] = [{"type": "text", "text": prompt}]
+    def _request(
+        self,
+        prompt: str,
+        image_png: bytes | None,
+        response_format: GeminiResponseFormat | None = None,
+    ) -> GeminiRequest:
+        parts: list[GeminiTextPart | GeminiImagePart] = [GeminiTextPart(text=prompt)]
         if image_png:
-            content.append({
-                "type": "image",
-                "data": base64.b64encode(image_png).decode("ascii"),
-                "mime_type": "image/png",
-            })
-        body: dict[str, Any] = {"model": self.settings.model, "input": content}
-        if response_format:
-            body["response_format"] = response_format
+            parts.append(GeminiImagePart(data=base64.b64encode(image_png).decode("ascii")))
         logger.info(
             "Gemini request: model=%s prompt=%d chars image=%s structured=%s",
             self.settings.model,
@@ -73,10 +77,23 @@ class GeminiClient:
             bool(response_format),
         )
         logger.debug("Gemini prompt: %s", prompt)
+        return GeminiRequest(
+            model=self.settings.model, input=parts, response_format=response_format
+        )
+
+    def _create(
+        self,
+        prompt: str,
+        image_png: bytes | None,
+        response_format: GeminiResponseFormat | None = None,
+    ) -> str:
+        request = self._request(prompt, image_png, response_format)
         started = time.monotonic()
         try:
             # create() also returns a Stream when stream=True, which this never sets.
-            interaction = cast("interactions.Interaction", self.client.interactions.create(**body))
+            interaction = cast(
+                "interactions.Interaction", self.client.interactions.create(**request.body())
+            )
         except errors.APIError as exc:
             logger.exception("Gemini request failed on model %s", self.settings.model)
             raise RuntimeError(f"Gemini 請求失敗（{self.settings.model}）：{exc}") from exc
@@ -95,18 +112,35 @@ class GeminiClient:
     def generate(self, prompt: str, image_png: bytes | None = None) -> str:
         return self._create(prompt, image_png)
 
+    def stream(self, prompt: str, image_png: bytes | None = None) -> Iterator[str]:
+        """Yield the reply in the chunks Gemini sends, so the UI can show it as it arrives."""
+        request = self._request(prompt, image_png)
+        started = time.monotonic()
+        received = 0
+        try:
+            events = cast(
+                "Iterator[Any]", self.client.interactions.create(**request.body(), stream=True)
+            )
+            for event in events:
+                # Anything else is a step boundary or a tool event this app never asks for.
+                if event.event_type == "error":
+                    raise RuntimeError(f"Gemini 串流中斷：{event.error.message}")
+                if event.event_type == "step.delta" and event.delta.type == "text":
+                    received += len(event.delta.text)
+                    yield event.delta.text
+        except errors.APIError as exc:
+            logger.exception("Gemini stream failed on model %s", self.settings.model)
+            raise RuntimeError(f"Gemini 串流失敗（{self.settings.model}）：{exc}") from exc
+        logger.info("Gemini streamed %d chars in %.1fs", received, time.monotonic() - started)
+        if not received:
+            raise RuntimeError("Gemini 沒有回傳內容")
+
     def generate_structured(
         self, prompt: str, schema: type[T], image_png: bytes | None = None
     ) -> T:
         """Ask for one JSON object and hand back the validated Pydantic model."""
         text = self._create(
-            prompt,
-            image_png,
-            {
-                "type": "text",
-                "mime_type": "application/json",
-                "schema": schema.model_json_schema(),
-            },
+            prompt, image_png, GeminiResponseFormat(json_schema=schema.model_json_schema())
         )
         try:
             return schema.model_validate_json(text)

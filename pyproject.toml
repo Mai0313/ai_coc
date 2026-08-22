@@ -73,9 +73,11 @@ dependencies = [
     "adbutils>=2.10",
     "defusedxml>=0.7,<1",
     "google-genai>=2.3.0",
+    "markdown-it-py>=3.0",
     "pydantic>=2.9",
     "PyQt5>=5.15,<6",
     "PyQt5-Qt5==5.15.2; sys_platform == 'win32'",
+    "rich>=13.9",
 ]
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
@@ -389,6 +391,12 @@ convention = "google"
 ignore-decorators = []
 property-decorators = []
 
+[tool.ruff.lint.flake8-type-checking]
+# Pydantic resolves annotations at runtime, so a model field's type must stay a
+# real import. Without this, TC003 moves it into `if TYPE_CHECKING` and the model
+# fails to build.
+runtime-evaluated-base-classes = ["pydantic.BaseModel"]
+
 [tool.ruff.lint.pyflakes]
 extend-generics = ["pyrootutils", "autorootcwd", "autoroot"]
 
@@ -512,11 +520,15 @@ python-version = "3.12"
 python-platform = "win32"
 
 # PyQt5 ships its own inaccurate stubs, so ty rejects correct calls into the GUI
-# shell. That file is covered by Ruff; the framework-independent core is checked
-# here.
+# shell. Those files are covered by Ruff; the framework-independent core, which
+# now includes `ui/render.py`, is checked here.
 [tool.ty.src]
 include = ["src/coc_ai_controller"]
-exclude = ["src/coc_ai_controller/app.py"]
+exclude = [
+    "src/coc_ai_controller/app.py",
+    "src/coc_ai_controller/ui/main_window.py",
+    "src/coc_ai_controller/ui/workers.py",
+]
 
 [tool.ty.rules]
 blanket-ignore-comment = "error"

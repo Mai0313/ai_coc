@@ -3,12 +3,11 @@ from __future__ import annotations
 import base64
 import ctypes
 from ctypes import wintypes
-from typing import TYPE_CHECKING
+from pathlib import Path
 
-from .constants import data_root
+from pydantic import Field, BaseModel
 
-if TYPE_CHECKING:
-    from pathlib import Path
+from coc_ai_controller.constants import data_root
 
 
 class DATA_BLOB(ctypes.Structure):  # noqa: N801 - mirrors the Win32 struct name
@@ -20,9 +19,8 @@ def _blob(data: bytes) -> tuple[DATA_BLOB, object]:
     return DATA_BLOB(len(data), ctypes.cast(buffer, ctypes.POINTER(ctypes.c_byte))), buffer
 
 
-class SecretStore:
-    def __init__(self, path: Path | None = None) -> None:
-        self.path = path or data_root() / "gemini.key.dpapi"
+class SecretStore(BaseModel):
+    path: Path = Field(default_factory=lambda: data_root() / "gemini.key.dpapi")
 
     def save(self, value: str) -> None:
         source, _keep = _blob(value.encode("utf-8"))
