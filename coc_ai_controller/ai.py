@@ -5,6 +5,7 @@ import json
 import urllib.error
 import urllib.parse
 import urllib.request
+import time
 from abc import ABC, abstractmethod
 from typing import Any
 
@@ -25,19 +26,30 @@ class GoogleGeminiProvider(AIProvider):
     def openai_compatible(self) -> bool:
         return "/openai" in self.base_url.lower()
 
-    def _openai_request(self, path: str, payload: dict | None = None) -> dict:
+    def _openai_request(self, path: str, payload: dict | None = None, timeout: int | None = None) -> dict:
         data = json.dumps(payload).encode("utf-8") if payload is not None else None
         request = urllib.request.Request(
             self.base_url + path,
             data=data,
             headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"},
             method="GET" if payload is None else "POST")
-        try:
-            with urllib.request.urlopen(request, timeout=20) as response:
-                return json.loads(response.read().decode("utf-8"))
-        except urllib.error.HTTPError as exc:
-            detail = exc.read().decode("utf-8", errors="replace")[:1200]
-            raise RuntimeError(f"Gemini OpenAI-compatible HTTP {exc.code}: {detail}") from exc
+        request_timeout = timeout or (75 if payload is not None else 20)
+        for attempt in range(3):
+            try:
+                with urllib.request.urlopen(request, timeout=request_timeout) as response:
+                    return json.loads(response.read().decode("utf-8"))
+            except urllib.error.HTTPError as exc:
+                detail = exc.read().decode("utf-8", errors="replace")[:1200]
+                if exc.code in (429, 500, 502, 503, 504) and attempt < 2:
+                    time.sleep(2 + attempt * 2)
+                    continue
+                raise RuntimeError(f"Gemini OpenAI-compatible HTTP {exc.code}: {detail}") from exc
+            except (TimeoutError, urllib.error.URLError) as exc:
+                if attempt < 2:
+                    time.sleep(2 + attempt * 2)
+                    continue
+                raise RuntimeError("Gemini 回應逾時，已自動重試 3 次。請稍後再試。") from exc
+        raise RuntimeError("Gemini 請求失敗")
 
     def list_models(self) -> list[dict[str, Any]]:
         if not self.api_key:

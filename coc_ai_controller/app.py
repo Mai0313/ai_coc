@@ -42,7 +42,7 @@ class Worker(QRunnable):
         try:
             self.signals.result.emit(self.fn())
         except Exception as exc:
-            self.signals.error.emit(f"{exc}\n\n{traceback.format_exc(limit=3)}")
+            self.signals.error.emit(str(exc))
         finally:
             self.signals.finished.emit()
 
