@@ -1,0 +1,44 @@
+FROM python:3.12-slim-bookworm AS builder
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+COPY --from=ghcr.io/astral-sh/ty:latest /ty /bin/
+
+LABEL maintainer="CoC AI Controller contributors" \
+    org.label-schema.name="coc-ai-controller" \
+    org.label-schema.vendor="Mai0313" \
+    org.label-schema.schema-version="1.0" \
+    com.centurylinklabs.watchtower.stop-signal="SIGINT"
+
+########################################################################################
+
+FROM builder AS prod
+WORKDIR /app
+
+# Pin the project venv to a real in-image path. With `[tool.uv] preview = true` uv stores the
+# environment in its cache (environments-v2) and symlinks .venv to it; in Docker that cache is a
+# BuildKit cache mount on a different filesystem and is not part of the image, so .venv would
+# dangle at runtime and `uv run` fails to spawn. An explicit path keeps .venv real.
+ENV UV_PROJECT_ENVIRONMENT=/app/.venv
+
+# Add apt packages here if your project needs them. Example:
+# RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+#     --mount=type=cache,target=/var/lib/apt,sharing=locked \
+#     apt-get update \
+#     && apt-get install -y --no-install-recommends ffmpeg
+
+COPY pyproject.toml uv.lock ./
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --no-dev --frozen --no-install-project
+
+COPY . .
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --no-dev --frozen
+
+# Run as a non-root user so bind-mounted data/ files are not root-owned on the host.
+RUN groupadd --gid 1000 app \
+    && useradd --create-home --uid 1000 --gid 1000 app
+
+# If your app writes to a directory at runtime, pre-create it before USER. Example:
+# RUN mkdir --parents /app/data && chown app:app /app/data
+
+ENV PYTHONDONTWRITEBYTECODE=1 UV_NO_SYNC=1
+USER app

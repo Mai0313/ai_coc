@@ -4,6 +4,7 @@ $Python = 'D:\Desktop\NB_COC\.venv\Scripts\python.exe'
 if (-not (Test-Path -LiteralPath $Python)) { throw "Build Python not found: $Python" }
 Push-Location $Root
 try {
+    $env:PYTHONPATH = Join-Path $Root 'src'
     & $Python -m unittest discover -s tests -v
     if ($LASTEXITCODE -ne 0) { throw 'Tests failed' }
     $RuntimeBin = 'D:\mini\Library\bin'

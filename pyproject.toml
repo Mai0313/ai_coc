@@ -1,0 +1,45 @@
+[project]
+name = "coc-ai-controller"
+version = "0.1.0"
+description = "AI-driven Clash of Clans automation controller for MuMu Player on Windows"
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+license = { text = "MIT" }
+authors = [{ name = "CoC AI Controller contributors" }]
+dependencies = ["PyQt5>=5.15,<6"]
+
+[project.urls]
+Repository = "https://github.com/Mai0313/CoC-AI-Controller"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/coc_ai_controller"]
+
+[dependency-groups]
+dev = ["pre-commit", "ruff", "ty"]
+test = ["pytest", "pytest-cov", "pytest-xdist"]
+build = ["pyinstaller>=6.21"]
+docs = ["zensical", "mkdocstrings[python]", "ruff"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = ["--strict-markers", "--cov=src/coc_ai_controller", "--cov-report=term-missing", "--cov-fail-under=20"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 120
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "S"]
+ignore = ["E501", "S603", "S607"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S101"]
+
+[tool.ty.environment]
+python-version = "3.12"

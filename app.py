@@ -1,4 +1,9 @@
-from coc_ai_controller.app import main
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
+
+from coc_ai_controller.app import main  # noqa: E402
 
 
 if __name__ == "__main__":
