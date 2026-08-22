@@ -11,10 +11,11 @@ Status: Phase 0 architecture baseline
 ## Component model
 
 ```text
-Desktop UI
+Desktop UI (`ui/`)
   ├─ Emulator page / active-target selection
   ├─ Account progress / master-data views
-  ├─ AI chat / teaching
+  ├─ AI chat / teaching ── streamed replies, Markdown rendered by `ui/render.py`
+  ├─ 執行紀錄 panel ── every log record, rendered through `rich`
   └─ Settings / About
           │ commands + events (never blocking UI)
 Application Services
@@ -25,15 +26,16 @@ Application Services
   ├─ DiscoveryService
   └─ AccountSyncService
           │ ports
-Infrastructure
+Infrastructure (`adapters/`, `parsers/`)
   ├─ MuMuAdapter ── mumu-cli lifecycle + Win32 HWND verification
   ├─ AdbController ── adbutils, one per instance port (capture, input, uiautomator)
-  ├─ GeminiClient ── google-genai Interactions API, structured output
+  ├─ GeminiClient ── google-genai Interactions API, streaming and structured output
   ├─ SQLite repositories
+  ├─ Village / Battle Script parsers
   └─ SecureSecretStore (Windows protected storage)
 ```
 
-Every value crossing these boundaries is a Pydantic model declared in `models.py`.
+Every value crossing these boundaries is a Pydantic model declared in `models.py`, and every adapter is itself a Pydantic model.
 
 ## Core identities and contracts
 
@@ -66,6 +68,8 @@ OFFLINE → LAUNCHING → ANDROID_WAIT → ADB_READY → COC_STARTING → COC_RE
 Recovery escalation is reconnect ADB, restart CoC, restart the selected instance, then `NEEDS_ATTENTION`. Every stage has timeout, retry budget and cancellation. Shutdown stops agent/actions, persists runtime state, flushes DB, then follows keep-open/close policy.
 
 ## Vision architecture
+
+Prose answers are streamed: `GeminiClient.stream` yields the `step.delta` text events and the UI grows the reply in place. Structured answers cannot stream, so the agent loop stays on one validated response per step.
 
 Primary recognition is semantic AI vision supplied with the current screenshot, account snapshot, relevant master data, agent profile and task context. Deterministic templates/pixels/OCR are optional capabilities for inexpensive fixed-UI checks, post-action verification and fallback. Their result is evidence, not the primary world model.
 
