@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "skills": {
+    "mumu-control": {
+      "source": "skills.mumu.163.com",
+      "sourceUrl": "https://skills.mumu.163.com/mumu-control",
+      "sourceType": "well-known",
+      "computedHash": "cf7ab7a65277ae33a108efcb9ada0a4f81184c96a6d7d6020ba70118f532dc4d",
+      "wellKnownDigest": "sha256:a114074b45c51d2b7d97731b1d2d0e4a6266ee8009e6764c0107a3331172c6b1"
+    }
+  }
+}

@@ -6,6 +6,7 @@ import re
 import subprocess
 import time
 import winreg
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 from .constants import COC_PACKAGE
@@ -193,3 +194,28 @@ class MuMuAdapter:
 
     def back(self, instance: EmulatorInstance) -> None:
         self.adb_run(instance.adb_serial, "shell", "input", "keyevent", "4", timeout=5)
+
+    def ui_elements(self, instance: EmulatorInstance) -> list[dict[str, object]]:
+        """Read Android's accessibility hierarchy without extra device agents."""
+        self.connect(instance.adb_serial)
+        elements: list[dict[str, object]] = []
+        try:
+            self.adb_run(instance.adb_serial, "shell", "uiautomator", "dump", "/sdcard/coc_ui.xml", timeout=8)
+        except MuMuError as exc:
+            if "dumped to" not in str(exc).lower():
+                return elements
+        xml_data = self.adb_run(instance.adb_serial, "shell", "cat", "/sdcard/coc_ui.xml", timeout=5).decode("utf-8", errors="replace")
+        try:
+            root = ET.fromstring(xml_data[xml_data.find("<?xml"):])
+        except (ET.ParseError, ValueError):
+            return elements
+        for node in root.iter("node"):
+            text = (node.get("text") or node.get("content-desc") or "").strip()
+            bounds = node.get("bounds", "")
+            match = re.fullmatch(r"\[(\d+),(\d+)\]\[(\d+),(\d+)\]", bounds)
+            if not match or not (text or node.get("clickable") == "true"): continue
+            left, top, right, bottom = map(int, match.groups())
+            elements.append({"text": text, "resource_id": node.get("resource-id", ""),
+                             "clickable": node.get("clickable") == "true",
+                             "x": (left + right) // 2, "y": (top + bottom) // 2})
+        return elements[:120]

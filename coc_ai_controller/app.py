@@ -510,8 +510,10 @@ class MainWindow(QMainWindow):
             for step in range(max_steps):
                 self.db.update_task(task_id, "RUNNING", f"第 {step + 1} 步：截圖、判斷與驗證")
                 last_png = m.screenshot(active)
+                ui_elements = m.ui_elements(active)
                 prompt = (f"你正在控制部落衝突。使用者指令：{command}\n"
                           f"使用者附圖提供的參考：{reference}\n使用者過去確認的操作教學：\n{self.knowledge_context()}\n"
+                          f"MuMu accessibility 可操作元素（優先使用其精確座標）：{json.dumps(ui_elements, ensure_ascii=False)}\n"
                           "檢查目前畫面是否已完成。只回傳單一 JSON，不要 markdown："
                           '{"done":false,"action":"tap|back|swipe_up|swipe_down|none","x_pct":50.0,"y_pct":50.0,"message":"繁體中文說明"}。'
                           f"若已完成 done=true。授權狀態：自主升級={self.auto_upgrade.isChecked()}，刷牆={self.auto_walls.isChecked()}，自主進攻={self.auto_attack.isChecked()}。"
