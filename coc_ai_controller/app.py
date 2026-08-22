@@ -81,12 +81,12 @@ class MainWindow(QMainWindow):
             QStatusBar { background: #0d121b; color: #91a3c0; }
         """)
         tabs = QTabWidget()
-        tabs.addTab(self._emulator_tab(), "Emulators")
-        tabs.addTab(self._account_tab(), "Account Progress")
-        tabs.addTab(self._agent_tab(), "AI Agent")
-        tabs.addTab(self._battle_tab(), "Battle Preparation")
-        tabs.addTab(self._settings_tab(), "Settings")
-        tabs.addTab(self._about_tab(), "About")
+        tabs.addTab(self._emulator_tab(), "模擬器")
+        tabs.addTab(self._account_tab(), "帳號進度")
+        tabs.addTab(self._agent_tab(), "AI 助手")
+        tabs.addTab(self._battle_tab(), "戰鬥準備")
+        tabs.addTab(self._settings_tab(), "設定")
+        tabs.addTab(self._about_tab(), "關於")
         self.setCentralWidget(tabs)
         self.setStatusBar(QStatusBar())
 
@@ -94,18 +94,18 @@ class MainWindow(QMainWindow):
         page = QWidget(); layout = QVBoxLayout(page)
         toolbar = QHBoxLayout()
         self.instance_combo = QComboBox(); self.instance_combo.currentIndexChanged.connect(self._select_instance)
-        for text, fn in (("Refresh", self.refresh_instances), ("Launch", self.launch_instance),
-                         ("Connect / Screenshot", self.capture), ("Launch CoC", self.launch_coc),
-                         ("Restart CoC", self.restart_coc), ("Back", self.back),
-                         ("Restart Emulator", self.restart_emulator), ("Close", self.close_emulator)):
+        for text, fn in (("重新整理", self.refresh_instances), ("啟動模擬器", self.launch_instance),
+                         ("連線／截圖", self.capture), ("開啟部落衝突", self.launch_coc),
+                         ("重啟部落衝突", self.restart_coc), ("返回", self.back),
+                         ("重啟模擬器", self.restart_emulator), ("關閉模擬器", self.close_emulator)):
             button = QPushButton(text); button.clicked.connect(fn); toolbar.addWidget(button)
-        layout.addWidget(QLabel("Active Agent Target")); layout.addWidget(self.instance_combo); layout.addLayout(toolbar)
+        layout.addWidget(QLabel("目前 AI 目標")); layout.addWidget(self.instance_combo); layout.addLayout(toolbar)
         splitter = QSplitter(Qt.Horizontal)
         left = QWidget(); left_layout = QVBoxLayout(left)
         self.emulator_details = QPlainTextEdit(); self.emulator_details.setReadOnly(True)
         left_layout.addWidget(self.emulator_details)
         right = QWidget(); right_layout = QVBoxLayout(right)
-        self.frame_label = QLabel("No screenshot"); self.frame_label.setAlignment(Qt.AlignCenter)
+        self.frame_label = QLabel("尚無截圖"); self.frame_label.setAlignment(Qt.AlignCenter)
         self.frame_label.setMinimumSize(640, 360); self.frame_label.setStyleSheet("background:#16181d;color:#bbb;border:1px solid #444")
         right_layout.addWidget(self.frame_label)
         splitter.addWidget(left); splitter.addWidget(right); splitter.setSizes([360, 850]); layout.addWidget(splitter)
@@ -113,7 +113,7 @@ class MainWindow(QMainWindow):
 
     def _account_tab(self) -> QWidget:
         page = QWidget(); layout = QVBoxLayout(page)
-        row = QHBoxLayout(); button = QPushButton("Import Village JSON"); button.clicked.connect(self.import_village)
+        row = QHBoxLayout(); button = QPushButton("匯入村莊 JSON"); button.clicked.connect(self.import_village)
         self.account_label = QLabel("No account imported"); row.addWidget(button); row.addWidget(self.account_label); row.addStretch(); layout.addLayout(row)
         self.account_table = QTableWidget(0, 10)
         self.account_table.setHorizontalHeaderLabels(["Section", "Data ID", "Name", "World", "Category", "Level", "Count", "Next", "Cost", "Time"])
@@ -125,26 +125,26 @@ class MainWindow(QMainWindow):
     def _agent_tab(self) -> QWidget:
         page = QWidget(); layout = QVBoxLayout(page)
         buttons = QHBoxLayout()
-        analyze = QPushButton("Analyze Current Screenshot"); analyze.clicked.connect(self.analyze_frame)
-        teach = QPushButton("Save as USER_CONFIRMED Teaching"); teach.clicked.connect(self.save_teaching)
+        analyze = QPushButton("分析目前截圖"); analyze.clicked.connect(self.analyze_frame)
+        teach = QPushButton("儲存為使用者教學"); teach.clicked.connect(self.save_teaching)
         buttons.addWidget(analyze); buttons.addWidget(teach); buttons.addStretch(); layout.addLayout(buttons)
         self.chat_history = QPlainTextEdit(); self.chat_history.setReadOnly(True); layout.addWidget(self.chat_history)
         row = QHBoxLayout(); self.chat_input = QLineEdit(); self.chat_input.setPlaceholderText("Ask or teach the CoC Agent…")
-        self.chat_input.returnPressed.connect(self.send_chat); send = QPushButton("Send"); send.clicked.connect(self.send_chat)
+        self.chat_input.returnPressed.connect(self.send_chat); send = QPushButton("送出"); send.clicked.connect(self.send_chat)
         row.addWidget(self.chat_input); row.addWidget(send); layout.addLayout(row)
         return page
 
     def _battle_tab(self) -> QWidget:
         page = QWidget(); layout = QVBoxLayout(page)
-        row = QHBoxLayout(); load = QPushButton("Load Battle Script"); load.clicked.connect(self.load_battle)
-        example = QPushButton("Load Example"); example.clicked.connect(lambda: self._show_battle(bundle_root() / "battle_scripts" / "BH10_BABY_DRAGON_01.json"))
+        row = QHBoxLayout(); load = QPushButton("載入戰鬥腳本"); load.clicked.connect(self.load_battle)
+        example = QPushButton("載入範例"); example.clicked.connect(lambda: self._show_battle(bundle_root() / "battle_scripts" / "BH10_BABY_DRAGON_01.json"))
         row.addWidget(load); row.addWidget(example); row.addStretch(); layout.addLayout(row)
         self.battle_view = QPlainTextEdit(); self.battle_view.setReadOnly(True); layout.addWidget(self.battle_view)
         layout.addWidget(QLabel("V1 boundary: requirements and preparation plan are available. Live tactical battle control remains RESERVED_RL."))
         return page
 
     def _settings_tab(self) -> QWidget:
-        page = QWidget(); layout = QVBoxLayout(page); group = QGroupBox("AI / API"); form = QFormLayout(group)
+        page = QWidget(); layout = QVBoxLayout(page); group = QGroupBox("AI／API 設定"); form = QFormLayout(group)
         self.provider_combo = QComboBox(); self.provider_combo.addItem("Google Gemini")
         self.api_key = QLineEdit(); self.api_key.setEchoMode(QLineEdit.Password); self.api_key.setPlaceholderText("Stored with Windows DPAPI")
         self.model_name = QLineEdit(str(self.settings.value("gemini_model", "gemini-2.5-flash")))
@@ -153,7 +153,7 @@ class MainWindow(QMainWindow):
         except Exception: pass
         form.addRow("Provider", self.provider_combo); form.addRow("API Key", self.api_key); form.addRow("Model", self.model_name); form.addRow("Endpoint", self.endpoint)
         buttons = QHBoxLayout()
-        for text, fn in (("Save", self.save_api), ("Test Connection", self.test_api), ("Clear", self.clear_api)):
+        for text, fn in (("儲存設定", self.save_api), ("測試連線", self.test_api), ("清除 API Key", self.clear_api)):
             b = QPushButton(text); b.clicked.connect(fn); buttons.addWidget(b)
         form.addRow(buttons); layout.addWidget(group); layout.addStretch(); return page
 
