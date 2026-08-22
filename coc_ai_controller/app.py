@@ -7,7 +7,7 @@ import traceback
 from pathlib import Path
 from typing import Any, Callable
 
-from PyQt5.QtCore import QBuffer, QByteArray, QIODevice, QObject, QRunnable, QSettings, Qt, QThreadPool, QTimer, pyqtSignal
+from PyQt5.QtCore import QBuffer, QByteArray, QEvent, QIODevice, QObject, QRunnable, QSettings, Qt, QThreadPool, QTimer, pyqtSignal
 from PyQt5.QtGui import QPixmap
 from PyQt5.QtWidgets import (
     QApplication, QComboBox, QFileDialog, QFormLayout, QGroupBox, QHBoxLayout,
@@ -143,9 +143,17 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.chat_image_preview)
         self.chat_history = QPlainTextEdit(); self.chat_history.setReadOnly(True); layout.addWidget(self.chat_history)
         row = QHBoxLayout(); self.chat_input = QLineEdit(); self.chat_input.setPlaceholderText("Ask or teach the CoC Agent…")
+        self.chat_input.installEventFilter(self)
         self.chat_input.returnPressed.connect(self.send_chat); send = QPushButton("送出"); send.clicked.connect(self.send_chat)
         row.addWidget(self.chat_input); row.addWidget(send); layout.addLayout(row)
         return page
+
+    def eventFilter(self, watched, event) -> bool:
+        if watched is getattr(self, "chat_input", None) and event.type() == QEvent.KeyPress:
+            if event.key() == Qt.Key_V and event.modifiers() & Qt.ControlModifier:
+                if not QApplication.clipboard().image().isNull():
+                    self.paste_chat_image(); return True
+        return super().eventFilter(watched, event)
 
     def _set_chat_image(self, png: bytes, label: str) -> None:
         pix = QPixmap();
@@ -371,6 +379,8 @@ class MainWindow(QMainWindow):
         if not text: return
         recent = self.chat_history.toPlainText()[-3500:]
         self.chat_input.clear(); self.chat_history.appendPlainText(f"\n你\n{text}\n\nAI 正在思考，請稍候…")
+        if any(word in text for word in ("打開", "開啟", "點擊", "按下", "進入", "返回", "關閉")) and self.active:
+            self.execute_agent_command(text); return
         frame = self.current_frame if self.chat_image_pending else None
         context = (f"{AGENT_PROFILE}\n請用繁體中文簡潔回答。\nCurrent account: {self.account_context()}\n"
                    f"Current emulator={self.active.emulator_id if self.active else 'none'}\nRecent conversation:\n{recent}\nUser: {text}")
@@ -380,6 +390,37 @@ class MainWindow(QMainWindow):
                 self.chat_image_pending = False
                 self.chat_image_preview.clear(); self.chat_image_preview.setText("尚未附加圖片（也可以將圖片拖進視窗）")
         self.run_async("AI 正在思考…", lambda: self.provider().generate(context, frame.png if frame else None), done)
+
+    def execute_agent_command(self, command: str) -> None:
+        m, a = self._require(); provider = self.provider()
+        def task() -> tuple[bytes, str]:
+            import time
+            active = m.ensure_coc(a.index)
+            last_png = b""
+            for step in range(5):
+                last_png = m.screenshot(active)
+                prompt = (f"你正在控制部落衝突。使用者指令：{command}\n"
+                          "檢查目前畫面是否已完成。只回傳單一 JSON，不要 markdown："
+                          '{"done":false,"action":"tap|back|none","x_pct":50.0,"y_pct":50.0,"message":"繁體中文說明"}。'
+                          "若已完成 done=true。禁止購買、花費資源、攻擊、刪除或確認不可逆操作。")
+                raw = provider.generate(prompt, last_png).strip().replace("```json", "").replace("```", "")
+                data = json.loads(raw[raw.find("{"):raw.rfind("}") + 1])
+                if data.get("done"):
+                    return last_png, str(data.get("message") or "指令已完成")
+                action = data.get("action")
+                if action == "tap":
+                    m.tap(active, int(float(data["x_pct"]) * 16), int(float(data["y_pct"]) * 9))
+                elif action == "back": m.back(active)
+                else: return last_png, str(data.get("message") or "AI 無法安全執行這個操作")
+                time.sleep(2)
+            return last_png, "已執行操作，但五次畫面確認後仍無法確認完成。"
+        def done(result: tuple[bytes, str]) -> None:
+            png, message = result
+            self.frame_sequence += 1; self.current_frame = Frame.create(a.emulator_id, self.current_account_tag, png, self.frame_sequence)
+            self.chat_history.appendPlainText(f"\nAI 操作結果\n{message}\n")
+            proof_path = os.environ.get("COC_AGENT_SCREENSHOT", "").strip()
+            if proof_path: QTimer.singleShot(800, lambda: self.grab().save(proof_path, "PNG"))
+        self.run_async("AI 正在操作並確認 MuMu 畫面…", task, done)
 
     def save_teaching(self) -> None:
         statement = self.chat_input.text().strip()
@@ -406,4 +447,10 @@ def main() -> int:
     window = MainWindow(); window.show()
     if "--live-test" in sys.argv:
         QTimer.singleShot(2500, window.live_ai_test)
+    for argument in sys.argv:
+        if argument.startswith("--agent-command="):
+            command = argument.split("=", 1)[1]
+            def run_command(text=command):
+                window.tabs.setCurrentIndex(2); window.chat_input.setText(text); window.send_chat()
+            QTimer.singleShot(2500, run_command)
     return app.exec_()
