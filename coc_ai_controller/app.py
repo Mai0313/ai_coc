@@ -67,6 +67,19 @@ class MainWindow(QMainWindow):
         self.refresh_instances()
 
     def _build_ui(self) -> None:
+        self.setStyleSheet("""
+            QMainWindow, QWidget { background: #121722; color: #e8edf7; font-size: 10pt; }
+            QTabWidget::pane { border: 1px solid #2b3548; background: #151c2a; }
+            QTabBar::tab { background: #1d2636; color: #aebbd0; padding: 10px 18px; border: 0; }
+            QTabBar::tab:selected { background: #367bf5; color: white; }
+            QGroupBox { border: 1px solid #33415a; border-radius: 10px; margin-top: 14px; padding: 16px 12px 12px; font-weight: bold; }
+            QGroupBox::title { subcontrol-origin: margin; left: 12px; padding: 0 6px; color: #70a4ff; }
+            QPushButton { background: #2b6de0; color: white; border: 0; border-radius: 6px; padding: 8px 14px; }
+            QPushButton:hover { background: #4385f2; } QPushButton:pressed { background: #1d54b6; }
+            QLineEdit, QPlainTextEdit, QComboBox, QTableWidget { background: #0e141f; color: #e8edf7; border: 1px solid #34435d; border-radius: 6px; padding: 6px; }
+            QHeaderView::section { background: #243149; color: #dbe6fa; padding: 6px; border: 0; }
+            QStatusBar { background: #0d121b; color: #91a3c0; }
+        """)
         tabs = QTabWidget()
         tabs.addTab(self._emulator_tab(), "Emulators")
         tabs.addTab(self._account_tab(), "Account Progress")

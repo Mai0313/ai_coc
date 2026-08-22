@@ -82,12 +82,28 @@ class GoogleGeminiProvider(AIProvider):
             content: list[dict[str, Any]] = [{"type": "text", "text": prompt}]
             if image_png:
                 content.append({"type": "image_url", "image_url": {"url": "data:image/png;base64," + base64.b64encode(image_png).decode("ascii")}})
-            raw = self._openai_request("/chat/completions", {"model": self.model, "messages": [{"role": "user", "content": content}], "temperature": 0.2})
+            payload = {"model": self.model, "messages": [{"role": "user", "content": content}], "temperature": 0.2}
+            try:
+                raw = self._openai_request("/chat/completions", payload)
+            except RuntimeError as exc:
+                if "HTTP 404" not in str(exc):
+                    raise
+                available = self.list_models()
+                names = [str(item.get("name", "")).removeprefix("models/") for item in available]
+                fallback = next((n for n in names if n), None)
+                if not fallback:
+                    raise RuntimeError(f"模型 {self.model} 不存在，且端點沒有回傳可用模型。請在 Settings 填入 CC Switch 顯示的模型名稱。") from exc
+                payload["model"] = fallback
+                raw = self._openai_request("/chat/completions", payload)
+                self.last_model = fallback
+                prefix = f"[自動改用端點可用模型：{fallback}]\n"
+            else:
+                prefix = ""
             choices = raw.get("choices") or []
             if not choices:
                 raise RuntimeError(f"Gemini OpenAI-compatible 沒有回傳內容：{raw}")
-            self.last_model = self.model
-            return str(choices[0].get("message", {}).get("content", "")).strip()
+            self.last_model = payload["model"]
+            return prefix + str(choices[0].get("message", {}).get("content", "")).strip()
         try:
             result = self._generate_once(self.model, prompt, image_png)
             self.last_model = self.model
