@@ -135,9 +135,10 @@ class MainWindow(QMainWindow):
         self.provider_combo = QComboBox(); self.provider_combo.addItem("Google Gemini")
         self.api_key = QLineEdit(); self.api_key.setEchoMode(QLineEdit.Password); self.api_key.setPlaceholderText("Stored with Windows DPAPI")
         self.model_name = QLineEdit(str(self.settings.value("gemini_model", "gemini-2.5-flash")))
+        self.endpoint = QLineEdit(str(self.settings.value("gemini_endpoint", "https://generativelanguage.googleapis.com/v1beta/openai")))
         try: self.api_key.setText(self.secrets.load())
         except Exception: pass
-        form.addRow("Provider", self.provider_combo); form.addRow("API Key", self.api_key); form.addRow("Model", self.model_name)
+        form.addRow("Provider", self.provider_combo); form.addRow("API Key", self.api_key); form.addRow("Model", self.model_name); form.addRow("Endpoint", self.endpoint)
         buttons = QHBoxLayout()
         for text, fn in (("Save", self.save_api), ("Test Connection", self.test_api), ("Clear", self.clear_api)):
             b = QPushButton(text); b.clicked.connect(fn); buttons.addWidget(b)
@@ -228,10 +229,10 @@ class MainWindow(QMainWindow):
         except Exception as exc: self._error("Village JSON import failed", str(exc))
 
     def provider(self) -> GoogleGeminiProvider:
-        return GoogleGeminiProvider(self.api_key.text(), self.model_name.text())
+        return GoogleGeminiProvider(self.api_key.text(), self.model_name.text(), self.endpoint.text())
     def save_api(self) -> None:
         try:
-            self.secrets.save(self.api_key.text()); self.settings.setValue("gemini_model", self.model_name.text()); QMessageBox.information(self, "Saved", "API Key 已使用 Windows DPAPI 儲存。")
+            self.secrets.save(self.api_key.text()); self.settings.setValue("gemini_model", self.model_name.text()); self.settings.setValue("gemini_endpoint", self.endpoint.text()); QMessageBox.information(self, "Saved", "API Key 已使用 Windows DPAPI 儲存。")
         except Exception as exc: self._error("Save API Key", str(exc))
     def clear_api(self) -> None:
         self.secrets.clear(); self.api_key.clear(); QMessageBox.information(self, "Cleared", "API Key 已清除。")
