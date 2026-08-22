@@ -4,6 +4,7 @@ import json
 import os
 import re
 import subprocess
+import time
 import winreg
 from pathlib import Path
 
@@ -138,6 +139,39 @@ class MuMuAdapter:
     def launch_coc(self, instance: EmulatorInstance) -> None:
         self.connect(instance.adb_serial)
         self.adb_run(instance.adb_serial, "shell", "monkey", "-p", COC_PACKAGE, "-c", "android.intent.category.LAUNCHER", "1", timeout=15)
+
+    def ensure_coc(self, index: int) -> EmulatorInstance:
+        """Bring one MuMu instance to a running CoC screen, recovering stale launches."""
+        items = self.enumerate_instances()
+        current = next((item for item in items if item.index == index), None)
+        if current is None:
+            raise MuMuError(f"找不到 MuMu instance {index}")
+        if not current.android_started:
+            self.launch_instance(index)
+            for _ in range(18):
+                time.sleep(2)
+                current = next((item for item in self.enumerate_instances() if item.index == index), current)
+                if current.android_started and not current.adb_serial.endswith(":0"):
+                    break
+        self.launch_coc(current)
+        for _ in range(5):
+            time.sleep(2)
+            current = next((item for item in self.enumerate_instances() if item.index == index), current)
+            if current.coc_running:
+                return current
+        # MuMu can report Android ready while the first monkey launch is ignored.
+        self.restart_instance(index)
+        for _ in range(18):
+            time.sleep(2)
+            current = next((item for item in self.enumerate_instances() if item.index == index), current)
+            if current.android_started and not current.adb_serial.endswith(":0"):
+                break
+        self.launch_coc(current)
+        time.sleep(3)
+        refreshed = next((item for item in self.enumerate_instances() if item.index == index), current)
+        if not refreshed.coc_running:
+            raise MuMuError("已重啟模擬器，但部落衝突仍未啟動")
+        return refreshed
 
     def restart_coc(self, instance: EmulatorInstance) -> None:
         self.connect(instance.adb_serial)

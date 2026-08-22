@@ -209,7 +209,7 @@ class MainWindow(QMainWindow):
     def close_emulator(self) -> None:
         m, a = self._require(); self.run_async("Closing MuMu…", lambda: m.close_instance(a.index), lambda _: self.refresh_instances())
     def launch_coc(self) -> None:
-        m, a = self._require(); self.run_async("Launching Clash of Clans…", lambda: m.launch_coc(a), lambda _: self.refresh_instances())
+        m, a = self._require(); self.run_async("正在自動啟動部落衝突…", lambda: m.ensure_coc(a.index), lambda _: self.refresh_instances())
     def restart_coc(self) -> None:
         m, a = self._require(); self.run_async("Restarting Clash of Clans…", lambda: m.restart_coc(a), lambda _: self.refresh_instances())
     def back(self) -> None:
