@@ -7,7 +7,9 @@ on:
   # manually trigger a workflow_dispatch event
   workflow_dispatch:
 
-permissions: write-all
+permissions:
+  contents: write
+  pull-requests: write
 
 jobs:
   auto-update:
@@ -42,11 +44,3 @@ jobs:
           body: "Update versions of pre-commit hooks to latest version."
           commit-message: "chore: update pre-commit hooks"
           delete-branch: true
-
-      - name: Auto Merge Pull Request
-        continue-on-error: true
-        if: ${{ steps.create-pr.outputs.pull-request-url }}
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh pr merge --squash --delete-branch "${{ steps.create-pr.outputs.pull-request-url }}"
