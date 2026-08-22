@@ -55,3 +55,7 @@ ignore = ["E501", "S603", "S607"]
 
 [tool.ty.environment]
 python-version = "3.12"
+
+[tool.ty.src]
+include = ["src/coc_ai_controller"]
+exclude = ["src/coc_ai_controller/app.py"]

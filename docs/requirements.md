@@ -1,6 +1,6 @@
 # CoC AI Controller Requirements
 
-Target: VER 0.1.0  
+Target: VER 0.1.0
 Updated: 2026-08-22
 
 ## Product requirements

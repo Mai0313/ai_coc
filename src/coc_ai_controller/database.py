@@ -154,6 +154,8 @@ class Database:
                 "INSERT INTO tasks(instruction,status,progress,created_at,updated_at) VALUES(?,?,?,?,?)",
                 (instruction, "PENDING", "等待執行", now, now),
             )
+            if cursor.lastrowid is None:
+                raise RuntimeError("Task insert did not return an identifier")
             return int(cursor.lastrowid)
 
     def pending_tasks(self) -> list[dict[str, Any]]:

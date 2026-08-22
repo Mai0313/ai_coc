@@ -15,10 +15,10 @@ Control MuMu Player 12 (Netease) Android emulator on Windows using `mumu-cli.exe
 
 **Two layers:**
 
-| Layer | Tool | Addressing | Purpose |
-|-------|------|------------|---------|
-| Instance management | `mumu-cli.exe` | `--vmindex N` | Launch, shutdown, settings, import/export |
-| UI automation | Python scripts (`scripts/`) | `-s <serial>` | Screenshot, tap, swipe, OCR, text input |
+| Layer               | Tool                        | Addressing    | Purpose                                   |
+| ------------------- | --------------------------- | ------------- | ----------------------------------------- |
+| Instance management | `mumu-cli.exe`              | `--vmindex N` | Launch, shutdown, settings, import/export |
+| UI automation       | Python scripts (`scripts/`) | `-s <serial>` | Screenshot, tap, swipe, OCR, text input   |
 
 > **Note:** `mumu-cli.exe` is the new CLI name (replaces the legacy `MuMuManager.exe`). If `mumu-cli.exe` is not found in `nx_main\`, fall back to `MuMuManager.exe` — they are functionally identical.
 
@@ -39,16 +39,17 @@ Detection chain (try in order, stop on first success):
 5. **Install** — offer to download from `https://mumu.163.com/`
 
 On success, save to cache:
+
 ```cmd
 echo <MuMuInstallPath> > "mumu_install_path.txt"
 ```
 
 ### Key Paths
 
-| Tool | Path |
-|------|------|
-| mumu-cli | `<MuMuInstallPath>\nx_main\mumu-cli.exe` |
-| ADB | `<MuMuInstallPath>\nx_main\adb.exe` |
+| Tool          | Path                                             |
+| ------------- | ------------------------------------------------ |
+| mumu-cli      | `<MuMuInstallPath>\nx_main\mumu-cli.exe`         |
+| ADB           | `<MuMuInstallPath>\nx_main\adb.exe`              |
 | Instance data | `<MuMuInstallPath>\vms\MuMuPlayer-12.0-<index>\` |
 
 > **Always use the bundled `adb.exe`** from `nx_main\` to avoid version conflicts.
@@ -84,46 +85,47 @@ python -m uiautomator2 init
 **Binary location:** `<MuMuInstallPath>\nx_main\mumu-cli.exe`
 
 **General syntax:**
+
 ```
 mumu-cli.exe <command> [--vmindex <N>] [subcommand]
 ```
 
 **`--vmindex` targeting rules:**
 
-| Value | Meaning |
-|-------|---------|
-| `--vmindex 0` | Single instance (index 0) |
+| Value             | Meaning                     |
+| ----------------- | --------------------------- |
+| `--vmindex 0`     | Single instance (index 0)   |
 | `--vmindex 0,2,4` | Multiple specific instances |
-| `--vmindex all` | All existing instances |
+| `--vmindex all`   | All existing instances      |
 
 > Short form: `-v` is alias for `--vmindex`, e.g. `-v 0` = `--vmindex 0`
 
 ### Complete Command Table
 
-| Command | Subcommand | Description |
-|---------|-----------|-------------|
-| `info` | — | Query instance status, ADB port, boot state |
-| `create` | — | Create a new emulator instance |
-| `clone` | — | Clone an existing instance |
-| `delete` | — | Delete an instance |
-| `rename` | — | Rename an instance |
-| `export` | — | Export instance to `.mumudata` backup file |
-| `import` | — | Import instance from backup file |
-| `setting` | — | Get or set emulator configuration (resolution, etc.) |
-| `simulation` | — | Simulate device info (android_id, IMEI, etc.) |
-| `control` | `launch` | Launch emulator |
-| `control` | `shutdown` | Shutdown emulator |
-| `control` | `restart` | Restart emulator |
-| `control` | `show_window` | Show emulator window |
-| `control` | `hide_window` | Hide emulator window (background mode) |
-| `control` | `layout_window` | Set window position and size |
-| `control` | `app install` | Install APK (supports .apk / .xapk / .apks) |
-| `control` | `app uninstall` | Uninstall app by package name |
-| `control` | `app launch` | Launch an app by package name |
-| `control` | `app close` | Force-stop a running app |
-| `control` | `app info` | Query app state or list installed apps |
-| `control` | `tool func` | Trigger toolbar actions (rotate, home, back, screenshot…) |
-| `control` | `tool downcpu` | Limit CPU usage (1–100%) |
+| Command      | Subcommand      | Description                                               |
+| ------------ | --------------- | --------------------------------------------------------- |
+| `info`       | —               | Query instance status, ADB port, boot state               |
+| `create`     | —               | Create a new emulator instance                            |
+| `clone`      | —               | Clone an existing instance                                |
+| `delete`     | —               | Delete an instance                                        |
+| `rename`     | —               | Rename an instance                                        |
+| `export`     | —               | Export instance to `.mumudata` backup file                |
+| `import`     | —               | Import instance from backup file                          |
+| `setting`    | —               | Get or set emulator configuration (resolution, etc.)      |
+| `simulation` | —               | Simulate device info (android_id, IMEI, etc.)             |
+| `control`    | `launch`        | Launch emulator                                           |
+| `control`    | `shutdown`      | Shutdown emulator                                         |
+| `control`    | `restart`       | Restart emulator                                          |
+| `control`    | `show_window`   | Show emulator window                                      |
+| `control`    | `hide_window`   | Hide emulator window (background mode)                    |
+| `control`    | `layout_window` | Set window position and size                              |
+| `control`    | `app install`   | Install APK (supports .apk / .xapk / .apks)               |
+| `control`    | `app uninstall` | Uninstall app by package name                             |
+| `control`    | `app launch`    | Launch an app by package name                             |
+| `control`    | `app close`     | Force-stop a running app                                  |
+| `control`    | `app info`      | Query app state or list installed apps                    |
+| `control`    | `tool func`     | Trigger toolbar actions (rotate, home, back, screenshot…) |
+| `control`    | `tool downcpu`  | Limit CPU usage (1–100%)                                  |
 
 ---
 
@@ -143,16 +145,16 @@ mumu-cli.exe info --vmindex all
 
 **Key output fields:**
 
-| Field | Meaning | Available |
-|-------|---------|-----------|
-| `index` | vmindex used in other commands | Always |
-| `name` | Instance display name | Always |
-| `is_process_started` | `true` = emulator process is running | Always |
-| `is_android_started` | `true` = Android OS fully booted | Always |
-| `player_state` | `start_finished` = fully running | **Running only** |
-| `adb_host_ip` | ADB host (usually `127.0.0.1`) | **Running only** |
-| `adb_port` | ADB port (index 0 → `16384`, index N → `16384 + N×2`) | **Running only** |
-| `pid` | Emulator process ID | **Running only** |
+| Field                | Meaning                                               | Available        |
+| -------------------- | ----------------------------------------------------- | ---------------- |
+| `index`              | vmindex used in other commands                        | Always           |
+| `name`               | Instance display name                                 | Always           |
+| `is_process_started` | `true` = emulator process is running                  | Always           |
+| `is_android_started` | `true` = Android OS fully booted                      | Always           |
+| `player_state`       | `start_finished` = fully running                      | **Running only** |
+| `adb_host_ip`        | ADB host (usually `127.0.0.1`)                        | **Running only** |
+| `adb_port`           | ADB port (index 0 → `16384`, index N → `16384 + N×2`) | **Running only** |
+| `pid`                | Emulator process ID                                   | **Running only** |
 
 > ✅ **Ready condition:** `player_state == "start_finished"` **AND** `is_android_started == true`
 >
@@ -340,13 +342,13 @@ mumu-cli.exe setting --vmindex 0,1,2 --key resolution_dpi --value 480
 
 **Common resolution presets (from `--all` output):**
 
-| Mode | Width | Height | DPI |
-|------|-------|--------|-----|
-| Tablet 1080p | 1920 | 1080 | 280 |
-| Tablet 900p *(default)* | 1600 | 900 | 240 |
-| Tablet 720p | 1280 | 720 | 240 |
-| Phone 1080p | 1080 | 1920 | 480 |
-| Phone 720p | 720 | 1280 | 320 |
+| Mode                    | Width | Height | DPI |
+| ----------------------- | ----- | ------ | --- |
+| Tablet 1080p            | 1920  | 1080   | 280 |
+| Tablet 900p *(default)* | 1600  | 900    | 240 |
+| Tablet 720p             | 1280  | 720    | 240 |
+| Phone 1080p             | 1080  | 1920   | 480 |
+| Phone 720p              | 720   | 1280   | 320 |
 
 ---
 
@@ -439,16 +441,36 @@ python scripts/uiscan.py --no-hierarchy     # OCR only (game engines)
 ```
 
 **Output JSON example:**
+
 ```json
 [
   {
-    "index": 0, "name": "Collect Reward", "control_type": "Button",
-    "coords": {"x": 540, "y": 960}, "size": {"width": 200, "height": 60},
-    "resource_id": "com.game:id/collect_btn", "clickable": true
+    "index": 0,
+    "name": "Collect Reward",
+    "control_type": "Button",
+    "coords": {
+      "x": 540,
+      "y": 960
+    },
+    "size": {
+      "width": 200,
+      "height": 60
+    },
+    "resource_id": "com.game:id/collect_btn",
+    "clickable": true
   },
   {
-    "index": 1, "name": "Daily Check-in", "control_type": "OCRText",
-    "coords": {"x": 300, "y": 400}, "size": {"width": 120, "height": 30}
+    "index": 1,
+    "name": "Daily Check-in",
+    "control_type": "OCRText",
+    "coords": {
+      "x": 300,
+      "y": 400
+    },
+    "size": {
+      "width": 120,
+      "height": 30
+    }
   }
 ]
 ```
@@ -553,53 +575,53 @@ For fine-grained single-instance control, use ADB directly:
 
 ## Quick Reference
 
-| Action | Command |
-|--------|---------|
-| **Setup** | |
-| Install deps | `pip install -r requirements.txt` |
-| Init u2 | `python -m uiautomator2 init` |
-| **mumu-cli — Instances** | |
-| List all instances | `mumu-cli.exe info --vmindex all` |
-| Query single | `mumu-cli.exe info --vmindex 0` |
-| Create instance | `mumu-cli.exe create --vmindex 2` |
-| Clone instance | `mumu-cli.exe clone --vmindex 0` |
-| Rename instance | `mumu-cli.exe rename --vmindex 0 --name "Bot-1"` |
-| Delete instance | `mumu-cli.exe delete --vmindex 1` |
-| Export backup | `mumu-cli.exe export --vmindex 0 --dir "C:\backups"` |
-| Import backup | `mumu-cli.exe import --vmindex 1 --path "C:\backups\backup.mumudata"` |
-| **mumu-cli — Lifecycle** | |
-| Launch | `mumu-cli.exe control --vmindex 0 launch` |
-| Shutdown | `mumu-cli.exe control --vmindex 0 shutdown` |
-| Restart | `mumu-cli.exe control --vmindex 0 restart` |
-| Hide window | `mumu-cli.exe control --vmindex 0 hide_window` |
-| Show window | `mumu-cli.exe control --vmindex 0 show_window` |
-| **mumu-cli — Apps** | |
-| Install APK | `mumu-cli.exe control --vmindex 0 app install --apk "C:\app.apk"` |
-| Launch app | `mumu-cli.exe control --vmindex 0 app launch --package <pkg>` |
-| Close app | `mumu-cli.exe control --vmindex 0 app close --package <pkg>` |
-| App status | `mumu-cli.exe control --vmindex 0 app info --package <pkg>` |
-| Active app | `mumu-cli.exe control --vmindex 0 app info --installed` |
-| Uninstall app | `mumu-cli.exe control --vmindex 0 app uninstall --package <pkg>` |
-| **mumu-cli — Settings** | |
-| Get all settings | `mumu-cli.exe setting --vmindex 0 --all` |
-| Get resolution | `mumu-cli.exe setting --vmindex 0 --key resolution_width` |
-| Set resolution *(shutdown first)* | `mumu-cli.exe setting -v 0 --key resolution_width --value 1080` |
-| Limit CPU | `mumu-cli.exe control --vmindex 0 tool downcpu --cap 50` |
-| Set window layout | `mumu-cli.exe control --vmindex 0 layout_window -px 0 -py 0 -sw 1280 -sh 720` |
-| **ADB** | |
-| Connect | `.\adb.exe connect 127.0.0.1:16384` |
-| List devices | `.\adb.exe devices` |
-| Reset ADB | `.\adb.exe kill-server && .\adb.exe start-server` |
-| **UI Automation** | |
-| Full UI scan | `python scripts/uiscan.py` |
-| Screenshot | `python scripts/screenshot.py` |
-| Tap coords | `python scripts/tap.py 540 960` |
-| Tap text (OCR) | `python scripts/tap.py --text "Collect"` |
-| Long press | `python scripts/tap.py 540 960 --long` |
-| Swipe direction | `python scripts/swipe.py --direction up` |
-| Swipe coords | `python scripts/swipe.py x1 y1 x2 y2` |
-| Key event | `python scripts/keyevent.py back` |
-| Text input | `python scripts/input_text.py "hello" --res-id <id>` |
+| Action                            | Command                                                                       |
+| --------------------------------- | ----------------------------------------------------------------------------- |
+| **Setup**                         |                                                                               |
+| Install deps                      | `pip install -r requirements.txt`                                             |
+| Init u2                           | `python -m uiautomator2 init`                                                 |
+| **mumu-cli — Instances**          |                                                                               |
+| List all instances                | `mumu-cli.exe info --vmindex all`                                             |
+| Query single                      | `mumu-cli.exe info --vmindex 0`                                               |
+| Create instance                   | `mumu-cli.exe create --vmindex 2`                                             |
+| Clone instance                    | `mumu-cli.exe clone --vmindex 0`                                              |
+| Rename instance                   | `mumu-cli.exe rename --vmindex 0 --name "Bot-1"`                              |
+| Delete instance                   | `mumu-cli.exe delete --vmindex 1`                                             |
+| Export backup                     | `mumu-cli.exe export --vmindex 0 --dir "C:\backups"`                          |
+| Import backup                     | `mumu-cli.exe import --vmindex 1 --path "C:\backups\backup.mumudata"`         |
+| **mumu-cli — Lifecycle**          |                                                                               |
+| Launch                            | `mumu-cli.exe control --vmindex 0 launch`                                     |
+| Shutdown                          | `mumu-cli.exe control --vmindex 0 shutdown`                                   |
+| Restart                           | `mumu-cli.exe control --vmindex 0 restart`                                    |
+| Hide window                       | `mumu-cli.exe control --vmindex 0 hide_window`                                |
+| Show window                       | `mumu-cli.exe control --vmindex 0 show_window`                                |
+| **mumu-cli — Apps**               |                                                                               |
+| Install APK                       | `mumu-cli.exe control --vmindex 0 app install --apk "C:\app.apk"`             |
+| Launch app                        | `mumu-cli.exe control --vmindex 0 app launch --package <pkg>`                 |
+| Close app                         | `mumu-cli.exe control --vmindex 0 app close --package <pkg>`                  |
+| App status                        | `mumu-cli.exe control --vmindex 0 app info --package <pkg>`                   |
+| Active app                        | `mumu-cli.exe control --vmindex 0 app info --installed`                       |
+| Uninstall app                     | `mumu-cli.exe control --vmindex 0 app uninstall --package <pkg>`              |
+| **mumu-cli — Settings**           |                                                                               |
+| Get all settings                  | `mumu-cli.exe setting --vmindex 0 --all`                                      |
+| Get resolution                    | `mumu-cli.exe setting --vmindex 0 --key resolution_width`                     |
+| Set resolution *(shutdown first)* | `mumu-cli.exe setting -v 0 --key resolution_width --value 1080`               |
+| Limit CPU                         | `mumu-cli.exe control --vmindex 0 tool downcpu --cap 50`                      |
+| Set window layout                 | `mumu-cli.exe control --vmindex 0 layout_window -px 0 -py 0 -sw 1280 -sh 720` |
+| **ADB**                           |                                                                               |
+| Connect                           | `.\adb.exe connect 127.0.0.1:16384`                                           |
+| List devices                      | `.\adb.exe devices`                                                           |
+| Reset ADB                         | `.\adb.exe kill-server && .\adb.exe start-server`                             |
+| **UI Automation**                 |                                                                               |
+| Full UI scan                      | `python scripts/uiscan.py`                                                    |
+| Screenshot                        | `python scripts/screenshot.py`                                                |
+| Tap coords                        | `python scripts/tap.py 540 960`                                               |
+| Tap text (OCR)                    | `python scripts/tap.py --text "Collect"`                                      |
+| Long press                        | `python scripts/tap.py 540 960 --long`                                        |
+| Swipe direction                   | `python scripts/swipe.py --direction up`                                      |
+| Swipe coords                      | `python scripts/swipe.py x1 y1 x2 y2`                                         |
+| Key event                         | `python scripts/keyevent.py back`                                             |
+| Text input                        | `python scripts/input_text.py "hello" --res-id <id>`                          |
 
 ---
 
@@ -607,33 +629,33 @@ For fine-grained single-instance control, use ADB directly:
 
 Run in order with your `<serial>` (default `127.0.0.1:16384`):
 
-| # | Check | Command | Pass |
-|---|-------|---------|------|
-| 1 | Binaries exist | `dir "<MuMuInstallPath>\nx_main\mumu-cli.exe"` | File found |
-| 2 | Instance info | `mumu-cli.exe info --vmindex 0` | Valid JSON |
-| 3 | ADB connected | `.\adb.exe connect <serial> && .\adb.exe devices` | Shows `device` |
-| 4 | Python deps | `python -c "import uiautomator2; import rapidocr_onnxruntime; print('OK')"` | Prints `OK` |
-| 5 | Screenshot | `python scripts/screenshot.py -o ./test.png` | PNG created |
-| 6 | UIScan | `python scripts/uiscan.py -o ./ -n test` | Annotated PNG + JSON |
-| 7 | Tap by text | `python scripts/tap.py --text "<visible_text>"` | Found and tapped |
+| #   | Check          | Command                                                                     | Pass                 |
+| --- | -------------- | --------------------------------------------------------------------------- | -------------------- |
+| 1   | Binaries exist | `dir "<MuMuInstallPath>\nx_main\mumu-cli.exe"`                              | File found           |
+| 2   | Instance info  | `mumu-cli.exe info --vmindex 0`                                             | Valid JSON           |
+| 3   | ADB connected  | `.\adb.exe connect <serial> && .\adb.exe devices`                           | Shows `device`       |
+| 4   | Python deps    | `python -c "import uiautomator2; import rapidocr_onnxruntime; print('OK')"` | Prints `OK`          |
+| 5   | Screenshot     | `python scripts/screenshot.py -o ./test.png`                                | PNG created          |
+| 6   | UIScan         | `python scripts/uiscan.py -o ./ -n test`                                    | Annotated PNG + JSON |
+| 7   | Tap by text    | `python scripts/tap.py --text "<visible_text>"`                             | Found and tapped     |
 
 ---
 
 ## Troubleshooting
 
-| Symptom | Resolution |
-|---------|-----------|
-| `mumu-cli.exe` not found | Re-run detection chain; delete `mumu_install_path.txt` |
-| `info` error | `mumu-cli.exe create --vmindex 0` |
-| ADB `offline` | Launch instance first; check `player_state` via `info` |
-| ADB `unauthorized` | Accept USB debugging dialog in emulator |
-| Blank screenshot | Wait for `is_android_started: true` |
-| `import` fails | `pip install -r requirements.txt` |
-| No elements in uiscan | `python -m uiautomator2 init` |
-| `--text` not found | Use `uiscan.py` to verify visible text first |
-| Chinese input broken | Use `input_text.py` (not raw `adb shell input text`) |
-| ADB drops mid-session | `adb kill-server && adb start-server && adb connect <serial>` |
-| Resolution not applied | Restart instance after `setting --key resolution --value ...` |
-| App won't launch | Verify package name: `mumu-cli.exe control -v 0 app info --installed` |
-| `key not writable` on setting | Shutdown instance first: `mumu-cli.exe control -v 0 shutdown` |
-| long press fails (RemoteDisconnected) | Run `python -m uiautomator2 init` to reinstall atx-agent |
+| Symptom                               | Resolution                                                            |
+| ------------------------------------- | --------------------------------------------------------------------- |
+| `mumu-cli.exe` not found              | Re-run detection chain; delete `mumu_install_path.txt`                |
+| `info` error                          | `mumu-cli.exe create --vmindex 0`                                     |
+| ADB `offline`                         | Launch instance first; check `player_state` via `info`                |
+| ADB `unauthorized`                    | Accept USB debugging dialog in emulator                               |
+| Blank screenshot                      | Wait for `is_android_started: true`                                   |
+| `import` fails                        | `pip install -r requirements.txt`                                     |
+| No elements in uiscan                 | `python -m uiautomator2 init`                                         |
+| `--text` not found                    | Use `uiscan.py` to verify visible text first                          |
+| Chinese input broken                  | Use `input_text.py` (not raw `adb shell input text`)                  |
+| ADB drops mid-session                 | `adb kill-server && adb start-server && adb connect <serial>`         |
+| Resolution not applied                | Restart instance after `setting --key resolution --value ...`         |
+| App won't launch                      | Verify package name: `mumu-cli.exe control -v 0 app info --installed` |
+| `key not writable` on setting         | Shutdown instance first: `mumu-cli.exe control -v 0 shutdown`         |
+| long press fails (RemoteDisconnected) | Run `python -m uiautomator2 init` to reinstall atx-agent              |

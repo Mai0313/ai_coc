@@ -13,8 +13,9 @@ COC_PACKAGE = "com.supercell.clashofclans"
 
 
 def bundle_root() -> Path:
-    if getattr(sys, "_MEIPASS", None):
-        return Path(sys._MEIPASS)
+    bundle_path = getattr(sys, "_MEIPASS", None)
+    if bundle_path:
+        return Path(bundle_path)
     if getattr(sys, "frozen", False):
         return Path(sys.executable).resolve().parent
     return Path(__file__).resolve().parents[1]

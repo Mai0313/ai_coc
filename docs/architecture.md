@@ -1,7 +1,7 @@
 # CoC AI Controller Architecture
 
-Version target: VER 0.1.0  
-Updated: 2026-08-22  
+Version target: VER 0.1.0
+Updated: 2026-08-22
 Status: Phase 0 architecture baseline
 
 ## Responsibility boundary
@@ -86,4 +86,3 @@ Lifecycle uses MuMu CLI when supported. Android checks and screenshot/input use 
 ## Packaging/versioning
 
 The eventual Windows build name is `CoC_AI_Controller_VER_0.1.0.exe`. `VERSION`, About metadata, executable file version, CHANGELOG and handoff version must come from one build-time version source. Phase 0 produces documents only; no executable is claimed.
-
