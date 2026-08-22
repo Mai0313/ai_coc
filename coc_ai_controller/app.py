@@ -10,9 +10,9 @@ from typing import Any, Callable
 from PyQt5.QtCore import QBuffer, QByteArray, QEvent, QIODevice, QObject, QRunnable, QSettings, Qt, QThreadPool, QTimer, pyqtSignal
 from PyQt5.QtGui import QPixmap
 from PyQt5.QtWidgets import (
-    QApplication, QComboBox, QFileDialog, QFormLayout, QGroupBox, QHBoxLayout,
+    QApplication, QCheckBox, QComboBox, QFileDialog, QFormLayout, QGroupBox, QHBoxLayout,
     QHeaderView, QLabel, QLineEdit, QMainWindow, QMessageBox, QPushButton,
-    QPlainTextEdit, QSplitter, QStatusBar, QTabWidget, QTableWidget,
+    QPlainTextEdit, QSpinBox, QSplitter, QStatusBar, QTabWidget, QTableWidget,
     QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
@@ -65,11 +65,14 @@ class MainWindow(QMainWindow):
         self.frame_sequence = 0
         self.current_account_tag = ""
         self.running_task_id: int | None = None
+        self.automation_timer = QTimer(self); self.automation_timer.timeout.connect(self.automation_cycle)
+        self.automation_step = 0
         self.setAcceptDrops(True)
         self._build_ui()
         self.statusBar().showMessage("Ready — 偵測 MuMu 以開始")
         self.refresh_instances()
         QTimer.singleShot(6000, self.resume_pending_tasks)
+        QTimer.singleShot(8000, lambda: self.start_automation() if self.auto_on_start.isChecked() else None)
 
     def _build_ui(self) -> None:
         self.setStyleSheet("""
@@ -90,6 +93,7 @@ class MainWindow(QMainWindow):
         tabs.addTab(self._account_tab(), "帳號進度")
         tabs.addTab(self._agent_tab(), "AI 助手")
         tabs.addTab(self._battle_tab(), "戰鬥準備")
+        tabs.addTab(self._automation_tab(), "自動化控制")
         tabs.addTab(self._settings_tab(), "設定")
         tabs.addTab(self._about_tab(), "關於")
         self.tabs = tabs
@@ -196,6 +200,77 @@ class MainWindow(QMainWindow):
         self.battle_view = QPlainTextEdit(); self.battle_view.setReadOnly(True); layout.addWidget(self.battle_view)
         layout.addWidget(QLabel("V1 boundary: requirements and preparation plan are available. Live tactical battle control remains RESERVED_RL."))
         return page
+
+    def _automation_tab(self) -> QWidget:
+        page = QWidget(); layout = QVBoxLayout(page)
+        behavior = QGroupBox("自主行為"); form = QFormLayout(behavior)
+        self.auto_on_start = QCheckBox("開啟 EXE 後自動啟動 MuMu、CoC 並開始巡檢")
+        self.auto_collect = QCheckBox("自主收取主村資源")
+        self.auto_donate = QCheckBox("自主開啟部落聊天室並捐兵")
+        self.auto_upgrade = QCheckBox("自主安排並執行建築升級")
+        self.auto_walls = QCheckBox("自主刷牆")
+        self.auto_attack = QCheckBox("自主搜尋對手並打資源")
+        for key, widget in (("auto_on_start", self.auto_on_start), ("auto_collect", self.auto_collect),
+                            ("auto_donate", self.auto_donate), ("auto_upgrade", self.auto_upgrade),
+                            ("auto_walls", self.auto_walls), ("auto_attack", self.auto_attack)):
+            widget.setChecked(str(self.settings.value(key, "false")).lower() == "true"); form.addRow(widget)
+        layout.addWidget(behavior)
+        battle = QGroupBox("進攻與資源門檻"); battle_form = QFormLayout(battle)
+        self.auto_script = QComboBox()
+        for path in sorted((bundle_root() / "battle_scripts").glob("*.json")): self.auto_script.addItem(path.stem, str(path))
+        self.min_gold = QSpinBox(); self.min_gold.setRange(0, 2000000); self.min_gold.setSingleStep(50000)
+        self.min_elixir = QSpinBox(); self.min_elixir.setRange(0, 2000000); self.min_elixir.setSingleStep(50000)
+        self.min_dark = QSpinBox(); self.min_dark.setRange(0, 50000); self.min_dark.setSingleStep(500)
+        self.stop_gold = QSpinBox(); self.stop_gold.setRange(0, 20000000); self.stop_gold.setSingleStep(100000)
+        self.cycle_minutes = QSpinBox(); self.cycle_minutes.setRange(1, 120)
+        for key, widget, default in (("min_gold", self.min_gold, 500000), ("min_elixir", self.min_elixir, 500000),
+                                     ("min_dark", self.min_dark, 5000), ("stop_gold", self.stop_gold, 15000000),
+                                     ("cycle_minutes", self.cycle_minutes, 10)):
+            widget.setValue(int(self.settings.value(key, default)))
+        battle_form.addRow("進攻腳本", self.auto_script); battle_form.addRow("最低金幣", self.min_gold)
+        battle_form.addRow("最低聖水", self.min_elixir); battle_form.addRow("最低黑水", self.min_dark)
+        battle_form.addRow("金幣達到此值停止刷資源", self.stop_gold); battle_form.addRow("巡檢間隔（分鐘）", self.cycle_minutes)
+        layout.addWidget(battle)
+        row = QHBoxLayout(); save = QPushButton("儲存自動化設定"); save.clicked.connect(self.save_automation)
+        start = QPushButton("立即開始自主運作"); start.clicked.connect(self.start_automation)
+        stop = QPushButton("停止自主運作"); stop.clicked.connect(self.stop_automation)
+        row.addWidget(save); row.addWidget(start); row.addWidget(stop); row.addStretch(); layout.addLayout(row)
+        self.automation_log = QPlainTextEdit(); self.automation_log.setReadOnly(True); layout.addWidget(self.automation_log)
+        return page
+
+    def save_automation(self) -> None:
+        for key, widget in (("auto_on_start", self.auto_on_start), ("auto_collect", self.auto_collect), ("auto_donate", self.auto_donate),
+                            ("auto_upgrade", self.auto_upgrade), ("auto_walls", self.auto_walls), ("auto_attack", self.auto_attack)):
+            self.settings.setValue(key, widget.isChecked())
+        for key, widget in (("min_gold", self.min_gold), ("min_elixir", self.min_elixir), ("min_dark", self.min_dark),
+                            ("stop_gold", self.stop_gold), ("cycle_minutes", self.cycle_minutes)):
+            self.settings.setValue(key, widget.value())
+        self.settings.setValue("auto_script", self.auto_script.currentData() or "")
+        self.automation_log.appendPlainText("自動化設定已保存。")
+
+    def start_automation(self) -> None:
+        self.save_automation(); self.automation_timer.start(self.cycle_minutes.value() * 60000)
+        self.automation_log.appendPlainText("自主運作已啟動；正在執行第一次巡檢。")
+        QTimer.singleShot(100, self.automation_cycle)
+
+    def stop_automation(self) -> None:
+        self.automation_timer.stop(); self.automation_log.appendPlainText("已停止建立新的自主任務；目前步驟完成後停止。")
+
+    def automation_cycle(self) -> None:
+        if self.running_task_id is not None or self.db.pending_tasks() or not self.active: return
+        jobs = []
+        if self.auto_collect.isChecked(): jobs.append("回到主村，收取所有金礦、聖水收集器和黑水鑽井的資源，完成後回到主村畫面")
+        if self.auto_donate.isChecked(): jobs.append("打開部落聊天室，檢查可捐兵請求並依現有軍隊安全捐兵，完成後返回主村")
+        if self.auto_upgrade.isChecked(): jobs.append("檢查空閒建築工人與目前資源，依已保存的升級優先順序安排一項建築升級")
+        if self.auto_walls.isChecked(): jobs.append("檢查保留資源門檻後，使用超出保留量的資源升級一段城牆")
+        if self.auto_attack.isChecked():
+            script_path = Path(str(self.auto_script.currentData() or ""))
+            script_text = script_path.read_text(encoding="utf-8-sig") if script_path.is_file() else "{}"
+            jobs.append(f"使用以下戰鬥腳本搜尋資源村並執行：{script_text}；門檻金幣 {self.min_gold.value()}、聖水 {self.min_elixir.value()}、黑水 {self.min_dark.value()}，符合才進攻並按腳本結束條件收尾")
+        if not jobs: self.automation_log.appendPlainText("巡檢完成：尚未啟用任何自主行為。"); return
+        instruction = jobs[self.automation_step % len(jobs)]; self.automation_step += 1
+        task_id = self.db.add_task(instruction); self.automation_log.appendPlainText(f"建立自主任務 #{task_id}：{instruction}")
+        self.execute_agent_command(instruction, task_id)
 
     def _settings_tab(self) -> QWidget:
         page = QWidget(); layout = QVBoxLayout(page); group = QGroupBox("AI／API 設定"); form = QFormLayout(group)
@@ -391,7 +466,7 @@ class MainWindow(QMainWindow):
             self.db.add_knowledge(self.active.emulator_id if self.active else "", self.current_frame.frame_id if self.current_frame else "", text, "USER_CONFIRMED")
         recent = self.chat_history.toPlainText()[-3500:]
         self.chat_input.clear(); self.chat_history.appendPlainText(f"\n你\n{text}\n\nAI 正在思考，請稍候…")
-        if any(word in text for word in ("打開", "開啟", "點擊", "按下", "進入", "返回", "關閉")) and self.active:
+        if any(word in text for word in ("打開", "開啟", "點擊", "按下", "進入", "返回", "關閉", "收取", "捐兵", "升級", "刷牆", "進攻", "搜尋")) and self.active:
             task_id = self.db.add_task(text)
             self.execute_agent_command(text, task_id); return
         frame = self.current_frame if self.chat_image_pending else None
@@ -426,14 +501,16 @@ class MainWindow(QMainWindow):
                     "這是使用者提供的操作參考圖片。請用繁體中文描述目標按鈕文字、外觀、位置，以及要完成的操作。", reference_frame.png)
             active = m.ensure_coc(a.index)
             last_png = b""
-            for step in range(5):
+            max_steps = 25 if any(word in command for word in ("進攻", "戰鬥", "搜尋資源村")) else 8
+            for step in range(max_steps):
                 self.db.update_task(task_id, "RUNNING", f"第 {step + 1} 步：截圖、判斷與驗證")
                 last_png = m.screenshot(active)
                 prompt = (f"你正在控制部落衝突。使用者指令：{command}\n"
                           f"使用者附圖提供的參考：{reference}\n使用者過去確認的操作教學：\n{self.knowledge_context()}\n"
                           "檢查目前畫面是否已完成。只回傳單一 JSON，不要 markdown："
                           '{"done":false,"action":"tap|back|swipe_up|swipe_down|none","x_pct":50.0,"y_pct":50.0,"message":"繁體中文說明"}。'
-                          "若已完成 done=true。禁止購買、花費資源、攻擊、刪除或確認不可逆操作。")
+                          f"若已完成 done=true。授權狀態：自主升級={self.auto_upgrade.isChecked()}，刷牆={self.auto_walls.isChecked()}，自主進攻={self.auto_attack.isChecked()}。"
+                          "只有對應授權為 true 才能花費遊戲資源或進攻；禁止花費寶石、現金、刪除或帳號操作。")
                 raw = provider.generate(prompt, last_png).strip().replace("```json", "").replace("```", "")
                 data = json.loads(raw[raw.find("{"):raw.rfind("}") + 1])
                 if data.get("done"):
@@ -446,7 +523,7 @@ class MainWindow(QMainWindow):
                 elif action == "swipe_down": m.swipe(active, 800, 220, 800, 720, 500)
                 else: return last_png, str(data.get("message") or "AI 無法安全執行這個操作"), False
                 time.sleep(2)
-            return last_png, "已執行操作，但五次畫面確認後仍無法確認完成。", False
+            return last_png, f"已執行操作，但 {max_steps} 次畫面確認後仍無法確認完成。", False
         def done(result: tuple[bytes, str, bool]) -> None:
             png, message, completed = result
             self.frame_sequence += 1; self.current_frame = Frame.create(a.emulator_id, self.current_account_tag, png, self.frame_sequence)
