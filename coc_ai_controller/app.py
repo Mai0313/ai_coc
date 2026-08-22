@@ -24,7 +24,7 @@ from .database import Database
 from .models import EmulatorInstance, Frame
 from .mumu import MuMuAdapter
 from .secrets import SecretStore
-from .village import parse_village
+from .village import parse_village, parse_village_text
 
 
 class WorkerSignals(QObject):
@@ -115,8 +115,10 @@ class MainWindow(QMainWindow):
 
     def _account_tab(self) -> QWidget:
         page = QWidget(); layout = QVBoxLayout(page)
-        row = QHBoxLayout(); button = QPushButton("匯入村莊 JSON"); button.clicked.connect(self.import_village)
-        self.account_label = QLabel("No account imported"); row.addWidget(button); row.addWidget(self.account_label); row.addStretch(); layout.addLayout(row)
+        row = QHBoxLayout(); button = QPushButton("AI 自動取得 JSON"); button.clicked.connect(self.ai_import_village)
+        paste = QPushButton("匯入剪貼簿 JSON"); paste.clicked.connect(self.import_clipboard_village)
+        file_button = QPushButton("選擇 JSON 檔案"); file_button.clicked.connect(self.import_village)
+        self.account_label = QLabel("尚未匯入帳號"); row.addWidget(button); row.addWidget(paste); row.addWidget(file_button); row.addWidget(self.account_label); row.addStretch(); layout.addLayout(row)
         self.account_table = QTableWidget(0, 10)
         self.account_table.setHorizontalHeaderLabels(["Section", "Data ID", "Name", "World", "Category", "Level", "Count", "Next", "Cost", "Time"])
         self.account_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
@@ -243,6 +245,45 @@ class MainWindow(QMainWindow):
             self.account_summary.setPlainText(f"Imported tolerant snapshot. Known IDs: {known}; Unknown IDs queued: {unknown}.\nUnknown JSON fields were preserved in the account snapshot.")
             self._select_instance(self.instance_combo.currentIndex())
         except Exception as exc: self._error("Village JSON import failed", str(exc))
+
+    def _apply_village_snapshot(self, snapshot) -> None:
+        self.db.save_account(snapshot.tag, snapshot.raw, snapshot.entities)
+        self.current_account_tag = snapshot.tag; rows = self.db.account_rows(snapshot.tag)
+        self.account_label.setText(f"帳號：{snapshot.tag} — {len(rows)} 筆資料")
+        self.account_table.setRowCount(len(rows))
+        for row_index, row in enumerate(rows):
+            values = [row.get("section"), row.get("data_id"), row.get("name") or "UNKNOWN", row.get("world") or "—",
+                      row.get("category") or "—", row.get("level"), row.get("count"), row.get("next_level"),
+                      row.get("upgrade_cost"), row.get("upgrade_seconds")]
+            for column, value in enumerate(values): self.account_table.setItem(row_index, column, QTableWidgetItem("—" if value is None else str(value)))
+        self.account_summary.setPlainText(f"已從剪貼簿匯入村莊 JSON。已知／未知資料都已保存，共 {len(rows)} 筆。")
+
+    def import_clipboard_village(self) -> None:
+        try:
+            text = QApplication.clipboard().text().strip()
+            if not text: raise ValueError("剪貼簿是空的")
+            self._apply_village_snapshot(parse_village_text(text))
+        except Exception as exc: self._error("剪貼簿 JSON 匯入失敗", str(exc))
+
+    def ai_import_village(self) -> None:
+        m, a = self._require(); provider = self.provider()
+        self.account_summary.setPlainText("AI 正在尋找 JSON／複製按鈕，請稍候…")
+        def locate(png: bytes, goal: str) -> tuple[int, int]:
+            prompt = ("分析這張 MuMu 畫面並尋找" + goal + "。只回傳 JSON："
+                      '{"found":true,"x_pct":50.0,"y_pct":50.0}。座標是畫面百分比；找不到則 found=false。')
+            raw = provider.generate(prompt, png).strip().replace("```json", "").replace("```", "")
+            data = json.loads(raw[raw.find("{"):raw.rfind("}") + 1])
+            if not data.get("found"): raise RuntimeError(f"AI 找不到{goal}")
+            return int(float(data["x_pct"]) * 16), int(float(data["y_pct"]) * 9)
+        def task() -> None:
+            active = m.ensure_coc(a.index)
+            png = m.screenshot(active); x, y = locate(png, "可開啟村莊 JSON 資料的入口")
+            m.tap(active, x, y); import time; time.sleep(2)
+            png = m.screenshot(active); x, y = locate(png, "複製完整 JSON 到剪貼簿的按鈕")
+            m.tap(active, x, y); time.sleep(2)
+        def done(_: None) -> None:
+            self.import_clipboard_village()
+        self.run_async("AI 正在取得村莊 JSON…", task, done)
 
     def provider(self) -> GoogleGeminiProvider:
         return GoogleGeminiProvider(self.api_key.text(), self.model_name.text(), self.endpoint.text())

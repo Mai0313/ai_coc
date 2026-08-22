@@ -17,7 +17,11 @@ def _integer(value: Any, default: int | None = None) -> int | None:
 
 
 def parse_village(path: str | Path) -> AccountSnapshot:
-    raw = json.loads(Path(path).read_text(encoding="utf-8-sig"))
+    return parse_village_text(Path(path).read_text(encoding="utf-8-sig"))
+
+
+def parse_village_text(text: str) -> AccountSnapshot:
+    raw = json.loads(text.lstrip("\ufeff").strip())
     if not isinstance(raw, dict):
         raise ValueError("Village JSON root must be an object")
     tag = str(raw.get("tag") or raw.get("player_tag") or "UNKNOWN").strip()
