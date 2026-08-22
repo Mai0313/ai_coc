@@ -1,4 +1,3 @@
-import os
 import sys
 from pathlib import Path
 
@@ -24,7 +23,7 @@ def bundle_root() -> Path:
 
 
 def data_root() -> Path:
-    root = Path(os.environ.get("LOCALAPPDATA", Path.home())) / "CoC_AI_Controller"
+    root = Path.home() / ".coc_ai"
     root.mkdir(parents=True, exist_ok=True)
     return root
 

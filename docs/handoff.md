@@ -29,6 +29,7 @@ Phase 0 and the first runnable Windows MVP are complete. The PyQt5 application i
 - Split the package into `adapters/`, `parsers/` and `ui/`, matching the three layers the architecture already described.
 - Streamed the AI replies, rendered them as Markdown, and put the run log through `rich` in both the panel and stderr.
 - Pointed capture and input at the display MuMu opens the game on, instead of display 0, which holds the emulator's own launcher.
+- Moved storage from `%LOCALAPPDATA%\CoC_AI_Controller\` to `~/.coc_ai\`.
 
 ## Important files
 

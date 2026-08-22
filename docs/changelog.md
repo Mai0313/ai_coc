@@ -7,7 +7,7 @@
 - Streamed AI replies: chat, screen analysis and the live AI test grow their answer as Gemini sends it, through `GeminiClient.stream` and `MainWindow.run_stream`.
 - Markdown rendering in the AI 助手 tab. Headings, lists, tables, inline code and code blocks are rendered by `markdown-it-py` into a `QTextBrowser`; raw HTML in a reply is escaped, never trusted.
 - Colour in the 執行紀錄 panel and on stderr: records go through `rich`, so levels, logger names and tracebacks are readable at a glance. The log file stays plain text.
-- 執行紀錄 panel under the tabs, mirroring every log record live, with a level selector (DEBUG shows full AI prompts and replies) and a shortcut to the rotating log file in `%LOCALAPPDATA%\CoC_AI_Controller\logs\`.
+- 執行紀錄 panel under the tabs, mirroring every log record live, with a level selector (DEBUG shows full AI prompts and replies) and a shortcut to the rotating log file in `~/.coc_ai\logs\`.
 - Model picker in Settings: 測試連線並載入模型 verifies the API key and fills the dropdown with the text models the endpoint exposes.
 - `AdbController` (`adb.py`), an adbutils-backed wrapper that owns every ADB call; `MuMuAdapter` keeps one per instance, so each emulator is addressed through its own ADB port.
 
@@ -19,6 +19,7 @@
 - Every structured value is a Pydantic model in `models.py`: village entities, account rows, knowledge, tasks, battle requirements, MuMu CLI payloads, UI elements and AI replies. `Database` takes and returns models, and saved account JSON is written with `model_dump_json`.
 - The package is split by layer: `adapters/`, `parsers/` and `ui/`, with `models.py` and `constants.py` at the root and `app.py` reduced to `main()`.
 - The remaining hand-built dicts and `.get()` chains are models as well: the Gemini request body, the MuMu CLI version and info payloads, Village JSON entries (historical key names now sit in `AliasChoices`) and the Battle Script document. `Database`, `SecretStore`, `AdbController`, `MuMuAdapter` and `GeminiClient` are Pydantic models and take keyword arguments.
+- Storage moved from `%LOCALAPPDATA%\CoC_AI_Controller\` to `~/.coc_ai\`, same layout. An existing installation's files have to be moved by hand.
 
 ### Fixed
 

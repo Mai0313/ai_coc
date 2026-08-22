@@ -1,6 +1,6 @@
 # Database Schema — VER 0.1.0
 
-SQLite runtime database is stored under `%LOCALAPPDATA%\CoC_AI_Controller\controller.sqlite3` and is not committed.
+SQLite runtime database is stored under `~/.coc_ai\controller.sqlite3` and is not committed.
 
 - `metadata`: schema/master versions.
 - `id_registry`: shared data ID identity, world/category and provenance.
