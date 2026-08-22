@@ -127,7 +127,8 @@ class MainWindow(QMainWindow):
         buttons = QHBoxLayout()
         analyze = QPushButton("分析目前截圖"); analyze.clicked.connect(self.analyze_frame)
         teach = QPushButton("儲存為使用者教學"); teach.clicked.connect(self.save_teaching)
-        buttons.addWidget(analyze); buttons.addWidget(teach); buttons.addStretch(); layout.addLayout(buttons)
+        live_test = QPushButton("實機測試 AI"); live_test.clicked.connect(self.live_ai_test)
+        buttons.addWidget(analyze); buttons.addWidget(live_test); buttons.addWidget(teach); buttons.addStretch(); layout.addLayout(buttons)
         self.chat_history = QPlainTextEdit(); self.chat_history.setReadOnly(True); layout.addWidget(self.chat_history)
         row = QHBoxLayout(); self.chat_input = QLineEdit(); self.chat_input.setPlaceholderText("Ask or teach the CoC Agent…")
         self.chat_input.returnPressed.connect(self.send_chat); send = QPushButton("送出"); send.clicked.connect(self.send_chat)
@@ -260,14 +261,31 @@ class MainWindow(QMainWindow):
         if not self.current_frame:
             self.capture(); QMessageBox.information(self, "Screenshot", "已開始取得畫面；完成後請再按 Analyze。") ; return
         frame = self.current_frame; provider = self.provider(); prompt = vision_prompt(frame.emulator_id, frame.frame_id, self.account_context())
-        self.run_async("Gemini semantic vision is analyzing…", lambda: provider.generate(prompt, frame.png), lambda result: self.chat_history.appendPlainText(f"\nVISION [{frame.frame_id}]\n{result}\n"))
+        self.chat_history.appendPlainText("\nAI 正在分析目前畫面，請稍候…")
+        self.run_async("AI 正在分析目前畫面…", lambda: provider.generate(prompt, frame.png), lambda result: self.chat_history.appendPlainText(f"\n畫面分析 [{frame.frame_id}]\n{result}\n"))
+
+    def live_ai_test(self) -> None:
+        m, a = self._require()
+        self.chat_history.appendPlainText("\n實機測試：正在啟動 CoC、擷取畫面並等待 AI 回覆…")
+        def task() -> tuple[bytes, str]:
+            active = m.ensure_coc(a.index)
+            png = m.screenshot(active)
+            answer = self.provider().generate(
+                "你是部落衝突助手。請用繁體中文簡短回答：你現在看到什麼畫面？列出兩個可見重點。", png)
+            return png, answer
+        def done(result: tuple[bytes, str]) -> None:
+            png, answer = result
+            self.frame_sequence += 1
+            self.current_frame = Frame.create(a.emulator_id, self.current_account_tag, png, self.frame_sequence)
+            self.chat_history.appendPlainText(f"\n實機 AI 回覆\n{answer}\n")
+        self.run_async("實機 AI 測試進行中，請等待回覆…", task, done)
 
     def send_chat(self) -> None:
         text = self.chat_input.text().strip()
         if not text: return
-        self.chat_input.clear(); self.chat_history.appendPlainText(f"\nYOU\n{text}")
+        self.chat_input.clear(); self.chat_history.appendPlainText(f"\n你\n{text}\n\nAI 正在思考，請稍候…")
         frame = self.current_frame; context = f"{AGENT_PROFILE}\nCurrent account: {self.account_context()}\nCurrent emulator={self.active.emulator_id if self.active else 'none'}, frame={frame.frame_id if frame else 'none'}\nUser: {text}"
-        self.run_async("CoC Agent is responding…", lambda: self.provider().generate(context, frame.png if frame else None), lambda result: self.chat_history.appendPlainText(f"\nAGENT\n{result}\n"))
+        self.run_async("AI 正在思考…", lambda: self.provider().generate(context, frame.png if frame else None), lambda result: self.chat_history.appendPlainText(f"\nAI 回覆\n{result}\n"))
 
     def save_teaching(self) -> None:
         statement = self.chat_input.text().strip()

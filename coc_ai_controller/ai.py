@@ -33,7 +33,7 @@ class GoogleGeminiProvider(AIProvider):
             data=data,
             headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"},
             method="GET" if payload is None else "POST")
-        request_timeout = timeout or (75 if payload is not None else 20)
+        request_timeout = timeout or (180 if payload is not None else 30)
         for attempt in range(3):
             try:
                 with urllib.request.urlopen(request, timeout=request_timeout) as response:
@@ -48,7 +48,7 @@ class GoogleGeminiProvider(AIProvider):
                 if attempt < 2:
                     time.sleep(2 + attempt * 2)
                     continue
-                raise RuntimeError("Gemini 回應逾時，已自動重試 3 次。請稍後再試。") from exc
+                raise RuntimeError("Gemini 等待超過限制，已自動重試 3 次。請稍後再試。") from exc
         raise RuntimeError("Gemini 請求失敗")
 
     def list_models(self) -> list[dict[str, Any]]:
