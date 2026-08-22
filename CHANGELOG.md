@@ -12,6 +12,7 @@
 - USER_CONFIRMED teaching records and versioned CoC Agent profile.
 - Battle Script validation and explicit army-requirements preparation view with reserved RL handoff.
 - Phase 0 audit, architecture, requirements, decisions, TODO and GitHub collaboration baseline.
+- Fixed packaged MuMu CLI launch by isolating it from PyQt Qt plugin environment variables.
 
 ### Known limitations
 

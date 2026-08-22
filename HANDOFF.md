@@ -26,6 +26,7 @@ Phase 0 and the first runnable Windows MVP are complete. The PyQt5 application i
 - Created and pushed the private GitHub repository `Hsien0818666/CoC-AI-Controller`; invited `Mai0313` with write access.
 - Added runnable desktop UI, MuMu CLI/ADB adapter, SQLite database, Village JSON import, Gemini/DPAPI support, semantic vision/chat/teaching and Battle Script reader.
 - Built and smoke-tested `CoC_AI_Controller_VER_0.1.0.exe`.
+- Fixed and rebuilt the MuMu CLI Qt-plugin conflict found in user testing; packaged CLI now receives a sanitized environment.
 
 # Files Changed
 
@@ -59,6 +60,7 @@ Versioned Agent Profile, Gemini provider, semantic screenshot analysis, contextu
 - ADB `wm size` reports 900×1600 while rotated screenshot is 1600×900; transform must use observed orientation/frame dimensions.
 - CLI mutation/lifecycle failure behavior and HWND stability have not been integration-tested.
 - ADB PNG capture averages ~381 ms on the sampled system; faster paths require benchmarking.
+- The first package exposed a Qt plugin conflict when mumu-cli inherited PyQt variables; source and rebuilt package now remove those variables before each CLI subprocess.
 - Simplicity source is mostly unavailable; reuse confidence is low.
 - Any MyBot code reuse has GPL implications; current plan is concepts/reference only.
 - Verified source-backed master level/cost/time data and GemCostCalculator rules are incomplete; the UI does not invent values.

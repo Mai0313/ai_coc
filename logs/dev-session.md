@@ -14,4 +14,6 @@ Tests: 2 core unit tests passed; live MuMu version/instance/ADB/CoC/screenshot p
 
 Known issues: sourced master level data and verified gem rules are incomplete; automated navigation/preparation is not unattended-ready.
 
-Next: build/smoke-test EXE, then expand source-backed master data and guarded semantic actions.
+Follow-up fix: user screenshot exposed a packaged mumu-cli Qt plugin conflict. Sanitized `QT_PLUGIN_PATH`, `QT_QPA_PLATFORM`, `QT_QPA_PLATFORM_PLUGIN_PATH` and `QML2_IMPORT_PATH` before MuMu subprocesses; rebuild and source-level polluted-environment probe passed.
+
+Next: expand source-backed master data and guarded semantic actions.
