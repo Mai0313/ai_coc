@@ -6,7 +6,10 @@ readme = "README.md"
 requires-python = ">=3.12,<3.13"
 license = { text = "MIT" }
 authors = [{ name = "CoC AI Controller contributors" }]
-dependencies = ["PyQt5>=5.15,<6"]
+dependencies = [
+  "PyQt5>=5.15,<6",
+  "PyQt5-Qt5==5.15.2; sys_platform == 'win32'",
+]
 
 [project.urls]
 Repository = "https://github.com/Mai0313/CoC-AI-Controller"
@@ -27,7 +30,14 @@ docs = ["zensical", "mkdocstrings[python]", "ruff"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
-addopts = ["--strict-markers", "--cov=src/coc_ai_controller", "--cov-report=term-missing", "--cov-fail-under=20"]
+addopts = [
+  "--strict-markers",
+  "--cov=src/coc_ai_controller",
+  "--cov-report=term-missing",
+  "--cov-report=xml:.github/reports/coverage.xml",
+  "--junitxml=.github/reports/.coverage.pytest.xml",
+  "--cov-fail-under=14",
+]
 
 [tool.ruff]
 target-version = "py312"

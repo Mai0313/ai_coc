@@ -22,6 +22,8 @@ adbkey.pub
 # Python/build artifacts
 __pycache__/
 *.py[cod]
+.coverage
+.github/reports/
 .venv/
 venv/
 build/
