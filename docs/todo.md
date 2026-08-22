@@ -16,8 +16,10 @@ Updated: 2026-08-22
 - [ ] Create modules for domain, application, infrastructure and UI with dependency direction enforced.
 - [ ] Define typed IDs/contracts for emulator session, frame, observation, semantic action and outcome.
 - [ ] Add tests, lint/type checks, structured logging and CI/build entry point.
-- [ ] Initialize a dedicated Git repository with `.gitignore`, secret scan and source-only initial commit.
-- [ ] Confirm private/public visibility, create the GitHub repository under `Hsien0818666`, and invite `Mai0313` with push access.
+- [x] Initialize a dedicated Git repository with `.gitignore` and a source/documentation-only initial commit.
+- [x] Create private `Hsien0818666/CoC-AI-Controller` and send `Mai0313` a write-access invitation.
+- [ ] Confirm that `Mai0313` accepted the GitHub invitation before relying on collaborator access.
+- [ ] Add automated secret scanning before application code or runtime data is introduced.
 
 ## Phase 2 — Version/logging/handoff
 

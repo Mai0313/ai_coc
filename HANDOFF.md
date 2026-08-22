@@ -23,6 +23,7 @@ Phase 0 reference and local MuMu audit is complete. Architecture, requirements, 
 - Measured ADB PNG screenshot baseline: 1600×900, five captures averaging about 380.6 ms.
 - Established multi-instance/session/frame/action safety architecture.
 - Located the existing GitHub owner/collaborator relationship for future publishing: owner `Hsien0818666`, editor `Mai0313`.
+- Created and pushed the private GitHub repository `Hsien0818666/CoC-AI-Controller`; invited `Mai0313` with write access.
 
 # Files Changed
 
@@ -61,7 +62,7 @@ No agent implementation exists. Responsibilities and semantic-action safety boun
 
 All implementation phases (skeleton through Enemy Preview handoff), data research, tests, executable build, CHANGELOG/version automation, dev-session log and single-file versioned AI handoff remain unfinished.
 
-The dedicated GitHub repository has not been created. Visibility must be selected first; private is recommended. The new repository must be separate from `Hsien0818666/nb-coc`, and `Mai0313` should receive push access.
+The GitHub repository exists and is private. `Mai0313` has been invited with write access but must accept the invitation before collaborator access becomes active. Automated secret scanning is not configured yet.
 
 # Next Recommended Work
 

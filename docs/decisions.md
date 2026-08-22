@@ -52,6 +52,6 @@ NB COC demonstrates Python/PyQt/PyInstaller feasibility, but framework choice sh
 
 ## ADR-009 — Use a separate GitHub repository and preserve the existing collaborator
 
-Status: Accepted, remote creation deferred pending visibility choice.
+Status: Implemented for repository setup.
 
-The new project must not be committed into `Hsien0818666/nb-coc`. Create a dedicated repository under `Hsien0818666`, then invite the known collaborator `Mai0313` with push access. A release is incomplete until its reviewed commit/tag is pushed. Because future artifacts can include account-linked data and screenshots, private visibility is recommended unless the user explicitly chooses public.
+The project uses the dedicated private repository `Hsien0818666/CoC-AI-Controller`, separate from `Hsien0818666/nb-coc`. Collaborator `Mai0313` has been invited with write access. A release is incomplete until its reviewed commit/tag is pushed. The repository must remain private unless the user explicitly changes this decision.
