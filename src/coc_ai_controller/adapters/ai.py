@@ -124,7 +124,9 @@ class GeminiClient(BaseModel):
             for event in events:
                 # Anything else is a step boundary or a tool event this app never asks for.
                 if event.event_type == "error":
-                    raise RuntimeError(f"Gemini 串流中斷：{event.error.message}")
+                    # ErrorEvent.error is optional; fall back to the event itself.
+                    reason = event.error.message if event.error else event
+                    raise RuntimeError(f"Gemini 串流中斷：{reason}")
                 if event.event_type == "step.delta" and event.delta.type == "text":
                     received += len(event.delta.text)
                     yield event.delta.text

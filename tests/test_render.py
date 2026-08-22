@@ -44,6 +44,12 @@ class LogRenderTests(unittest.TestCase):
         assert "coc_ai_controller.test" in html
         assert "找不到 instance" in html
 
+    def test_levels_are_exported_for_a_dark_panel(self) -> None:
+        html = LogHtmlRenderer().render(_record(logging.ERROR, "boom"))
+        # rich's default export palette is built for a white terminal, where red
+        # is #800000; on the panel's #0e141f background that is unreadable.
+        assert "#800000" not in html
+
     def test_markup_in_a_message_is_escaped(self) -> None:
         html = LogHtmlRenderer().render(_record(logging.INFO, "<b>x</b>"))
         assert "&lt;b&gt;x&lt;/b&gt;" in html

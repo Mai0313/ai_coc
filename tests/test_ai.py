@@ -84,6 +84,11 @@ class StreamTests(unittest.TestCase):
             list(_client(interactions).stream("在嗎"))
         assert "quota exhausted" in str(caught.value)
 
+    def test_an_error_event_without_a_body_still_raises(self) -> None:
+        interactions = FakeInteractions([FakeEvent("error", error=None)])
+        with pytest.raises(RuntimeError, match="串流中斷"):
+            list(_client(interactions).stream("在嗎"))
+
     def test_a_stream_with_no_text_is_an_error(self) -> None:
         with pytest.raises(RuntimeError):
             list(_client(FakeInteractions([FakeEvent("interaction.completed")])).stream("在嗎"))

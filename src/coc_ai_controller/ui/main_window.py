@@ -657,18 +657,26 @@ class MainWindow(QMainWindow):
         logger.info("Started: %s", label)
         self.statusBar().showMessage(label)
 
+        failures: list[str] = []
+
         def failed(message: str) -> None:
             # Otherwise the dismissed message box leaves an empty reply with no reason.
+            failures.append(message)
             into.body += f"\n\n**失敗**：{message}"
             self._error(label, message)
+
+        def finished() -> None:
+            self._paint_chat()
+            self.statusBar().showMessage("Ready")
+            # StreamWorker signals `finished` from a `finally`, so a failed stream
+            # gets here too; `done` may only run when the reply actually arrived.
+            if done and not failures:
+                done()
 
         worker = StreamWorker(fn, label)
         worker.signals.delta.connect(lambda chunk: self._grow(into, chunk))
         worker.signals.error.connect(failed)
-        worker.signals.finished.connect(self._paint_chat)
-        worker.signals.finished.connect(lambda: self.statusBar().showMessage("Ready"))
-        if done:
-            worker.signals.finished.connect(done)
+        worker.signals.finished.connect(finished)
         self.pool.start(worker)
 
     def _error(self, title: str, message: str) -> None:
@@ -968,11 +976,11 @@ class MainWindow(QMainWindow):
             )
 
         def done() -> None:
-            if captured:
-                self.frame_sequence += 1
-                self.current_frame = Frame.create(
-                    a.emulator_id, self.current_account_tag, captured[0], self.frame_sequence
-                )
+            # Only reached once the whole generator ran, so the capture is there.
+            self.frame_sequence += 1
+            self.current_frame = Frame.create(
+                a.emulator_id, self.current_account_tag, captured[0], self.frame_sequence
+            )
             proof_path = os.environ.get("COC_LIVE_TEST_SCREENSHOT", "").strip()
             if proof_path:
                 QTimer.singleShot(800, lambda: self.grab().save(proof_path, "PNG"))

@@ -11,6 +11,7 @@ from rich.text import Text
 from markdown_it import MarkdownIt
 from rich.console import Console
 from rich.traceback import Traceback
+from rich.terminal_theme import MONOKAI
 
 from coc_ai_controller.logging_setup import TIME_FORMAT
 
@@ -84,7 +85,11 @@ class LogHtmlRenderer:
             self.console.print(
                 Traceback.from_exception(kind, value, trace, width=self.console.width)
             )
-        html = self.console.export_html(inline_styles=True, code_format="{code}", clear=True)
+        # Without a theme rich exports the light-terminal palette, whose red is
+        # #800000 — unreadable on the panel's dark background.
+        html = self.console.export_html(
+            theme=MONOKAI, inline_styles=True, code_format="{code}", clear=True
+        )
         # export_html only clears the recorded segments; the sink grows without this.
         self.buffer.seek(0)
         self.buffer.truncate(0)
