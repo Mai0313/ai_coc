@@ -1,0 +1,1183 @@
+from __future__ import annotations
+
+import os
+import time
+from typing import TYPE_CHECKING, Any
+import logging
+from pathlib import Path
+
+from PyQt5.QtGui import QPixmap, QDesktopServices
+from PyQt5.QtCore import (
+    Qt,
+    QUrl,
+    QEvent,
+    QTimer,
+    QBuffer,
+    QObject,
+    QIODevice,
+    QSettings,
+    QByteArray,
+    QThreadPool,
+)
+from PyQt5.QtWidgets import (
+    QLabel,
+    QWidget,
+    QSpinBox,
+    QCheckBox,
+    QComboBox,
+    QGroupBox,
+    QLineEdit,
+    QSplitter,
+    QStatusBar,
+    QTabWidget,
+    QFileDialog,
+    QFormLayout,
+    QHBoxLayout,
+    QHeaderView,
+    QMainWindow,
+    QMessageBox,
+    QPushButton,
+    QVBoxLayout,
+    QApplication,
+    QTableWidget,
+    QTextBrowser,
+    QPlainTextEdit,
+    QTableWidgetItem,
+)
+
+from coc_ai_controller.models import (
+    Frame,
+    ChatRole,
+    AgentAction,
+    ChatMessage,
+    LocatedTarget,
+    UiElementList,
+    AccountRowList,
+    ChatTranscript,
+    GeminiSettings,
+    AccountSnapshot,
+    EmulatorInstance,
+)
+from coc_ai_controller.constants import (
+    APP_NAME,
+    LOG_PATH,
+    UPDATED_DATE,
+    VERSION_LABEL,
+    SCHEMA_VERSION,
+    ACCOUNT_JSON_DIR,
+    MASTER_DB_VERSION,
+    DEFAULT_GEMINI_MODEL,
+    AGENT_PROFILE_VERSION,
+    bundle_root,
+)
+from coc_ai_controller.adapters.ai import AGENT_PROFILE, GeminiClient, vision_prompt
+from coc_ai_controller.adapters.mumu import MuMuAdapter
+from coc_ai_controller.parsers.battle import load_battle_script
+from coc_ai_controller.parsers.village import parse_village, parse_village_text
+from coc_ai_controller.adapters.secrets import SecretStore
+from coc_ai_controller.adapters.database import Database
+
+from .render import CHAT_STYLESHEET, transcript_to_html
+from .workers import Worker, LogBridge, StreamWorker, UiLogHandler
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Iterator
+
+    from PyQt5.QtGui import QDropEvent, QDragEnterEvent
+
+logger = logging.getLogger(__name__)
+
+
+class MainWindow(QMainWindow):
+    def __init__(self) -> None:
+        super().__init__()
+        self.setWindowTitle(f"{APP_NAME} — {VERSION_LABEL}")
+        self.resize(1260, 820)
+        self.pool = QThreadPool.globalInstance()
+        self.db = Database()
+        self.secrets = SecretStore()
+        self.settings = QSettings("Hsien0818666", "CoCAIController")
+        self.mumu: MuMuAdapter | None = None
+        self.instances: list[EmulatorInstance] = []
+        self.active: EmulatorInstance | None = None
+        self.current_frame: Frame | None = None
+        self.chat_image_pending = False
+        self.frame_sequence = 0
+        self.current_account_tag = ""
+        self.running_task_id: int | None = None
+        self.chat = ChatTranscript()
+        # A streamed reply arrives token by token; repaint on a beat instead.
+        self.chat_repaint = QTimer(self)
+        self.chat_repaint.setSingleShot(True)
+        self.chat_repaint.setInterval(120)
+        self.chat_repaint.timeout.connect(self._paint_chat)
+        self.automation_timer = QTimer(self)
+        self.automation_timer.timeout.connect(self.automation_cycle)
+        self.automation_step = 0
+        self.setAcceptDrops(True)
+        self._build_ui()
+        self._attach_log_panel()
+        self.statusBar().showMessage("Ready — 偵測 MuMu 以開始")
+        self.refresh_instances()
+        QTimer.singleShot(6000, self.resume_pending_tasks)
+        QTimer.singleShot(
+            8000, lambda: self.start_automation() if self.auto_on_start.isChecked() else None
+        )
+
+    def _build_ui(self) -> None:
+        self.setStyleSheet("""
+            QMainWindow, QWidget { background: #121722; color: #e8edf7; font-size: 10pt; }
+            QTabWidget::pane { border: 1px solid #2b3548; background: #151c2a; }
+            QTabBar::tab { background: #1d2636; color: #aebbd0; padding: 10px 18px; border: 0; }
+            QTabBar::tab:selected { background: #367bf5; color: white; }
+            QGroupBox { border: 1px solid #33415a; border-radius: 10px; margin-top: 14px; padding: 16px 12px 12px; font-weight: bold; }
+            QGroupBox::title { subcontrol-origin: margin; left: 12px; padding: 0 6px; color: #70a4ff; }
+            QPushButton { background: #2b6de0; color: white; border: 0; border-radius: 6px; padding: 8px 14px; }
+            QPushButton:hover { background: #4385f2; } QPushButton:pressed { background: #1d54b6; }
+            QLineEdit, QPlainTextEdit, QTextBrowser, QComboBox, QTableWidget { background: #0e141f; color: #e8edf7; border: 1px solid #34435d; border-radius: 6px; padding: 6px; }
+            QHeaderView::section { background: #243149; color: #dbe6fa; padding: 6px; border: 0; }
+            QStatusBar { background: #0d121b; color: #91a3c0; }
+        """)
+        central = QWidget()
+        central_layout = QVBoxLayout(central)
+        launcher = QHBoxLayout()
+        launch_game = QPushButton("一鍵啟動《部落衝突》")
+        launch_game.clicked.connect(self.launch_coc)
+        launch_auto = QPushButton("啟動自主循環")
+        launch_auto.clicked.connect(self.start_automation)
+        stop_auto = QPushButton("停止自主循環")
+        stop_auto.clicked.connect(self.stop_automation)
+        self.launch_summary = QLabel("啟動後會檢查 MuMu、ADB、遊戲與未完成任務")
+        launcher.addWidget(launch_game)
+        launcher.addWidget(launch_auto)
+        launcher.addWidget(stop_auto)
+        launcher.addWidget(self.launch_summary, 1)
+        central_layout.addLayout(launcher)
+        tabs = QTabWidget()
+        tabs.addTab(self._emulator_tab(), "模擬器")
+        tabs.addTab(self._account_tab(), "帳號進度")
+        tabs.addTab(self._agent_tab(), "AI 助手")
+        tabs.addTab(self._battle_tab(), "戰鬥準備")
+        tabs.addTab(self._automation_tab(), "自動化控制")
+        tabs.addTab(self._settings_tab(), "設定")
+        tabs.addTab(self._about_tab(), "關於")
+        self.tabs = tabs
+        splitter = QSplitter(Qt.Vertical)
+        splitter.addWidget(tabs)
+        splitter.addWidget(self._log_panel())
+        splitter.setSizes([620, 200])
+        central_layout.addWidget(splitter, 1)
+        self.setCentralWidget(central)
+        self.setStatusBar(QStatusBar())
+
+    def _log_panel(self) -> QGroupBox:
+        self.log_view = QTextBrowser()
+        self.log_view.document().setMaximumBlockCount(2000)
+        self.log_view.setMinimumHeight(110)
+        group = QGroupBox("執行紀錄")
+        layout = QVBoxLayout(group)
+        row = QHBoxLayout()
+        self.log_level = QComboBox()
+        self.log_level.addItems(["INFO", "DEBUG", "WARNING", "ERROR"])
+        self.log_level.setToolTip("DEBUG 會額外記下送給 AI 的完整提示與回覆")
+        self.log_level.currentTextChanged.connect(self._set_log_level)
+        clear = QPushButton("清除")
+        clear.clicked.connect(self.log_view.clear)
+        open_log = QPushButton("開啟記錄檔")
+        open_log.clicked.connect(
+            lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(str(LOG_PATH)))
+        )
+        row.addWidget(QLabel("等級"))
+        row.addWidget(self.log_level)
+        row.addWidget(clear)
+        row.addWidget(open_log)
+        row.addStretch()
+        layout.addLayout(row)
+        layout.addWidget(self.log_view)
+        return group
+
+    def _attach_log_panel(self) -> None:
+        """Route the root logger into the panel; workers emit from other threads."""
+        self.log_bridge = LogBridge()
+        self.log_bridge.message.connect(self._append_log)
+        logging.getLogger().addHandler(UiLogHandler(self.log_bridge))
+        logger.info("%s %s started, log file: %s", APP_NAME, VERSION_LABEL, LOG_PATH)
+
+    def _append_log(self, html: str) -> None:
+        """Append one rich-rendered record, without yanking the view off what is being read."""
+        bar = self.log_view.verticalScrollBar()
+        follow = bar.value() >= bar.maximum() - 4
+        self.log_view.append(html)
+        if follow:
+            bar.setValue(bar.maximum())
+
+    def _set_log_level(self, level: str) -> None:
+        logging.getLogger().setLevel(getattr(logging, level, logging.INFO))
+        logger.warning("Log level is now %s", level)
+
+    def _emulator_tab(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        toolbar = QHBoxLayout()
+        self.instance_combo = QComboBox()
+        self.instance_combo.currentIndexChanged.connect(self._select_instance)
+        for text, fn in (
+            ("重新整理狀態", self.refresh_instances),
+            ("一鍵啟動遊戲", self.launch_coc),
+            ("擷取目前畫面", self.capture),
+            ("關閉模擬器", self.close_emulator),
+        ):
+            button = QPushButton(text)
+            button.clicked.connect(fn)
+            toolbar.addWidget(button)
+        layout.addWidget(QLabel("目前 AI 目標"))
+        layout.addWidget(self.instance_combo)
+        layout.addLayout(toolbar)
+        splitter = QSplitter(Qt.Horizontal)
+        left = QWidget()
+        left_layout = QVBoxLayout(left)
+        self.emulator_details = QPlainTextEdit()
+        self.emulator_details.setReadOnly(True)
+        left_layout.addWidget(self.emulator_details)
+        right = QWidget()
+        right_layout = QVBoxLayout(right)
+        self.frame_label = QLabel("尚無截圖")
+        self.frame_label.setAlignment(Qt.AlignCenter)
+        self.frame_label.setMinimumSize(640, 360)
+        self.frame_label.setStyleSheet("background:#16181d;color:#bbb;border:1px solid #444")
+        right_layout.addWidget(self.frame_label)
+        splitter.addWidget(left)
+        splitter.addWidget(right)
+        splitter.setSizes([360, 850])
+        layout.addWidget(splitter)
+        return page
+
+    def _account_tab(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        row = QHBoxLayout()
+        button = QPushButton("AI 自動取得 JSON")
+        button.clicked.connect(self.ai_import_village)
+        paste = QPushButton("匯入剪貼簿 JSON")
+        paste.clicked.connect(self.import_clipboard_village)
+        file_button = QPushButton("選擇 JSON 檔案")
+        file_button.clicked.connect(self.import_village)
+        self.account_label = QLabel("尚未匯入帳號")
+        row.addWidget(button)
+        row.addWidget(paste)
+        row.addWidget(file_button)
+        row.addWidget(self.account_label)
+        row.addStretch()
+        layout.addLayout(row)
+        self.account_table = QTableWidget(0, 10)
+        self.account_table.setHorizontalHeaderLabels([
+            "Section",
+            "Data ID",
+            "Name",
+            "World",
+            "Category",
+            "Level",
+            "Count",
+            "Next",
+            "Cost",
+            "Time",
+        ])
+        self.account_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
+        self.account_table.horizontalHeader().setStretchLastSection(True)
+        layout.addWidget(self.account_table)
+        self.account_summary = QPlainTextEdit()
+        self.account_summary.setReadOnly(True)
+        self.account_summary.setMaximumHeight(140)
+        layout.addWidget(self.account_summary)
+        return page
+
+    def _agent_tab(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        buttons = QHBoxLayout()
+        teach = QPushButton("儲存為使用者教學")
+        teach.clicked.connect(self.save_teaching)
+        choose_image = QPushButton("選擇圖片")
+        choose_image.clicked.connect(self.choose_chat_image)
+        paste_image = QPushButton("貼上圖片")
+        paste_image.clicked.connect(self.paste_chat_image)
+        buttons.addWidget(choose_image)
+        buttons.addWidget(paste_image)
+        buttons.addWidget(teach)
+        buttons.addStretch()
+        layout.addLayout(buttons)
+        self.chat_image_preview = QLabel("尚未附加圖片（也可以將圖片拖進視窗）")
+        self.chat_image_preview.setAlignment(Qt.AlignCenter)
+        self.chat_image_preview.setMaximumHeight(180)
+        self.chat_image_preview.setStyleSheet(
+            "background:#0e141f;border:1px dashed #486083;border-radius:6px;padding:8px;color:#91a3c0"
+        )
+        layout.addWidget(self.chat_image_preview)
+        self.chat_history = QTextBrowser()
+        self.chat_history.document().setDefaultStyleSheet(CHAT_STYLESHEET)
+        layout.addWidget(self.chat_history)
+        row = QHBoxLayout()
+        self.chat_input = QLineEdit()
+        self.chat_input.setPlaceholderText("Ask or teach the CoC Agent…")
+        self.chat_input.installEventFilter(self)
+        self.chat_input.returnPressed.connect(self.send_chat)
+        send = QPushButton("送出")
+        send.clicked.connect(self.send_chat)
+        row.addWidget(self.chat_input)
+        row.addWidget(send)
+        layout.addLayout(row)
+        return page
+
+    def _say(self, role: ChatRole, heading: str, body: str = "") -> ChatMessage:
+        """Add one entry to the transcript and repaint it."""
+        message = self.chat.add(role, heading, body)
+        self._paint_chat()
+        return message
+
+    def _paint_chat(self) -> None:
+        bar = self.chat_history.verticalScrollBar()
+        follow = bar.value() >= bar.maximum() - 4
+        position = bar.value()
+        self.chat_history.setHtml(transcript_to_html(self.chat))
+        bar.setValue(bar.maximum() if follow else min(position, bar.maximum()))
+
+    def _grow(self, message: ChatMessage, chunk: str) -> None:
+        message.body += chunk
+        if not self.chat_repaint.isActive():
+            self.chat_repaint.start()
+
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:  # noqa: N802 - Qt override
+        if (
+            watched is getattr(self, "chat_input", None)
+            and event.type() == QEvent.KeyPress
+            and event.key() == Qt.Key_V
+            and event.modifiers() & Qt.ControlModifier
+            and not QApplication.clipboard().image().isNull()
+        ):
+            self.paste_chat_image()
+            return True
+        return super().eventFilter(watched, event)
+
+    def _set_chat_image(self, png: bytes, label: str) -> None:
+        pix = QPixmap()
+        if not pix.loadFromData(png):
+            raise ValueError("無法讀取圖片")
+        self.frame_sequence += 1
+        self.current_frame = Frame.create(
+            "uploaded-image", self.current_account_tag, png, self.frame_sequence
+        )
+        self.chat_image_pending = True
+        self.chat_image_preview.setPixmap(
+            pix.scaled(900, 170, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        )
+        self.chat_image_preview.setToolTip(label)
+        self._say("system", f"已附加圖片：{label}")
+
+    def choose_chat_image(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self, "選擇要傳給 AI 的圖片", "", "圖片 (*.png *.jpg *.jpeg *.webp *.bmp)"
+        )
+        if path:
+            try:
+                self._set_chat_image(Path(path).read_bytes(), Path(path).name)
+            except Exception as exc:
+                self._error("圖片載入失敗", str(exc))
+
+    def paste_chat_image(self) -> None:
+        image = QApplication.clipboard().image()
+        if image.isNull():
+            self._error("貼上圖片", "剪貼簿裡沒有圖片")
+            return
+        data = QByteArray()
+        buffer = QBuffer(data)
+        buffer.open(QIODevice.WriteOnly)
+        image.save(buffer, "PNG")
+        self._set_chat_image(bytes(data), "剪貼簿圖片")
+
+    def dragEnterEvent(self, event: QDragEnterEvent) -> None:  # noqa: N802 - Qt override
+        urls = event.mimeData().urls()
+        if urls and Path(urls[0].toLocalFile()).suffix.lower() in {
+            ".png",
+            ".jpg",
+            ".jpeg",
+            ".webp",
+            ".bmp",
+        }:
+            event.acceptProposedAction()
+
+    def dropEvent(self, event: QDropEvent) -> None:  # noqa: N802 - Qt override
+        path = Path(event.mimeData().urls()[0].toLocalFile())
+        try:
+            self._set_chat_image(path.read_bytes(), path.name)
+            self.tabs.setCurrentIndex(2)
+            event.acceptProposedAction()
+        except Exception as exc:
+            self._error("圖片載入失敗", str(exc))
+
+    def _battle_tab(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        row = QHBoxLayout()
+        load = QPushButton("載入戰鬥腳本")
+        load.clicked.connect(self.load_battle)
+        example = QPushButton("載入範例")
+        example.clicked.connect(
+            lambda: self._show_battle(
+                bundle_root() / "battle_scripts" / "BH10_BABY_DRAGON_01.json"
+            )
+        )
+        row.addWidget(load)
+        row.addWidget(example)
+        row.addStretch()
+        layout.addLayout(row)
+        self.battle_view = QPlainTextEdit()
+        self.battle_view.setReadOnly(True)
+        layout.addWidget(self.battle_view)
+        layout.addWidget(
+            QLabel(
+                "V1 boundary: requirements and preparation plan are available. Live tactical battle control remains RESERVED_RL."
+            )
+        )
+        return page
+
+    def _automation_behavior_group(self) -> QGroupBox:
+        behavior = QGroupBox("自主行為")
+        form = QFormLayout(behavior)
+        self.auto_on_start = QCheckBox("開啟 EXE 後自動啟動 MuMu、CoC 並開始巡檢")
+        self.auto_collect = QCheckBox("自主收取主村資源")
+        self.auto_donate = QCheckBox("自主開啟部落聊天室並捐兵")
+        self.auto_upgrade = QCheckBox("自主安排並執行建築升級")
+        self.auto_walls = QCheckBox("自主刷牆")
+        self.auto_attack = QCheckBox("自主搜尋對手並打資源")
+        for key, widget in (
+            ("auto_on_start", self.auto_on_start),
+            ("auto_collect", self.auto_collect),
+            ("auto_donate", self.auto_donate),
+            ("auto_upgrade", self.auto_upgrade),
+            ("auto_walls", self.auto_walls),
+            ("auto_attack", self.auto_attack),
+        ):
+            widget.setChecked(str(self.settings.value(key, "false")).lower() == "true")
+            form.addRow(widget)
+        return behavior
+
+    def _automation_battle_group(self) -> QGroupBox:
+        battle = QGroupBox("進攻與資源門檻")
+        battle_form = QFormLayout(battle)
+        self.auto_script = QComboBox()
+        for path in sorted((bundle_root() / "battle_scripts").glob("*.json")):
+            self.auto_script.addItem(path.stem, str(path))
+        self.min_gold = QSpinBox()
+        self.min_gold.setRange(0, 2000000)
+        self.min_gold.setSingleStep(50000)
+        self.min_elixir = QSpinBox()
+        self.min_elixir.setRange(0, 2000000)
+        self.min_elixir.setSingleStep(50000)
+        self.min_dark = QSpinBox()
+        self.min_dark.setRange(0, 50000)
+        self.min_dark.setSingleStep(500)
+        self.stop_gold = QSpinBox()
+        self.stop_gold.setRange(0, 20000000)
+        self.stop_gold.setSingleStep(100000)
+        self.cycle_minutes = QSpinBox()
+        self.cycle_minutes.setRange(1, 120)
+        for key, widget, default in (
+            ("min_gold", self.min_gold, 500000),
+            ("min_elixir", self.min_elixir, 500000),
+            ("min_dark", self.min_dark, 5000),
+            ("stop_gold", self.stop_gold, 15000000),
+            ("cycle_minutes", self.cycle_minutes, 10),
+        ):
+            widget.setValue(int(self.settings.value(key, default)))
+        battle_form.addRow("進攻腳本", self.auto_script)
+        battle_form.addRow("最低金幣", self.min_gold)
+        battle_form.addRow("最低聖水", self.min_elixir)
+        battle_form.addRow("最低黑水", self.min_dark)
+        battle_form.addRow("金幣達到此值停止刷資源", self.stop_gold)
+        battle_form.addRow("巡檢間隔（分鐘）", self.cycle_minutes)
+        return battle
+
+    def _automation_tab(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.addWidget(self._automation_behavior_group())
+        layout.addWidget(self._automation_battle_group())
+        row = QHBoxLayout()
+        save = QPushButton("儲存自動化設定")
+        save.clicked.connect(self.save_automation)
+        start = QPushButton("立即開始自主運作")
+        start.clicked.connect(self.start_automation)
+        stop = QPushButton("停止自主運作")
+        stop.clicked.connect(self.stop_automation)
+        row.addWidget(save)
+        row.addWidget(start)
+        row.addWidget(stop)
+        row.addStretch()
+        layout.addLayout(row)
+        self.automation_log = QPlainTextEdit()
+        self.automation_log.setReadOnly(True)
+        layout.addWidget(self.automation_log)
+        return page
+
+    def save_automation(self) -> None:
+        for key, widget in (
+            ("auto_on_start", self.auto_on_start),
+            ("auto_collect", self.auto_collect),
+            ("auto_donate", self.auto_donate),
+            ("auto_upgrade", self.auto_upgrade),
+            ("auto_walls", self.auto_walls),
+            ("auto_attack", self.auto_attack),
+        ):
+            self.settings.setValue(key, widget.isChecked())
+        for key, widget in (
+            ("min_gold", self.min_gold),
+            ("min_elixir", self.min_elixir),
+            ("min_dark", self.min_dark),
+            ("stop_gold", self.stop_gold),
+            ("cycle_minutes", self.cycle_minutes),
+        ):
+            self.settings.setValue(key, widget.value())
+        self.settings.setValue("auto_script", self.auto_script.currentData() or "")
+        self.automation_log.appendPlainText("自動化設定已保存。")
+
+    def start_automation(self) -> None:
+        self.save_automation()
+        self.automation_timer.start(self.cycle_minutes.value() * 60000)
+        self.automation_log.appendPlainText("自主運作已啟動；正在執行第一次巡檢。")
+        QTimer.singleShot(100, self.automation_cycle)
+
+    def stop_automation(self) -> None:
+        self.automation_timer.stop()
+        self.automation_log.appendPlainText("已停止建立新的自主任務；目前步驟完成後停止。")
+
+    def automation_cycle(self) -> None:
+        if self.running_task_id is not None or self.db.pending_tasks() or not self.active:
+            return
+        jobs = []
+        if self.auto_collect.isChecked():
+            jobs.append("回到主村，收取所有金礦、聖水收集器和黑水鑽井的資源，完成後回到主村畫面")
+        if self.auto_donate.isChecked():
+            jobs.append("打開部落聊天室，檢查可捐兵請求並依現有軍隊安全捐兵，完成後返回主村")
+        if self.auto_upgrade.isChecked():
+            jobs.append("檢查空閒建築工人與目前資源，依已保存的升級優先順序安排一項建築升級")
+        if self.auto_walls.isChecked():
+            jobs.append("檢查保留資源門檻後，使用超出保留量的資源升級一段城牆")
+        if self.auto_attack.isChecked():
+            script_path = Path(str(self.auto_script.currentData() or ""))
+            script_text = (
+                script_path.read_text(encoding="utf-8-sig") if script_path.is_file() else "{}"
+            )
+            jobs.append(
+                f"使用以下戰鬥腳本搜尋資源村並執行：{script_text}；門檻金幣 {self.min_gold.value()}、聖水 {self.min_elixir.value()}、黑水 {self.min_dark.value()}，符合才進攻並按腳本結束條件收尾"
+            )
+        if not jobs:
+            self.automation_log.appendPlainText("巡檢完成：尚未啟用任何自主行為。")
+            return
+        instruction = jobs[self.automation_step % len(jobs)]
+        self.automation_step += 1
+        task_id = self.db.add_task(instruction)
+        self.automation_log.appendPlainText(f"建立自主任務 #{task_id}：{instruction}")
+        self.execute_agent_command(instruction, task_id)
+
+    def _settings_tab(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        group = QGroupBox("AI／API 設定")
+        form = QFormLayout(group)
+        self.provider_combo = QComboBox()
+        self.provider_combo.addItem("Google Gemini")
+        self.api_key = QLineEdit()
+        self.api_key.setEchoMode(QLineEdit.Password)
+        self.api_key.setPlaceholderText("Stored with Windows DPAPI")
+        self.model_combo = QComboBox()
+        self.model_combo.addItem(
+            str(self.settings.value("gemini_model", DEFAULT_GEMINI_MODEL)) or DEFAULT_GEMINI_MODEL
+        )
+        self.model_combo.setToolTip("按「測試連線並載入模型」後會列出這把金鑰可用的文字模型")
+        # The OpenAI-compatible endpoint the previous release defaulted to is
+        # not a google-genai base URL; drop it rather than carry it forward.
+        saved_endpoint = str(self.settings.value("gemini_endpoint", ""))
+        self.endpoint = QLineEdit("" if "openai" in saved_endpoint.lower() else saved_endpoint)
+        self.endpoint.setPlaceholderText("留空即使用 Google 官方端點")
+        try:
+            self.api_key.setText(self.secrets.load())
+        except Exception:
+            logger.debug("Unable to load the saved API key", exc_info=True)
+        form.addRow("Provider", self.provider_combo)
+        form.addRow("API Key", self.api_key)
+        form.addRow("Model", self.model_combo)
+        form.addRow("Endpoint", self.endpoint)
+        buttons = QHBoxLayout()
+        for text, fn in (
+            ("儲存設定", self.save_api),
+            ("測試連線並載入模型", self.test_api),
+            ("清除 API Key", self.clear_api),
+        ):
+            b = QPushButton(text)
+            b.clicked.connect(fn)
+            buttons.addWidget(b)
+        form.addRow(buttons)
+        layout.addWidget(group)
+        layout.addStretch()
+        return page
+
+    def _about_tab(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        text = QLabel(
+            f"<h1>{APP_NAME}</h1><p>{VERSION_LABEL}</p><p>Updated: {UPDATED_DATE}</p>"
+            f"<p>Master DB: {MASTER_DB_VERSION}<br>Schema: {SCHEMA_VERSION}<br>Agent Profile: {AGENT_PROFILE_VERSION}</p>"
+            "<p>AI General Operator platform. Live battle tactics are reserved for future RL.</p>"
+        )
+        text.setTextFormat(Qt.RichText)
+        layout.addWidget(text)
+        layout.addStretch()
+        return page
+
+    def run_async(
+        self, label: str, fn: Callable[[], Any], done: Callable[[Any], None] | None = None
+    ) -> None:
+        logger.info("Started: %s", label)
+        self.statusBar().showMessage(label)
+        worker = Worker(fn, label)
+        if done:
+            worker.signals.result.connect(done)
+        worker.signals.error.connect(lambda message: self._error(label, message))
+        worker.signals.finished.connect(lambda: self.statusBar().showMessage("Ready"))
+        self.pool.start(worker)
+
+    def run_stream(
+        self,
+        label: str,
+        fn: Callable[[], Iterator[str]],
+        into: ChatMessage,
+        done: Callable[[], None] | None = None,
+    ) -> None:
+        """Grow one transcript entry from a generator running on the pool."""
+        logger.info("Started: %s", label)
+        self.statusBar().showMessage(label)
+
+        failures: list[str] = []
+
+        def failed(message: str) -> None:
+            # Otherwise the dismissed message box leaves an empty reply with no reason.
+            failures.append(message)
+            into.body += f"\n\n**失敗**：{message}"
+            self._error(label, message)
+
+        def finished() -> None:
+            self._paint_chat()
+            self.statusBar().showMessage("Ready")
+            # StreamWorker signals `finished` from a `finally`, so a failed stream
+            # gets here too; `done` may only run when the reply actually arrived.
+            if done and not failures:
+                done()
+
+        worker = StreamWorker(fn, label)
+        worker.signals.delta.connect(lambda chunk: self._grow(into, chunk))
+        worker.signals.error.connect(failed)
+        worker.signals.finished.connect(finished)
+        self.pool.start(worker)
+
+    def _error(self, title: str, message: str) -> None:
+        logger.error("%s: %s", title, message)
+        QMessageBox.critical(self, title, message)
+
+    def refresh_instances(self) -> None:
+        def task() -> tuple[MuMuAdapter, str, list[EmulatorInstance]]:
+            adapter = MuMuAdapter()
+            return adapter, adapter.version(), adapter.enumerate_instances()
+
+        def done(result: tuple[MuMuAdapter, str, list[EmulatorInstance]]) -> None:
+            self.mumu, version, self.instances = result
+            self.instance_combo.blockSignals(True)
+            self.instance_combo.clear()
+            for item in self.instances:
+                self.instance_combo.addItem(
+                    f"{item.name} — {item.state} — ADB {item.adb_serial}", item.emulator_id
+                )
+            self.instance_combo.blockSignals(False)
+            if self.instances:
+                self.instance_combo.setCurrentIndex(0)
+                self._select_instance(0)
+            self.statusBar().showMessage(
+                f"MuMu {version}: {len(self.instances)} instance(s)", 6000
+            )
+
+        self.run_async("Detecting MuMu instances…", task, done)
+
+    def _select_instance(self, index: int) -> None:
+        if 0 <= index < len(self.instances):
+            self.active = self.instances[index]
+            a = self.active
+            self.emulator_details.setPlainText(
+                f"emulator_id: {a.emulator_id}\ninstance_id: {a.index}\nname: {a.name}\nstate: {a.state}\n"
+                f"android: {a.android_version} / ready={a.android_started}\nadb_serial: {a.adb_serial}\n"
+                f"pid: {a.pid}\nmain_hwnd: 0x{a.main_hwnd:X}\nrender_hwnd: 0x{a.render_hwnd:X}\n"
+                f"resolution: {a.resolution}\ndpi: {a.dpi}\nCoC running: {a.coc_running}\naccount_tag: {self.current_account_tag or 'unbound'}"
+            )
+
+    def _require(self) -> tuple[MuMuAdapter, EmulatorInstance]:
+        if not self.mumu or not self.active:
+            raise RuntimeError("請先選擇 MuMu instance")
+        return self.mumu, self.active
+
+    def launch_instance(self) -> None:
+        m, a = self._require()
+        self.run_async(
+            "Launching MuMu…",
+            lambda: m.launch_instance(a.index),
+            lambda _: self.refresh_instances(),
+        )
+
+    def restart_emulator(self) -> None:
+        m, a = self._require()
+        self.run_async(
+            "Restarting MuMu…",
+            lambda: m.restart_instance(a.index),
+            lambda _: self.refresh_instances(),
+        )
+
+    def close_emulator(self) -> None:
+        m, a = self._require()
+        self.run_async(
+            "Closing MuMu…", lambda: m.close_instance(a.index), lambda _: self.refresh_instances()
+        )
+
+    def launch_coc(self) -> None:
+        m, a = self._require()
+        self.run_async(
+            "正在自動啟動部落衝突…",
+            lambda: m.ensure_coc(a.index),
+            lambda _: self.refresh_instances(),
+        )
+
+    def restart_coc(self) -> None:
+        m, a = self._require()
+        self.run_async(
+            "Restarting Clash of Clans…",
+            lambda: m.restart_coc(a),
+            lambda _: self.refresh_instances(),
+        )
+
+    def back(self) -> None:
+        m, a = self._require()
+        self.run_async("Sending Back…", lambda: m.back(a))
+
+    def capture(self) -> None:
+        m, a = self._require()
+
+        def done(png: bytes) -> None:
+            self.frame_sequence += 1
+            self.current_frame = Frame.create(
+                a.emulator_id, self.current_account_tag, png, self.frame_sequence
+            )
+            pix = QPixmap()
+            pix.loadFromData(png)
+            self.frame_label.setPixmap(
+                pix.scaled(self.frame_label.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            )
+            self.statusBar().showMessage(f"Captured {self.current_frame.frame_id}", 7000)
+
+        self.run_async("Capturing current MuMu frame…", lambda: m.screenshot(a), done)
+
+    def import_village(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Import Village JSON", "", "JSON (*.json);;All Files (*)"
+        )
+        if not path:
+            return
+        try:
+            self._apply_village_snapshot(parse_village(path))
+        except Exception as exc:
+            self._error("村莊 JSON 匯入失敗", str(exc))
+
+    def _apply_village_snapshot(self, snapshot: AccountSnapshot) -> None:
+        logger.info(
+            "Importing village snapshot %s (%d entities)", snapshot.tag, len(snapshot.entities)
+        )
+        self.db.save_account(snapshot)
+        safe_tag = "".join(ch for ch in snapshot.tag if ch.isalnum() or ch in "-_#") or "UNKNOWN"
+        saved_path = ACCOUNT_JSON_DIR / f"{safe_tag}.json"
+        saved_path.write_text(snapshot.model_dump_json(indent=2), encoding="utf-8")
+        self.current_account_tag = snapshot.tag
+        rows = self.db.account_rows(snapshot.tag)
+        self.account_label.setText(f"帳號：{snapshot.tag} — {len(rows)} 筆資料")
+        self.account_table.setRowCount(len(rows))
+        for row_index, row in enumerate(rows):
+            values = [
+                row.section,
+                row.data_id,
+                row.name or "UNKNOWN",
+                row.world or "—",
+                row.category or "—",
+                row.level,
+                row.count,
+                row.next_level,
+                row.upgrade_cost,
+                row.upgrade_seconds,
+            ]
+            for column, value in enumerate(values):
+                self.account_table.setItem(
+                    row_index, column, QTableWidgetItem("—" if value is None else str(value))
+                )
+        unknown = sum(1 for row in rows if not row.name)
+        self.account_summary.setPlainText(
+            f"已匯入村莊 JSON，共 {len(rows)} 筆，其中 {unknown} 筆是尚未收錄的 data_id。\n"
+            f"資料庫與 JSON 檔都已保存：{saved_path}"
+        )
+        self._select_instance(self.instance_combo.currentIndex())
+
+    def import_clipboard_village(self) -> None:
+        try:
+            text = QApplication.clipboard().text().strip()
+            logger.info("Clipboard holds %d characters", len(text))
+            if not text:
+                raise ValueError("剪貼簿是空的")
+            self._apply_village_snapshot(parse_village_text(text))
+        except Exception as exc:
+            self._error("剪貼簿 JSON 匯入失敗", str(exc))
+
+    def ai_import_village(self) -> None:
+        m, a = self._require()
+        client = self.gemini_client()
+        self.account_summary.setPlainText("AI 正在尋找 JSON／複製按鈕，請稍候…")
+
+        def locate(png: bytes, goal: str) -> tuple[int, int]:
+            target = client.generate_structured(
+                f"分析這張《部落衝突》畫面並尋找{goal}。x_pct 與 y_pct 是畫面寬高的百分比"
+                "（0 到 100）。找不到時 found=false，並在 reason 用繁體中文說明畫面上看到什麼。",
+                LocatedTarget,
+                png,
+            )
+            logger.info("AI located %s: %s", goal, target.model_dump())
+            if not target.found:
+                raise RuntimeError(f"AI 找不到{goal}：{target.reason}")
+            return int(target.x_pct * 16), int(target.y_pct * 9)
+
+        def task() -> None:
+            active = m.ensure_coc(a.index)
+            png = m.screenshot(active)
+            x, y = locate(png, "可開啟村莊 JSON 資料的入口")
+            m.tap(active, x, y)
+            time.sleep(2)
+            png = m.screenshot(active)
+            x, y = locate(png, "複製完整 JSON 到剪貼簿的按鈕")
+            m.tap(active, x, y)
+            time.sleep(2)
+
+        def done(_: None) -> None:
+            self.import_clipboard_village()
+
+        self.run_async("AI 正在取得村莊 JSON…", task, done)
+
+    def gemini_client(self) -> GeminiClient:
+        return GeminiClient(
+            settings=GeminiSettings(
+                api_key=self.api_key.text(),
+                model=self.model_combo.currentText().strip() or DEFAULT_GEMINI_MODEL,
+                base_url=self.endpoint.text().strip(),
+            )
+        )
+
+    def save_api(self) -> None:
+        try:
+            self.secrets.save(self.api_key.text())
+            self.settings.setValue("gemini_model", self.model_combo.currentText())
+            self.settings.setValue("gemini_endpoint", self.endpoint.text())
+            logger.info("Saved API settings, model=%s", self.model_combo.currentText())
+            QMessageBox.information(self, "Saved", "API Key 已使用 Windows DPAPI 儲存。")
+        except Exception as exc:
+            self._error("Save API Key", str(exc))
+
+    def clear_api(self) -> None:
+        self.secrets.clear()
+        self.api_key.clear()
+        QMessageBox.information(self, "Cleared", "API Key 已清除。")
+
+    def test_api(self) -> None:
+        client = self.gemini_client()
+
+        def task() -> tuple[list[str], str]:
+            # The list has to come first. Testing generation against a model the
+            # endpoint does not serve would raise and leave the picker empty,
+            # which is exactly the situation the picker exists to get out of.
+            models = client.list_text_models()
+            try:
+                return models, client.test()
+            except Exception as exc:
+                logger.warning("Model list loaded but generation failed: %s", exc)
+                return models, f"模型清單已載入，但用 {client.settings.model} 生成失敗：{exc}"
+
+        def done(result: tuple[list[str], str]) -> None:
+            models, answer = result
+            self._fill_model_combo(models)
+            QMessageBox.information(
+                self,
+                "Gemini",
+                f"{answer}\n\n已載入 {len(models)} 個文字模型，可在 Model 選單挑選。",
+            )
+
+        self.run_async("正在測試 Gemini 連線並取得模型清單…", task, done)
+
+    def _fill_model_combo(self, models: list[str]) -> None:
+        if not models:
+            logger.warning(
+                "The endpoint returned no text model; keeping %s", self.model_combo.currentText()
+            )
+            return
+        current = self.model_combo.currentText().strip()
+        self.model_combo.clear()
+        self.model_combo.addItems(models)
+        preferred = current if current in models else DEFAULT_GEMINI_MODEL
+        index = self.model_combo.findText(preferred)
+        self.model_combo.setCurrentIndex(max(index, 0))
+
+    def account_context(self) -> str:
+        if not self.current_account_tag:
+            return "No Village JSON imported."
+        return AccountRowList(
+            self.db.account_rows(self.current_account_tag)[:40]
+        ).model_dump_json()
+
+    def knowledge_context(self) -> str:
+        items = self.db.recent_knowledge(40)
+        return (
+            "\n".join(f"- [{item.status}] {item.statement}" for item in items)
+            or "尚無使用者教學。"
+        )
+
+    def analyze_frame(self) -> None:
+        if not self.current_frame:
+            self.capture()
+            QMessageBox.information(self, "Screenshot", "已開始取得畫面；完成後請再按 Analyze。")
+            return
+        frame = self.current_frame
+        client = self.gemini_client()
+        prompt = vision_prompt(frame.emulator_id, frame.frame_id, self.account_context())
+        analysis = self._say("assistant", f"畫面分析 [{frame.frame_id}]")
+        self.run_stream("AI 正在分析目前畫面…", lambda: client.stream(prompt, frame.png), analysis)
+
+    def live_ai_test(self) -> None:
+        m, a = self._require()
+        client = self.gemini_client()
+        self.tabs.setCurrentIndex(2)
+        self._say("system", "實機測試：正在啟動 CoC、擷取畫面並等待 AI 回覆…")
+        answer = self._say("assistant", "實機 AI 回覆")
+        captured: list[bytes] = []
+
+        def task() -> Iterator[str]:
+            active = m.ensure_coc(a.index)
+            png = m.screenshot(active)
+            captured.append(png)
+            yield from client.stream(
+                "你是部落衝突助手。請用繁體中文簡短回答：你現在看到什麼畫面？列出兩個可見重點。",
+                png,
+            )
+
+        def done() -> None:
+            # Only reached once the whole generator ran, so the capture is there.
+            self.frame_sequence += 1
+            self.current_frame = Frame.create(
+                a.emulator_id, self.current_account_tag, captured[0], self.frame_sequence
+            )
+            proof_path = os.environ.get("COC_LIVE_TEST_SCREENSHOT", "").strip()
+            if proof_path:
+                QTimer.singleShot(800, lambda: self.grab().save(proof_path, "PNG"))
+
+        self.run_stream("實機 AI 測試進行中，請等待回覆…", task, answer, done)
+
+    def send_chat(self) -> None:
+        text = self.chat_input.text().strip()
+        if not text:
+            return
+        should_remember = any(
+            word in text for word in ("記住", "記下", "以後要", "下次要", "我教你")
+        )
+        if should_remember:
+            self.db.add_knowledge(
+                self.active.emulator_id if self.active else "",
+                self.current_frame.frame_id if self.current_frame else "",
+                text,
+                "USER_CONFIRMED",
+            )
+        recent = self.chat.tail(3500)
+        self.chat_input.clear()
+        self._say("user", "你", text)
+        if (
+            any(
+                word in text
+                for word in (
+                    "打開",
+                    "開啟",
+                    "點擊",
+                    "按下",
+                    "進入",
+                    "返回",
+                    "關閉",
+                    "收取",
+                    "捐兵",
+                    "升級",
+                    "刷牆",
+                    "進攻",
+                    "搜尋",
+                )
+            )
+            and self.active
+        ):
+            task_id = self.db.add_task(text)
+            self._say("system", "AI 正在操作 MuMu 並確認畫面，請稍候…")
+            self.execute_agent_command(text, task_id)
+            return
+        frame = self.current_frame if self.chat_image_pending else None
+        context = (
+            f"{AGENT_PROFILE}\n請用繁體中文簡潔回答。\n使用者已確認、必須長期遵守的教學：\n{self.knowledge_context()}\nCurrent account: {self.account_context()}\n"
+            f"Current emulator={self.active.emulator_id if self.active else 'none'}\nRecent conversation:\n{recent}\nUser: {text}"
+        )
+
+        def done() -> None:
+            if frame:
+                self.chat_image_pending = False
+                self.chat_image_preview.clear()
+                self.chat_image_preview.setText("尚未附加圖片（也可以將圖片拖進視窗）")
+
+        client = self.gemini_client()
+        reply = self._say("assistant", "AI 回覆")
+        self.run_stream(
+            "AI 正在回覆…",
+            lambda: client.stream(context, frame.png if frame else None),
+            reply,
+            done,
+        )
+
+    def resume_pending_tasks(self) -> None:
+        if self.running_task_id is not None or not self.active:
+            return
+        pending = self.db.pending_tasks()
+        if pending:
+            item = pending[0]
+            logger.info("Resuming pending task #%d: %s", item.id, item.instruction)
+            self._say("system", f"自動繼續未完成任務 #{item.id}：{item.instruction}")
+            self.tabs.setCurrentIndex(2)
+            self.execute_agent_command(item.instruction, item.id)
+
+    def _apply_agent_action(
+        self, m: MuMuAdapter, active: EmulatorInstance, action: AgentAction
+    ) -> bool:
+        """Perform one AI-proposed action; False when the action is not executable."""
+        if action.action == "tap":
+            m.tap(active, int(action.x_pct * 16), int(action.y_pct * 9))
+        elif action.action == "back":
+            m.back(active)
+        elif action.action == "swipe_up":
+            m.swipe(active, (800, 720), (800, 220), 500)
+        elif action.action == "swipe_down":
+            m.swipe(active, (800, 220), (800, 720), 500)
+        else:
+            return False
+        return True
+
+    def execute_agent_command(self, command: str, task_id: int) -> None:
+        m, a = self._require()
+        client = self.gemini_client()
+        self.running_task_id = task_id
+        self.db.update_task(task_id, "RUNNING", "正在觀察目前畫面")
+        reference_frame = self.current_frame if self.chat_image_pending else None
+
+        def task() -> tuple[bytes, str, bool]:
+            reference = ""
+            if reference_frame:
+                reference = client.generate(
+                    "這是使用者提供的操作參考圖片。請用繁體中文描述目標按鈕文字、外觀、位置，以及要完成的操作。",
+                    reference_frame.png,
+                )
+            active = m.ensure_coc(a.index)
+            last_png = b""
+            max_steps = (
+                25 if any(word in command for word in ("進攻", "戰鬥", "搜尋資源村")) else 8
+            )
+            logger.info("Agent task #%d starts, at most %d steps: %s", task_id, max_steps, command)
+            for step in range(max_steps):
+                self.db.update_task(task_id, "RUNNING", f"第 {step + 1} 步：截圖、判斷與驗證")
+                last_png = m.screenshot(active)
+                elements = UiElementList(m.ui_elements(active)).model_dump_json()
+                prompt = (
+                    f"你正在控制部落衝突。使用者指令：{command}\n"
+                    f"使用者附圖提供的參考：{reference}\n使用者過去確認的操作教學：\n{self.knowledge_context()}\n"
+                    f"MuMu accessibility 可操作元素（優先使用其精確座標）：{elements}\n"
+                    "檢查目前畫面是否已完成：完成就把 done 設為 true，否則從 tap、back、swipe_up、"
+                    "swipe_down 選一個動作；tap 需要 x_pct 與 y_pct，兩者都是畫面寬高的百分比（0 到 100）。"
+                    "message 一律用繁體中文說明你的判斷。"
+                    f"授權狀態：自主升級={self.auto_upgrade.isChecked()}，刷牆={self.auto_walls.isChecked()}，自主進攻={self.auto_attack.isChecked()}。"
+                    "只有對應授權為 true 才能花費遊戲資源或進攻；禁止花費寶石、現金、刪除或帳號操作。"
+                )
+                action = client.generate_structured(prompt, AgentAction, last_png)
+                logger.info("Agent step %d/%d: %s", step + 1, max_steps, action.model_dump())
+                if action.done:
+                    return last_png, action.message or "指令已完成", True
+                if not self._apply_agent_action(m, active, action):
+                    return last_png, action.message or "AI 無法安全執行這個操作", False
+                time.sleep(2)
+            return last_png, f"已執行操作，但 {max_steps} 次畫面確認後仍無法確認完成。", False
+
+        def done(result: tuple[bytes, str, bool]) -> None:
+            png, message, completed = result
+            self.frame_sequence += 1
+            self.current_frame = Frame.create(
+                a.emulator_id, self.current_account_tag, png, self.frame_sequence
+            )
+            self.chat_image_pending = False
+            self._say("assistant", "AI 操作結果", message)
+            self.db.update_task(task_id, "COMPLETED" if completed else "PENDING", message)
+            self.running_task_id = None
+            proof_path = os.environ.get("COC_AGENT_SCREENSHOT", "").strip()
+            if proof_path:
+                QTimer.singleShot(800, lambda: self.grab().save(proof_path, "PNG"))
+            if completed:
+                QTimer.singleShot(1200, self.resume_pending_tasks)
+
+        self.run_async("AI 正在操作並確認 MuMu 畫面…", task, done)
+
+    def save_teaching(self) -> None:
+        statement = self.chat_input.text().strip()
+        if not statement:
+            QMessageBox.information(self, "Teaching", "請先在輸入框輸入教學內容。")
+            return
+        self.db.add_knowledge(
+            self.active.emulator_id if self.active else "",
+            self.current_frame.frame_id if self.current_frame else "",
+            statement,
+            "USER_CONFIRMED",
+        )
+        self._say("system", "TEACHING [USER_CONFIRMED]", statement)
+        self.chat_input.clear()
+
+    def load_battle(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(self, "Load Battle Script", "", "JSON (*.json)")
+        if path:
+            self._show_battle(Path(path))
+
+    def _show_battle(self, path: Path) -> None:
+        try:
+            script = load_battle_script(path)
+            lines = [
+                f"Script: {script.script_id}",
+                f"Name: {script.display_name}",
+                f"World: {script.world}",
+                f"Controller: {script.battle_controller.kind}",
+                "",
+                "Requirements:",
+            ]
+            for category, values in script.army_requirements.categories():
+                lines.append(f"  {category}:")
+                for value in values:
+                    lines.append(f"    - {value.data_id} {value.name} required={value.required}")
+            lines += [
+                "",
+                "Preparation state: REQUIREMENTS_LOADED",
+                "Next: account/army verification through AI semantic vision.",
+                "Enemy Preview handoff: RESERVED_RL",
+            ]
+            self.battle_view.setPlainText("\n".join(lines))
+        except Exception as exc:
+            self._error("Battle Script", str(exc))

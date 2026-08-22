@@ -26,12 +26,14 @@ Phase 0 and the first runnable Windows MVP are complete. The PyQt5 application i
 - Made the application observable: rotating log file, live 執行紀錄 panel with a level selector, tracebacks for background failures.
 - Moved Gemini onto the `google-genai` SDK with structured output, and every ADB call onto `adbutils` in `adb.py`.
 - Made every structured value a Pydantic model in `models.py`, including the database's inputs and outputs.
+- Split the package into `adapters/`, `parsers/` and `ui/`, matching the three layers the architecture already described.
+- Streamed the AI replies, rendered them as Markdown, and put the run log through `rich` in both the panel and stderr.
 
 ## Important files
 
-`src/coc_ai_controller/app.py`, `mumu.py`, `adb.py`, `ai.py`, `models.py`, `logging_setup.py`, `database.py`, `village.py`, `battle.py`, `battle_scripts/`, `tests/`, `scripts/build.ps1` and [Architecture](architecture.md).
+`src/coc_ai_controller/ui/main_window.py`, `ui/render.py`, `ui/workers.py`, `adapters/mumu.py`, `adapters/adb.py`, `adapters/ai.py`, `adapters/database.py`, `parsers/village.py`, `parsers/battle.py`, `models.py`, `logging_setup.py`, `battle_scripts/`, `tests/`, `scripts/build.ps1` and [Architecture](architecture.md).
 
-For an emulator or runtime review, start from `src/coc_ai_controller/mumu.py`, `src/coc_ai_controller/app.py` and [Database Schema](database-schema.md).
+For an emulator or runtime review, start from `src/coc_ai_controller/adapters/mumu.py`, `src/coc_ai_controller/ui/main_window.py` and [Database Schema](database-schema.md).
 
 ## Architecture
 
@@ -57,6 +59,7 @@ Versioned Agent Profile, Gemini provider, semantic screenshot analysis, contextu
 - The first package exposed a Qt plugin conflict when mumu-cli inherited PyQt variables; source and rebuilt package now remove those variables before each CLI subprocess.
 - Simplicity source is mostly unavailable; reuse confidence is low.
 - Any MyBot code reuse has GPL implications; the current plan is concepts and reference only.
+- `bundle_root()` resolves to `src/` when the application runs from source, so 載入範例 and the automation script picker find no Battle Script until the EXE is packaged, where PyInstaller copies `battle_scripts/` into the bundle. Not yet fixed.
 - Verified source-backed master level/cost/time data and GemCostCalculator rules are incomplete; the UI does not invent values.
 - Autonomous Battle Preparation and navigation through Enemy Preview are not unattended-ready.
 - Gemini features require the user's own valid API key.

@@ -7,9 +7,10 @@ from typing import TYPE_CHECKING
 import logging
 
 import adbutils
+from pydantic import BaseModel
 from defusedxml import ElementTree as ET  # noqa: N817 - the conventional alias for ElementTree
 
-from .models import UiElement, AdbEndpoint
+from coc_ai_controller.models import UiElement, AdbEndpoint
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -27,11 +28,10 @@ def use_adb_executable(path: Path) -> None:
     logger.info("adbutils will use %s", path)
 
 
-class AdbController:
+class AdbController(BaseModel):
     """Every ADB call in the application goes through adbutils, one per serial."""
 
-    def __init__(self, serial: str) -> None:
-        self.endpoint = AdbEndpoint.parse(serial)
+    endpoint: AdbEndpoint
 
     @property
     def serial(self) -> str:

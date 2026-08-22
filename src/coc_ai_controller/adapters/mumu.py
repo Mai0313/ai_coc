@@ -1,70 +1,89 @@
 from __future__ import annotations
 
 import os
-import json
 import time
-from typing import Any
+from typing import TypeVar
 import winreg
 import logging
 from pathlib import Path
 import subprocess
 
+from pydantic import Field, BaseModel, PrivateAttr
+
+from coc_ai_controller.models import (
+    UiElement,
+    AdbEndpoint,
+    MuMuCliResult,
+    MuMuCliVersion,
+    EmulatorInstance,
+    MuMuInstanceTable,
+)
+from coc_ai_controller.constants import COC_PACKAGE
+
 from .adb import AdbController, use_adb_executable
-from .models import UiElement, EmulatorInstance, MuMuInstanceInfo
-from .constants import COC_PACKAGE
 
 logger = logging.getLogger(__name__)
+
+T = TypeVar("T", bound=BaseModel)
 
 
 class MuMuError(RuntimeError):
     pass
 
 
-class MuMuAdapter:
-    def __init__(self, install_root: Path | None = None) -> None:
-        self.install_root = install_root or self.detect_install_path()
-        self.cli = self.install_root / "nx_main" / "mumu-cli.exe"
-        self.adb = self.install_root / "nx_main" / "adb.exe"
+def detect_install_path() -> Path:
+    candidates: list[Path] = []
+    for hive, key in (
+        (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall"),
+        (
+            winreg.HKEY_LOCAL_MACHINE,
+            r"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall",
+        ),
+    ):
+        try:
+            with winreg.OpenKey(hive, key) as parent:
+                for i in range(winreg.QueryInfoKey(parent)[0]):
+                    try:
+                        with winreg.OpenKey(parent, winreg.EnumKey(parent, i)) as child:
+                            name = str(winreg.QueryValueEx(child, "DisplayName")[0])
+                            if "MuMuPlayer" in name:
+                                candidates.append(
+                                    Path(str(winreg.QueryValueEx(child, "InstallLocation")[0]))
+                                )
+                    except OSError:
+                        continue
+        except OSError:
+            pass
+    candidates.extend([
+        Path(r"C:\Program Files\Netease\MuMuPlayer"),
+        Path(r"D:\Program Files\Netease\MuMuPlayer"),
+    ])
+    for candidate in candidates:
+        if (candidate / "nx_main" / "mumu-cli.exe").is_file():
+            return candidate
+    raise MuMuError("找不到支援 mumu-cli 的 MuMuPlayer")
+
+
+class MuMuAdapter(BaseModel):
+    install_root: Path = Field(default_factory=detect_install_path)
+
+    _controllers: dict[str, AdbController] = PrivateAttr(default_factory=dict)
+
+    def model_post_init(self, context: object, /) -> None:
         if not self.cli.is_file():
             raise MuMuError(f"找不到 MuMu CLI：{self.cli}")
         if not self.adb.is_file():
             raise MuMuError(f"找不到 MuMu ADB：{self.adb}")
         use_adb_executable(self.adb)
-        self._controllers: dict[str, AdbController] = {}
         logger.info("MuMu install root: %s", self.install_root)
 
-    @staticmethod
-    def detect_install_path() -> Path:
-        candidates: list[Path] = []
-        for hive, key in (
-            (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall"),
-            (
-                winreg.HKEY_LOCAL_MACHINE,
-                r"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall",
-            ),
-        ):
-            try:
-                with winreg.OpenKey(hive, key) as parent:
-                    for i in range(winreg.QueryInfoKey(parent)[0]):
-                        try:
-                            with winreg.OpenKey(parent, winreg.EnumKey(parent, i)) as child:
-                                name = str(winreg.QueryValueEx(child, "DisplayName")[0])
-                                if "MuMuPlayer" in name:
-                                    candidates.append(
-                                        Path(str(winreg.QueryValueEx(child, "InstallLocation")[0]))
-                                    )
-                        except OSError:
-                            continue
-            except OSError:
-                pass
-        candidates.extend([
-            Path(r"C:\Program Files\Netease\MuMuPlayer"),
-            Path(r"D:\Program Files\Netease\MuMuPlayer"),
-        ])
-        for candidate in candidates:
-            if (candidate / "nx_main" / "mumu-cli.exe").is_file():
-                return candidate
-        raise MuMuError("找不到支援 mumu-cli 的 MuMuPlayer")
+    @property
+    def cli(self) -> Path:
+        return self.install_root / "nx_main" / "mumu-cli.exe"
+
+    @property
+    def adb(self) -> Path:
+        return self.install_root / "nx_main" / "adb.exe"
 
     @staticmethod
     def _flags() -> int:
@@ -103,29 +122,27 @@ class MuMuAdapter:
             raise MuMuError(message or f"命令失敗 ({result.returncode})")
         return result.stdout
 
-    def cli_json(self, *args: str, timeout: float = 15) -> dict[str, Any]:
+    def cli_model(self, model: type[T], *args: str, timeout: float = 15) -> T:
+        """Run one CLI command and validate its JSON answer into `model`."""
         data = self._run([str(self.cli), *args], timeout)
         try:
-            return json.loads(data.decode("utf-8-sig"))
-        except json.JSONDecodeError as exc:
+            return model.model_validate_json(data.decode("utf-8-sig"))
+        except ValueError as exc:
             raise MuMuError(f"無法解析 MuMu CLI 回應：{data[:200]!r}") from exc
 
     def version(self) -> str:
-        return str(self.cli_json("version").get("version", "unknown"))
+        return self.cli_model(MuMuCliVersion, "version").version
 
     def controller(self, serial: str) -> AdbController:
         """One adbutils-backed controller per instance, keyed by its own ADB port."""
         if serial not in self._controllers:
-            self._controllers[serial] = AdbController(serial)
+            self._controllers[serial] = AdbController(endpoint=AdbEndpoint.parse(serial))
         return self._controllers[serial]
 
     def enumerate_instances(self) -> list[EmulatorInstance]:
-        raw = self.cli_json("info", "--vmindex", "all")
+        table = self.cli_model(MuMuInstanceTable, "info", "--vmindex", "all")
         instances: list[EmulatorInstance] = []
-        for value in raw.values():
-            if not isinstance(value, dict) or "index" not in value:
-                continue
-            info = MuMuInstanceInfo.model_validate(value)
+        for info in table.instances():
             resolution = dpi = "unknown"
             coc_running = False
             if info.is_android_started and info.endpoint.ready:
@@ -157,13 +174,13 @@ class MuMuAdapter:
         return sorted(instances, key=lambda item: item.index)
 
     def launch_instance(self, index: int) -> None:
-        self.cli_json("control", "--vmindex", str(index), "launch", timeout=30)
+        self.cli_model(MuMuCliResult, "control", "--vmindex", str(index), "launch", timeout=30)
 
     def restart_instance(self, index: int) -> None:
-        self.cli_json("control", "--vmindex", str(index), "restart", timeout=30)
+        self.cli_model(MuMuCliResult, "control", "--vmindex", str(index), "restart", timeout=30)
 
     def close_instance(self, index: int) -> None:
-        self.cli_json("control", "--vmindex", str(index), "shutdown", timeout=30)
+        self.cli_model(MuMuCliResult, "control", "--vmindex", str(index), "shutdown", timeout=30)
 
     def launch_coc(self, instance: EmulatorInstance) -> None:
         self.controller(instance.adb_serial).launch_app(COC_PACKAGE)

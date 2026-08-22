@@ -1,23 +1,31 @@
 from __future__ import annotations
 
-import json
-from typing import TYPE_CHECKING
+from typing import Any
+from pathlib import Path
 import sqlite3
 from datetime import UTC, datetime
 import threading
 from contextlib import closing
 
-from .models import AccountRow, TaskRecord, KnowledgeItem, RegistryEntry, AccountSnapshot
-from .constants import DB_PATH, SCHEMA_VERSION, MASTER_DB_VERSION
+from pydantic import BaseModel, PrivateAttr
 
-if TYPE_CHECKING:
-    from pathlib import Path
+from coc_ai_controller.models import (
+    AccountRow,
+    TaskRecord,
+    KnowledgeItem,
+    RegistryEntry,
+    AccountSnapshot,
+)
+from coc_ai_controller.constants import DB_PATH, SCHEMA_VERSION, MASTER_DB_VERSION
 
 
-class Database:
-    def __init__(self, path: Path = DB_PATH) -> None:
-        self.path = path
-        self._lock = threading.RLock()
+class Database(BaseModel):
+    path: Path = DB_PATH
+
+    # threading.RLock is a factory, so the lock it returns has no public type name.
+    _lock: Any = PrivateAttr(default_factory=threading.RLock)
+
+    def model_post_init(self, context: object, /) -> None:
         self._initialize()
 
     def connect(self) -> sqlite3.Connection:
@@ -105,7 +113,7 @@ class Database:
         with self._lock, closing(self.connect()) as con, con:
             con.execute(
                 "INSERT OR REPLACE INTO account_snapshots VALUES(?,?,?)",
-                (snapshot.tag, imported, json.dumps(snapshot.raw, ensure_ascii=False)),
+                (snapshot.tag, imported, snapshot.raw.model_dump_json()),
             )
             con.execute("DELETE FROM account_entities WHERE tag=?", (snapshot.tag,))
             for entity in snapshot.entities:
