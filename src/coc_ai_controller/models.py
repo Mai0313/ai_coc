@@ -44,6 +44,21 @@ class AdbEndpoint(BaseModel):
         return cls(host=host or DEFAULT_ADB_HOST, port=int(port) if port.isdigit() else 0)
 
 
+class DisplayTarget(BaseModel):
+    """The display one package's window sits on.
+
+    MuMu runs several Android displays and keeps display 0 on its own launcher, so
+    every capture and every input has to name the one holding the game. The two ids
+    travel together because the numbering schemes differ: `screencap -d` takes the
+    physical id, `input -d` the logical one.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    logical_id: str
+    physical_id: str
+
+
 class MuMuInstanceInfo(BaseModel):
     """One entry of `mumu-cli info --vmindex all`."""
 

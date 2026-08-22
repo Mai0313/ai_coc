@@ -5,9 +5,48 @@ import unittest
 
 import pytest
 
+from coc_ai_controller.adapters.adb import focused_display, physical_display
 from coc_ai_controller.parsers.battle import load_battle_script
 from coc_ai_controller.parsers.village import parse_village
 from coc_ai_controller.adapters.database import Database
+
+# Trimmed from a live MuMu instance: the launcher holds display 0 and the game
+# sits on its own, with the logical and physical ids numbered apart.
+WINDOW_DISPLAYS = """WINDOW MANAGER DISPLAY CONTENTS (dumpsys window displays)
+  Display: mDisplayId=3 (organized)
+    mCurrentFocus=null
+    mFocusedApp=null
+  Display: mDisplayId=0 (organized)
+    mCurrentFocus=null
+    mFocusedApp=ActivityRecord{202723142 u0 app.lawnchair/.LawnchairLauncher t2}
+  Display: mDisplayId=2 (organized)
+    mCurrentFocus=Window{964a007 u0 com.supercell.clashofclans/com.supercell.titan.GameApp}
+    mFocusedApp=ActivityRecord{14144584 u0 com.supercell.clashofclans/com.supercell.titan.GameApp}
+"""
+
+# The same instance after another app took the focus on a display of its own:
+# only the topmost display keeps mCurrentFocus, so the game is left with mFocusedApp.
+UNFOCUSED_DISPLAYS = """WINDOW MANAGER DISPLAY CONTENTS (dumpsys window displays)
+  Display: mDisplayId=2 (organized)
+    mCurrentFocus=null
+    mFocusedApp=ActivityRecord{14144584 u0 com.supercell.clashofclans/com.supercell.titan.GameApp}
+  Display: mDisplayId=4 (organized)
+    mCurrentFocus=Window{f551b42 u0 com.android.documentsui/com.android.documentsui.files.FilesActivity}
+    mFocusedApp=ActivityRecord{185215537 u0 com.android.documentsui/.files.FilesActivity}
+"""
+
+DISPLAY_DEVICES = """Display Devices: size=3
+  DisplayDeviceInfo{"mumuscreen000": uniqueId="local:4619827820427265280", 1080 x 1920}
+  DisplayDeviceInfo{"mumuscreen001": uniqueId="local:4619827767814508545", 1080 x 1920}
+  DisplayDeviceInfo{"mumuscreen002": uniqueId="local:4619826888814064386", 1080 x 1920}
+Logical Displays: size=3
+  mDisplayId=0
+    mBaseDisplayInfo=DisplayInfo{"mumuscreen000", displayId 0, displayGroupId 0, FLAG_SECURE}
+  mDisplayId=2
+    mBaseDisplayInfo=DisplayInfo{"mumuscreen001", displayId 2, displayGroupId 0, FLAG_SECURE}
+  mDisplayId=3
+    mBaseDisplayInfo=DisplayInfo{"mumuscreen002", displayId 3, displayGroupId 0, FLAG_SECURE}
+"""
 
 
 class CoreTests(unittest.TestCase):
@@ -83,6 +122,18 @@ class CoreTests(unittest.TestCase):
             broken.write_text(json.dumps({"script_id": "X"}), encoding="utf-8")
             with pytest.raises(ValueError, match="army_requirements"):
                 load_battle_script(broken)
+
+    def test_display_lookup_picks_the_game_over_the_launcher(self) -> None:
+        logical = focused_display(WINDOW_DISPLAYS, "com.supercell.clashofclans")
+        assert logical == "2"
+        assert physical_display(DISPLAY_DEVICES, logical) == "4619827767814508545"
+
+    def test_display_lookup_survives_another_display_taking_the_focus(self) -> None:
+        assert focused_display(UNFOCUSED_DISPLAYS, "com.supercell.clashofclans") == "2"
+
+    def test_display_lookup_is_empty_when_the_package_has_no_window(self) -> None:
+        assert focused_display(WINDOW_DISPLAYS, "com.example.absent") == ""
+        assert physical_display(DISPLAY_DEVICES, "9") == ""
 
 
 if __name__ == "__main__":

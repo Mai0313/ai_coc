@@ -234,10 +234,12 @@ class MuMuAdapter(BaseModel):
         adb.launch_app(COC_PACKAGE)
 
     def screenshot(self, instance: EmulatorInstance) -> bytes:
-        return self.controller(instance.adb_serial).screenshot()
+        adb = self.controller(instance.adb_serial)
+        return adb.screenshot(adb.display_for(COC_PACKAGE))
 
     def tap(self, instance: EmulatorInstance, x: int, y: int) -> None:
-        self.controller(instance.adb_serial).tap(x, y)
+        adb = self.controller(instance.adb_serial)
+        adb.tap(x, y, adb.display_for(COC_PACKAGE))
 
     def swipe(
         self,
@@ -246,10 +248,12 @@ class MuMuAdapter(BaseModel):
         end: tuple[int, int],
         duration_ms: int,
     ) -> None:
-        self.controller(instance.adb_serial).swipe(start, end, duration_ms)
+        adb = self.controller(instance.adb_serial)
+        adb.swipe(start, end, duration_ms, adb.display_for(COC_PACKAGE))
 
     def back(self, instance: EmulatorInstance) -> None:
-        self.controller(instance.adb_serial).back()
+        adb = self.controller(instance.adb_serial)
+        adb.back(adb.display_for(COC_PACKAGE))
 
     def ui_elements(self, instance: EmulatorInstance) -> list[UiElement]:
         return self.controller(instance.adb_serial).ui_elements()

@@ -1,5 +1,19 @@
 # Development Session Log
 
+## 2026-08-22 — Capturing the display the game is actually on
+
+Task: 擷取目前畫面 failed with `ADB 截圖失敗 … screencap error`, and nothing in the log said why.
+
+Cause: MuMu Player runs three Android displays (`mumuscreen000/001/002`) and opens the game on one of its own, leaving display 0 on the launcher. With more than one display present, `screencap -p` writes `[Warning] Multiple displays were found, but no display id was specified! …` ahead of the PNG, so the decode fails. adbutils turned that into a bare `screencap error`. The same split hit input: `input tap` without `-d` lands on the launcher, so every tap the agent loop made was going to the wrong screen.
+
+Changed: `AdbController.display_for(package)` reads `dumpsys window displays` for the display whose focused window or focused app belongs to the package — only the topmost display carries `mCurrentFocus`, so anything else grabbing the focus would otherwise hide a game that is running perfectly well — then bridges `dumpsys display`'s two id schemes through the display name they share. `screencap -d` takes the physical id, `input -d` the logical one, so `DisplayTarget` carries both. `screenshot`, `tap`, `swipe` and `back` all take one; `MuMuAdapter` looks it up per call, which costs about 80 ms against a 900 ms capture. The screenshot no longer round-trips through Pillow: `screencap -p` already returns PNG bytes, and the PNG magic is checked so a device message ends up in the error instead of a decode failure.
+
+Also: storage moved from `%LOCALAPPDATA%\CoC_AI_Controller\` to `~/.coc_ai\`, same layout, one line in `data_root()`.
+
+Tests: `uv run pytest` (22 passed). Against the live instance: `display_for` returned logical 2 / physical 4619827767814508545, the capture came back as a real 1920x1080 game frame, and a tap at (580, 631) hit the reconnect button in the game's idle dialog.
+
+Known issues: `_apply_agent_action` still converts Gemini's percentages with `x_pct * 16, y_pct * 9`, which assumes a 1600x900 screen while this instance is 1920x1080, so AI taps land about 17% short of the target. `ui_elements()` and `screen_geometry()` still read display 0.
+
 ## 2026-08-22 — Streaming replies, rendered output and a package split
 
 Task: the AI 助手 tab printed one plain-text block after a long silence, the run log was a flat grey wall, several classes still bypassed the Pydantic rule, and the package was twelve flat modules.
