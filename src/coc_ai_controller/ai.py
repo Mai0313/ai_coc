@@ -1,200 +1,140 @@
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
-import json
 import time
 import base64
-from typing import Any
-import urllib.error
-import urllib.parse
-import urllib.request
+from typing import TYPE_CHECKING, Any, TypeVar, cast
+import logging
+
+from google import genai
+from pydantic import BaseModel, ValidationError
+from google.genai import types, errors, interactions
+
+if TYPE_CHECKING:
+    from .models import GeminiSettings
+
+logger = logging.getLogger(__name__)
+
+T = TypeVar("T", bound=BaseModel)
+
+# The endpoint also lists image, speech and embedding models. The controller
+# only ever sends a prompt plus a screenshot and expects text back.
+NON_TEXT_MODEL_TAGS = (
+    "tts",
+    "audio",
+    "speech",
+    "image",
+    "video",
+    "veo",
+    "imagen",
+    "embedding",
+    "aqa",
+)
 
 
-class AIProvider(ABC):
-    @abstractmethod
-    def generate(self, prompt: str, image_png: bytes | None = None) -> str: ...
+class GeminiClient:
+    """The single place the application talks to Gemini, through google-genai."""
 
-
-class GoogleGeminiProvider(AIProvider):
-    def __init__(self, api_key: str, model: str = "gemini-2.5-flash", base_url: str = "") -> None:
-        self.api_key = api_key.strip()
-        self.model = model.strip() or "gemini-2.5-flash"
-        self.base_url = base_url.strip().rstrip("/")
-        self.last_model = self.model
+    def __init__(self, settings: GeminiSettings) -> None:
+        self.settings = settings
+        self._client: genai.Client | None = None
 
     @property
-    def openai_compatible(self) -> bool:
-        return "/openai" in self.base_url.lower()
+    def client(self) -> genai.Client:
+        """Built lazily so a missing key surfaces on the worker thread, not in a slot."""
+        if self._client is None:
+            if not self.settings.api_key.strip():
+                raise ValueError("尚未設定 Gemini API Key")
+            self._client = genai.Client(
+                api_key=self.settings.api_key.strip(),
+                http_options=types.HttpOptions(base_url=self.settings.base_url)
+                if self.settings.base_url.strip()
+                else None,
+            )
+        return self._client
 
-    def _openai_request(
-        self, path: str, payload: dict[str, Any] | None = None, timeout: int | None = None
-    ) -> dict[str, Any]:
-        data = json.dumps(payload).encode("utf-8") if payload is not None else None
-        request = urllib.request.Request(  # noqa: S310 - endpoint is an HTTPS API configured by the user
-            self.base_url + path,
-            data=data,
-            headers={
-                "Authorization": f"Bearer {self.api_key}",
-                "Content-Type": "application/json",
-            },
-            method="GET" if payload is None else "POST",
-        )
-        request_timeout = timeout or (180 if payload is not None else 30)
-        for attempt in range(3):
-            try:
-                with urllib.request.urlopen(request, timeout=request_timeout) as response:  # noqa: S310
-                    return json.loads(response.read().decode("utf-8"))
-            except urllib.error.HTTPError as exc:
-                detail = exc.read().decode("utf-8", errors="replace")[:1200]
-                if exc.code in (429, 500, 502, 503, 504) and attempt < 2:
-                    time.sleep(2 + attempt * 2)
-                    continue
-                raise RuntimeError(f"Gemini OpenAI-compatible HTTP {exc.code}: {detail}") from exc
-            except (TimeoutError, urllib.error.URLError) as exc:
-                if attempt < 2:
-                    time.sleep(2 + attempt * 2)
-                    continue
-                raise RuntimeError("Gemini 等待超過限制，已自動重試 3 次。請稍後再試。") from exc
-        raise RuntimeError("Gemini 請求失敗")
-
-    def list_models(self) -> list[dict[str, Any]]:
-        if not self.api_key:
-            raise ValueError("尚未設定 Gemini API Key")
-        if self.openai_compatible:
-            return [
-                {"name": item.get("id", ""), "supportedGenerationMethods": ["generateContent"]}
-                for item in self._openai_request("/models").get("data", [])
-            ]
-        key = urllib.parse.quote(self.api_key, safe="")
-        request = urllib.request.Request(
-            f"https://generativelanguage.googleapis.com/v1beta/models?key={key}",
-            headers={"Accept": "application/json"},
-            method="GET",
-        )
-        try:
-            with urllib.request.urlopen(request, timeout=20) as response:  # noqa: S310 - fixed Google HTTPS endpoint
-                raw = json.loads(response.read().decode("utf-8"))
-        except urllib.error.HTTPError as exc:
-            detail = exc.read().decode("utf-8", errors="replace")[:1000]
-            raise RuntimeError(f"Gemini model list HTTP {exc.code}: {detail}") from exc
-        return [
-            item
-            for item in raw.get("models", [])
-            if "generateContent" in item.get("supportedGenerationMethods", [])
-        ]
-
-    def _text_model_names(self) -> list[str]:
-        """Model IDs the endpoint exposes that can answer a text prompt."""
-        names = [str(item.get("name", "")).removeprefix("models/") for item in self.list_models()]
-        return [
-            n
-            for n in names
-            if n and not any(tag in n.lower() for tag in ("tts", "audio", "speech"))
-        ]
-
-    def _generate_once(self, model_name: str, prompt: str, image_png: bytes | None) -> str:
-        parts: list[dict[str, Any]] = [{"text": prompt}]
-        if image_png:
-            parts.append({
-                "inline_data": {
-                    "mime_type": "image/png",
-                    "data": base64.b64encode(image_png).decode("ascii"),
-                }
-            })
-        payload = json.dumps({
-            "contents": [{"role": "user", "parts": parts}],
-            "generationConfig": {"temperature": 0.2},
-        }).encode("utf-8")
-        model = urllib.parse.quote(model_name, safe="-._")
-        key = urllib.parse.quote(self.api_key, safe="")
-        request = urllib.request.Request(
-            f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={key}",
-            data=payload,
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
-        with urllib.request.urlopen(request, timeout=45) as response:  # noqa: S310 - fixed Google HTTPS endpoint
-            raw = json.loads(response.read().decode("utf-8"))
-        candidates = raw.get("candidates") or []
-        if not candidates:
-            raise RuntimeError(f"Gemini 沒有回傳內容：{raw}")
-        return "\n".join(
-            part.get("text", "") for part in candidates[0].get("content", {}).get("parts", [])
-        ).strip()
-
-    def _generate_openai_compatible(self, prompt: str, image_png: bytes | None) -> str:
-        # CC Switch's compatibility endpoint may expose different model IDs
-        # than Google's native endpoint. Resolve a text-capable model first.
-        text_names = self._text_model_names()
-        if text_names and self.model not in text_names:
-            preferred = [n for n in text_names if "flash" in n.lower()] or text_names
-            self.model = preferred[0]
+    def _create(
+        self, prompt: str, image_png: bytes | None, response_format: dict[str, Any] | None = None
+    ) -> str:
         content: list[dict[str, Any]] = [{"type": "text", "text": prompt}]
         if image_png:
             content.append({
-                "type": "image_url",
-                "image_url": {
-                    "url": "data:image/png;base64," + base64.b64encode(image_png).decode("ascii")
-                },
+                "type": "image",
+                "data": base64.b64encode(image_png).decode("ascii"),
+                "mime_type": "image/png",
             })
-        payload = {
-            "model": self.model,
-            "messages": [{"role": "user", "content": content}],
-            "temperature": 0.2,
-        }
+        body: dict[str, Any] = {"model": self.settings.model, "input": content}
+        if response_format:
+            body["response_format"] = response_format
+        logger.info(
+            "Gemini request: model=%s prompt=%d chars image=%s structured=%s",
+            self.settings.model,
+            len(prompt),
+            f"{len(image_png)} bytes" if image_png else "none",
+            bool(response_format),
+        )
+        logger.debug("Gemini prompt: %s", prompt)
+        started = time.monotonic()
         try:
-            raw = self._openai_request("/chat/completions", payload)
-        except RuntimeError as exc:
-            if not any(code in str(exc) for code in ("HTTP 404", "HTTP 503", "HTTP 400")):
-                raise
-            text_names = self._text_model_names()
-            preferred = [n for n in text_names if "flash" in n.lower()] or text_names
-            fallback = next((n for n in preferred if n != self.model), None)
-            if not fallback:
-                raise RuntimeError(
-                    f"模型 {self.model} 不存在，且端點沒有回傳可用模型。請在 Settings 填入 CC Switch 顯示的模型名稱。"
-                ) from exc
-            payload["model"] = fallback
-            raw = self._openai_request("/chat/completions", payload)
-            self.last_model = fallback
-            prefix = f"[自動改用端點可用模型：{fallback}]\n"
-        else:
-            prefix = ""
-        choices = raw.get("choices") or []
-        if not choices:
-            raise RuntimeError(f"Gemini OpenAI-compatible 沒有回傳內容：{raw}")
-        self.last_model = payload["model"]
-        return prefix + str(choices[0].get("message", {}).get("content", "")).strip()
+            # create() also returns a Stream when stream=True, which this never sets.
+            interaction = cast("interactions.Interaction", self.client.interactions.create(**body))
+        except errors.APIError as exc:
+            logger.exception("Gemini request failed on model %s", self.settings.model)
+            raise RuntimeError(f"Gemini 請求失敗（{self.settings.model}）：{exc}") from exc
+        text = (interaction.output_text or "").strip()
+        logger.info(
+            "Gemini replied in %.1fs with %d chars (status=%s)",
+            time.monotonic() - started,
+            len(text),
+            interaction.status,
+        )
+        logger.debug("Gemini reply: %s", text)
+        if not text:
+            raise RuntimeError(f"Gemini 沒有回傳內容，status={interaction.status}")
+        return text
 
     def generate(self, prompt: str, image_png: bytes | None = None) -> str:
-        if not self.api_key:
-            raise ValueError("尚未設定 Gemini API Key")
-        if self.openai_compatible:
-            return self._generate_openai_compatible(prompt, image_png)
+        return self._create(prompt, image_png)
+
+    def generate_structured(
+        self, prompt: str, schema: type[T], image_png: bytes | None = None
+    ) -> T:
+        """Ask for one JSON object and hand back the validated Pydantic model."""
+        text = self._create(
+            prompt,
+            image_png,
+            {
+                "type": "text",
+                "mime_type": "application/json",
+                "schema": schema.model_json_schema(),
+            },
+        )
         try:
-            result = self._generate_once(self.model, prompt, image_png)
-            self.last_model = self.model
-            return result
-        except urllib.error.HTTPError as exc:
-            detail = exc.read().decode("utf-8", errors="replace")[:1000]
-            if exc.code != 404:
-                raise RuntimeError(f"Gemini API HTTP {exc.code}: {detail}") from exc
-            models = self.list_models()
-            preferred = ("gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash")
-            candidates = [str(item.get("name", "")).removeprefix("models/") for item in models]
-            fallback = next((name for name in preferred if name in candidates), None) or (
-                candidates[0] if candidates else None
-            )
-            if not fallback:
-                raise RuntimeError(
-                    f"指定模型 {self.model} 不可用，且 API 沒有可用 generateContent 模型。"
-                ) from exc
-            result = self._generate_once(fallback, prompt, image_png)
-            self.last_model = fallback
-            return f"[自動改用可用模型：{fallback}]\n{result}"
+            return schema.model_validate_json(text)
+        except ValidationError as exc:
+            logger.error("Gemini reply did not match %s: %s", schema.__name__, text)
+            raise RuntimeError(f"Gemini 回覆不符合 {schema.__name__} 格式：{text[:500]}") from exc
+
+    def list_text_models(self) -> list[str]:
+        """Model IDs on this endpoint that can answer a prompt with text."""
+        try:
+            models = list(self.client.models.list())
+        except errors.APIError as exc:
+            logger.exception("Listing Gemini models failed")
+            raise RuntimeError(f"無法取得模型清單：{exc}") from exc
+        candidates: list[tuple[str, list[str]]] = []
+        for model in models:
+            name = (model.name or "").removeprefix("models/")
+            if name and not any(tag in name.lower() for tag in NON_TEXT_MODEL_TAGS):
+                candidates.append((name, list(model.supported_actions or [])))
+        # Older endpoints report generateContent; newer ones may report nothing.
+        # Falling back to the name filter keeps the picker from coming up empty.
+        generative = [name for name, actions in candidates if "generateContent" in actions]
+        names = sorted(set(generative or [name for name, _ in candidates]))
+        logger.info("Gemini endpoint exposes %d text models", len(names))
+        return names
 
     def test(self) -> str:
-        return self.generate("Reply with exactly: CoC AI Controller connected")
+        return self._create("Reply with exactly: CoC AI Controller connected", None)
 
 
 AGENT_PROFILE = """You are the CoC AI Controller general operator. You understand Clash of Clans screens, account state, UI, buildings, troops and heroes. You navigate, prepare armies, search opponents, verify actions, teach and discover. You do not perform live battle tactics; at Enemy Preview you reserve handoff to an RL battle controller. Never invent account or master-data facts. For proposed actions include emulator_id and frame_id and explain the verification condition. Treat user teaching as USER_CONFIRMED knowledge."""

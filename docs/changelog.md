@@ -1,5 +1,24 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- 執行紀錄 panel under the tabs, mirroring every log record live, with a level selector (DEBUG shows full AI prompts and replies) and a shortcut to the rotating log file in `%LOCALAPPDATA%\CoC_AI_Controller\logs\`.
+- Model picker in Settings: 測試連線並載入模型 verifies the API key and fills the dropdown with the text models the endpoint exposes.
+- `AdbController` (`adb.py`), an adbutils-backed wrapper that owns every ADB call; `MuMuAdapter` keeps one per instance, so each emulator is addressed through its own ADB port.
+
+### Changed
+
+- Gemini now goes through the `google-genai` SDK's Interactions API instead of hand-rolled HTTP; the OpenAI-compatible code path is gone.
+- Agent actions and on-screen target lookups use structured output validated into `AgentAction` / `LocatedTarget` instead of hand-parsing JSON out of markdown fences.
+- Default model is `gemini-3.5-flash`; a saved OpenAI-compatible endpoint is ignored on load because it is not a valid google-genai base URL.
+- Every structured value is a Pydantic model in `models.py`: village entities, account rows, knowledge, tasks, battle requirements, MuMu CLI payloads, UI elements and AI replies. `Database` takes and returns models, and saved account JSON is written with `model_dump_json`.
+
+### Fixed
+
+- Background failures no longer disappear: `Worker` logs the traceback before the message box, and `sys.excepthook` records what Qt used to swallow.
+
 ## VER 0.1.0 — 2026-08-22
 
 ### Added

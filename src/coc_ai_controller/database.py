@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 import sqlite3
 from datetime import UTC, datetime
 import threading
 from contextlib import closing
 
+from .models import AccountRow, TaskRecord, KnowledgeItem, RegistryEntry, AccountSnapshot
 from .constants import DB_PATH, SCHEMA_VERSION, MASTER_DB_VERSION
 
 if TYPE_CHECKING:
@@ -94,45 +95,46 @@ class Database:
                 ],
             )
 
-    def lookup(self, data_id: int) -> sqlite3.Row | None:
+    def lookup(self, data_id: int) -> RegistryEntry | None:
         with closing(self.connect()) as con:
-            return con.execute("SELECT * FROM id_registry WHERE data_id=?", (data_id,)).fetchone()
+            row = con.execute("SELECT * FROM id_registry WHERE data_id=?", (data_id,)).fetchone()
+        return RegistryEntry.model_validate(dict(row)) if row else None
 
-    def save_account(self, tag: str, raw: dict[str, Any], entities: list[dict[str, Any]]) -> None:
+    def save_account(self, snapshot: AccountSnapshot) -> None:
         imported = datetime.now(UTC).isoformat()
         with self._lock, closing(self.connect()) as con, con:
             con.execute(
                 "INSERT OR REPLACE INTO account_snapshots VALUES(?,?,?)",
-                (tag, imported, json.dumps(raw, ensure_ascii=False)),
+                (snapshot.tag, imported, json.dumps(snapshot.raw, ensure_ascii=False)),
             )
-            con.execute("DELETE FROM account_entities WHERE tag=?", (tag,))
-            for entity in entities:
+            con.execute("DELETE FROM account_entities WHERE tag=?", (snapshot.tag,))
+            for entity in snapshot.entities:
                 con.execute(
                     """INSERT OR REPLACE INTO account_entities
                     (tag,section,data_id,level,count,raw_json) VALUES(?,?,?,?,?,?)""",
                     (
-                        tag,
-                        entity["section"],
-                        entity["data_id"],
-                        entity.get("level"),
-                        entity.get("count", 1),
-                        json.dumps(entity["raw"], ensure_ascii=False),
+                        snapshot.tag,
+                        entity.section,
+                        entity.data_id,
+                        entity.level,
+                        entity.count,
+                        entity.model_dump_json(),
                     ),
                 )
-                if self.lookup(entity["data_id"]) is None:
+                if self.lookup(entity.data_id) is None:
                     con.execute(
                         """INSERT OR IGNORE INTO unknown_entities
                         (data_id,section,first_seen_at,sample_json,status) VALUES(?,?,?,?,?)""",
                         (
-                            entity["data_id"],
-                            entity["section"],
+                            entity.data_id,
+                            entity.section,
                             imported,
-                            json.dumps(entity["raw"], ensure_ascii=False),
+                            entity.model_dump_json(),
                             "UNKNOWN",
                         ),
                     )
 
-    def account_rows(self, tag: str) -> list[dict[str, Any]]:
+    def account_rows(self, tag: str) -> list[AccountRow]:
         with closing(self.connect()) as con:
             rows = con.execute(
                 """SELECT ae.*, ir.name, ir.world, ir.category,
@@ -142,7 +144,7 @@ class Database:
                 WHERE ae.tag=? ORDER BY ae.section, COALESCE(ir.name, ae.data_id)""",
                 (tag,),
             ).fetchall()
-            return [dict(r) for r in rows]
+        return [AccountRow.model_validate(dict(row)) for row in rows]
 
     def add_knowledge(self, emulator_id: str, frame_id: str, statement: str, status: str) -> None:
         with closing(self.connect()) as con, con:
@@ -151,12 +153,12 @@ class Database:
                 (emulator_id, frame_id, statement, status, datetime.now(UTC).isoformat()),
             )
 
-    def recent_knowledge(self, limit: int = 50) -> list[dict[str, Any]]:
+    def recent_knowledge(self, limit: int = 50) -> list[KnowledgeItem]:
         with closing(self.connect()) as con:
             rows = con.execute(
                 "SELECT * FROM knowledge ORDER BY id DESC LIMIT ?", (limit,)
             ).fetchall()
-            return [dict(row) for row in reversed(rows)]
+        return [KnowledgeItem.model_validate(dict(row)) for row in reversed(rows)]
 
     def add_task(self, instruction: str) -> int:
         now = datetime.now(UTC).isoformat()
@@ -169,12 +171,12 @@ class Database:
                 raise RuntimeError("Task insert did not return an identifier")
             return int(cursor.lastrowid)
 
-    def pending_tasks(self) -> list[dict[str, Any]]:
+    def pending_tasks(self) -> list[TaskRecord]:
         with closing(self.connect()) as con:
             rows = con.execute(
                 "SELECT * FROM tasks WHERE status IN ('PENDING','RUNNING') ORDER BY id"
             ).fetchall()
-            return [dict(row) for row in rows]
+        return [TaskRecord.model_validate(dict(row)) for row in rows]
 
     def update_task(self, task_id: int, status: str, progress: str) -> None:
         now = datetime.now(UTC).isoformat()

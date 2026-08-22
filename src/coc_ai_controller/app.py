@@ -8,9 +8,10 @@ from typing import TYPE_CHECKING, Any
 import logging
 from pathlib import Path
 
-from PyQt5.QtGui import QPixmap
+from PyQt5.QtGui import QPixmap, QDesktopServices
 from PyQt5.QtCore import (
     Qt,
+    QUrl,
     QEvent,
     QTimer,
     QBuffer,
@@ -47,23 +48,33 @@ from PyQt5.QtWidgets import (
     QTableWidgetItem,
 )
 
-from .ai import AGENT_PROFILE, GoogleGeminiProvider, vision_prompt
+from .ai import AGENT_PROFILE, GeminiClient, vision_prompt
 from .mumu import MuMuAdapter
 from .battle import load_battle_script
-from .models import Frame, AccountSnapshot, EmulatorInstance
+from .models import (
+    Frame,
+    AgentAction,
+    LocatedTarget,
+    GeminiSettings,
+    AccountSnapshot,
+    EmulatorInstance,
+)
 from .secrets import SecretStore
 from .village import parse_village, parse_village_text
 from .database import Database
 from .constants import (
     APP_NAME,
+    LOG_PATH,
     UPDATED_DATE,
     VERSION_LABEL,
     SCHEMA_VERSION,
     ACCOUNT_JSON_DIR,
     MASTER_DB_VERSION,
+    DEFAULT_GEMINI_MODEL,
     AGENT_PROFILE_VERSION,
     bundle_root,
 )
+from .logging_setup import LOG_FORMAT, TIME_FORMAT, configure_logging
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -80,18 +91,38 @@ class WorkerSignals(QObject):
 
 
 class Worker(QRunnable):
-    def __init__(self, fn: Callable[[], Any]) -> None:
+    def __init__(self, fn: Callable[[], Any], label: str = "") -> None:
         super().__init__()
         self.fn = fn
+        self.label = label
         self.signals = WorkerSignals()
 
     def run(self) -> None:
         try:
             self.signals.result.emit(self.fn())
         except Exception as exc:
+            # Without this the traceback dies inside the thread pool and the
+            # user only ever sees the message box.
+            logger.exception("背景工作失敗：%s", self.label)
             self.signals.error.emit(str(exc))
         finally:
             self.signals.finished.emit()
+
+
+class LogBridge(QObject):
+    message = pyqtSignal(str)
+
+
+class UiLogHandler(logging.Handler):
+    """Mirror every log record into the window's log panel, from any thread."""
+
+    def __init__(self, bridge: LogBridge) -> None:
+        super().__init__()
+        self.bridge = bridge
+        self.setFormatter(logging.Formatter(LOG_FORMAT, TIME_FORMAT))
+
+    def emit(self, record: logging.LogRecord) -> None:
+        self.bridge.message.emit(self.format(record))
 
 
 class MainWindow(QMainWindow):
@@ -116,6 +147,7 @@ class MainWindow(QMainWindow):
         self.automation_step = 0
         self.setAcceptDrops(True)
         self._build_ui()
+        self._attach_log_panel()
         self.statusBar().showMessage("Ready — 偵測 MuMu 以開始")
         self.refresh_instances()
         QTimer.singleShot(6000, self.resume_pending_tasks)
@@ -161,9 +193,51 @@ class MainWindow(QMainWindow):
         tabs.addTab(self._settings_tab(), "設定")
         tabs.addTab(self._about_tab(), "關於")
         self.tabs = tabs
-        central_layout.addWidget(tabs, 1)
+        splitter = QSplitter(Qt.Vertical)
+        splitter.addWidget(tabs)
+        splitter.addWidget(self._log_panel())
+        splitter.setSizes([620, 200])
+        central_layout.addWidget(splitter, 1)
         self.setCentralWidget(central)
         self.setStatusBar(QStatusBar())
+
+    def _log_panel(self) -> QGroupBox:
+        self.log_view = QPlainTextEdit()
+        self.log_view.setReadOnly(True)
+        self.log_view.setMaximumBlockCount(2000)
+        self.log_view.setMinimumHeight(110)
+        group = QGroupBox("執行紀錄")
+        layout = QVBoxLayout(group)
+        row = QHBoxLayout()
+        self.log_level = QComboBox()
+        self.log_level.addItems(["INFO", "DEBUG", "WARNING", "ERROR"])
+        self.log_level.setToolTip("DEBUG 會額外記下送給 AI 的完整提示與回覆")
+        self.log_level.currentTextChanged.connect(self._set_log_level)
+        clear = QPushButton("清除")
+        clear.clicked.connect(self.log_view.clear)
+        open_log = QPushButton("開啟記錄檔")
+        open_log.clicked.connect(
+            lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(str(LOG_PATH)))
+        )
+        row.addWidget(QLabel("等級"))
+        row.addWidget(self.log_level)
+        row.addWidget(clear)
+        row.addWidget(open_log)
+        row.addStretch()
+        layout.addLayout(row)
+        layout.addWidget(self.log_view)
+        return group
+
+    def _attach_log_panel(self) -> None:
+        """Route the root logger into the panel; workers emit from other threads."""
+        self.log_bridge = LogBridge()
+        self.log_bridge.message.connect(self.log_view.appendPlainText)
+        logging.getLogger().addHandler(UiLogHandler(self.log_bridge))
+        logger.info("%s %s started, log file: %s", APP_NAME, VERSION_LABEL, LOG_PATH)
+
+    def _set_log_level(self, level: str) -> None:
+        logging.getLogger().setLevel(getattr(logging, level, logging.INFO))
+        logger.warning("Log level is now %s", level)
 
     def _emulator_tab(self) -> QWidget:
         page = QWidget()
@@ -521,26 +595,28 @@ class MainWindow(QMainWindow):
         self.api_key = QLineEdit()
         self.api_key.setEchoMode(QLineEdit.Password)
         self.api_key.setPlaceholderText("Stored with Windows DPAPI")
-        self.model_name = QLineEdit(str(self.settings.value("gemini_model", "gemini-2.5-flash")))
-        self.endpoint = QLineEdit(
-            str(
-                self.settings.value(
-                    "gemini_endpoint", "https://generativelanguage.googleapis.com/v1beta/openai"
-                )
-            )
+        self.model_combo = QComboBox()
+        self.model_combo.addItem(
+            str(self.settings.value("gemini_model", DEFAULT_GEMINI_MODEL)) or DEFAULT_GEMINI_MODEL
         )
+        self.model_combo.setToolTip("按「測試連線並載入模型」後會列出這把金鑰可用的文字模型")
+        # The OpenAI-compatible endpoint the previous release defaulted to is
+        # not a google-genai base URL; drop it rather than carry it forward.
+        saved_endpoint = str(self.settings.value("gemini_endpoint", ""))
+        self.endpoint = QLineEdit("" if "openai" in saved_endpoint.lower() else saved_endpoint)
+        self.endpoint.setPlaceholderText("留空即使用 Google 官方端點")
         try:
             self.api_key.setText(self.secrets.load())
         except Exception:
             logger.debug("Unable to load the saved API key", exc_info=True)
         form.addRow("Provider", self.provider_combo)
         form.addRow("API Key", self.api_key)
-        form.addRow("Model", self.model_name)
+        form.addRow("Model", self.model_combo)
         form.addRow("Endpoint", self.endpoint)
         buttons = QHBoxLayout()
         for text, fn in (
             ("儲存設定", self.save_api),
-            ("測試連線", self.test_api),
+            ("測試連線並載入模型", self.test_api),
             ("清除 API Key", self.clear_api),
         ):
             b = QPushButton(text)
@@ -567,8 +643,9 @@ class MainWindow(QMainWindow):
     def run_async(
         self, label: str, fn: Callable[[], Any], done: Callable[[Any], None] | None = None
     ) -> None:
+        logger.info("Started: %s", label)
         self.statusBar().showMessage(label)
-        worker = Worker(fn)
+        worker = Worker(fn, label)
         if done:
             worker.signals.result.connect(done)
         worker.signals.error.connect(lambda message: self._error(label, message))
@@ -576,6 +653,7 @@ class MainWindow(QMainWindow):
         self.pool.start(worker)
 
     def _error(self, title: str, message: str) -> None:
+        logger.error("%s: %s", title, message)
         QMessageBox.critical(self, title, message)
 
     def refresh_instances(self) -> None:
@@ -683,73 +761,50 @@ class MainWindow(QMainWindow):
         if not path:
             return
         try:
-            snapshot = parse_village(path)
-            self.db.save_account(snapshot.tag, snapshot.raw, snapshot.entities)
-            self.current_account_tag = snapshot.tag
-            rows = self.db.account_rows(snapshot.tag)
-            self.account_label.setText(f"Account: {snapshot.tag} — {len(rows)} entities")
-            self.account_table.setRowCount(len(rows))
-            for row_index, row in enumerate(rows):
-                values = [
-                    row.get("section"),
-                    row.get("data_id"),
-                    row.get("name") or "UNKNOWN",
-                    row.get("world") or "—",
-                    row.get("category") or "—",
-                    row.get("level"),
-                    row.get("count"),
-                    row.get("next_level"),
-                    row.get("upgrade_cost"),
-                    row.get("upgrade_seconds"),
-                ]
-                for column, value in enumerate(values):
-                    self.account_table.setItem(
-                        row_index, column, QTableWidgetItem("—" if value is None else str(value))
-                    )
-            known = sum(1 for row in rows if row.get("name"))
-            unknown = len(rows) - known
-            self.account_summary.setPlainText(
-                f"Imported tolerant snapshot. Known IDs: {known}; Unknown IDs queued: {unknown}.\nUnknown JSON fields were preserved in the account snapshot."
-            )
-            self._select_instance(self.instance_combo.currentIndex())
+            self._apply_village_snapshot(parse_village(path))
         except Exception as exc:
-            self._error("Village JSON import failed", str(exc))
+            self._error("村莊 JSON 匯入失敗", str(exc))
 
     def _apply_village_snapshot(self, snapshot: AccountSnapshot) -> None:
-        self.db.save_account(snapshot.tag, snapshot.raw, snapshot.entities)
+        logger.info(
+            "Importing village snapshot %s (%d entities)", snapshot.tag, len(snapshot.entities)
+        )
+        self.db.save_account(snapshot)
         safe_tag = "".join(ch for ch in snapshot.tag if ch.isalnum() or ch in "-_#") or "UNKNOWN"
         saved_path = ACCOUNT_JSON_DIR / f"{safe_tag}.json"
-        saved_path.write_text(
-            json.dumps(snapshot.raw, ensure_ascii=False, indent=2), encoding="utf-8"
-        )
+        saved_path.write_text(snapshot.model_dump_json(indent=2), encoding="utf-8")
         self.current_account_tag = snapshot.tag
         rows = self.db.account_rows(snapshot.tag)
         self.account_label.setText(f"帳號：{snapshot.tag} — {len(rows)} 筆資料")
         self.account_table.setRowCount(len(rows))
         for row_index, row in enumerate(rows):
             values = [
-                row.get("section"),
-                row.get("data_id"),
-                row.get("name") or "UNKNOWN",
-                row.get("world") or "—",
-                row.get("category") or "—",
-                row.get("level"),
-                row.get("count"),
-                row.get("next_level"),
-                row.get("upgrade_cost"),
-                row.get("upgrade_seconds"),
+                row.section,
+                row.data_id,
+                row.name or "UNKNOWN",
+                row.world or "—",
+                row.category or "—",
+                row.level,
+                row.count,
+                row.next_level,
+                row.upgrade_cost,
+                row.upgrade_seconds,
             ]
             for column, value in enumerate(values):
                 self.account_table.setItem(
                     row_index, column, QTableWidgetItem("—" if value is None else str(value))
                 )
+        unknown = sum(1 for row in rows if not row.name)
         self.account_summary.setPlainText(
-            f"已匯入村莊 JSON，共 {len(rows)} 筆。\n資料庫與 JSON 檔都已保存：{saved_path}"
+            f"已匯入村莊 JSON，共 {len(rows)} 筆，其中 {unknown} 筆是尚未收錄的 data_id。\n"
+            f"資料庫與 JSON 檔都已保存：{saved_path}"
         )
+        self._select_instance(self.instance_combo.currentIndex())
 
     def import_clipboard_village(self) -> None:
         try:
             text = QApplication.clipboard().text().strip()
+            logger.info("Clipboard holds %d characters", len(text))
             if not text:
                 raise ValueError("剪貼簿是空的")
             self._apply_village_snapshot(parse_village_text(text))
@@ -758,19 +813,20 @@ class MainWindow(QMainWindow):
 
     def ai_import_village(self) -> None:
         m, a = self._require()
-        provider = self.provider()
+        client = self.gemini_client()
         self.account_summary.setPlainText("AI 正在尋找 JSON／複製按鈕，請稍候…")
 
         def locate(png: bytes, goal: str) -> tuple[int, int]:
-            prompt = (
-                "分析這張 MuMu 畫面並尋找" + goal + "。只回傳 JSON："
-                '{"found":true,"x_pct":50.0,"y_pct":50.0}。座標是畫面百分比；找不到則 found=false。'
+            target = client.generate_structured(
+                f"分析這張《部落衝突》畫面並尋找{goal}。x_pct 與 y_pct 是畫面寬高的百分比"
+                "（0 到 100）。找不到時 found=false，並在 reason 用繁體中文說明畫面上看到什麼。",
+                LocatedTarget,
+                png,
             )
-            raw = provider.generate(prompt, png).strip().replace("```json", "").replace("```", "")
-            data = json.loads(raw[raw.find("{") : raw.rfind("}") + 1])
-            if not data.get("found"):
-                raise RuntimeError(f"AI 找不到{goal}")
-            return int(float(data["x_pct"]) * 16), int(float(data["y_pct"]) * 9)
+            logger.info("AI located %s: %s", goal, target.model_dump())
+            if not target.found:
+                raise RuntimeError(f"AI 找不到{goal}：{target.reason}")
+            return int(target.x_pct * 16), int(target.y_pct * 9)
 
         def task() -> None:
             active = m.ensure_coc(a.index)
@@ -788,16 +844,21 @@ class MainWindow(QMainWindow):
 
         self.run_async("AI 正在取得村莊 JSON…", task, done)
 
-    def provider(self) -> GoogleGeminiProvider:
-        return GoogleGeminiProvider(
-            self.api_key.text(), self.model_name.text(), self.endpoint.text()
+    def gemini_client(self) -> GeminiClient:
+        return GeminiClient(
+            GeminiSettings(
+                api_key=self.api_key.text(),
+                model=self.model_combo.currentText().strip() or DEFAULT_GEMINI_MODEL,
+                base_url=self.endpoint.text().strip(),
+            )
         )
 
     def save_api(self) -> None:
         try:
             self.secrets.save(self.api_key.text())
-            self.settings.setValue("gemini_model", self.model_name.text())
+            self.settings.setValue("gemini_model", self.model_combo.currentText())
             self.settings.setValue("gemini_endpoint", self.endpoint.text())
+            logger.info("Saved API settings, model=%s", self.model_combo.currentText())
             QMessageBox.information(self, "Saved", "API Key 已使用 Windows DPAPI 儲存。")
         except Exception as exc:
             self._error("Save API Key", str(exc))
@@ -808,21 +869,53 @@ class MainWindow(QMainWindow):
         QMessageBox.information(self, "Cleared", "API Key 已清除。")
 
     def test_api(self) -> None:
-        self.run_async(
-            "Testing Gemini connection…",
-            self.provider().test,
-            lambda result: QMessageBox.information(self, "Gemini", result),
-        )
+        client = self.gemini_client()
+
+        def task() -> tuple[list[str], str]:
+            # The list has to come first. Testing generation against a model the
+            # endpoint does not serve would raise and leave the picker empty,
+            # which is exactly the situation the picker exists to get out of.
+            models = client.list_text_models()
+            try:
+                return models, client.test()
+            except Exception as exc:
+                logger.warning("Model list loaded but generation failed: %s", exc)
+                return models, f"模型清單已載入，但用 {client.settings.model} 生成失敗：{exc}"
+
+        def done(result: tuple[list[str], str]) -> None:
+            models, answer = result
+            self._fill_model_combo(models)
+            QMessageBox.information(
+                self,
+                "Gemini",
+                f"{answer}\n\n已載入 {len(models)} 個文字模型，可在 Model 選單挑選。",
+            )
+
+        self.run_async("正在測試 Gemini 連線並取得模型清單…", task, done)
+
+    def _fill_model_combo(self, models: list[str]) -> None:
+        if not models:
+            logger.warning(
+                "The endpoint returned no text model; keeping %s", self.model_combo.currentText()
+            )
+            return
+        current = self.model_combo.currentText().strip()
+        self.model_combo.clear()
+        self.model_combo.addItems(models)
+        preferred = current if current in models else DEFAULT_GEMINI_MODEL
+        index = self.model_combo.findText(preferred)
+        self.model_combo.setCurrentIndex(max(index, 0))
 
     def account_context(self) -> str:
         if not self.current_account_tag:
             return "No Village JSON imported."
-        return json.dumps(self.db.account_rows(self.current_account_tag)[:40], ensure_ascii=False)
+        rows = self.db.account_rows(self.current_account_tag)[:40]
+        return json.dumps([row.model_dump() for row in rows], ensure_ascii=False)
 
     def knowledge_context(self) -> str:
         items = self.db.recent_knowledge(40)
         return (
-            "\n".join(f"- [{item['status']}] {item['statement']}" for item in items)
+            "\n".join(f"- [{item.status}] {item.statement}" for item in items)
             or "尚無使用者教學。"
         )
 
@@ -832,12 +925,12 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "Screenshot", "已開始取得畫面；完成後請再按 Analyze。")
             return
         frame = self.current_frame
-        provider = self.provider()
+        client = self.gemini_client()
         prompt = vision_prompt(frame.emulator_id, frame.frame_id, self.account_context())
         self.chat_history.appendPlainText("\nAI 正在分析目前畫面，請稍候…")
         self.run_async(
             "AI 正在分析目前畫面…",
-            lambda: provider.generate(prompt, frame.png),
+            lambda: client.generate(prompt, frame.png),
             lambda result: self.chat_history.appendPlainText(
                 f"\n畫面分析 [{frame.frame_id}]\n{result}\n"
             ),
@@ -845,13 +938,14 @@ class MainWindow(QMainWindow):
 
     def live_ai_test(self) -> None:
         m, a = self._require()
+        client = self.gemini_client()
         self.tabs.setCurrentIndex(2)
         self.chat_history.appendPlainText("\n實機測試：正在啟動 CoC、擷取畫面並等待 AI 回覆…")
 
         def task() -> tuple[bytes, str]:
             active = m.ensure_coc(a.index)
             png = m.screenshot(active)
-            answer = self.provider().generate(
+            answer = client.generate(
                 "你是部落衝突助手。請用繁體中文簡短回答：你現在看到什麼畫面？列出兩個可見重點。",
                 png,
             )
@@ -924,10 +1018,9 @@ class MainWindow(QMainWindow):
                 self.chat_image_preview.clear()
                 self.chat_image_preview.setText("尚未附加圖片（也可以將圖片拖進視窗）")
 
+        client = self.gemini_client()
         self.run_async(
-            "AI 正在思考…",
-            lambda: self.provider().generate(context, frame.png if frame else None),
-            done,
+            "AI 正在思考…", lambda: client.generate(context, frame.png if frame else None), done
         )
 
     def resume_pending_tasks(self) -> None:
@@ -936,24 +1029,24 @@ class MainWindow(QMainWindow):
         pending = self.db.pending_tasks()
         if pending:
             item = pending[0]
+            logger.info("Resuming pending task #%d: %s", item.id, item.instruction)
             self.chat_history.appendPlainText(
-                f"\n自動繼續未完成任務 #{item['id']}：{item['instruction']}"
+                f"\n自動繼續未完成任務 #{item.id}：{item.instruction}"
             )
             self.tabs.setCurrentIndex(2)
-            self.execute_agent_command(str(item["instruction"]), int(item["id"]))
+            self.execute_agent_command(item.instruction, item.id)
 
     def _apply_agent_action(
-        self, m: MuMuAdapter, active: EmulatorInstance, data: dict[str, Any]
+        self, m: MuMuAdapter, active: EmulatorInstance, action: AgentAction
     ) -> bool:
         """Perform one AI-proposed action; False when the action is not executable."""
-        action = data.get("action")
-        if action == "tap":
-            m.tap(active, int(float(data["x_pct"]) * 16), int(float(data["y_pct"]) * 9))
-        elif action == "back":
+        if action.action == "tap":
+            m.tap(active, int(action.x_pct * 16), int(action.y_pct * 9))
+        elif action.action == "back":
             m.back(active)
-        elif action == "swipe_up":
+        elif action.action == "swipe_up":
             m.swipe(active, (800, 720), (800, 220), 500)
-        elif action == "swipe_down":
+        elif action.action == "swipe_down":
             m.swipe(active, (800, 220), (800, 720), 500)
         else:
             return False
@@ -961,7 +1054,7 @@ class MainWindow(QMainWindow):
 
     def execute_agent_command(self, command: str, task_id: int) -> None:
         m, a = self._require()
-        provider = self.provider()
+        client = self.gemini_client()
         self.running_task_id = task_id
         self.db.update_task(task_id, "RUNNING", "正在觀察目前畫面")
         reference_frame = self.current_frame if self.chat_image_pending else None
@@ -969,7 +1062,7 @@ class MainWindow(QMainWindow):
         def task() -> tuple[bytes, str, bool]:
             reference = ""
             if reference_frame:
-                reference = provider.generate(
+                reference = client.generate(
                     "這是使用者提供的操作參考圖片。請用繁體中文描述目標按鈕文字、外觀、位置，以及要完成的操作。",
                     reference_frame.png,
                 )
@@ -978,31 +1071,27 @@ class MainWindow(QMainWindow):
             max_steps = (
                 25 if any(word in command for word in ("進攻", "戰鬥", "搜尋資源村")) else 8
             )
+            logger.info("Agent task #%d starts, at most %d steps: %s", task_id, max_steps, command)
             for step in range(max_steps):
                 self.db.update_task(task_id, "RUNNING", f"第 {step + 1} 步：截圖、判斷與驗證")
                 last_png = m.screenshot(active)
-                ui_elements = m.ui_elements(active)
+                elements = [element.model_dump() for element in m.ui_elements(active)]
                 prompt = (
                     f"你正在控制部落衝突。使用者指令：{command}\n"
                     f"使用者附圖提供的參考：{reference}\n使用者過去確認的操作教學：\n{self.knowledge_context()}\n"
-                    f"MuMu accessibility 可操作元素（優先使用其精確座標）：{json.dumps(ui_elements, ensure_ascii=False)}\n"
-                    "檢查目前畫面是否已完成。只回傳單一 JSON，不要 markdown："
-                    '{"done":false,"action":"tap|back|swipe_up|swipe_down|none","x_pct":50.0,"y_pct":50.0,"message":"繁體中文說明"}。'
-                    f"若已完成 done=true。授權狀態：自主升級={self.auto_upgrade.isChecked()}，刷牆={self.auto_walls.isChecked()}，自主進攻={self.auto_attack.isChecked()}。"
+                    f"MuMu accessibility 可操作元素（優先使用其精確座標）：{json.dumps(elements, ensure_ascii=False)}\n"
+                    "檢查目前畫面是否已完成：完成就把 done 設為 true，否則從 tap、back、swipe_up、"
+                    "swipe_down 選一個動作；tap 需要 x_pct 與 y_pct，兩者都是畫面寬高的百分比（0 到 100）。"
+                    "message 一律用繁體中文說明你的判斷。"
+                    f"授權狀態：自主升級={self.auto_upgrade.isChecked()}，刷牆={self.auto_walls.isChecked()}，自主進攻={self.auto_attack.isChecked()}。"
                     "只有對應授權為 true 才能花費遊戲資源或進攻；禁止花費寶石、現金、刪除或帳號操作。"
                 )
-                raw = (
-                    provider
-                    .generate(prompt, last_png)
-                    .strip()
-                    .replace("```json", "")
-                    .replace("```", "")
-                )
-                data = json.loads(raw[raw.find("{") : raw.rfind("}") + 1])
-                if data.get("done"):
-                    return last_png, str(data.get("message") or "指令已完成"), True
-                if not self._apply_agent_action(m, active, data):
-                    return last_png, str(data.get("message") or "AI 無法安全執行這個操作"), False
+                action = client.generate_structured(prompt, AgentAction, last_png)
+                logger.info("Agent step %d/%d: %s", step + 1, max_steps, action.model_dump())
+                if action.done:
+                    return last_png, action.message or "指令已完成", True
+                if not self._apply_agent_action(m, active, action):
+                    return last_png, action.message or "AI 無法安全執行這個操作", False
                 time.sleep(2)
             return last_png, f"已執行操作，但 {max_steps} 次畫面確認後仍無法確認完成。", False
 
@@ -1057,9 +1146,7 @@ class MainWindow(QMainWindow):
             for category, values in script.requirements.items():
                 lines.append(f"  {category}:")
                 for value in values:
-                    lines.append(
-                        f"    - {value.get('data_id')} {value.get('name')} required={value.get('required', False)}"
-                    )
+                    lines.append(f"    - {value.data_id} {value.name} required={value.required}")
             lines += [
                 "",
                 "Preparation state: REQUIREMENTS_LOADED",
@@ -1071,7 +1158,14 @@ class MainWindow(QMainWindow):
             self._error("Battle Script", str(exc))
 
 
+def _log_uncaught(kind: type[BaseException], value: BaseException, trace: Any) -> None:  # noqa: ANN401 - matches sys.excepthook
+    """Qt swallows slot exceptions; without this the packaged EXE loses them."""
+    logger.critical("未處理的例外", exc_info=(kind, value, trace))
+
+
 def main() -> int:
+    configure_logging()
+    sys.excepthook = _log_uncaught
     app = QApplication(sys.argv)
     app.setApplicationName(APP_NAME)
     app.setApplicationVersion(VERSION_LABEL)

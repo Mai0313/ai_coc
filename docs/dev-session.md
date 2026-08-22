@@ -1,5 +1,21 @@
 # Development Session Log
 
+## 2026-08-22 — Logging, google-genai and Pydantic
+
+Task: the AI Village-JSON import failed with nothing shown anywhere, so make the application observable, then move AI and ADB onto the libraries meant for them.
+
+Added: `logging_setup.py` and the 執行紀錄 panel; `adb.py` with `AdbController` over adbutils; the Settings model picker fed by `GeminiClient.list_text_models`.
+
+Changed: `ai.py` rewritten on `google-genai` (Interactions API, structured output); `mumu.py` delegates all ADB work to `adb.py`; all structured data is now Pydantic, including `Database` inputs and outputs.
+
+Removed: the OpenAI-compatible Gemini path, the hand-rolled `urllib` request/retry code, and the manual ```` ```json ```` stripping.
+
+Tests: `uv run pytest` (3 passed, coverage 18%); an offscreen `MainWindow` smoke run confirmed the log panel fills, adbutils picks up MuMu's own `adb.exe` and instance `127.0.0.1:16480` is enumerated.
+
+Known issues: the packaged build has not been re-verified since google-genai, adbutils and pydantic joined the dependency set. Screenshots and taps still target the emulator's default display, so an app MuMu opened on a secondary display would be captured and tapped incorrectly.
+
+Next: rerun `scripts/build.ps1` and confirm the EXE, then decide whether display selection needs to be explicit.
+
 ## 2026-08-22 — VER 0.1.0
 
 Task: Produce the first runnable CoC AI Controller Windows MVP after Phase 0.

@@ -4,7 +4,7 @@ import json
 from typing import Any
 from pathlib import Path
 
-from .models import AccountSnapshot
+from .models import VillageEntity, AccountSnapshot
 
 SECTIONS = (
     "buildings",
@@ -37,8 +37,11 @@ def parse_village_text(text: str) -> AccountSnapshot:
     raw = json.loads(text.lstrip("\ufeff").strip())
     if not isinstance(raw, dict):
         raise ValueError("Village JSON root must be an object")
+    # A snapshot the application saved itself keeps the village payload under `raw`.
+    if isinstance(raw.get("raw"), dict) and "entities" in raw:
+        raw = raw["raw"]
     tag = str(raw.get("tag") or raw.get("player_tag") or "UNKNOWN").strip()
-    entities: list[dict[str, Any]] = []
+    entities: list[VillageEntity] = []
     for section in SECTIONS:
         values = raw.get(section, [])
         if not isinstance(values, list):
@@ -49,11 +52,13 @@ def parse_village_text(text: str) -> AccountSnapshot:
             data_id = _integer(item.get("data", item.get("data_id", item.get("id"))))
             if data_id is None:
                 continue
-            entities.append({
-                "section": section,
-                "data_id": data_id,
-                "level": _integer(item.get("lvl", item.get("level"))),
-                "count": _integer(item.get("cnt", item.get("count")), 1) or 1,
-                "raw": item,
-            })
+            entities.append(
+                VillageEntity(
+                    section=section,
+                    data_id=data_id,
+                    level=_integer(item.get("lvl", item.get("level"))),
+                    count=_integer(item.get("cnt", item.get("count")), 1) or 1,
+                    raw=item,
+                )
+            )
     return AccountSnapshot(tag=tag, raw=raw, entities=entities)

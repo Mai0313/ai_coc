@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os
-import re
 import json
 import time
 from typing import Any
@@ -10,9 +9,8 @@ import logging
 from pathlib import Path
 import subprocess
 
-from defusedxml import ElementTree as ET  # noqa: N817 - the conventional alias for ElementTree
-
-from .models import EmulatorInstance
+from .adb import AdbController, use_adb_executable
+from .models import UiElement, EmulatorInstance, MuMuInstanceInfo
 from .constants import COC_PACKAGE
 
 logger = logging.getLogger(__name__)
@@ -31,6 +29,9 @@ class MuMuAdapter:
             raise MuMuError(f"找不到 MuMu CLI：{self.cli}")
         if not self.adb.is_file():
             raise MuMuError(f"找不到 MuMu ADB：{self.adb}")
+        use_adb_executable(self.adb)
+        self._controllers: dict[str, AdbController] = {}
+        logger.info("MuMu install root: %s", self.install_root)
 
     @staticmethod
     def detect_install_path() -> Path:
@@ -112,14 +113,11 @@ class MuMuAdapter:
     def version(self) -> str:
         return str(self.cli_json("version").get("version", "unknown"))
 
-    def adb_run(self, serial: str, *args: str, timeout: float = 12) -> bytes:
-        return self._run([str(self.adb), "-s", serial, *args], timeout)
-
-    def connect(self, serial: str) -> None:
-        self._run([str(self.adb), "connect", serial], 12)
-        state = self.adb_run(serial, "get-state", timeout=6).decode(errors="replace").strip()
-        if state != "device":
-            raise MuMuError(f"ADB 尚未就緒：{state}")
+    def controller(self, serial: str) -> AdbController:
+        """One adbutils-backed controller per instance, keyed by its own ADB port."""
+        if serial not in self._controllers:
+            self._controllers[serial] = AdbController(serial)
+        return self._controllers[serial]
 
     def enumerate_instances(self) -> list[EmulatorInstance]:
         raw = self.cli_json("info", "--vmindex", "all")
@@ -127,49 +125,35 @@ class MuMuAdapter:
         for value in raw.values():
             if not isinstance(value, dict) or "index" not in value:
                 continue
-            index = int(value["index"])
-            serial = f"{value.get('adb_host_ip', '127.0.0.1')}:{value.get('adb_port', 0)}"
+            info = MuMuInstanceInfo.model_validate(value)
             resolution = dpi = "unknown"
             coc_running = False
-            if value.get("is_android_started") and not serial.endswith(":0"):
+            if info.is_android_started and info.endpoint.ready:
                 try:
-                    self.connect(serial)
-                    size = self.adb_run(serial, "shell", "wm", "size", timeout=5).decode(
-                        errors="replace"
-                    )
-                    match = re.findall(r"(\d+)x(\d+)", size)
-                    if match:
-                        width, height = map(int, match[-1])
-                        resolution = f"{max(width, height)}x{min(width, height)}"
-                    density = self.adb_run(serial, "shell", "wm", "density", timeout=5).decode(
-                        errors="replace"
-                    )
-                    match_dpi = re.findall(r"(\d+)", density)
-                    if match_dpi:
-                        dpi = match_dpi[-1]
-                    coc_running = bool(
-                        self.adb_run(serial, "shell", "pidof", COC_PACKAGE, timeout=5).strip()
-                    )
+                    adb = self.controller(info.endpoint.serial)
+                    resolution, dpi = adb.screen_geometry()
+                    coc_running = adb.is_running(COC_PACKAGE)
                 except Exception:
-                    logger.debug("Unable to inspect MuMu instance %s", index, exc_info=True)
+                    logger.warning("Unable to inspect MuMu instance %s", info.index, exc_info=True)
             instances.append(
                 EmulatorInstance(
-                    emulator_id=f"mumu:{index}",
-                    index=index,
-                    name=str(value.get("name", f"MuMu {index}")),
-                    android_version=str(value.get("android_version", "unknown")),
-                    adb_serial=serial,
-                    process_started=bool(value.get("is_process_started")),
-                    android_started=bool(value.get("is_android_started")),
-                    state=str(value.get("player_state", "unknown")),
-                    pid=int(value.get("pid", 0) or 0),
-                    main_hwnd=int(str(value.get("main_wnd", "0")), 16),
-                    render_hwnd=int(str(value.get("render_wnd", "0")), 16),
+                    emulator_id=f"mumu:{info.index}",
+                    index=info.index,
+                    name=info.name or f"MuMu {info.index}",
+                    android_version=info.android_version,
+                    adb_serial=info.endpoint.serial,
+                    process_started=info.is_process_started,
+                    android_started=info.is_android_started,
+                    state=info.player_state,
+                    pid=info.pid,
+                    main_hwnd=info.hwnd("main_wnd"),
+                    render_hwnd=info.hwnd("render_wnd"),
                     resolution=resolution,
                     dpi=dpi,
                     coc_running=coc_running,
                 )
             )
+        logger.info("MuMu reported %d instance(s)", len(instances))
         return sorted(instances, key=lambda item: item.index)
 
     def launch_instance(self, index: int) -> None:
@@ -182,21 +166,11 @@ class MuMuAdapter:
         self.cli_json("control", "--vmindex", str(index), "shutdown", timeout=30)
 
     def launch_coc(self, instance: EmulatorInstance) -> None:
-        self.connect(instance.adb_serial)
-        self.adb_run(
-            instance.adb_serial,
-            "shell",
-            "monkey",
-            "-p",
-            COC_PACKAGE,
-            "-c",
-            "android.intent.category.LAUNCHER",
-            "1",
-            timeout=15,
-        )
+        self.controller(instance.adb_serial).launch_app(COC_PACKAGE)
 
     def ensure_coc(self, index: int) -> EmulatorInstance:
         """Bring one MuMu instance to a running CoC screen, recovering stale launches."""
+        logger.info("Ensuring Clash of Clans is running on MuMu instance %s", index)
         items = self.enumerate_instances()
         current = next((item for item in items if item.index == index), None)
         if current is None:
@@ -208,7 +182,7 @@ class MuMuAdapter:
                 current = next(
                     (item for item in self.enumerate_instances() if item.index == index), current
                 )
-                if current.android_started and not current.adb_serial.endswith(":0"):
+                if current.android_started and current.endpoint.ready:
                     break
         self.launch_coc(current)
         for _ in range(5):
@@ -219,13 +193,14 @@ class MuMuAdapter:
             if current.coc_running:
                 return current
         # MuMu can report Android ready while the first monkey launch is ignored.
+        logger.warning("Clash of Clans did not come up on %s; restarting the instance", index)
         self.restart_instance(index)
         for _ in range(18):
             time.sleep(2)
             current = next(
                 (item for item in self.enumerate_instances() if item.index == index), current
             )
-            if current.android_started and not current.adb_serial.endswith(":0"):
+            if current.android_started and current.endpoint.ready:
                 break
         self.launch_coc(current)
         time.sleep(3)
@@ -237,21 +212,15 @@ class MuMuAdapter:
         return refreshed
 
     def restart_coc(self, instance: EmulatorInstance) -> None:
-        self.connect(instance.adb_serial)
-        self.adb_run(instance.adb_serial, "shell", "am", "force-stop", COC_PACKAGE, timeout=8)
-        self.launch_coc(instance)
+        adb = self.controller(instance.adb_serial)
+        adb.stop_app(COC_PACKAGE)
+        adb.launch_app(COC_PACKAGE)
 
     def screenshot(self, instance: EmulatorInstance) -> bytes:
-        self.connect(instance.adb_serial)
-        data = self.adb_run(instance.adb_serial, "exec-out", "screencap", "-p", timeout=12)
-        if not data.startswith(b"\x89PNG\r\n\x1a\n"):
-            raise MuMuError("MuMu 截圖不是有效 PNG")
-        return data
+        return self.controller(instance.adb_serial).screenshot()
 
     def tap(self, instance: EmulatorInstance, x: int, y: int) -> None:
-        self.adb_run(
-            instance.adb_serial, "shell", "input", "tap", str(int(x)), str(int(y)), timeout=5
-        )
+        self.controller(instance.adb_serial).tap(x, y)
 
     def swipe(
         self,
@@ -260,57 +229,10 @@ class MuMuAdapter:
         end: tuple[int, int],
         duration_ms: int,
     ) -> None:
-        self.adb_run(
-            instance.adb_serial,
-            "shell",
-            "input",
-            "swipe",
-            str(start[0]),
-            str(start[1]),
-            str(end[0]),
-            str(end[1]),
-            str(duration_ms),
-            timeout=8,
-        )
+        self.controller(instance.adb_serial).swipe(start, end, duration_ms)
 
     def back(self, instance: EmulatorInstance) -> None:
-        self.adb_run(instance.adb_serial, "shell", "input", "keyevent", "4", timeout=5)
+        self.controller(instance.adb_serial).back()
 
-    def ui_elements(self, instance: EmulatorInstance) -> list[dict[str, object]]:
-        """Read Android's accessibility hierarchy without extra device agents."""
-        self.connect(instance.adb_serial)
-        elements: list[dict[str, object]] = []
-        try:
-            self.adb_run(
-                instance.adb_serial,
-                "shell",
-                "uiautomator",
-                "dump",
-                "/sdcard/coc_ui.xml",
-                timeout=8,
-            )
-        except MuMuError as exc:
-            if "dumped to" not in str(exc).lower():
-                return elements
-        xml_data = self.adb_run(
-            instance.adb_serial, "shell", "cat", "/sdcard/coc_ui.xml", timeout=5
-        ).decode("utf-8", errors="replace")
-        try:
-            root = ET.fromstring(xml_data[xml_data.find("<?xml") :])
-        except (ET.ParseError, ValueError):
-            return elements
-        for node in root.iter("node"):
-            text = (node.get("text") or node.get("content-desc") or "").strip()
-            bounds = node.get("bounds", "")
-            match = re.fullmatch(r"\[(\d+),(\d+)\]\[(\d+),(\d+)\]", bounds)
-            if not match or not (text or node.get("clickable") == "true"):
-                continue
-            left, top, right, bottom = map(int, match.groups())
-            elements.append({
-                "text": text,
-                "resource_id": node.get("resource-id", ""),
-                "clickable": node.get("clickable") == "true",
-                "x": (left + right) // 2,
-                "y": (top + bottom) // 2,
-            })
-        return elements[:120]
+    def ui_elements(self, instance: EmulatorInstance) -> list[UiElement]:
+        return self.controller(instance.adb_serial).ui_elements()

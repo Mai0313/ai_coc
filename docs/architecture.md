@@ -26,12 +26,14 @@ Application Services
   └─ AccountSyncService
           │ ports
 Infrastructure
-  ├─ MuMuAdapter ── mumu-cli + bundled adb + Win32 HWND verification
-  ├─ GoogleGeminiProvider
-  ├─ Screenshot/Capture providers
+  ├─ MuMuAdapter ── mumu-cli lifecycle + Win32 HWND verification
+  ├─ AdbController ── adbutils, one per instance port (capture, input, uiautomator)
+  ├─ GeminiClient ── google-genai Interactions API, structured output
   ├─ SQLite repositories
   └─ SecureSecretStore (Windows protected storage)
 ```
+
+Every value crossing these boundaries is a Pydantic model declared in `models.py`.
 
 ## Core identities and contracts
 
