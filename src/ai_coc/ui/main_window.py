@@ -61,7 +61,6 @@ from ai_coc.models import (
 from ai_coc.constants import (
     APP_NAME,
     LOG_PATH,
-    UPDATED_DATE,
     VERSION_LABEL,
     SCHEMA_VERSION,
     ACCOUNT_JSON_DIR,
@@ -626,7 +625,7 @@ class MainWindow(QMainWindow):
         page = QWidget()
         layout = QVBoxLayout(page)
         text = QLabel(
-            f"<h1>{APP_NAME}</h1><p>{VERSION_LABEL}</p><p>Updated: {UPDATED_DATE}</p>"
+            f"<h1>{APP_NAME}</h1><p>{VERSION_LABEL}</p>"
             f"<p>Master DB: {MASTER_DB_VERSION}<br>Schema: {SCHEMA_VERSION}<br>Agent Profile: {AGENT_PROFILE_VERSION}</p>"
             "<p>AI General Operator platform. Live battle tactics are reserved for future RL.</p>"
         )

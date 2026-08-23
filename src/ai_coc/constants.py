@@ -4,8 +4,7 @@ from ai_coc import __version__
 
 APP_NAME = "AI CoC"
 
-VERSION_LABEL = f"VER {__version__}"
-UPDATED_DATE = "2026-08-22"
+VERSION_LABEL = f"v{__version__}"
 SCHEMA_VERSION = "1"
 MASTER_DB_VERSION = "seed-2026-08-22"
 AGENT_PROFILE_VERSION = "0.1.0"
