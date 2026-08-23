@@ -51,6 +51,7 @@ from ai_coc.models import (
     ChatRole,
     AgentAction,
     ChatMessage,
+    HeroTimings,
     AttackReport,
     LocatedTarget,
     UiElementList,
@@ -99,6 +100,15 @@ RUN_BUTTON_RUNNING = "background:#c2410c;font-size:12pt;font-weight:bold;border-
 # A finished job queues the next pass straight away, so the loop runs back to
 # back; the interval timer is only what retries when a pass had nothing to do.
 NEXT_CYCLE_DELAY = 3000
+# A queen wants her cloak almost at once; a warden's tome is worth holding until
+# the push is deep enough to be worth saving.
+HERO_ABILITY_FIELDS = (
+    ("king", "野蠻人之王", 20),
+    ("queen", "弓箭女皇", 1),
+    ("warden", "大守護者", 30),
+    ("champion", "皇家守護", 45),
+    ("minion_prince", "飛盾王子", 20),
+)
 
 
 class MainWindow(QMainWindow):
@@ -238,6 +248,21 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.emulator_details)
         return group
 
+    def _hero_ability_group(self) -> QGroupBox:
+        """One delay per hero, not per card slot: an upgrading hero cannot take
+        the field, so its card is absent and every slot after it shifts.
+        """
+        group = QGroupBox("英雄大招時機（落地後幾秒）")
+        form = QFormLayout(group)
+        self.hero_delays: dict[str, QSpinBox] = {}
+        for key, label, default in HERO_ABILITY_FIELDS:
+            box = QSpinBox()
+            box.setRange(0, 180)
+            box.setValue(int(self.settings.value(f"hero_{key}", default)))
+            self.hero_delays[key] = box
+            form.addRow(label, box)
+        return group
+
     def _control_tab(self) -> QWidget:
         """Everything needed to start a run, on one page: pick the emulator, say
         what it should do, press the button bottom right.
@@ -250,6 +275,7 @@ class MainWindow(QMainWindow):
         left_layout.addWidget(self._emulator_group())
         left_layout.addWidget(self._automation_behavior_group())
         left_layout.addWidget(self._automation_battle_group())
+        left_layout.addWidget(self._hero_ability_group())
         left_layout.addStretch()
         right = QWidget()
         right_layout = QVBoxLayout(right)
@@ -514,6 +540,8 @@ class MainWindow(QMainWindow):
             ("cycle_minutes", self.cycle_minutes),
         ):
             self.settings.setValue(key, widget.value())
+        for key, box in self.hero_delays.items():
+            self.settings.setValue(f"hero_{key}", box.value())
         self.automation_log.appendPlainText("自動化設定已保存。")
 
     def toggle_automation(self) -> None:
@@ -605,12 +633,17 @@ class MainWindow(QMainWindow):
         # The client is only used once an opponent has passed the thresholds, to
         # pick the flank and the spell targets; screen reading never needs it.
         planner = self.gemini_client() if self.api_key.text().strip() else None
+        abilities = HeroTimings(**{key: box.value() for key, box in self.hero_delays.items()})
 
         def task() -> AttackReport:
             active = m.ensure_coc(a.index)
             adb = m.controller(active.adb_serial)
             return AttackRunner(
-                adb=adb, display=adb.display_for(COC_PACKAGE), thresholds=thresholds, ai=planner
+                adb=adb,
+                display=adb.display_for(COC_PACKAGE),
+                thresholds=thresholds,
+                abilities=abilities,
+                ai=planner,
             ).run()
 
         def done(report: AttackReport) -> None:

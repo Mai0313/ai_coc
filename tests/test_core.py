@@ -7,7 +7,7 @@ import unittest
 from PIL import Image
 import pytest
 
-from ai_coc.models import LootOffer, LootThresholds
+from ai_coc.models import LootOffer, HeroTimings, LootThresholds
 from ai_coc.ui.attack import (
     PLAYFIELD,
     DEPLOY_END,
@@ -202,6 +202,13 @@ class AttackTests(unittest.TestCase):
         assert len(points) == 8
         assert points[0] == DEPLOY_START
         assert points[-1] == DEPLOY_END
+
+    def test_ability_timing_is_per_hero_not_per_slot(self) -> None:
+        """An upgrading hero has no card at all, so every slot after it shifts."""
+        timings = HeroTimings(queen=1, warden=30)
+        assert timings.seconds("queen") == 1
+        assert timings.seconds("warden") == 30
+        assert timings.seconds("unknown") == timings.unknown
 
     def test_pushing_a_drop_out_moves_it_off_the_middle_and_stays_on_screen(self) -> None:
         point = DEPLOY_START

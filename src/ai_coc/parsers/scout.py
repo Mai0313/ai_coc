@@ -94,6 +94,25 @@ ARMY_DIGIT_TOLERANCE = 22
 REFUSED_BOX = (600, 238, 1010, 278)
 REFUSED_RED = 0.07
 
+# 還在嗎 / 你因閒置過久而中斷連線. A loop that spends minutes waiting for barracks
+# will meet this, and nothing else clears it: the game stops responding to taps
+# until 重新登入遊戲 is pressed. Measured, its flat grey panel fills 0.97 of this
+# box where a village reads 0.14 and even the result screen only 0.45.
+IDLE_DIALOG_BOX = (400, 340, 1200, 560)
+IDLE_DIALOG_DARK = 0.7
+
+
+def idle_disconnected(png: bytes) -> bool:
+    """Whether the idle-disconnect dialog is covering the game."""
+    data = Image.open(io.BytesIO(png)).convert("RGB").crop(IDLE_DIALOG_BOX).tobytes()
+    panel = sum(
+        max(data[i], data[i + 1], data[i + 2]) < 95
+        and max(data[i], data[i + 1], data[i + 2]) - min(data[i], data[i + 1], data[i + 2]) < 30
+        for i in range(0, len(data), 3)
+    )
+    return panel / (len(data) // 3) >= IDLE_DIALOG_DARK
+
+
 # The digits are near-white with a black outline; the village behind them is not.
 INK_BRIGHTNESS = 200
 INK_SATURATION = 70

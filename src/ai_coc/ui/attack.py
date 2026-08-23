@@ -14,9 +14,11 @@ import logging
 from pydantic import BaseModel
 
 from ai_coc.models import (
+    HeroKind,
     LootOffer,
     ScoutView,
     AttackPlan,
+    HeroTimings,
     AttackReport,
     DisplayTarget,
     LootThresholds,
@@ -33,6 +35,7 @@ from ai_coc.parsers.scout import (
     counted_cards,
     deploy_refused,
     attack_menu_open,
+    idle_disconnected,
 )
 
 logger = logging.getLogger(__name__)
@@ -109,8 +112,15 @@ PLAYFIELD = (30, 105, 1570, 700)
 # The refusal banner lingers, so it has to clear before the next probe is read.
 REFUSAL_CLEAR_DELAY = 3
 
-HERO_ABILITY_DELAY = 15
 BATTLE_TIMEOUT = 240
+# Two things routinely cover the home village between runs: a building panel
+# left open by a stray tap, which back closes, and the idle-disconnect dialog,
+# which only a relogin clears and which a loop that waits for barracks will
+# certainly meet.
+RELOGIN_BUTTON = (485, 528)
+RELOGIN_WAIT = 14
+HOME_ATTEMPTS = 3
+HOME_RETRY_DELAY = 3
 # The army screen comes up before the search fee is charged, so a half-trained
 # army can still back out for free rather than paying to attack with nothing.
 MIN_ARMY_RATIO = 0.9
@@ -156,6 +166,7 @@ rage_points：狂暴法術的落點，**剛好 {rage_count} 個，不能少**。
 一瓶狂暴的覆蓋範圍是寬約畫面 15%、高約畫面 13% 的橢圓（畫面是等角視角，所以橫向比縱向寬）。彼此不要重疊，重疊等於整瓶浪費。
 優先蓋在部隊會卡住的地方：外牆的突破口、防禦最密集因而會拖最久的那一段。
 freeze_point：冰凍法術的落點，放在那條路線上防禦火力最強的地方（多座防禦交叉的位置，或單一高等防禦）。
+heroes：畫面最下方那排卡片裡，**英雄卡由左到右**分別是誰，用 king（野蠻人之王）、queen（弓箭女皇）、warden（大守護者）、champion（皇家守護）、minion_prince（飛盾王子）；認不出來的填 unknown。英雄卡是有等級數字、沒有 xN 數量的那幾張，不要把士兵、攻城機器或法術算進去。正在升級的英雄不能出戰，所以卡片會直接消失，順序不是固定的。
 座標是畫面百分比，x_pct 與 y_pct 都是 0 到 100，只能落在村莊範圍內。
 reason 用繁體中文一句話說明為什麼選這一側。"""
 
@@ -172,11 +183,31 @@ class AttackRunner(BaseModel):
     adb: AdbController
     display: DisplayTarget
     thresholds: LootThresholds
+    abilities: HeroTimings = HeroTimings()
     max_skips: int = 20
     ai: GeminiClient | None = None
 
     def _tap(self, point: tuple[int, int]) -> None:
         self.adb.tap(point[0], point[1], self.display)
+
+    def _open_attack_menu(self) -> bool:
+        """Get to the attack menu, clearing whatever is covering the village."""
+        for _ in range(HOME_ATTEMPTS):
+            if idle_disconnected(self.adb.screenshot(self.display)):
+                logger.info("Idle-disconnect dialog is up; logging back in")
+                self._tap(RELOGIN_BUTTON)
+                time.sleep(RELOGIN_WAIT)
+                continue
+            self._tap(HOME_ATTACK)
+            time.sleep(2)
+            if attack_menu_open(self.adb.screenshot(self.display)):
+                return True
+            # Never `back` here: on the home village that is 確定退出遊戲嗎, one
+            # tap away from closing the game. A building panel left open does
+            # not cover the 攻擊 button in the corner anyway, so the tap above
+            # only needs the panel to swallow one press and then retries.
+            time.sleep(HOME_RETRY_DELAY)
+        return False
 
     def _plan(self, frame: bytes, rage_count: int) -> AttackPlan | None:
         if self.ai is None:
@@ -189,10 +220,11 @@ class AttackRunner(BaseModel):
             logger.warning("Attack planning failed; using the fixed flank", exc_info=True)
             return None
         logger.info(
-            "Plan: from %s, %d rage point(s), freeze=%s (%s)",
+            "Plan: from %s, %d rage point(s), freeze=%s, heroes=%s (%s)",
             plan.deploy_from,
             len(plan.rage_points),
             plan.freeze_point is not None,
+            plan.heroes,
             plan.reason,
         )
         return plan
@@ -321,15 +353,36 @@ class AttackRunner(BaseModel):
         for x in followers:
             self.adb.tap_many([(x, CARD_ROW_Y), middle], self.display, gap=SINGLE_DROP_DELAY)
         logger.info("Dropped %d hero card(s) at %s", len(followers), middle)
-        time.sleep(HERO_ABILITY_DELAY)
-        # A hero card taps into its ability once the hero is on the field. Some
-        # card slots overlap the result screen's 回營 button, so this only runs
-        # while the battle is genuinely still on.
+        self._fire_abilities(followers, plan.heroes if plan else [])
+        # Freeze wants the defences the troops are fighting, which is where they
+        # are by now. Some card slots overlap the result screen's 回營 button, so
+        # this only runs while the battle is genuinely still on.
         if read_scout(self.adb.screenshot(self.display)) is None:
             return
-        self.adb.tap_many([(x, CARD_ROW_Y) for x in singles], self.display)
-        # Now the troops are deep in and taking fire, which is what freeze is for.
         self._cast(freezes, (freeze_target,), frame)
+
+    def _fire_abilities(self, heroes: list[int], kinds: list[HeroKind]) -> None:
+        """Tap each hero's card again at its own moment, which is its ability.
+
+        Timing is per hero rather than per card slot: an upgrading hero cannot
+        take the field, so its card is absent and every slot after it shifts.
+        A queen wants her cloak almost immediately, a warden's eternal tome is
+        worth holding until the push is deep enough to be worth saving.
+        """
+        schedule = sorted(
+            (self.abilities.seconds(kinds[i] if i < len(kinds) else "unknown"), x)
+            for i, x in enumerate(heroes)
+        )
+        landed = time.monotonic()
+        for delay, x in schedule:
+            remaining = landed + delay - time.monotonic()
+            if remaining > 0:
+                time.sleep(remaining)
+            if read_scout(self.adb.screenshot(self.display)) is None:
+                logger.info("Battle ended before every ability fired")
+                return
+            self._tap((x, CARD_ROW_Y))
+            logger.info("Fired the ability on the card at %d after %ds", x, delay)
 
     def _cast(self, cards: list[int], targets: tuple[tuple[int, int], ...], frame: bytes) -> None:
         """Empty each spell card over `targets`.
@@ -368,9 +421,7 @@ class AttackRunner(BaseModel):
 
     def run(self) -> AttackReport:
         logger.info("Attack run starts, thresholds=%s", self.thresholds.model_dump())
-        self._tap(HOME_ATTACK)
-        time.sleep(2)
-        if not attack_menu_open(self.adb.screenshot(self.display)):
+        if not self._open_attack_menu():
             logger.warning("The attack menu did not open; the game is not on the home village")
             return AttackReport(message="畫面不在主村，沒有開啟攻擊選單就停手")
         self._tap(FIND_MATCH)

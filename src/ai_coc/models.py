@@ -345,6 +345,29 @@ class ScreenPoint(BaseModel):
         return round(self.x_pct * 16), round(self.y_pct * 9)
 
 
+HeroKind = Literal["king", "queen", "warden", "champion", "minion_prince", "unknown"]
+
+
+class HeroTimings(BaseModel):
+    """How long after landing each hero's ability fires.
+
+    Keyed by hero rather than by card position: a hero being upgraded cannot
+    take the field, so its card is simply absent and every position shifts.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    king: int = 20
+    queen: int = 1
+    warden: int = 30
+    champion: int = 45
+    minion_prince: int = 20
+    unknown: int = 20
+
+    def seconds(self, kind: HeroKind) -> int:
+        return int(getattr(self, kind, self.unknown))
+
+
 class AttackPlan(BaseModel):
     """How to attack one opponent, chosen by reading its scout screen.
 
@@ -356,6 +379,8 @@ class AttackPlan(BaseModel):
     deploy_from: Literal["top_left", "top_right", "bottom_left", "bottom_right"] = "top_left"
     rage_points: list[ScreenPoint] = Field(default_factory=list)
     freeze_point: ScreenPoint | None = None
+    # Left to right, so each hero card can be matched to its own ability timing.
+    heroes: list[HeroKind] = Field(default_factory=list)
     reason: str = ""
 
 
