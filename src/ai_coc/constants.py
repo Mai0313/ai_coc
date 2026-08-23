@@ -1,9 +1,10 @@
-import sys
 from pathlib import Path
 
-APP_NAME = "CoC AI Controller"
-VERSION = "0.1.0"
-VERSION_LABEL = f"VER {VERSION}"
+from ai_coc import __version__
+
+APP_NAME = "AI CoC"
+
+VERSION_LABEL = f"VER {__version__}"
 UPDATED_DATE = "2026-08-22"
 SCHEMA_VERSION = "1"
 MASTER_DB_VERSION = "seed-2026-08-22"
@@ -13,17 +14,13 @@ DEFAULT_GEMINI_MODEL = "gemini-3.5-flash"
 DEFAULT_ADB_HOST = "127.0.0.1"
 
 
-def bundle_root() -> Path:
-    bundle_path = getattr(sys, "_MEIPASS", None)
-    if bundle_path:
-        return Path(bundle_path)
-    if getattr(sys, "frozen", False):
-        return Path(sys.executable).resolve().parent
-    return Path(__file__).resolve().parents[1]
+# Shipped inside the package so a wheel install and a PyInstaller bundle both
+# resolve it the same way as a source checkout.
+BATTLE_SCRIPT_DIR = Path(__file__).resolve().parent / "battle_scripts"
 
 
 def data_root() -> Path:
-    root = Path.home() / ".coc_ai"
+    root = Path.home() / ".ai_coc"
     root.mkdir(parents=True, exist_ok=True)
     return root
 

@@ -45,7 +45,7 @@ from PyQt5.QtWidgets import (
     QTableWidgetItem,
 )
 
-from coc_ai_controller.models import (
+from ai_coc.models import (
     Frame,
     ChatRole,
     AgentAction,
@@ -58,26 +58,26 @@ from coc_ai_controller.models import (
     AccountSnapshot,
     EmulatorInstance,
 )
-from coc_ai_controller.constants import (
+from ai_coc.constants import (
     APP_NAME,
     LOG_PATH,
     UPDATED_DATE,
     VERSION_LABEL,
     SCHEMA_VERSION,
     ACCOUNT_JSON_DIR,
+    BATTLE_SCRIPT_DIR,
     MASTER_DB_VERSION,
     ENTITY_MAPPING_URL,
     DEFAULT_GEMINI_MODEL,
     AGENT_PROFILE_VERSION,
-    bundle_root,
 )
-from coc_ai_controller.adapters.ai import AGENT_PROFILE, GeminiClient, vision_prompt
-from coc_ai_controller.adapters.mumu import MuMuAdapter
-from coc_ai_controller.parsers.battle import load_battle_script
-from coc_ai_controller.parsers.village import parse_village, parse_village_text
-from coc_ai_controller.adapters.mapping import fetch_entity_mapping
-from coc_ai_controller.adapters.secrets import SecretStore
-from coc_ai_controller.adapters.database import Database
+from ai_coc.adapters.ai import AGENT_PROFILE, GeminiClient, vision_prompt
+from ai_coc.adapters.mumu import MuMuAdapter
+from ai_coc.parsers.battle import load_battle_script
+from ai_coc.parsers.village import parse_village, parse_village_text
+from ai_coc.adapters.mapping import fetch_entity_mapping
+from ai_coc.adapters.secrets import SecretStore
+from ai_coc.adapters.database import Database
 
 from .render import CHAT_STYLESHEET, transcript_to_html
 from .workers import Worker, LogBridge, StreamWorker, UiLogHandler
@@ -425,9 +425,7 @@ class MainWindow(QMainWindow):
         load.clicked.connect(self.load_battle)
         example = QPushButton("載入範例")
         example.clicked.connect(
-            lambda: self._show_battle(
-                bundle_root() / "battle_scripts" / "BH10_BABY_DRAGON_01.json"
-            )
+            lambda: self._show_battle(BATTLE_SCRIPT_DIR / "BH10_BABY_DRAGON_01.json")
         )
         row.addWidget(load)
         row.addWidget(example)
@@ -468,7 +466,7 @@ class MainWindow(QMainWindow):
         battle = QGroupBox("進攻與資源門檻")
         battle_form = QFormLayout(battle)
         self.auto_script = QComboBox()
-        for path in sorted((bundle_root() / "battle_scripts").glob("*.json")):
+        for path in sorted(BATTLE_SCRIPT_DIR.glob("*.json")):
             self.auto_script.addItem(path.stem, str(path))
         self.min_gold = QSpinBox()
         self.min_gold.setRange(0, 2000000)

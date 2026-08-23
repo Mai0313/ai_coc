@@ -9,7 +9,7 @@ import adbutils
 from pydantic import BaseModel
 from defusedxml import ElementTree as ET  # noqa: N817 - the conventional alias for ElementTree
 
-from coc_ai_controller.models import UiElement, AdbEndpoint, DisplayTarget
+from ai_coc.models import UiElement, AdbEndpoint, DisplayTarget
 
 if TYPE_CHECKING:
     from pathlib import Path

@@ -9,14 +9,8 @@ from contextlib import closing
 
 from pydantic import BaseModel, PrivateAttr
 
-from coc_ai_controller.models import (
-    AccountRow,
-    TaskRecord,
-    KnowledgeItem,
-    RegistryEntry,
-    AccountSnapshot,
-)
-from coc_ai_controller.constants import DB_PATH, SCHEMA_VERSION, MASTER_DB_VERSION
+from ai_coc.models import AccountRow, TaskRecord, KnowledgeItem, RegistryEntry, AccountSnapshot
+from ai_coc.constants import DB_PATH, SCHEMA_VERSION, MASTER_DB_VERSION
 
 
 class Database(BaseModel):

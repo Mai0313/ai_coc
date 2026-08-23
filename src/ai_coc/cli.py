@@ -7,9 +7,11 @@ import logging
 from PyQt5.QtCore import QTimer
 from PyQt5.QtWidgets import QApplication
 
-from .constants import APP_NAME, VERSION_LABEL
-from .logging_setup import configure_logging
-from .ui.main_window import MainWindow
+# PyInstaller runs this file as `__main__`, which has no package context, so these
+# stay absolute even for same-layer modules.
+from ai_coc.constants import APP_NAME, VERSION_LABEL
+from ai_coc.logging_setup import configure_logging
+from ai_coc.ui.main_window import MainWindow
 
 logger = logging.getLogger(__name__)
 
@@ -40,3 +42,7 @@ def main() -> int:
 
             QTimer.singleShot(2500, run_command)
     return app.exec_()
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

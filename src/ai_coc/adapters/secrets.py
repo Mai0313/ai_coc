@@ -7,7 +7,7 @@ from pathlib import Path
 
 from pydantic import Field, BaseModel
 
-from coc_ai_controller.constants import data_root
+from ai_coc.constants import APP_NAME, data_root
 
 
 class DATA_BLOB(ctypes.Structure):  # noqa: N801 - mirrors the Win32 struct name
@@ -26,7 +26,7 @@ class SecretStore(BaseModel):
         source, _keep = _blob(value.encode("utf-8"))
         output = DATA_BLOB()
         if not ctypes.windll.crypt32.CryptProtectData(
-            ctypes.byref(source), "CoC AI Controller", None, None, None, 0, ctypes.byref(output)
+            ctypes.byref(source), APP_NAME, None, None, None, 0, ctypes.byref(output)
         ):
             raise ctypes.WinError()
         try:
