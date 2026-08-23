@@ -10,7 +10,7 @@ so a checked-in copy could only ever go stale.
 import re
 from pathlib import Path
 
-from ai_coc import package_name, __version__
+from ai_coc import __version__, package_name
 from ai_coc.constants import APP_NAME
 
 OUTPUT = Path(__file__).resolve().parents[1] / "version_info.txt"
@@ -34,11 +34,9 @@ def main() -> None:
     # Windows wants exactly four integers, so pad; a dev version such as
     # 0.2.3.dev2 already carries four and keeps its build number.
     found = [int(number) for number in re.findall(r"\d+", __version__)]
-    numbers = tuple((found + [0, 0, 0, 0])[:4])
+    numbers = tuple(([*found, 0, 0, 0, 0])[:4])
     OUTPUT.write_text(
-        TEMPLATE.format(
-            numbers=numbers, version=__version__, name=APP_NAME, package=package_name
-        ),
+        TEMPLATE.format(numbers=numbers, version=__version__, name=APP_NAME, package=package_name),
         encoding="utf-8",
     )
 
