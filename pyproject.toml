@@ -105,6 +105,9 @@ test = [
     "pytest-cov",
     "pytest-xdist[psutil]",
 ]
+build = [
+    "pyinstaller>=6.21",
+]
 docs = [
     "anyio",
     "fire",

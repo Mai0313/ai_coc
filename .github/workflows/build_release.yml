@@ -57,9 +57,20 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Install dependencies
+        run: uv sync --group test --group build
+
+      # The app reads its own version from the installed metadata, which
+      # `--copy-metadata` snapshots, so the bump has to happen before PyInstaller
+      # runs or every build reports pyproject's placeholder.
+      - name: Update Version
+        shell: bash
         run: |
-          uv add pyinstaller
-          uv sync --no-dev
+          VERSION=$(uvx dunamai from git --bump --no-metadata --style pep440)
+          uv version $VERSION --frozen
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+
+      - name: Run tests
+        run: uv run pytest
 
       - name: Packaging to Executable file
         run: |
@@ -74,9 +85,10 @@ jobs:
           $ErrorActionPreference = "Stop"
           $dest = "dist/${{ matrix.target }}"
           New-Item -ItemType Directory -Force -Path $dest | Out-Null
-          $version = "${env:GITHUB_REF_NAME}".Substring(1)
           $name = "${{ github.event.repository.name }}"
-          $zip = "$name-v$version-${{ matrix.friendly_id }}.zip"
+          # Named from the resolved version, not the ref: a manual dispatch runs
+          # from a branch, where the tag name is not there to slice a "v" off.
+          $zip = "$name-v$env:VERSION-${{ matrix.friendly_id }}.zip"
           # onedir leaves a folder, onefile a bare .exe; both sit directly under dist\.
           $payload = if ("${{ env.PACKAGE_MODE }}" -eq "onefile") { "dist\$name.exe" } else { "dist\$name" }
           Compress-Archive -Path $payload -DestinationPath "$dest\$zip" -Force
@@ -139,7 +151,10 @@ jobs:
         run: |
           uv build
 
+      # A dispatch run builds and checks; only a tag may reach PyPI, where a
+      # version number cannot be taken back once it is published.
       - name: Publish Package
+        if: startsWith(github.ref, 'refs/tags/')
         continue-on-error: true
         env:
           UV_PUBLISH_TOKEN: ${{ secrets.UV_PUBLISH_TOKEN }}
@@ -162,6 +177,8 @@ jobs:
       - build
       - package
     runs-on: ubuntu-latest
+    # Without this a dispatch run from main creates a Release tagged "main".
+    if: startsWith(github.ref, 'refs/tags/')
 
     steps:
       - name: Download artifacts

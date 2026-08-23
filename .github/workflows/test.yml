@@ -73,8 +73,10 @@ jobs:
         run: |
           uv run pytest -vv | tee .coverage.txt
 
+      # There is no issue to comment on outside a pull request, so a push to main
+      # would fail this step on all three matrix legs.
       - name: Pytest coverage comment
-        if: ${{ steps.check_tests.outputs.has_tests == 'true' }}
+        if: ${{ github.event_name == 'pull_request' && steps.check_tests.outputs.has_tests == 'true' }}
         uses: MishaKav/pytest-coverage-comment@main
         with:
           pytest-coverage-path: ./.coverage.txt

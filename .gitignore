@@ -218,3 +218,21 @@ __marimo__/
 /data/
 /docs/
 TODO.md
+
+# Secrets and local configuration
+.env.*
+!.env.example
+*.key
+*.pem
+*.p12
+secrets/
+config/settings.json
+
+# Private runtime/account data. COC_LIVE_TEST_SCREENSHOT and COC_AGENT_SCREENSHOT
+# write frames of a live account wherever they are pointed.
+data/accounts/
+data/runtime/
+screenshots/
+captures/
+adbkey
+adbkey.pub
