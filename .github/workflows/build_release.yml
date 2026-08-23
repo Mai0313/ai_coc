@@ -73,7 +73,7 @@ jobs:
         run: uv run pytest
 
       - name: Generate the Windows version resource
-        run: uv run python scripts/gen_version_file.py
+        run: uv run python scripts/gen_version_file.py $env:VERSION
 
       - name: Packaging to Executable file
         run: |
