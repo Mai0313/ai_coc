@@ -13,39 +13,37 @@ Read `gh-dev-flow` before starting; it owns the path from a task landing to the 
 ## Commands
 
 ```bash
-uv sync --group test --group build   # test needs the `test` group; scripts/build.ps1 needs `build`
+uv sync --group test                 # the suite needs the `test` group
 uv run pytest                        # full suite (xdist, coverage gate, JUnit/XML into .github/reports)
 uv run pytest tests/test_core.py::CoreTests::test_battle_script_requires_army   # single test
 make fmt                             # pre-commit: ruff, mdformat, codespell, ty, gitleaks, uv-sync/lock
-make gen-docs                        # regenerate docs/Reference and docs/Scripts only
+make gen-docs                        # rebuild docs/ from the READMEs and the source
 ```
 
-Run the app with `uv run python app.py`. Two CLI hooks exist for smoke tests: `--live-test` captures a frame and asks Gemini to describe it, and `--agent-command=<text>` types a command into the AI tab and executes it. Both save a proof screenshot of the window when `COC_LIVE_TEST_SCREENSHOT` / `COC_AGENT_SCREENSHOT` point at a path.
+Run the app with `uv run ai_coc`. Two CLI hooks exist for smoke tests: `--live-test` captures a frame and asks Gemini to describe it, and `--agent-command=<text>` types a command into the AI tab and executes it. Both save a proof screenshot of the window when `COC_LIVE_TEST_SCREENSHOT` / `COC_AGENT_SCREENSHOT` point at a path.
 
-Build the distributable with PowerShell:
+Distributables are built in CI only: pushing a `v*` tag runs `build_release.yml`, which publishes the wheel to PyPI and attaches a PyInstaller Windows build to the release. There is no local build script.
 
-```powershell
-scripts/build.ps1   # uv sync + pytest + PyInstaller onedir into outputs/
-```
+That build defaults to `--onedir`, and the dispatch form's `package_mode` switches it to `--onefile`. Measured here, onefile costs 6.6-7.0 s to reach the first log line against onedir's 1.4-3.1 s, because it unpacks the whole bundle into a temp directory on every launch. Onefile is one 76 MB file where onedir is a 174 MB folder, so it stays available, just not the default.
 
 ## Architecture
 
-`app.py` at the repo root is the PyInstaller entry point; it puts `src/` on `sys.path` and calls `coc_ai_controller.app.main`.
+`src/ai_coc/cli.py` is the entry point behind both console scripts (`ai_coc` and `cli`) and the PyInstaller build. PyInstaller runs it as `__main__`, so its imports stay absolute even for same-layer modules and it keeps an `if __name__ == "__main__"` block.
 
 The three layers are directories, so an import that crosses them is visible in the import line:
 
-- **UI and orchestration** — `ui/main_window.py` (`MainWindow`), all seven tabs plus every workflow; `ui/workers.py` (thread-pool workers and the log handler); `ui/render.py` (Markdown and log records to HTML). `app.py` inside the package is only `main()`.
+- **UI and orchestration** — `ui/main_window.py` (`MainWindow`), all seven tabs plus every workflow; `ui/workers.py` (thread-pool workers and the log handler); `ui/render.py` (Markdown and log records to HTML). `cli.py` is only `main()`.
 - **Adapters** — `adapters/mumu.py` (emulator lifecycle), `adapters/adb.py` (every ADB call), `adapters/ai.py` (Gemini), `adapters/secrets.py` (DPAPI), `adapters/database.py` (SQLite).
 - **Pure parsers** — `parsers/village.py`, `parsers/battle.py`.
 - **Data shapes** — `models.py` at the package root holds every Pydantic model in the project; see the Pydantic rule below.
 
-Imports across layers are absolute (`from coc_ai_controller.models import …`) and within a layer relative (`from .adb import …`); Ruff's `TID252` enforces it and rewrites the rest.
+Imports across layers are absolute (`from ai_coc.models import …`) and within a layer relative (`from .adb import …`); Ruff's `TID252` enforces it and rewrites the rest.
 
 **Threading.** Every blocking call goes through `MainWindow.run_async`, which wraps the callable in a `Worker` (`QRunnable`) on the global `QThreadPool` and delivers the result back to the UI thread via `pyqtSignal`. A call that produces text as it goes uses `MainWindow.run_stream` and a `StreamWorker` instead: it drains a generator and emits each chunk. Never call `MuMuAdapter` or `GeminiClient` directly from a slot.
 
 **The AI 助手 transcript is a model, not a text buffer.** `MainWindow.chat` is a `ChatTranscript`; `_say` appends a `ChatMessage` and `_paint_chat` re-renders the whole transcript into the `QTextBrowser` through `ui/render.py`. Bodies are Markdown, rendered by `markdown-it-py` with raw HTML disabled, and styled by `CHAT_STYLESHEET` (Qt honours only a subset of CSS 2.1). A streamed reply grows the last message in place, and repaints are throttled by the `chat_repaint` timer rather than fired per token.
 
-**Logging.** `configure_logging()` in `main()` sets up a rotating plain-text file at `~/.coc_ai\logs\controller.log` plus a `rich` stderr console; `MainWindow._attach_log_panel` adds a handler that renders every record through `rich` and mirrors the resulting HTML into the 執行紀錄 panel under the tabs, and the panel's level selector retargets the root logger at runtime (DEBUG adds full prompts and replies). The file handler stays plain text so the log can still be grepped. `Worker.run` logs the traceback before the message box, and `sys.excepthook` catches what Qt would otherwise swallow. New adapter code is expected to log its own decisions; a feature that fails silently is the bug being fixed here.
+**Logging.** `configure_logging()` in `main()` sets up a rotating plain-text file at `~/.ai_coc\logs\controller.log` plus a `rich` stderr console; `MainWindow._attach_log_panel` adds a handler that renders every record through `rich` and mirrors the resulting HTML into the 執行紀錄 panel under the tabs, and the panel's level selector retargets the root logger at runtime (DEBUG adds full prompts and replies). The file handler stays plain text so the log can still be grepped. `Worker.run` logs the traceback before the message box, and `sys.excepthook` catches what Qt would otherwise swallow. New adapter code is expected to log its own decisions; a feature that fails silently is the bug being fixed here.
 
 **Agent loop** (`execute_agent_command`): ensure CoC is running, then loop up to `max_steps` (8 normally, 25 when the command mentions 進攻/戰鬥/搜尋資源村). Each step captures a screenshot plus a `uiautomator dump`, sends both to Gemini and reads back an `AgentAction` through structured output, applies it, sleeps 2 s and re-observes. Anything outside `tap|back|swipe_up|swipe_down` ends the task, so a new action verb needs a `Literal` member on `AgentAction`, a branch in `_apply_agent_action` and a mention in the prompt.
 
@@ -66,7 +64,7 @@ Imports across layers are absolute (`from coc_ai_controller.models import …`) 
 
 **`GeminiClient`** is the only place the app talks to Gemini, through the `google-genai` SDK's Interactions API. Every request body is a `GeminiRequest`, never a hand-built dict. `generate` returns the whole text; `stream` sets `stream=True` and yields the `step.delta` text events, which is what the chat and the screen analysis use; `generate_structured(prompt, SomeModel, png)` sets `response_format` from the model's JSON schema and returns the validated instance, so no code strips ```` ```json ```` fences by hand. Structured output cannot stream, so the agent loop stays on `generate_structured`. `list_text_models` feeds the Model picker in Settings and only appears after 測試連線 succeeds. The default model is `DEFAULT_GEMINI_MODEL` in `constants.py`.
 
-**Storage** lives in `~/.coc_ai\`: `controller.sqlite3`, `frames/`, `account_json/` and the DPAPI-protected `gemini.key.dpapi`. The schema is created idempotently in `Database._initialize` with no migration tooling, so a changed table means bumping `SCHEMA_VERSION` and handling existing databases yourself. The API key never goes into `QSettings`, only into the DPAPI file.
+**Storage** lives in `~/.ai_coc\`: `controller.sqlite3`, `frames/`, `account_json/` and the DPAPI-protected `gemini.key.dpapi`. The schema is created idempotently in `Database._initialize` with no migration tooling, so a changed table means bumping `SCHEMA_VERSION` and handling existing databases yourself. The API key never goes into `QSettings`, only into the DPAPI file.
 
 **Village and Battle Script parsing is deliberately tolerant.** Unknown sections and fields are preserved verbatim, unknown `data_id`s are queued into `unknown_entities` instead of failing the import. Game updates add IDs; keep it tolerant.
 
@@ -75,8 +73,9 @@ Imports across layers are absolute (`from coc_ai_controller.models import …`) 
 - **Every structured value is a Pydantic `BaseModel`, no exceptions.** New shapes go in `models.py`: emulator and CLI payloads, database rows, parsed files, AI replies, requests, settings and the chat transcript. The adapters are models too (`Database`, `SecretStore`, `AdbController`, `MuMuAdapter`, `GeminiClient`), so they take keyword arguments and put their non-field state in `PrivateAttr`. Only Qt subclasses and the ctypes `DATA_BLOB` stay plain classes, because their base class rules it out. Do not introduce a `dataclass`, a `TypedDict`, or a bare `dict[str, Any]` that travels between functions, and do not read a value out with `.get("key")` when a model could have declared the field — historical key names belong in `AliasChoices`, not in an `or` chain. Parse at the boundary with `model_validate` / `model_validate_json`, and write JSON out with `model_dump_json()` / `model_dump()` rather than `json.dumps` over a hand-built dict; a bare list on its way into a prompt gets a `RootModel` (`UiElementList`, `AccountRowList`). Ask Gemini for structure through `GeminiClient.generate_structured` and a model, never by parsing the text yourself. Models mirroring an external format that gains fields between releases carry `model_config = TOLERANT` so unknown keys survive.
 - **A model field's type must be importable at runtime.** `[tool.ruff.lint.flake8-type-checking] runtime-evaluated-base-classes` keeps `TC003` from moving those imports into `if TYPE_CHECKING`, which would leave the model unbuildable. If a new model base class appears, add it there.
 - **Never invent master data.** `entity_levels` (costs, times, requirements) stays empty until a value is source-backed, and the UI shows `—` rather than a guess. This is a stated product decision, not an oversight.
-- **`docs/` is hand-written and committed**, unlike the upstream template it was synced from. That is why `make gen-docs` and `make clean` only touch `docs/Reference` and `docs/Scripts`. When behaviour changes, update `docs/handoff.md`, `docs/changelog.md` and `docs/dev-session.md`.
+- **`docs/` is generated and gitignored**, rebuilt from the three READMEs and the source by `make gen-docs`. Edit the READMEs and the docstrings, never the generated output.
 - **UI strings, prompts and user-facing messages are Traditional Chinese**; code, comments, commit messages and anything published to GitHub are English.
-- **Deliberate deviations from the repo template**, documented in `pyproject.toml` comments: coverage gate is `--cov-fail-under=12` because almost everything is the untested PyQt shell; `[tool.ty.environment] python-platform = "win32"` is required or `winreg`/`ctypes.windll` fail to resolve on Linux CI runners; ty excludes `app.py`, `ui/main_window.py` and `ui/workers.py` because PyQt5 ships inaccurate stubs; `allowed-confusables` carries `／` and `？` for the Chinese UI strings.
-- **The version appears in six places** and they move together: `VERSION`, `pyproject.toml`, `src/coc_ai_controller/__init__.py`, `constants.py`, `version_info.txt` and the `--name` in `scripts/build.ps1`.
+- **Deliberate deviations from the repo template**, documented in `pyproject.toml` comments: coverage gate is `--cov-fail-under=12` because almost everything is the untested PyQt shell; `[tool.ty.environment] python-platform = "win32"` is required or `winreg`/`ctypes.windll` fail to resolve on Linux CI runners; ty excludes `cli.py`, `ui/main_window.py` and `ui/workers.py` because PyQt5 ships inaccurate stubs; `allowed-confusables` carries `／` and `？` for the Chinese UI strings; the `build_release.yml` matrix is Windows-only because nothing here runs elsewhere.
+- **The version is never written down.** `constants.py` reads it from the installed package metadata, and CI derives that from the git tag through `dunamai`. The `0.1.0` in `pyproject.toml` is a placeholder CI overwrites; do not hand-edit a version anywhere else.
+- **Package data lives inside the package.** `battle_scripts/` sits at `src/ai_coc/battle_scripts/` and is reached through `BATTLE_SCRIPT_DIR`, so a wheel install resolves it the same way a source checkout does. The PyInstaller step needs `--add-data` for it and `--copy-metadata` for the version lookup; both are in `build_release.yml`.
 - CodeQL and dependency-review jobs are gated on `github.event.repository.visibility == 'public'` because this private repo has no GitHub Advanced Security.
