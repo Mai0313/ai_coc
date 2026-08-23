@@ -371,14 +371,18 @@ class HeroTimings(BaseModel):
 class AttackPlan(BaseModel):
     """How to attack one opponent, chosen by reading its scout screen.
 
-    The approach is one of four named flanks rather than free coordinates: a
-    drop has to land outside the deployment boundary, and a named side can be
-    mapped onto a line already known to be outside it.
+    The drop line comes as two free endpoints, because no fixed set of flanks
+    survives the range of layouts. `deploy_from` stays underneath it as the
+    fallback: a drop has to land outside the deployment boundary, and a named
+    side maps onto a line already known to be outside it, which is what the loop
+    falls back to when there is no plan or the planned line crosses the village.
     """
 
     deploy_from: Literal["top_left", "top_right", "bottom_left", "bottom_right"] = "top_left"
+    deploy_start: ScreenPoint | None = None
+    deploy_end: ScreenPoint | None = None
     rage_points: list[ScreenPoint] = Field(default_factory=list)
-    freeze_point: ScreenPoint | None = None
+    freeze_points: list[ScreenPoint] = Field(default_factory=list)
     # Left to right, so each hero card can be matched to its own ability timing.
     heroes: list[HeroKind] = Field(default_factory=list)
     reason: str = ""

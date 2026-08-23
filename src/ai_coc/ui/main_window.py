@@ -129,6 +129,10 @@ class MainWindow(QMainWindow):
         self.current_account_tag = ""
         self.running_task_id: int | None = None
         self.attack_running = False
+        # Read from the worker threads as well as the UI one, so it is a plain
+        # bool rather than the timer's own state: stopping has to reach the
+        # attack loop and the agent loop, not just the next scheduled cycle.
+        self.automation_active = False
         self.chat = ChatTranscript()
         # A streamed reply arrives token by token; repaint on a beat instead.
         self.chat_repaint = QTimer(self)
@@ -144,10 +148,13 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage("Ready — 偵測 MuMu 以開始")
         self.refresh_instances()
         self.refresh_entity_mapping()
-        QTimer.singleShot(6000, self.resume_pending_tasks)
         QTimer.singleShot(
             8000, lambda: self.start_automation() if self.auto_on_start.isChecked() else None
         )
+        # After the line above, not before: resuming is automation, so it waits
+        # for the automation to be switched on rather than starting work the
+        # user never asked for.
+        QTimer.singleShot(9000, self.resume_pending_tasks)
 
     def _build_ui(self) -> None:
         self.setStyleSheet("""
@@ -545,13 +552,13 @@ class MainWindow(QMainWindow):
         self.automation_log.appendPlainText("自動化設定已保存。")
 
     def toggle_automation(self) -> None:
-        if self.automation_timer.isActive():
+        if self.automation_active:
             self.stop_automation()
         else:
             self.start_automation()
 
     def _paint_run_button(self) -> None:
-        running = self.automation_timer.isActive()
+        running = self.automation_active
         self.run_button.setText(RUN_LABEL_STOP if running else RUN_LABEL_START)
         self.run_button.setStyleSheet(RUN_BUTTON_RUNNING if running else RUN_BUTTON_IDLE)
 
@@ -559,26 +566,31 @@ class MainWindow(QMainWindow):
         """Start the next pass as soon as this one finishes, so the loop is
         continuous rather than paced by the idle timer.
         """
-        if self.automation_timer.isActive():
+        if self.automation_active:
             QTimer.singleShot(NEXT_CYCLE_DELAY, self.automation_cycle)
 
     def start_automation(self) -> None:
         self.save_automation()
+        self.automation_active = True
         self.automation_timer.start(self.cycle_minutes.value() * 60000)
         self._paint_run_button()
         self.automation_log.appendPlainText("自動化已啟動，第一輪開始。")
         QTimer.singleShot(100, self.automation_cycle)
 
     def stop_automation(self) -> None:
+        self.automation_active = False
         self.automation_timer.stop()
         self._paint_run_button()
-        self.automation_log.appendPlainText("已停止建立新的自主任務；目前步驟完成後停止。")
+        self.automation_log.appendPlainText(
+            "已停止：不再搜尋新對手，也不再接續未完成任務。已經開打的這一場會打完再回營。"
+        )
 
     def automation_cycle(self) -> None:
         # An attack holds no task row, so it needs its own flag here: a second
         # runner started mid-attack would interleave taps on the same display.
         if (
-            self.running_task_id is not None
+            not self.automation_active
+            or self.running_task_id is not None
             or self.attack_running
             or self.db.pending_tasks()
             or not self.active
@@ -620,7 +632,7 @@ class MainWindow(QMainWindow):
     def _queue_agent_job(self, instruction: str) -> None:
         task_id = self.db.add_task(instruction)
         self.automation_log.appendPlainText(f"建立自主任務 #{task_id}：{instruction}")
-        self.execute_agent_command(instruction, task_id)
+        self.execute_agent_command(instruction, task_id, automated=True)
 
     def run_attack(self) -> None:
         m, a = self._require()
@@ -644,6 +656,7 @@ class MainWindow(QMainWindow):
                 thresholds=thresholds,
                 abilities=abilities,
                 ai=planner,
+                should_stop=lambda: not self.automation_active,
             ).run()
 
         def done(report: AttackReport) -> None:
@@ -1155,7 +1168,10 @@ class MainWindow(QMainWindow):
         )
 
     def resume_pending_tasks(self) -> None:
-        if self.running_task_id is not None or not self.active:
+        # Without the flag, pressing stop only kept the *timer* quiet: the task
+        # in flight still finished, and its completion resumed the next pending
+        # one, so the automation carried on as if nothing had been pressed.
+        if not self.automation_active or self.running_task_id is not None or not self.active:
             return
         pending = self.db.pending_tasks()
         if pending:
@@ -1163,7 +1179,7 @@ class MainWindow(QMainWindow):
             logger.info("Resuming pending task #%d: %s", item.id, item.instruction)
             self._say("system", f"自動繼續未完成任務 #{item.id}：{item.instruction}")
             self.tabs.setCurrentIndex(2)
-            self.execute_agent_command(item.instruction, item.id)
+            self.execute_agent_command(item.instruction, item.id, automated=True)
 
     def _apply_agent_action(
         self, m: MuMuAdapter, active: EmulatorInstance, action: AgentAction
@@ -1181,7 +1197,7 @@ class MainWindow(QMainWindow):
             return False
         return True
 
-    def execute_agent_command(self, command: str, task_id: int) -> None:
+    def execute_agent_command(self, command: str, task_id: int, automated: bool = False) -> None:
         m, a = self._require()
         client = self.gemini_client()
         self.running_task_id = task_id
@@ -1202,6 +1218,15 @@ class MainWindow(QMainWindow):
             )
             logger.info("Agent task #%d starts, at most %d steps: %s", task_id, max_steps, command)
             for step in range(max_steps):
+                # A command typed into the AI tab is the user's own, so only the
+                # automation's own jobs answer to the stop button. Left PENDING
+                # rather than COMPLETED, so starting the automation again
+                # picks the task back up where it stopped.
+                if automated and not self.automation_active:
+                    logger.info(
+                        "Agent task #%d stops after %d step(s): stop pressed", task_id, step
+                    )
+                    return last_png, "已停止自動化，這個任務保留為未完成", False
                 self.db.update_task(task_id, "RUNNING", f"第 {step + 1} 步：截圖、判斷與驗證")
                 last_png = m.screenshot(active)
                 elements = UiElementList(m.ui_elements(active)).model_dump_json()
