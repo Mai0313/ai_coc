@@ -7,13 +7,14 @@ import unittest
 from PIL import Image
 import pytest
 
-from ai_coc.models import LootOffer, LootThresholds
-from ai_coc.constants import BATTLE_SCRIPT_DIR
+from ai_coc.models import LootOffer, HeroTimings, LootThresholds
 from ai_coc.ui.attack import (
+    PLAYFIELD,
     DEPLOY_END,
     LINE_POINTS,
     DEPLOY_START,
     DROPS_PER_PASS,
+    push_out,
     deploy_line,
     drop_points,
 )
@@ -24,10 +25,11 @@ from ai_coc.parsers.scout import (
     read_scout,
     card_groups,
     freeze_cards,
+    army_strength,
     counted_cards,
+    deploy_refused,
     attack_menu_open,
 )
-from ai_coc.parsers.battle import load_battle_script
 from ai_coc.parsers.village import parse_village
 from ai_coc.adapters.secrets import dotenv_value
 from ai_coc.adapters.database import Database
@@ -126,25 +128,6 @@ class CoreTests(unittest.TestCase):
             saved.write_text(parse_village(source).model_dump_json(), encoding="utf-8")
             assert parse_village(saved).entities[0].data_id == 1000055
 
-    def test_battle_script_requires_army(self) -> None:
-        script = load_battle_script(BATTLE_SCRIPT_DIR / "BH10_BABY_DRAGON_01.json")
-        assert script.army_requirements.troops[0].data_id == 4000041
-        assert script.battle_controller.kind == "RESERVED_RL"
-        assert [name for name, _ in script.army_requirements.categories()] == [
-            "troops",
-            "heroes",
-            "spells",
-            "siege",
-            "reinforcements",
-        ]
-
-    def test_battle_script_without_requirements_is_rejected(self) -> None:
-        with tempfile.TemporaryDirectory() as td:
-            broken = Path(td) / "broken.json"
-            broken.write_text(json.dumps({"script_id": "X"}), encoding="utf-8")
-            with pytest.raises(ValueError, match="army_requirements"):
-                load_battle_script(broken)
-
     def test_display_lookup_picks_the_game_over_the_launcher(self) -> None:
         logical = focused_display(WINDOW_DISPLAYS, "com.supercell.clashofclans")
         assert logical == "2"
@@ -186,6 +169,18 @@ class ScoutTests(unittest.TestCase):
         assert attack_menu_open((FRAMES / "attack_menu.png").read_bytes())
         assert not attack_menu_open((FRAMES / "scout_grass.png").read_bytes())
 
+    def test_a_refused_drop_is_recognised(self) -> None:
+        """Layouts vary more than one drop line can allow for, so the refusal matters."""
+        assert deploy_refused((FRAMES / "deploy_refused.png").read_bytes())
+        assert not deploy_refused((FRAMES / "scout_grass.png").read_bytes())
+
+    def test_army_strength_splits_on_the_glyphs_that_are_not_digits(self) -> None:
+        """The troop icon and the slash are found by matching no digit well."""
+        assert army_strength((FRAMES / "army_full.png").read_bytes()) == (305, 305)
+
+    def test_army_strength_is_none_away_from_the_army_screen(self) -> None:
+        assert army_strength((FRAMES / "scout_grass.png").read_bytes()) is None
+
     def test_a_frame_of_another_resolution_is_rejected(self) -> None:
         buffer = io.BytesIO()
         Image.new("RGB", (800, 450)).save(buffer, "PNG")
@@ -207,6 +202,23 @@ class AttackTests(unittest.TestCase):
         assert len(points) == 8
         assert points[0] == DEPLOY_START
         assert points[-1] == DEPLOY_END
+
+    def test_ability_timing_is_per_hero_not_per_slot(self) -> None:
+        """An upgrading hero has no card at all, so every slot after it shifts."""
+        timings = HeroTimings(queen=1, warden=30)
+        assert timings.seconds("queen") == 1
+        assert timings.seconds("warden") == 30
+        assert timings.seconds("unknown") == timings.unknown
+
+    def test_pushing_a_drop_out_moves_it_off_the_middle_and_stays_on_screen(self) -> None:
+        point = DEPLOY_START
+        assert push_out(point, 0) == point
+        pushed = push_out(point, 4)
+        # DEPLOY_START sits up and left of centre, so pushing goes further that way.
+        assert pushed[0] < point[0]
+        assert pushed[1] < point[1]
+        assert PLAYFIELD[0] <= pushed[0] <= PLAYFIELD[2]
+        assert PLAYFIELD[1] <= pushed[1] <= PLAYFIELD[3]
 
     def test_each_pass_spreads_its_drops_and_shifts(self) -> None:
         """A card holding one troop must not drop it where every other card started."""

@@ -16,11 +16,6 @@ DEFAULT_GEMINI_MODEL = "gemini-3.5-flash"
 DEFAULT_ADB_HOST = "127.0.0.1"
 
 
-# Shipped inside the package so a wheel install and a PyInstaller bundle both
-# resolve it the same way as a source checkout.
-BATTLE_SCRIPT_DIR = Path(__file__).resolve().parent / "battle_scripts"
-
-
 def data_root() -> Path:
     root = Path.home() / ".ai_coc"
     root.mkdir(parents=True, exist_ok=True)
