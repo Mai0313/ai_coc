@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import time
 import logging
+from collections.abc import Callable
 
 from pydantic import BaseModel
 
@@ -186,6 +187,10 @@ class AttackRunner(BaseModel):
     abilities: HeroTimings = HeroTimings()
     max_skips: int = 20
     ai: GeminiClient | None = None
+    # Checked between opponents only. A battle already under way is played out:
+    # abandoning one mid-deploy would leave the army on the field and the game
+    # on a screen the next run does not know how to get home from.
+    should_stop: Callable[[], bool] = lambda: False
 
     def _tap(self, point: tuple[int, int]) -> None:
         self.adb.tap(point[0], point[1], self.display)
@@ -434,6 +439,10 @@ class AttackRunner(BaseModel):
         self._tap(ARMY_ATTACK)
         skipped = 0
         while True:
+            if self.should_stop():
+                logger.info("Stop pressed; leaving the search after %d skip(s)", skipped)
+                self._tap(END_BATTLE)
+                return AttackReport(skipped=skipped, message="已停止，未開打就離開搜尋")
             scouted = self._scout()
             if scouted is None:
                 return AttackReport(skipped=skipped, message="等不到對手畫面，已放棄這一輪搜尋")
@@ -443,15 +452,15 @@ class AttackRunner(BaseModel):
                 reason = "倒數結束被強制開戰" if forced else "戰利品達標"
                 logger.info("Attacking after %d skips (%s)", skipped, reason)
                 self._deploy(frame)
-                if not self._wait_out_battle(view.loot):
+                took = self._wait_out_battle(view.loot)
+                if not took:
                     logger.warning("The whole battle passed without any loot moving")
-                    return AttackReport(
-                        skipped=skipped,
-                        attacked=view.loot,
-                        message=f"{reason}，但整場戰利品沒有變化，部隊可能沒有成功部署",
-                    )
                 return AttackReport(
-                    skipped=skipped, attacked=view.loot, message=f"{reason}，已進攻並回營"
+                    skipped=skipped,
+                    attacked=view.loot,
+                    message=f"{reason}，已進攻並回營"
+                    if took
+                    else f"{reason}，但整場戰利品沒有變化，部隊可能沒有成功部署",
                 )
             if skipped >= self.max_skips:
                 self._tap(END_BATTLE)
