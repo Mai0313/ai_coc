@@ -24,6 +24,8 @@ Run the app with `uv run ai_coc`. Two CLI hooks exist for smoke tests: `--live-t
 
 Distributables are built in CI only: pushing a `v*` tag runs `build_release.yml`, which publishes the wheel to PyPI and attaches a PyInstaller Windows build to the release. There is no local build script.
 
+`scripts/gen_version_file.py` writes `version_info.txt` from the resolved version just before PyInstaller runs, which is what puts a version into the executable's Windows file properties. That file is gitignored: a committed copy could only go stale.
+
 That build defaults to `--onedir`, and the dispatch form's `package_mode` switches it to `--onefile`. Measured here, onefile costs 6.6-7.0 s to reach the first log line against onedir's 1.4-3.1 s, because it unpacks the whole bundle into a temp directory on every launch. Onefile is one 76 MB file where onedir is a 174 MB folder, so it stays available, just not the default.
 
 ## Architecture
@@ -76,6 +78,6 @@ Imports across layers are absolute (`from ai_coc.models import …`) and within 
 - **`docs/` is generated and gitignored**, rebuilt from the three READMEs and the source by `make gen-docs`. Edit the READMEs and the docstrings, never the generated output.
 - **UI strings, prompts and user-facing messages are Traditional Chinese**; code, comments, commit messages and anything published to GitHub are English.
 - **Deliberate deviations from the repo template**, documented in `pyproject.toml` comments: coverage gate is `--cov-fail-under=12` because almost everything is the untested PyQt shell; `[tool.ty.environment] python-platform = "win32"` is required or `winreg`/`ctypes.windll` fail to resolve on Linux CI runners; ty excludes `cli.py`, `ui/main_window.py` and `ui/workers.py` because PyQt5 ships inaccurate stubs; `allowed-confusables` carries `／` and `？` for the Chinese UI strings; the `build_release.yml` matrix is Windows-only because nothing here runs elsewhere.
-- **The version is never written down.** `constants.py` reads it from the installed package metadata, and CI derives that from the git tag through `dunamai`. The `0.1.0` in `pyproject.toml` is a placeholder CI overwrites; do not hand-edit a version anywhere else.
+- **The version is never written down.** `constants.py` reads it from the installed package metadata, and CI derives that from the git tag through `dunamai`. The `0.1.0` in `pyproject.toml` is a placeholder CI overwrites; do not hand-edit a version anywhere else, and note that `version_info.txt` is generated from that same value rather than maintained.
 - **Package data lives inside the package.** `battle_scripts/` sits at `src/ai_coc/battle_scripts/` and is reached through `BATTLE_SCRIPT_DIR`, so a wheel install resolves it the same way a source checkout does. The PyInstaller step needs `--add-data` for it and `--copy-metadata` for the version lookup; both are in `build_release.yml`.
 - CodeQL and dependency-review jobs are gated on `github.event.repository.visibility == 'public'` because this private repo has no GitHub Advanced Security.
