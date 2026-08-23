@@ -7,13 +7,7 @@ on:
       - master
   pull_request:
 
-permissions:
-  contents: read
-  security-events: write
-  # codeql-action resolves its own workflow run through the Actions API.
-  actions: read
-  # gitleaks-action lists a pull request's commits to pick the scan range.
-  pull-requests: read
+permissions: write-all
 
 jobs:
   secret-scanning:
@@ -47,8 +41,8 @@ jobs:
   codeql-scanning:
     name: CodeQL Scanning
     runs-on: ubuntu-latest
-    # Code scanning needs GitHub Advanced Security on a private repository, so
-    # the upload fails outright while this one stays private.
+    # CodeQL needs GitHub Advanced Security, which this private repo does not
+    # have. The gate opens by itself once the repo goes public or GHAS is on.
     if: github.event.repository.visibility == 'public'
 
     steps:

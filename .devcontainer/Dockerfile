@@ -1,9 +1,9 @@
 FROM nikolaik/python-nodejs:python3.12-nodejs22 AS builder
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
-LABEL maintainer="CoC AI Controller contributors" \
-    org.label-schema.name="coc-ai-controller" \
-    org.label-schema.vendor="Mai0313" \
+LABEL maintainer="Wei Lee <mai@mai0313.com>" \
+    org.label-schema.name="ai_coc" \
+    org.label-schema.vendor="Wei Lee" \
     org.label-schema.schema-version="1.0" \
     com.centurylinklabs.watchtower.stop-signal="SIGINT"
 

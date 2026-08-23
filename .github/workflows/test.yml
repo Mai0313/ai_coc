@@ -19,9 +19,7 @@ on:
     paths-ignore:
       - "**/*.md"
 
-permissions:
-  contents: read
-  pull-requests: write
+permissions: write-all
 
 jobs:
   run_tests:
@@ -35,6 +33,8 @@ jobs:
           - ubuntu-latest
         python-version:
           - "3.12"
+          - "3.13"
+          - "3.14"
 
     timeout-minutes: 20
 
@@ -74,7 +74,7 @@ jobs:
           uv run pytest -vv | tee .coverage.txt
 
       - name: Pytest coverage comment
-        if: ${{ github.event_name == 'pull_request' && steps.check_tests.outputs.has_tests == 'true' }}
+        if: ${{ steps.check_tests.outputs.has_tests == 'true' }}
         uses: MishaKav/pytest-coverage-comment@main
         with:
           pytest-coverage-path: ./.coverage.txt

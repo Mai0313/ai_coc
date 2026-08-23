@@ -5,26 +5,15 @@ on:
     branches:
       - main
       - master
-    # No tag trigger: the github-pages environment only accepts deployments from
-    # main, so a tag push fails before any step runs. Publishing from main
-    # already covers every tagged commit.
+    tags:
+      - v*
 
-permissions:
-  contents: read
-  pages: write
-  id-token: write
-
-concurrency:
-  group: pages
-  cancel-in-progress: true
+permissions: write-all
 
 jobs:
   deploy:
     name: Deploy
     runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
 
     steps:
       - name: Checkout
@@ -42,6 +31,7 @@ jobs:
       - name: Deploy docs
         run: |
           uv sync --group docs
+          uv run make gen-docs
           uv run zensical build
 
       - name: Setup Pages
@@ -57,7 +47,6 @@ jobs:
           name: github-pages-${{ github.run_attempt }}
 
       - name: Publish to GitHub Pages
-        id: deployment
         uses: actions/deploy-pages@v5
         with:
           artifact_name: github-pages-${{ github.run_attempt }}

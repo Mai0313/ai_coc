@@ -13,9 +13,8 @@ addopts = [
     "--cache-clear",
     "-n=auto",
     "--no-header",
-    # The template asks for 80. Actual coverage is 12: almost everything here is
-    # the PyQt shell and the MuMu/Gemini adapters, none of which has tests yet.
-    # Raise this as those grow instead of leaving the gate permanently red.
+    # Deliberately low: almost everything here is the untested PyQt shell and the
+    # MuMu/Gemini adapters, which need a real emulator to exercise.
     "--cov-fail-under=12",
 ]
 filterwarnings = [
@@ -63,11 +62,11 @@ omit = ["*/__init__.py"]
 # ================== #
 
 [project]
-name = "coc-ai-controller"
+name = "ai_coc"
 version = "0.1.0"
 description = "AI-driven Clash of Clans automation controller for MuMu Player on Windows"
 authors = [
-    { name = "CoC AI Controller contributors" },
+    { name = "Wei", email = "mai@mai0313.com" },
 ]
 dependencies = [
     "adbutils>=2.10",
@@ -80,12 +79,16 @@ dependencies = [
     "rich>=13.9",
 ]
 readme = "README.md"
-requires-python = ">=3.12,<3.13"
+requires-python = ">= 3.12"
 license = { text = "MIT" }
 
 [project.urls]
-Homepage = "https://mai0313.github.io/CoC-AI-Controller"
-Repository = "https://github.com/Mai0313/CoC-AI-Controller"
+Homepage = "https://mai0313.github.io/ai_coc"
+Repository = "https://github.com/Mai0313/ai_coc"
+
+[project.scripts]
+cli = "ai_coc.cli:main"
+ai_coc = "ai_coc.cli:main"
 
 [dependency-groups]
 dev = [
@@ -101,9 +104,6 @@ test = [
     "pytest-asyncio",
     "pytest-cov",
     "pytest-xdist[psutil]",
-]
-build = [
-    "pyinstaller>=6.21",
 ]
 docs = [
     "anyio",
@@ -127,11 +127,11 @@ allow-direct-references = true
 
 [tool.hatch.build]
 include = [
-    "src/coc_ai_controller"
+    "src/ai_coc"
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/coc_ai_controller"]
+packages = ["src/ai_coc"]
 
 [tool.hatch.build.targets.sdist]
 # Basically everything except hidden files/directories (such as .github, .devcontainers, .python-version, etc)
@@ -168,9 +168,11 @@ exclude = [
 ]
 
 [tool.poe.tasks]
-cli = "python ./app.py"
-api = "python ./app.py"
-main = "python ./app.py"
+# `python src/ai_coc/cli.py` would break the package-relative imports, so go
+# through the installed console script instead.
+cli = "ai_coc"
+api = "ai_coc"
+main = "ai_coc"
 
 # Documentation
 docs_gen = "make gen-docs"
@@ -235,8 +237,6 @@ show-fixes = true
 
 # In addition to the standard set of exclusions, omit all tests, plus a specific file.
 extend-exclude = [
-    # Vendored MuMu skill scripts; they are upstream code, not ours to restyle.
-    ".agents",
     "logs",
     "data",
     "*.svg",
@@ -283,8 +283,6 @@ unfixable = ["T201", "F841"]
 
 # Allow minus-sign (U+2212), greek-small-letter-rho (U+03C1), and the asterisk-operator (U+2217),
 # which could be confused for "-", "p", and "*", respectively.
-# `／` and `？` are not in the template's list; the Traditional Chinese UI strings
-# in this application use them.
 allowed-confusables = ["。", "，", "*", "；", "：", "、", "「", "」", "『", "』", "（", "）", "〔", "〕", "【", "】", "《", "》", "〈", "〉", "〖", "〗", "／", "？"]
 
 # Require explicit selection of preview rules.
@@ -473,7 +471,7 @@ skip-magic-trailing-comma = true
 # For more info:
 # https://docs.pydantic.dev/logfire/api/logfire/#logfire.configure
 [tool.logfire]
-service_name = "coc_ai_controller"
+service_name = "ai_coc"
 trace_sample_rate = 1.0
 console_colors = "auto"
 console_span_style = "show-parents"
@@ -510,24 +508,20 @@ ignore-words-list = ["ameba", "mke"]
 # https://docs.astral.sh/ty/reference/configuration
 # https://docs.astral.sh/ty/reference/rules
 # Based on: https://docs.astral.sh/ty/coming-from-mypy-or-pyright/#stricter-checking-with-ty
-
-# This application only ever runs on Windows: it drives MuMu Player through winreg
-# and protects the API key with DPAPI. Without pinning the platform, ty resolves
-# `winreg` and `ctypes.windll` against whatever host CI runs on and reports them as
-# missing on the Linux runners.
 [tool.ty.environment]
 python-version = "3.12"
+# `winreg` and `ctypes.windll` do not resolve on the Linux CI runner without this.
 python-platform = "win32"
 
 # PyQt5 ships its own inaccurate stubs, so ty rejects correct calls into the GUI
 # shell. Those files are covered by Ruff; the framework-independent core, which
 # now includes `ui/render.py`, is checked here.
 [tool.ty.src]
-include = ["src/coc_ai_controller"]
+include = ["src/ai_coc"]
 exclude = [
-    "src/coc_ai_controller/app.py",
-    "src/coc_ai_controller/ui/main_window.py",
-    "src/coc_ai_controller/ui/workers.py",
+    "src/ai_coc/cli.py",
+    "src/ai_coc/ui/main_window.py",
+    "src/ai_coc/ui/workers.py",
 ]
 
 [tool.ty.rules]

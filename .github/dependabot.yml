@@ -27,11 +27,6 @@ updates:
     groups:
       uv:
         patterns: ["*"]
-    ignore:
-      # PyQt5-Qt5 is pinned exactly so PyInstaller resolves the Qt plugin paths
-      # it bundles. Dependabot retries it on every run, produces no file change,
-      # and fails the whole update job on "Content did not change!".
-      - dependency-name: "pyqt5-qt5"
     commit-message:
       prefix: "chore"
       include: "scope"

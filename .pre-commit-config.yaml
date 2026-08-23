@@ -65,9 +65,6 @@ repos:
     rev: 1.0.0
     hooks:
       - id: mdformat
-        # Vendored skills are upstream markdown, the same reason ruff skips
-        # `.agents`. Without this every run rewrites them and the hook fails.
-        exclude: ^\.(agents|claude)/skills/
         args:
           - --number
           - --no-validate
@@ -113,7 +110,7 @@ repos:
           - tomli
 
   - repo: https://github.com/astral-sh/ty-pre-commit
-    rev: v0.0.73
+    rev: v0.0.74
     hooks:
       - id: ty
         # ty checks the whole repo (src, tests, scripts), so its environment
