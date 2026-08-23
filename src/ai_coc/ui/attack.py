@@ -13,7 +13,15 @@ import logging
 
 from pydantic import BaseModel
 
-from ai_coc.models import LootOffer, ScoutView, AttackReport, DisplayTarget, LootThresholds
+from ai_coc.models import (
+    LootOffer,
+    ScoutView,
+    AttackPlan,
+    AttackReport,
+    DisplayTarget,
+    LootThresholds,
+)
+from ai_coc.adapters.ai import GeminiClient
 from ai_coc.adapters.adb import AdbController
 from ai_coc.parsers.scout import (
     card_count,
@@ -21,7 +29,9 @@ from ai_coc.parsers.scout import (
     read_scout,
     card_groups,
     freeze_cards,
+    army_strength,
     counted_cards,
+    deploy_refused,
     attack_menu_open,
 )
 
@@ -43,24 +53,24 @@ CARD_ROW_Y = 800
 DROPS_PER_PASS = 4
 DEPLOY_PASSES = 10
 
-# A line along the village's upper-left flank, outside the deployment boundary.
-DEPLOY_START = (600, 110)
-DEPLOY_END = (230, 380)
+# Lines just outside the deployment boundary on each flank. A plan names a side
+# rather than free coordinates, because a drop inside the boundary is refused and
+# a named side maps onto a line already known to be outside it.
+DEPLOY_LINES = {
+    "top_left": ((600, 110), (230, 380)),
+    "top_right": ((1000, 110), (1370, 380)),
+    "bottom_left": ((230, 430), (600, 660)),
+    "bottom_right": ((1370, 430), (1000, 660)),
+}
+DEPLOY_START, DEPLOY_END = DEPLOY_LINES["top_left"]
 LINE_POINTS = 12
 
-# Rage and freeze go on the strongest defences, which sit towards the middle of
-# the village — never on the drop line, where by the time a spell can be cast
-# there is nothing left but empty ground. Reading the defences off the frame is
-# what an AI pass would add; this is the standing approximation of "the middle".
-# Spells go down first and tile the village, so the troops walk into them the
-# whole way in. A rage reaches 5 tiles, and the 44x44 map spans about 1040x605
-# px here, which puts a tile at roughly 24x12 and the spell's footprint at a
-# 240x120 ellipse rather than a circle — the board is drawn isometric, so the
-# vertical spacing is half the horizontal. Two that overlap waste one, so these
-# are spaced at that pitch and ordered from the middle out, leaving a short
-# army still covering where the fighting lands.
-# Rage goes where the troops are about to walk rather than where they land: a
-# grid running from the flank they drop on towards the middle.
+# Where the spells go when no plan says otherwise. Rage covers 5 tiles, and the
+# 44x44 map spans about 1040x605 px here, so a tile is roughly 24x12 and the
+# footprint is a 240x120 ellipse rather than a circle: the board is isometric, so
+# vertical spacing is half the horizontal. Two overlapping rages waste one, hence
+# this pitch. It runs from the drop flank towards the middle, because rage
+# belongs where the troops are about to walk, not where they land.
 RAGE_PATH = (
     (520, 300),
     (760, 300),
@@ -74,7 +84,7 @@ RAGE_PATH = (
 # Freeze is the opposite: it is held back until the troops are deep enough to be
 # under fire, and goes where they are rather than where they were headed.
 FREEZE_TARGET = (800, 420)
-# Every spell gets cast: one carried home is worth nothing.
+
 # A one-off drop needs far longer between selecting the card and placing it than
 # a troop does. A troop card is tapped repeatedly, so a swallowed tap costs one
 # troop; a hero or siege machine gets one attempt.
@@ -88,17 +98,44 @@ SINGLE_DROP_DELAY = 0.6
 SPELL_SELECT_DELAY = 1.2
 SPELL_PLACE_GAP = 0.3
 
+# A village whose boundary reaches past the chosen line refuses every drop, and
+# layouts vary far more than one line can allow for. So the line is tested with a
+# single troop and pushed further from the middle until the game accepts it,
+# staying inside the playfield the UI leaves free.
+SCREEN_CENTRE = (800, 400)
+PUSH_STEP = 70
+DEPLOY_ATTEMPTS = 5
+PLAYFIELD = (30, 105, 1570, 700)
+# The refusal banner lingers, so it has to clear before the next probe is read.
+REFUSAL_CLEAR_DELAY = 3
+
 HERO_ABILITY_DELAY = 15
 BATTLE_TIMEOUT = 240
+# The army screen comes up before the search fee is charged, so a half-trained
+# army can still back out for free rather than paying to attack with nothing.
+MIN_ARMY_RATIO = 0.9
 
 
-def deploy_line(count: int) -> list[tuple[int, int]]:
-    """Evenly spaced positions along the flank, from one end to the other."""
-    (x0, y0), (x1, y1) = DEPLOY_START, DEPLOY_END
+def deploy_line(
+    count: int, start: tuple[int, int] = DEPLOY_START, end: tuple[int, int] = DEPLOY_END
+) -> list[tuple[int, int]]:
+    """Evenly spaced positions along a flank, from one end to the other."""
+    (x0, y0), (x1, y1) = start, end
     step = max(count - 1, 1)
     return [
         (round(x0 + (x1 - x0) * i / step), round(y0 + (y1 - y0) * i / step)) for i in range(count)
     ]
+
+
+def push_out(point: tuple[int, int], steps: int) -> tuple[int, int]:
+    """Move a drop further from the middle, clamped to the usable playfield."""
+    dx, dy = point[0] - SCREEN_CENTRE[0], point[1] - SCREEN_CENTRE[1]
+    span = max((dx * dx + dy * dy) ** 0.5, 1.0)
+    left, top, right, bottom = PLAYFIELD
+    return (
+        min(max(round(point[0] + dx / span * PUSH_STEP * steps), left), right),
+        min(max(round(point[1] + dy / span * PUSH_STEP * steps), top), bottom),
+    )
 
 
 def drop_points(line: list[tuple[int, int]], seed: int) -> list[tuple[int, int]]:
@@ -111,16 +148,54 @@ def drop_points(line: list[tuple[int, int]], seed: int) -> list[tuple[int, int]]
     return [line[(seed + i * step) % len(line)] for i in range(DROPS_PER_PASS)]
 
 
+PLAN_PROMPT = """這是《部落衝突》的偵察畫面，我要打資源，請看整張圖決定怎麼打。
+
+deploy_from：從哪一側投兵。選防禦最少、而且外圍資源建築（金庫、聖水瓶、金礦、聖水收集器）最密集的那一側。避開迫擊砲、防空火箭、法師塔、地獄塔密集的方向。
+rage_points：狂暴法術的落點，**剛好 {rage_count} 個，不能少**。
+部隊是沿著那一側的整條邊撒開下去的，所以他們是一整片往村莊中心推進，不是一條線；落點要鋪滿那一片會經過的區域，深度和寬度都要分開，**不要排成一直線**。
+一瓶狂暴的覆蓋範圍是寬約畫面 15%、高約畫面 13% 的橢圓（畫面是等角視角，所以橫向比縱向寬）。彼此不要重疊，重疊等於整瓶浪費。
+優先蓋在部隊會卡住的地方：外牆的突破口、防禦最密集因而會拖最久的那一段。
+freeze_point：冰凍法術的落點，放在那條路線上防禦火力最強的地方（多座防禦交叉的位置，或單一高等防禦）。
+座標是畫面百分比，x_pct 與 y_pct 都是 0 到 100，只能落在村莊範圍內。
+reason 用繁體中文一句話說明為什麼選這一側。"""
+
+
 class AttackRunner(BaseModel):
-    """Drives one attack from the home village and back, with no AI in the loop."""
+    """Drives one attack from the home village and back.
+
+    Screen reading never involves Gemini; only the tactical choice does, and only
+    once an opponent has already passed the loot thresholds, so a skipped
+    opponent costs nothing. Without `ai`, or if the call fails, the fixed flank
+    and spell grid are used instead.
+    """
 
     adb: AdbController
     display: DisplayTarget
     thresholds: LootThresholds
     max_skips: int = 20
+    ai: GeminiClient | None = None
 
     def _tap(self, point: tuple[int, int]) -> None:
         self.adb.tap(point[0], point[1], self.display)
+
+    def _plan(self, frame: bytes, rage_count: int) -> AttackPlan | None:
+        if self.ai is None:
+            return None
+        try:
+            plan = self.ai.generate_structured(
+                PLAN_PROMPT.format(rage_count=rage_count), AttackPlan, frame
+            )
+        except Exception:
+            logger.warning("Attack planning failed; using the fixed flank", exc_info=True)
+            return None
+        logger.info(
+            "Plan: from %s, %d rage point(s), freeze=%s (%s)",
+            plan.deploy_from,
+            len(plan.rage_points),
+            plan.freeze_point is not None,
+            plan.reason,
+        )
+        return plan
 
     def _scout(self, timeout: float = 30) -> tuple[ScoutView, bytes] | None:
         """Poll until an opponent is on screen; 正在搜尋對手 reads as nothing at all.
@@ -136,6 +211,63 @@ class AttackRunner(BaseModel):
                 return view, png
             time.sleep(1)
         return None
+
+    def _usable_line(
+        self, card: int, start: tuple[int, int], end: tuple[int, int]
+    ) -> list[tuple[int, int]] | None:
+        """A flank the game will actually accept drops on.
+
+        Troops are dropped as probes, because a village whose boundary reaches
+        past the line refuses them and says so on screen. Both ends go in as
+        well as the middle: a flank can sit outside the boundary at its centre
+        and inside it at the tips, which would silently lose every troop aimed
+        there. Each refusal pushes the line further out; None means even the
+        playfield edge was inside the boundary.
+        """
+        for attempt in range(DEPLOY_ATTEMPTS):
+            line = deploy_line(LINE_POINTS, push_out(start, attempt), push_out(end, attempt))
+            probes = [line[0], line[len(line) // 2], line[-1]]
+            self.adb.tap_many([(card, CARD_ROW_Y), *probes], self.display)
+            if not deploy_refused(self.adb.screenshot(self.display)):
+                logger.info("Deploying on the flank pushed out %d step(s)", attempt)
+                return line
+            logger.info("Drop refused inside the boundary; pushing the flank out")
+            time.sleep(REFUSAL_CLEAR_DELAY)
+        return None
+
+    def _spread_troops(
+        self,
+        troops: list[int],
+        line: list[tuple[int, int]],
+        start: tuple[int, int],
+        end: tuple[int, int],
+    ) -> list[tuple[int, int]]:
+        """Empty the troop cards along the flank; returns the line ending up in use.
+
+        Probing the ends is not enough on its own: the village is a diamond, so
+        the ground around it is not convex and a line whose ends are both clear
+        can still cut through it. A refusal means *some* of this pass's drops
+        landed inside, so the flank is pushed out for the passes that follow —
+        but the cards are still re-read, because the drops that did land count.
+        """
+        remaining = list(troops)
+        pushed = 0
+        for index in range(DEPLOY_PASSES):
+            for card, x in enumerate(remaining):
+                drops = drop_points(line, index * len(remaining) + card)
+                self.adb.tap_many([(x, CARD_ROW_Y), *drops], self.display)
+            shot = self.adb.screenshot(self.display)
+            if deploy_refused(shot) and pushed + 1 < DEPLOY_ATTEMPTS:
+                pushed += 1
+                logger.info(
+                    "Some drops landed inside the boundary; flank pushed out to %d", pushed
+                )
+                line = deploy_line(LINE_POINTS, push_out(start, pushed), push_out(end, pushed))
+            remaining = live_cards(shot, remaining)
+            logger.info("%d troop card(s) still hold something", len(remaining))
+            if not remaining:
+                break
+        return line
 
     def _deploy(self, frame: bytes) -> None:
         """Spread the main troops along one flank; everything else drops once, mid-line."""
@@ -161,25 +293,34 @@ class AttackRunner(BaseModel):
             len(followers),
             len(spells),
         )
-        line = deploy_line(LINE_POINTS)
+        freezes = freeze_cards(frame, spells)
+        rages = [x for x in spells if x not in freezes]
+        rage_count = sum(card_count(frame, x) or len(RAGE_PATH) for x in rages)
+        plan = self._plan(frame, rage_count)
+        start, end = DEPLOY_LINES[plan.deploy_from] if plan else (DEPLOY_START, DEPLOY_END)
+        line = self._usable_line(troops[0], start, end)
+        if line is None:
+            logger.warning("Every drop was refused; the boundary reaches past the playfield")
+            return
         middle = line[len(line) // 2]
+        planned = tuple(point.pixels() for point in plan.rage_points) if plan else ()
+        # A plan can name fewer spots than the army carries rages, and `_cast`
+        # cycles back over its targets — which would stack two rages on one spot
+        # and waste one. The fixed grid fills the tail so each gets its own.
+        rage_path = planned + tuple(point for point in RAGE_PATH if point not in planned)
+        freeze_target = plan.freeze_point.pixels() if plan and plan.freeze_point else FREEZE_TARGET
         # Rage goes down first, along the path the troops are about to take, so
         # they are inside it the whole way in. Freeze waits until the end.
-        freezes = freeze_cards(frame, spells)
-        self._cast([x for x in spells if x not in freezes], RAGE_PATH, frame)
+        self._cast(rages, rage_path, frame)
         for x in vanguard:
             self.adb.tap_many([(x, CARD_ROW_Y), middle], self.display, gap=SINGLE_DROP_DELAY)
-        remaining = list(troops)
-        for index in range(DEPLOY_PASSES):
-            for card, x in enumerate(remaining):
-                drops = drop_points(line, index * len(remaining) + card)
-                self.adb.tap_many([(x, CARD_ROW_Y), *drops], self.display)
-            remaining = live_cards(self.adb.screenshot(self.display), remaining)
-            logger.info("%d troop card(s) still hold something", len(remaining))
-            if not remaining:
-                break
+        line = self._spread_troops(troops, line, start, end)
+        # Recomputed, not reused: the flank moves while the troops go down, and
+        # a hero sent to the pre-push midpoint is sent somewhere already refused.
+        middle = line[len(line) // 2]
         for x in followers:
             self.adb.tap_many([(x, CARD_ROW_Y), middle], self.display, gap=SINGLE_DROP_DELAY)
+        logger.info("Dropped %d hero card(s) at %s", len(followers), middle)
         time.sleep(HERO_ABILITY_DELAY)
         # A hero card taps into its ability once the hero is on the field. Some
         # card slots overlap the result screen's 回營 button, so this only runs
@@ -188,7 +329,7 @@ class AttackRunner(BaseModel):
             return
         self.adb.tap_many([(x, CARD_ROW_Y) for x in singles], self.display)
         # Now the troops are deep in and taking fire, which is what freeze is for.
-        self._cast(freezes, (FREEZE_TARGET,), frame)
+        self._cast(freezes, (freeze_target,), frame)
 
     def _cast(self, cards: list[int], targets: tuple[tuple[int, int], ...], frame: bytes) -> None:
         """Empty each spell card over `targets`.
@@ -234,6 +375,11 @@ class AttackRunner(BaseModel):
             return AttackReport(message="畫面不在主村，沒有開啟攻擊選單就停手")
         self._tap(FIND_MATCH)
         time.sleep(2)
+        strength = army_strength(self.adb.screenshot(self.display))
+        if strength and strength[0] < strength[1] * MIN_ARMY_RATIO:
+            logger.info("Army is only %d/%d; backing out before the search fee", *strength)
+            self.adb.back(self.display)
+            return AttackReport(message=f"兵力只有 {strength[0]}/{strength[1]}，等練好再打")
         self._tap(ARMY_ATTACK)
         skipped = 0
         while True:

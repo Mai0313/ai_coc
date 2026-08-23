@@ -77,6 +77,23 @@ SPELL_ART_TOP, SPELL_ART_BOTTOM = 790, 860
 SPELL_ART_HALF_WIDTH = 40
 FREEZE_GREEN = 190
 
+# `305/305` on the 我的軍隊 screen, which is the last point before the search fee
+# is charged. The troop icon before it and the slash between the two numbers are
+# not digits, and that is exactly how they are found: every real digit matches a
+# template within ARMY_DIGIT_TOLERANCE (measured 12-18) while the slash reads 25
+# and the icon 74, so anything over the line splits one number from the next.
+ARMY_BOX = (700, 192, 880, 230)
+ARMY_INK_BRIGHTNESS = 200
+ARMY_DIGIT_TOLERANCE = 22
+
+# 你無法在紅線區域內派遣部隊, the red banner the game shows when a drop lands
+# inside the deployment boundary. Village layouts vary far more than a fixed
+# drop line can allow for, so this is what tells the loop to move further out.
+# Measured, the warning fills 0.15 of this box in red against at most 0.03 of
+# whatever village happens to be behind it.
+REFUSED_BOX = (600, 238, 1010, 278)
+REFUSED_RED = 0.07
+
 # The digits are near-white with a black outline; the village behind them is not.
 INK_BRIGHTNESS = 200
 INK_SATURATION = 70
@@ -261,6 +278,40 @@ def card_count(png: bytes, slot: int) -> int | None:
             continue
         digits += min(TEMPLATES, key=lambda d: (TEMPLATES[d] ^ signature).bit_count())
     return int(digits) if digits else None
+
+
+def deploy_refused(png: bytes) -> bool:
+    """Whether the game is refusing drops for landing inside the boundary."""
+    data = Image.open(io.BytesIO(png)).convert("RGB").crop(REFUSED_BOX).tobytes()
+    red = sum(
+        data[i] > 170 and data[i] - data[i + 1] > 80 and data[i] - data[i + 2] > 80
+        for i in range(0, len(data), 3)
+    )
+    return red / (len(data) // 3) >= REFUSED_RED
+
+
+def army_strength(png: bytes) -> tuple[int, int] | None:
+    """Trained and total army size off the 我的軍隊 screen, or None if not on it.
+
+    Checked before the attack is confirmed, because the search fee is charged
+    after that and an army still being trained is not worth paying it for.
+    """
+    image = Image.open(io.BytesIO(png)).convert("RGB")
+    mask = _ink_mask(image.crop(ARMY_BOX), ARMY_INK_BRIGHTNESS)
+    numbers: list[str] = [""]
+    for left, right in _glyph_columns(mask):
+        signature = _signature(mask, left, right)
+        if signature is None:
+            continue
+        digit = min(TEMPLATES, key=lambda d: (TEMPLATES[d] ^ signature).bit_count())
+        if (TEMPLATES[digit] ^ signature).bit_count() > ARMY_DIGIT_TOLERANCE:
+            numbers.append("")
+            continue
+        numbers[-1] += digit
+    found = [value for value in numbers if value]
+    if len(found) != 2:
+        return None
+    return int(found[0]), int(found[1])
 
 
 def freeze_cards(png: bytes, slots: Sequence[int]) -> list[int]:

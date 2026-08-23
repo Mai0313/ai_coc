@@ -69,7 +69,6 @@ from ai_coc.constants import (
     VERSION_LABEL,
     SCHEMA_VERSION,
     ACCOUNT_JSON_DIR,
-    BATTLE_SCRIPT_DIR,
     MASTER_DB_VERSION,
     ENTITY_MAPPING_URL,
     DEFAULT_GEMINI_MODEL,
@@ -77,7 +76,6 @@ from ai_coc.constants import (
 )
 from ai_coc.adapters.ai import AGENT_PROFILE, GeminiClient, vision_prompt
 from ai_coc.adapters.mumu import MuMuAdapter
-from ai_coc.parsers.battle import load_battle_script
 from ai_coc.parsers.village import parse_village, parse_village_text
 from ai_coc.adapters.mapping import fetch_entity_mapping
 from ai_coc.adapters.secrets import SecretStore
@@ -93,6 +91,14 @@ if TYPE_CHECKING:
     from PyQt5.QtGui import QDropEvent, QDragEnterEvent
 
 logger = logging.getLogger(__name__)
+
+RUN_LABEL_START = "▶  開始自動化"
+RUN_LABEL_STOP = "■  停止"
+RUN_BUTTON_IDLE = "background:#1f9d55;font-size:12pt;font-weight:bold;border-radius:8px"
+RUN_BUTTON_RUNNING = "background:#c2410c;font-size:12pt;font-weight:bold;border-radius:8px"
+# A finished job queues the next pass straight away, so the loop runs back to
+# back; the interval timer is only what retries when a pass had nothing to do.
+NEXT_CYCLE_DELAY = 3000
 
 
 class MainWindow(QMainWindow):
@@ -149,25 +155,10 @@ class MainWindow(QMainWindow):
         """)
         central = QWidget()
         central_layout = QVBoxLayout(central)
-        launcher = QHBoxLayout()
-        launch_game = QPushButton("一鍵啟動《部落衝突》")
-        launch_game.clicked.connect(self.launch_coc)
-        launch_auto = QPushButton("啟動自主循環")
-        launch_auto.clicked.connect(self.start_automation)
-        stop_auto = QPushButton("停止自主循環")
-        stop_auto.clicked.connect(self.stop_automation)
-        self.launch_summary = QLabel("啟動後會檢查 MuMu、ADB、遊戲與未完成任務")
-        launcher.addWidget(launch_game)
-        launcher.addWidget(launch_auto)
-        launcher.addWidget(stop_auto)
-        launcher.addWidget(self.launch_summary, 1)
-        central_layout.addLayout(launcher)
         tabs = QTabWidget()
-        tabs.addTab(self._emulator_tab(), "模擬器")
+        tabs.addTab(self._control_tab(), "主控")
         tabs.addTab(self._account_tab(), "帳號進度")
         tabs.addTab(self._agent_tab(), "AI 助手")
-        tabs.addTab(self._battle_tab(), "戰鬥準備")
-        tabs.addTab(self._automation_tab(), "自動化控制")
         tabs.addTab(self._settings_tab(), "設定")
         tabs.addTab(self._about_tab(), "關於")
         self.tabs = tabs
@@ -224,12 +215,13 @@ class MainWindow(QMainWindow):
         logging.getLogger().setLevel(getattr(logging, level, logging.INFO))
         logger.warning("Log level is now %s", level)
 
-    def _emulator_tab(self) -> QWidget:
-        page = QWidget()
-        layout = QVBoxLayout(page)
-        toolbar = QHBoxLayout()
+    def _emulator_group(self) -> QGroupBox:
+        group = QGroupBox("模擬器")
+        layout = QVBoxLayout(group)
         self.instance_combo = QComboBox()
         self.instance_combo.currentIndexChanged.connect(self._select_instance)
+        layout.addWidget(self.instance_combo)
+        toolbar = QHBoxLayout()
         for text, fn in (
             ("重新整理狀態", self.refresh_instances),
             ("一鍵啟動遊戲", self.launch_coc),
@@ -239,26 +231,54 @@ class MainWindow(QMainWindow):
             button = QPushButton(text)
             button.clicked.connect(fn)
             toolbar.addWidget(button)
-        layout.addWidget(QLabel("目前 AI 目標"))
-        layout.addWidget(self.instance_combo)
         layout.addLayout(toolbar)
+        self.emulator_details = QPlainTextEdit()
+        self.emulator_details.setReadOnly(True)
+        self.emulator_details.setMaximumHeight(150)
+        layout.addWidget(self.emulator_details)
+        return group
+
+    def _control_tab(self) -> QWidget:
+        """Everything needed to start a run, on one page: pick the emulator, say
+        what it should do, press the button bottom right.
+        """
+        page = QWidget()
+        layout = QVBoxLayout(page)
         splitter = QSplitter(Qt.Horizontal)
         left = QWidget()
         left_layout = QVBoxLayout(left)
-        self.emulator_details = QPlainTextEdit()
-        self.emulator_details.setReadOnly(True)
-        left_layout.addWidget(self.emulator_details)
+        left_layout.addWidget(self._emulator_group())
+        left_layout.addWidget(self._automation_behavior_group())
+        left_layout.addWidget(self._automation_battle_group())
+        left_layout.addStretch()
         right = QWidget()
         right_layout = QVBoxLayout(right)
         self.frame_label = QLabel("尚無截圖")
         self.frame_label.setAlignment(Qt.AlignCenter)
-        self.frame_label.setMinimumSize(640, 360)
+        self.frame_label.setMinimumSize(520, 300)
         self.frame_label.setStyleSheet("background:#16181d;color:#bbb;border:1px solid #444")
         right_layout.addWidget(self.frame_label)
+        run_log = QGroupBox("自動化進度")
+        run_log_layout = QVBoxLayout(run_log)
+        self.automation_log = QPlainTextEdit()
+        self.automation_log.setReadOnly(True)
+        run_log_layout.addWidget(self.automation_log)
+        right_layout.addWidget(run_log, 1)
         splitter.addWidget(left)
         splitter.addWidget(right)
-        splitter.setSizes([360, 850])
-        layout.addWidget(splitter)
+        splitter.setSizes([520, 720])
+        layout.addWidget(splitter, 1)
+        footer = QHBoxLayout()
+        save = QPushButton("儲存設定")
+        save.clicked.connect(self.save_automation)
+        footer.addWidget(save)
+        footer.addStretch()
+        self.run_button = QPushButton(RUN_LABEL_START)
+        self.run_button.setMinimumSize(200, 46)
+        self.run_button.setStyleSheet(RUN_BUTTON_IDLE)
+        self.run_button.clicked.connect(self.toggle_automation)
+        footer.addWidget(self.run_button)
+        layout.addLayout(footer)
         return page
 
     def _account_tab(self) -> QWidget:
@@ -423,30 +443,6 @@ class MainWindow(QMainWindow):
         except Exception as exc:
             self._error("圖片載入失敗", str(exc))
 
-    def _battle_tab(self) -> QWidget:
-        page = QWidget()
-        layout = QVBoxLayout(page)
-        row = QHBoxLayout()
-        load = QPushButton("載入戰鬥腳本")
-        load.clicked.connect(self.load_battle)
-        example = QPushButton("載入範例")
-        example.clicked.connect(
-            lambda: self._show_battle(BATTLE_SCRIPT_DIR / "BH10_BABY_DRAGON_01.json")
-        )
-        row.addWidget(load)
-        row.addWidget(example)
-        row.addStretch()
-        layout.addLayout(row)
-        self.battle_view = QPlainTextEdit()
-        self.battle_view.setReadOnly(True)
-        layout.addWidget(self.battle_view)
-        layout.addWidget(
-            QLabel(
-                "V1 boundary: requirements and preparation plan are available. Live tactical battle control remains RESERVED_RL."
-            )
-        )
-        return page
-
     def _automation_behavior_group(self) -> QGroupBox:
         behavior = QGroupBox("自主行為")
         form = QFormLayout(behavior)
@@ -471,9 +467,6 @@ class MainWindow(QMainWindow):
     def _automation_battle_group(self) -> QGroupBox:
         battle = QGroupBox("進攻與資源門檻")
         battle_form = QFormLayout(battle)
-        self.auto_script = QComboBox()
-        for path in sorted(BATTLE_SCRIPT_DIR.glob("*.json")):
-            self.auto_script.addItem(path.stem, str(path))
         self.min_gold = QSpinBox()
         self.min_gold.setRange(0, 2000000)
         self.min_gold.setSingleStep(50000)
@@ -496,35 +489,12 @@ class MainWindow(QMainWindow):
             ("cycle_minutes", self.cycle_minutes, 10),
         ):
             widget.setValue(int(self.settings.value(key, default)))
-        battle_form.addRow("進攻腳本", self.auto_script)
         battle_form.addRow("最低金幣", self.min_gold)
         battle_form.addRow("最低聖水", self.min_elixir)
         battle_form.addRow("最低黑水", self.min_dark)
         battle_form.addRow("金幣達到此值停止刷資源", self.stop_gold)
-        battle_form.addRow("巡檢間隔（分鐘）", self.cycle_minutes)
+        battle_form.addRow("閒置時重試間隔（分鐘）", self.cycle_minutes)
         return battle
-
-    def _automation_tab(self) -> QWidget:
-        page = QWidget()
-        layout = QVBoxLayout(page)
-        layout.addWidget(self._automation_behavior_group())
-        layout.addWidget(self._automation_battle_group())
-        row = QHBoxLayout()
-        save = QPushButton("儲存自動化設定")
-        save.clicked.connect(self.save_automation)
-        start = QPushButton("立即開始自主運作")
-        start.clicked.connect(self.start_automation)
-        stop = QPushButton("停止自主運作")
-        stop.clicked.connect(self.stop_automation)
-        row.addWidget(save)
-        row.addWidget(start)
-        row.addWidget(stop)
-        row.addStretch()
-        layout.addLayout(row)
-        self.automation_log = QPlainTextEdit()
-        self.automation_log.setReadOnly(True)
-        layout.addWidget(self.automation_log)
-        return page
 
     def save_automation(self) -> None:
         for key, widget in (
@@ -544,17 +514,36 @@ class MainWindow(QMainWindow):
             ("cycle_minutes", self.cycle_minutes),
         ):
             self.settings.setValue(key, widget.value())
-        self.settings.setValue("auto_script", self.auto_script.currentData() or "")
         self.automation_log.appendPlainText("自動化設定已保存。")
+
+    def toggle_automation(self) -> None:
+        if self.automation_timer.isActive():
+            self.stop_automation()
+        else:
+            self.start_automation()
+
+    def _paint_run_button(self) -> None:
+        running = self.automation_timer.isActive()
+        self.run_button.setText(RUN_LABEL_STOP if running else RUN_LABEL_START)
+        self.run_button.setStyleSheet(RUN_BUTTON_RUNNING if running else RUN_BUTTON_IDLE)
+
+    def _queue_next_cycle(self) -> None:
+        """Start the next pass as soon as this one finishes, so the loop is
+        continuous rather than paced by the idle timer.
+        """
+        if self.automation_timer.isActive():
+            QTimer.singleShot(NEXT_CYCLE_DELAY, self.automation_cycle)
 
     def start_automation(self) -> None:
         self.save_automation()
         self.automation_timer.start(self.cycle_minutes.value() * 60000)
-        self.automation_log.appendPlainText("自主運作已啟動；正在執行第一次巡檢。")
+        self._paint_run_button()
+        self.automation_log.appendPlainText("自動化已啟動，第一輪開始。")
         QTimer.singleShot(100, self.automation_cycle)
 
     def stop_automation(self) -> None:
         self.automation_timer.stop()
+        self._paint_run_button()
         self.automation_log.appendPlainText("已停止建立新的自主任務；目前步驟完成後停止。")
 
     def automation_cycle(self) -> None:
@@ -613,11 +602,15 @@ class MainWindow(QMainWindow):
             min_dark=self.min_dark.value(),
         )
 
+        # The client is only used once an opponent has passed the thresholds, to
+        # pick the flank and the spell targets; screen reading never needs it.
+        planner = self.gemini_client() if self.api_key.text().strip() else None
+
         def task() -> AttackReport:
             active = m.ensure_coc(a.index)
             adb = m.controller(active.adb_serial)
             return AttackRunner(
-                adb=adb, display=adb.display_for(COC_PACKAGE), thresholds=thresholds
+                adb=adb, display=adb.display_for(COC_PACKAGE), thresholds=thresholds, ai=planner
             ).run()
 
         def done(report: AttackReport) -> None:
@@ -627,6 +620,7 @@ class MainWindow(QMainWindow):
 
         def finished() -> None:
             self.attack_running = False
+            self._queue_next_cycle()
 
         self.automation_log.appendPlainText("開始搜尋對手…")
         self.attack_running = True
@@ -1212,6 +1206,7 @@ class MainWindow(QMainWindow):
                 QTimer.singleShot(800, lambda: self.grab().save(proof_path, "PNG"))
             if completed:
                 QTimer.singleShot(1200, self.resume_pending_tasks)
+            self._queue_next_cycle()
 
         self.run_async("AI 正在操作並確認 MuMu 畫面…", task, done)
 
@@ -1228,33 +1223,3 @@ class MainWindow(QMainWindow):
         )
         self._say("system", "TEACHING [USER_CONFIRMED]", statement)
         self.chat_input.clear()
-
-    def load_battle(self) -> None:
-        path, _ = QFileDialog.getOpenFileName(self, "Load Battle Script", "", "JSON (*.json)")
-        if path:
-            self._show_battle(Path(path))
-
-    def _show_battle(self, path: Path) -> None:
-        try:
-            script = load_battle_script(path)
-            lines = [
-                f"Script: {script.script_id}",
-                f"Name: {script.display_name}",
-                f"World: {script.world}",
-                f"Controller: {script.battle_controller.kind}",
-                "",
-                "Requirements:",
-            ]
-            for category, values in script.army_requirements.categories():
-                lines.append(f"  {category}:")
-                for value in values:
-                    lines.append(f"    - {value.data_id} {value.name} required={value.required}")
-            lines += [
-                "",
-                "Preparation state: REQUIREMENTS_LOADED",
-                "Next: account/army verification through AI semantic vision.",
-                "Enemy Preview handoff: RESERVED_RL",
-            ]
-            self.battle_view.setPlainText("\n".join(lines))
-        except Exception as exc:
-            self._error("Battle Script", str(exc))

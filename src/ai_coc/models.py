@@ -292,52 +292,6 @@ class TaskRecord(BaseModel):
     updated_at: str
 
 
-class ArmyRequirement(BaseModel):
-    model_config = TOLERANT
-
-    data_id: int
-    name: str = ""
-    required: bool = False
-
-
-class ArmyRequirements(BaseModel):
-    """The `army_requirements` block of a Battle Script, one list per category."""
-
-    model_config = TOLERANT
-
-    troops: list[ArmyRequirement] = Field(default_factory=list)
-    heroes: list[ArmyRequirement] = Field(default_factory=list)
-    spells: list[ArmyRequirement] = Field(default_factory=list)
-    siege: list[ArmyRequirement] = Field(default_factory=list)
-    reinforcements: list[ArmyRequirement] = Field(default_factory=list)
-
-    def categories(self) -> list[tuple[str, list[ArmyRequirement]]]:
-        """The declared categories only; one the game adds later stays in extras."""
-        return [(name, getattr(self, name)) for name in ArmyRequirements.model_fields]
-
-
-class BattleController(BaseModel):
-    """The handoff boundary a Battle Script names; V1 always reserves it for RL."""
-
-    model_config = TOLERANT
-
-    kind: str = Field(default="RESERVED_RL", validation_alias="type")
-
-
-class BattleScript(BaseModel):
-    model_config = TOLERANT
-
-    script_id: str = ""
-    name: str = ""
-    world: str = "unknown"
-    army_requirements: ArmyRequirements
-    battle_controller: BattleController = Field(default_factory=BattleController)
-
-    @property
-    def display_name(self) -> str:
-        return self.name or self.script_id or "Unnamed"
-
-
 class LootOffer(BaseModel):
     """The lootable resources a scouted opponent shows, read off the screenshot."""
 
@@ -377,6 +331,32 @@ class ScoutView(BaseModel):
 
     loot: LootOffer
     can_skip: bool
+
+
+class ScreenPoint(BaseModel):
+    """A spot on the battle screen, as percentages the way `AgentAction` uses them."""
+
+    model_config = ConfigDict(frozen=True)
+
+    x_pct: float = Field(ge=0, le=100)
+    y_pct: float = Field(ge=0, le=100)
+
+    def pixels(self) -> tuple[int, int]:
+        return round(self.x_pct * 16), round(self.y_pct * 9)
+
+
+class AttackPlan(BaseModel):
+    """How to attack one opponent, chosen by reading its scout screen.
+
+    The approach is one of four named flanks rather than free coordinates: a
+    drop has to land outside the deployment boundary, and a named side can be
+    mapped onto a line already known to be outside it.
+    """
+
+    deploy_from: Literal["top_left", "top_right", "bottom_left", "bottom_right"] = "top_left"
+    rage_points: list[ScreenPoint] = Field(default_factory=list)
+    freeze_point: ScreenPoint | None = None
+    reason: str = ""
 
 
 class AttackReport(BaseModel):
