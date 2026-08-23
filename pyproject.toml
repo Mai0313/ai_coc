@@ -73,6 +73,7 @@ dependencies = [
     "defusedxml>=0.7,<1",
     "google-genai>=2.3.0",
     "markdown-it-py>=3.0",
+    "pillow>=11.0",
     "pydantic>=2.9",
     "PyQt5>=5.15,<6",
     "PyQt5-Qt5==5.15.2; sys_platform == 'win32'",
