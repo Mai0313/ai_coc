@@ -218,6 +218,8 @@ __marimo__/
 /data/
 /docs/
 TODO.md
+# Written by scripts/gen_version_file.py right before PyInstaller runs.
+/version_info.txt
 
 # Secrets and local configuration
 .env.*

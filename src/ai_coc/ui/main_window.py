@@ -61,6 +61,7 @@ from ai_coc.models import (
 from ai_coc.constants import (
     APP_NAME,
     LOG_PATH,
+    ORGANISATION,
     VERSION_LABEL,
     SCHEMA_VERSION,
     ACCOUNT_JSON_DIR,
@@ -97,7 +98,7 @@ class MainWindow(QMainWindow):
         self.pool = QThreadPool.globalInstance()
         self.db = Database()
         self.secrets = SecretStore()
-        self.settings = QSettings("Hsien0818666", "CoCAIController")
+        self.settings = QSettings(ORGANISATION, "CoCAIController")
         self.mumu: MuMuAdapter | None = None
         self.instances: list[EmulatorInstance] = []
         self.active: EmulatorInstance | None = None

@@ -72,10 +72,14 @@ jobs:
       - name: Run tests
         run: uv run pytest
 
+      - name: Generate the Windows version resource
+        run: uv run python scripts/gen_version_file.py $env:VERSION
+
       - name: Packaging to Executable file
         run: |
           uv run pyinstaller src/${{ github.event.repository.name }}/cli.py --${{ env.PACKAGE_MODE }} --windowed `
             -n ${{ github.event.repository.name }} `
+            --version-file version_info.txt `
             --add-data "src/${{ github.event.repository.name }}/battle_scripts;${{ github.event.repository.name }}/battle_scripts" `
             --copy-metadata ${{ github.event.repository.name }}
 
