@@ -538,16 +538,19 @@ class AttackRunner(BaseModel):
         self._tap(ARMY_ATTACK)
         skipped = 0
         while True:
-            if self.should_stop():
-                logger.info("Stop pressed; leaving the search after %d skip(s)", skipped)
-                self._tap(END_BATTLE)
-                return AttackReport(skipped=skipped, message="已停止，未開打就離開搜尋")
             scouted = self._scout()
             if scouted is None:
                 return AttackReport(skipped=skipped, message="等不到對手畫面，已放棄這一輪搜尋")
             view, frame = scouted
             forced = not view.can_skip
-            if forced or self.thresholds.accepts(view.loot):
+            # Leaving is only safe on an opponent that can still be skipped: 結束
+            # 戰鬥 is on that screen, and the search fee is already spent, so
+            # walking out of 正在搜尋對手 would pay for a battle nothing is
+            # deployed in and lose the shield with it. A forced battle is played.
+            stopping = self.should_stop() and not forced
+            if stopping:
+                logger.info("Stop pressed; leaving the search after %d skip(s)", skipped)
+            if not stopping and (forced or self.thresholds.accepts(view.loot)):
                 reason = "倒數結束被強制開戰" if forced else "戰利品達標"
                 logger.info("Attacking after %d skips (%s)", skipped, reason)
                 self._deploy(frame)
@@ -561,10 +564,13 @@ class AttackRunner(BaseModel):
                     if took
                     else f"{reason}，但整場戰利品沒有變化，部隊可能沒有成功部署",
                 )
-            if skipped >= self.max_skips:
+            if stopping or skipped >= self.max_skips:
                 self._tap(END_BATTLE)
                 return AttackReport(
-                    skipped=skipped, message=f"連續跳過 {skipped} 個對手都未達門檻，已結束搜尋"
+                    skipped=skipped,
+                    message="已停止，未開打就離開搜尋"
+                    if stopping
+                    else f"連續跳過 {skipped} 個對手都未達門檻，已結束搜尋",
                 )
             skipped += 1
             self._tap(NEXT_TARGET)
