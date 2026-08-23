@@ -9,7 +9,8 @@ from PyQt5.QtWidgets import QApplication
 
 # PyInstaller runs this file as `__main__`, which has no package context, so these
 # stay absolute even for same-layer modules.
-from ai_coc.constants import APP_NAME, VERSION_LABEL
+from ai_coc import __version__
+from ai_coc.constants import APP_NAME
 from ai_coc.logging_setup import configure_logging
 from ai_coc.ui.main_window import MainWindow
 
@@ -26,7 +27,8 @@ def main() -> int:
     sys.excepthook = _log_uncaught
     app = QApplication(sys.argv)
     app.setApplicationName(APP_NAME)
-    app.setApplicationVersion(VERSION_LABEL)
+    # Qt wants the bare version here; it feeds --version and the platform About box.
+    app.setApplicationVersion(__version__)
     window = MainWindow()
     window.show()
     if "--live-test" in sys.argv:
