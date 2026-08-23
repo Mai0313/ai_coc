@@ -5,6 +5,7 @@ import time
 from typing import TYPE_CHECKING, Any
 import logging
 from pathlib import Path
+from functools import partial
 
 from PyQt5.QtGui import QPixmap, QDesktopServices
 from PyQt5.QtCore import (
@@ -50,17 +51,20 @@ from ai_coc.models import (
     ChatRole,
     AgentAction,
     ChatMessage,
+    AttackReport,
     LocatedTarget,
     UiElementList,
     AccountRowList,
     ChatTranscript,
     GeminiSettings,
+    LootThresholds,
     AccountSnapshot,
     EmulatorInstance,
 )
 from ai_coc.constants import (
     APP_NAME,
     LOG_PATH,
+    COC_PACKAGE,
     ORGANISATION,
     VERSION_LABEL,
     SCHEMA_VERSION,
@@ -79,6 +83,7 @@ from ai_coc.adapters.mapping import fetch_entity_mapping
 from ai_coc.adapters.secrets import SecretStore
 from ai_coc.adapters.database import Database
 
+from .attack import AttackRunner
 from .render import CHAT_STYLESHEET, transcript_to_html
 from .workers import Worker, LogBridge, StreamWorker, UiLogHandler
 
@@ -107,6 +112,7 @@ class MainWindow(QMainWindow):
         self.frame_sequence = 0
         self.current_account_tag = ""
         self.running_task_id: int | None = None
+        self.attack_running = False
         self.chat = ChatTranscript()
         # A streamed reply arrives token by token; repaint on a beat instead.
         self.chat_repaint = QTimer(self)
@@ -552,33 +558,79 @@ class MainWindow(QMainWindow):
         self.automation_log.appendPlainText("已停止建立新的自主任務；目前步驟完成後停止。")
 
     def automation_cycle(self) -> None:
-        if self.running_task_id is not None or self.db.pending_tasks() or not self.active:
+        # An attack holds no task row, so it needs its own flag here: a second
+        # runner started mid-attack would interleave taps on the same display.
+        if (
+            self.running_task_id is not None
+            or self.attack_running
+            or self.db.pending_tasks()
+            or not self.active
+        ):
             return
-        jobs = []
-        if self.auto_collect.isChecked():
-            jobs.append("回到主村，收取所有金礦、聖水收集器和黑水鑽井的資源，完成後回到主村畫面")
-        if self.auto_donate.isChecked():
-            jobs.append("打開部落聊天室，檢查可捐兵請求並依現有軍隊安全捐兵，完成後返回主村")
-        if self.auto_upgrade.isChecked():
-            jobs.append("檢查空閒建築工人與目前資源，依已保存的升級優先順序安排一項建築升級")
-        if self.auto_walls.isChecked():
-            jobs.append("檢查保留資源門檻後，使用超出保留量的資源升級一段城牆")
+        jobs: list[Callable[[], None]] = [
+            partial(self._queue_agent_job, instruction)
+            for enabled, instruction in (
+                (
+                    self.auto_collect.isChecked(),
+                    "回到主村，收取所有金礦、聖水收集器和黑水鑽井的資源，完成後回到主村畫面",
+                ),
+                (
+                    self.auto_donate.isChecked(),
+                    "打開部落聊天室，檢查可捐兵請求並依現有軍隊安全捐兵，完成後返回主村",
+                ),
+                (
+                    self.auto_upgrade.isChecked(),
+                    "檢查空閒建築工人與目前資源，依已保存的升級優先順序安排一項建築升級",
+                ),
+                (
+                    self.auto_walls.isChecked(),
+                    "檢查保留資源門檻後，使用超出保留量的資源升級一段城牆",
+                ),
+            )
+            if enabled
+        ]
+        # Attacking is a fixed sequence against a screen that expires in 30
+        # seconds, so it drives itself instead of going through the agent loop.
         if self.auto_attack.isChecked():
-            script_path = Path(str(self.auto_script.currentData() or ""))
-            script_text = (
-                script_path.read_text(encoding="utf-8-sig") if script_path.is_file() else "{}"
-            )
-            jobs.append(
-                f"使用以下戰鬥腳本搜尋資源村並執行：{script_text}；門檻金幣 {self.min_gold.value()}、聖水 {self.min_elixir.value()}、黑水 {self.min_dark.value()}，符合才進攻並按腳本結束條件收尾"
-            )
+            jobs.append(self.run_attack)
         if not jobs:
             self.automation_log.appendPlainText("巡檢完成：尚未啟用任何自主行為。")
             return
-        instruction = jobs[self.automation_step % len(jobs)]
+        job = jobs[self.automation_step % len(jobs)]
         self.automation_step += 1
+        job()
+
+    def _queue_agent_job(self, instruction: str) -> None:
         task_id = self.db.add_task(instruction)
         self.automation_log.appendPlainText(f"建立自主任務 #{task_id}：{instruction}")
         self.execute_agent_command(instruction, task_id)
+
+    def run_attack(self) -> None:
+        m, a = self._require()
+        thresholds = LootThresholds(
+            min_gold=self.min_gold.value(),
+            min_elixir=self.min_elixir.value(),
+            min_dark=self.min_dark.value(),
+        )
+
+        def task() -> AttackReport:
+            active = m.ensure_coc(a.index)
+            adb = m.controller(active.adb_serial)
+            return AttackRunner(
+                adb=adb, display=adb.display_for(COC_PACKAGE), thresholds=thresholds
+            ).run()
+
+        def done(report: AttackReport) -> None:
+            self.automation_log.appendPlainText(
+                f"進攻巡檢結束（跳過 {report.skipped} 個對手）：{report.message}"
+            )
+
+        def finished() -> None:
+            self.attack_running = False
+
+        self.automation_log.appendPlainText("開始搜尋對手…")
+        self.attack_running = True
+        self.run_async("AI 正在搜尋對手並進攻…", task, done, finished)
 
     def _settings_tab(self) -> QWidget:
         page = QWidget()
@@ -636,13 +688,20 @@ class MainWindow(QMainWindow):
         return page
 
     def run_async(
-        self, label: str, fn: Callable[[], Any], done: Callable[[Any], None] | None = None
+        self,
+        label: str,
+        fn: Callable[[], Any],
+        done: Callable[[Any], None] | None = None,
+        finished: Callable[[], None] | None = None,
     ) -> None:
         logger.info("Started: %s", label)
         self.statusBar().showMessage(label)
         worker = Worker(fn, label)
         if done:
             worker.signals.result.connect(done)
+        if finished:
+            # Runs whether the work succeeded or raised, unlike `done`.
+            worker.signals.finished.connect(finished)
         worker.signals.error.connect(lambda message: self._error(label, message))
         worker.signals.finished.connect(lambda: self.statusBar().showMessage("Ready"))
         self.pool.start(worker)

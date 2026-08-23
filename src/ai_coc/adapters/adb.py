@@ -79,12 +79,14 @@ class AdbController(BaseModel):
             raise AdbControlError(f"ADB 尚未就緒 {self.serial}：{state}")
         return device
 
-    def shell(self, command: list[str], timeout: float = 12) -> str:
-        logger.debug("adb -s %s shell %s", self.serial, " ".join(command))
+    def shell(self, command: list[str] | str, timeout: float = 12) -> str:
+        """A list has every argument escaped; pass a string to use shell syntax."""
+        printable = command if isinstance(command, str) else " ".join(command)
+        logger.debug("adb -s %s shell %s", self.serial, printable)
         try:
             return str(self.connect().shell(command, timeout=timeout))
         except adbutils.AdbError as exc:
-            raise AdbControlError(f"ADB 指令失敗 {' '.join(command)}：{exc}") from exc
+            raise AdbControlError(f"ADB 指令失敗 {printable}：{exc}") from exc
 
     def display_for(self, package: str) -> DisplayTarget:
         """Locate the display holding a package; MuMu leaves display 0 on its own launcher."""
@@ -116,6 +118,27 @@ class AdbController(BaseModel):
     def tap(self, x: int, y: int, display: DisplayTarget) -> None:
         logger.info("Tap %s display %s at (%d, %d)", self.serial, display.logical_id, x, y)
         self.input(display, "tap", str(int(x)), str(int(y)))
+
+    def tap_many(
+        self, points: list[tuple[int, int]], display: DisplayTarget, gap: float = 0.12
+    ) -> None:
+        """A burst of taps in one shell round-trip, spaced far enough apart to land.
+
+        Deploying an army one call at a time spends most of the battle timer on
+        ADB latency. Two things here were each paid for in a battle that
+        deployed nothing at all, both of them silent:
+
+        - it goes as a shell string, because adbutils escapes every argument of
+          a list, which turns the separators into literal text;
+        - the sleeps are load-bearing. Chained `input` calls land about 10 ms
+          apart, well inside one display frame, and the game keeps only the
+          first of them.
+        """
+        logger.info(
+            "Tapping %d points on %s display %s", len(points), self.serial, display.logical_id
+        )
+        taps = [f"input -d {display.logical_id} tap {int(x)} {int(y)}" for x, y in points]
+        self.shell(f";sleep {gap};".join(taps), timeout=len(points) * (gap + 0.5) + 15)
 
     def swipe(
         self,

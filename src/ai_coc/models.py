@@ -338,6 +338,55 @@ class BattleScript(BaseModel):
         return self.name or self.script_id or "Unnamed"
 
 
+class LootOffer(BaseModel):
+    """The lootable resources a scouted opponent shows, read off the screenshot."""
+
+    model_config = ConfigDict(frozen=True)
+
+    gold: int
+    elixir: int
+    dark: int
+
+
+class LootThresholds(BaseModel):
+    """The minimum loot the automation tab requires before an opponent is worth attacking."""
+
+    model_config = ConfigDict(frozen=True)
+
+    min_gold: int = 0
+    min_elixir: int = 0
+    min_dark: int = 0
+
+    def accepts(self, offer: LootOffer) -> bool:
+        """Every threshold has to be met; a resource that does not matter is left at 0."""
+        return (
+            offer.gold >= self.min_gold
+            and offer.elixir >= self.min_elixir
+            and offer.dark >= self.min_dark
+        )
+
+
+class ScoutView(BaseModel):
+    """What the opponent screen offers, and whether it can still be skipped.
+
+    The loot panel stays on screen once the battle starts, so `can_skip` is what
+    separates the 30-second scout window from a battle already under way.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    loot: LootOffer
+    can_skip: bool
+
+
+class AttackReport(BaseModel):
+    """What one run of the attack loop did, for the automation log."""
+
+    skipped: int = 0
+    attacked: LootOffer | None = None
+    message: str = ""
+
+
 class UiElement(BaseModel):
     """One clickable or labelled node from Android's accessibility hierarchy."""
 
