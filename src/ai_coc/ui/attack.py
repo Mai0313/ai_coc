@@ -112,6 +112,7 @@ DEPLOY_ATTEMPTS = 5
 PLAYFIELD = (30, 105, 1570, 700)
 # The refusal banner lingers, so it has to clear before the next probe is read.
 REFUSAL_CLEAR_DELAY = 3
+BANNER_CLEAR_ATTEMPTS = 3
 
 BATTLE_TIMEOUT = 240
 # Two things routinely cover the home village between runs: a building panel
@@ -249,10 +250,8 @@ class AttackRunner(BaseModel):
             time.sleep(1)
         return None
 
-    def _usable_line(
-        self, card: int, start: tuple[int, int], end: tuple[int, int]
-    ) -> list[tuple[int, int]] | None:
-        """A flank the game will actually accept drops on.
+    def _usable_line(self, card: int, start: tuple[int, int], end: tuple[int, int]) -> int | None:
+        """How far out the flank has to be pushed before the game accepts drops on it.
 
         Troops are dropped as probes, because a village whose boundary reaches
         past the line refuses them and says so on screen. Both ends go in as
@@ -260,6 +259,10 @@ class AttackRunner(BaseModel):
         and inside it at the tips, which would silently lose every troop aimed
         there. Each refusal pushes the line further out; None means even the
         playfield edge was inside the boundary.
+
+        The step count is what comes back rather than the line, because everyone
+        downstream keeps pushing from it and a line cannot say how far out it
+        already is.
         """
         for attempt in range(DEPLOY_ATTEMPTS):
             line = deploy_line(LINE_POINTS, push_out(start, attempt), push_out(end, attempt))
@@ -267,17 +270,13 @@ class AttackRunner(BaseModel):
             self.adb.tap_many([(card, CARD_ROW_Y), *probes], self.display)
             if not deploy_refused(self.adb.screenshot(self.display)):
                 logger.info("Deploying on the flank pushed out %d step(s)", attempt)
-                return line
+                return attempt
             logger.info("Drop refused inside the boundary; pushing the flank out")
             time.sleep(REFUSAL_CLEAR_DELAY)
         return None
 
     def _spread_troops(
-        self,
-        troops: list[int],
-        line: list[tuple[int, int]],
-        start: tuple[int, int],
-        end: tuple[int, int],
+        self, troops: list[int], start: tuple[int, int], end: tuple[int, int], pushed: int
     ) -> list[tuple[int, int]]:
         """Empty the troop cards along the flank; returns the line ending up in use.
 
@@ -286,25 +285,78 @@ class AttackRunner(BaseModel):
         can still cut through it. A refusal means *some* of this pass's drops
         landed inside, so the flank is pushed out for the passes that follow —
         but the cards are still re-read, because the drops that did land count.
+
+        `pushed` carries on from where `_usable_line` left off. Restarting it at
+        zero made the first push land back on the line already in use, so a real
+        refusal was answered by moving nothing at all.
         """
         remaining = list(troops)
-        pushed = 0
+        line = deploy_line(LINE_POINTS, push_out(start, pushed), push_out(end, pushed))
         for index in range(DEPLOY_PASSES):
             for card, x in enumerate(remaining):
                 drops = drop_points(line, index * len(remaining) + card)
                 self.adb.tap_many([(x, CARD_ROW_Y), *drops], self.display)
             shot = self.adb.screenshot(self.display)
-            if deploy_refused(shot) and pushed + 1 < DEPLOY_ATTEMPTS:
+            refused = deploy_refused(shot)
+            if refused and pushed + 1 < DEPLOY_ATTEMPTS:
                 pushed += 1
                 logger.info(
                     "Some drops landed inside the boundary; flank pushed out to %d", pushed
                 )
                 line = deploy_line(LINE_POINTS, push_out(start, pushed), push_out(end, pushed))
             remaining = live_cards(shot, remaining)
+            # The banner outlives the pass that earned it, so without this the
+            # next pass reads the same one again and pushes the flank a second
+            # time for drops that were never refused.
+            if refused:
+                time.sleep(REFUSAL_CLEAR_DELAY)
             logger.info("%d troop card(s) still hold something", len(remaining))
             if not remaining:
                 break
         return line
+
+    def _drop_single(self, card: int, point: tuple[int, int]) -> bool:
+        """One unit off one card onto one spot; False when the game refused the spot.
+
+        The screen has to be clear of an older banner *before* the drop, because
+        judging one against a stale banner is not a free mistake here: a hero
+        already on the field answers a second tap on its card with its ability,
+        so a drop wrongly called refused burns the cloak or the tome on a retry
+        and leaves `_fire_abilities` tapping an empty card later.
+        """
+        for _ in range(BANNER_CLEAR_ATTEMPTS):
+            if not deploy_refused(self.adb.screenshot(self.display)):
+                break
+            time.sleep(REFUSAL_CLEAR_DELAY)
+        self.adb.tap_many([(card, CARD_ROW_Y), point], self.display, gap=SINGLE_DROP_DELAY)
+        return not deploy_refused(self.adb.screenshot(self.display))
+
+    def _drop_singles(self, cards: list[int], point: tuple[int, int], what: str) -> int:
+        """Empty the one-off cards onto the same spot, pushing it out when refused.
+
+        The troop line is probed before it is used and pushed again whenever a
+        pass is refused; these drops never were, and that is how a hero went
+        missing. A refused hero is silent — the troops already on the field keep
+        the loot moving, so `_wait_out_battle` sees a battle going fine.
+        """
+        landed = 0
+        pushed = 0
+        for card in cards:
+            while pushed < DEPLOY_ATTEMPTS and not self._drop_single(
+                card, push_out(point, pushed)
+            ):
+                pushed += 1
+                logger.info("A %s drop was refused; the spot is pushed out to %d", what, pushed)
+            if pushed < DEPLOY_ATTEMPTS:
+                landed += 1
+        logger.info(
+            "%d of %d %s card(s) landed at %s",
+            landed,
+            len(cards),
+            what,
+            push_out(point, min(pushed, DEPLOY_ATTEMPTS - 1)),
+        )
+        return landed
 
     def _deploy(self, frame: bytes) -> None:
         """Spread the main troops along one flank; everything else drops once, mid-line."""
@@ -335,10 +387,11 @@ class AttackRunner(BaseModel):
         rage_count = sum(card_count(frame, x) or len(RAGE_PATH) for x in rages)
         plan = self._plan(frame, rage_count)
         start, end = DEPLOY_LINES[plan.deploy_from] if plan else (DEPLOY_START, DEPLOY_END)
-        line = self._usable_line(troops[0], start, end)
-        if line is None:
+        pushed = self._usable_line(troops[0], start, end)
+        if pushed is None:
             logger.warning("Every drop was refused; the boundary reaches past the playfield")
             return
+        line = deploy_line(LINE_POINTS, push_out(start, pushed), push_out(end, pushed))
         middle = line[len(line) // 2]
         planned = tuple(point.pixels() for point in plan.rage_points) if plan else ()
         # A plan can name fewer spots than the army carries rages, and `_cast`
@@ -349,16 +402,15 @@ class AttackRunner(BaseModel):
         # Rage goes down first, along the path the troops are about to take, so
         # they are inside it the whole way in. Freeze waits until the end.
         self._cast(rages, rage_path, frame)
-        for x in vanguard:
-            self.adb.tap_many([(x, CARD_ROW_Y), middle], self.display, gap=SINGLE_DROP_DELAY)
-        line = self._spread_troops(troops, line, start, end)
+        self._drop_singles(vanguard, middle, "siege")
+        line = self._spread_troops(troops, start, end, pushed)
         # Recomputed, not reused: the flank moves while the troops go down, and
         # a hero sent to the pre-push midpoint is sent somewhere already refused.
         middle = line[len(line) // 2]
-        for x in followers:
-            self.adb.tap_many([(x, CARD_ROW_Y), middle], self.display, gap=SINGLE_DROP_DELAY)
-        logger.info("Dropped %d hero card(s) at %s", len(followers), middle)
-        self._fire_abilities(followers, plan.heroes if plan else [])
+        # No hero on the field means every ability tap would only select a card,
+        # and the schedule would sit through its longest timer to do it.
+        if self._drop_singles(followers, middle, "hero"):
+            self._fire_abilities(followers, plan.heroes if plan else [])
         # Freeze wants the defences the troops are fighting, which is where they
         # are by now. Some card slots overlap the result screen's 回營 button, so
         # this only runs while the battle is genuinely still on.
