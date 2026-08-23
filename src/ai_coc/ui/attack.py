@@ -57,9 +57,9 @@ CARD_ROW_Y = 800
 DROPS_PER_PASS = 4
 DEPLOY_PASSES = 10
 
-# Lines just outside the deployment boundary on each flank. A plan names a side
-# rather than free coordinates, because a drop inside the boundary is refused and
-# a named side maps onto a line already known to be outside it.
+# Lines just outside the deployment boundary on each flank, used when there is
+# no plan or the line it drew crosses the village. A drop inside the boundary is
+# refused, and a named side maps onto a line already known to be outside it.
 DEPLOY_LINES = {
     "top_left": ((600, 110), (230, 380)),
     "top_right": ((1000, 110), (1370, 380)),
@@ -113,6 +113,13 @@ PLAYFIELD = (30, 105, 1570, 700)
 # The refusal banner lingers, so it has to clear before the next probe is read.
 REFUSAL_CLEAR_DELAY = 3
 BANNER_CLEAR_ATTEMPTS = 3
+# A planned line has to run past the village, not merely start and end clear of
+# it. `push_out` moves a point away from SCREEN_CENTRE, so a point near the
+# centre has almost no direction to be pushed in and a line drawn straight
+# across the village is refused at every probe, which loses the whole army.
+# The four preset flanks all sit about 410 px out at their midpoint; this keeps
+# a planned line in the same band and falls back to a flank when it is not.
+MIN_LINE_RADIUS = 300
 
 BATTLE_TIMEOUT = 240
 # Two things routinely cover the home village between runs: a building panel
@@ -150,6 +157,30 @@ def push_out(point: tuple[int, int], steps: int) -> tuple[int, int]:
     )
 
 
+def planned_line(plan: AttackPlan | None) -> tuple[tuple[int, int], tuple[int, int]] | None:
+    """The line a plan drew, or None when it is not one the loop can work with.
+
+    A line whose midpoint sits on the village is the failure case: every probe
+    along it is refused and `push_out` has no room to move it, so the caller
+    needs to know to use a named flank instead rather than lose the army.
+    """
+    if plan is None or plan.deploy_start is None or plan.deploy_end is None:
+        return None
+    start, end = plan.deploy_start.pixels(), plan.deploy_end.pixels()
+    dx = (start[0] + end[0]) / 2 - SCREEN_CENTRE[0]
+    dy = (start[1] + end[1]) / 2 - SCREEN_CENTRE[1]
+    radius = (dx * dx + dy * dy) ** 0.5
+    if radius < MIN_LINE_RADIUS:
+        logger.info(
+            "The planned line runs %.0f px from the middle, so it crosses the village; "
+            "falling back to the %s flank",
+            radius,
+            plan.deploy_from,
+        )
+        return None
+    return start, end
+
+
 def drop_points(line: list[tuple[int, int]], seed: int) -> list[tuple[int, int]]:
     """One pass worth of drops, spread over the whole line rather than bunched.
 
@@ -163,11 +194,14 @@ def drop_points(line: list[tuple[int, int]], seed: int) -> list[tuple[int, int]]
 PLAN_PROMPT = """這是《部落衝突》的偵察畫面，我要打資源，請看整張圖決定怎麼打。
 
 deploy_from：從哪一側投兵。選防禦最少、而且外圍資源建築（金庫、聖水瓶、金礦、聖水收集器）最密集的那一側。避開迫擊砲、防空火箭、法師塔、地獄塔密集的方向。
+deploy_start 與 deploy_end：投兵線的兩端，部隊會沿著這條線平均撒開。
+**整條線都必須在村莊外面的空地上**，貼著你選的那一側外緣走，像村莊外圍的一條切線；線的中段離村莊中心不能比兩端近太多。
+**絕對不可以讓這條線穿過村莊、壓在建築或城牆上**，那樣遊戲會拒絕派兵，整支軍隊會全部浪費掉。
 rage_points：狂暴法術的落點，**剛好 {rage_count} 個，不能少**。
-部隊是沿著那一側的整條邊撒開下去的，所以他們是一整片往村莊中心推進，不是一條線；落點要鋪滿那一片會經過的區域，深度和寬度都要分開，**不要排成一直線**。
+部隊是沿著那條線撒開下去的，所以他們是一整片往村莊中心推進，不是一條線；落點要鋪滿那一片會經過的區域，深度和寬度都要分開，**不要排成一直線**。
 一瓶狂暴的覆蓋範圍是寬約畫面 15%、高約畫面 13% 的橢圓（畫面是等角視角，所以橫向比縱向寬）。彼此不要重疊，重疊等於整瓶浪費。
 優先蓋在部隊會卡住的地方：外牆的突破口、防禦最密集因而會拖最久的那一段。
-freeze_point：冰凍法術的落點，放在那條路線上防禦火力最強的地方（多座防禦交叉的位置，或單一高等防禦）。
+freeze_points：冰凍法術的落點，**剛好 {freeze_count} 個**。冰凍是最後才放的，放在部隊推進路線上防禦火力最強的地方（多座防禦交叉的位置，或單一高等防禦）。每一個落點蓋不同的防禦，不要疊在一起。
 heroes：畫面最下方那排卡片裡，**英雄卡由左到右**分別是誰，用 king（野蠻人之王）、queen（弓箭女皇）、warden（大守護者）、champion（皇家守護）、minion_prince（飛盾王子）；認不出來的填 unknown。英雄卡是有等級數字、沒有 xN 數量的那幾張，不要把士兵、攻城機器或法術算進去。正在升級的英雄不能出戰，所以卡片會直接消失，順序不是固定的。
 座標是畫面百分比，x_pct 與 y_pct 都是 0 到 100，只能落在村莊範圍內。
 reason 用繁體中文一句話說明為什麼選這一側。"""
@@ -215,21 +249,25 @@ class AttackRunner(BaseModel):
             time.sleep(HOME_RETRY_DELAY)
         return False
 
-    def _plan(self, frame: bytes, rage_count: int) -> AttackPlan | None:
+    def _plan(self, frame: bytes, rage_count: int, freeze_count: int) -> AttackPlan | None:
         if self.ai is None:
             return None
         try:
             plan = self.ai.generate_structured(
-                PLAN_PROMPT.format(rage_count=rage_count), AttackPlan, frame
+                PLAN_PROMPT.format(rage_count=rage_count, freeze_count=freeze_count),
+                AttackPlan,
+                frame,
             )
         except Exception:
             logger.warning("Attack planning failed; using the fixed flank", exc_info=True)
             return None
         logger.info(
-            "Plan: from %s, %d rage point(s), freeze=%s, heroes=%s (%s)",
+            "Plan: from %s, line %s to %s, %d rage point(s), %d freeze point(s), heroes=%s (%s)",
             plan.deploy_from,
+            plan.deploy_start,
+            plan.deploy_end,
             len(plan.rage_points),
-            plan.freeze_point is not None,
+            len(plan.freeze_points),
             plan.heroes,
             plan.reason,
         )
@@ -385,8 +423,14 @@ class AttackRunner(BaseModel):
         freezes = freeze_cards(frame, spells)
         rages = [x for x in spells if x not in freezes]
         rage_count = sum(card_count(frame, x) or len(RAGE_PATH) for x in rages)
-        plan = self._plan(frame, rage_count)
-        start, end = DEPLOY_LINES[plan.deploy_from] if plan else (DEPLOY_START, DEPLOY_END)
+        # One apiece where the count is unreadable: there is no fixed freeze grid
+        # to fall back on the way rage has RAGE_PATH, and asking for eight points
+        # for a single bottle would only spend the battle tapping empty ground.
+        freeze_count = sum(card_count(frame, x) or 1 for x in freezes)
+        plan = self._plan(frame, rage_count, freeze_count)
+        start, end = planned_line(plan) or (
+            DEPLOY_LINES[plan.deploy_from] if plan else (DEPLOY_START, DEPLOY_END)
+        )
         pushed = self._usable_line(troops[0], start, end)
         if pushed is None:
             logger.warning("Every drop was refused; the boundary reaches past the playfield")
@@ -398,7 +442,10 @@ class AttackRunner(BaseModel):
         # cycles back over its targets — which would stack two rages on one spot
         # and waste one. The fixed grid fills the tail so each gets its own.
         rage_path = planned + tuple(point for point in RAGE_PATH if point not in planned)
-        freeze_target = plan.freeze_point.pixels() if plan and plan.freeze_point else FREEZE_TARGET
+        # Every freeze used to stack on one spot, which is one spell's worth of
+        # effect for the whole cargo. A plan names one per bottle instead.
+        freeze_targets = tuple(point.pixels() for point in plan.freeze_points) if plan else ()
+        freeze_targets = freeze_targets or (FREEZE_TARGET,)
         # Rage goes down first, along the path the troops are about to take, so
         # they are inside it the whole way in. Freeze waits until the end.
         self._cast(rages, rage_path, frame)
@@ -416,7 +463,7 @@ class AttackRunner(BaseModel):
         # this only runs while the battle is genuinely still on.
         if read_scout(self.adb.screenshot(self.display)) is None:
             return
-        self._cast(freezes, (freeze_target,), frame)
+        self._cast(freezes, freeze_targets, frame)
 
     def _fire_abilities(self, heroes: list[int], kinds: list[HeroKind]) -> None:
         """Tap each hero's card again at its own moment, which is its ability.

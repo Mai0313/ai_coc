@@ -7,16 +7,18 @@ import unittest
 from PIL import Image
 import pytest
 
-from ai_coc.models import LootOffer, HeroTimings, LootThresholds
+from ai_coc.models import LootOffer, AttackPlan, HeroTimings, ScreenPoint, LootThresholds
 from ai_coc.ui.attack import (
     PLAYFIELD,
     DEPLOY_END,
     LINE_POINTS,
+    DEPLOY_LINES,
     DEPLOY_START,
     DROPS_PER_PASS,
     push_out,
     deploy_line,
     drop_points,
+    planned_line,
 )
 from ai_coc.adapters.adb import focused_display, physical_display
 from ai_coc.parsers.scout import (
@@ -226,6 +228,26 @@ class AttackTests(unittest.TestCase):
         first, second = drop_points(line, 0), drop_points(line, 1)
         assert len(set(first)) == DROPS_PER_PASS
         assert first[0] != second[0]
+
+    def test_a_planned_line_along_the_village_edge_is_used(self) -> None:
+        """The percentages of the top-left flank, which is a line the loop can push out."""
+        plan = AttackPlan(
+            deploy_start=ScreenPoint(x_pct=37.5, y_pct=12.2),
+            deploy_end=ScreenPoint(x_pct=14.4, y_pct=42.2),
+        )
+        assert planned_line(plan) == DEPLOY_LINES["top_left"]
+
+    def test_a_planned_line_across_the_village_falls_back_to_a_flank(self) -> None:
+        """Its midpoint sits on the middle, where push_out has no direction to move it."""
+        plan = AttackPlan(
+            deploy_start=ScreenPoint(x_pct=25, y_pct=30),
+            deploy_end=ScreenPoint(x_pct=75, y_pct=70),
+        )
+        assert planned_line(plan) is None
+
+    def test_a_line_only_half_drawn_falls_back_too(self) -> None:
+        assert planned_line(None) is None
+        assert planned_line(AttackPlan(deploy_start=ScreenPoint(x_pct=10, y_pct=10))) is None
 
     def test_card_groups_keep_troops_apart_from_heroes_and_spells(self) -> None:
         """Troops, siege machine, heroes and spells, told apart by the wider gaps."""
