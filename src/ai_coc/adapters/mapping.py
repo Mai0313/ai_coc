@@ -3,14 +3,14 @@ from __future__ import annotations
 import logging
 import urllib.request
 
-from coc_ai_controller.models import EntityMapping
-from coc_ai_controller.constants import ENTITY_MAPPING_URL, ENTITY_MAPPING_PATH
+from ai_coc.models import EntityMapping
+from ai_coc.constants import ENTITY_MAPPING_URL, ENTITY_MAPPING_PATH
 
 logger = logging.getLogger(__name__)
 
 
 def fetch_entity_mapping() -> EntityMapping:
-    """Refresh the community data_id → name table, keeping a copy under `~/.coc_ai`.
+    """Refresh the community data_id → name table, keeping a copy under `~/.ai_coc`.
 
     The download is what keeps names current as the game adds entities, but it must
     not be what decides whether the application starts, so a failed refresh falls

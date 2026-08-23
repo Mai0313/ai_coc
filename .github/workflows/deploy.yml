@@ -9,10 +9,7 @@ on:
     # main, so a tag push fails before any step runs. Publishing from main
     # already covers every tagged commit.
 
-permissions:
-  contents: read
-  pages: write
-  id-token: write
+permissions: write-all
 
 concurrency:
   group: pages
@@ -22,6 +19,7 @@ jobs:
   deploy:
     name: Deploy
     runs-on: ubuntu-latest
+    # `actions/deploy-pages` deploys into this environment and fails without it.
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
@@ -42,6 +40,7 @@ jobs:
       - name: Deploy docs
         run: |
           uv sync --group docs
+          uv run make gen-docs
           uv run zensical build
 
       - name: Setup Pages

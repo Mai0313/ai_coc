@@ -9,7 +9,7 @@ from google import genai
 from pydantic import BaseModel, PrivateAttr, ValidationError
 from google.genai import types, errors, interactions
 
-from coc_ai_controller.models import (
+from ai_coc.models import (
     GeminiRequest,
     GeminiSettings,
     GeminiTextPart,
@@ -170,10 +170,10 @@ class GeminiClient(BaseModel):
         return names
 
     def test(self) -> str:
-        return self._create("Reply with exactly: CoC AI Controller connected", None)
+        return self._create("Reply with exactly: AI CoC connected", None)
 
 
-AGENT_PROFILE = """You are the CoC AI Controller general operator. You understand Clash of Clans screens, account state, UI, buildings, troops and heroes. You navigate, prepare armies, search opponents, verify actions, teach and discover. You do not perform live battle tactics; at Enemy Preview you reserve handoff to an RL battle controller. Never invent account or master-data facts. For proposed actions include emulator_id and frame_id and explain the verification condition. Treat user teaching as USER_CONFIRMED knowledge."""
+AGENT_PROFILE = """You are the AI CoC general operator. You understand Clash of Clans screens, account state, UI, buildings, troops and heroes. You navigate, prepare armies, search opponents, verify actions, teach and discover. You do not perform live battle tactics; at Enemy Preview you reserve handoff to an RL battle controller. Never invent account or master-data facts. For proposed actions include emulator_id and frame_id and explain the verification condition. Treat user teaching as USER_CONFIRMED knowledge."""
 
 
 def vision_prompt(emulator_id: str, frame_id: str, account_context: str = "") -> str:

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from coc_ai_controller.models import AccountSnapshot, VillageDocument
+from ai_coc.models import AccountSnapshot, VillageDocument
 
 SECTIONS = (
     "buildings",

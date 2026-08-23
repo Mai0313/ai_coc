@@ -1,51 +1,194 @@
-name: Build and Release Windows EXE
+name: Build and Release
 
 on:
   push:
-    tags: ["v*"]
+    tags:
+      - v*
   workflow_dispatch:
+    inputs:
+      package_mode:
+        description: "PyInstaller layout"
+        type: choice
+        default: onedir
+        options:
+          - onedir
+          - onefile
 
-permissions:
-  contents: write
+permissions: write-all
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
-  build-windows:
-    runs-on: windows-latest
+  build:
+    name: ${{ matrix.runner }} - ${{ matrix.target }}
+    runs-on: ${{ matrix.runner }}
+
     timeout-minutes: 30
+
+    # onedir ships a folder next to an `_internal/`; onefile unpacks the whole
+    # bundle into a temp dir on every launch, which costs seconds of startup.
+    # A tag build takes the fast one; pick the other from the dispatch form.
+    env:
+      PACKAGE_MODE: ${{ inputs.package_mode || 'onedir' }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # MuMu Player, PyQt5-Qt5 and ctypes.windll are Windows-only, so the
+          # other runners have nothing to build.
+          - runner: windows-latest
+            target: x86_64-pc-windows-msvc
+            friendly_id: windows-x64
+
     steps:
-      - uses: actions/checkout@v7
+      - name: Checkout
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
-      - uses: astral-sh/setup-uv@v7
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v7
         with:
-          python-version: "3.12"
+          version: "latest"
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Install dependencies
         run: uv sync --group test --group build
+
+      # The app reads its own version from the installed metadata, which
+      # `--copy-metadata` snapshots, so the bump has to happen before PyInstaller
+      # runs or every build reports pyproject's placeholder.
+      - name: Update Version
+        shell: bash
+        run: |
+          VERSION=$(uvx dunamai from git --bump --no-metadata --style pep440)
+          uv version $VERSION --frozen
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+
       - name: Run tests
         run: uv run pytest
-      - name: Build Windows application
-        shell: pwsh
+
+      - name: Packaging to Executable file
         run: |
-          uv run pyinstaller --noconfirm --clean --windowed --onedir `
-            --name CoC_AI_Controller `
-            --version-file version_info.txt `
-            --add-data "battle_scripts;battle_scripts" app.py
-      - name: Upload unpacked application
+          uv run pyinstaller src/${{ github.event.repository.name }}/cli.py --${{ env.PACKAGE_MODE }} --windowed `
+            -n ${{ github.event.repository.name }} `
+            --add-data "src/${{ github.event.repository.name }}/battle_scripts;${{ github.event.repository.name }}/battle_scripts" `
+            --copy-metadata ${{ github.event.repository.name }}
+
+      - name: Create .zip
+        shell: powershell
+        run: |
+          $ErrorActionPreference = "Stop"
+          $dest = "dist/${{ matrix.target }}"
+          New-Item -ItemType Directory -Force -Path $dest | Out-Null
+          $name = "${{ github.event.repository.name }}"
+          # Named from the resolved version, not the ref: a manual dispatch runs
+          # from a branch, where the tag name is not there to slice a "v" off.
+          $zip = "$name-v$env:VERSION-${{ matrix.friendly_id }}.zip"
+          # onedir leaves a folder, onefile a bare .exe; both sit directly under dist\.
+          $payload = if ("${{ env.PACKAGE_MODE }}" -eq "onefile") { "dist\$name.exe" } else { "dist\$name" }
+          Compress-Archive -Path $payload -DestinationPath "$dest\$zip" -Force
+
+      - name: Upload Artifacts
         uses: actions/upload-artifact@v7
         with:
-          name: CoC_AI_Controller-Windows-x64
-          path: dist/CoC_AI_Controller/
+          name: ${{ matrix.friendly_id }}
+          path: dist/${{ matrix.target }}/*
           if-no-files-found: error
-      - name: Create release archive
+          retention-days: 7
+          compression-level: 6
+          overwrite: true
+
+  package:
+    name: Build Package
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        python-version:
+          - "3.12"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          version: "latest"
+          python-version: ${{ matrix.python-version }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Update Version
+        id: version
+        shell: bash
+        run: |
+          VERSION=$(uvx dunamai from git --bump --no-metadata --style pep440)
+          uv version $VERSION --frozen
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      # - name: Update Version
+      #   id: version
+      #   shell: pwsh
+      #   run: |
+      #     [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+      #     $env:PYTHONUTF8 = "1"
+      #     $VERSION = (uvx dunamai from git --bump --no-metadata --style pep440)
+      #     uv version $VERSION --frozen
+      #     echo "Version: $VERSION"
+      #     echo "VERSION=$VERSION" | Out-File -FilePath $Env:GITHUB_ENV -Encoding utf8 -Append
+      #     echo "version=$VERSION" | Out-File -FilePath $Env:GITHUB_OUTPUT -Encoding utf8 -Append
+
+      - name: Build Package
+        run: |
+          uv build
+
+      # A dispatch run builds and checks; only a tag may reach PyPI, where a
+      # version number cannot be taken back once it is published.
+      - name: Publish Package
         if: startsWith(github.ref, 'refs/tags/')
-        shell: pwsh
-        run: Compress-Archive -Path dist/CoC_AI_Controller/* -DestinationPath dist/CoC_AI_Controller-${{ github.ref_name }}-Windows-x64.zip
-      - name: Publish GitHub Release
-        if: startsWith(github.ref, 'refs/tags/')
+        continue-on-error: true
+        env:
+          UV_PUBLISH_TOKEN: ${{ secrets.UV_PUBLISH_TOKEN }}
+        run: |
+          uv publish --check-url https://pypi.org/simple/
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v7
+        with:
+          path: ./dist/*
+          name: ${{ github.event.repository.name }}-py${{ matrix.python-version }}
+          if-no-files-found: ignore
+          retention-days: 7
+          compression-level: 6
+          overwrite: true
+
+  release:
+    name: Release Package
+    needs:
+      - build
+      - package
+    runs-on: ubuntu-latest
+    # Without this a dispatch run from main creates a Release tagged "main".
+    if: startsWith(github.ref, 'refs/tags/')
+
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Upload Release Assets
         uses: softprops/action-gh-release@v3
         with:
-          files: dist/CoC_AI_Controller-${{ github.ref_name }}-Windows-x64.zip
+          files: |
+            dist/**/*

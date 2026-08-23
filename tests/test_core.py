@@ -5,10 +5,11 @@ import unittest
 
 import pytest
 
-from coc_ai_controller.adapters.adb import focused_display, physical_display
-from coc_ai_controller.parsers.battle import load_battle_script
-from coc_ai_controller.parsers.village import parse_village
-from coc_ai_controller.adapters.database import Database
+from ai_coc.constants import BATTLE_SCRIPT_DIR
+from ai_coc.adapters.adb import focused_display, physical_display
+from ai_coc.parsers.battle import load_battle_script
+from ai_coc.parsers.village import parse_village
+from ai_coc.adapters.database import Database
 
 # Trimmed from a live MuMu instance: the launcher holds display 0 and the game
 # sits on its own, with the logical and physical ids numbered apart.
@@ -103,9 +104,7 @@ class CoreTests(unittest.TestCase):
             assert parse_village(saved).entities[0].data_id == 1000055
 
     def test_battle_script_requires_army(self) -> None:
-        script = load_battle_script(
-            Path(__file__).parents[1] / "battle_scripts" / "BH10_BABY_DRAGON_01.json"
-        )
+        script = load_battle_script(BATTLE_SCRIPT_DIR / "BH10_BABY_DRAGON_01.json")
         assert script.army_requirements.troops[0].data_id == 4000041
         assert script.battle_controller.kind == "RESERVED_RL"
         assert [name for name, _ in script.army_requirements.categories()] == [

@@ -4,8 +4,8 @@ import unittest
 
 import pytest
 
-from coc_ai_controller.models import AgentAction, GeminiSettings
-from coc_ai_controller.adapters.ai import GeminiClient
+from ai_coc.models import AgentAction, GeminiSettings
+from ai_coc.adapters.ai import GeminiClient
 
 
 class FakeDelta:

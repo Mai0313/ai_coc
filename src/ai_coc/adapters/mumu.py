@@ -10,7 +10,7 @@ import subprocess
 
 from pydantic import Field, BaseModel, PrivateAttr
 
-from coc_ai_controller.models import (
+from ai_coc.models import (
     UiElement,
     AdbEndpoint,
     MuMuCliResult,
@@ -18,7 +18,7 @@ from coc_ai_controller.models import (
     EmulatorInstance,
     MuMuInstanceTable,
 )
-from coc_ai_controller.constants import COC_PACKAGE
+from ai_coc.constants import COC_PACKAGE
 
 from .adb import AdbController, use_adb_executable
 

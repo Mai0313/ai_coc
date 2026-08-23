@@ -6,10 +6,7 @@ name: Pull Request Labeler
 on:
   pull_request_target:
 
-permissions:
-  contents: read
-  pull-requests: write
-  issues: write
+permissions: write-all
 
 jobs:
   labeler:

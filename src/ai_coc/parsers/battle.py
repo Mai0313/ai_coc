@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from coc_ai_controller.models import BattleScript
+from ai_coc.models import BattleScript
 
 
 def load_battle_script(path: str | Path) -> BattleScript:

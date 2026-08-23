@@ -1,11 +1,11 @@
 import logging
 import unittest
 
-from coc_ai_controller.models import ChatTranscript
-from coc_ai_controller.ui.render import LogHtmlRenderer, markdown_to_html, transcript_to_html
+from ai_coc.models import ChatTranscript
+from ai_coc.ui.render import LogHtmlRenderer, markdown_to_html, transcript_to_html
 
 
-def _record(level: int, message: str, name: str = "coc_ai_controller.test") -> logging.LogRecord:
+def _record(level: int, message: str, name: str = "ai_coc.test") -> logging.LogRecord:
     return logging.LogRecord(name, level, __file__, 1, message, None, None)
 
 
@@ -41,7 +41,7 @@ class LogRenderTests(unittest.TestCase):
     def test_record_carries_level_name_and_message(self) -> None:
         html = LogHtmlRenderer().render(_record(logging.WARNING, "找不到 instance"))
         assert "WARNING" in html
-        assert "coc_ai_controller.test" in html
+        assert "ai_coc.test" in html
         assert "找不到 instance" in html
 
     def test_levels_are_exported_for_a_dark_panel(self) -> None:

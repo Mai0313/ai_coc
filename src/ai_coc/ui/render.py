@@ -13,12 +13,12 @@ from rich.console import Console
 from rich.traceback import Traceback
 from rich.terminal_theme import MONOKAI
 
-from coc_ai_controller.logging_setup import TIME_FORMAT
+from ai_coc.logging_setup import TIME_FORMAT
 
 if TYPE_CHECKING:
     import logging
 
-    from coc_ai_controller.models import ChatTranscript
+    from ai_coc.models import ChatTranscript
 
 # Qt's rich text is a subset of CSS 2.1; keep to selectors and properties it honours.
 CHAT_STYLESHEET = """
