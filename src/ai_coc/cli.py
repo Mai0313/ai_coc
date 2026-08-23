@@ -27,7 +27,7 @@ def main() -> int:
     sys.excepthook = _log_uncaught
     app = QApplication(sys.argv)
     app.setApplicationName(APP_NAME)
-    # Qt wants the bare version here; it feeds --version and the platform About box.
+    # Qt's own metadata slot, which takes the bare version, not a display label.
     app.setApplicationVersion(__version__)
     window = MainWindow()
     window.show()
