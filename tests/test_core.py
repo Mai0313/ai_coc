@@ -1,6 +1,7 @@
 import io
 import json
 import math
+import time
 from pathlib import Path
 import tempfile
 import unittest
@@ -17,10 +18,10 @@ from ai_coc.models import (
     ScoutView,
     AttackPlan,
     AdbEndpoint,
-    HeroTimings,
     ScreenPoint,
     StockLimits,
     VillageStock,
+    AttackTimings,
     DisplayTarget,
     BoundarySurvey,
     LootThresholds,
@@ -49,11 +50,13 @@ from ai_coc.parsers.scout import (
     live_cards,
     read_scout,
     read_stock,
+    battle_over,
     card_groups,
+    field_units,
+    card_drained,
     freeze_cards,
     army_strength,
     counted_cards,
-    deploy_refused,
     attack_menu_open,
 )
 from ai_coc.parsers.village import parse_village
@@ -62,6 +65,7 @@ from ai_coc.parsers.boundary import (
     DEPLOY_BOUND,
     VILLAGE_GRID,
     fitted_line,
+    village_box,
     boundary_line,
     boundary_reach,
 )
@@ -227,10 +231,33 @@ class ScoutTests(unittest.TestCase):
         assert attack_menu_open((FRAMES / "attack_menu.png").read_bytes())
         assert not attack_menu_open((FRAMES / "scout_grass.png").read_bytes())
 
-    def test_a_refused_drop_is_recognised(self) -> None:
-        """Layouts vary more than one drop line can allow for, so the refusal matters."""
-        assert deploy_refused((FRAMES / "deploy_refused.png").read_bytes())
-        assert not deploy_refused((FRAMES / "scout_grass.png").read_bytes())
+    def test_the_result_screen_is_recognised_so_the_next_run_can_start(self) -> None:
+        """One 回營 tap was not enough, and four runs in a row then stood down."""
+        assert battle_over((FRAMES / "battle_result.png").read_bytes())
+        assert not battle_over((FRAMES / "attack_menu.png").read_bytes())
+        assert not battle_over((FRAMES / "scout_in_battle.png").read_bytes())
+
+    def test_only_the_card_that_lost_one_shows_it(self) -> None:
+        """A drop is judged on the card's own corner, which repaints when it loses one.
+
+        The corner is read rather than the number: the giant's illustration
+        swallows its count entirely, and this still separates the card that
+        deployed from the nine that did not.
+        """
+        before = (FRAMES / "pass_before.png").read_bytes()
+        after = (FRAMES / "pass_after.png").read_bytes()
+        slots = [171, 293, 413, 557, 694, 804, 925, 1046, 1181, 1302]
+        assert card_drained(before, after, slots) == [171]
+        assert card_drained(before, before, slots) == []
+
+    def test_a_hero_on_the_field_is_read_off_its_health_bar(self) -> None:
+        """Three of the four went down; the run that recorded this reported four."""
+        frame = (FRAMES / "heroes_down.png").read_bytes()
+        assert field_units(frame, [557, 694, 804, 925, 1046]) == [694, 804, 925]
+
+    def test_a_hero_still_in_its_card_carries_no_bar(self) -> None:
+        """A hero keeps its card once it lands, so nothing else separates the two."""
+        assert field_units((FRAMES / "cards_full.png").read_bytes(), [815, 925, 1046, 1167]) == []
 
     def test_army_strength_splits_on_the_glyphs_that_are_not_digits(self) -> None:
         """The troop icon and the slash are found by matching no digit well."""
@@ -302,13 +329,13 @@ class PlanTests(unittest.TestCase):
     def test_the_ai_is_not_allowed_to_invent_hero_timings(self) -> None:
         """`timings` is on the schema, so the model can fill it; a still frame cannot know."""
         assert "timings" in AttackPlan.model_json_schema()["properties"]
-        answered = AttackPlan(**_LINE, timings=HeroTimings(queen=30, warden=5))
+        answered = AttackPlan(**_LINE, timings=AttackTimings(queen=30, warden=5))
         assert answered.model_copy(update={"timings": None}).timings is None
 
     def test_a_plans_own_timings_beat_the_ones_the_runner_was_built_with(self) -> None:
         """A written plan is the whole tactic, so its schedule is the one that fires."""
-        plan = AttackPlan(**_LINE, timings=HeroTimings(queen=7))
-        assert (plan.timings or HeroTimings()).seconds("queen") == 7
+        plan = AttackPlan(**_LINE, timings=AttackTimings(queen=7))
+        assert (plan.timings or AttackTimings()).seconds("queen") == 7
 
 
 class PromptTests(unittest.TestCase):
@@ -349,6 +376,11 @@ class MapFrameTests(unittest.TestCase):
         """Both points are live evidence: one deploys troops, the other lost a hero."""
         assert DEPLOY_BOUND.contains((600, 110))
         assert not DEPLOY_BOUND.contains((30, 175))
+
+    def test_every_drop_the_survey_measured_is_inside_the_bound(self) -> None:
+        """`ai_coc bounds` had all six rays taken at the screen edge, so it clamps none."""
+        for point in ((1570, 400), (30, 400), (1100, 700), (500, 700), (505, 105), (1095, 105)):
+            assert DEPLOY_BOUND.contains(point), point
 
     def test_clamping_pulls_a_point_back_onto_the_map(self) -> None:
         pulled = DEPLOY_BOUND.clamp((30, 175))
@@ -419,11 +451,11 @@ class BoundaryTests(unittest.TestCase):
 
     def test_a_bent_line_walks_through_every_anchor(self) -> None:
         """A chord across a diamond cuts back inside it, so the middle gets its own anchor."""
-        bent = deploy_line(5, (100, 100), (400, 100), (400, 400))
-        assert bent[0] == (100, 100)
+        bent = deploy_line(5, (100, 150), (400, 150), (400, 400))
+        assert bent[0] == (100, 150)
         assert bent[-1] == (400, 400)
         # The corner is an anchor, so a point lands on it rather than cutting it off.
-        assert (400, 100) in bent
+        assert (400, 150) in bent
 
     def test_a_crossing_too_far_in_reads_as_nothing(self) -> None:
         """A ray that stops at the playfield edge never met a boundary lying beyond it.
@@ -455,6 +487,17 @@ class BoundaryTests(unittest.TestCase):
         buffer = io.BytesIO()
         blank.save(buffer, format="PNG")
         assert fitted_line(buffer.getvalue(), (600, 110), (230, 380)) is None
+
+    def test_the_village_is_found_in_the_middle_of_the_screen(self) -> None:
+        """Both themes, so nothing downstream has to take the camera on trust."""
+        for name in ("battle_boundary_grass", "battle_boundary_ice"):
+            box = village_box((FRAMES / f"{name}.png").read_bytes())
+            assert box is not None, name
+            middle = ((box[0] + box[2]) // 2, (box[1] + box[3]) // 2)
+            assert math.hypot(middle[0] - 800, middle[1] - 400) < 60, (name, middle)
+
+    def test_a_screen_with_no_boundary_on_it_has_no_village_box(self) -> None:
+        assert village_box((FRAMES / "attack_menu.png").read_bytes()) is None
 
     def test_the_boundary_is_read_over_two_village_themes(self) -> None:
         rays = [angle * 30 for angle in range(12)]
@@ -491,7 +534,7 @@ class AttackTests(unittest.TestCase):
 
     def test_ability_timing_is_per_hero_not_per_slot(self) -> None:
         """An upgrading hero has no card at all, so every slot after it shifts."""
-        timings = HeroTimings(queen=1, warden=30)
+        timings = AttackTimings(queen=1, warden=30)
         assert timings.seconds("queen") == 1
         assert timings.seconds("warden") == 30
         assert timings.seconds("unknown") == timings.unknown
@@ -520,6 +563,12 @@ class AttackTests(unittest.TestCase):
         """Both ends can clear that corner while the span between them cuts across it."""
         points = deploy_line(LINE_POINTS, (30, 700), (600, 700))
         assert not any(x < ABANDON_BUTTON[0] and y > ABANDON_BUTTON[1] for x, y in points)
+
+    def test_a_line_the_planner_drew_under_the_card_row_is_pulled_back_up(self) -> None:
+        """Gemini answered y_pct 80, which is y 720 — the army bar, not the ground."""
+        under = deploy_line(LINE_POINTS, (320, 522), (672, 720))
+        assert all(PLAYFIELD[1] <= y <= PLAYFIELD[3] for _, y in under)
+        assert all(PLAYFIELD[0] <= x <= PLAYFIELD[2] for x, _ in under)
 
     def test_the_lower_flanks_still_push_past_a_wide_village(self) -> None:
         """Trimming the whole bottom edge to dodge that button left them nowhere to go."""
@@ -567,6 +616,9 @@ class AttackTests(unittest.TestCase):
             patch.object(AttackRunner, "_frame", return_value=b""),
             patch.object(AttackRunner, "_tap"),
             patch.object(attack, "read_scout", side_effect=readings),
+            # The result screen is left through its own poll now, and these
+            # canned frames are not images.
+            patch.object(attack, "battle_over", return_value=False),
             patch.object(attack.time, "sleep"),
         ):
             # Whatever the abilities saw counts too, which is the whole point.
@@ -587,6 +639,68 @@ class AttackTests(unittest.TestCase):
 
     def test_a_battle_nobody_ever_read_is_not_called_a_success(self) -> None:
         assert not self._verdict(LootOffer(gold=1, elixir=1, dark=1), [None, None])
+
+    def _settled(self, box: tuple[int, int, int, int]) -> list[tuple[int, int]]:
+        """Every drag `_settle_camera` asks for, given a village measured at `box`."""
+        runner = self._runner()
+        swipes: list[tuple[int, int]] = []
+        with (
+            patch.object(AttackRunner, "_frame", return_value=b""),
+            patch.object(attack, "village_box", return_value=box),
+            patch.object(attack.time, "sleep"),
+            patch.object(
+                type(runner.adb),
+                "swipe",
+                lambda _self, start, end, _ms, _display: swipes.append((
+                    end[0] - start[0],
+                    end[1] - start[1],
+                )),
+            ),
+        ):
+            runner._settle_camera(b"")
+        return swipes
+
+    def test_a_camera_left_off_centre_is_dragged_back(self) -> None:
+        """Measured live: knocked 96 px left, one drag put it back within 15."""
+        # Middle (704, 400), so the village has to move 96 px to the right.
+        assert self._settled((104, 100, 1304, 700))[0] == (96, 0)
+
+    def test_a_camera_already_on_the_village_is_left_alone(self) -> None:
+        """The game centres every attack itself; dragging a good camera can only hurt."""
+        assert self._settled((200, 120, 1380, 680)) == []
+
+    def test_a_move_already_due_is_played_before_the_army_is_all_down(self) -> None:
+        """Putting the army down outlasts the freeze's own timer, so it is offered a turn."""
+        played: list[str] = []
+        pending = [
+            (0.0, "freeze", lambda: played.append("freeze")),
+            (time.monotonic() + 600, "later", lambda: played.append("later")),
+        ]
+        on = ScoutView(loot=LootOffer(gold=1, elixir=1, dark=1), can_skip=False)
+        with patch.object(AttackRunner, "_battle_view", return_value=on):
+            self._runner()._play_due(0.0, pending)
+        assert played == ["freeze"]
+        assert [what for _, what, _ in pending] == ["later"]
+
+    def test_the_freeze_no_longer_queues_behind_the_slowest_hero(self) -> None:
+        """Cast after the last ability it sat out a champion's 45 seconds first."""
+        played: list[str] = []
+        timings = AttackTimings()
+        # The heroes land twenty seconds into the attack; their abilities run
+        # from there, the freeze from the opening.
+        opened, landed = 0.0, 20.0
+        moves = [
+            (landed + timings.seconds("champion"), "champion", lambda: played.append("champion")),
+            (landed + timings.seconds("queen"), "queen", lambda: played.append("queen")),
+            (opened + timings.freeze, "freeze", lambda: played.append("freeze")),
+        ]
+        on = ScoutView(loot=LootOffer(gold=1, elixir=1, dark=1), can_skip=False)
+        with (
+            patch.object(AttackRunner, "_battle_view", return_value=on),
+            patch.object(attack.time, "sleep"),
+        ):
+            self._runner()._run_schedule(opened, moves)
+        assert played == ["queen", "freeze", "champion"]
 
     def test_a_refused_flank_leaves_the_other_three_to_try(self) -> None:
         """The plan's own side goes first behind its line, then the flanks it did not pick."""
@@ -620,6 +734,12 @@ class AttackTests(unittest.TestCase):
         groups = card_groups((FRAMES / "cards_full.png").read_bytes())
         assert [len(group) for group in groups] == [4, 1, 4, 2]
         assert groups[0] == [171, 293, 413, 534]
+
+    def test_the_empty_slot_the_row_ends_with_is_not_a_card(self) -> None:
+        """It has no level badge, and it arrived downstream as one more hero to drop."""
+        groups = card_groups((FRAMES / "cards_with_empty_slot.png").read_bytes())
+        assert [len(group) for group in groups] == [3, 1, 4, 2]
+        assert 1416 not in [slot for group in groups for slot in group]
 
     def test_spells_are_told_apart_from_heroes_by_their_count(self) -> None:
         """Spells carry an xN in the corner; heroes and the siege machine do not."""

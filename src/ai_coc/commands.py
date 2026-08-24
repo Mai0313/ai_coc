@@ -15,13 +15,17 @@ import time
 from typing import TYPE_CHECKING
 import logging
 
+from pydantic import PrivateAttr
+
 from ai_coc import plans
 from ai_coc.models import (
+    MapEdge,
     ProbeRay,
-    HeroTimings,
+    MapSurvey,
     StockLimits,
     AttackReport,
     FrameReading,
+    AttackTimings,
     BoundarySurvey,
     GeminiSettings,
     LootThresholds,
@@ -35,17 +39,18 @@ from ai_coc.parsers.scout import (
     read_scout,
     read_stock,
     card_groups,
+    field_units,
+    card_drained,
     freeze_cards,
     army_strength,
     counted_cards,
-    deploy_refused,
     attack_menu_open,
     idle_disconnected,
 )
 from ai_coc.adapters.secrets import SecretStore
-from ai_coc.parsers.boundary import VILLAGE_CENTRE, boundary_reach
+from ai_coc.parsers.boundary import PLAYFIELD, VILLAGE_CENTRE, boundary_reach
 
-from .ui.attack import CARD_ROW_Y, SINGLE_DROP_DELAY, REFUSAL_CLEAR_DELAY, AttackRunner
+from .ui.attack import CARD_ROW_Y, DROP_SETTLE, SINGLE_DROP_DELAY, AttackRunner
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -103,7 +108,7 @@ def attack(
         display=adb.display_for(COC_PACKAGE),
         thresholds=thresholds or LootThresholds(),
         stock=StockLimits(),
-        abilities=HeroTimings(),
+        abilities=AttackTimings(),
         ai=None if plan else _planner(),
         plan=plan,
         frame_dir=frame_dir,
@@ -117,8 +122,8 @@ def attack(
 
 
 # Twelve rays is the whole village at 30 degree steps, and two drops on each is
-# what fits: a refused drop costs no troop but does cost the three seconds its
-# banner takes to clear, so a wider sweep runs past the end of the battle.
+# what fits: a refused drop costs no troop but does cost the capture that reads
+# the card afterwards, so a wider sweep runs past the end of the battle.
 SURVEY_RAYS = tuple(angle * 30 for angle in range(12))
 # How far either side of the predicted line the two drops go. Wider than the
 # margin `fitted_line` already adds, so a ray that agrees really does straddle it.
@@ -158,11 +163,14 @@ class _BoundarySurvey(AttackRunner):
                     round(VILLAGE_CENTRE[0] + dx * (radius + offset)),
                     round(VILLAGE_CENTRE[1] + dy * (radius + offset)),
                 )
+                before = self._frame(f"{degrees:03.0f}deg-{offset:+d}-before")
                 self.adb.tap_many([(card, CARD_ROW_Y), point], self.display, gap=SINGLE_DROP_DELAY)
-                refused = deploy_refused(self._frame(f"{degrees:03.0f}deg-{offset:+d}"))
-                verdicts.append(refused)
-                if refused:
-                    time.sleep(REFUSAL_CLEAR_DELAY)
+                time.sleep(DROP_SETTLE)
+                after = self._frame(f"{degrees:03.0f}deg-{offset:+d}")
+                # The card is what the survey measures, because the warning
+                # banner it used to read is raised by four different things and
+                # not raised at all by a tap the game simply swallows.
+                verdicts.append(not card_drained(before, after, [card]))
             ray = ProbeRay(
                 degrees=degrees,
                 predicted=round(radius),
@@ -200,6 +208,101 @@ def probe(frame_dir: Path | None = None) -> BoundarySurvey:
     return runner.survey
 
 
+# Six rays, picked for where the map's own edge falls inside the playfield. The
+# vertical pair runs off the top and bottom of the screen long before it reaches
+# the diamond, so it would measure the UI rather than the map.
+MAP_RAYS = (0.0, 45.0, 135.0, 180.0, 225.0, 315.0)
+# How far each probe steps back in from the screen edge, and how many it may take
+# before the ray is given up on. A refused probe costs no troop, only the capture
+# that reads the card, so the limit is the battle's own three minutes.
+MAP_STEP = 45
+MAP_PROBES = 8
+
+
+class _MapSurvey(AttackRunner):
+    """An attack spent measuring how far out the game will still take a drop.
+
+    `VILLAGE_GRID` was calibrated by overlaying candidates on live frames until
+    they sat on the ground's own edge, which is the sort of number a screenshot
+    cannot argue with. This is the argument: walk inwards along a ray until a
+    troop lands, and that is where the map really ends. It is worth re-running
+    after a game update, a theme that repaints the ground, or any change to the
+    emulator's resolution.
+    """
+
+    survey: MapSurvey = MapSurvey()
+    # Which cards the probes may spend, read once off the full row.
+    _troops: list[int] = PrivateAttr(default_factory=list)
+
+    def _edge(self, degrees: float, shot: bytes) -> tuple[MapEdge | None, bytes]:
+        """Walk one ray inwards from the screen edge until a drop lands."""
+        left, top, right, bottom = PLAYFIELD
+        dx, dy = math.cos(math.radians(degrees)), math.sin(math.radians(degrees))
+        # The furthest this ray gets before the playfield stops it.
+        limit = min(
+            (edge - VILLAGE_CENTRE[axis]) / step
+            for axis, step, edge in (
+                (0, dx, right if dx > 0 else left),
+                (1, dy, bottom if dy > 0 else top),
+            )
+            if abs(step) > 1e-9
+        )
+        for probe in range(MAP_PROBES):
+            radius = limit - probe * MAP_STEP
+            if radius <= 0:
+                break
+            point = (
+                round(VILLAGE_CENTRE[0] + dx * radius),
+                round(VILLAGE_CENTRE[1] + dy * radius),
+            )
+            card = next(iter(live_cards(shot, self._troops)), None)
+            if card is None:
+                logger.info("Every troop card is spent; the survey stops here")
+                return None, shot
+            self.adb.tap_many([(card, CARD_ROW_Y), point], self.display, gap=SINGLE_DROP_DELAY)
+            time.sleep(DROP_SETTLE)
+            before, shot = shot, self._frame(f"{degrees:03.0f}deg-{round(radius):04d}")
+            if card_drained(before, shot, [card]):
+                logger.info("Ray %.0f: accepted at %d of %d", degrees, radius, limit)
+                # Accepted at the very first probe means the screen ran out
+                # before the map did, so this ray measured the playfield.
+                return MapEdge(
+                    degrees=degrees,
+                    reached=None if probe == 0 else round(radius),
+                    predicted=round(limit),
+                ), shot
+        logger.info("Ray %.0f: nothing landed anywhere along it", degrees)
+        return None, shot
+
+    def _deploy(self, frame: bytes) -> None:
+        self._troops = card_groups(frame)[0]
+        battle = self._wait_for_battle()
+        if battle is None:
+            logger.warning("Never reached the battle; nothing to survey")
+            return
+        shot = battle
+        for degrees in MAP_RAYS:
+            edge, shot = self._edge(degrees, shot)
+            if edge is not None:
+                self.survey.edges.append(edge)
+
+
+def bounds(frame_dir: Path | None = None) -> MapSurvey:
+    """Spend a battle finding where the map really ends, and fit a diamond to it."""
+    adb = _controller()
+    if frame_dir is not None:
+        frame_dir.mkdir(parents=True, exist_ok=True)
+    runner = _MapSurvey(
+        adb=adb,
+        display=adb.display_for(COC_PACKAGE),
+        thresholds=LootThresholds(),
+        frame_dir=frame_dir,
+    )
+    runner.run()
+    logger.info("Map survey: %s", runner.survey.summary)
+    return runner.survey
+
+
 def capture(out_dir: Path, count: int = 1, gap: float = 1.5) -> list[Path]:
     """Save frames off the live game, for measuring a screen the parsers cannot read yet.
 
@@ -230,11 +333,11 @@ def read(png: bytes) -> FrameReading:
         stock=read_stock(png),
         army=army_strength(png),
         attack_menu=attack_menu_open(png),
-        refused=deploy_refused(png),
         idle_dialog=idle_disconnected(png),
         card_groups=groups,
         counted=counted_cards(png, slots),
         freezes=freeze_cards(png, slots),
         live=live_cards(png, slots),
+        on_field=field_units(png, slots),
         counts={slot: card_count(png, slot) for slot in slots},
     )

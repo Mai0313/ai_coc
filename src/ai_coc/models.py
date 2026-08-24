@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from typing import Any, Literal
 from datetime import UTC, datetime
 
@@ -42,6 +43,12 @@ class AdbEndpoint(BaseModel):
     def parse(cls, serial: str) -> AdbEndpoint:
         host, _, port = serial.strip().rpartition(":")
         return cls(host=host or DEFAULT_ADB_HOST, port=int(port) if port.isdigit() else 0)
+
+
+# The middle of the battle map at the camera every attack opens on. It lives
+# here because `MapSurvey` fits a diamond around it and `parsers.boundary` reads
+# rays out of it, and one of the two would otherwise be importing the other.
+DEFAULT_MAP_CENTRE = (800, 400)
 
 
 class MapFrame(BaseModel):
@@ -465,6 +472,75 @@ class BoundarySurvey(BaseModel):
         return f"{agreed}/{len(self.rays)} rays agreed, {len(self.unread)} unread"
 
 
+class MapEdge(BaseModel):
+    """The furthest out a drop was accepted along one ray, against the model's guess.
+
+    `reached` is None where the ray was accepted at the very first probe, which
+    means the screen ran out before the map did: that ray measures the playfield
+    edge, not the map, and says nothing about the diamond.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    degrees: float
+    reached: int | None
+    predicted: int
+
+
+class MapSurvey(BaseModel):
+    """Where the game really stopped taking drops, and what a diamond fitted to it looks like.
+
+    `VILLAGE_GRID` was calibrated by eye against an assumed centre, which is
+    exactly the sort of number that cannot be argued with from a screenshot. This
+    is how to argue with it: drop troops inwards along each ray until one lands.
+
+    The first live survey came back with every ray unmeasured, and that is a
+    result rather than a failure: the game took the very first probe on all six,
+    so the screen runs out before the map does and the diamond cannot be seen
+    from inside it. What it does give is a lower bound, which was enough to show
+    the old constant clamping drops the game would have accepted.
+    """
+
+    edges: list[MapEdge] = Field(default_factory=list)
+
+    @property
+    def summary(self) -> str:
+        measured = [edge for edge in self.edges if edge.reached is not None]
+        if not measured:
+            return f"{len(self.edges)} ray(s) accepted at the screen edge; the map reaches past it"
+        return f"{len(measured)} of {len(self.edges)} ray(s) found the map edge -> {self.fitted}"
+
+    @property
+    def fitted(self) -> MapFrame | None:
+        """The diamond whose edge best matches every ray that measured one."""
+        measured = [
+            (math.radians(edge.degrees), edge.reached)
+            for edge in self.edges
+            if edge.reached is not None
+        ]
+        if len(measured) < 3:
+            return None
+        # |dx|/half_width + |dy|/half_height == 1 on the edge, so each ray gives
+        # one linear equation in 1/half_width and 1/half_height. Two unknowns and
+        # more equations than that, solved by least squares in closed form.
+        rows = [(abs(math.cos(a)) * r, abs(math.sin(a)) * r) for a, r in measured]
+        sxx = sum(x * x for x, _ in rows)
+        syy = sum(y * y for _, y in rows)
+        sxy = sum(x * y for x, y in rows)
+        sx = sum(x for x, _ in rows)
+        sy = sum(y for _, y in rows)
+        determinant = sxx * syy - sxy * sxy
+        if not determinant:
+            return None
+        across = (sx * syy - sy * sxy) / determinant
+        down = (sy * sxx - sx * sxy) / determinant
+        if across <= 0 or down <= 0:
+            return None
+        return MapFrame(
+            centre=DEFAULT_MAP_CENTRE, half_width=round(1 / across), half_height=round(1 / down)
+        )
+
+
 class ScoutView(BaseModel):
     """What the opponent screen offers, and whether it can still be skipped.
 
@@ -493,11 +569,29 @@ class ScreenPoint(BaseModel):
 HeroKind = Literal["king", "queen", "warden", "champion", "minion_prince", "unknown"]
 
 
-class HeroTimings(BaseModel):
-    """How long after landing each hero's ability fires.
+class AttackTimings(BaseModel):
+    """How long after the army is down each thing that waits on a clock happens.
 
-    Keyed by hero rather than by card position: a hero being upgraded cannot
-    take the field, so its card is simply absent and every position shifts.
+    The abilities are keyed by hero rather than by card position: a hero being
+    upgraded cannot take the field, so its card is simply absent and every
+    position shifts.
+
+    Freeze is here rather than left to fall out of the code's ordering, which is
+    what it used to do — cast after the last ability, it waited out the slowest
+    hero on the field, so a champion's 45 seconds put it a minute and a half into
+    a three-minute battle, long after the defences it was meant to stop had done
+    their work. It is the one spell held back, so it is the one with a time.
+
+    It is also the one measured from a different moment. An ability's delay runs
+    from its own hero landing; the freeze's runs from the attack opening, which
+    is how it is judged on screen — about half a minute in, as the push reaches
+    the first line of defences — and hanging it off the heroes would move it by
+    however long the army happened to take to go down.
+
+    Read it as the earliest moment rather than the exact one: the loop is single
+    threaded and the deployment only offers the clock a turn between one card and
+    the next. Measured over four battles that offset was 5 to 8 seconds, which is
+    why the default is 30 for a spell wanted 30 to 40 seconds in.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -508,6 +602,7 @@ class HeroTimings(BaseModel):
     champion: int = 45
     minion_prince: int = 20
     unknown: int = 20
+    freeze: int = 30
 
     def seconds(self, kind: HeroKind) -> int:
         return int(getattr(self, kind, self.unknown))
@@ -539,7 +634,7 @@ class AttackPlan(BaseModel):
     # Carried on the plan so a written-out one is the whole tactic in one file,
     # rather than a set of points whose timing lives somewhere else entirely.
     # None leaves the runner on whatever the caller configured.
-    timings: HeroTimings | None = None
+    timings: AttackTimings | None = None
     reason: str = ""
 
 
@@ -566,12 +661,12 @@ class FrameReading(BaseModel):
     stock: VillageStock | None = None
     army: tuple[int, int] | None = None
     attack_menu: bool = False
-    refused: bool = False
     idle_dialog: bool = False
     card_groups: list[list[int]] = Field(default_factory=list)
     counted: list[int] = Field(default_factory=list)
     freezes: list[int] = Field(default_factory=list)
     live: list[int] = Field(default_factory=list)
+    on_field: list[int] = Field(default_factory=list)
     counts: dict[int, int | None] = Field(default_factory=dict)
 
 
