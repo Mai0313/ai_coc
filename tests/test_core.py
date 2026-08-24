@@ -3,17 +3,22 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from PIL import Image
 import pytest
 
+from ai_coc.ui import attack
 from ai_coc.models import (
     LootOffer,
+    ScoutView,
     AttackPlan,
+    AdbEndpoint,
     HeroTimings,
     ScreenPoint,
     StockLimits,
     VillageStock,
+    DisplayTarget,
     LootThresholds,
 )
 from ai_coc.ui.attack import (
@@ -25,12 +30,14 @@ from ai_coc.ui.attack import (
     ABANDON_BUTTON,
     DROPS_PER_PASS,
     DEPLOY_ATTEMPTS,
+    AttackRunner,
     push_out,
     deploy_line,
     drop_points,
     planned_line,
+    deploy_candidates,
 )
-from ai_coc.adapters.adb import focused_display, physical_display
+from ai_coc.adapters.adb import AdbController, focused_display, physical_display
 from ai_coc.parsers.scout import (
     card_count,
     live_cards,
@@ -298,6 +305,57 @@ class AttackTests(unittest.TestCase):
     def test_a_line_only_half_drawn_falls_back_too(self) -> None:
         assert planned_line(None) is None
         assert planned_line(AttackPlan(deploy_start=ScreenPoint(x_pct=10, y_pct=10))) is None
+
+    def _runner(self) -> AttackRunner:
+        return AttackRunner(
+            adb=AdbController(endpoint=AdbEndpoint(port=16384)),
+            display=DisplayTarget(logical_id="1", physical_id="2"),
+            thresholds=LootThresholds(),
+        )
+
+    def _verdict(self, opening: LootOffer, readings: list[ScoutView | None]) -> bool:
+        """Run the battle wait against canned panel readings, with the clock removed."""
+        runner = self._runner()
+        with (
+            patch.object(AttackRunner, "_frame", return_value=b""),
+            patch.object(AttackRunner, "_tap"),
+            patch.object(attack, "read_scout", side_effect=readings),
+            patch.object(attack.time, "sleep"),
+        ):
+            # Whatever the abilities saw counts too, which is the whole point.
+            runner._battle_view("ability")
+            return runner._wait_out_battle(opening)
+
+    def test_a_battle_won_before_the_first_poll_still_counts(self) -> None:
+        """100% three stars, but over so fast that only the ability check saw the loot fall."""
+        opening = LootOffer(gold=1031321, elixir=420990, dark=2525)
+        during = ScoutView(loot=LootOffer(gold=149101, elixir=19976, dark=120), can_skip=False)
+        assert self._verdict(opening, [during, None])
+
+    def test_loot_that_never_moves_is_still_reported_as_a_failure(self) -> None:
+        """The case this check exists for: an army that never reached the village."""
+        opening = LootOffer(gold=1031321, elixir=420990, dark=2525)
+        stuck = ScoutView(loot=opening, can_skip=False)
+        assert not self._verdict(opening, [stuck, stuck, None])
+
+    def test_a_battle_nobody_ever_read_is_not_called_a_success(self) -> None:
+        assert not self._verdict(LootOffer(gold=1, elixir=1, dark=1), [None, None])
+
+    def test_a_refused_flank_leaves_the_other_three_to_try(self) -> None:
+        """The plan's own side goes first, then every flank it did not pick."""
+        plan = AttackPlan(deploy_from="bottom_right")
+        candidates = deploy_candidates(plan)
+        assert candidates[0] == DEPLOY_LINES["bottom_right"]
+        assert sorted(candidates) == sorted(DEPLOY_LINES.values())
+
+    def test_a_usable_planned_line_is_tried_before_any_flank(self) -> None:
+        plan = AttackPlan(
+            deploy_start=ScreenPoint(x_pct=62.5, y_pct=12.2),
+            deploy_end=ScreenPoint(x_pct=85.6, y_pct=42.2),
+        )
+        candidates = deploy_candidates(plan)
+        assert candidates[0] == planned_line(plan)
+        assert len(candidates) == len(DEPLOY_LINES) + 1
 
     def test_card_groups_keep_troops_apart_from_heroes_and_spells(self) -> None:
         """Troops, siege machine, heroes and spells, told apart by the wider gaps."""

@@ -10,9 +10,10 @@ from __future__ import annotations
 
 import time
 import logging
+from pathlib import Path
 from collections.abc import Callable
 
-from pydantic import BaseModel
+from pydantic import BaseModel, PrivateAttr
 
 from ai_coc.models import (
     HeroKind,
@@ -210,6 +211,20 @@ def planned_line(plan: AttackPlan | None) -> tuple[tuple[int, int], tuple[int, i
     return start, end
 
 
+def deploy_candidates(plan: AttackPlan | None) -> list[tuple[tuple[int, int], tuple[int, int]]]:
+    """Every line worth trying, best first: what the plan drew, its flank, then the rest.
+
+    One flank is not enough. `push_out` runs out of room on a village whose
+    boundary reaches the screen edge, because the presets already hug the
+    playfield, and giving up there spends the whole battle with the army still
+    in the cards. A village only ever blocks the sides it grew towards, so the
+    remaining flanks are what turns that into a fought battle.
+    """
+    sides = sorted(DEPLOY_LINES, key=lambda side: side != (plan.deploy_from if plan else ""))
+    line = planned_line(plan)
+    return ([line] if line else []) + [DEPLOY_LINES[side] for side in sides]
+
+
 def drop_points(line: list[tuple[int, int]], seed: int) -> list[tuple[int, int]]:
     """One pass worth of drops, spread over the whole line rather than bunched.
 
@@ -257,9 +272,44 @@ class AttackRunner(BaseModel):
     # abandoning one mid-deploy would leave the army on the field and the game
     # on a screen the next run does not know how to get home from.
     should_stop: Callable[[], bool] = lambda: False
+    # Where to keep every frame the loop reads, for a run being studied afterwards.
+    frame_dir: Path | None = None
+
+    _captures: int = PrivateAttr(default=0)
+    _seen: LootOffer | None = PrivateAttr(default=None)
 
     def _tap(self, point: tuple[int, int]) -> None:
         self.adb.tap(point[0], point[1], self.display)
+
+    def _frame(self, label: str) -> bytes:
+        """One capture, kept on disk when the run is being recorded.
+
+        Every screenshot the loop reads comes through here, so a recorded run is
+        the whole battle in the order the loop saw it, each frame named for what
+        it was being asked. Afterwards that is the only thing separating a frame
+        the parser misread from a tap that never landed.
+        """
+        png = self.adb.screenshot(self.display)
+        if self.frame_dir is not None:
+            self._captures += 1
+            (self.frame_dir / f"{self._captures:04d}_{label}.png").write_bytes(png)
+        return png
+
+    def _battle_view(self, label: str) -> ScoutView | None:
+        """The loot panel mid-battle, kept here so every caller's reading counts.
+
+        Three places poll it to ask whether the battle is still on, and all three
+        readings are evidence of the same thing, so the last one lives on the
+        runner rather than in whichever method happened to take it. A battle that
+        ends quickly is what this is for: the loot had visibly fallen while the
+        abilities were firing, but `_wait_out_battle` trusted only its own
+        ten-second poll, met the result screen on the first one, and reported a
+        village it had three-starred as one where nothing was ever deployed.
+        """
+        view = read_scout(self._frame(label))
+        if view is not None:
+            self._seen = view.loot
+        return view
 
     def _open_attack_menu(self) -> bytes | None:
         """Get to the attack menu, clearing whatever is covering the village.
@@ -269,7 +319,7 @@ class AttackRunner(BaseModel):
         for the idle dialog, so reading the storages costs no extra capture.
         """
         for _ in range(HOME_ATTEMPTS):
-            home = self.adb.screenshot(self.display)
+            home = self._frame("home")
             if idle_disconnected(home):
                 logger.info("Idle-disconnect dialog is up; logging back in")
                 self._tap(RELOGIN_BUTTON)
@@ -277,7 +327,7 @@ class AttackRunner(BaseModel):
                 continue
             self._tap(HOME_ATTACK)
             time.sleep(2)
-            if attack_menu_open(self.adb.screenshot(self.display)):
+            if attack_menu_open(self._frame("attack-menu")):
                 return home
             # Never `back` here: on the home village that is 確定退出遊戲嗎, one
             # tap away from closing the game. A building panel left open does
@@ -318,7 +368,7 @@ class AttackRunner(BaseModel):
         """
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
-            png = self.adb.screenshot(self.display)
+            png = self._frame("scout")
             view = read_scout(png)
             if view:
                 return view, png
@@ -343,11 +393,12 @@ class AttackRunner(BaseModel):
             line = deploy_line(LINE_POINTS, push_out(start, attempt), push_out(end, attempt))
             probes = [line[0], line[len(line) // 2], line[-1]]
             self.adb.tap_many([(card, CARD_ROW_Y), *probes], self.display)
-            if not deploy_refused(self.adb.screenshot(self.display)):
-                logger.info("Deploying on the flank pushed out %d step(s)", attempt)
+            if not deploy_refused(self._frame("probe")):
+                logger.info("Deploying along %s-%s, pushed out %d step(s)", start, end, attempt)
                 return attempt
             logger.info("Drop refused inside the boundary; pushing the flank out")
             time.sleep(REFUSAL_CLEAR_DELAY)
+        logger.info("The %s-%s line is refused at every push; trying the next flank", start, end)
         return None
 
     def _spread_troops(
@@ -371,7 +422,7 @@ class AttackRunner(BaseModel):
             for card, x in enumerate(remaining):
                 drops = drop_points(line, index * len(remaining) + card)
                 self.adb.tap_many([(x, CARD_ROW_Y), *drops], self.display)
-            shot = self.adb.screenshot(self.display)
+            shot = self._frame("pass")
             refused = deploy_refused(shot)
             if refused and pushed + 1 < DEPLOY_ATTEMPTS:
                 pushed += 1
@@ -400,11 +451,11 @@ class AttackRunner(BaseModel):
         and leaves `_fire_abilities` tapping an empty card later.
         """
         for _ in range(BANNER_CLEAR_ATTEMPTS):
-            if not deploy_refused(self.adb.screenshot(self.display)):
+            if not deploy_refused(self._frame("banner")):
                 break
             time.sleep(REFUSAL_CLEAR_DELAY)
         self.adb.tap_many([(card, CARD_ROW_Y), point], self.display, gap=SINGLE_DROP_DELAY)
-        return not deploy_refused(self.adb.screenshot(self.display))
+        return not deploy_refused(self._frame("dropped"))
 
     def _drop_singles(self, cards: list[int], point: tuple[int, int], what: str) -> int:
         """Empty the one-off cards onto the same spot, pushing it out when refused.
@@ -469,12 +520,12 @@ class AttackRunner(BaseModel):
         # for a single bottle would only spend the battle tapping empty ground.
         freeze_count = sum(card_count(frame, x) or 1 for x in freezes)
         plan = self._plan(frame, rage_count, freeze_count)
-        start, end = planned_line(plan) or (
-            DEPLOY_LINES[plan.deploy_from] if plan else (DEPLOY_START, DEPLOY_END)
-        )
-        pushed = self._usable_line(troops[0], start, end)
-        if pushed is None:
-            logger.warning("Every drop was refused; the boundary reaches past the playfield")
+        for start, end in deploy_candidates(plan):
+            pushed = self._usable_line(troops[0], start, end)
+            if pushed is not None:
+                break
+        else:
+            logger.warning("Every flank was refused; the boundary reaches past the playfield")
             return
         line = deploy_line(LINE_POINTS, push_out(start, pushed), push_out(end, pushed))
         middle = line[len(line) // 2]
@@ -502,7 +553,7 @@ class AttackRunner(BaseModel):
         # Freeze wants the defences the troops are fighting, which is where they
         # are by now. Some card slots overlap the result screen's 回營 button, so
         # this only runs while the battle is genuinely still on.
-        if read_scout(self.adb.screenshot(self.display)) is None:
+        if self._battle_view("before-freeze") is None:
             return
         self._cast(freezes, freeze_targets, frame)
 
@@ -523,7 +574,7 @@ class AttackRunner(BaseModel):
             remaining = landed + delay - time.monotonic()
             if remaining > 0:
                 time.sleep(remaining)
-            if read_scout(self.adb.screenshot(self.display)) is None:
+            if self._battle_view("ability") is None:
                 logger.info("Battle ended before every ability fired")
                 return
             self._tap((x, CARD_ROW_Y))
@@ -550,19 +601,21 @@ class AttackRunner(BaseModel):
         """Sit through the battle and leave through 回營; False if no loot ever moved.
 
         Loot that never drops is how a deployment nothing came of shows up, and
-        it costs nothing extra because the panel is already being polled.
+        it costs nothing extra because the panel is already being polled. The
+        verdict comes from the last reading anyone took rather than only from
+        this loop's own, because remaining loot only ever falls: a battle short
+        enough that the first poll ten seconds in already finds the result screen
+        is a battle that went *well*, and judging it on nothing was how a village
+        taken to 100% got reported as one the army never reached.
         """
         deadline = time.monotonic() + BATTLE_TIMEOUT
-        taken = False
         while time.monotonic() < deadline:
             time.sleep(10)
             # The result screen is the first one with no loot panel on it.
-            view = read_scout(self.adb.screenshot(self.display))
-            if view is None:
+            if self._battle_view("battle") is None:
                 break
-            taken = taken or view.loot != opening
         self._tap(RETURN_HOME)
-        return taken
+        return self._seen is not None and self._seen != opening
 
     def run(self) -> AttackReport:
         logger.info("Attack run starts, thresholds=%s", self.thresholds.model_dump())
@@ -591,7 +644,7 @@ class AttackRunner(BaseModel):
             )
         self._tap(FIND_MATCH)
         time.sleep(2)
-        strength = army_strength(self.adb.screenshot(self.display))
+        strength = army_strength(self._frame("army"))
         if strength and strength[0] < strength[1] * MIN_ARMY_RATIO:
             logger.info("Army is only %d/%d; backing out before the search fee", *strength)
             self.adb.back(self.display)
