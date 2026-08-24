@@ -634,6 +634,35 @@ class AttackTests(unittest.TestCase):
     def test_a_battle_nobody_ever_read_is_not_called_a_success(self) -> None:
         assert not self._verdict(LootOffer(gold=1, elixir=1, dark=1), [None, None])
 
+    def _settled(self, box: tuple[int, int, int, int]) -> list[tuple[int, int]]:
+        """Every drag `_settle_camera` asks for, given a village measured at `box`."""
+        runner = self._runner()
+        swipes: list[tuple[int, int]] = []
+        with (
+            patch.object(AttackRunner, "_frame", return_value=b""),
+            patch.object(attack, "village_box", return_value=box),
+            patch.object(attack.time, "sleep"),
+            patch.object(
+                type(runner.adb),
+                "swipe",
+                lambda _self, start, end, _ms, _display: swipes.append((
+                    end[0] - start[0],
+                    end[1] - start[1],
+                )),
+            ),
+        ):
+            runner._settle_camera(b"")
+        return swipes
+
+    def test_a_camera_left_off_centre_is_dragged_back(self) -> None:
+        """Measured live: knocked 96 px left, one drag put it back within 15."""
+        # Middle (704, 400), so the village has to move 96 px to the right.
+        assert self._settled((104, 100, 1304, 700))[0] == (96, 0)
+
+    def test_a_camera_already_on_the_village_is_left_alone(self) -> None:
+        """The game centres every attack itself; dragging a good camera can only hurt."""
+        assert self._settled((200, 120, 1380, 680)) == []
+
     def test_the_freeze_no_longer_queues_behind_the_slowest_hero(self) -> None:
         """Cast after the last ability it sat out a champion's 45 seconds first."""
         played: list[str] = []

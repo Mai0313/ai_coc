@@ -665,7 +665,18 @@ class AttackRunner(BaseModel):
             middle = ((box[0] + box[2]) // 2, (box[1] + box[3]) // 2)
             drift = (SCREEN_CENTRE[0] - middle[0], SCREEN_CENTRE[1] - middle[1])
             if max(abs(drift[0]), abs(drift[1])) <= CAMERA_TOLERANCE:
-                logger.info("Village sits at %s, %s off the middle", middle, drift)
+                # The span goes in the log as well as the middle. Nothing here
+                # can tell a zoomed camera from a village that is simply bigger,
+                # because both make the box wider — but a run of battles whose
+                # spans all move together is what a changed zoom would look like,
+                # and that is only visible if the number was written down.
+                logger.info(
+                    "Village sits at %s, %s off the middle, spanning %dx%d",
+                    middle,
+                    drift,
+                    box[2] - box[0],
+                    box[3] - box[1],
+                )
                 return frame
             logger.info("Village sits at %s; dragging the camera by %s", middle, drift)
             self.adb.swipe(
