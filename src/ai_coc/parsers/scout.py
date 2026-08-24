@@ -14,7 +14,7 @@ import logging
 
 from PIL import Image
 
-from ai_coc.models import LootOffer, ScoutView
+from ai_coc.models import LootOffer, ScoutView, VillageStock
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -93,6 +93,17 @@ ARMY_DIGIT_TOLERANCE = 22
 # whatever village happens to be behind it.
 REFUSED_BOX = (600, 238, 1010, 278)
 REFUSED_RED = 0.07
+
+# The village's own storages, on the four bars down the home screen's right edge.
+# Only the first three are read; the fourth is gems. The numbers are right-aligned
+# against the icons, so the box reaches far enough left for eight digits and their
+# separators, which is more than any storage holds. Behind them sits the bar's own
+# fill highlight, which moves with the amount stored and is the reason for the
+# tolerance: measured, a real digit here matches within 11 while the highlight
+# never resolves into one at all.
+STOCK_LEFT, STOCK_RIGHT = 1300, 1512
+STOCK_ROW_BOUNDS = ((33, 72), (117, 156), (200, 239))
+STOCK_DIGIT_TOLERANCE = 22
 
 # 還在嗎 / 你因閒置過久而中斷連線. A loop that spends minutes waiting for barracks
 # will meet this, and nothing else clears it: the game stops responding to taps
@@ -186,14 +197,25 @@ def _signature(mask: list[list[bool]], left: int, right: int) -> int | None:
     return bits
 
 
-def _read_row(image: Image.Image, top: int, bottom: int) -> int | None:
-    mask = _ink_mask(image.crop((PANEL_LEFT, top, PANEL_RIGHT, bottom)))
+def _read_row(
+    image: Image.Image, box: tuple[int, int, int, int], tolerance: int | None = None
+) -> int | None:
+    """The number written across one row, or None where it does not read as one.
+
+    `tolerance` gives up on the whole row as soon as one glyph is a poor match,
+    which is what keeps a storage bar's fill highlight from being read as a
+    digit. The loot panel has nothing but the village behind it and passes None.
+    """
+    mask = _ink_mask(image.crop(box))
     digits = ""
     for left, right in _glyph_columns(mask):
         signature = _signature(mask, left, right)
         if signature is None:
             continue
-        digits += min(TEMPLATES, key=lambda d: (TEMPLATES[d] ^ signature).bit_count())
+        digit = min(TEMPLATES, key=lambda d: (TEMPLATES[d] ^ signature).bit_count())
+        if tolerance is not None and (TEMPLATES[digit] ^ signature).bit_count() > tolerance:
+            return None
+        digits += digit
     return int(digits) if digits else None
 
 
@@ -384,7 +406,9 @@ def read_scout(png: bytes) -> ScoutView | None:
     image = Image.open(io.BytesIO(png)).convert("RGB")
     if image.size != SCREEN_SIZE:
         raise ValueError(f"戰利品面板座標只適用 1600x900，收到 {image.size[0]}x{image.size[1]}")
-    gold, elixir, dark = (_read_row(image, top, bottom) for top, bottom in ROW_BOUNDS)
+    gold, elixir, dark = (
+        _read_row(image, (PANEL_LEFT, top, PANEL_RIGHT, bottom)) for top, bottom in ROW_BOUNDS
+    )
     if gold is None or elixir is None or dark is None:
         return None
     view = ScoutView(
@@ -399,3 +423,25 @@ def read_scout(png: bytes) -> ScoutView | None:
         view.can_skip,
     )
     return view
+
+
+def read_stock(png: bytes) -> VillageStock | None:
+    """The village's own storages, or None when this screenshot is not showing them.
+
+    Anything other than the home village reads as None, as does a home village
+    with a panel over the bars, so a caller is meant to treat it as "not now"
+    rather than as an empty village. Three rows all resolving into digits is
+    itself the evidence that the home screen is up.
+    """
+    image = Image.open(io.BytesIO(png)).convert("RGB")
+    if image.size != SCREEN_SIZE:
+        raise ValueError(f"儲量條座標只適用 1600x900，收到 {image.size[0]}x{image.size[1]}")
+    gold, elixir, dark = (
+        _read_row(image, (STOCK_LEFT, top, STOCK_RIGHT, bottom), STOCK_DIGIT_TOLERANCE)
+        for top, bottom in STOCK_ROW_BOUNDS
+    )
+    if gold is None or elixir is None or dark is None:
+        return None
+    stock = VillageStock(gold=gold, elixir=elixir, dark=dark)
+    logger.info("Village holds gold=%d elixir=%d dark=%d", stock.gold, stock.elixir, stock.dark)
+    return stock

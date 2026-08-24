@@ -52,6 +52,7 @@ from ai_coc.models import (
     AgentAction,
     ChatMessage,
     HeroTimings,
+    StockLimits,
     AttackReport,
     LocatedTarget,
     UiElementList,
@@ -512,6 +513,15 @@ class MainWindow(QMainWindow):
         self.stop_gold = QSpinBox()
         self.stop_gold.setRange(0, 20000000)
         self.stop_gold.setSingleStep(100000)
+        self.stop_elixir = QSpinBox()
+        self.stop_elixir.setRange(0, 20000000)
+        self.stop_elixir.setSingleStep(100000)
+        self.stop_dark = QSpinBox()
+        self.stop_dark.setRange(0, 500000)
+        self.stop_dark.setSingleStep(10000)
+        # 0 is the minimum, so this labels it in place rather than in the row text.
+        for box in (self.stop_gold, self.stop_elixir, self.stop_dark):
+            box.setSpecialValueText("不監控")
         self.cycle_minutes = QSpinBox()
         self.cycle_minutes.setRange(1, 120)
         for key, widget, default in (
@@ -519,6 +529,8 @@ class MainWindow(QMainWindow):
             ("min_elixir", self.min_elixir, 500000),
             ("min_dark", self.min_dark, 5000),
             ("stop_gold", self.stop_gold, 15000000),
+            ("stop_elixir", self.stop_elixir, 15000000),
+            ("stop_dark", self.stop_dark, 0),
             ("cycle_minutes", self.cycle_minutes, 10),
         ):
             widget.setValue(int(self.settings.value(key, default)))
@@ -526,6 +538,8 @@ class MainWindow(QMainWindow):
         battle_form.addRow("最低聖水", self.min_elixir)
         battle_form.addRow("最低黑水", self.min_dark)
         battle_form.addRow("金幣達到此值停止刷資源", self.stop_gold)
+        battle_form.addRow("聖水達到此值停止刷資源", self.stop_elixir)
+        battle_form.addRow("黑水達到此值停止刷資源", self.stop_dark)
         battle_form.addRow("閒置時重試間隔（分鐘）", self.cycle_minutes)
         return battle
 
@@ -544,6 +558,8 @@ class MainWindow(QMainWindow):
             ("min_elixir", self.min_elixir),
             ("min_dark", self.min_dark),
             ("stop_gold", self.stop_gold),
+            ("stop_elixir", self.stop_elixir),
+            ("stop_dark", self.stop_dark),
             ("cycle_minutes", self.cycle_minutes),
         ):
             self.settings.setValue(key, widget.value())
@@ -641,6 +657,11 @@ class MainWindow(QMainWindow):
             min_elixir=self.min_elixir.value(),
             min_dark=self.min_dark.value(),
         )
+        limits = StockLimits(
+            stop_gold=self.stop_gold.value(),
+            stop_elixir=self.stop_elixir.value(),
+            stop_dark=self.stop_dark.value(),
+        )
 
         # The client is only used once an opponent has passed the thresholds, to
         # pick the flank and the spell targets; screen reading never needs it.
@@ -654,12 +675,22 @@ class MainWindow(QMainWindow):
                 adb=adb,
                 display=adb.display_for(COC_PACKAGE),
                 thresholds=thresholds,
+                stock=limits,
                 abilities=abilities,
                 ai=planner,
                 should_stop=lambda: not self.automation_active,
             ).run()
 
         def done(report: AttackReport) -> None:
+            # The storage is full, so the next pass would only read it again and
+            # come back here. Stopping is the whole point of the threshold. The
+            # skip count is left out of this one: it returns before any opponent
+            # is scouted, and this is the only line saying why the automation
+            # switched itself off.
+            if report.stock_full:
+                self.automation_log.appendPlainText(report.message)
+                self.stop_automation()
+                return
             self.automation_log.appendPlainText(
                 f"進攻巡檢結束（跳過 {report.skipped} 個對手）：{report.message}"
             )
