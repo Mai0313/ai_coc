@@ -601,7 +601,13 @@ class AttackRunner(BaseModel):
             bool(live_cards(before, [card])) and not live_cards(after, [card])
         )
 
-    def _drop_singles(self, cards: list[int], point: tuple[int, int], what: str) -> list[int]:
+    def _drop_singles(
+        self,
+        cards: list[int],
+        point: tuple[int, int],
+        what: str,
+        between: Callable[[], None] = lambda: None,
+    ) -> list[int]:
         """Empty the one-off cards onto the same spot, pushing it out when nothing lands.
 
         Every card gets its own attempts, starting from wherever the last one
@@ -624,6 +630,9 @@ class AttackRunner(BaseModel):
                 logger.info("The %s card at %d took nothing at push %d", what, card, attempt)
             else:
                 logger.warning("The %s card at %d never landed; its unit stays put", what, card)
+            # Four heroes take twenty seconds between them, which is the last gap
+            # a spell timed from the attack opening could fall into.
+            between()
         logger.info(
             "%d of %d %s card(s) landed at %s",
             len(landed),
@@ -804,7 +813,7 @@ class AttackRunner(BaseModel):
         # between the larger steps left it 5 to 10 seconds late, because a rage
         # cast is ten seconds nobody can interrupt.
         catch_up = partial(self._play_due, opened, pending)
-        self._drop_singles(vanguard, middle, "siege")
+        self._drop_singles(vanguard, middle, "siege", catch_up)
         line = self._spread_troops(troops, anchors, pushed, catch_up)
         self._cast(rages, rage_path, frame)
         catch_up()
@@ -814,7 +823,7 @@ class AttackRunner(BaseModel):
         # Only the heroes that actually went down get an ability. A hero still in
         # its card answers an ability tap by deploying instead, with nothing
         # around it and no ability fired.
-        down = self._drop_singles(followers, middle, "hero")
+        down = self._drop_singles(followers, middle, "hero", catch_up)
         landed = time.monotonic()
         kinds = list(plan.heroes) if plan else []
         kinds += ["unknown"] * (len(followers) - len(kinds))
