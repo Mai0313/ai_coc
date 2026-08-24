@@ -415,14 +415,18 @@ class AttackRunner(BaseModel):
         # The first group is the troops the attack is built on. Of what follows,
         # spells are held back for the village itself; `xN` is what separates
         # them, since spells carry a count and heroes and the siege machine do
-        # not. The group immediately after the troops is the siege machine, and
-        # it leads: it is the tank, and it opens the path the troops walk into.
+        # not. The game then always orders what is left as siege machine first
+        # and heroes after, so the leader is simply the first of them. Taking it
+        # from the group boundary instead put four heroes in the vanguard: they
+        # went down ahead of the troops with nothing covering them, and since
+        # only the followers reach `_fire_abilities`, not one of their abilities
+        # was ever fired.
         troops = groups[0]
         rest = [x for group in groups[1:] for x in group]
         spells = counted_cards(frame, rest)
         singles = [x for x in rest if x not in spells]
-        vanguard = [x for x in groups[1] if x in singles] if len(groups) > 1 else []
-        followers = [x for x in singles if x not in vanguard]
+        vanguard = singles[:1]
+        followers = singles[1:]
         logger.info(
             "%d troop card(s), %d leading, %d following, %d spell(s)",
             len(troops),
