@@ -22,6 +22,16 @@ make gen-docs                        # rebuild docs/ from the READMEs and the so
 
 Run the app with `uv run ai_coc`. Two CLI hooks exist for smoke tests: `--live-test` captures a frame and asks Gemini to describe it, and `--agent-command=<text>` types a command into the AI tab and executes it. Both save a proof screenshot of the window when `COC_LIVE_TEST_SCREENSHOT` / `COC_AGENT_SCREENSHOT` point at a path.
 
+Three sub-commands run headless instead, and they are how the game is worked on:
+
+```bash
+uv run ai_coc attack --frames <dir>       # one attack pass, no window, every frame it reads kept
+uv run ai_coc read <png>                  # what each parser makes of one frame
+uv run ai_coc capture <dir> --count 30    # a burst off the live game
+```
+
+**Running real attacks to gather evidence is cheap, so do it rather than reasoning from one sample.** Training troops costs nothing in current Clash of Clans and the search fee is negligible, and neither does a battle that goes badly or deploys nothing at all — a run spent entirely on probes is a normal thing to spend, not a mistake to apologise for. The only real budget is the wall-clock time an army takes to train, and `MIN_ARMY_RATIO` backs a run out for free before the fee when it is not ready. `--frames` names each capture for what the loop was asking (`0006_probe`, `0010_pass`, `0018_banner`), which afterwards is the only thing separating a frame the parser misread from a tap that never landed.
+
 Distributables are built in CI only: pushing a `v*` tag runs `build_release.yml`, which publishes the wheel to PyPI and attaches a PyInstaller Windows build to the release. There is no local build script.
 
 `scripts/gen_version_file.py` writes `version_info.txt` from the resolved version just before PyInstaller runs, which is what puts a version into the executable's Windows file properties. That file is gitignored: a committed copy could only go stale.
@@ -34,7 +44,7 @@ That build defaults to `--onedir`, and the dispatch form's `package_mode` switch
 
 The three layers are directories, so an import that crosses them is visible in the import line:
 
-- **UI and orchestration** — `ui/main_window.py` (`MainWindow`), all five tabs plus every workflow; `ui/attack.py` (`AttackRunner`, the farming attack loop, kept Qt-free so it can be driven and tested without the window); `ui/workers.py` (thread-pool workers and the log handler); `ui/render.py` (Markdown and log records to HTML). `cli.py` is only `main()`.
+- **UI and orchestration** — `ui/main_window.py` (`MainWindow`), all five tabs plus every workflow; `ui/attack.py` (`AttackRunner`, the farming attack loop, kept Qt-free so it can be driven and tested without the window); `ui/workers.py` (thread-pool workers and the log handler); `ui/render.py` (Markdown and log records to HTML). `cli.py` is only argument parsing and `main()`, and `commands.py` is the headless side it dispatches to: a feature reachable only through a widget cannot be run against the live game while it is being worked on, so new work belongs somewhere `commands.py` can call it.
 - **Adapters** — `adapters/mumu.py` (emulator lifecycle), `adapters/adb.py` (every ADB call), `adapters/ai.py` (Gemini), `adapters/secrets.py` (DPAPI), `adapters/database.py` (SQLite).
 - **Pure parsers** — `parsers/village.py`, `parsers/scout.py`.
 - **Data shapes** — `models.py` at the package root holds every Pydantic model in the project; see the Pydantic rule below.

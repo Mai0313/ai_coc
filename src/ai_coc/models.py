@@ -441,6 +441,27 @@ class AttackReport(BaseModel):
     stock_full: bool = False
 
 
+class FrameReading(BaseModel):
+    """Everything the parsers make of one frame, for the `read` command.
+
+    A screen the loop mishandled is almost always a screen it misread, and this
+    is what says which of the readers disagreed with the eye. It is one model
+    rather than a printout so a recorded run can be replayed through it.
+    """
+
+    scout: ScoutView | None = None
+    stock: VillageStock | None = None
+    army: tuple[int, int] | None = None
+    attack_menu: bool = False
+    refused: bool = False
+    idle_dialog: bool = False
+    card_groups: list[list[int]] = Field(default_factory=list)
+    counted: list[int] = Field(default_factory=list)
+    freezes: list[int] = Field(default_factory=list)
+    live: list[int] = Field(default_factory=list)
+    counts: dict[int, int | None] = Field(default_factory=dict)
+
+
 class UiElement(BaseModel):
     """One clickable or labelled node from Android's accessibility hierarchy."""
 
