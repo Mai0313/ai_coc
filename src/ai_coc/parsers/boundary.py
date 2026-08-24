@@ -112,17 +112,23 @@ OUTLIER_RATIO = 0.6
 
 def fitted_line(
     png: bytes, start: tuple[int, int], end: tuple[int, int], margin: int = 30
-) -> tuple[tuple[int, int], tuple[int, int]] | None:
-    """The same flank moved out to sit just outside this village's own red line.
+) -> tuple[tuple[int, int], ...] | None:
+    """The same flank bent out to sit just outside this village's own red line.
 
-    A preset flank is drawn for a village that does not exist; this puts it where
-    the boundary actually is, which is what saves the loop probing its way out one
-    refused troop at a time. None when either end's ray never met the stroke, so
-    the caller keeps the flank it had and probes as before.
+    Three anchors rather than two, and that is the point: a village is a diamond,
+    so a straight chord between two points on its boundary cuts back inside it
+    across the middle. Fitting only the ends left every probe of the midpoint
+    refused, which read as the whole flank being unusable — measured live, two
+    flanks in a row were rejected at all five pushes that way before a third
+    worked. The midpoint gets its own ray, so the line follows the village.
+
+    None when any of the three rays never met the stroke, so the caller keeps the
+    flank it had and probes its way out as before.
     """
     image = Image.open(io.BytesIO(png)).convert("RGB")
+    middle = ((start[0] + end[0]) // 2, (start[1] + end[1]) // 2)
     moved: list[tuple[int, int]] = []
-    for point in (start, end):
+    for point in (start, middle, end):
         angle = math.degrees(
             math.atan2(point[1] - VILLAGE_CENTRE[1], point[0] - VILLAGE_CENTRE[0])
         )
@@ -132,8 +138,8 @@ def fitted_line(
             return None
         dx, dy = math.cos(math.radians(angle)), math.sin(math.radians(angle))
         moved.append((round(reach[0] + dx * margin), round(reach[1] + dy * margin)))
-    logger.info("Flank %s-%s fitted to the boundary as %s-%s", start, end, moved[0], moved[1])
-    return moved[0], moved[1]
+    logger.info("Flank %s-%s fitted to the boundary as %s", start, end, moved)
+    return tuple(moved)
 
 
 def boundary_line(png: bytes, degrees: list[float], margin: int = 24) -> list[tuple[int, int]]:

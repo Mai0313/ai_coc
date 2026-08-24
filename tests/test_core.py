@@ -384,12 +384,22 @@ class BoundaryTests(unittest.TestCase):
     def test_a_flank_is_fitted_onto_the_village_own_boundary(self) -> None:
         """A preset flank is drawn for a village that does not exist; this moves it."""
         png = (FRAMES / "battle_boundary_grass.png").read_bytes()
-        # On the 210 and 240 degree rays, which is what this frame kept.
-        preset = ((540, 250), (650, 140))
+        # Ends on the 180 and 240 degree rays, so their midpoint lands on 210 —
+        # all three kept in this frame, and the midpoint is fitted too.
+        preset = ((500, 400), (650, 140))
         fitted = fitted_line(png, *preset)
         assert fitted is not None
+        assert len(fitted) == 3
         for point in fitted:
             assert math.hypot(point[0] - 800, point[1] - 400) > 200
+
+    def test_a_bent_line_walks_through_every_anchor(self) -> None:
+        """A chord across a diamond cuts back inside it, so the middle gets its own anchor."""
+        bent = deploy_line(5, (100, 100), (400, 100), (400, 400))
+        assert bent[0] == (100, 100)
+        assert bent[-1] == (400, 400)
+        # The corner is an anchor, so a point lands on it rather than cutting it off.
+        assert (400, 100) in bent
 
     def test_a_flank_with_no_boundary_under_it_is_left_alone(self) -> None:
         """Both ends have to read, or the caller keeps its preset and probes."""

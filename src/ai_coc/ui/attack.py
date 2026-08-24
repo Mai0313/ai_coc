@@ -169,21 +169,30 @@ def clear_of_controls(point: tuple[int, int]) -> tuple[int, int]:
     return (x, min(y, ABANDON_BUTTON[1])) if x < ABANDON_BUTTON[0] else point
 
 
-def deploy_line(
-    count: int, start: tuple[int, int] = DEPLOY_START, end: tuple[int, int] = DEPLOY_END
-) -> list[tuple[int, int]]:
-    """Evenly spaced positions along a flank, from one end to the other.
+def deploy_line(count: int, *anchors: tuple[int, int]) -> list[tuple[int, int]]:
+    """Evenly spaced positions along a flank, walking through every anchor given.
 
-    Every point is cleared of the button, not only the two ends the caller
-    pushed: the line is a chord, so both ends can sit outside that corner while
-    the span between them cuts straight across it.
+    Two anchors is a straight chord; three or more bend it, which is what a flank
+    fitted to a village's own boundary needs, since a chord across a diamond cuts
+    back inside it. Every point is cleared of the button, not only the anchors:
+    the span between two of them can cross that corner while both sit clear of it.
     """
-    (x0, y0), (x1, y1) = start, end
+    marks = list(anchors) or [DEPLOY_START, DEPLOY_END]
+    if len(marks) == 1:
+        marks = marks * 2
+    legs = len(marks) - 1
     step = max(count - 1, 1)
-    return [
-        clear_of_controls((round(x0 + (x1 - x0) * i / step), round(y0 + (y1 - y0) * i / step)))
-        for i in range(count)
-    ]
+    points: list[tuple[int, int]] = []
+    for i in range(count):
+        # Which leg this point falls on, and how far along that leg it sits.
+        travelled = i / step * legs
+        leg = min(int(travelled), legs - 1)
+        (x0, y0), (x1, y1) = marks[leg], marks[leg + 1]
+        offset = travelled - leg
+        points.append(
+            clear_of_controls((round(x0 + (x1 - x0) * offset), round(y0 + (y1 - y0) * offset)))
+        )
+    return points
 
 
 def push_out(point: tuple[int, int], steps: int) -> tuple[int, int]:
@@ -203,6 +212,11 @@ def push_out(point: tuple[int, int], steps: int) -> tuple[int, int]:
         round(point[1] + dy / span * PUSH_STEP * steps),
     ))
     return clear_of_controls((min(max(on_map[0], left), right), min(max(on_map[1], top), bottom)))
+
+
+def push_line(anchors: tuple[tuple[int, int], ...], steps: int) -> list[tuple[int, int]]:
+    """Every anchor of a flank moved the same distance further from the middle."""
+    return [push_out(anchor, steps) for anchor in anchors]
 
 
 def planned_line(plan: AttackPlan | None) -> tuple[tuple[int, int], tuple[int, int]] | None:
@@ -410,7 +424,7 @@ class AttackRunner(BaseModel):
             time.sleep(1)
         return None
 
-    def _usable_line(self, card: int, start: tuple[int, int], end: tuple[int, int]) -> int | None:
+    def _usable_line(self, card: int, anchors: tuple[tuple[int, int], ...]) -> int | None:
         """How far out the flank has to be pushed before the game accepts drops on it.
 
         Troops are dropped as probes, because a village whose boundary reaches
@@ -425,19 +439,19 @@ class AttackRunner(BaseModel):
         already is.
         """
         for attempt in range(DEPLOY_ATTEMPTS):
-            line = deploy_line(LINE_POINTS, push_out(start, attempt), push_out(end, attempt))
+            line = deploy_line(LINE_POINTS, *push_line(anchors, attempt))
             probes = [line[0], line[len(line) // 2], line[-1]]
             self.adb.tap_many([(card, CARD_ROW_Y), *probes], self.display)
             if not deploy_refused(self._frame("probe")):
-                logger.info("Deploying along %s-%s, pushed out %d step(s)", start, end, attempt)
+                logger.info("Deploying along %s, pushed out %d step(s)", anchors, attempt)
                 return attempt
             logger.info("Drop refused inside the boundary; pushing the flank out")
             time.sleep(REFUSAL_CLEAR_DELAY)
-        logger.info("The %s-%s line is refused at every push; trying the next flank", start, end)
+        logger.info("The %s line is refused at every push; trying the next flank", anchors)
         return None
 
     def _spread_troops(
-        self, troops: list[int], start: tuple[int, int], end: tuple[int, int], pushed: int
+        self, troops: list[int], anchors: tuple[tuple[int, int], ...], pushed: int
     ) -> list[tuple[int, int]]:
         """Empty the troop cards along the flank; returns the line ending up in use.
 
@@ -452,7 +466,7 @@ class AttackRunner(BaseModel):
         refusal was answered by moving nothing at all.
         """
         remaining = list(troops)
-        line = deploy_line(LINE_POINTS, push_out(start, pushed), push_out(end, pushed))
+        line = deploy_line(LINE_POINTS, *push_line(anchors, pushed))
         for index in range(DEPLOY_PASSES):
             for card, x in enumerate(remaining):
                 drops = drop_points(line, index * len(remaining) + card)
@@ -464,7 +478,7 @@ class AttackRunner(BaseModel):
                 logger.info(
                     "Some drops landed inside the boundary; flank pushed out to %d", pushed
                 )
-                line = deploy_line(LINE_POINTS, push_out(start, pushed), push_out(end, pushed))
+                line = deploy_line(LINE_POINTS, *push_line(anchors, pushed))
             remaining = live_cards(shot, remaining)
             # The banner outlives the pass that earned it, so without this the
             # next pass reads the same one again and pushes the flank a second
@@ -593,15 +607,14 @@ class AttackRunner(BaseModel):
             # The boundary the game draws beats a flank drawn for a village that
             # does not exist, and fitting to it is what saves probing outwards one
             # refused troop at a time. It is still probed once before it is used.
-            fitted = fitted_line(battle, *preset) if battle else None
-            start, end = fitted or preset
-            pushed = self._usable_line(troops[0], start, end)
+            anchors = (fitted_line(battle, *preset) if battle else None) or preset
+            pushed = self._usable_line(troops[0], anchors)
             if pushed is not None:
                 break
         else:
             logger.warning("Every flank was refused; the boundary reaches past the playfield")
             return
-        line = deploy_line(LINE_POINTS, push_out(start, pushed), push_out(end, pushed))
+        line = deploy_line(LINE_POINTS, *push_line(anchors, pushed))
         middle = line[len(line) // 2]
         planned = tuple(point.pixels() for point in plan.rage_points) if plan else ()
         # A plan can name fewer spots than the army carries rages, and `_cast`
@@ -616,7 +629,7 @@ class AttackRunner(BaseModel):
         # they are inside it the whole way in. Freeze waits until the end.
         self._cast(rages, rage_path, frame)
         self._drop_singles(vanguard, middle, "siege")
-        line = self._spread_troops(troops, start, end, pushed)
+        line = self._spread_troops(troops, anchors, pushed)
         # Recomputed, not reused: the flank moves while the troops go down, and
         # a hero sent to the pre-push midpoint is sent somewhere already refused.
         middle = line[len(line) // 2]
