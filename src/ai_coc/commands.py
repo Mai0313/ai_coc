@@ -10,16 +10,19 @@ is the whole reason the attack loop grew a `frame_dir` at the same time.
 
 from __future__ import annotations
 
+import math
 import time
 from typing import TYPE_CHECKING
 import logging
 
 from ai_coc import plans
 from ai_coc.models import (
+    ProbeRay,
     HeroTimings,
     StockLimits,
     AttackReport,
     FrameReading,
+    BoundarySurvey,
     GeminiSettings,
     LootThresholds,
 )
@@ -40,8 +43,9 @@ from ai_coc.parsers.scout import (
     idle_disconnected,
 )
 from ai_coc.adapters.secrets import SecretStore
+from ai_coc.parsers.boundary import VILLAGE_CENTRE, boundary_reach
 
-from .ui.attack import AttackRunner
+from .ui.attack import CARD_ROW_Y, SINGLE_DROP_DELAY, REFUSAL_CLEAR_DELAY, AttackRunner
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -110,6 +114,90 @@ def attack(
         logger.info("Wrote the plan that ran to %s", plan_out)
     logger.info("Attack finished: %s", report.message)
     return report
+
+
+# Twelve rays is the whole village at 30 degree steps, and two drops on each is
+# what fits: a refused drop costs no troop but does cost the three seconds its
+# banner takes to clear, so a wider sweep runs past the end of the battle.
+SURVEY_RAYS = tuple(angle * 30 for angle in range(12))
+# How far either side of the predicted line the two drops go. Wider than the
+# margin `fitted_line` already adds, so a ray that agrees really does straddle it.
+SURVEY_MARGIN = 60
+
+
+class _BoundarySurvey(AttackRunner):
+    """An attack that surveys the deployment boundary instead of fighting.
+
+    The boundary reader is the least certain thing in the loop: its colour
+    thresholds were measured on four village themes and the map diamond was
+    calibrated by eye. This is how to find out whether it still agrees with the
+    game — on a new theme, after a game update, or when a battle goes wrong for
+    reasons the recorded frames do not explain. It costs a battle that is thrown
+    away, which costs nothing but the time.
+    """
+
+    survey: BoundarySurvey = BoundarySurvey()
+
+    def _deploy(self, frame: bytes) -> None:
+        card = card_groups(frame)[0][0]
+        battle = self._wait_for_battle()
+        if battle is None:
+            logger.warning("Never reached the battle; nothing to survey")
+            return
+        for degrees in SURVEY_RAYS:
+            reach = boundary_reach(battle, degrees)
+            if reach is None:
+                self.survey.unread.append(degrees)
+                logger.info("Ray %.0f: the reader found no boundary", degrees)
+                continue
+            radius = math.hypot(reach[0] - VILLAGE_CENTRE[0], reach[1] - VILLAGE_CENTRE[1])
+            dx, dy = math.cos(math.radians(degrees)), math.sin(math.radians(degrees))
+            verdicts: list[bool] = []
+            for offset in (-SURVEY_MARGIN, SURVEY_MARGIN):
+                point = (
+                    round(VILLAGE_CENTRE[0] + dx * (radius + offset)),
+                    round(VILLAGE_CENTRE[1] + dy * (radius + offset)),
+                )
+                self.adb.tap_many([(card, CARD_ROW_Y), point], self.display, gap=SINGLE_DROP_DELAY)
+                refused = deploy_refused(self._frame(f"{degrees:03.0f}deg-{offset:+d}"))
+                verdicts.append(refused)
+                if refused:
+                    time.sleep(REFUSAL_CLEAR_DELAY)
+            ray = ProbeRay(
+                degrees=degrees,
+                predicted=round(radius),
+                inside_refused=verdicts[0],
+                outside_refused=verdicts[1],
+            )
+            self.survey.rays.append(ray)
+            logger.info(
+                "Ray %.0f: predicted %d, inside %s, outside %s -> %s",
+                degrees,
+                ray.predicted,
+                "refused" if ray.inside_refused else "ACCEPTED",
+                "refused" if ray.outside_refused else "accepted",
+                "agrees" if ray.agrees else "DISAGREES",
+            )
+
+
+def probe(frame_dir: Path | None = None) -> BoundarySurvey:
+    """Survey where drops are really accepted, and compare it to what the reader says.
+
+    Spends a battle to answer one question the recorded frames cannot: whether
+    the red line the parser found is the line the game is enforcing.
+    """
+    adb = _controller()
+    if frame_dir is not None:
+        frame_dir.mkdir(parents=True, exist_ok=True)
+    runner = _BoundarySurvey(
+        adb=adb,
+        display=adb.display_for(COC_PACKAGE),
+        thresholds=LootThresholds(),
+        frame_dir=frame_dir,
+    )
+    runner.run()
+    logger.info("Boundary survey: %s", runner.survey.agreement)
+    return runner.survey
 
 
 def capture(out_dir: Path, count: int = 1, gap: float = 1.5) -> list[Path]:

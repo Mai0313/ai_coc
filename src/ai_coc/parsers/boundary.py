@@ -128,6 +128,7 @@ def fitted_line(
     image = Image.open(io.BytesIO(png)).convert("RGB")
     middle = ((start[0] + end[0]) // 2, (start[1] + end[1]) // 2)
     moved: list[tuple[int, int]] = []
+    radii: list[float] = []
     for point in (start, middle, end):
         angle = math.degrees(
             math.atan2(point[1] - VILLAGE_CENTRE[1], point[0] - VILLAGE_CENTRE[0])
@@ -136,8 +137,19 @@ def fitted_line(
         if reach is None:
             logger.info("No boundary on the ray through %s; keeping the preset flank", point)
             return None
+        radii.append(math.hypot(reach[0] - VILLAGE_CENTRE[0], reach[1] - VILLAGE_CENTRE[1]))
         dx, dy = math.cos(math.radians(angle)), math.sin(math.radians(angle))
         moved.append((round(reach[0] + dx * margin), round(reach[1] + dy * margin)))
+    # The boundary does not fold in on itself across one flank, so three anchors
+    # at wildly different distances mean a ray matched a wall inside the village
+    # rather than the stroke. `ai_coc probe` measured that happening on four of
+    # twelve rays, and an anchor placed inside is the expensive direction to be
+    # wrong in: the line cuts through the village and every probe on it is
+    # refused. Falling back here costs only the preset flank the caller already
+    # had, which is what this ran before it could read anything at all.
+    if min(radii) < max(radii) * OUTLIER_RATIO:
+        logger.info("Boundary radii %s disagree across the flank; keeping the preset", radii)
+        return None
     logger.info("Flank %s-%s fitted to the boundary as %s", start, end, moved)
     return tuple(moved)
 
