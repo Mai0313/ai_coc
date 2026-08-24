@@ -12,6 +12,7 @@ import pytest
 from ai_coc import plans
 from ai_coc.ui import attack
 from ai_coc.models import (
+    ProbeRay,
     LootOffer,
     ScoutView,
     AttackPlan,
@@ -21,6 +22,7 @@ from ai_coc.models import (
     StockLimits,
     VillageStock,
     DisplayTarget,
+    BoundarySurvey,
     LootThresholds,
 )
 from ai_coc.prompts import PROMPTS, PROMPT_DIR, render
@@ -255,6 +257,27 @@ class ScoutTests(unittest.TestCase):
             read_scout(buffer.getvalue())
 
 
+class SurveyTests(unittest.TestCase):
+    """The survey exists to catch the boundary reader disagreeing with the game."""
+
+    def _ray(self, inside: bool, outside: bool) -> ProbeRay:
+        return ProbeRay(degrees=30, predicted=400, inside_refused=inside, outside_refused=outside)
+
+    def test_a_ray_agrees_only_when_the_line_sits_between_the_two_drops(self) -> None:
+        assert self._ray(inside=True, outside=False).agrees
+        # Accepted inside the predicted line: the reader put it too far out.
+        assert not self._ray(inside=False, outside=False).agrees
+        # Refused outside it: too far in, which is the one that loses troops.
+        assert not self._ray(inside=True, outside=True).agrees
+
+    def test_the_summary_counts_the_rays_that_could_not_be_read(self) -> None:
+        survey = BoundarySurvey(
+            rays=[self._ray(inside=True, outside=False), self._ray(inside=True, outside=True)],
+            unread=[90.0, 270.0],
+        )
+        assert survey.agreement == "1/2 rays agreed, 2 unread"
+
+
 class PlanTests(unittest.TestCase):
     """A tactic written down, so it can be replayed, edited, or swapped for the AI's."""
 
@@ -384,9 +407,9 @@ class BoundaryTests(unittest.TestCase):
     def test_a_flank_is_fitted_onto_the_village_own_boundary(self) -> None:
         """A preset flank is drawn for a village that does not exist; this moves it."""
         png = (FRAMES / "battle_boundary_grass.png").read_bytes()
-        # Ends on the 180 and 240 degree rays, so their midpoint lands on 210 —
+        # Ends on the 150 and 210 degree rays, so their midpoint lands on 180 —
         # all three kept in this frame, and the midpoint is fitted too.
-        preset = ((500, 400), (650, 140))
+        preset = ((540, 550), (540, 250))
         fitted = fitted_line(png, *preset)
         assert fitted is not None
         assert len(fitted) == 3
@@ -400,6 +423,17 @@ class BoundaryTests(unittest.TestCase):
         assert bent[-1] == (400, 400)
         # The corner is an anchor, so a point lands on it rather than cutting it off.
         assert (400, 100) in bent
+
+    def test_a_flank_whose_anchors_disagree_is_thrown_away(self) -> None:
+        """One ray matching a wall inside the village puts an anchor where drops are refused.
+
+        `ai_coc probe` measured this on four of twelve rays: the reader put the
+        line well inside the boundary the game was actually enforcing. These
+        three rays read 585, 381 and 182 from the middle, which no single flank's
+        boundary does, so the fit is dropped and the caller probes as before.
+        """
+        png = (FRAMES / "battle_boundary_grass.png").read_bytes()
+        assert fitted_line(png, (500, 400), (650, 140)) is None
 
     def test_a_flank_with_no_boundary_under_it_is_left_alone(self) -> None:
         """Both ends have to read, or the caller keeps its preset and probes."""

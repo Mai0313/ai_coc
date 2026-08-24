@@ -430,6 +430,38 @@ class StockLimits(BaseModel):
         ]
 
 
+class ProbeRay(BaseModel):
+    """What one ray of a boundary survey found, against what the reader predicted.
+
+    Two drops per ray, one either side of the predicted line. The one inside is
+    expected to be refused and the one outside accepted; anything else is the
+    reader disagreeing with the game, which is the whole reason to run this.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    degrees: float
+    predicted: int
+    inside_refused: bool
+    outside_refused: bool
+
+    @property
+    def agrees(self) -> bool:
+        return self.inside_refused and not self.outside_refused
+
+
+class BoundarySurvey(BaseModel):
+    """A whole survey, and how much of it the boundary reader got right."""
+
+    rays: list[ProbeRay] = Field(default_factory=list)
+    unread: list[float] = Field(default_factory=list)
+
+    @property
+    def agreement(self) -> str:
+        agreed = sum(ray.agrees for ray in self.rays)
+        return f"{agreed}/{len(self.rays)} rays agreed, {len(self.unread)} unread"
+
+
 class ScoutView(BaseModel):
     """What the opponent screen offers, and whether it can still be skipped.
 
