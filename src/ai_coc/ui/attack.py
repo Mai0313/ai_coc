@@ -576,7 +576,7 @@ class AttackRunner(BaseModel):
         Getting it wrong the other way is not free either, which is what the
         settle is for: a second tap on a hero already on the field is its
         ability, so a drop wrongly called refused burns the cloak or the tome and
-        leaves `_fire_abilities` tapping a card that has nothing left to give.
+        leaves the schedule tapping a card that has nothing left to give.
         """
         before = self._frame("before-drop")
         self.adb.tap_many([(card, CARD_ROW_Y), point], self.display, gap=SINGLE_DROP_DELAY)
@@ -703,8 +703,8 @@ class AttackRunner(BaseModel):
         # and heroes after, so the leader is simply the first of them. Taking it
         # from the group boundary instead put four heroes in the vanguard: they
         # went down ahead of the troops with nothing covering them, and since
-        # only the followers reach `_fire_abilities`, not one of their abilities
-        # was ever fired.
+        # only the followers are scheduled, not one of their abilities was ever
+        # fired.
         troops = groups[0]
         rest = [x for group in groups[1:] for x in group]
         spells = counted_cards(frame, rest)
@@ -727,11 +727,11 @@ class AttackRunner(BaseModel):
         freeze_count = sum(card_count(frame, x) or 1 for x in freezes)
         plan = self._plan(frame, rage_count, freeze_count)
         # Nothing can be placed while the scout countdown is still running, and a
-        # tap the game ignores raises no refusal banner either, so probing then
-        # reads every drop as accepted and the whole army is deployed into
-        # nothing. With Gemini in the loop the planning call happens to outlast
-        # the countdown, which is what has been hiding this; without a key `_plan`
-        # returns at once and the run would deploy into the countdown every time.
+        # tap the game ignores raises nothing at all, so probing then drains no
+        # card and every flank in turn reads as one the village has grown over.
+        # With Gemini in the loop the planning call happens to outlast the
+        # countdown, which is what has been hiding this; without a key `_plan`
+        # returns at once and the run would probe into the countdown every time.
         battle = self._wait_for_battle()
         for preset in deploy_candidates(plan):
             # The boundary the game draws beats a flank drawn for a village that
