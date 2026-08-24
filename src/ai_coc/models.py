@@ -489,8 +489,14 @@ class AttackPlan(BaseModel):
     """
 
     deploy_from: Literal["top_left", "top_right", "bottom_left", "bottom_right"] = "top_left"
-    deploy_start: ScreenPoint | None = None
-    deploy_end: ScreenPoint | None = None
+    # Required, and that is the whole point: with defaults they are optional in
+    # the JSON schema, and Gemini answered three runs running with a start and no
+    # end. Half a line is no line, so the call was paid for and its most
+    # important output thrown away every time. A reply that still omits one now
+    # fails validation, which `_plan` already answers by falling back — the same
+    # place it ended up before, but without pretending it had a plan.
+    deploy_start: ScreenPoint
+    deploy_end: ScreenPoint
     rage_points: list[ScreenPoint] = Field(default_factory=list)
     freeze_points: list[ScreenPoint] = Field(default_factory=list)
     # Left to right, so each hero card can be matched to its own ability timing.

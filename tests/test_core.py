@@ -67,6 +67,13 @@ from ai_coc.adapters.database import Database
 
 FRAMES = Path(__file__).parent / "frames"
 
+# A plan has to carry both ends of its line, so tests that do not care about
+# the line still have to supply one.
+_LINE = {
+    "deploy_start": ScreenPoint(x_pct=37.5, y_pct=12.2),
+    "deploy_end": ScreenPoint(x_pct=14.4, y_pct=42.2),
+}
+
 # Trimmed from a live MuMu instance: the launcher holds display 0 and the game
 # sits on its own, with the logical and physical ids numbered apart.
 WINDOW_DISPLAYS = """WINDOW MANAGER DISPLAY CONTENTS (dumpsys window displays)
@@ -272,12 +279,12 @@ class PlanTests(unittest.TestCase):
     def test_the_ai_is_not_allowed_to_invent_hero_timings(self) -> None:
         """`timings` is on the schema, so the model can fill it; a still frame cannot know."""
         assert "timings" in AttackPlan.model_json_schema()["properties"]
-        answered = AttackPlan(timings=HeroTimings(queen=30, warden=5))
+        answered = AttackPlan(**_LINE, timings=HeroTimings(queen=30, warden=5))
         assert answered.model_copy(update={"timings": None}).timings is None
 
     def test_a_plans_own_timings_beat_the_ones_the_runner_was_built_with(self) -> None:
         """A written plan is the whole tactic, so its schedule is the one that fires."""
-        plan = AttackPlan(timings=HeroTimings(queen=7))
+        plan = AttackPlan(**_LINE, timings=HeroTimings(queen=7))
         assert (plan.timings or HeroTimings()).seconds("queen") == 7
 
 
@@ -486,7 +493,7 @@ class AttackTests(unittest.TestCase):
 
     def test_a_line_only_half_drawn_falls_back_too(self) -> None:
         assert planned_line(None) is None
-        assert planned_line(AttackPlan(deploy_start=ScreenPoint(x_pct=10, y_pct=10))) is None
+        assert planned_line(None) is None
 
     def _runner(self) -> AttackRunner:
         return AttackRunner(
@@ -524,11 +531,22 @@ class AttackTests(unittest.TestCase):
         assert not self._verdict(LootOffer(gold=1, elixir=1, dark=1), [None, None])
 
     def test_a_refused_flank_leaves_the_other_three_to_try(self) -> None:
-        """The plan's own side goes first, then every flank it did not pick."""
-        plan = AttackPlan(deploy_from="bottom_right")
+        """The plan's own side goes first behind its line, then the flanks it did not pick."""
+        plan = AttackPlan(
+            deploy_start=ScreenPoint(x_pct=25, y_pct=30),
+            deploy_end=ScreenPoint(x_pct=75, y_pct=70),
+            deploy_from="bottom_right",
+        )
+        # That line runs across the village, so only the named flanks are left.
+        assert planned_line(plan) is None
         candidates = deploy_candidates(plan)
         assert candidates[0] == DEPLOY_LINES["bottom_right"]
         assert sorted(candidates) == sorted(DEPLOY_LINES.values())
+
+    def test_both_ends_of_the_line_are_required_of_the_planner(self) -> None:
+        """Gemini answered three runs running with a start and no end; half a line is none."""
+        required = set(AttackPlan.model_json_schema()["required"])
+        assert {"deploy_start", "deploy_end"} <= required
 
     def test_a_usable_planned_line_is_tried_before_any_flank(self) -> None:
         plan = AttackPlan(
