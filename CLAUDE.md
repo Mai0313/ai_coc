@@ -26,6 +26,8 @@ Three sub-commands run headless instead, and they are how the game is worked on:
 
 ```bash
 uv run ai_coc attack --frames <dir>       # one attack pass, no window, every frame it reads kept
+uv run ai_coc attack --plan-in tuned.json  # play a written tactic, no AI call at all
+uv run ai_coc attack --plan-out used.json  # write down whichever plan actually ran
 uv run ai_coc read <png>                  # what each parser makes of one frame
 uv run ai_coc capture <dir> --count 30    # a burst off the live game
 ```
@@ -77,6 +79,8 @@ Spacing follows the spell's real footprint. A rage reaches 5 tiles, and the 44x4
 Timing is load-bearing too. A troop card is tapped repeatedly, so a swallowed tap costs one troop, but a hero, siege machine or spell gets a single attempt. Selecting a spell opens a radius indicator before it will accept a placement: measured live, a placement 0.6 s later was still swallowed where 1.5 s went through. Only the *selection* is slow — the card stays selected while it still holds something, so the rest follow as a fast burst. Casting each spell as a full select-and-place took 18 s, by which point a rage cast first had nearly run its 18 s duration out before the troops even landed. How many times to tap comes from `card_count`, the card's own `xN`, plus one for slack.
 
 The troop cards are emptied in small passes, each pass's drops spaced across the whole line and rotated per card, so a card holding one troop does not pile it where every other card started. `live_cards` says which cards are spent — a spent card goes fully greyscale, which brightness alone does not separate — so passes stop as soon as the cards are empty rather than running a tap count guessed up front. The row is walked once more after a delay because a hero card taps into its ability once the hero is on the field.
+
+**A tactic is a file, not a set of constants** (`plans/flat.json`, `AttackPlan`). `_plan` settles on one of three: the plan handed to the runner, which skips Gemini entirely and is what `--plan-in` fills; the one Gemini answers; or `plans.flat()`, the everything-spread-evenly default that reproduces exactly what the loop used to hold in `DEPLOY_LINES` and `RAGE_PATH`. Flat is a safe tactic rather than a good one — it runs against any village and gives a baseline to compare against. A plan carries `timings` as well as points, so a written one is the whole tactic in one document rather than positions whose schedule lives somewhere else; `--plan-out` writes back whichever ran, which is what makes a battle worth repeating repeatable. Like `prompts/`, the directory ships through `[tool.hatch.build]` and needs its own `--add-data` line in `build_release.yml`.
 
 **The battle map is a diamond, and `MapFrame` is what says where** (`models.py`, calibrated in `parsers/boundary.py`). `VILLAGE_GRID` is the 44x44 grid the buildings sit on and carries the tile-to-pixel conversion; `DEPLOY_BOUND` is that grown by five tiles, which is the ground the game will accept a drop on. Both are read off live frames rather than detected in them, because a village theme repaints the ground the edge runs along while the camera stays put, and both are good to about 20 px — enough to keep a pushed drop on the map, not enough to land on a chosen tile. `push_out` clamps to `DEPLOY_BOUND` and not only to the playfield rectangle, whose own corners are off the map: a hero refused four times ended up at (30, 175), where the map spans x 596 to 1004.
 

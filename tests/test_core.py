@@ -9,6 +9,7 @@ from unittest.mock import patch
 from PIL import Image
 import pytest
 
+from ai_coc import plans
 from ai_coc.ui import attack
 from ai_coc.models import (
     LootOffer,
@@ -25,6 +26,7 @@ from ai_coc.models import (
 from ai_coc.prompts import PROMPTS, PROMPT_DIR, render
 from ai_coc.ui.attack import (
     PLAYFIELD,
+    RAGE_PATH,
     DEPLOY_END,
     LINE_POINTS,
     DEPLOY_LINES,
@@ -238,6 +240,33 @@ class ScoutTests(unittest.TestCase):
         Image.new("RGB", (800, 450)).save(buffer, "PNG")
         with pytest.raises(ValueError, match="1600x900"):
             read_scout(buffer.getvalue())
+
+
+class PlanTests(unittest.TestCase):
+    """A tactic written down, so it can be replayed, edited, or swapped for the AI's."""
+
+    def test_the_flat_plan_loads_and_carries_a_full_tactic(self) -> None:
+        plan = plans.flat()
+        assert plan.deploy_start is not None
+        assert plan.deploy_end is not None
+        assert len(plan.rage_points) == len(RAGE_PATH)
+        assert plan.freeze_points
+        assert plan.timings is not None
+
+    def test_the_flat_plan_draws_the_line_the_loop_used_to_hold_in_constants(self) -> None:
+        """It has to reproduce the old fallback, or the default quietly changed."""
+        assert planned_line(plans.flat()) == DEPLOY_LINES["top_left"]
+
+    def test_a_plan_survives_being_written_out_and_read_back(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "plan.json"
+            path.write_text(plans.flat().model_dump_json(indent=2), encoding="utf-8")
+            assert plans.load(path) == plans.flat()
+
+    def test_a_plans_own_timings_beat_the_ones_the_runner_was_built_with(self) -> None:
+        """A written plan is the whole tactic, so its schedule is the one that fires."""
+        plan = AttackPlan(timings=HeroTimings(queen=7))
+        assert (plan.timings or HeroTimings()).seconds("queen") == 7
 
 
 class PromptTests(unittest.TestCase):

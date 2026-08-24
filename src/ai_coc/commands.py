@@ -14,6 +14,7 @@ import time
 from typing import TYPE_CHECKING
 import logging
 
+from ai_coc import plans
 from ai_coc.models import (
     HeroTimings,
     StockLimits,
@@ -73,7 +74,10 @@ def _planner() -> GeminiClient | None:
 
 
 def attack(
-    frame_dir: Path | None = None, thresholds: LootThresholds | None = None
+    frame_dir: Path | None = None,
+    plan_in: Path | None = None,
+    plan_out: Path | None = None,
+    thresholds: LootThresholds | None = None,
 ) -> AttackReport:
     """One pass of the attack loop, with no window in the way.
 
@@ -81,19 +85,29 @@ def attack(
     first opponent it is shown. That is what a run being studied wants: skipping
     is already covered by its own tests, and the code worth watching is the part
     that only runs once an opponent has been accepted.
+
+    `plan_in` replaces the AI entirely — the loop plays that file and asks for
+    nothing — and `plan_out` writes down whichever plan actually ran, so a battle
+    worth repeating can be repeated and one worth arguing with can be edited.
     """
     adb = _controller()
     if frame_dir is not None:
         frame_dir.mkdir(parents=True, exist_ok=True)
-    report = AttackRunner(
+    plan = plans.load(plan_in) if plan_in else None
+    runner = AttackRunner(
         adb=adb,
         display=adb.display_for(COC_PACKAGE),
         thresholds=thresholds or LootThresholds(),
         stock=StockLimits(),
         abilities=HeroTimings(),
-        ai=_planner(),
+        ai=None if plan else _planner(),
+        plan=plan,
         frame_dir=frame_dir,
-    ).run()
+    )
+    report = runner.run()
+    if plan_out is not None and runner.played is not None:
+        plan_out.write_text(runner.played.model_dump_json(indent=2), encoding="utf-8")
+        logger.info("Wrote the plan that ran to %s", plan_out)
     logger.info("Attack finished: %s", report.message)
     return report
 

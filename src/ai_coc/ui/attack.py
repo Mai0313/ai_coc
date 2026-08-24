@@ -15,6 +15,7 @@ from collections.abc import Callable
 
 from pydantic import BaseModel, PrivateAttr
 
+from ai_coc import plans
 from ai_coc.models import (
     HeroKind,
     LootOffer,
@@ -265,6 +266,10 @@ class AttackRunner(BaseModel):
     abilities: HeroTimings = HeroTimings()
     max_skips: int = 20
     ai: GeminiClient | None = None
+    # A plan settled before the run, which skips the Gemini call entirely. This is
+    # what `--plan-in` fills, and it is how a hand-written tactic is replayed
+    # exactly: the loop plays what it is given rather than asking for its own.
+    plan: AttackPlan | None = None
     # Checked between opponents only. A battle already under way is played out:
     # abandoning one mid-deploy would leave the army on the field and the game
     # on a screen the next run does not know how to get home from.
@@ -274,6 +279,13 @@ class AttackRunner(BaseModel):
 
     _captures: int = PrivateAttr(default=0)
     _seen: LootOffer | None = PrivateAttr(default=None)
+    # Whatever `_plan` settled on, kept so a run can be written down and replayed.
+    _played: AttackPlan | None = PrivateAttr(default=None)
+
+    @property
+    def played(self) -> AttackPlan | None:
+        """The plan this run actually used, once one has been settled on."""
+        return self._played
 
     def _tap(self, point: tuple[int, int]) -> None:
         self.adb.tap(point[0], point[1], self.display)
@@ -334,8 +346,19 @@ class AttackRunner(BaseModel):
         return None
 
     def _plan(self, frame: bytes, rage_count: int, freeze_count: int) -> AttackPlan | None:
+        """The plan for this opponent: the one handed in, the AI's, or the flat default.
+
+        Falling back to a written-out plan rather than to constants is what makes
+        the default readable and editable, and it is the same tactic the loop
+        used to hold in `DEPLOY_LINES` and `RAGE_PATH`.
+        """
+        if self.plan is not None:
+            logger.info("Playing the plan handed in: %s", self.plan.reason or "no reason given")
+            self._played = self.plan
+            return self.plan
         if self.ai is None:
-            return None
+            self._played = plans.flat()
+            return self._played
         try:
             plan = self.ai.generate_structured(
                 PLAN_PROMPT.format(rage_count=rage_count, freeze_count=freeze_count),
@@ -343,8 +366,10 @@ class AttackRunner(BaseModel):
                 frame,
             )
         except Exception:
-            logger.warning("Attack planning failed; using the fixed flank", exc_info=True)
-            return None
+            logger.warning("Attack planning failed; falling back to the flat plan", exc_info=True)
+            self._played = plans.flat()
+            return self._played
+        self._played = plan
         logger.info(
             "Plan: from %s, line %s to %s, %d rage point(s), %d freeze point(s), heroes=%s (%s)",
             plan.deploy_from,
@@ -546,7 +571,11 @@ class AttackRunner(BaseModel):
         # No hero on the field means every ability tap would only select a card,
         # and the schedule would sit through its longest timer to do it.
         if self._drop_singles(followers, middle, "hero"):
-            self._fire_abilities(followers, plan.heroes if plan else [])
+            self._fire_abilities(
+                followers,
+                plan.heroes if plan else [],
+                (plan.timings if plan and plan.timings else self.abilities),
+            )
         # Freeze wants the defences the troops are fighting, which is where they
         # are by now. Some card slots overlap the result screen's 回營 button, so
         # this only runs while the battle is genuinely still on.
@@ -554,7 +583,9 @@ class AttackRunner(BaseModel):
             return
         self._cast(freezes, freeze_targets, frame)
 
-    def _fire_abilities(self, heroes: list[int], kinds: list[HeroKind]) -> None:
+    def _fire_abilities(
+        self, heroes: list[int], kinds: list[HeroKind], timings: HeroTimings
+    ) -> None:
         """Tap each hero's card again at its own moment, which is its ability.
 
         Timing is per hero rather than per card slot: an upgrading hero cannot
@@ -563,7 +594,7 @@ class AttackRunner(BaseModel):
         worth holding until the push is deep enough to be worth saving.
         """
         schedule = sorted(
-            (self.abilities.seconds(kinds[i] if i < len(kinds) else "unknown"), x)
+            (timings.seconds(kinds[i] if i < len(kinds) else "unknown"), x)
             for i, x in enumerate(heroes)
         )
         landed = time.monotonic()

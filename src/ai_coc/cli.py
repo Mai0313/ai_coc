@@ -37,6 +37,8 @@ def _parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command")
     run = sub.add_parser("attack", help="跑一輪進攻迴圈,不開視窗")
     run.add_argument("--frames", type=Path, help="把迴圈讀到的每一張畫面存進這個資料夾")
+    run.add_argument("--plan-in", type=Path, help="照這份 JSON 打，完全不呼叫 AI")
+    run.add_argument("--plan-out", type=Path, help="把這一場實際用的計畫寫成 JSON")
     shot = sub.add_parser("capture", help="從遊戲連續存畫面")
     shot.add_argument("out", type=Path)
     shot.add_argument("--count", type=int, default=1)
@@ -53,7 +55,8 @@ def _run_command(arguments: argparse.Namespace) -> int:
     on stderr, and this is the answer.
     """
     if arguments.command == "attack":
-        result = commands.attack(arguments.frames).model_dump_json(indent=2)
+        report = commands.attack(arguments.frames, arguments.plan_in, arguments.plan_out)
+        result = report.model_dump_json(indent=2)
     elif arguments.command == "capture":
         saved = commands.capture(arguments.out, arguments.count, arguments.gap)
         result = "\n".join(str(path) for path in saved)

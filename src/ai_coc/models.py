@@ -495,6 +495,10 @@ class AttackPlan(BaseModel):
     freeze_points: list[ScreenPoint] = Field(default_factory=list)
     # Left to right, so each hero card can be matched to its own ability timing.
     heroes: list[HeroKind] = Field(default_factory=list)
+    # Carried on the plan so a written-out one is the whole tactic in one file,
+    # rather than a set of points whose timing lives somewhere else entirely.
+    # None leaves the runner on whatever the caller configured.
+    timings: HeroTimings | None = None
     reason: str = ""
 
 
