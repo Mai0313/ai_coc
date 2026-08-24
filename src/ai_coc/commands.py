@@ -299,7 +299,7 @@ def bounds(frame_dir: Path | None = None) -> MapSurvey:
         frame_dir=frame_dir,
     )
     runner.run()
-    logger.info("Map survey fitted %s", runner.survey.fitted)
+    logger.info("Map survey: %s", runner.survey.summary)
     return runner.survey
 
 

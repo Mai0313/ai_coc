@@ -377,6 +377,11 @@ class MapFrameTests(unittest.TestCase):
         assert DEPLOY_BOUND.contains((600, 110))
         assert not DEPLOY_BOUND.contains((30, 175))
 
+    def test_every_drop_the_survey_measured_is_inside_the_bound(self) -> None:
+        """`ai_coc bounds` had all six rays taken at the screen edge, so it clamps none."""
+        for point in ((1570, 400), (30, 400), (1100, 700), (500, 700), (505, 105), (1095, 105)):
+            assert DEPLOY_BOUND.contains(point), point
+
     def test_clamping_pulls_a_point_back_onto_the_map(self) -> None:
         pulled = DEPLOY_BOUND.clamp((30, 175))
         assert DEPLOY_BOUND.contains(pulled)

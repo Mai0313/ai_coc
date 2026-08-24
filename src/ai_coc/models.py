@@ -493,9 +493,22 @@ class MapSurvey(BaseModel):
     `VILLAGE_GRID` was calibrated by eye against an assumed centre, which is
     exactly the sort of number that cannot be argued with from a screenshot. This
     is how to argue with it: drop troops inwards along each ray until one lands.
+
+    The first live survey came back with every ray unmeasured, and that is a
+    result rather than a failure: the game took the very first probe on all six,
+    so the screen runs out before the map does and the diamond cannot be seen
+    from inside it. What it does give is a lower bound, which was enough to show
+    the old constant clamping drops the game would have accepted.
     """
 
     edges: list[MapEdge] = Field(default_factory=list)
+
+    @property
+    def summary(self) -> str:
+        measured = [edge for edge in self.edges if edge.reached is not None]
+        if not measured:
+            return f"{len(self.edges)} ray(s) accepted at the screen edge; the map reaches past it"
+        return f"{len(measured)} of {len(self.edges)} ray(s) found the map edge -> {self.fitted}"
 
     @property
     def fitted(self) -> MapFrame | None:

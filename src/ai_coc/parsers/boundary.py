@@ -38,12 +38,18 @@ VILLAGE_CENTRE = DEFAULT_MAP_CENTRE
 # rather than something to detect; see `MapFrame` for what it is good enough for.
 VILLAGE_GRID = MapFrame(centre=VILLAGE_CENTRE, half_width=675, half_height=337)
 # Troops go down outside the grid as well as on it, so the ground the game will
-# accept a drop on is wider than the grid the buildings sit in. The preset flanks
-# are what measure it: `top_left` starts at (600, 110), well outside the grid and
-# depositing troops long before any of this was read off the screen, and five
-# tiles is the smallest margin that leaves it comfortably inside. It still keeps
-# out the corner a hero was pushed into after four refusals, at (30, 175).
-DEPLOY_BOUND = VILLAGE_GRID.grown(5)
+# accept a drop on is wider than the grid the buildings sit in — and wider than
+# this used to say. `ai_coc bounds` walked six rays inwards from the screen edge
+# and the game took the very first probe on **every one of them**: (1570, 400),
+# (30, 400), (1100, 700), (500, 700), (505, 105) and (1095, 105) all landed. The
+# survey never found the map's edge, because the screen runs out first, so this
+# is a lower bound rather than a measurement of the diamond. Five tiles around
+# the grid would have clamped four of those six back inside.
+#
+# The diamond is kept rather than dropped for the screen corners, which no ray
+# reaches: (30, 175) is still outside it, which is where a hero pushed out four
+# times ended up and was lost.
+DEPLOY_BOUND = MapFrame(centre=VILLAGE_CENTRE, half_width=1000, half_height=450, tiles=64)
 
 # Measured on the stroke across four village themes: red sits between 130 and
 # 215 while `red - max(green, blue)` runs 85 to 105, against -20 to -30 for the
