@@ -269,6 +269,12 @@ class PlanTests(unittest.TestCase):
             path.write_text(plans.flat().model_dump_json(indent=2), encoding="utf-8")
             assert plans.load(path) == plans.flat()
 
+    def test_the_ai_is_not_allowed_to_invent_hero_timings(self) -> None:
+        """`timings` is on the schema, so the model can fill it; a still frame cannot know."""
+        assert "timings" in AttackPlan.model_json_schema()["properties"]
+        answered = AttackPlan(timings=HeroTimings(queen=30, warden=5))
+        assert answered.model_copy(update={"timings": None}).timings is None
+
     def test_a_plans_own_timings_beat_the_ones_the_runner_was_built_with(self) -> None:
         """A written plan is the whole tactic, so its schedule is the one that fires."""
         plan = AttackPlan(timings=HeroTimings(queen=7))

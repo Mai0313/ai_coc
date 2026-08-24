@@ -22,6 +22,13 @@ PROMPTS: dict[str, str] = {
     path.stem: path.read_text(encoding="utf-8").strip() for path in sorted(PROMPT_DIR.glob("*.md"))
 }
 
+if not PROMPTS:
+    # Every AI call in the application reads one of these, and the first read is
+    # at import time, so an empty directory takes the whole app down. Saying why
+    # here beats a `KeyError` on a dictionary lookup three modules away: what it
+    # means in practice is a PyInstaller build whose `--add-data` line is missing.
+    raise RuntimeError(f"找不到任何 prompt 檔案：{PROMPT_DIR}（打包時可能漏掉 --add-data）")
+
 
 def render(name: str, **values: object) -> str:
     """One prompt with its placeholders filled in."""

@@ -949,12 +949,18 @@ class MainWindow(QMainWindow):
                 return None
 
         def done(png: bytes | None) -> None:
-            self.live_busy = False
             if png:
                 self._paint_frame(png)
 
+        def released() -> None:
+            self.live_busy = False
+
         worker = Worker(frame, "live preview")
         worker.signals.result.connect(done)
+        # On `finished` rather than `result`: a worker that raised emits `error`
+        # and never `result`, and the flag left set would stop every later tick
+        # at the guard, freezing the preview for the rest of the session.
+        worker.signals.finished.connect(released)
         self.pool.start(worker)
 
     def capture(self) -> None:

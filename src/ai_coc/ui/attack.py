@@ -140,6 +140,9 @@ MIN_LINE_RADIUS = 300
 # The scout countdown is 30 seconds; this polls a second at a time and leaves
 # room for a slow frame rather than sitting through a whole battle.
 COUNTDOWN_ATTEMPTS = 45
+# Consecutive unreadable frames that end the wait early. One is a moment of
+# animation over the panel; three in a row is a screen this cannot read.
+UNREADABLE_ATTEMPTS = 3
 
 BATTLE_TIMEOUT = 240
 # Two things routinely cover the home village between runs: a building panel
@@ -373,6 +376,12 @@ class AttackRunner(BaseModel):
             logger.warning("Attack planning failed; falling back to the flat plan", exc_info=True)
             self._played = plans.flat()
             return self._played
+        # Its own timings are dropped. `timings` is on the model, so it reaches
+        # the schema and the model will happily fill it in, but a still frame
+        # says nothing about how long this machine takes to put an army down —
+        # and a number invented there would silently replace the schedule the
+        # user set in 英雄大招時機. Only a written plan gets to carry timings.
+        plan = plan.model_copy(update={"timings": None})
         self._played = plan
         logger.info(
             "Plan: from %s, line %s to %s, %d rage point(s), %d freeze point(s), heroes=%s (%s)",
@@ -517,12 +526,22 @@ class AttackRunner(BaseModel):
         `can_skip` reads. The frame comes back because the boundary is only drawn
         once the battle is under way, so this is the first moment it can be read
         and the caller would otherwise have to pay for another capture.
+
+        A panel that stops reading ends the wait rather than extending it. It is
+        the countdown *still running* that is worth waiting out; an unreadable
+        screen says nothing either way, and sitting on it would spend a quarter
+        of the battle to learn nothing, where deploying at least might land.
         """
+        unreadable = 0
         for _ in range(COUNTDOWN_ATTEMPTS):
             png = self._frame("waiting")
             view = read_scout(png)
             if view is not None and not view.can_skip:
                 return png
+            unreadable = 0 if view else unreadable + 1
+            if unreadable >= UNREADABLE_ATTEMPTS:
+                logger.warning("The loot panel will not read; deploying without waiting further")
+                return None
             time.sleep(1)
         logger.warning("The scout countdown never ended; deploying without a battle frame")
         return None
