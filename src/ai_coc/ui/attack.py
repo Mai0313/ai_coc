@@ -112,6 +112,16 @@ SCREEN_CENTRE = (800, 400)
 PUSH_STEP = 70
 DEPLOY_ATTEMPTS = 5
 PLAYFIELD = (30, 105, 1570, 700)
+# The 放棄 button, measured at x 12-205 and y 636-700 on the battle screen. It
+# is the one piece of UI the playfield would otherwise reach over, and a drop
+# pushed onto it is not a wasted troop but a button press: a hero pushed out
+# three times landed at (49, 650), and the 結束戰鬥？ dialog it opened read as
+# the battle being over, so every freeze and every hero ability was skipped and
+# the report claimed the loot had never moved. That battle was winning at the
+# time. Only this corner is excluded — trimming the whole bottom edge instead
+# left the two lower flanks with no room to push past a village's boundary,
+# which loses the army just as completely.
+ABANDON_BUTTON = (215, 630)
 # The refusal banner lingers, so it has to clear before the next probe is read.
 REFUSAL_CLEAR_DELAY = 3
 BANNER_CLEAR_ATTEMPTS = 3
@@ -137,26 +147,43 @@ HOME_RETRY_DELAY = 3
 MIN_ARMY_RATIO = 0.9
 
 
+def clear_of_controls(point: tuple[int, int]) -> tuple[int, int]:
+    """Lift a drop off the 放棄 button, which the playfield reaches over.
+
+    Lifted rather than moved aside: a point ends up in that corner because it is
+    heading away from the village, and shifting it right would send it back
+    towards the boundary it is trying to clear.
+    """
+    x, y = point
+    return (x, min(y, ABANDON_BUTTON[1])) if x < ABANDON_BUTTON[0] else point
+
+
 def deploy_line(
     count: int, start: tuple[int, int] = DEPLOY_START, end: tuple[int, int] = DEPLOY_END
 ) -> list[tuple[int, int]]:
-    """Evenly spaced positions along a flank, from one end to the other."""
+    """Evenly spaced positions along a flank, from one end to the other.
+
+    Every point is cleared of the button, not only the two ends the caller
+    pushed: the line is a chord, so both ends can sit outside that corner while
+    the span between them cuts straight across it.
+    """
     (x0, y0), (x1, y1) = start, end
     step = max(count - 1, 1)
     return [
-        (round(x0 + (x1 - x0) * i / step), round(y0 + (y1 - y0) * i / step)) for i in range(count)
+        clear_of_controls((round(x0 + (x1 - x0) * i / step), round(y0 + (y1 - y0) * i / step)))
+        for i in range(count)
     ]
 
 
 def push_out(point: tuple[int, int], steps: int) -> tuple[int, int]:
-    """Move a drop further from the middle, clamped to the usable playfield."""
+    """Move a drop further from the middle, clamped clear of the playfield and the UI."""
     dx, dy = point[0] - SCREEN_CENTRE[0], point[1] - SCREEN_CENTRE[1]
     span = max((dx * dx + dy * dy) ** 0.5, 1.0)
     left, top, right, bottom = PLAYFIELD
-    return (
+    return clear_of_controls((
         min(max(round(point[0] + dx / span * PUSH_STEP * steps), left), right),
         min(max(round(point[1] + dy / span * PUSH_STEP * steps), top), bottom),
-    )
+    ))
 
 
 def planned_line(plan: AttackPlan | None) -> tuple[tuple[int, int], tuple[int, int]] | None:

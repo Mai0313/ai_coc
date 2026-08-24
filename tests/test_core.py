@@ -22,7 +22,9 @@ from ai_coc.ui.attack import (
     LINE_POINTS,
     DEPLOY_LINES,
     DEPLOY_START,
+    ABANDON_BUTTON,
     DROPS_PER_PASS,
+    DEPLOY_ATTEMPTS,
     push_out,
     deploy_line,
     drop_points,
@@ -249,6 +251,26 @@ class AttackTests(unittest.TestCase):
         assert pushed[1] < point[1]
         assert PLAYFIELD[0] <= pushed[0] <= PLAYFIELD[2]
         assert PLAYFIELD[1] <= pushed[1] <= PLAYFIELD[3]
+
+    def test_a_pushed_drop_never_lands_on_the_abandon_button(self) -> None:
+        """One that did opened 結束戰鬥？, which then read as the battle being over."""
+        grid = [
+            (x, y)
+            for x in range(PLAYFIELD[0], PLAYFIELD[2] + 1, 70)
+            for y in range(PLAYFIELD[1], PLAYFIELD[3] + 1, 70)
+        ]
+        drops = [push_out(point, steps) for point in grid for steps in range(DEPLOY_ATTEMPTS)]
+        assert not any(x < ABANDON_BUTTON[0] and y > ABANDON_BUTTON[1] for x, y in drops)
+
+    def test_a_drawn_line_never_crosses_the_abandon_button(self) -> None:
+        """Both ends can clear that corner while the span between them cuts across it."""
+        points = deploy_line(LINE_POINTS, (30, 700), (600, 700))
+        assert not any(x < ABANDON_BUTTON[0] and y > ABANDON_BUTTON[1] for x, y in points)
+
+    def test_the_lower_flanks_still_push_past_a_wide_village(self) -> None:
+        """Trimming the whole bottom edge to dodge that button left them nowhere to go."""
+        _, end = DEPLOY_LINES["bottom_left"]
+        assert push_out(end, DEPLOY_ATTEMPTS - 1)[1] > end[1]
 
     def test_each_pass_spreads_its_drops_and_shifts(self) -> None:
         """A card holding one troop must not drop it where every other card started."""
