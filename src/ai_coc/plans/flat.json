@@ -1,0 +1,61 @@
+{
+  "deploy_from": "top_left",
+  "deploy_start": {
+    "x_pct": 37.5,
+    "y_pct": 12.22
+  },
+  "deploy_end": {
+    "x_pct": 14.38,
+    "y_pct": 42.22
+  },
+  "rage_points": [
+    {
+      "x_pct": 32.5,
+      "y_pct": 33.33
+    },
+    {
+      "x_pct": 47.5,
+      "y_pct": 33.33
+    },
+    {
+      "x_pct": 32.5,
+      "y_pct": 46.67
+    },
+    {
+      "x_pct": 47.5,
+      "y_pct": 46.67
+    },
+    {
+      "x_pct": 62.5,
+      "y_pct": 33.33
+    },
+    {
+      "x_pct": 62.5,
+      "y_pct": 46.67
+    },
+    {
+      "x_pct": 40.0,
+      "y_pct": 20.0
+    },
+    {
+      "x_pct": 55.0,
+      "y_pct": 20.0
+    }
+  ],
+  "freeze_points": [
+    {
+      "x_pct": 50.0,
+      "y_pct": 46.67
+    }
+  ],
+  "heroes": [],
+  "timings": {
+    "king": 20,
+    "queen": 1,
+    "warden": 30,
+    "champion": 45,
+    "minion_prince": 20,
+    "unknown": 20
+  },
+  "reason": "平鋪：沿著左上外緣撒開，狂暴鋪滿推進路徑，冰凍留到最後放在中央。"
+}

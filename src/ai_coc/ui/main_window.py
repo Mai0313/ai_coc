@@ -54,6 +54,7 @@ from ai_coc.models import (
     HeroTimings,
     StockLimits,
     AttackReport,
+    DisplayTarget,
     LocatedTarget,
     UiElementList,
     AccountRowList,
@@ -63,6 +64,7 @@ from ai_coc.models import (
     AccountSnapshot,
     EmulatorInstance,
 )
+from ai_coc.prompts import PROMPTS, render
 from ai_coc.constants import (
     APP_NAME,
     LOG_PATH,
@@ -101,6 +103,10 @@ RUN_BUTTON_RUNNING = "background:#c2410c;font-size:12pt;font-weight:bold;border-
 # A finished job queues the next pass straight away, so the loop runs back to
 # back; the interval timer is only what retries when a pass had nothing to do.
 NEXT_CYCLE_DELAY = 3000
+# Two frames a second: enough to watch an attack unfold, and slow enough that the
+# preview's own `screencap` does not compete with the loop taking the frames it
+# reads. A tick whose frame is still in flight is dropped rather than queued.
+LIVE_INTERVAL = 500
 # A queen wants her cloak almost at once; a warden's tome is worth holding until
 # the push is deep enough to be worth saving.
 HERO_ABILITY_FIELDS = (
@@ -143,19 +149,21 @@ class MainWindow(QMainWindow):
         self.automation_timer = QTimer(self)
         self.automation_timer.timeout.connect(self.automation_cycle)
         self.automation_step = 0
+        # The preview polls `screencap`, so the display is resolved once and kept
+        # rather than paying two `dumpsys` calls for every frame; a failed frame
+        # drops it so the next tick looks the game up again.
+        self.live_display: DisplayTarget | None = None
+        self.live_busy = False
+        self.live_timer = QTimer(self)
+        self.live_timer.timeout.connect(self._live_tick)
         self.setAcceptDrops(True)
         self._build_ui()
         self._attach_log_panel()
         self.statusBar().showMessage("Ready — 偵測 MuMu 以開始")
         self.refresh_instances()
         self.refresh_entity_mapping()
-        QTimer.singleShot(
-            8000, lambda: self.start_automation() if self.auto_on_start.isChecked() else None
-        )
-        # After the line above, not before: resuming is automation, so it waits
-        # for the automation to be switched on rather than starting work the
-        # user never asked for.
-        QTimer.singleShot(9000, self.resume_pending_tasks)
+        if self.live_view.isChecked():
+            self.live_timer.start(LIVE_INTERVAL)
 
     def _build_ui(self) -> None:
         self.setStyleSheet("""
@@ -287,7 +295,12 @@ class MainWindow(QMainWindow):
         left_layout.addStretch()
         right = QWidget()
         right_layout = QVBoxLayout(right)
-        self.frame_label = QLabel("尚無截圖")
+        self.live_view = QCheckBox("即時畫面")
+        self.live_view.setToolTip("每半秒抓一張 CoC 畫面；關掉之後這裡只會顯示手動擷取的截圖")
+        self.live_view.setChecked(str(self.settings.value("live_view", "true")).lower() == "true")
+        self.live_view.toggled.connect(self._toggle_live_view)
+        right_layout.addWidget(self.live_view)
+        self.frame_label = QLabel("尚無畫面")
         self.frame_label.setAlignment(Qt.AlignCenter)
         self.frame_label.setMinimumSize(520, 300)
         self.frame_label.setStyleSheet("background:#16181d;color:#bbb;border:1px solid #444")
@@ -480,14 +493,12 @@ class MainWindow(QMainWindow):
     def _automation_behavior_group(self) -> QGroupBox:
         behavior = QGroupBox("自主行為")
         form = QFormLayout(behavior)
-        self.auto_on_start = QCheckBox("開啟 EXE 後自動啟動 MuMu、CoC 並開始巡檢")
         self.auto_collect = QCheckBox("自主收取主村資源")
         self.auto_donate = QCheckBox("自主開啟部落聊天室並捐兵")
         self.auto_upgrade = QCheckBox("自主安排並執行建築升級")
         self.auto_walls = QCheckBox("自主刷牆")
         self.auto_attack = QCheckBox("自主搜尋對手並打資源")
         for key, widget in (
-            ("auto_on_start", self.auto_on_start),
             ("auto_collect", self.auto_collect),
             ("auto_donate", self.auto_donate),
             ("auto_upgrade", self.auto_upgrade),
@@ -545,7 +556,6 @@ class MainWindow(QMainWindow):
 
     def save_automation(self) -> None:
         for key, widget in (
-            ("auto_on_start", self.auto_on_start),
             ("auto_collect", self.auto_collect),
             ("auto_donate", self.auto_donate),
             ("auto_upgrade", self.auto_upgrade),
@@ -591,7 +601,12 @@ class MainWindow(QMainWindow):
         self.automation_timer.start(self.cycle_minutes.value() * 60000)
         self._paint_run_button()
         self.automation_log.appendPlainText("自動化已啟動，第一輪開始。")
-        QTimer.singleShot(100, self.automation_cycle)
+        # Nothing runs before this button, so an unfinished task from a previous
+        # session is picked back up here. It goes first because a PENDING row
+        # makes `automation_cycle` stand down, and `execute_agent_command` claims
+        # `running_task_id` straight away, so the cycle below sees it and yields.
+        QTimer.singleShot(100, self.resume_pending_tasks)
+        QTimer.singleShot(300, self.automation_cycle)
 
     def stop_automation(self) -> None:
         self.automation_active = False
@@ -895,6 +910,59 @@ class MainWindow(QMainWindow):
         m, a = self._require()
         self.run_async("Sending Back…", lambda: m.back(a))
 
+    def _paint_frame(self, png: bytes) -> None:
+        pix = QPixmap()
+        pix.loadFromData(png)
+        self.frame_label.setPixmap(
+            pix.scaled(self.frame_label.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        )
+
+    def _toggle_live_view(self, on: bool) -> None:
+        self.settings.setValue("live_view", on)
+        if on:
+            self.live_timer.start(LIVE_INTERVAL)
+        else:
+            self.live_timer.stop()
+
+    def _live_tick(self) -> None:
+        """Put one fresh frame in the preview, unless the last one is still in flight.
+
+        Everything here is deliberately silent. It runs twice a second whether
+        anyone is watching or not, so an emulator that is not up yet must not
+        raise a message box the way `run_async` would, and a stale display id
+        must clear itself rather than need a restart.
+        """
+        if self.live_busy or not self.mumu or not self.active:
+            return
+        m, a = self.mumu, self.active
+        self.live_busy = True
+
+        def frame() -> bytes | None:
+            try:
+                adb = m.controller(a.adb_serial)
+                if self.live_display is None:
+                    self.live_display = adb.display_for(COC_PACKAGE)
+                return adb.screenshot(self.live_display)
+            except Exception:
+                self.live_display = None
+                logger.debug("Live preview frame failed", exc_info=True)
+                return None
+
+        def done(png: bytes | None) -> None:
+            if png:
+                self._paint_frame(png)
+
+        def released() -> None:
+            self.live_busy = False
+
+        worker = Worker(frame, "live preview")
+        worker.signals.result.connect(done)
+        # On `finished` rather than `result`: a worker that raised emits `error`
+        # and never `result`, and the flag left set would stop every later tick
+        # at the guard, freezing the preview for the rest of the session.
+        worker.signals.finished.connect(released)
+        self.pool.start(worker)
+
     def capture(self) -> None:
         m, a = self._require()
 
@@ -903,11 +971,7 @@ class MainWindow(QMainWindow):
             self.current_frame = Frame.create(
                 a.emulator_id, self.current_account_tag, png, self.frame_sequence
             )
-            pix = QPixmap()
-            pix.loadFromData(png)
-            self.frame_label.setPixmap(
-                pix.scaled(self.frame_label.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
-            )
+            self._paint_frame(png)
             self.statusBar().showMessage(f"Captured {self.current_frame.frame_id}", 7000)
 
         self.run_async("Capturing current MuMu frame…", lambda: m.screenshot(a), done)
@@ -987,10 +1051,7 @@ class MainWindow(QMainWindow):
 
         def locate(png: bytes, goal: str) -> tuple[int, int]:
             target = client.generate_structured(
-                f"分析這張《部落衝突》畫面並尋找{goal}。x_pct 與 y_pct 是畫面寬高的百分比"
-                "（0 到 100）。找不到時 found=false，並在 reason 用繁體中文說明畫面上看到什麼。",
-                LocatedTarget,
-                png,
+                render("locate_target", goal=goal), LocatedTarget, png
             )
             logger.info("AI located %s: %s", goal, target.model_dump())
             if not target.found:
@@ -1118,10 +1179,7 @@ class MainWindow(QMainWindow):
             active = m.ensure_coc(a.index)
             png = m.screenshot(active)
             captured.append(png)
-            yield from client.stream(
-                "你是部落衝突助手。請用繁體中文簡短回答：你現在看到什麼畫面？列出兩個可見重點。",
-                png,
-            )
+            yield from client.stream(PROMPTS["live_test"], png)
 
         def done() -> None:
             # Only reached once the whole generator ran, so the capture is there.
@@ -1178,9 +1236,14 @@ class MainWindow(QMainWindow):
             self.execute_agent_command(text, task_id)
             return
         frame = self.current_frame if self.chat_image_pending else None
-        context = (
-            f"{AGENT_PROFILE}\n請用繁體中文簡潔回答。\n使用者已確認、必須長期遵守的教學：\n{self.knowledge_context()}\nCurrent account: {self.account_context()}\n"
-            f"Current emulator={self.active.emulator_id if self.active else 'none'}\nRecent conversation:\n{recent}\nUser: {text}"
+        context = render(
+            "chat",
+            profile=AGENT_PROFILE,
+            knowledge=self.knowledge_context(),
+            account=self.account_context(),
+            emulator=self.active.emulator_id if self.active else "none",
+            recent=recent,
+            text=text,
         )
 
         def done() -> None:
@@ -1238,10 +1301,7 @@ class MainWindow(QMainWindow):
         def task() -> tuple[bytes, str, bool]:
             reference = ""
             if reference_frame:
-                reference = client.generate(
-                    "這是使用者提供的操作參考圖片。請用繁體中文描述目標按鈕文字、外觀、位置，以及要完成的操作。",
-                    reference_frame.png,
-                )
+                reference = client.generate(PROMPTS["reference_image"], reference_frame.png)
             active = m.ensure_coc(a.index)
             last_png = b""
             max_steps = (
@@ -1261,15 +1321,15 @@ class MainWindow(QMainWindow):
                 self.db.update_task(task_id, "RUNNING", f"第 {step + 1} 步：截圖、判斷與驗證")
                 last_png = m.screenshot(active)
                 elements = UiElementList(m.ui_elements(active)).model_dump_json()
-                prompt = (
-                    f"你正在控制部落衝突。使用者指令：{command}\n"
-                    f"使用者附圖提供的參考：{reference}\n使用者過去確認的操作教學：\n{self.knowledge_context()}\n"
-                    f"MuMu accessibility 可操作元素（優先使用其精確座標）：{elements}\n"
-                    "檢查目前畫面是否已完成：完成就把 done 設為 true，否則從 tap、back、swipe_up、"
-                    "swipe_down 選一個動作；tap 需要 x_pct 與 y_pct，兩者都是畫面寬高的百分比（0 到 100）。"
-                    "message 一律用繁體中文說明你的判斷。"
-                    f"授權狀態：自主升級={self.auto_upgrade.isChecked()}，刷牆={self.auto_walls.isChecked()}，自主進攻={self.auto_attack.isChecked()}。"
-                    "只有對應授權為 true 才能花費遊戲資源或進攻；禁止花費寶石、現金、刪除或帳號操作。"
+                prompt = render(
+                    "agent_step",
+                    command=command,
+                    reference=reference,
+                    knowledge=self.knowledge_context(),
+                    elements=elements,
+                    may_upgrade=self.auto_upgrade.isChecked(),
+                    may_walls=self.auto_walls.isChecked(),
+                    may_attack=self.auto_attack.isChecked(),
                 )
                 action = client.generate_structured(prompt, AgentAction, last_png)
                 logger.info("Agent step %d/%d: %s", step + 1, max_steps, action.model_dump())

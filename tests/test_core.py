@@ -1,23 +1,32 @@
 import io
 import json
+import math
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from PIL import Image
 import pytest
 
+from ai_coc import plans
+from ai_coc.ui import attack
 from ai_coc.models import (
     LootOffer,
+    ScoutView,
     AttackPlan,
+    AdbEndpoint,
     HeroTimings,
     ScreenPoint,
     StockLimits,
     VillageStock,
+    DisplayTarget,
     LootThresholds,
 )
+from ai_coc.prompts import PROMPTS, PROMPT_DIR, render
 from ai_coc.ui.attack import (
     PLAYFIELD,
+    RAGE_PATH,
     DEPLOY_END,
     LINE_POINTS,
     DEPLOY_LINES,
@@ -25,12 +34,14 @@ from ai_coc.ui.attack import (
     ABANDON_BUTTON,
     DROPS_PER_PASS,
     DEPLOY_ATTEMPTS,
+    AttackRunner,
     push_out,
     deploy_line,
     drop_points,
     planned_line,
+    deploy_candidates,
 )
-from ai_coc.adapters.adb import focused_display, physical_display
+from ai_coc.adapters.adb import AdbController, focused_display, physical_display
 from ai_coc.parsers.scout import (
     card_count,
     live_cards,
@@ -45,9 +56,23 @@ from ai_coc.parsers.scout import (
 )
 from ai_coc.parsers.village import parse_village
 from ai_coc.adapters.secrets import dotenv_value
+from ai_coc.parsers.boundary import (
+    DEPLOY_BOUND,
+    VILLAGE_GRID,
+    fitted_line,
+    boundary_line,
+    boundary_reach,
+)
 from ai_coc.adapters.database import Database
 
 FRAMES = Path(__file__).parent / "frames"
+
+# A plan has to carry both ends of its line, so tests that do not care about
+# the line still have to supply one.
+_LINE = {
+    "deploy_start": ScreenPoint(x_pct=37.5, y_pct=12.2),
+    "deploy_end": ScreenPoint(x_pct=14.4, y_pct=42.2),
+}
 
 # Trimmed from a live MuMu instance: the launcher holds display 0 and the game
 # sits on its own, with the logical and physical ids numbered apart.
@@ -169,6 +194,24 @@ class ScoutTests(unittest.TestCase):
         assert view is not None
         assert (view.loot.gold, view.loot.elixir, view.loot.dark) == (767905, 814967, 12891)
 
+    def test_seven_figure_loot_is_not_cut_short(self) -> None:
+        """The panel box has to clear x 207; a village this rich is what pays for it."""
+        view = read_scout((FRAMES / "scout_seven_digits.png").read_bytes())
+        assert view is not None
+        assert (view.loot.gold, view.loot.elixir, view.loot.dark) == (1746707, 1705910, 16361)
+
+    def test_the_dark_row_is_read_where_it_is_dimmest(self) -> None:
+        """It peaks at 206, so the shared ink floor of 200 left the row unreadable."""
+        view = read_scout((FRAMES / "scout_dim_dark.png").read_bytes())
+        assert view is not None
+        assert (view.loot.gold, view.loot.elixir, view.loot.dark) == (185482, 133614, 2780)
+
+    def test_village_showing_through_the_panel_is_not_read_as_digits(self) -> None:
+        """Bright paving behind the panel used to add a digit to the end of every row."""
+        view = read_scout((FRAMES / "scout_bright_backdrop.png").read_bytes())
+        assert view is not None
+        assert (view.loot.gold, view.loot.elixir, view.loot.dark) == (180728, 24752, 505)
+
     def test_a_started_battle_is_no_longer_skippable(self) -> None:
         """The loot panel stays on screen once the countdown expires; 下一個 does not."""
         view = read_scout((FRAMES / "scout_in_battle.png").read_bytes())
@@ -210,6 +253,169 @@ class ScoutTests(unittest.TestCase):
         Image.new("RGB", (800, 450)).save(buffer, "PNG")
         with pytest.raises(ValueError, match="1600x900"):
             read_scout(buffer.getvalue())
+
+
+class PlanTests(unittest.TestCase):
+    """A tactic written down, so it can be replayed, edited, or swapped for the AI's."""
+
+    def test_the_flat_plan_loads_and_carries_a_full_tactic(self) -> None:
+        plan = plans.flat()
+        assert plan.deploy_start is not None
+        assert plan.deploy_end is not None
+        assert len(plan.rage_points) == len(RAGE_PATH)
+        assert plan.freeze_points
+        assert plan.timings is not None
+
+    def test_the_flat_plan_draws_the_line_the_loop_used_to_hold_in_constants(self) -> None:
+        """It has to reproduce the old fallback, or the default quietly changed."""
+        assert planned_line(plans.flat()) == DEPLOY_LINES["top_left"]
+
+    def test_a_plan_survives_being_written_out_and_read_back(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "plan.json"
+            path.write_text(plans.flat().model_dump_json(indent=2), encoding="utf-8")
+            assert plans.load(path) == plans.flat()
+
+    def test_the_ai_is_not_allowed_to_invent_hero_timings(self) -> None:
+        """`timings` is on the schema, so the model can fill it; a still frame cannot know."""
+        assert "timings" in AttackPlan.model_json_schema()["properties"]
+        answered = AttackPlan(**_LINE, timings=HeroTimings(queen=30, warden=5))
+        assert answered.model_copy(update={"timings": None}).timings is None
+
+    def test_a_plans_own_timings_beat_the_ones_the_runner_was_built_with(self) -> None:
+        """A written plan is the whole tactic, so its schedule is the one that fires."""
+        plan = AttackPlan(**_LINE, timings=HeroTimings(queen=7))
+        assert (plan.timings or HeroTimings()).seconds("queen") == 7
+
+
+class PromptTests(unittest.TestCase):
+    """Prompts live as Markdown so a change to what the model is told is a readable diff."""
+
+    def test_every_prompt_the_code_asks_for_exists(self) -> None:
+        expected = {
+            "agent_profile",
+            "agent_step",
+            "attack_plan",
+            "chat",
+            "live_test",
+            "locate_target",
+            "reference_image",
+            "vision",
+        }
+        assert expected <= set(PROMPTS)
+
+    def test_a_prompt_fills_in_its_placeholders(self) -> None:
+        filled = render("locate_target", goal="設定齒輪")
+        assert "設定齒輪" in filled
+        assert "{" not in filled
+
+    def test_the_attack_prompt_still_takes_its_spell_counts(self) -> None:
+        """`_plan` formats these in; losing them would ask for the wrong spell count."""
+        assert "{rage_count}" in PROMPTS["attack_plan"]
+        assert "{freeze_count}" in PROMPTS["attack_plan"]
+
+    def test_a_prompt_file_is_shipped_beside_the_module(self) -> None:
+        """PyInstaller lays the bundle out this way, so the loader looks here."""
+        assert (PROMPT_DIR / "attack_plan.md").is_file()
+
+
+class MapFrameTests(unittest.TestCase):
+    """The battle map is a diamond, and a rectangle's corners are not on it."""
+
+    def test_a_preset_flank_is_on_the_map_and_a_pushed_corner_is_not(self) -> None:
+        """Both points are live evidence: one deploys troops, the other lost a hero."""
+        assert DEPLOY_BOUND.contains((600, 110))
+        assert not DEPLOY_BOUND.contains((30, 175))
+
+    def test_clamping_pulls_a_point_back_onto_the_map(self) -> None:
+        pulled = DEPLOY_BOUND.clamp((30, 175))
+        assert DEPLOY_BOUND.contains(pulled)
+        # Back along the line from the middle, so it keeps the direction it was pushed.
+        assert pulled[0] < DEPLOY_BOUND.centre[0]
+        assert pulled[1] < DEPLOY_BOUND.centre[1]
+
+    def test_a_point_already_on_the_map_is_left_alone(self) -> None:
+        assert DEPLOY_BOUND.clamp((600, 110)) == (600, 110)
+
+    def test_grid_coordinates_round_trip(self) -> None:
+        for point in ((800, 410), (600, 300), (1100, 500)):
+            assert VILLAGE_GRID.pixel(VILLAGE_GRID.tile(point)) == point
+
+    def test_the_grid_corners_are_the_diamond_vertices(self) -> None:
+        assert VILLAGE_GRID.pixel((0, 0)) == (800, 410 - VILLAGE_GRID.half_height)
+        assert VILLAGE_GRID.pixel((44, 44)) == (800, 410 + VILLAGE_GRID.half_height)
+        assert VILLAGE_GRID.pixel((44, 0)) == (800 + VILLAGE_GRID.half_width, 410)
+
+
+class BoundaryTests(unittest.TestCase):
+    """The red stroke the game draws around a village it will not accept drops inside.
+
+    The two frames are live battles masked down to the rays the tests walk, one
+    per village theme, because the theme changes the ground under the stroke.
+    """
+
+    def _painted(self, marks: list[tuple[int, tuple[int, int, int]]]) -> Image.Image:
+        """A blank battle frame with vertical marks at the given x, for one ray east."""
+        image = Image.new("RGB", (1600, 900), (60, 120, 40))
+        pixels = image.load()
+        for x, colour in marks:
+            for offset in range(2):
+                pixels[x + offset, 400] = colour
+        return image
+
+    def test_the_stroke_is_found_where_it_was_painted(self) -> None:
+        found = boundary_reach(self._painted([(1200, (170, 70, 26))]), 0)
+        assert found == (1201, 400)
+
+    def test_the_outer_crossing_is_the_one_that_bounds_the_drop(self) -> None:
+        """A ray leaving the middle crosses a stair-step boundary more than once."""
+        marks = [(1000, (170, 70, 26)), (1300, (170, 70, 26))]
+        assert boundary_reach(self._painted(marks), 0) == (1301, 400)
+
+    def test_a_wall_highlight_is_too_bright_to_be_the_stroke(self) -> None:
+        """Measured, a wall reads (255, 71, 0) and a fire (255, 140, 24)."""
+        assert boundary_reach(self._painted([(1200, (255, 71, 0))]), 0) is None
+        assert boundary_reach(self._painted([(1200, (255, 140, 24))]), 0) is None
+
+    def test_a_frame_of_another_resolution_is_rejected(self) -> None:
+        with pytest.raises(ValueError, match="1600x900"):
+            boundary_reach(Image.new("RGB", (1280, 720)), 0)
+
+    def test_a_flank_is_fitted_onto_the_village_own_boundary(self) -> None:
+        """A preset flank is drawn for a village that does not exist; this moves it."""
+        png = (FRAMES / "battle_boundary_grass.png").read_bytes()
+        # Ends on the 180 and 240 degree rays, so their midpoint lands on 210 —
+        # all three kept in this frame, and the midpoint is fitted too.
+        preset = ((500, 400), (650, 140))
+        fitted = fitted_line(png, *preset)
+        assert fitted is not None
+        assert len(fitted) == 3
+        for point in fitted:
+            assert math.hypot(point[0] - 800, point[1] - 400) > 200
+
+    def test_a_bent_line_walks_through_every_anchor(self) -> None:
+        """A chord across a diamond cuts back inside it, so the middle gets its own anchor."""
+        bent = deploy_line(5, (100, 100), (400, 100), (400, 400))
+        assert bent[0] == (100, 100)
+        assert bent[-1] == (400, 400)
+        # The corner is an anchor, so a point lands on it rather than cutting it off.
+        assert (400, 100) in bent
+
+    def test_a_flank_with_no_boundary_under_it_is_left_alone(self) -> None:
+        """Both ends have to read, or the caller keeps its preset and probes."""
+        blank = Image.new("RGB", (1600, 900), (60, 120, 40))
+        buffer = io.BytesIO()
+        blank.save(buffer, format="PNG")
+        assert fitted_line(buffer.getvalue(), (600, 110), (230, 380)) is None
+
+    def test_the_boundary_is_read_over_two_village_themes(self) -> None:
+        rays = [angle * 30 for angle in range(12)]
+        for name in ("battle_boundary_grass.png", "battle_boundary_ice.png"):
+            points = boundary_line((FRAMES / name).read_bytes(), rays)
+            radii = [math.hypot(x - 800, y - 400) for x, y in points]
+            assert len(points) >= 6, name
+            # One closed curve, so nothing should sit near the middle of it.
+            assert min(radii) > 200, (name, sorted(radii))
 
 
 class AttackTests(unittest.TestCase):
@@ -297,7 +503,69 @@ class AttackTests(unittest.TestCase):
 
     def test_a_line_only_half_drawn_falls_back_too(self) -> None:
         assert planned_line(None) is None
-        assert planned_line(AttackPlan(deploy_start=ScreenPoint(x_pct=10, y_pct=10))) is None
+        assert planned_line(None) is None
+
+    def _runner(self) -> AttackRunner:
+        return AttackRunner(
+            adb=AdbController(endpoint=AdbEndpoint(port=16384)),
+            display=DisplayTarget(logical_id="1", physical_id="2"),
+            thresholds=LootThresholds(),
+        )
+
+    def _verdict(self, opening: LootOffer, readings: list[ScoutView | None]) -> bool:
+        """Run the battle wait against canned panel readings, with the clock removed."""
+        runner = self._runner()
+        with (
+            patch.object(AttackRunner, "_frame", return_value=b""),
+            patch.object(AttackRunner, "_tap"),
+            patch.object(attack, "read_scout", side_effect=readings),
+            patch.object(attack.time, "sleep"),
+        ):
+            # Whatever the abilities saw counts too, which is the whole point.
+            runner._battle_view("ability")
+            return runner._wait_out_battle(opening)
+
+    def test_a_battle_won_before_the_first_poll_still_counts(self) -> None:
+        """100% three stars, but over so fast that only the ability check saw the loot fall."""
+        opening = LootOffer(gold=1031321, elixir=420990, dark=2525)
+        during = ScoutView(loot=LootOffer(gold=149101, elixir=19976, dark=120), can_skip=False)
+        assert self._verdict(opening, [during, None])
+
+    def test_loot_that_never_moves_is_still_reported_as_a_failure(self) -> None:
+        """The case this check exists for: an army that never reached the village."""
+        opening = LootOffer(gold=1031321, elixir=420990, dark=2525)
+        stuck = ScoutView(loot=opening, can_skip=False)
+        assert not self._verdict(opening, [stuck, stuck, None])
+
+    def test_a_battle_nobody_ever_read_is_not_called_a_success(self) -> None:
+        assert not self._verdict(LootOffer(gold=1, elixir=1, dark=1), [None, None])
+
+    def test_a_refused_flank_leaves_the_other_three_to_try(self) -> None:
+        """The plan's own side goes first behind its line, then the flanks it did not pick."""
+        plan = AttackPlan(
+            deploy_start=ScreenPoint(x_pct=25, y_pct=30),
+            deploy_end=ScreenPoint(x_pct=75, y_pct=70),
+            deploy_from="bottom_right",
+        )
+        # That line runs across the village, so only the named flanks are left.
+        assert planned_line(plan) is None
+        candidates = deploy_candidates(plan)
+        assert candidates[0] == DEPLOY_LINES["bottom_right"]
+        assert sorted(candidates) == sorted(DEPLOY_LINES.values())
+
+    def test_both_ends_of_the_line_are_required_of_the_planner(self) -> None:
+        """Gemini answered three runs running with a start and no end; half a line is none."""
+        required = set(AttackPlan.model_json_schema()["required"])
+        assert {"deploy_start", "deploy_end"} <= required
+
+    def test_a_usable_planned_line_is_tried_before_any_flank(self) -> None:
+        plan = AttackPlan(
+            deploy_start=ScreenPoint(x_pct=62.5, y_pct=12.2),
+            deploy_end=ScreenPoint(x_pct=85.6, y_pct=42.2),
+        )
+        candidates = deploy_candidates(plan)
+        assert candidates[0] == planned_line(plan)
+        assert len(candidates) == len(DEPLOY_LINES) + 1
 
     def test_card_groups_keep_troops_apart_from_heroes_and_spells(self) -> None:
         """Troops, siege machine, heroes and spells, told apart by the wider gaps."""

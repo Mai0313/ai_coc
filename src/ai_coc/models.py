@@ -44,6 +44,74 @@ class AdbEndpoint(BaseModel):
         return cls(host=host or DEFAULT_ADB_HOST, port=int(port) if port.isdigit() else 0)
 
 
+class MapFrame(BaseModel):
+    """The battle map's diamond in screen pixels, at the camera a battle opens on.
+
+    Calibrated against live frames rather than detected from them: a village
+    theme repaints the ground the map's edge runs along, so anything reading that
+    edge by colour or brightness falls over on the next theme, while the camera
+    itself does not move. The figures are good to about 20 px, which is enough
+    for the one thing this is load-bearing for — keeping a drop that is being
+    pushed away from the village from being pushed off the map — and not yet
+    enough for anything that needs a particular tile to be hit.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    centre: tuple[int, int]
+    half_width: int
+    half_height: int
+    # The home village grid, which is what the map is drawn from.
+    tiles: int = 44
+
+    def contains(self, point: tuple[int, int]) -> bool:
+        return (
+            abs(point[0] - self.centre[0]) / self.half_width
+            + abs(point[1] - self.centre[1]) / self.half_height
+        ) <= 1
+
+    def clamp(self, point: tuple[int, int]) -> tuple[int, int]:
+        """Pull a point back onto the map along the line from the middle.
+
+        A rectangle cannot do this: the map is a diamond, so a rectangle's own
+        corners are off the map entirely, and a drop pushed into one lands
+        nowhere the game will accept it.
+        """
+        dx = (point[0] - self.centre[0]) / self.half_width
+        dy = (point[1] - self.centre[1]) / self.half_height
+        span = abs(dx) + abs(dy)
+        if span <= 1:
+            return point
+        return (
+            round(self.centre[0] + dx / span * self.half_width),
+            round(self.centre[1] + dy / span * self.half_height),
+        )
+
+    def grown(self, tiles: int) -> MapFrame:
+        """The same diamond widened by a number of tiles on every side."""
+        scale = (self.tiles + 2 * tiles) / self.tiles
+        return MapFrame(
+            centre=self.centre,
+            half_width=round(self.half_width * scale),
+            half_height=round(self.half_height * scale),
+            tiles=self.tiles + 2 * tiles,
+        )
+
+    def tile(self, point: tuple[int, int]) -> tuple[float, float]:
+        """Grid coordinates for a screen point, the axes running along the edges."""
+        across = (point[0] - self.centre[0]) / (self.half_width / self.tiles)
+        down = (point[1] - self.centre[1]) / (self.half_height / self.tiles)
+        return ((across + down) / 2 + self.tiles / 2, (down - across) / 2 + self.tiles / 2)
+
+    def pixel(self, tile: tuple[float, float]) -> tuple[int, int]:
+        """Where one grid cell's corner sits on screen; the inverse of `tile`."""
+        column, row = tile[0] - self.tiles / 2, tile[1] - self.tiles / 2
+        return (
+            round(self.centre[0] + (column - row) * self.half_width / self.tiles),
+            round(self.centre[1] + (column + row) * self.half_height / self.tiles),
+        )
+
+
 class DisplayTarget(BaseModel):
     """The display one package's window sits on.
 
@@ -421,12 +489,22 @@ class AttackPlan(BaseModel):
     """
 
     deploy_from: Literal["top_left", "top_right", "bottom_left", "bottom_right"] = "top_left"
-    deploy_start: ScreenPoint | None = None
-    deploy_end: ScreenPoint | None = None
+    # Required, and that is the whole point: with defaults they are optional in
+    # the JSON schema, and Gemini answered three runs running with a start and no
+    # end. Half a line is no line, so the call was paid for and its most
+    # important output thrown away every time. A reply that still omits one now
+    # fails validation, which `_plan` already answers by falling back — the same
+    # place it ended up before, but without pretending it had a plan.
+    deploy_start: ScreenPoint
+    deploy_end: ScreenPoint
     rage_points: list[ScreenPoint] = Field(default_factory=list)
     freeze_points: list[ScreenPoint] = Field(default_factory=list)
     # Left to right, so each hero card can be matched to its own ability timing.
     heroes: list[HeroKind] = Field(default_factory=list)
+    # Carried on the plan so a written-out one is the whole tactic in one file,
+    # rather than a set of points whose timing lives somewhere else entirely.
+    # None leaves the runner on whatever the caller configured.
+    timings: HeroTimings | None = None
     reason: str = ""
 
 
@@ -439,6 +517,27 @@ class AttackReport(BaseModel):
     # Farming has met its goal, so the automation is meant to stop rather than
     # come round again: the next pass would only read the same full storage.
     stock_full: bool = False
+
+
+class FrameReading(BaseModel):
+    """Everything the parsers make of one frame, for the `read` command.
+
+    A screen the loop mishandled is almost always a screen it misread, and this
+    is what says which of the readers disagreed with the eye. It is one model
+    rather than a printout so a recorded run can be replayed through it.
+    """
+
+    scout: ScoutView | None = None
+    stock: VillageStock | None = None
+    army: tuple[int, int] | None = None
+    attack_menu: bool = False
+    refused: bool = False
+    idle_dialog: bool = False
+    card_groups: list[list[int]] = Field(default_factory=list)
+    counted: list[int] = Field(default_factory=list)
+    freezes: list[int] = Field(default_factory=list)
+    live: list[int] = Field(default_factory=list)
+    counts: dict[int, int | None] = Field(default_factory=dict)
 
 
 class UiElement(BaseModel):

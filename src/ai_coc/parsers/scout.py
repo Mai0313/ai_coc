@@ -17,15 +17,28 @@ from PIL import Image
 from ai_coc.models import LootOffer, ScoutView, VillageStock
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Iterator, Sequence
 
 logger = logging.getLogger(__name__)
 
 SCREEN_SIZE = (1600, 900)
 
-# The loot panel sits under the opponent's name, one row per resource.
-PANEL_LEFT, PANEL_RIGHT = 74, 270
+# The loot panel sits under the opponent's name, one row per resource. It is
+# transparent, so the village behind it shows through to the right of the digits
+# and its brighter speckles segment as glyphs of their own. The box cannot simply
+# be pulled in tight against the text: loot runs to seven figures, and the widest
+# reading measured ran to x 207, so this leaves room for that and no more.
+PANEL_LEFT, PANEL_RIGHT = 74, 215
 ROW_BOUNDS = ((126, 156), (173, 203), (220, 250))
+# What is left of the village inside the box is dropped by how badly it matches:
+# measured over 21 rows of live frames, all 115 real digits land within 28 bits
+# of their template while the blobs read 42 and 57, so the line sits between.
+LOOT_DIGIT_TOLERANCE = 35
+# The dark row is dimmer than the other two and on the scout screen it peaks at
+# 206, where the shared INK_BRIGHTNESS of 200 left almost none of it standing:
+# the glyphs came out too short to measure, the row read as nothing, and the
+# whole opponent was judged on dark=0.
+LOOT_INK_BRIGHTNESS = 190
 
 # The game paints these buttons in one saturated orange that nothing behind them
 # comes close to, so a box around either doubles as a check on which screen is
@@ -197,6 +210,20 @@ def _signature(mask: list[list[bool]], left: int, right: int) -> int | None:
     return bits
 
 
+def _row_glyphs(mask: list[list[bool]]) -> Iterator[tuple[str, int]]:
+    """Each glyph on a row as the digit it matches best and how far off that was.
+
+    The distance is what the two callers disagree about, so it comes back with
+    the digit rather than being judged here.
+    """
+    for left, right in _glyph_columns(mask):
+        signature = _signature(mask, left, right)
+        if signature is None:
+            continue
+        digit = min(TEMPLATES, key=lambda d: (TEMPLATES[d] ^ signature).bit_count())
+        yield digit, (TEMPLATES[digit] ^ signature).bit_count()
+
+
 def _read_row(
     image: Image.Image, box: tuple[int, int, int, int], tolerance: int | None = None
 ) -> int | None:
@@ -204,18 +231,29 @@ def _read_row(
 
     `tolerance` gives up on the whole row as soon as one glyph is a poor match,
     which is what keeps a storage bar's fill highlight from being read as a
-    digit. The loot panel has nothing but the village behind it and passes None.
+    digit, and is how a screen that is not the home village reads as no screen.
     """
-    mask = _ink_mask(image.crop(box))
     digits = ""
-    for left, right in _glyph_columns(mask):
-        signature = _signature(mask, left, right)
-        if signature is None:
-            continue
-        digit = min(TEMPLATES, key=lambda d: (TEMPLATES[d] ^ signature).bit_count())
-        if tolerance is not None and (TEMPLATES[digit] ^ signature).bit_count() > tolerance:
+    for digit, distance in _row_glyphs(_ink_mask(image.crop(box))):
+        if tolerance is not None and distance > tolerance:
             return None
         digits += digit
+    return int(digits) if digits else None
+
+
+def _read_loot_row(image: Image.Image, box: tuple[int, int, int, int]) -> int | None:
+    """One row of the loot panel, with the village showing through it dropped.
+
+    A poor match is skipped rather than failing the row, which is the opposite of
+    `_read_row` and deliberately so: `read_scout` returning None means "no
+    opponent on screen", so one speckle of village would leave the loop waiting
+    out a search it had already paid for.
+    """
+    digits = "".join(
+        digit
+        for digit, distance in _row_glyphs(_ink_mask(image.crop(box), LOOT_INK_BRIGHTNESS))
+        if distance <= LOOT_DIGIT_TOLERANCE
+    )
     return int(digits) if digits else None
 
 
@@ -407,7 +445,7 @@ def read_scout(png: bytes) -> ScoutView | None:
     if image.size != SCREEN_SIZE:
         raise ValueError(f"戰利品面板座標只適用 1600x900，收到 {image.size[0]}x{image.size[1]}")
     gold, elixir, dark = (
-        _read_row(image, (PANEL_LEFT, top, PANEL_RIGHT, bottom)) for top, bottom in ROW_BOUNDS
+        _read_loot_row(image, (PANEL_LEFT, top, PANEL_RIGHT, bottom)) for top, bottom in ROW_BOUNDS
     )
     if gold is None or elixir is None or dark is None:
         return None
