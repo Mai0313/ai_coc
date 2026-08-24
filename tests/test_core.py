@@ -176,6 +176,24 @@ class ScoutTests(unittest.TestCase):
         assert view is not None
         assert (view.loot.gold, view.loot.elixir, view.loot.dark) == (767905, 814967, 12891)
 
+    def test_seven_figure_loot_is_not_cut_short(self) -> None:
+        """The panel box has to clear x 207; a village this rich is what pays for it."""
+        view = read_scout((FRAMES / "scout_seven_digits.png").read_bytes())
+        assert view is not None
+        assert (view.loot.gold, view.loot.elixir, view.loot.dark) == (1746707, 1705910, 16361)
+
+    def test_the_dark_row_is_read_where_it_is_dimmest(self) -> None:
+        """It peaks at 206, so the shared ink floor of 200 left the row unreadable."""
+        view = read_scout((FRAMES / "scout_dim_dark.png").read_bytes())
+        assert view is not None
+        assert (view.loot.gold, view.loot.elixir, view.loot.dark) == (185482, 133614, 2780)
+
+    def test_village_showing_through_the_panel_is_not_read_as_digits(self) -> None:
+        """Bright paving behind the panel used to add a digit to the end of every row."""
+        view = read_scout((FRAMES / "scout_bright_backdrop.png").read_bytes())
+        assert view is not None
+        assert (view.loot.gold, view.loot.elixir, view.loot.dark) == (180728, 24752, 505)
+
     def test_a_started_battle_is_no_longer_skippable(self) -> None:
         """The loot panel stays on screen once the countdown expires; 下一個 does not."""
         view = read_scout((FRAMES / "scout_in_battle.png").read_bytes())
