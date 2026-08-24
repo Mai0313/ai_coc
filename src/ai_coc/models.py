@@ -505,6 +505,12 @@ class AttackTimings(BaseModel):
     hero on the field, so a champion's 45 seconds put it a minute and a half into
     a three-minute battle, long after the defences it was meant to stop had done
     their work. It is the one spell held back, so it is the one with a time.
+
+    It is also the one measured from a different moment. An ability's delay runs
+    from its own hero landing; the freeze's runs from the attack opening, which
+    is how it is judged on screen — about half a minute in, as the push reaches
+    the first line of defences — and hanging it off the heroes would move it by
+    however long the army happened to take to go down.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -515,7 +521,7 @@ class AttackTimings(BaseModel):
     champion: int = 45
     minion_prince: int = 20
     unknown: int = 20
-    freeze: int = 15
+    freeze: int = 35
 
     def seconds(self, kind: HeroKind) -> int:
         return int(getattr(self, kind, self.unknown))

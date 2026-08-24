@@ -108,16 +108,17 @@ NEXT_CYCLE_DELAY = 3000
 # reads. A tick whose frame is still in flight is dropped rather than queued.
 LIVE_INTERVAL = 500
 # A queen wants her cloak almost at once; a warden's tome is worth holding until
-# the push is deep enough to be worth saving. Freeze is on the same clock rather
-# than left to fall out after the last ability, which used to put it a minute and
-# a half in whenever a champion was on the field.
+# the push is deep enough to be worth saving. A hero's delay runs from that hero
+# landing; the freeze's runs from the attack opening, which is why it is labelled
+# apart. It used to have no time of its own at all and simply followed the last
+# ability, which put it a minute and a half in whenever a champion was out.
 TIMING_FIELDS = (
-    ("king", "野蠻人之王", 20),
-    ("queen", "弓箭女皇", 1),
-    ("warden", "大守護者", 30),
-    ("champion", "皇家守護", 45),
-    ("minion_prince", "飛盾王子", 20),
-    ("freeze", "冰凍法術", 15),
+    ("king", "野蠻人之王（落地後）", 20),
+    ("queen", "弓箭女皇（落地後）", 1),
+    ("warden", "大守護者（落地後）", 30),
+    ("champion", "皇家守護（落地後）", 45),
+    ("minion_prince", "飛盾王子（落地後）", 20),
+    ("freeze", "冰凍法術（開打後）", 35),
 )
 
 
@@ -270,12 +271,13 @@ class MainWindow(QMainWindow):
     def _timing_group(self) -> QGroupBox:
         """One delay per hero, not per card slot: an upgrading hero cannot take
         the field, so its card is absent and every slot after it shifts. Freeze
-        sits on the same clock, since it is the one spell held back.
+        is the one spell held back, and the one timed from the attack opening
+        rather than from a landing, so its row says which.
 
         The stored keys keep their `hero_` prefix, which no longer describes all
         of them: renaming would silently throw away the delays already saved.
         """
-        group = QGroupBox("大招與法術時機（落地後幾秒）")
+        group = QGroupBox("大招與法術時機（秒）")
         form = QFormLayout(group)
         self.timing_delays: dict[str, QSpinBox] = {}
         for key, label, default in TIMING_FIELDS:

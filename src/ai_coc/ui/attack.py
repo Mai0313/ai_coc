@@ -748,6 +748,7 @@ class AttackRunner(BaseModel):
         # Cast here it starts as they begin walking, and the heroes join them
         # inside it. Freeze is the one thing still held back, and it now waits on
         # its own clock rather than on the last hero's.
+        opened = time.monotonic()
         self._drop_singles(vanguard, middle, "siege")
         line = self._spread_troops(troops, anchors, pushed)
         self._cast(rages, rage_path, frame)
@@ -758,51 +759,59 @@ class AttackRunner(BaseModel):
         # its card answers an ability tap by deploying instead, with nothing
         # around it and no ability fired.
         down = self._drop_singles(followers, middle, "hero")
+        landed = time.monotonic()
         kinds = list(plan.heroes) if plan else []
         kinds += ["unknown"] * (len(followers) - len(kinds))
         timings = plan.timings if plan and plan.timings else self.abilities
         moves = [
             (
-                timings.seconds(kinds[i]),
+                landed + timings.seconds(kinds[i]),
                 f"ability on the card at {x}",
                 partial(self._tap, (x, CARD_ROW_Y)),
             )
             for i, x in enumerate(followers)
             if x in down
         ]
+        # Two clocks, because the two numbers mean different things. A hero's
+        # ability is timed from that hero landing, which is what the setting says
+        # and what a queen's cloak is worth. The freeze is timed from the attack
+        # opening, because that is how it is judged on screen — about half a
+        # minute in, when the push is at the first line of defences — and it
+        # would drift by however long the army happened to take to go down if it
+        # hung off the heroes instead.
         if freezes:
             moves.append((
-                timings.freeze,
+                opened + timings.freeze,
                 f"{len(freezes)} freeze card(s)",
                 partial(self._cast, freezes, freeze_targets, frame),
             ))
-        self._run_schedule(moves)
+        self._run_schedule(opened, moves)
 
-    def _run_schedule(self, moves: Sequence[tuple[int, str, Callable[[], None]]]) -> None:
-        """Everything that waits on the clock once the army is down, in time order.
+    def _run_schedule(
+        self, opened: float, moves: Sequence[tuple[float, str, Callable[[], None]]]
+    ) -> None:
+        """Everything that waits on the clock, in time order, each at its own moment.
 
         One list rather than the abilities and then the freeze, because ordering
         by position in the code made the freeze wait out the slowest hero on the
         field: with a champion at 45 seconds it landed a minute and a half into a
         three-minute battle, long after the defences it was meant to stop had
-        done their work. Timing is per hero rather than per card slot for the
-        same reason it always was — an upgrading hero has no card, so every slot
-        after it shifts — and a queen wants her cloak almost immediately where a
-        warden's tome is worth holding until the push is deep enough to save.
+        done their work. Ability timing is per hero rather than per card slot for
+        the same reason it always was — an upgrading hero has no card, so every
+        slot after it shifts.
 
         Some card slots overlap the result screen's 回營 button, so nothing here
         runs unless the battle is genuinely still on.
         """
-        started = time.monotonic()
-        for delay, what, act in sorted(moves, key=lambda move: move[0]):
-            remaining = started + delay - time.monotonic()
+        for at, what, act in sorted(moves, key=lambda move: move[0]):
+            remaining = at - time.monotonic()
             if remaining > 0:
                 time.sleep(remaining)
             if self._battle_view("scheduled") is None:
                 logger.info("Battle ended with the %s still to come", what)
                 return
             act()
-            logger.info("Played the %s, %ds after the army was down", what, delay)
+            logger.info("Played the %s, %.0fs into the attack", what, at - opened)
 
     def _cast(self, cards: list[int], targets: tuple[tuple[int, int], ...], frame: bytes) -> None:
         """Empty each spell card over `targets`, and say so when a card would not go.

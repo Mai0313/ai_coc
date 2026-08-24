@@ -638,17 +638,20 @@ class AttackTests(unittest.TestCase):
         """Cast after the last ability it sat out a champion's 45 seconds first."""
         played: list[str] = []
         timings = AttackTimings()
+        # The heroes land twenty seconds into the attack; their abilities run
+        # from there, the freeze from the opening.
+        opened, landed = 0.0, 20.0
         moves = [
-            (timings.seconds("champion"), "champion", lambda: played.append("champion")),
-            (timings.seconds("queen"), "queen", lambda: played.append("queen")),
-            (timings.freeze, "freeze", lambda: played.append("freeze")),
+            (landed + timings.seconds("champion"), "champion", lambda: played.append("champion")),
+            (landed + timings.seconds("queen"), "queen", lambda: played.append("queen")),
+            (opened + timings.freeze, "freeze", lambda: played.append("freeze")),
         ]
         on = ScoutView(loot=LootOffer(gold=1, elixir=1, dark=1), can_skip=False)
         with (
             patch.object(AttackRunner, "_battle_view", return_value=on),
             patch.object(attack.time, "sleep"),
         ):
-            self._runner()._run_schedule(moves)
+            self._runner()._run_schedule(opened, moves)
         assert played == ["queen", "freeze", "champion"]
 
     def test_a_refused_flank_leaves_the_other_three_to_try(self) -> None:
