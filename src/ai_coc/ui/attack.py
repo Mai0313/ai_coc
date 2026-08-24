@@ -557,6 +557,12 @@ class AttackRunner(BaseModel):
             for card, x in enumerate(remaining):
                 drops = drop_points(line, index * len(remaining) + card)
                 self.adb.tap_many([(x, CARD_ROW_Y), *drops], self.display)
+                # Most of the minute the army takes to go down is spent here, so
+                # anything on the clock gets its turn between cards rather than
+                # waiting for the last one to empty. Asking costs nothing when
+                # nothing is due; between whole passes instead left the freeze
+                # eight seconds late, which is a pass and a capture.
+                between()
             time.sleep(DROP_SETTLE)
             before, shot = shot, self._frame("pass")
             if not card_drained(before, shot, remaining) and pushed + 1 < DEPLOY_ATTEMPTS:
@@ -567,10 +573,6 @@ class AttackRunner(BaseModel):
             logger.info("%d troop card(s) still hold something", len(remaining))
             if not remaining:
                 break
-            # Most of the minute the army takes to go down is spent here, so
-            # anything on the clock gets its turn between passes rather than
-            # waiting for the last card to empty.
-            between()
         return line
 
     def _drop_single(self, card: int, point: tuple[int, int]) -> bool:
