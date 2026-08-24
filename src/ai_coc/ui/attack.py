@@ -43,7 +43,7 @@ from ai_coc.parsers.scout import (
     attack_menu_open,
     idle_disconnected,
 )
-from ai_coc.parsers.boundary import DEPLOY_BOUND
+from ai_coc.parsers.boundary import DEPLOY_BOUND, fitted_line
 
 logger = logging.getLogger(__name__)
 
@@ -136,6 +136,10 @@ BANNER_CLEAR_ATTEMPTS = 3
 # The four preset flanks all sit about 410 px out at their midpoint; this keeps
 # a planned line in the same band and falls back to a flank when it is not.
 MIN_LINE_RADIUS = 300
+
+# The scout countdown is 30 seconds; this polls a second at a time and leaves
+# room for a slow frame rather than sitting through a whole battle.
+COUNTDOWN_ATTEMPTS = 45
 
 BATTLE_TIMEOUT = 240
 # Two things routinely cover the home village between runs: a building panel
@@ -506,6 +510,23 @@ class AttackRunner(BaseModel):
         )
         return landed
 
+    def _wait_for_battle(self) -> bytes | None:
+        """Hold until the scout countdown ends, and hand back the first battle frame.
+
+        The 下一個 button going away is the countdown ending, which is what
+        `can_skip` reads. The frame comes back because the boundary is only drawn
+        once the battle is under way, so this is the first moment it can be read
+        and the caller would otherwise have to pay for another capture.
+        """
+        for _ in range(COUNTDOWN_ATTEMPTS):
+            png = self._frame("waiting")
+            view = read_scout(png)
+            if view is not None and not view.can_skip:
+                return png
+            time.sleep(1)
+        logger.warning("The scout countdown never ended; deploying without a battle frame")
+        return None
+
     def _deploy(self, frame: bytes) -> None:
         """Spread the main troops along one flank; everything else drops once, mid-line."""
         groups = card_groups(frame)
@@ -542,7 +563,19 @@ class AttackRunner(BaseModel):
         # for a single bottle would only spend the battle tapping empty ground.
         freeze_count = sum(card_count(frame, x) or 1 for x in freezes)
         plan = self._plan(frame, rage_count, freeze_count)
-        for start, end in deploy_candidates(plan):
+        # Nothing can be placed while the scout countdown is still running, and a
+        # tap the game ignores raises no refusal banner either, so probing then
+        # reads every drop as accepted and the whole army is deployed into
+        # nothing. With Gemini in the loop the planning call happens to outlast
+        # the countdown, which is what has been hiding this; without a key `_plan`
+        # returns at once and the run would deploy into the countdown every time.
+        battle = self._wait_for_battle()
+        for preset in deploy_candidates(plan):
+            # The boundary the game draws beats a flank drawn for a village that
+            # does not exist, and fitting to it is what saves probing outwards one
+            # refused troop at a time. It is still probed once before it is used.
+            fitted = fitted_line(battle, *preset) if battle else None
+            start, end = fitted or preset
             pushed = self._usable_line(troops[0], start, end)
             if pushed is not None:
                 break

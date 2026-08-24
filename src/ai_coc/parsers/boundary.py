@@ -110,6 +110,32 @@ def boundary_reach(
 OUTLIER_RATIO = 0.6
 
 
+def fitted_line(
+    png: bytes, start: tuple[int, int], end: tuple[int, int], margin: int = 30
+) -> tuple[tuple[int, int], tuple[int, int]] | None:
+    """The same flank moved out to sit just outside this village's own red line.
+
+    A preset flank is drawn for a village that does not exist; this puts it where
+    the boundary actually is, which is what saves the loop probing its way out one
+    refused troop at a time. None when either end's ray never met the stroke, so
+    the caller keeps the flank it had and probes as before.
+    """
+    image = Image.open(io.BytesIO(png)).convert("RGB")
+    moved: list[tuple[int, int]] = []
+    for point in (start, end):
+        angle = math.degrees(
+            math.atan2(point[1] - VILLAGE_CENTRE[1], point[0] - VILLAGE_CENTRE[0])
+        )
+        reach = boundary_reach(image, angle)
+        if reach is None:
+            logger.info("No boundary on the ray through %s; keeping the preset flank", point)
+            return None
+        dx, dy = math.cos(math.radians(angle)), math.sin(math.radians(angle))
+        moved.append((round(reach[0] + dx * margin), round(reach[1] + dy * margin)))
+    logger.info("Flank %s-%s fitted to the boundary as %s-%s", start, end, moved[0], moved[1])
+    return moved[0], moved[1]
+
+
 def boundary_line(png: bytes, degrees: list[float], margin: int = 24) -> list[tuple[int, int]]:
     """Points just outside the boundary along each of these rays, worst readings dropped.
 

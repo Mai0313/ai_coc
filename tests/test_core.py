@@ -56,7 +56,13 @@ from ai_coc.parsers.scout import (
 )
 from ai_coc.parsers.village import parse_village
 from ai_coc.adapters.secrets import dotenv_value
-from ai_coc.parsers.boundary import DEPLOY_BOUND, VILLAGE_GRID, boundary_line, boundary_reach
+from ai_coc.parsers.boundary import (
+    DEPLOY_BOUND,
+    VILLAGE_GRID,
+    fitted_line,
+    boundary_line,
+    boundary_reach,
+)
 from ai_coc.adapters.database import Database
 
 FRAMES = Path(__file__).parent / "frames"
@@ -361,6 +367,23 @@ class BoundaryTests(unittest.TestCase):
     def test_a_frame_of_another_resolution_is_rejected(self) -> None:
         with pytest.raises(ValueError, match="1600x900"):
             boundary_reach(Image.new("RGB", (1280, 720)), 0)
+
+    def test_a_flank_is_fitted_onto_the_village_own_boundary(self) -> None:
+        """A preset flank is drawn for a village that does not exist; this moves it."""
+        png = (FRAMES / "battle_boundary_grass.png").read_bytes()
+        # On the 210 and 240 degree rays, which is what this frame kept.
+        preset = ((540, 250), (650, 140))
+        fitted = fitted_line(png, *preset)
+        assert fitted is not None
+        for point in fitted:
+            assert math.hypot(point[0] - 800, point[1] - 400) > 200
+
+    def test_a_flank_with_no_boundary_under_it_is_left_alone(self) -> None:
+        """Both ends have to read, or the caller keeps its preset and probes."""
+        blank = Image.new("RGB", (1600, 900), (60, 120, 40))
+        buffer = io.BytesIO()
+        blank.save(buffer, format="PNG")
+        assert fitted_line(buffer.getvalue(), (600, 110), (230, 380)) is None
 
     def test_the_boundary_is_read_over_two_village_themes(self) -> None:
         rays = [angle * 30 for angle in range(12)]
