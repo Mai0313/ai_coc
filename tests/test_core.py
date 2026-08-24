@@ -49,6 +49,7 @@ from ai_coc.parsers.scout import (
     live_cards,
     read_scout,
     read_stock,
+    battle_over,
     card_groups,
     field_units,
     card_drained,
@@ -227,6 +228,12 @@ class ScoutTests(unittest.TestCase):
     def test_the_attack_menu_is_recognised_before_the_run_commits(self) -> None:
         assert attack_menu_open((FRAMES / "attack_menu.png").read_bytes())
         assert not attack_menu_open((FRAMES / "scout_grass.png").read_bytes())
+
+    def test_the_result_screen_is_recognised_so_the_next_run_can_start(self) -> None:
+        """One 回營 tap was not enough, and four runs in a row then stood down."""
+        assert battle_over((FRAMES / "battle_result.png").read_bytes())
+        assert not battle_over((FRAMES / "attack_menu.png").read_bytes())
+        assert not battle_over((FRAMES / "scout_in_battle.png").read_bytes())
 
     def test_only_the_card_that_lost_one_shows_it(self) -> None:
         """A drop is judged on the card's own corner, which repaints when it loses one.
@@ -591,6 +598,9 @@ class AttackTests(unittest.TestCase):
             patch.object(AttackRunner, "_frame", return_value=b""),
             patch.object(AttackRunner, "_tap"),
             patch.object(attack, "read_scout", side_effect=readings),
+            # The result screen is left through its own poll now, and these
+            # canned frames are not images.
+            patch.object(attack, "battle_over", return_value=False),
             patch.object(attack.time, "sleep"),
         ):
             # Whatever the abilities saw counts too, which is the whole point.

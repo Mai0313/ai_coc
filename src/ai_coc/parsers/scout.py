@@ -144,12 +144,32 @@ STOCK_LEFT, STOCK_RIGHT = 1300, 1512
 STOCK_ROW_BOUNDS = ((33, 72), (117, 156), (200, 239))
 STOCK_DIGIT_TOLERANCE = 22
 
+# The 回營 button on the battle result screen. It is the one screen a farming
+# loop reliably ends on and the one it could not get off: the button only comes
+# alive once the stars have finished flying in, so the single tap fired the
+# moment the loot panel disappeared landed on nothing, and four runs in a row
+# then found the village covered and stood down without attacking. Measured, the
+# button fills 0.33 of this box in green against at most 0.05 of any other
+# screen, the attack menu's own buttons included.
+RETURN_HOME_BOX = (690, 738, 910, 796)
+RETURN_HOME_GREEN = 0.15
+
 # 還在嗎 / 你因閒置過久而中斷連線. A loop that spends minutes waiting for barracks
 # will meet this, and nothing else clears it: the game stops responding to taps
 # until 重新登入遊戲 is pressed. Measured, its flat grey panel fills 0.97 of this
 # box where a village reads 0.14 and even the result screen only 0.45.
 IDLE_DIALOG_BOX = (400, 340, 1200, 560)
 IDLE_DIALOG_DARK = 0.7
+
+
+def battle_over(png: bytes) -> bool:
+    """Whether the battle result screen is up with its 回營 button waiting."""
+    data = Image.open(io.BytesIO(png)).convert("RGB").crop(RETURN_HOME_BOX).tobytes()
+    green = sum(
+        data[i + 1] > 150 and data[i + 1] - data[i] > 45 and data[i + 1] - data[i + 2] > 60
+        for i in range(0, len(data), 3)
+    )
+    return green / (len(data) // 3) >= RETURN_HOME_GREEN
 
 
 def idle_disconnected(png: bytes) -> bool:

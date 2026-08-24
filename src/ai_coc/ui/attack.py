@@ -35,6 +35,7 @@ from ai_coc.parsers.scout import (
     live_cards,
     read_scout,
     read_stock,
+    battle_over,
     card_groups,
     field_units,
     card_drained,
@@ -159,6 +160,10 @@ RELOGIN_BUTTON = (485, 528)
 RELOGIN_WAIT = 14
 HOME_ATTEMPTS = 3
 HOME_RETRY_DELAY = 3
+# The result screen animates its stars in before its button answers, so leaving
+# it is a poll rather than a tap.
+RESULT_ATTEMPTS = 4
+RESULT_RETRY_DELAY = 3
 # The army screen comes up before the search fee is charged, so a half-trained
 # army can still back out for free rather than paying to attack with nothing.
 MIN_ARMY_RATIO = 0.9
@@ -371,6 +376,10 @@ class AttackRunner(BaseModel):
                 self._tap(RELOGIN_BUTTON)
                 time.sleep(RELOGIN_WAIT)
                 continue
+            if battle_over(home):
+                logger.info("The last battle's result screen is still up; leaving it")
+                self._leave_result()
+                continue
             self._tap(HOME_ATTACK)
             time.sleep(2)
             if attack_menu_open(self._frame("attack-menu")):
@@ -381,6 +390,22 @@ class AttackRunner(BaseModel):
             # only needs the panel to swallow one press and then retries.
             time.sleep(HOME_RETRY_DELAY)
         return None
+
+    def _leave_result(self) -> None:
+        """Tap 回營 until the result screen has actually gone.
+
+        One tap was not enough and cost four runs in a row. The loot panel
+        vanishes as the result screen starts animating in, so the tap fired the
+        moment `_battle_view` reads nothing lands before the button is alive; the
+        village then stayed covered and every following run stood down with
+        畫面不在主村 without ever attacking.
+        """
+        for _ in range(RESULT_ATTEMPTS):
+            if not battle_over(self._frame("result")):
+                return
+            self._tap(RETURN_HOME)
+            time.sleep(RESULT_RETRY_DELAY)
+        logger.warning("The result screen will not close; the next run has nowhere to start")
 
     def _plan(self, frame: bytes, rage_count: int, freeze_count: int) -> AttackPlan | None:
         """The plan for this opponent: the one handed in, the AI's, or the flat default.
@@ -783,7 +808,7 @@ class AttackRunner(BaseModel):
             # The result screen is the first one with no loot panel on it.
             if self._battle_view("battle") is None:
                 break
-        self._tap(RETURN_HOME)
+        self._leave_result()
         return self._seen is not None and self._seen != opening
 
     def run(self) -> AttackReport:
