@@ -526,7 +526,11 @@ class AttackRunner(BaseModel):
         return None
 
     def _spread_troops(
-        self, troops: list[int], anchors: tuple[tuple[int, int], ...], pushed: int
+        self,
+        troops: list[int],
+        anchors: tuple[tuple[int, int], ...],
+        pushed: int,
+        between: Callable[[], None] = lambda: None,
     ) -> list[tuple[int, int]]:
         """Empty the troop cards along the flank; returns the line ending up in use.
 
@@ -563,6 +567,10 @@ class AttackRunner(BaseModel):
             logger.info("%d troop card(s) still hold something", len(remaining))
             if not remaining:
                 break
+            # Most of the minute the army takes to go down is spent here, so
+            # anything on the clock gets its turn between passes rather than
+            # waiting for the last card to empty.
+            between()
         return line
 
     def _drop_single(self, card: int, point: tuple[int, int]) -> bool:
@@ -779,28 +787,25 @@ class AttackRunner(BaseModel):
         # minute in, as the push reaches the first line of defences.
         timings = plan.timings if plan and plan.timings else self.abilities
         opened = time.monotonic()
-        pending = (
-            [
-                (
-                    opened + timings.freeze,
-                    f"{len(freezes)} freeze card(s)",
-                    partial(self._cast, freezes, freeze_targets, frame),
-                )
-            ]
-            if freezes
-            else []
-        )
+        pending: Moves = []
+        if freezes:
+            pending.append((
+                opened + timings.freeze,
+                f"{len(freezes)} freeze card(s)",
+                partial(self._cast, freezes, freeze_targets, frame),
+            ))
         # Putting the army down takes about as long as the freeze is meant to
         # wait — measured, the last hero lands 65 seconds in where the freeze
         # wants to go at 35 — so a schedule that only starts once everything is
-        # down can never be early enough. The deployment offers it a turn after
-        # each step instead, and the log records when a move really happened
-        # rather than when it was meant to.
+        # down can never be early enough. It is offered a turn between the troop
+        # passes instead, which is where most of that minute goes; checking only
+        # between the larger steps left it 5 to 10 seconds late, because a rage
+        # cast is ten seconds nobody can interrupt.
+        catch_up = partial(self._play_due, opened, pending)
         self._drop_singles(vanguard, middle, "siege")
-        line = self._spread_troops(troops, anchors, pushed)
-        pending = self._play_due(opened, pending)
+        line = self._spread_troops(troops, anchors, pushed, catch_up)
         self._cast(rages, rage_path, frame)
-        pending = self._play_due(opened, pending)
+        catch_up()
         # Recomputed, not reused: the flank moves while the troops go down, and
         # a hero sent to the pre-push midpoint is sent somewhere already refused.
         middle = line[len(line) // 2]
@@ -848,17 +853,20 @@ class AttackRunner(BaseModel):
             if not self._play(opened, move):
                 return
 
-    def _play_due(self, opened: float, pending: Moves) -> Moves:
-        """Play whatever is already due and hand back what is still to come.
+    def _play_due(self, opened: float, pending: Moves) -> None:
+        """Play whatever is already due, dropping it from `pending` as it goes.
 
-        Called between the steps of the deployment, because a spell timed from
-        the attack opening comes due while the army is still going down.
+        Handed to the deployment to call between passes, because a spell timed
+        from the attack opening comes due while the army is still going down and
+        waiting for the last hero would put it half a minute late.
         """
-        due = [move for move in pending if move[0] <= time.monotonic()]
-        for move in sorted(due, key=lambda move: move[0]):
+        for move in sorted(
+            [move for move in pending if move[0] <= time.monotonic()], key=lambda move: move[0]
+        ):
+            pending.remove(move)
             if not self._play(opened, move):
-                return []
-        return [move for move in pending if move not in due]
+                pending.clear()
+                return
 
     def _play(self, opened: float, move: tuple[float, str, Callable[[], None]]) -> bool:
         """One scheduled move, or False once the battle is over and there is no point.

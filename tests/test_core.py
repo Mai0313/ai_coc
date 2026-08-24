@@ -673,9 +673,9 @@ class AttackTests(unittest.TestCase):
         ]
         on = ScoutView(loot=LootOffer(gold=1, elixir=1, dark=1), can_skip=False)
         with patch.object(AttackRunner, "_battle_view", return_value=on):
-            left = self._runner()._play_due(0.0, pending)
+            self._runner()._play_due(0.0, pending)
         assert played == ["freeze"]
-        assert [what for _, what, _ in left] == ["later"]
+        assert [what for _, what, _ in pending] == ["later"]
 
     def test_the_freeze_no_longer_queues_behind_the_slowest_hero(self) -> None:
         """Cast after the last ability it sat out a champion's 45 seconds first."""
