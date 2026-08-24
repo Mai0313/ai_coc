@@ -476,7 +476,7 @@ class AttackRunner(BaseModel):
             time.sleep(1)
         return None
 
-    def _usable_line(self, card: int, anchors: tuple[tuple[int, int], ...]) -> int | None:
+    def _usable_line(self, troops: list[int], anchors: tuple[tuple[int, int], ...]) -> int | None:
         """How far out the flank has to be pushed before the game accepts drops on it.
 
         Troops are dropped as probes, because a village whose boundary reaches
@@ -486,8 +486,11 @@ class AttackRunner(BaseModel):
         takes nothing pushes the line further out; None means even the playfield
         edge was inside the boundary.
 
-        The card is what says whether the probe landed. Reading the game's red
-        warning instead never worked: the tap is as often swallowed without one,
+        The card is what says whether the probe landed, and which card is picked
+        fresh each time: three troops a probe over five pushes and four flanks is
+        more than a small army holds, and a card that has run dry reads exactly
+        like a flank the village has grown over. Reading the game's red warning
+        instead never worked either — the tap is as often swallowed without one,
         so this returned 0 on the first try every time and the flank was never
         actually tested.
 
@@ -501,6 +504,10 @@ class AttackRunner(BaseModel):
         # them, and the battle only runs three minutes.
         shot = self._frame("before-probe")
         for attempt in range(DEPLOY_ATTEMPTS):
+            card = next(iter(live_cards(shot, troops)), None)
+            if card is None:
+                logger.warning("Every troop card is spent before a flank was settled")
+                return None
             line = deploy_line(LINE_POINTS, *push_line(anchors, attempt))
             probes = [line[0], line[len(line) // 2], line[-1]]
             self.adb.tap_many([(card, CARD_ROW_Y), *probes], self.display)
@@ -720,7 +727,7 @@ class AttackRunner(BaseModel):
             # does not exist, and fitting to it is what saves probing outwards one
             # refused troop at a time. It is still probed once before it is used.
             anchors = (fitted_line(battle, *preset) if battle else None) or preset
-            pushed = self._usable_line(troops[0], anchors)
+            pushed = self._usable_line(troops, anchors)
             if pushed is not None:
                 break
         else:

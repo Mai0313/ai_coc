@@ -15,6 +15,8 @@ import time
 from typing import TYPE_CHECKING
 import logging
 
+from pydantic import PrivateAttr
+
 from ai_coc import plans
 from ai_coc.models import (
     MapEdge,
@@ -229,6 +231,8 @@ class _MapSurvey(AttackRunner):
     """
 
     survey: MapSurvey = MapSurvey()
+    # Which cards the probes may spend, read once off the full row.
+    _troops: list[int] = PrivateAttr(default_factory=list)
 
     def _edge(self, degrees: float, shot: bytes) -> tuple[MapEdge | None, bytes]:
         """Walk one ray inwards from the screen edge until a drop lands."""
