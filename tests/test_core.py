@@ -50,10 +50,11 @@ from ai_coc.parsers.scout import (
     read_scout,
     read_stock,
     card_groups,
+    field_units,
+    card_drained,
     freeze_cards,
     army_strength,
     counted_cards,
-    deploy_refused,
     attack_menu_open,
 )
 from ai_coc.parsers.village import parse_village
@@ -227,10 +228,27 @@ class ScoutTests(unittest.TestCase):
         assert attack_menu_open((FRAMES / "attack_menu.png").read_bytes())
         assert not attack_menu_open((FRAMES / "scout_grass.png").read_bytes())
 
-    def test_a_refused_drop_is_recognised(self) -> None:
-        """Layouts vary more than one drop line can allow for, so the refusal matters."""
-        assert deploy_refused((FRAMES / "deploy_refused.png").read_bytes())
-        assert not deploy_refused((FRAMES / "scout_grass.png").read_bytes())
+    def test_only_the_card_that_lost_one_shows_it(self) -> None:
+        """A drop is judged on the card's own corner, which repaints when it loses one.
+
+        The corner is read rather than the number: the giant's illustration
+        swallows its count entirely, and this still separates the card that
+        deployed from the nine that did not.
+        """
+        before = (FRAMES / "pass_before.png").read_bytes()
+        after = (FRAMES / "pass_after.png").read_bytes()
+        slots = [171, 293, 413, 557, 694, 804, 925, 1046, 1181, 1302]
+        assert card_drained(before, after, slots) == [171]
+        assert card_drained(before, before, slots) == []
+
+    def test_a_hero_on_the_field_is_read_off_its_health_bar(self) -> None:
+        """Three of the four went down; the run that recorded this reported four."""
+        frame = (FRAMES / "heroes_down.png").read_bytes()
+        assert field_units(frame, [557, 694, 804, 925, 1046]) == [694, 804, 925]
+
+    def test_a_hero_still_in_its_card_carries_no_bar(self) -> None:
+        """A hero keeps its card once it lands, so nothing else separates the two."""
+        assert field_units((FRAMES / "cards_full.png").read_bytes(), [815, 925, 1046, 1167]) == []
 
     def test_army_strength_splits_on_the_glyphs_that_are_not_digits(self) -> None:
         """The troop icon and the slash are found by matching no digit well."""
@@ -419,11 +437,11 @@ class BoundaryTests(unittest.TestCase):
 
     def test_a_bent_line_walks_through_every_anchor(self) -> None:
         """A chord across a diamond cuts back inside it, so the middle gets its own anchor."""
-        bent = deploy_line(5, (100, 100), (400, 100), (400, 400))
-        assert bent[0] == (100, 100)
+        bent = deploy_line(5, (100, 150), (400, 150), (400, 400))
+        assert bent[0] == (100, 150)
         assert bent[-1] == (400, 400)
         # The corner is an anchor, so a point lands on it rather than cutting it off.
-        assert (400, 100) in bent
+        assert (400, 150) in bent
 
     def test_a_crossing_too_far_in_reads_as_nothing(self) -> None:
         """A ray that stops at the playfield edge never met a boundary lying beyond it.
@@ -520,6 +538,12 @@ class AttackTests(unittest.TestCase):
         """Both ends can clear that corner while the span between them cuts across it."""
         points = deploy_line(LINE_POINTS, (30, 700), (600, 700))
         assert not any(x < ABANDON_BUTTON[0] and y > ABANDON_BUTTON[1] for x, y in points)
+
+    def test_a_line_the_planner_drew_under_the_card_row_is_pulled_back_up(self) -> None:
+        """Gemini answered y_pct 80, which is y 720 — the army bar, not the ground."""
+        under = deploy_line(LINE_POINTS, (320, 522), (672, 720))
+        assert all(PLAYFIELD[1] <= y <= PLAYFIELD[3] for _, y in under)
+        assert all(PLAYFIELD[0] <= x <= PLAYFIELD[2] for x, _ in under)
 
     def test_the_lower_flanks_still_push_past_a_wide_village(self) -> None:
         """Trimming the whole bottom edge to dodge that button left them nowhere to go."""
@@ -620,6 +644,12 @@ class AttackTests(unittest.TestCase):
         groups = card_groups((FRAMES / "cards_full.png").read_bytes())
         assert [len(group) for group in groups] == [4, 1, 4, 2]
         assert groups[0] == [171, 293, 413, 534]
+
+    def test_the_empty_slot_the_row_ends_with_is_not_a_card(self) -> None:
+        """It has no level badge, and it arrived downstream as one more hero to drop."""
+        groups = card_groups((FRAMES / "cards_with_empty_slot.png").read_bytes())
+        assert [len(group) for group in groups] == [3, 1, 4, 2]
+        assert 1416 not in [slot for group in groups for slot in group]
 
     def test_spells_are_told_apart_from_heroes_by_their_count(self) -> None:
         """Spells carry an xN in the corner; heroes and the siege machine do not."""

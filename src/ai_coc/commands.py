@@ -35,17 +35,18 @@ from ai_coc.parsers.scout import (
     read_scout,
     read_stock,
     card_groups,
+    field_units,
+    card_drained,
     freeze_cards,
     army_strength,
     counted_cards,
-    deploy_refused,
     attack_menu_open,
     idle_disconnected,
 )
 from ai_coc.adapters.secrets import SecretStore
 from ai_coc.parsers.boundary import VILLAGE_CENTRE, boundary_reach
 
-from .ui.attack import CARD_ROW_Y, SINGLE_DROP_DELAY, REFUSAL_CLEAR_DELAY, AttackRunner
+from .ui.attack import CARD_ROW_Y, DROP_SETTLE, SINGLE_DROP_DELAY, AttackRunner
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -117,8 +118,8 @@ def attack(
 
 
 # Twelve rays is the whole village at 30 degree steps, and two drops on each is
-# what fits: a refused drop costs no troop but does cost the three seconds its
-# banner takes to clear, so a wider sweep runs past the end of the battle.
+# what fits: a refused drop costs no troop but does cost the capture that reads
+# the card afterwards, so a wider sweep runs past the end of the battle.
 SURVEY_RAYS = tuple(angle * 30 for angle in range(12))
 # How far either side of the predicted line the two drops go. Wider than the
 # margin `fitted_line` already adds, so a ray that agrees really does straddle it.
@@ -158,11 +159,14 @@ class _BoundarySurvey(AttackRunner):
                     round(VILLAGE_CENTRE[0] + dx * (radius + offset)),
                     round(VILLAGE_CENTRE[1] + dy * (radius + offset)),
                 )
+                before = self._frame(f"{degrees:03.0f}deg-{offset:+d}-before")
                 self.adb.tap_many([(card, CARD_ROW_Y), point], self.display, gap=SINGLE_DROP_DELAY)
-                refused = deploy_refused(self._frame(f"{degrees:03.0f}deg-{offset:+d}"))
-                verdicts.append(refused)
-                if refused:
-                    time.sleep(REFUSAL_CLEAR_DELAY)
+                time.sleep(DROP_SETTLE)
+                after = self._frame(f"{degrees:03.0f}deg-{offset:+d}")
+                # The card is what the survey measures, because the warning
+                # banner it used to read is raised by four different things and
+                # not raised at all by a tap the game simply swallows.
+                verdicts.append(not card_drained(before, after, [card]))
             ray = ProbeRay(
                 degrees=degrees,
                 predicted=round(radius),
@@ -230,11 +234,11 @@ def read(png: bytes) -> FrameReading:
         stock=read_stock(png),
         army=army_strength(png),
         attack_menu=attack_menu_open(png),
-        refused=deploy_refused(png),
         idle_dialog=idle_disconnected(png),
         card_groups=groups,
         counted=counted_cards(png, slots),
         freezes=freeze_cards(png, slots),
         live=live_cards(png, slots),
+        on_field=field_units(png, slots),
         counts={slot: card_count(png, slot) for slot in slots},
     )

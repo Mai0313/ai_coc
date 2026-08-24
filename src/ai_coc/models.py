@@ -566,12 +566,12 @@ class FrameReading(BaseModel):
     stock: VillageStock | None = None
     army: tuple[int, int] | None = None
     attack_menu: bool = False
-    refused: bool = False
     idle_dialog: bool = False
     card_groups: list[list[int]] = Field(default_factory=list)
     counted: list[int] = Field(default_factory=list)
     freezes: list[int] = Field(default_factory=list)
     live: list[int] = Field(default_factory=list)
+    on_field: list[int] = Field(default_factory=list)
     counts: dict[int, int | None] = Field(default_factory=dict)
 
 

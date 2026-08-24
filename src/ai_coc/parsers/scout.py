@@ -67,6 +67,17 @@ CARD_GROUP_GAP = 20
 CARD_MIN_WIDTH = 80
 CARD_EDGE_GAP = 5
 CARD_LIT_BRIGHTNESS = 60
+# Every real card carries its level in a badge at the bottom-left corner. The
+# empty slot the row ends with does not: it is a dashed outline with the
+# battlefield showing through, so it segments as a card of its own whenever the
+# ground behind it is bright enough, and then arrives downstream as one more
+# hero — which cost a run all five of that card's attempts, tapping nothing.
+# Measured on a full row, every real card lights 0.15 of that badge or more and
+# the empty slot lights none of it at all.
+BADGE_LEFT, BADGE_RIGHT = -44, -4
+BADGE_TOP, BADGE_BOTTOM = 838, 874
+BADGE_BRIGHTNESS = 175
+BADGE_LIT = 0.05
 
 # Troop and spell cards carry an `xN` count in their top-right corner; hero and
 # siege cards do not. Measured, that corner reads 0.21 of its pixels as white or
@@ -99,13 +110,28 @@ ARMY_BOX = (700, 192, 880, 230)
 ARMY_INK_BRIGHTNESS = 200
 ARMY_DIGIT_TOLERANCE = 22
 
-# 你無法在紅線區域內派遣部隊, the red banner the game shows when a drop lands
-# inside the deployment boundary. Village layouts vary far more than a fixed
-# drop line can allow for, so this is what tells the loop to move further out.
-# Measured, the warning fills 0.15 of this box in red against at most 0.03 of
-# whatever village happens to be behind it.
-REFUSED_BOX = (600, 238, 1010, 278)
-REFUSED_RED = 0.07
+# What a drop that landed leaves behind, which is the only evidence the game
+# gives that can be trusted. A counted card repaints its `xN` corner, and it does
+# so even where the number itself will not read: measured live, a corner whose
+# card lost something differs in 368 to 1139 of its pixels, and one whose card
+# did not differs in exactly none, selecting the card included.
+#
+# The red banner used to stand in for this and cannot. Measured live, a troop
+# tapped inside the boundary is as often swallowed in silence as it is answered
+# with 你無法在紅線區域內派遣部隊, while 請選擇其他兵種, 已部署所有兵力 and 該法術
+# 已用完 are the same red in the same place — and so is a burning building, which
+# put four flanks in a row through a push they never needed.
+CARD_CORNER_INK = 40
+CARD_CORNER_PIXELS = 20
+
+# A hero's card does not empty when the hero lands: it turns into the ability
+# button and keeps its colour, so `live_cards` cannot tell one that went down
+# from one still waiting. The health bar the game draws over the card can —
+# measured, it fills 0.33 to 0.37 of this strip while a hero still in the card
+# leaves at most 0.02. It takes a second or so to appear, so read it after a wait.
+HERO_BAR_TOP, HERO_BAR_BOTTOM = 714, 738
+HERO_BAR_HALF_WIDTH = 50
+HERO_BAR_GREEN = 0.15
 
 # The village's own storages, on the four bars down the home screen's right edge.
 # Only the first three are read; the fourth is gems. The numbers are right-aligned
@@ -277,6 +303,20 @@ def attack_menu_open(png: bytes) -> bool:
     return _orange_ratio(image, FIND_MATCH_BOX) >= BUTTON_ORANGE
 
 
+def _badged(image: Image.Image, centre: int) -> bool:
+    """Whether this slot carries a card's level badge, which the empty one does not."""
+    data = image.crop((
+        centre + BADGE_LEFT,
+        BADGE_TOP,
+        centre + BADGE_RIGHT,
+        BADGE_BOTTOM,
+    )).tobytes()
+    lit = sum(
+        max(data[i], data[i + 1], data[i + 2]) > BADGE_BRIGHTNESS for i in range(0, len(data), 3)
+    )
+    return lit / (len(data) // 3) >= BADGE_LIT
+
+
 def card_groups(png: bytes) -> list[list[int]]:
     """Card centres in the battle row, split into the groups the game lays them out in.
 
@@ -303,6 +343,7 @@ def card_groups(png: bytes) -> list[list[int]]:
             start = None
     if len(spans) > 1 and spans[1][0] - spans[0][1] < CARD_EDGE_GAP:
         spans = spans[1:]
+    spans = [span for span in spans if _badged(image, (span[0] + span[1]) // 2)]
     groups: list[list[int]] = []
     for index, (left, right) in enumerate(spans):
         if index == 0 or left - spans[index - 1][1] > CARD_GROUP_GAP:
@@ -359,14 +400,57 @@ def card_count(png: bytes, slot: int) -> int | None:
     return int(digits) if digits else None
 
 
-def deploy_refused(png: bytes) -> bool:
-    """Whether the game is refusing drops for landing inside the boundary."""
-    data = Image.open(io.BytesIO(png)).convert("RGB").crop(REFUSED_BOX).tobytes()
-    red = sum(
-        data[i] > 170 and data[i] - data[i + 1] > 80 and data[i] - data[i + 2] > 80
-        for i in range(0, len(data), 3)
+def _corner(image: Image.Image, slot: int) -> bytes:
+    return (
+        image
+        .crop((slot + COUNT_LEFT, COUNT_TOP, slot + COUNT_RIGHT, COUNT_BOTTOM))
+        .convert("L")
+        .tobytes()
     )
-    return red / (len(data) // 3) >= REFUSED_RED
+
+
+def card_drained(before: bytes, after: bytes, slots: Sequence[int]) -> list[int]:
+    """Which of these counted cards actually put something on the field.
+
+    The `xN` corner is repainted whenever a card loses one, which answers the
+    question the loop keeps asking — did that drop land — without needing to read
+    the number, and without believing a banner that means four different things.
+    """
+    first = Image.open(io.BytesIO(before)).convert("RGB")
+    second = Image.open(io.BytesIO(after)).convert("RGB")
+    drained: list[int] = []
+    for centre in slots:
+        moved = sum(
+            abs(a - b) > CARD_CORNER_INK
+            for a, b in zip(_corner(first, centre), _corner(second, centre), strict=False)
+        )
+        if moved >= CARD_CORNER_PIXELS:
+            drained.append(centre)
+    return drained
+
+
+def field_units(png: bytes, slots: Sequence[int]) -> list[int]:
+    """Which of these cards have their hero alive on the field, by its health bar.
+
+    A hero card is the one that says nothing otherwise: it stays lit and stays
+    counted once the hero is down, because it has become the ability button.
+    """
+    image = Image.open(io.BytesIO(png)).convert("RGB")
+    down: list[int] = []
+    for centre in slots:
+        data = image.crop((
+            centre - HERO_BAR_HALF_WIDTH,
+            HERO_BAR_TOP,
+            centre + HERO_BAR_HALF_WIDTH,
+            HERO_BAR_BOTTOM,
+        )).tobytes()
+        green = sum(
+            data[i + 1] > 150 and data[i + 1] - data[i] > 40 and data[i + 1] - data[i + 2] > 40
+            for i in range(0, len(data), 3)
+        )
+        if green / (len(data) // 3) >= HERO_BAR_GREEN:
+            down.append(centre)
+    return down
 
 
 def army_strength(png: bytes) -> tuple[int, int] | None:
