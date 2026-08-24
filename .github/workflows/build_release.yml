@@ -80,6 +80,7 @@ jobs:
           uv run pyinstaller src/${{ github.event.repository.name }}/cli.py --${{ env.PACKAGE_MODE }} --windowed `
             -n ${{ github.event.repository.name }} `
             --version-file version_info.txt `
+            --add-data "src/${{ github.event.repository.name }}/prompts;${{ github.event.repository.name }}/prompts" `
             --copy-metadata ${{ github.event.repository.name }}
 
       - name: Create .zip

@@ -64,6 +64,7 @@ from ai_coc.models import (
     AccountSnapshot,
     EmulatorInstance,
 )
+from ai_coc.prompts import PROMPTS, render
 from ai_coc.constants import (
     APP_NAME,
     LOG_PATH,
@@ -1044,10 +1045,7 @@ class MainWindow(QMainWindow):
 
         def locate(png: bytes, goal: str) -> tuple[int, int]:
             target = client.generate_structured(
-                f"分析這張《部落衝突》畫面並尋找{goal}。x_pct 與 y_pct 是畫面寬高的百分比"
-                "（0 到 100）。找不到時 found=false，並在 reason 用繁體中文說明畫面上看到什麼。",
-                LocatedTarget,
-                png,
+                render("locate_target", goal=goal), LocatedTarget, png
             )
             logger.info("AI located %s: %s", goal, target.model_dump())
             if not target.found:
@@ -1175,10 +1173,7 @@ class MainWindow(QMainWindow):
             active = m.ensure_coc(a.index)
             png = m.screenshot(active)
             captured.append(png)
-            yield from client.stream(
-                "你是部落衝突助手。請用繁體中文簡短回答：你現在看到什麼畫面？列出兩個可見重點。",
-                png,
-            )
+            yield from client.stream(PROMPTS["live_test"], png)
 
         def done() -> None:
             # Only reached once the whole generator ran, so the capture is there.
@@ -1235,9 +1230,14 @@ class MainWindow(QMainWindow):
             self.execute_agent_command(text, task_id)
             return
         frame = self.current_frame if self.chat_image_pending else None
-        context = (
-            f"{AGENT_PROFILE}\n請用繁體中文簡潔回答。\n使用者已確認、必須長期遵守的教學：\n{self.knowledge_context()}\nCurrent account: {self.account_context()}\n"
-            f"Current emulator={self.active.emulator_id if self.active else 'none'}\nRecent conversation:\n{recent}\nUser: {text}"
+        context = render(
+            "chat",
+            profile=AGENT_PROFILE,
+            knowledge=self.knowledge_context(),
+            account=self.account_context(),
+            emulator=self.active.emulator_id if self.active else "none",
+            recent=recent,
+            text=text,
         )
 
         def done() -> None:
@@ -1295,10 +1295,7 @@ class MainWindow(QMainWindow):
         def task() -> tuple[bytes, str, bool]:
             reference = ""
             if reference_frame:
-                reference = client.generate(
-                    "這是使用者提供的操作參考圖片。請用繁體中文描述目標按鈕文字、外觀、位置，以及要完成的操作。",
-                    reference_frame.png,
-                )
+                reference = client.generate(PROMPTS["reference_image"], reference_frame.png)
             active = m.ensure_coc(a.index)
             last_png = b""
             max_steps = (
@@ -1318,15 +1315,15 @@ class MainWindow(QMainWindow):
                 self.db.update_task(task_id, "RUNNING", f"第 {step + 1} 步：截圖、判斷與驗證")
                 last_png = m.screenshot(active)
                 elements = UiElementList(m.ui_elements(active)).model_dump_json()
-                prompt = (
-                    f"你正在控制部落衝突。使用者指令：{command}\n"
-                    f"使用者附圖提供的參考：{reference}\n使用者過去確認的操作教學：\n{self.knowledge_context()}\n"
-                    f"MuMu accessibility 可操作元素（優先使用其精確座標）：{elements}\n"
-                    "檢查目前畫面是否已完成：完成就把 done 設為 true，否則從 tap、back、swipe_up、"
-                    "swipe_down 選一個動作；tap 需要 x_pct 與 y_pct，兩者都是畫面寬高的百分比（0 到 100）。"
-                    "message 一律用繁體中文說明你的判斷。"
-                    f"授權狀態：自主升級={self.auto_upgrade.isChecked()}，刷牆={self.auto_walls.isChecked()}，自主進攻={self.auto_attack.isChecked()}。"
-                    "只有對應授權為 true 才能花費遊戲資源或進攻；禁止花費寶石、現金、刪除或帳號操作。"
+                prompt = render(
+                    "agent_step",
+                    command=command,
+                    reference=reference,
+                    knowledge=self.knowledge_context(),
+                    elements=elements,
+                    may_upgrade=self.auto_upgrade.isChecked(),
+                    may_walls=self.auto_walls.isChecked(),
+                    may_attack=self.auto_attack.isChecked(),
                 )
                 action = client.generate_structured(prompt, AgentAction, last_png)
                 logger.info("Agent step %d/%d: %s", step + 1, max_steps, action.model_dump())

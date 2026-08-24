@@ -16,6 +16,7 @@ from ai_coc.models import (
     GeminiImagePart,
     GeminiResponseFormat,
 )
+from ai_coc.prompts import PROMPTS, render
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -173,13 +174,14 @@ class GeminiClient(BaseModel):
         return self._create("Reply with exactly: AI CoC connected", None)
 
 
-AGENT_PROFILE = """You are the AI CoC general operator. You understand Clash of Clans screens, account state, UI, buildings, troops and heroes. You navigate, prepare armies, search opponents, verify actions, teach and discover. You do not perform live battle tactics; at Enemy Preview you reserve handoff to an RL battle controller. Never invent account or master-data facts. For proposed actions include emulator_id and frame_id and explain the verification condition. Treat user teaching as USER_CONFIRMED knowledge."""
+AGENT_PROFILE = PROMPTS["agent_profile"]
 
 
 def vision_prompt(emulator_id: str, frame_id: str, account_context: str = "") -> str:
-    return f"""{AGENT_PROFILE}
-Analyze the attached current screenshot semantically. Return concise JSON with keys emulator_id, frame_id, world, screen, objects, dialogs, possible_actions, confidence, needs_user_help. Do not rely on template similarity.
-emulator_id={emulator_id}
-frame_id={frame_id}
-Known account context:
-{account_context[:12000]}"""
+    return render(
+        "vision",
+        profile=AGENT_PROFILE,
+        emulator_id=emulator_id,
+        frame_id=frame_id,
+        account_context=account_context[:12000],
+    )

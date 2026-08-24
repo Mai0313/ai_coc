@@ -22,6 +22,7 @@ from ai_coc.models import (
     DisplayTarget,
     LootThresholds,
 )
+from ai_coc.prompts import PROMPTS, PROMPT_DIR, render
 from ai_coc.ui.attack import (
     PLAYFIELD,
     DEPLOY_END,
@@ -237,6 +238,37 @@ class ScoutTests(unittest.TestCase):
         Image.new("RGB", (800, 450)).save(buffer, "PNG")
         with pytest.raises(ValueError, match="1600x900"):
             read_scout(buffer.getvalue())
+
+
+class PromptTests(unittest.TestCase):
+    """Prompts live as Markdown so a change to what the model is told is a readable diff."""
+
+    def test_every_prompt_the_code_asks_for_exists(self) -> None:
+        expected = {
+            "agent_profile",
+            "agent_step",
+            "attack_plan",
+            "chat",
+            "live_test",
+            "locate_target",
+            "reference_image",
+            "vision",
+        }
+        assert expected <= set(PROMPTS)
+
+    def test_a_prompt_fills_in_its_placeholders(self) -> None:
+        filled = render("locate_target", goal="設定齒輪")
+        assert "設定齒輪" in filled
+        assert "{" not in filled
+
+    def test_the_attack_prompt_still_takes_its_spell_counts(self) -> None:
+        """`_plan` formats these in; losing them would ask for the wrong spell count."""
+        assert "{rage_count}" in PROMPTS["attack_plan"]
+        assert "{freeze_count}" in PROMPTS["attack_plan"]
+
+    def test_a_prompt_file_is_shipped_beside_the_module(self) -> None:
+        """PyInstaller lays the bundle out this way, so the loader looks here."""
+        assert (PROMPT_DIR / "attack_plan.md").is_file()
 
 
 class MapFrameTests(unittest.TestCase):

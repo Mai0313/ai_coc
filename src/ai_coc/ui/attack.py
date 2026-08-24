@@ -26,6 +26,7 @@ from ai_coc.models import (
     DisplayTarget,
     LootThresholds,
 )
+from ai_coc.prompts import PROMPTS
 from ai_coc.adapters.ai import GeminiClient
 from ai_coc.adapters.adb import AdbController
 from ai_coc.parsers.scout import (
@@ -244,22 +245,7 @@ def drop_points(line: list[tuple[int, int]], seed: int) -> list[tuple[int, int]]
     return [line[(seed + i * step) % len(line)] for i in range(DROPS_PER_PASS)]
 
 
-PLAN_PROMPT = """這是《部落衝突》的偵察畫面，我要打資源，請看整張圖決定怎麼打。
-
-deploy_from：從哪一側投兵。**選防禦最強、防禦建築最密集的那一側**，迫擊砲、防空火箭、法師塔、地獄塔、X 連弩集中的方向就是要打的方向。
-現在的部隊強度足以正面吃下防禦，先把防禦拆乾淨，資源建築沒有還手能力，後面自然收得到。
-**不要挑資源最密集的那一側下兵**，那是常見的錯誤：金庫和聖水瓶血量很高又不會反擊，會變成擋在路上的肉盾一直吸傷害，而你的部隊同時被還活著的防禦持續射擊，最後兵死光、防禦卻完好。
-deploy_start 與 deploy_end：投兵線的兩端，部隊會沿著這條線平均撒開。
-**整條線都必須在村莊外面的空地上**，貼著你選的那一側外緣走，像村莊外圍的一條切線；線的中段離村莊中心不能比兩端近太多。
-**絕對不可以讓這條線穿過村莊、壓在建築或城牆上**，那樣遊戲會拒絕派兵，整支軍隊會全部浪費掉。
-rage_points：狂暴法術的落點，**剛好 {rage_count} 個，不能少**。
-部隊是沿著那條線撒開下去的，所以他們是一整片往村莊中心推進，不是一條線；落點要鋪滿那一片會經過的區域，深度和寬度都要分開，**不要排成一直線**。
-一瓶狂暴的覆蓋範圍是寬約畫面 15%、高約畫面 13% 的橢圓（畫面是等角視角，所以橫向比縱向寬）。彼此不要重疊，重疊等於整瓶浪費。
-優先蓋在部隊會卡住的地方：外牆的突破口、防禦最密集因而會拖最久的那一段。
-freeze_points：冰凍法術的落點，**剛好 {freeze_count} 個**。冰凍是最後才放的，放在部隊推進路線上防禦火力最強的地方（多座防禦交叉的位置，或單一高等防禦）。每一個落點蓋不同的防禦，不要疊在一起。
-heroes：畫面最下方那排卡片裡，**英雄卡由左到右**分別是誰，用 king（野蠻人之王）、queen（弓箭女皇）、warden（大守護者）、champion（皇家守護）、minion_prince（飛盾王子）；認不出來的填 unknown。英雄卡是有等級數字、沒有 xN 數量的那幾張，不要把士兵、攻城機器或法術算進去。正在升級的英雄不能出戰，所以卡片會直接消失，順序不是固定的。
-座標是畫面百分比，x_pct 與 y_pct 都是 0 到 100，只能落在村莊範圍內。
-reason 用繁體中文一句話說明為什麼選這一側。"""
+PLAN_PROMPT = PROMPTS["attack_plan"]
 
 
 class AttackRunner(BaseModel):
