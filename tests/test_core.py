@@ -1,5 +1,6 @@
 import io
 import json
+import math
 from pathlib import Path
 import tempfile
 import unittest
@@ -52,6 +53,7 @@ from ai_coc.parsers.scout import (
 )
 from ai_coc.parsers.village import parse_village
 from ai_coc.adapters.secrets import dotenv_value
+from ai_coc.parsers.boundary import boundary_line, boundary_reach
 from ai_coc.adapters.database import Database
 
 FRAMES = Path(__file__).parent / "frames"
@@ -235,6 +237,50 @@ class ScoutTests(unittest.TestCase):
         Image.new("RGB", (800, 450)).save(buffer, "PNG")
         with pytest.raises(ValueError, match="1600x900"):
             read_scout(buffer.getvalue())
+
+
+class BoundaryTests(unittest.TestCase):
+    """The red stroke the game draws around a village it will not accept drops inside.
+
+    The two frames are live battles masked down to the rays the tests walk, one
+    per village theme, because the theme changes the ground under the stroke.
+    """
+
+    def _painted(self, marks: list[tuple[int, tuple[int, int, int]]]) -> Image.Image:
+        """A blank battle frame with vertical marks at the given x, for one ray east."""
+        image = Image.new("RGB", (1600, 900), (60, 120, 40))
+        pixels = image.load()
+        for x, colour in marks:
+            for offset in range(2):
+                pixels[x + offset, 400] = colour
+        return image
+
+    def test_the_stroke_is_found_where_it_was_painted(self) -> None:
+        found = boundary_reach(self._painted([(1200, (170, 70, 26))]), 0)
+        assert found == (1201, 400)
+
+    def test_the_outer_crossing_is_the_one_that_bounds_the_drop(self) -> None:
+        """A ray leaving the middle crosses a stair-step boundary more than once."""
+        marks = [(1000, (170, 70, 26)), (1300, (170, 70, 26))]
+        assert boundary_reach(self._painted(marks), 0) == (1301, 400)
+
+    def test_a_wall_highlight_is_too_bright_to_be_the_stroke(self) -> None:
+        """Measured, a wall reads (255, 71, 0) and a fire (255, 140, 24)."""
+        assert boundary_reach(self._painted([(1200, (255, 71, 0))]), 0) is None
+        assert boundary_reach(self._painted([(1200, (255, 140, 24))]), 0) is None
+
+    def test_a_frame_of_another_resolution_is_rejected(self) -> None:
+        with pytest.raises(ValueError, match="1600x900"):
+            boundary_reach(Image.new("RGB", (1280, 720)), 0)
+
+    def test_the_boundary_is_read_over_two_village_themes(self) -> None:
+        rays = [angle * 30 for angle in range(12)]
+        for name in ("battle_boundary_grass.png", "battle_boundary_ice.png"):
+            points = boundary_line((FRAMES / name).read_bytes(), rays)
+            radii = [math.hypot(x - 800, y - 400) for x, y in points]
+            assert len(points) >= 6, name
+            # One closed curve, so nothing should sit near the middle of it.
+            assert min(radii) > 200, (name, sorted(radii))
 
 
 class AttackTests(unittest.TestCase):
