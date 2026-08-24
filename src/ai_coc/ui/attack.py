@@ -625,11 +625,19 @@ class AttackRunner(BaseModel):
         # effect for the whole cargo. A plan names one per bottle instead.
         freeze_targets = tuple(point.pixels() for point in plan.freeze_points) if plan else ()
         freeze_targets = freeze_targets or (FREEZE_TARGET,)
-        # Rage goes down first, along the path the troops are about to take, so
-        # they are inside it the whole way in. Freeze waits until the end.
-        self._cast(rages, rage_path, frame)
+        # The siege machine opens the path, then the troops go down, and only
+        # then does rage land on the route ahead of them.
+        #
+        # Rage used to be cast first, on the reasoning that the troops should be
+        # inside it the whole way in. That holds only if they land at once, and
+        # they do not: measured across three battles, the last troop is down 30
+        # seconds after the first spell and the heroes 39, while a rage lasts 18.
+        # Cast first, it had expired before most of the army was on the field.
+        # Cast here it starts as they begin walking, and the heroes join them
+        # inside it. Freeze still waits until the end.
         self._drop_singles(vanguard, middle, "siege")
         line = self._spread_troops(troops, anchors, pushed)
+        self._cast(rages, rage_path, frame)
         # Recomputed, not reused: the flank moves while the troops go down, and
         # a hero sent to the pre-push midpoint is sent somewhere already refused.
         middle = line[len(line) // 2]
