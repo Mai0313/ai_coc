@@ -590,7 +590,8 @@ class AttackTimings(BaseModel):
 
     Read it as the earliest moment rather than the exact one: the loop is single
     threaded and the deployment only offers the clock a turn between one card and
-    the next, so measured live, 35 lands at 40.
+    the next. Measured over four battles that offset was 5 to 8 seconds, which is
+    why the default is 30 for a spell wanted 30 to 40 seconds in.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -601,7 +602,7 @@ class AttackTimings(BaseModel):
     champion: int = 45
     minion_prince: int = 20
     unknown: int = 20
-    freeze: int = 35
+    freeze: int = 30
 
     def seconds(self, kind: HeroKind) -> int:
         return int(getattr(self, kind, self.unknown))
