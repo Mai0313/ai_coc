@@ -12,7 +12,7 @@ import time
 import logging
 from pathlib import Path
 from functools import partial
-from collections.abc import Callable, Sequence
+from collections.abc import Callable
 
 from pydantic import BaseModel, PrivateAttr
 
@@ -48,6 +48,11 @@ from ai_coc.parsers.scout import (
 from ai_coc.parsers.boundary import DEPLOY_BOUND, fitted_line, village_box
 
 logger = logging.getLogger(__name__)
+
+# Everything the loop does on a clock: when it is due, what to call it in the
+# log, and what to do. A tuple rather than a model because the payload is a bound
+# call rather than data, and it never leaves this module.
+Moves = list[tuple[float, str, Callable[[], None]]]
 
 # Every coordinate is the 1600x900 layout, the one `_apply_agent_action` assumes.
 HOME_ATTACK = (105, 830)
@@ -764,12 +769,38 @@ class AttackRunner(BaseModel):
         # seconds after the first spell and the heroes 39, while a rage lasts 18.
         # Cast first, it had expired before most of the army was on the field.
         # Cast here it starts as they begin walking, and the heroes join them
-        # inside it. Freeze is the one thing still held back, and it now waits on
-        # its own clock rather than on the last hero's.
+        # inside it. Freeze is the one thing still held back, and it waits on its
+        # own clock rather than on the last hero's.
+        #
+        # Two clocks, because the two numbers mean different things. A hero's
+        # ability is timed from that hero landing, which is what the setting says
+        # and what a queen's cloak is worth. The freeze is timed from the attack
+        # opening, because that is how it is judged on screen — about half a
+        # minute in, as the push reaches the first line of defences.
+        timings = plan.timings if plan and plan.timings else self.abilities
         opened = time.monotonic()
+        pending = (
+            [
+                (
+                    opened + timings.freeze,
+                    f"{len(freezes)} freeze card(s)",
+                    partial(self._cast, freezes, freeze_targets, frame),
+                )
+            ]
+            if freezes
+            else []
+        )
+        # Putting the army down takes about as long as the freeze is meant to
+        # wait — measured, the last hero lands 65 seconds in where the freeze
+        # wants to go at 35 — so a schedule that only starts once everything is
+        # down can never be early enough. The deployment offers it a turn after
+        # each step instead, and the log records when a move really happened
+        # rather than when it was meant to.
         self._drop_singles(vanguard, middle, "siege")
         line = self._spread_troops(troops, anchors, pushed)
+        pending = self._play_due(opened, pending)
         self._cast(rages, rage_path, frame)
+        pending = self._play_due(opened, pending)
         # Recomputed, not reused: the flank moves while the troops go down, and
         # a hero sent to the pre-push midpoint is sent somewhere already refused.
         middle = line[len(line) // 2]
@@ -780,34 +811,23 @@ class AttackRunner(BaseModel):
         landed = time.monotonic()
         kinds = list(plan.heroes) if plan else []
         kinds += ["unknown"] * (len(followers) - len(kinds))
-        timings = plan.timings if plan and plan.timings else self.abilities
-        moves = [
-            (
-                landed + timings.seconds(kinds[i]),
-                f"ability on the card at {x}",
-                partial(self._tap, (x, CARD_ROW_Y)),
-            )
-            for i, x in enumerate(followers)
-            if x in down
-        ]
-        # Two clocks, because the two numbers mean different things. A hero's
-        # ability is timed from that hero landing, which is what the setting says
-        # and what a queen's cloak is worth. The freeze is timed from the attack
-        # opening, because that is how it is judged on screen — about half a
-        # minute in, when the push is at the first line of defences — and it
-        # would drift by however long the army happened to take to go down if it
-        # hung off the heroes instead.
-        if freezes:
-            moves.append((
-                opened + timings.freeze,
-                f"{len(freezes)} freeze card(s)",
-                partial(self._cast, freezes, freeze_targets, frame),
-            ))
-        self._run_schedule(opened, moves)
+        self._run_schedule(
+            opened,
+            [
+                *pending,
+                *(
+                    (
+                        landed + timings.seconds(kinds[i]),
+                        f"ability on the card at {x}",
+                        partial(self._tap, (x, CARD_ROW_Y)),
+                    )
+                    for i, x in enumerate(followers)
+                    if x in down
+                ),
+            ],
+        )
 
-    def _run_schedule(
-        self, opened: float, moves: Sequence[tuple[float, str, Callable[[], None]]]
-    ) -> None:
+    def _run_schedule(self, opened: float, moves: Moves) -> None:
         """Everything that waits on the clock, in time order, each at its own moment.
 
         One list rather than the abilities and then the freeze, because ordering
@@ -821,15 +841,38 @@ class AttackRunner(BaseModel):
         Some card slots overlap the result screen's 回營 button, so nothing here
         runs unless the battle is genuinely still on.
         """
-        for at, what, act in sorted(moves, key=lambda move: move[0]):
-            remaining = at - time.monotonic()
+        for move in sorted(moves, key=lambda move: move[0]):
+            remaining = move[0] - time.monotonic()
             if remaining > 0:
                 time.sleep(remaining)
-            if self._battle_view("scheduled") is None:
-                logger.info("Battle ended with the %s still to come", what)
+            if not self._play(opened, move):
                 return
-            act()
-            logger.info("Played the %s, %.0fs into the attack", what, at - opened)
+
+    def _play_due(self, opened: float, pending: Moves) -> Moves:
+        """Play whatever is already due and hand back what is still to come.
+
+        Called between the steps of the deployment, because a spell timed from
+        the attack opening comes due while the army is still going down.
+        """
+        due = [move for move in pending if move[0] <= time.monotonic()]
+        for move in sorted(due, key=lambda move: move[0]):
+            if not self._play(opened, move):
+                return []
+        return [move for move in pending if move not in due]
+
+    def _play(self, opened: float, move: tuple[float, str, Callable[[], None]]) -> bool:
+        """One scheduled move, or False once the battle is over and there is no point.
+
+        Some card slots overlap the result screen's 回營 button, so nothing is
+        tapped unless the battle is genuinely still on.
+        """
+        _, what, act = move
+        if self._battle_view("scheduled") is None:
+            logger.info("Battle ended with the %s still to come", what)
+            return False
+        act()
+        logger.info("Played the %s, %.0fs into the attack", what, time.monotonic() - opened)
+        return True
 
     def _cast(self, cards: list[int], targets: tuple[tuple[int, int], ...], frame: bytes) -> None:
         """Empty each spell card over `targets`, and say so when a card would not go.

@@ -1,6 +1,7 @@
 import io
 import json
 import math
+import time
 from pathlib import Path
 import tempfile
 import unittest
@@ -662,6 +663,19 @@ class AttackTests(unittest.TestCase):
     def test_a_camera_already_on_the_village_is_left_alone(self) -> None:
         """The game centres every attack itself; dragging a good camera can only hurt."""
         assert self._settled((200, 120, 1380, 680)) == []
+
+    def test_a_move_already_due_is_played_before_the_army_is_all_down(self) -> None:
+        """Putting the army down outlasts the freeze's own timer, so it is offered a turn."""
+        played: list[str] = []
+        pending = [
+            (0.0, "freeze", lambda: played.append("freeze")),
+            (time.monotonic() + 600, "later", lambda: played.append("later")),
+        ]
+        on = ScoutView(loot=LootOffer(gold=1, elixir=1, dark=1), can_skip=False)
+        with patch.object(AttackRunner, "_battle_view", return_value=on):
+            left = self._runner()._play_due(0.0, pending)
+        assert played == ["freeze"]
+        assert [what for _, what, _ in left] == ["later"]
 
     def test_the_freeze_no_longer_queues_behind_the_slowest_hero(self) -> None:
         """Cast after the last ability it sat out a champion's 45 seconds first."""
