@@ -82,9 +82,12 @@ class MapFrame(BaseModel):
         span = abs(dx) + abs(dy)
         if span <= 1:
             return point
+        # Truncated rather than rounded, which moves each offset towards the
+        # middle: rounding outwards leaves the result a pixel over the edge and
+        # failing `contains`, which is a trap for anyone who checks it later.
         return (
-            round(self.centre[0] + dx / span * self.half_width),
-            round(self.centre[1] + dy / span * self.half_height),
+            self.centre[0] + int(dx / span * self.half_width),
+            self.centre[1] + int(dy / span * self.half_height),
         )
 
     def grown(self, tiles: int) -> MapFrame:

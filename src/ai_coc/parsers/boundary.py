@@ -24,14 +24,19 @@ from ai_coc.models import MapFrame
 logger = logging.getLogger(__name__)
 
 SCREEN_SIZE = (1600, 900)
-# The middle of the battle map at the camera every battle opens on.
+# The middle of the battle map at the camera every battle opens on, and the one
+# origin every other measurement here is taken from. Cast twelve rays out of it
+# across an emptied village and the two clean opposite pairs came back 359/367
+# and 361/359, so it is right to within a few pixels sideways; the vertical pair
+# was 66 apart, which hints it belongs lower, but that was the home camera and
+# one pair of rays is not enough to move a constant everything else is tuned to.
 VILLAGE_CENTRE = (800, 400)
 
 # Read off live frames by overlaying candidates until they sat on the ground's
 # own edge, across the two themes with the most contrast against their
 # surroundings. The camera does not move between battles, so this is a constant
 # rather than something to detect; see `MapFrame` for what it is good enough for.
-VILLAGE_GRID = MapFrame(centre=(800, 410), half_width=675, half_height=337)
+VILLAGE_GRID = MapFrame(centre=VILLAGE_CENTRE, half_width=675, half_height=337)
 # Troops go down outside the grid as well as on it, so the ground the game will
 # accept a drop on is wider than the grid the buildings sit in. The preset flanks
 # are what measure it: `top_left` starts at (600, 110), well outside the grid and
@@ -59,6 +64,14 @@ RAY_STEP = 1
 # having never met it, and without this the last wall it grazed would be
 # returned as the boundary and put the drop inside the village.
 MAX_STROKE_RUN = 4
+# A ray stops at the playfield edge, and where the boundary lies beyond that edge
+# it never meets it — so whatever red it grazed on the way, a wall or a building's
+# trim, becomes its answer. Measured across two live surveys of twelve rays each,
+# a crossing that matched the game sat between 0.62 and 0.99 of the distance the
+# ray was able to travel, while every reading that turned out to be inside the
+# village sat at 0.45 or less. Half is the gap between them, and a ray under it
+# reports nothing rather than something wrong.
+MIN_REACH_RATIO = 0.5
 
 
 def _stroke(data: bytes, offset: int) -> bool:
@@ -85,12 +98,14 @@ def boundary_reach(
     dx = math.cos(math.radians(degrees))
     dy = math.sin(math.radians(degrees))
     furthest: tuple[int, int] | None = None
+    reached = 0
     run: list[tuple[int, int]] = []
     for step in range(RAY_STEP, 1200, RAY_STEP):
         x = round(centre[0] + dx * step)
         y = round(centre[1] + dy * step)
         if not (left <= x <= right and top <= y <= bottom):
             break
+        reached = step
         if _stroke(data, (y * width + x) * 3):
             run.append((x, y))
             continue
@@ -99,6 +114,17 @@ def boundary_reach(
         run = []
     if run and len(run) <= MAX_STROKE_RUN:
         furthest = run[-1]
+    if furthest is None:
+        return None
+    radius = math.hypot(furthest[0] - centre[0], furthest[1] - centre[1])
+    if radius < reached * MIN_REACH_RATIO:
+        logger.debug(
+            "Ray %.0f crossed at %.0f of %d travelled, too far in to be the boundary",
+            degrees,
+            radius,
+            reached,
+        )
+        return None
     return furthest
 
 

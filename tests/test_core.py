@@ -361,13 +361,14 @@ class MapFrameTests(unittest.TestCase):
         assert DEPLOY_BOUND.clamp((600, 110)) == (600, 110)
 
     def test_grid_coordinates_round_trip(self) -> None:
-        for point in ((800, 410), (600, 300), (1100, 500)):
+        for point in (VILLAGE_GRID.centre, (600, 300), (1100, 500)):
             assert VILLAGE_GRID.pixel(VILLAGE_GRID.tile(point)) == point
 
     def test_the_grid_corners_are_the_diamond_vertices(self) -> None:
-        assert VILLAGE_GRID.pixel((0, 0)) == (800, 410 - VILLAGE_GRID.half_height)
-        assert VILLAGE_GRID.pixel((44, 44)) == (800, 410 + VILLAGE_GRID.half_height)
-        assert VILLAGE_GRID.pixel((44, 0)) == (800 + VILLAGE_GRID.half_width, 410)
+        cx, cy = VILLAGE_GRID.centre
+        assert VILLAGE_GRID.pixel((0, 0)) == (cx, cy - VILLAGE_GRID.half_height)
+        assert VILLAGE_GRID.pixel((44, 44)) == (cx, cy + VILLAGE_GRID.half_height)
+        assert VILLAGE_GRID.pixel((44, 0)) == (cx + VILLAGE_GRID.half_width, cy)
 
 
 class BoundaryTests(unittest.TestCase):
@@ -423,6 +424,19 @@ class BoundaryTests(unittest.TestCase):
         assert bent[-1] == (400, 400)
         # The corner is an anchor, so a point lands on it rather than cutting it off.
         assert (400, 100) in bent
+
+    def test_a_crossing_too_far_in_reads_as_nothing(self) -> None:
+        """A ray that stops at the playfield edge never met a boundary lying beyond it.
+
+        Whatever red it grazed on the way is then its answer, and two live
+        surveys measured that landing at 0.45 of the distance travelled or less
+        while every crossing that matched the game sat at 0.62 or more.
+        """
+        near = self._painted([(860, (170, 70, 26))])
+        # 60 px out of the 770 this ray can travel: a building, not the boundary.
+        assert boundary_reach(near, 0) is None
+        far = self._painted([(1500, (170, 70, 26))])
+        assert boundary_reach(far, 0) is not None
 
     def test_a_flank_whose_anchors_disagree_is_thrown_away(self) -> None:
         """One ray matching a wall inside the village puts an anchor where drops are refused.
