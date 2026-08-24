@@ -45,7 +45,7 @@ from ai_coc.parsers.scout import (
     attack_menu_open,
     idle_disconnected,
 )
-from ai_coc.parsers.boundary import DEPLOY_BOUND, fitted_line
+from ai_coc.parsers.boundary import DEPLOY_BOUND, fitted_line, village_box
 
 logger = logging.getLogger(__name__)
 
@@ -143,6 +143,17 @@ ABANDON_BUTTON = (215, 630)
 # The four preset flanks all sit about 410 px out at their midpoint; this keeps
 # a planned line in the same band and falls back to a flank when it is not.
 MIN_LINE_RADIUS = 300
+
+# The camera is measured rather than assumed, and only moved when it is really
+# off. Measured across nine battles the game opens every attack with the village
+# already within 35 px of the middle, so this normally reads once and does
+# nothing; the tolerance keeps it that way and leaves the drag for a camera that
+# has genuinely been left somewhere else.
+CAMERA_TOLERANCE = 60
+CAMERA_ATTEMPTS = 2
+CAMERA_GRIP = (800, 400)
+CAMERA_DRAG_MS = 350
+CAMERA_SETTLE = 1.5
 
 # The scout countdown is 30 seconds; this polls a second at a time and leaves
 # room for a slow frame rather than sitting through a whole battle.
@@ -627,8 +638,42 @@ class AttackRunner(BaseModel):
         logger.warning("The scout countdown never ended; deploying without a battle frame")
         return None
 
+    def _settle_camera(self, frame: bytes) -> bytes:
+        """Put the village in the middle of the screen, and hand back what it looks like.
+
+        Everything downstream reads the camera without being able to check it:
+        `push_out` moves a drop away from the screen centre, the preset flanks are
+        screen coordinates, and the spell grid is spaced off the middle. The game
+        does open every attack centred — measured across nine battles it was never
+        more than 35 px out — but that is the sort of fact that is true until it
+        is not, and a camera left anywhere else puts the whole army somewhere
+        nobody asked for. This runs before the plan is drawn so the planner is
+        looking at the same screen the drops will land on.
+        """
+        for _ in range(CAMERA_ATTEMPTS):
+            box = village_box(frame)
+            if box is None:
+                logger.info("The village will not measure; the camera is left where it is")
+                return frame
+            middle = ((box[0] + box[2]) // 2, (box[1] + box[3]) // 2)
+            drift = (SCREEN_CENTRE[0] - middle[0], SCREEN_CENTRE[1] - middle[1])
+            if max(abs(drift[0]), abs(drift[1])) <= CAMERA_TOLERANCE:
+                logger.info("Village sits at %s, %s off the middle", middle, drift)
+                return frame
+            logger.info("Village sits at %s; dragging the camera by %s", middle, drift)
+            self.adb.swipe(
+                CAMERA_GRIP,
+                clear_of_controls((CAMERA_GRIP[0] + drift[0], CAMERA_GRIP[1] + drift[1])),
+                CAMERA_DRAG_MS,
+                self.display,
+            )
+            time.sleep(CAMERA_SETTLE)
+            frame = self._frame("camera")
+        return frame
+
     def _deploy(self, frame: bytes) -> None:
         """Spread the main troops along one flank; everything else drops once, mid-line."""
+        frame = self._settle_camera(frame)
         groups = card_groups(frame)
         if not groups:
             logger.warning("No cards found on the battle row; nothing to deploy")

@@ -17,7 +17,7 @@ import io
 import math
 import logging
 
-from PIL import Image
+from PIL import Image, ImageDraw, ImageChops
 
 from ai_coc.models import MapFrame
 
@@ -74,6 +74,24 @@ MAX_STROKE_RUN = 4
 MIN_REACH_RATIO = 0.5
 
 
+# Where the village sits on screen, taken from the same red stroke. Four pieces
+# of UI are painted in the game's own red and would otherwise drag the box out to
+# the screen edge: the loot panel, our resource bars, 結束戰鬥 and 摧毀率.
+UI_PANELS = ((0, 0, 320, 280), (1320, 0, 1600, 200), (0, 620, 230, 712), (1320, 600, 1600, 712))
+# The stroke is thin, so the profiles are taken over bands rather than whole
+# columns: averaged over 600 rows a two-pixel crossing rounds away to nothing.
+PROFILE_BANDS = 32
+# What is left after the panels is a speckle of village trim, so the box is cut
+# where this fraction of the stroke lies outside it rather than at its very last
+# pixel. Measured over nine battles and both theme fixtures, that put the middle
+# of the village within 35 px of the screen centre every time.
+PROFILE_EDGE = 0.02
+# A box far too small to be a village is a stray red button on a screen that has
+# no boundary on it at all: the attack menu reads 217x67 that way. Measured, a
+# real one spans 853 to 1166 across and 510 to 574 down.
+MIN_VILLAGE_SPAN = (400, 250)
+
+
 def _stroke(data: bytes, offset: int) -> bool:
     red, green, blue = data[offset], data[offset + 1], data[offset + 2]
     return STROKE_RED[0] <= red <= STROKE_RED[1] and red - max(green, blue) >= STROKE_SCORE
@@ -126,6 +144,67 @@ def boundary_reach(
         )
         return None
     return furthest
+
+
+def _trimmed(profile: list[int]) -> tuple[int, int] | None:
+    """The span holding all but `PROFILE_EDGE` of a profile at each end."""
+    total = sum(profile)
+    if not total:
+        return None
+    cut = total * PROFILE_EDGE
+    run = 0
+    low = 0
+    for index, value in enumerate(profile):
+        run += value
+        if run >= cut:
+            low = index
+            break
+    run = 0
+    high = len(profile) - 1
+    for index in range(len(profile) - 1, -1, -1):
+        run += profile[index]
+        if run >= cut:
+            high = index
+            break
+    return (low, high) if high > low else None
+
+
+def village_box(png: bytes) -> tuple[int, int, int, int] | None:
+    """The screen rectangle the game's own red line encloses, or None if it will not read.
+
+    Nothing downstream should assume where the camera is pointing: `push_out`
+    moves a drop away from the screen centre, the preset flanks are screen
+    coordinates and the spell grid is spaced off the middle. Measured across nine
+    battles and both theme fixtures the game opens every attack with the village
+    already within 35 px of the centre — but reading it is what makes that a fact
+    rather than an assumption, and a camera left anywhere else then shows up
+    instead of quietly putting the whole army in the wrong place.
+    """
+    image = Image.open(io.BytesIO(png)).convert("RGB")
+    if image.size != SCREEN_SIZE:
+        raise ValueError(f"村莊位置判讀只適用 1600x900，收到 {image.size[0]}x{image.size[1]}")
+    red, green, blue = image.split()
+    score = ImageChops.subtract(red, ImageChops.lighter(green, blue))
+    mask = ImageChops.multiply(
+        score.point(lambda v: 255 if v >= STROKE_SCORE else 0),
+        red.point(lambda v: 255 if STROKE_RED[0] <= v <= STROKE_RED[1] else 0),
+    )
+    blank = ImageDraw.Draw(mask)
+    _left, top, _right, bottom = PLAYFIELD
+    for box in ((0, 0, image.width, top), (0, bottom, image.width, image.height), *UI_PANELS):
+        blank.rectangle(box, fill=0)
+    width, height = image.size
+    bands = mask.resize((width, PROFILE_BANDS), Image.Resampling.BOX).tobytes()
+    columns = [sum(bands[row * width + x] for row in range(PROFILE_BANDS)) for x in range(width)]
+    strips = mask.resize((PROFILE_BANDS, height), Image.Resampling.BOX).tobytes()
+    rows = [sum(strips[y * PROFILE_BANDS : (y + 1) * PROFILE_BANDS]) for y in range(height)]
+    across, down = _trimmed(columns), _trimmed(rows)
+    if across is None or down is None:
+        return None
+    if across[1] - across[0] < MIN_VILLAGE_SPAN[0] or down[1] - down[0] < MIN_VILLAGE_SPAN[1]:
+        logger.info("Red found on %s but far too small to be a village", (across, down))
+        return None
+    return (across[0], down[0], across[1], down[1])
 
 
 # A reading far short of what its neighbours found is a wall the ray grazed on

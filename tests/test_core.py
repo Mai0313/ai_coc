@@ -64,6 +64,7 @@ from ai_coc.parsers.boundary import (
     DEPLOY_BOUND,
     VILLAGE_GRID,
     fitted_line,
+    village_box,
     boundary_line,
     boundary_reach,
 )
@@ -480,6 +481,17 @@ class BoundaryTests(unittest.TestCase):
         buffer = io.BytesIO()
         blank.save(buffer, format="PNG")
         assert fitted_line(buffer.getvalue(), (600, 110), (230, 380)) is None
+
+    def test_the_village_is_found_in_the_middle_of_the_screen(self) -> None:
+        """Both themes, so nothing downstream has to take the camera on trust."""
+        for name in ("battle_boundary_grass", "battle_boundary_ice"):
+            box = village_box((FRAMES / f"{name}.png").read_bytes())
+            assert box is not None, name
+            middle = ((box[0] + box[2]) // 2, (box[1] + box[3]) // 2)
+            assert math.hypot(middle[0] - 800, middle[1] - 400) < 60, (name, middle)
+
+    def test_a_screen_with_no_boundary_on_it_has_no_village_box(self) -> None:
+        assert village_box((FRAMES / "attack_menu.png").read_bytes()) is None
 
     def test_the_boundary_is_read_over_two_village_themes(self) -> None:
         rays = [angle * 30 for angle in range(12)]
