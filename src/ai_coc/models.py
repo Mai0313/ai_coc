@@ -587,6 +587,10 @@ class AttackTimings(BaseModel):
     is how it is judged on screen — about half a minute in, as the push reaches
     the first line of defences — and hanging it off the heroes would move it by
     however long the army happened to take to go down.
+
+    Read it as the earliest moment rather than the exact one: the loop is single
+    threaded and the deployment only offers the clock a turn between one card and
+    the next, so measured live, 35 lands at 40.
     """
 
     model_config = ConfigDict(frozen=True)
