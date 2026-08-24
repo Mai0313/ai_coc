@@ -18,10 +18,10 @@ import logging
 from ai_coc import plans
 from ai_coc.models import (
     ProbeRay,
-    HeroTimings,
     StockLimits,
     AttackReport,
     FrameReading,
+    AttackTimings,
     BoundarySurvey,
     GeminiSettings,
     LootThresholds,
@@ -104,7 +104,7 @@ def attack(
         display=adb.display_for(COC_PACKAGE),
         thresholds=thresholds or LootThresholds(),
         stock=StockLimits(),
-        abilities=HeroTimings(),
+        abilities=AttackTimings(),
         ai=None if plan else _planner(),
         plan=plan,
         frame_dir=frame_dir,

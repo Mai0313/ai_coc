@@ -17,10 +17,10 @@ from ai_coc.models import (
     ScoutView,
     AttackPlan,
     AdbEndpoint,
-    HeroTimings,
     ScreenPoint,
     StockLimits,
     VillageStock,
+    AttackTimings,
     DisplayTarget,
     BoundarySurvey,
     LootThresholds,
@@ -320,13 +320,13 @@ class PlanTests(unittest.TestCase):
     def test_the_ai_is_not_allowed_to_invent_hero_timings(self) -> None:
         """`timings` is on the schema, so the model can fill it; a still frame cannot know."""
         assert "timings" in AttackPlan.model_json_schema()["properties"]
-        answered = AttackPlan(**_LINE, timings=HeroTimings(queen=30, warden=5))
+        answered = AttackPlan(**_LINE, timings=AttackTimings(queen=30, warden=5))
         assert answered.model_copy(update={"timings": None}).timings is None
 
     def test_a_plans_own_timings_beat_the_ones_the_runner_was_built_with(self) -> None:
         """A written plan is the whole tactic, so its schedule is the one that fires."""
-        plan = AttackPlan(**_LINE, timings=HeroTimings(queen=7))
-        assert (plan.timings or HeroTimings()).seconds("queen") == 7
+        plan = AttackPlan(**_LINE, timings=AttackTimings(queen=7))
+        assert (plan.timings or AttackTimings()).seconds("queen") == 7
 
 
 class PromptTests(unittest.TestCase):
@@ -509,7 +509,7 @@ class AttackTests(unittest.TestCase):
 
     def test_ability_timing_is_per_hero_not_per_slot(self) -> None:
         """An upgrading hero has no card at all, so every slot after it shifts."""
-        timings = HeroTimings(queen=1, warden=30)
+        timings = AttackTimings(queen=1, warden=30)
         assert timings.seconds("queen") == 1
         assert timings.seconds("warden") == 30
         assert timings.seconds("unknown") == timings.unknown
@@ -611,6 +611,23 @@ class AttackTests(unittest.TestCase):
 
     def test_a_battle_nobody_ever_read_is_not_called_a_success(self) -> None:
         assert not self._verdict(LootOffer(gold=1, elixir=1, dark=1), [None, None])
+
+    def test_the_freeze_no_longer_queues_behind_the_slowest_hero(self) -> None:
+        """Cast after the last ability it sat out a champion's 45 seconds first."""
+        played: list[str] = []
+        timings = AttackTimings()
+        moves = [
+            (timings.seconds("champion"), "champion", lambda: played.append("champion")),
+            (timings.seconds("queen"), "queen", lambda: played.append("queen")),
+            (timings.freeze, "freeze", lambda: played.append("freeze")),
+        ]
+        on = ScoutView(loot=LootOffer(gold=1, elixir=1, dark=1), can_skip=False)
+        with (
+            patch.object(AttackRunner, "_battle_view", return_value=on),
+            patch.object(attack.time, "sleep"),
+        ):
+            self._runner()._run_schedule(moves)
+        assert played == ["queen", "freeze", "champion"]
 
     def test_a_refused_flank_leaves_the_other_three_to_try(self) -> None:
         """The plan's own side goes first behind its line, then the flanks it did not pick."""

@@ -493,11 +493,18 @@ class ScreenPoint(BaseModel):
 HeroKind = Literal["king", "queen", "warden", "champion", "minion_prince", "unknown"]
 
 
-class HeroTimings(BaseModel):
-    """How long after landing each hero's ability fires.
+class AttackTimings(BaseModel):
+    """How long after the army is down each thing that waits on a clock happens.
 
-    Keyed by hero rather than by card position: a hero being upgraded cannot
-    take the field, so its card is simply absent and every position shifts.
+    The abilities are keyed by hero rather than by card position: a hero being
+    upgraded cannot take the field, so its card is simply absent and every
+    position shifts.
+
+    Freeze is here rather than left to fall out of the code's ordering, which is
+    what it used to do — cast after the last ability, it waited out the slowest
+    hero on the field, so a champion's 45 seconds put it a minute and a half into
+    a three-minute battle, long after the defences it was meant to stop had done
+    their work. It is the one spell held back, so it is the one with a time.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -508,6 +515,7 @@ class HeroTimings(BaseModel):
     champion: int = 45
     minion_prince: int = 20
     unknown: int = 20
+    freeze: int = 15
 
     def seconds(self, kind: HeroKind) -> int:
         return int(getattr(self, kind, self.unknown))
@@ -539,7 +547,7 @@ class AttackPlan(BaseModel):
     # Carried on the plan so a written-out one is the whole tactic in one file,
     # rather than a set of points whose timing lives somewhere else entirely.
     # None leaves the runner on whatever the caller configured.
-    timings: HeroTimings | None = None
+    timings: AttackTimings | None = None
     reason: str = ""
 
 

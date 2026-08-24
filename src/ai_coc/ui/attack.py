@@ -11,19 +11,19 @@ from __future__ import annotations
 import time
 import logging
 from pathlib import Path
-from collections.abc import Callable
+from functools import partial
+from collections.abc import Callable, Sequence
 
 from pydantic import BaseModel, PrivateAttr
 
 from ai_coc import plans
 from ai_coc.models import (
-    HeroKind,
     LootOffer,
     ScoutView,
     AttackPlan,
-    HeroTimings,
     StockLimits,
     AttackReport,
+    AttackTimings,
     DisplayTarget,
     LootThresholds,
 )
@@ -300,7 +300,7 @@ class AttackRunner(BaseModel):
     thresholds: LootThresholds
     # Read once per run off the home village, before the search fee is charged.
     stock: StockLimits = StockLimits()
-    abilities: HeroTimings = HeroTimings()
+    abilities: AttackTimings = AttackTimings()
     max_skips: int = 20
     ai: GeminiClient | None = None
     # A plan settled before the run, which skips the Gemini call entirely. This is
@@ -676,58 +676,63 @@ class AttackRunner(BaseModel):
         # seconds after the first spell and the heroes 39, while a rage lasts 18.
         # Cast first, it had expired before most of the army was on the field.
         # Cast here it starts as they begin walking, and the heroes join them
-        # inside it. Freeze still waits until the end.
+        # inside it. Freeze is the one thing still held back, and it now waits on
+        # its own clock rather than on the last hero's.
         self._drop_singles(vanguard, middle, "siege")
         line = self._spread_troops(troops, anchors, pushed)
         self._cast(rages, rage_path, frame)
         # Recomputed, not reused: the flank moves while the troops go down, and
         # a hero sent to the pre-push midpoint is sent somewhere already refused.
         middle = line[len(line) // 2]
-        # Only the heroes that actually went down get a schedule. A hero still in
+        # Only the heroes that actually went down get an ability. A hero still in
         # its card answers an ability tap by deploying instead, with nothing
-        # around it and no ability fired, and the schedule would still sit
-        # through its longest timer to do it.
+        # around it and no ability fired.
         down = self._drop_singles(followers, middle, "hero")
-        if down:
-            kinds = list(plan.heroes) if plan else []
-            kinds += ["unknown"] * (len(followers) - len(kinds))
-            fired = [(x, kinds[i]) for i, x in enumerate(followers) if x in down]
-            self._fire_abilities(
-                [x for x, _ in fired],
-                [kind for _, kind in fired],
-                (plan.timings if plan and plan.timings else self.abilities),
+        kinds = list(plan.heroes) if plan else []
+        kinds += ["unknown"] * (len(followers) - len(kinds))
+        timings = plan.timings if plan and plan.timings else self.abilities
+        moves = [
+            (
+                timings.seconds(kinds[i]),
+                f"ability on the card at {x}",
+                partial(self._tap, (x, CARD_ROW_Y)),
             )
-        # Freeze wants the defences the troops are fighting, which is where they
-        # are by now. Some card slots overlap the result screen's 回營 button, so
-        # this only runs while the battle is genuinely still on.
-        if self._battle_view("before-freeze") is None:
-            return
-        self._cast(freezes, freeze_targets, frame)
+            for i, x in enumerate(followers)
+            if x in down
+        ]
+        if freezes:
+            moves.append((
+                timings.freeze,
+                f"{len(freezes)} freeze card(s)",
+                partial(self._cast, freezes, freeze_targets, frame),
+            ))
+        self._run_schedule(moves)
 
-    def _fire_abilities(
-        self, heroes: list[int], kinds: list[HeroKind], timings: HeroTimings
-    ) -> None:
-        """Tap each hero's card again at its own moment, which is its ability.
+    def _run_schedule(self, moves: Sequence[tuple[int, str, Callable[[], None]]]) -> None:
+        """Everything that waits on the clock once the army is down, in time order.
 
-        Timing is per hero rather than per card slot: an upgrading hero cannot
-        take the field, so its card is absent and every slot after it shifts.
-        A queen wants her cloak almost immediately, a warden's eternal tome is
-        worth holding until the push is deep enough to be worth saving.
+        One list rather than the abilities and then the freeze, because ordering
+        by position in the code made the freeze wait out the slowest hero on the
+        field: with a champion at 45 seconds it landed a minute and a half into a
+        three-minute battle, long after the defences it was meant to stop had
+        done their work. Timing is per hero rather than per card slot for the
+        same reason it always was — an upgrading hero has no card, so every slot
+        after it shifts — and a queen wants her cloak almost immediately where a
+        warden's tome is worth holding until the push is deep enough to save.
+
+        Some card slots overlap the result screen's 回營 button, so nothing here
+        runs unless the battle is genuinely still on.
         """
-        schedule = sorted(
-            (timings.seconds(kinds[i] if i < len(kinds) else "unknown"), x)
-            for i, x in enumerate(heroes)
-        )
-        landed = time.monotonic()
-        for delay, x in schedule:
-            remaining = landed + delay - time.monotonic()
+        started = time.monotonic()
+        for delay, what, act in sorted(moves, key=lambda move: move[0]):
+            remaining = started + delay - time.monotonic()
             if remaining > 0:
                 time.sleep(remaining)
-            if self._battle_view("ability") is None:
-                logger.info("Battle ended before every ability fired")
+            if self._battle_view("scheduled") is None:
+                logger.info("Battle ended with the %s still to come", what)
                 return
-            self._tap((x, CARD_ROW_Y))
-            logger.info("Fired the ability on the card at %d after %ds", x, delay)
+            act()
+            logger.info("Played the %s, %ds after the army was down", what, delay)
 
     def _cast(self, cards: list[int], targets: tuple[tuple[int, int], ...], frame: bytes) -> None:
         """Empty each spell card over `targets`, and say so when a card would not go.
