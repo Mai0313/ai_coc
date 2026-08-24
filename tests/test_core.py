@@ -7,7 +7,15 @@ import unittest
 from PIL import Image
 import pytest
 
-from ai_coc.models import LootOffer, AttackPlan, HeroTimings, ScreenPoint, LootThresholds
+from ai_coc.models import (
+    LootOffer,
+    AttackPlan,
+    HeroTimings,
+    ScreenPoint,
+    StockLimits,
+    VillageStock,
+    LootThresholds,
+)
 from ai_coc.ui.attack import (
     PLAYFIELD,
     DEPLOY_END,
@@ -25,6 +33,7 @@ from ai_coc.parsers.scout import (
     card_count,
     live_cards,
     read_scout,
+    read_stock,
     card_groups,
     freeze_cards,
     army_strength,
@@ -183,6 +192,17 @@ class ScoutTests(unittest.TestCase):
     def test_army_strength_is_none_away_from_the_army_screen(self) -> None:
         assert army_strength((FRAMES / "scout_grass.png").read_bytes()) is None
 
+    def test_the_village_storages_are_read_off_the_home_screen(self) -> None:
+        """The bars carry their own fill highlight behind the digits."""
+        assert read_stock((FRAMES / "home_storages.png").read_bytes()) == VillageStock(
+            gold=1053405, elixir=375386, dark=143079
+        )
+
+    def test_storages_are_none_away_from_the_home_screen(self) -> None:
+        """Three readable rows is what says the home village is up; nothing else does."""
+        assert read_stock((FRAMES / "scout_grass.png").read_bytes()) is None
+        assert read_stock((FRAMES / "attack_menu.png").read_bytes()) is None
+
     def test_a_frame_of_another_resolution_is_rejected(self) -> None:
         buffer = io.BytesIO()
         Image.new("RGB", (800, 450)).save(buffer, "PNG")
@@ -198,6 +218,14 @@ class AttackTests(unittest.TestCase):
 
     def test_a_threshold_left_at_zero_ignores_that_resource(self) -> None:
         assert LootThresholds().accepts(LootOffer(gold=0, elixir=0, dark=0))
+
+    def test_any_one_full_storage_stops_the_farming(self) -> None:
+        """Unlike the loot thresholds: loot past a full storage is thrown away."""
+        stock = VillageStock(gold=15000000, elixir=400000, dark=1000)
+        assert StockLimits(stop_gold=15000000, stop_elixir=15000000).reached(stock) == ["金幣"]
+
+    def test_a_stop_limit_left_at_zero_watches_nothing(self) -> None:
+        assert not StockLimits().reached(VillageStock(gold=99999999, elixir=1, dark=1))
 
     def test_deploy_line_runs_the_whole_flank(self) -> None:
         points = deploy_line(8)

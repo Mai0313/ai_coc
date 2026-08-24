@@ -20,6 +20,7 @@ from ai_coc.models import (
     ScoutView,
     AttackPlan,
     HeroTimings,
+    StockLimits,
     AttackReport,
     DisplayTarget,
     LootThresholds,
@@ -30,6 +31,7 @@ from ai_coc.parsers.scout import (
     card_count,
     live_cards,
     read_scout,
+    read_stock,
     card_groups,
     freeze_cards,
     army_strength,
@@ -219,6 +221,8 @@ class AttackRunner(BaseModel):
     adb: AdbController
     display: DisplayTarget
     thresholds: LootThresholds
+    # Read once per run off the home village, before the search fee is charged.
+    stock: StockLimits = StockLimits()
     abilities: HeroTimings = HeroTimings()
     max_skips: int = 20
     ai: GeminiClient | None = None
@@ -230,10 +234,16 @@ class AttackRunner(BaseModel):
     def _tap(self, point: tuple[int, int]) -> None:
         self.adb.tap(point[0], point[1], self.display)
 
-    def _open_attack_menu(self) -> bool:
-        """Get to the attack menu, clearing whatever is covering the village."""
+    def _open_attack_menu(self) -> bytes | None:
+        """Get to the attack menu, clearing whatever is covering the village.
+
+        The home village frame comes back with it. That is the one screen the
+        storage bars are on, and the frame is already being taken here to check
+        for the idle dialog, so reading the storages costs no extra capture.
+        """
         for _ in range(HOME_ATTEMPTS):
-            if idle_disconnected(self.adb.screenshot(self.display)):
+            home = self.adb.screenshot(self.display)
+            if idle_disconnected(home):
                 logger.info("Idle-disconnect dialog is up; logging back in")
                 self._tap(RELOGIN_BUTTON)
                 time.sleep(RELOGIN_WAIT)
@@ -241,13 +251,13 @@ class AttackRunner(BaseModel):
             self._tap(HOME_ATTACK)
             time.sleep(2)
             if attack_menu_open(self.adb.screenshot(self.display)):
-                return True
+                return home
             # Never `back` here: on the home village that is 確定退出遊戲嗎, one
             # tap away from closing the game. A building panel left open does
             # not cover the 攻擊 button in the corner anyway, so the tap above
             # only needs the panel to swallow one press and then retries.
             time.sleep(HOME_RETRY_DELAY)
-        return False
+        return None
 
     def _plan(self, frame: bytes, rage_count: int, freeze_count: int) -> AttackPlan | None:
         if self.ai is None:
@@ -525,9 +535,29 @@ class AttackRunner(BaseModel):
 
     def run(self) -> AttackReport:
         logger.info("Attack run starts, thresholds=%s", self.thresholds.model_dump())
-        if not self._open_attack_menu():
+        home = self._open_attack_menu()
+        if home is None:
             logger.warning("The attack menu did not open; the game is not on the home village")
             return AttackReport(message="畫面不在主村，沒有開啟攻擊選單就停手")
+        # Before the search fee, like the army check below: a full storage means
+        # the loot this run wins is thrown away when it is collected. An
+        # unreadable frame stops nothing, because a village that cannot be read
+        # is not evidence of a full one.
+        stock = read_stock(home)
+        if stock and (full := self.stock.reached(stock)):
+            logger.info(
+                "Storage limit reached (%s); farming stops with gold=%d elixir=%d dark=%d",
+                "/".join(full),
+                stock.gold,
+                stock.elixir,
+                stock.dark,
+            )
+            self.adb.back(self.display)
+            return AttackReport(
+                stock_full=True,
+                message=f"{'、'.join(full)}已達停止門檻"
+                f"（金幣 {stock.gold}／聖水 {stock.elixir}／黑水 {stock.dark}），停止刷資源",
+            )
         self._tap(FIND_MATCH)
         time.sleep(2)
         strength = army_strength(self.adb.screenshot(self.display))

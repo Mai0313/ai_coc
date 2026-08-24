@@ -320,6 +320,48 @@ class LootThresholds(BaseModel):
         )
 
 
+class VillageStock(BaseModel):
+    """What the village itself is holding, read off the home screen's storage bars.
+
+    The same three resources as `LootOffer` and deliberately not the same type:
+    one is what an opponent is carrying and the other is what we already have,
+    and nothing in the loop wants to mix them up.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    gold: int
+    elixir: int
+    dark: int
+
+
+class StockLimits(BaseModel):
+    """The storage levels the automation stops farming at; 0 leaves one unwatched."""
+
+    model_config = ConfigDict(frozen=True)
+
+    stop_gold: int = 0
+    stop_elixir: int = 0
+    stop_dark: int = 0
+
+    def reached(self, stock: VillageStock) -> list[str]:
+        """Which watched resources are at or past their limit, named for the log.
+
+        Any one of them is enough to stop on: loot past a full storage is thrown
+        away on collection, so farming for a second resource that is still short
+        means paying a search fee to overfill the first.
+        """
+        return [
+            name
+            for name, limit, held in (
+                ("金幣", self.stop_gold, stock.gold),
+                ("聖水", self.stop_elixir, stock.elixir),
+                ("黑水", self.stop_dark, stock.dark),
+            )
+            if limit and held >= limit
+        ]
+
+
 class ScoutView(BaseModel):
     """What the opponent screen offers, and whether it can still be skipped.
 
@@ -394,6 +436,9 @@ class AttackReport(BaseModel):
     skipped: int = 0
     attacked: LootOffer | None = None
     message: str = ""
+    # Farming has met its goal, so the automation is meant to stop rather than
+    # come round again: the next pass would only read the same full storage.
+    stock_full: bool = False
 
 
 class UiElement(BaseModel):
