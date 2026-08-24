@@ -53,7 +53,7 @@ from ai_coc.parsers.scout import (
 )
 from ai_coc.parsers.village import parse_village
 from ai_coc.adapters.secrets import dotenv_value
-from ai_coc.parsers.boundary import boundary_line, boundary_reach
+from ai_coc.parsers.boundary import DEPLOY_BOUND, VILLAGE_GRID, boundary_line, boundary_reach
 from ai_coc.adapters.database import Database
 
 FRAMES = Path(__file__).parent / "frames"
@@ -237,6 +237,34 @@ class ScoutTests(unittest.TestCase):
         Image.new("RGB", (800, 450)).save(buffer, "PNG")
         with pytest.raises(ValueError, match="1600x900"):
             read_scout(buffer.getvalue())
+
+
+class MapFrameTests(unittest.TestCase):
+    """The battle map is a diamond, and a rectangle's corners are not on it."""
+
+    def test_a_preset_flank_is_on_the_map_and_a_pushed_corner_is_not(self) -> None:
+        """Both points are live evidence: one deploys troops, the other lost a hero."""
+        assert DEPLOY_BOUND.contains((600, 110))
+        assert not DEPLOY_BOUND.contains((30, 175))
+
+    def test_clamping_pulls_a_point_back_onto_the_map(self) -> None:
+        pulled = DEPLOY_BOUND.clamp((30, 175))
+        assert DEPLOY_BOUND.contains(pulled)
+        # Back along the line from the middle, so it keeps the direction it was pushed.
+        assert pulled[0] < DEPLOY_BOUND.centre[0]
+        assert pulled[1] < DEPLOY_BOUND.centre[1]
+
+    def test_a_point_already_on_the_map_is_left_alone(self) -> None:
+        assert DEPLOY_BOUND.clamp((600, 110)) == (600, 110)
+
+    def test_grid_coordinates_round_trip(self) -> None:
+        for point in ((800, 410), (600, 300), (1100, 500)):
+            assert VILLAGE_GRID.pixel(VILLAGE_GRID.tile(point)) == point
+
+    def test_the_grid_corners_are_the_diamond_vertices(self) -> None:
+        assert VILLAGE_GRID.pixel((0, 0)) == (800, 410 - VILLAGE_GRID.half_height)
+        assert VILLAGE_GRID.pixel((44, 44)) == (800, 410 + VILLAGE_GRID.half_height)
+        assert VILLAGE_GRID.pixel((44, 0)) == (800 + VILLAGE_GRID.half_width, 410)
 
 
 class BoundaryTests(unittest.TestCase):

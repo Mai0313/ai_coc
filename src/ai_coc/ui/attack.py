@@ -41,6 +41,7 @@ from ai_coc.parsers.scout import (
     attack_menu_open,
     idle_disconnected,
 )
+from ai_coc.parsers.boundary import DEPLOY_BOUND
 
 logger = logging.getLogger(__name__)
 
@@ -177,14 +178,22 @@ def deploy_line(
 
 
 def push_out(point: tuple[int, int], steps: int) -> tuple[int, int]:
-    """Move a drop further from the middle, clamped clear of the playfield and the UI."""
+    """Move a drop further from the middle, kept on the map, the screen and off the UI.
+
+    The map is a diamond, so clamping to the playfield rectangle alone pushed
+    drops into corners that are not on the map at all: a hero refused four times
+    ended up at (30, 175), where the map only spans x 596 to 1004, and the game
+    had nothing to accept. `DEPLOY_BOUND.clamp` is what keeps a push heading
+    outwards from leaving the board.
+    """
     dx, dy = point[0] - SCREEN_CENTRE[0], point[1] - SCREEN_CENTRE[1]
     span = max((dx * dx + dy * dy) ** 0.5, 1.0)
     left, top, right, bottom = PLAYFIELD
-    return clear_of_controls((
-        min(max(round(point[0] + dx / span * PUSH_STEP * steps), left), right),
-        min(max(round(point[1] + dy / span * PUSH_STEP * steps), top), bottom),
+    on_map = DEPLOY_BOUND.clamp((
+        round(point[0] + dx / span * PUSH_STEP * steps),
+        round(point[1] + dy / span * PUSH_STEP * steps),
     ))
+    return clear_of_controls((min(max(on_map[0], left), right), min(max(on_map[1], top), bottom)))
 
 
 def planned_line(plan: AttackPlan | None) -> tuple[tuple[int, int], tuple[int, int]] | None:

@@ -19,11 +19,26 @@ import logging
 
 from PIL import Image
 
+from ai_coc.models import MapFrame
+
 logger = logging.getLogger(__name__)
 
 SCREEN_SIZE = (1600, 900)
 # The middle of the battle map at the camera every battle opens on.
 VILLAGE_CENTRE = (800, 400)
+
+# Read off live frames by overlaying candidates until they sat on the ground's
+# own edge, across the two themes with the most contrast against their
+# surroundings. The camera does not move between battles, so this is a constant
+# rather than something to detect; see `MapFrame` for what it is good enough for.
+VILLAGE_GRID = MapFrame(centre=(800, 410), half_width=675, half_height=337)
+# Troops go down outside the grid as well as on it, so the ground the game will
+# accept a drop on is wider than the grid the buildings sit in. The preset flanks
+# are what measure it: `top_left` starts at (600, 110), well outside the grid and
+# depositing troops long before any of this was read off the screen, and five
+# tiles is the smallest margin that leaves it comfortably inside. It still keeps
+# out the corner a hero was pushed into after four refusals, at (30, 175).
+DEPLOY_BOUND = VILLAGE_GRID.grown(5)
 
 # Measured on the stroke across four village themes: red sits between 130 and
 # 215 while `red - max(green, blue)` runs 85 to 105, against -20 to -30 for the

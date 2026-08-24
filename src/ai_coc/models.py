@@ -44,6 +44,74 @@ class AdbEndpoint(BaseModel):
         return cls(host=host or DEFAULT_ADB_HOST, port=int(port) if port.isdigit() else 0)
 
 
+class MapFrame(BaseModel):
+    """The battle map's diamond in screen pixels, at the camera a battle opens on.
+
+    Calibrated against live frames rather than detected from them: a village
+    theme repaints the ground the map's edge runs along, so anything reading that
+    edge by colour or brightness falls over on the next theme, while the camera
+    itself does not move. The figures are good to about 20 px, which is enough
+    for the one thing this is load-bearing for — keeping a drop that is being
+    pushed away from the village from being pushed off the map — and not yet
+    enough for anything that needs a particular tile to be hit.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    centre: tuple[int, int]
+    half_width: int
+    half_height: int
+    # The home village grid, which is what the map is drawn from.
+    tiles: int = 44
+
+    def contains(self, point: tuple[int, int]) -> bool:
+        return (
+            abs(point[0] - self.centre[0]) / self.half_width
+            + abs(point[1] - self.centre[1]) / self.half_height
+        ) <= 1
+
+    def clamp(self, point: tuple[int, int]) -> tuple[int, int]:
+        """Pull a point back onto the map along the line from the middle.
+
+        A rectangle cannot do this: the map is a diamond, so a rectangle's own
+        corners are off the map entirely, and a drop pushed into one lands
+        nowhere the game will accept it.
+        """
+        dx = (point[0] - self.centre[0]) / self.half_width
+        dy = (point[1] - self.centre[1]) / self.half_height
+        span = abs(dx) + abs(dy)
+        if span <= 1:
+            return point
+        return (
+            round(self.centre[0] + dx / span * self.half_width),
+            round(self.centre[1] + dy / span * self.half_height),
+        )
+
+    def grown(self, tiles: int) -> MapFrame:
+        """The same diamond widened by a number of tiles on every side."""
+        scale = (self.tiles + 2 * tiles) / self.tiles
+        return MapFrame(
+            centre=self.centre,
+            half_width=round(self.half_width * scale),
+            half_height=round(self.half_height * scale),
+            tiles=self.tiles + 2 * tiles,
+        )
+
+    def tile(self, point: tuple[int, int]) -> tuple[float, float]:
+        """Grid coordinates for a screen point, the axes running along the edges."""
+        across = (point[0] - self.centre[0]) / (self.half_width / self.tiles)
+        down = (point[1] - self.centre[1]) / (self.half_height / self.tiles)
+        return ((across + down) / 2 + self.tiles / 2, (down - across) / 2 + self.tiles / 2)
+
+    def pixel(self, tile: tuple[float, float]) -> tuple[int, int]:
+        """Where one grid cell's corner sits on screen; the inverse of `tile`."""
+        column, row = tile[0] - self.tiles / 2, tile[1] - self.tiles / 2
+        return (
+            round(self.centre[0] + (column - row) * self.half_width / self.tiles),
+            round(self.centre[1] + (column + row) * self.half_height / self.tiles),
+        )
+
+
 class DisplayTarget(BaseModel):
     """The display one package's window sits on.
 
