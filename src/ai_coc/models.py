@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from typing import Any, Literal
 from datetime import UTC, datetime
 
@@ -42,6 +43,12 @@ class AdbEndpoint(BaseModel):
     def parse(cls, serial: str) -> AdbEndpoint:
         host, _, port = serial.strip().rpartition(":")
         return cls(host=host or DEFAULT_ADB_HOST, port=int(port) if port.isdigit() else 0)
+
+
+# The middle of the battle map at the camera every attack opens on. It lives
+# here because `MapSurvey` fits a diamond around it and `parsers.boundary` reads
+# rays out of it, and one of the two would otherwise be importing the other.
+DEFAULT_MAP_CENTRE = (800, 400)
 
 
 class MapFrame(BaseModel):
@@ -463,6 +470,62 @@ class BoundarySurvey(BaseModel):
     def agreement(self) -> str:
         agreed = sum(ray.agrees for ray in self.rays)
         return f"{agreed}/{len(self.rays)} rays agreed, {len(self.unread)} unread"
+
+
+class MapEdge(BaseModel):
+    """The furthest out a drop was accepted along one ray, against the model's guess.
+
+    `reached` is None where the ray was accepted at the very first probe, which
+    means the screen ran out before the map did: that ray measures the playfield
+    edge, not the map, and says nothing about the diamond.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    degrees: float
+    reached: int | None
+    predicted: int
+
+
+class MapSurvey(BaseModel):
+    """Where the game really stopped taking drops, and what a diamond fitted to it looks like.
+
+    `VILLAGE_GRID` was calibrated by eye against an assumed centre, which is
+    exactly the sort of number that cannot be argued with from a screenshot. This
+    is how to argue with it: drop troops inwards along each ray until one lands.
+    """
+
+    edges: list[MapEdge] = Field(default_factory=list)
+
+    @property
+    def fitted(self) -> MapFrame | None:
+        """The diamond whose edge best matches every ray that measured one."""
+        measured = [
+            (math.radians(edge.degrees), edge.reached)
+            for edge in self.edges
+            if edge.reached is not None
+        ]
+        if len(measured) < 3:
+            return None
+        # |dx|/half_width + |dy|/half_height == 1 on the edge, so each ray gives
+        # one linear equation in 1/half_width and 1/half_height. Two unknowns and
+        # more equations than that, solved by least squares in closed form.
+        rows = [(abs(math.cos(a)) * r, abs(math.sin(a)) * r) for a, r in measured]
+        sxx = sum(x * x for x, _ in rows)
+        syy = sum(y * y for _, y in rows)
+        sxy = sum(x * y for x, y in rows)
+        sx = sum(x for x, _ in rows)
+        sy = sum(y for _, y in rows)
+        determinant = sxx * syy - sxy * sxy
+        if not determinant:
+            return None
+        across = (sx * syy - sy * sxy) / determinant
+        down = (sy * sxx - sx * sxy) / determinant
+        if across <= 0 or down <= 0:
+            return None
+        return MapFrame(
+            centre=DEFAULT_MAP_CENTRE, half_width=round(1 / across), half_height=round(1 / down)
+        )
 
 
 class ScoutView(BaseModel):

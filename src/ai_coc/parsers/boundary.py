@@ -19,7 +19,7 @@ import logging
 
 from PIL import Image, ImageDraw, ImageChops
 
-from ai_coc.models import MapFrame
+from ai_coc.models import DEFAULT_MAP_CENTRE, MapFrame
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +30,7 @@ SCREEN_SIZE = (1600, 900)
 # and 361/359, so it is right to within a few pixels sideways; the vertical pair
 # was 66 apart, which hints it belongs lower, but that was the home camera and
 # one pair of rays is not enough to move a constant everything else is tuned to.
-VILLAGE_CENTRE = (800, 400)
+VILLAGE_CENTRE = DEFAULT_MAP_CENTRE
 
 # Read off live frames by overlaying candidates until they sat on the ground's
 # own edge, across the two themes with the most contrast against their

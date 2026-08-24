@@ -17,7 +17,9 @@ import logging
 
 from ai_coc import plans
 from ai_coc.models import (
+    MapEdge,
     ProbeRay,
+    MapSurvey,
     StockLimits,
     AttackReport,
     FrameReading,
@@ -44,7 +46,7 @@ from ai_coc.parsers.scout import (
     idle_disconnected,
 )
 from ai_coc.adapters.secrets import SecretStore
-from ai_coc.parsers.boundary import VILLAGE_CENTRE, boundary_reach
+from ai_coc.parsers.boundary import PLAYFIELD, VILLAGE_CENTRE, boundary_reach
 
 from .ui.attack import CARD_ROW_Y, DROP_SETTLE, SINGLE_DROP_DELAY, AttackRunner
 
@@ -201,6 +203,99 @@ def probe(frame_dir: Path | None = None) -> BoundarySurvey:
     )
     runner.run()
     logger.info("Boundary survey: %s", runner.survey.agreement)
+    return runner.survey
+
+
+# Six rays, picked for where the map's own edge falls inside the playfield. The
+# vertical pair runs off the top and bottom of the screen long before it reaches
+# the diamond, so it would measure the UI rather than the map.
+MAP_RAYS = (0.0, 45.0, 135.0, 180.0, 225.0, 315.0)
+# How far each probe steps back in from the screen edge, and how many it may take
+# before the ray is given up on. A refused probe costs no troop, only the capture
+# that reads the card, so the limit is the battle's own three minutes.
+MAP_STEP = 45
+MAP_PROBES = 8
+
+
+class _MapSurvey(AttackRunner):
+    """An attack spent measuring how far out the game will still take a drop.
+
+    `VILLAGE_GRID` was calibrated by overlaying candidates on live frames until
+    they sat on the ground's own edge, which is the sort of number a screenshot
+    cannot argue with. This is the argument: walk inwards along a ray until a
+    troop lands, and that is where the map really ends. It is worth re-running
+    after a game update, a theme that repaints the ground, or any change to the
+    emulator's resolution.
+    """
+
+    survey: MapSurvey = MapSurvey()
+
+    def _edge(self, degrees: float, shot: bytes) -> tuple[MapEdge | None, bytes]:
+        """Walk one ray inwards from the screen edge until a drop lands."""
+        left, top, right, bottom = PLAYFIELD
+        dx, dy = math.cos(math.radians(degrees)), math.sin(math.radians(degrees))
+        # The furthest this ray gets before the playfield stops it.
+        limit = min(
+            (edge - VILLAGE_CENTRE[axis]) / step
+            for axis, step, edge in (
+                (0, dx, right if dx > 0 else left),
+                (1, dy, bottom if dy > 0 else top),
+            )
+            if abs(step) > 1e-9
+        )
+        for probe in range(MAP_PROBES):
+            radius = limit - probe * MAP_STEP
+            if radius <= 0:
+                break
+            point = (
+                round(VILLAGE_CENTRE[0] + dx * radius),
+                round(VILLAGE_CENTRE[1] + dy * radius),
+            )
+            card = next(iter(live_cards(shot, self._troops)), None)
+            if card is None:
+                logger.info("Every troop card is spent; the survey stops here")
+                return None, shot
+            self.adb.tap_many([(card, CARD_ROW_Y), point], self.display, gap=SINGLE_DROP_DELAY)
+            time.sleep(DROP_SETTLE)
+            before, shot = shot, self._frame(f"{degrees:03.0f}deg-{round(radius):04d}")
+            if card_drained(before, shot, [card]):
+                logger.info("Ray %.0f: accepted at %d of %d", degrees, radius, limit)
+                # Accepted at the very first probe means the screen ran out
+                # before the map did, so this ray measured the playfield.
+                return MapEdge(
+                    degrees=degrees,
+                    reached=None if probe == 0 else round(radius),
+                    predicted=round(limit),
+                ), shot
+        logger.info("Ray %.0f: nothing landed anywhere along it", degrees)
+        return None, shot
+
+    def _deploy(self, frame: bytes) -> None:
+        self._troops = card_groups(frame)[0]
+        battle = self._wait_for_battle()
+        if battle is None:
+            logger.warning("Never reached the battle; nothing to survey")
+            return
+        shot = battle
+        for degrees in MAP_RAYS:
+            edge, shot = self._edge(degrees, shot)
+            if edge is not None:
+                self.survey.edges.append(edge)
+
+
+def bounds(frame_dir: Path | None = None) -> MapSurvey:
+    """Spend a battle finding where the map really ends, and fit a diamond to it."""
+    adb = _controller()
+    if frame_dir is not None:
+        frame_dir.mkdir(parents=True, exist_ok=True)
+    runner = _MapSurvey(
+        adb=adb,
+        display=adb.display_for(COC_PACKAGE),
+        thresholds=LootThresholds(),
+        frame_dir=frame_dir,
+    )
+    runner.run()
+    logger.info("Map survey fitted %s", runner.survey.fitted)
     return runner.survey
 
 

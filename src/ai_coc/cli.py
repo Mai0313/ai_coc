@@ -41,6 +41,8 @@ def _parser() -> argparse.ArgumentParser:
     run.add_argument("--plan-out", type=Path, help="把這一場實際用的計畫寫成 JSON")
     survey = sub.add_parser("probe", help="花一場戰鬥實測邊界，對照判讀器說的")
     survey.add_argument("--frames", type=Path, help="把每一次探測的畫面存起來")
+    edges = sub.add_parser("bounds", help="花一場戰鬥實測地圖邊緣，回推村莊範圍")
+    edges.add_argument("--frames", type=Path, help="把每一次探測的畫面存起來")
     shot = sub.add_parser("capture", help="從遊戲連續存畫面")
     shot.add_argument("out", type=Path)
     shot.add_argument("--count", type=int, default=1)
@@ -61,6 +63,8 @@ def _run_command(arguments: argparse.Namespace) -> int:
         result = report.model_dump_json(indent=2)
     elif arguments.command == "probe":
         result = commands.probe(arguments.frames).model_dump_json(indent=2)
+    elif arguments.command == "bounds":
+        result = commands.bounds(arguments.frames).model_dump_json(indent=2)
     elif arguments.command == "capture":
         saved = commands.capture(arguments.out, arguments.count, arguments.gap)
         result = "\n".join(str(path) for path in saved)
