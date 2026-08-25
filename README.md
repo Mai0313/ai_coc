@@ -92,12 +92,12 @@ uv sync --group docs    # Install docs-only deps
 The three layers are directories, so an import that crosses them is visible in the import line:
 
 - **UI and orchestration** — `ui/main_window.py` holds the window and every workflow, `ui/workers.py` the thread-pool workers, `ui/render.py` the Markdown and log rendering. `cli.py` is only `main()`
-- **Adapters** — `adapters/mumu.py` (emulator lifecycle), `adapters/adb.py` (every ADB call), `adapters/ai.py` (Gemini), `adapters/secrets.py` (DPAPI), `adapters/database.py` (SQLite)
+- **Adapters** — `adapters/mumu.py` (emulator lifecycle), `adapters/adb.py` (every ADB call), `adapters/ai.py` (Gemini), `adapters/secrets.py` (DPAPI), `adapters/config.py` (the shared settings file), `adapters/database.py` (SQLite)
 - **Pure parsers** — `parsers/village.py`, `parsers/battle.py`
 
 Every structured value is a Pydantic model, collected in `models.py`. Blocking calls go through a `QThreadPool` worker and come back to the UI thread as a signal.
 
-Application state lives in `~/.ai_coc`: the SQLite database, captured frames, imported account JSON and the DPAPI-protected key file.
+Application state lives in `~/.ai_coc`: the SQLite database, captured frames, imported account JSON, the DPAPI-protected key file and `config.json`, which is the one settings file the window and the terminal both read.
 
 ## 📚 Documentation
 

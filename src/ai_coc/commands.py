@@ -21,16 +21,16 @@ from ai_coc import plans
 from ai_coc.models import (
     MapEdge,
     ProbeRay,
+    AppConfig,
     MapSurvey,
-    StockLimits,
     AttackReport,
     FrameReading,
-    AttackTimings,
+    LootOverrides,
     BoundarySurvey,
     GeminiSettings,
     LootThresholds,
 )
-from ai_coc.constants import COC_PACKAGE, DEFAULT_GEMINI_MODEL
+from ai_coc.constants import COC_PACKAGE
 from ai_coc.adapters.ai import GeminiClient
 from ai_coc.adapters.mumu import MuMuAdapter
 from ai_coc.parsers.scout import (
@@ -47,6 +47,7 @@ from ai_coc.parsers.scout import (
     attack_menu_open,
     idle_disconnected,
 )
+from ai_coc.adapters.config import ConfigStore
 from ai_coc.adapters.secrets import SecretStore
 from ai_coc.parsers.boundary import PLAYFIELD, VILLAGE_CENTRE, boundary_reach
 
@@ -69,7 +70,7 @@ def _controller() -> AdbController:
     return mumu.controller(mumu.ensure_coc(instances[0].index).adb_serial)
 
 
-def _planner() -> GeminiClient | None:
+def _planner(config: AppConfig) -> GeminiClient | None:
     """The saved key, or None so the attack falls back to its fixed flank."""
     try:
         key = SecretStore().load()
@@ -79,21 +80,28 @@ def _planner() -> GeminiClient | None:
     if not key:
         logger.info("No API key is saved; the attack will use the fixed flank and spell grid")
         return None
-    return GeminiClient(settings=GeminiSettings(api_key=key, model=DEFAULT_GEMINI_MODEL))
+    return GeminiClient(
+        settings=GeminiSettings(
+            api_key=key, model=config.gemini_model, base_url=config.gemini_endpoint
+        )
+    )
 
 
 def attack(
     frame_dir: Path | None = None,
     plan_in: Path | None = None,
     plan_out: Path | None = None,
-    thresholds: LootThresholds | None = None,
+    minimums: LootOverrides | None = None,
 ) -> AttackReport:
     """One pass of the attack loop, with no window in the way.
 
-    Thresholds default to zero, so a run started from a terminal attacks the
-    first opponent it is shown. That is what a run being studied wants: skipping
-    is already covered by its own tests, and the code worth watching is the part
-    that only runs once an opponent has been accepted.
+    Thresholds, storage limits and ability timings all come from the shared
+    config file, so a run started here plays the same way as one started from
+    the window — the storage limits included, which means a full village stands
+    this down before it searches. `minimums` overrides the thresholds alone,
+    which is how a loop being studied gets the old behaviour back: all three at
+    zero is "attack the first opponent shown", and skipping nothing is what puts
+    the code worth watching on screen.
 
     `plan_in` replaces the AI entirely — the loop plays that file and asks for
     nothing — and `plan_out` writes down whichever plan actually ran, so a battle
@@ -103,13 +111,14 @@ def attack(
     if frame_dir is not None:
         frame_dir.mkdir(parents=True, exist_ok=True)
     plan = plans.load(plan_in) if plan_in else None
+    config = ConfigStore().load()
     runner = AttackRunner(
         adb=adb,
         display=adb.display_for(COC_PACKAGE),
-        thresholds=thresholds or LootThresholds(),
-        stock=StockLimits(),
-        abilities=AttackTimings(),
-        ai=None if plan else _planner(),
+        thresholds=(minimums or LootOverrides()).over(config.thresholds),
+        stock=config.stock,
+        abilities=config.timings,
+        ai=None if plan else _planner(config),
         plan=plan,
         frame_dir=frame_dir,
     )
