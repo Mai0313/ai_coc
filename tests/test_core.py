@@ -9,11 +9,13 @@ from unittest.mock import patch
 
 from PIL import Image
 import pytest
+from pydantic import ValidationError
 
 from ai_coc import plans
 from ai_coc.ui import attack
 from ai_coc.models import (
     ProbeRay,
+    AppConfig,
     LootOffer,
     ScoutView,
     AttackPlan,
@@ -23,6 +25,7 @@ from ai_coc.models import (
     VillageStock,
     AttackTimings,
     DisplayTarget,
+    LootOverrides,
     BoundarySurvey,
     LootThresholds,
 )
@@ -59,6 +62,7 @@ from ai_coc.parsers.scout import (
     counted_cards,
     attack_menu_open,
 )
+from ai_coc.adapters.config import ConfigStore
 from ai_coc.parsers.village import parse_village
 from ai_coc.adapters.secrets import dotenv_value
 from ai_coc.parsers.boundary import (
@@ -336,6 +340,47 @@ class PlanTests(unittest.TestCase):
         """A written plan is the whole tactic, so its schedule is the one that fires."""
         plan = AttackPlan(**_LINE, timings=AttackTimings(queen=7))
         assert (plan.timings or AttackTimings()).seconds("queen") == 7
+
+
+class ConfigTests(unittest.TestCase):
+    """One settings file, because a run has to play the same way from either side."""
+
+    def test_a_missing_file_reads_as_what_the_window_has_always_shown(self) -> None:
+        """Not the field defaults underneath: those are attack anything, stop at nothing."""
+        with tempfile.TemporaryDirectory() as td:
+            config = ConfigStore(path=Path(td) / "config.json").load()
+        assert config.thresholds != LootThresholds()
+        assert config.stock != StockLimits()
+
+    def test_settings_survive_being_written_out_and_read_back(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            store = ConfigStore(path=Path(td) / "config.json")
+            saved = AppConfig(
+                thresholds=LootThresholds(min_gold=1, min_elixir=2, min_dark=3),
+                timings=AttackTimings(queen=9),
+                gemini_model="gemini-not-the-default",
+            )
+            store.save(saved)
+            assert store.load() == saved
+
+    def test_a_file_that_will_not_parse_raises_rather_than_farming_on_defaults(self) -> None:
+        """Silently defaulting is the failure this file was added to close."""
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "config.json"
+            path.write_text("{ not json at all", encoding="utf-8")
+            with pytest.raises(ValidationError):
+                ConfigStore(path=path).load()
+
+    def test_an_omitted_minimum_leaves_the_configured_one_alone(self) -> None:
+        base = LootThresholds(min_gold=500_000, min_elixir=400_000, min_dark=5_000)
+        assert LootOverrides(min_gold=10).over(base) == LootThresholds(
+            min_gold=10, min_elixir=400_000, min_dark=5_000
+        )
+
+    def test_a_minimum_passed_as_zero_really_takes_that_threshold_out(self) -> None:
+        """Zero is the interesting value: it is how a run being studied attacks anything."""
+        base = LootThresholds(min_gold=500_000, min_elixir=400_000, min_dark=5_000)
+        assert LootOverrides(min_gold=0, min_elixir=0, min_dark=0).over(base) == LootThresholds()
 
 
 class PromptTests(unittest.TestCase):

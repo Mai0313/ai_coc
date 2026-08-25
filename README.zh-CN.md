@@ -92,12 +92,12 @@ uv sync --group docs    # 只装文档用依赖
 三个层次就是三个目录，所以跨层的 import 在 import 那一行就看得出来：
 
 - **UI 与流程调度**：`ui/main_window.py` 放主窗口与所有工作流程，`ui/workers.py` 放线程池的 worker，`ui/render.py` 负责 Markdown 与日志的呈现。`cli.py` 只有 `main()`
-- **适配层**：`adapters/mumu.py`（模拟器生命周期）、`adapters/adb.py`（所有 ADB 调用）、`adapters/ai.py`（Gemini）、`adapters/secrets.py`（DPAPI）、`adapters/database.py`（SQLite）
+- **适配层**：`adapters/mumu.py`（模拟器生命周期）、`adapters/adb.py`（所有 ADB 调用）、`adapters/ai.py`（Gemini）、`adapters/secrets.py`（DPAPI）、`adapters/config.py`（共用配置文件）、`adapters/database.py`（SQLite）
 - **纯解析器**：`parsers/village.py`、`parsers/battle.py`
 
 每一个结构化的值都是 Pydantic model，全部集中在 `models.py`。会阻塞的调用一律走 `QThreadPool` 的 worker，再用 signal 回到 UI 线程。
 
-程序状态放在 `~/.ai_coc`：SQLite 数据库、截取的画面、导入的账号 JSON，以及 DPAPI 保护的 key 文件。
+程序状态放在 `~/.ai_coc`：SQLite 数据库、截取的画面、导入的账号 JSON、DPAPI 保护的 key 文件，以及窗口与终端共用的配置文件 `config.json`。
 
 ## 📚 文档
 

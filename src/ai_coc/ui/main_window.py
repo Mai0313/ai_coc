@@ -49,6 +49,7 @@ from PyQt5.QtWidgets import (
 from ai_coc.models import (
     Frame,
     ChatRole,
+    AppConfig,
     AgentAction,
     ChatMessage,
     StockLimits,
@@ -80,6 +81,7 @@ from ai_coc.constants import (
 )
 from ai_coc.adapters.ai import AGENT_PROFILE, GeminiClient, vision_prompt
 from ai_coc.adapters.mumu import MuMuAdapter
+from ai_coc.adapters.config import ConfigStore
 from ai_coc.parsers.village import parse_village, parse_village_text
 from ai_coc.adapters.mapping import fetch_entity_mapping
 from ai_coc.adapters.secrets import SecretStore
@@ -111,15 +113,50 @@ LIVE_INTERVAL = 500
 # the push is deep enough to be worth saving. A hero's delay runs from that hero
 # landing; the freeze's runs from the attack opening, which is why it is labelled
 # apart. It used to have no time of its own at all and simply followed the last
-# ability, which put it a minute and a half in whenever a champion was out.
+# ability, which put it a minute and a half in whenever a champion was out. The
+# numbers themselves are `AttackTimings`' own defaults; only the labels are here.
 TIMING_FIELDS = (
-    ("king", "野蠻人之王（落地後）", 20),
-    ("queen", "弓箭女皇（落地後）", 1),
-    ("warden", "大守護者（落地後）", 30),
-    ("champion", "皇家守護（落地後）", 45),
-    ("minion_prince", "飛盾王子（落地後）", 20),
-    ("freeze", "冰凍法術（開打後）", 30),
+    ("king", "野蠻人之王（落地後）"),
+    ("queen", "弓箭女皇（落地後）"),
+    ("warden", "大守護者（落地後）"),
+    ("champion", "皇家守護（落地後）"),
+    ("minion_prince", "飛盾王子（落地後）"),
+    ("freeze", "冰凍法術（開打後）"),
 )
+# What the registry used to hold, read once so a machine that has been running
+# this for months keeps its settings when they move into the config file. Saving
+# through the window is what writes the file, so without this step the first
+# terminal run after the upgrade would use the defaults and say nothing.
+THRESHOLD_KEYS = ("min_gold", "min_elixir", "min_dark")
+STOCK_KEYS = ("stop_gold", "stop_elixir", "stop_dark")
+
+
+def _migrated_config(settings: QSettings) -> AppConfig | None:
+    """The registry's own values as an `AppConfig`, or None if it holds none."""
+    if not any(settings.contains(key) for key in (*THRESHOLD_KEYS, *STOCK_KEYS, "gemini_model")):
+        return None
+    defaults = AppConfig()
+    endpoint = str(settings.value("gemini_endpoint", ""))
+
+    def saved(key: str, fallback: int) -> int:
+        return int(settings.value(key, fallback))
+
+    return AppConfig(
+        thresholds=LootThresholds(**{
+            key: saved(key, getattr(defaults.thresholds, key)) for key in THRESHOLD_KEYS
+        }),
+        stock=StockLimits(**{key: saved(key, getattr(defaults.stock, key)) for key in STOCK_KEYS}),
+        timings=AttackTimings(**{
+            key: saved(f"hero_{key}", getattr(defaults.timings, key))
+            for key, _label in TIMING_FIELDS
+        }),
+        gemini_model=str(settings.value("gemini_model", defaults.gemini_model)),
+        # The OpenAI-compatible endpoint the previous release defaulted to is not
+        # a google-genai base URL. This is the one moment it could be carried
+        # forward, so it is the moment to drop it: past here the terminal reads
+        # the file directly and has no window to filter it on the way through.
+        gemini_endpoint="" if "openai" in endpoint.lower() else endpoint,
+    )
 
 
 class MainWindow(QMainWindow):
@@ -131,6 +168,7 @@ class MainWindow(QMainWindow):
         self.db = Database()
         self.secrets = SecretStore()
         self.settings = QSettings(ORGANISATION, "CoCAIController")
+        self.config = self._load_config()
         self.mumu: MuMuAdapter | None = None
         self.instances: list[EmulatorInstance] = []
         self.active: EmulatorInstance | None = None
@@ -168,6 +206,16 @@ class MainWindow(QMainWindow):
         self.refresh_entity_mapping()
         if self.live_view.isChecked():
             self.live_timer.start(LIVE_INTERVAL)
+
+    def _load_config(self) -> AppConfig:
+        """The shared config file, carrying over whatever the registry still holds."""
+        store = ConfigStore()
+        if not store.path.is_file():
+            migrated = _migrated_config(self.settings)
+            if migrated is not None:
+                store.save(migrated)
+                logger.info("Carried the saved settings over into %s", store.path)
+        return store.load()
 
     def _build_ui(self) -> None:
         self.setStyleSheet("""
@@ -274,16 +322,17 @@ class MainWindow(QMainWindow):
         is the one spell held back, and the one timed from the attack opening
         rather than from a landing, so its row says which.
 
-        The stored keys keep their `hero_` prefix, which no longer describes all
-        of them: renaming would silently throw away the delays already saved.
+        The keys are `AttackTimings`' own field names. The `hero_` prefix they
+        carried in the registry survives in `_migrated_config` alone, which is
+        the only thing that still reads what was saved there.
         """
         group = QGroupBox("大招與法術時機（秒）")
         form = QFormLayout(group)
         self.timing_delays: dict[str, QSpinBox] = {}
-        for key, label, default in TIMING_FIELDS:
+        for key, label in TIMING_FIELDS:
             box = QSpinBox()
             box.setRange(0, 180)
-            box.setValue(int(self.settings.value(f"hero_{key}", default)))
+            box.setValue(getattr(self.config.timings, key))
             self.timing_delays[key] = box
             form.addRow(label, box)
         return group
@@ -544,16 +593,17 @@ class MainWindow(QMainWindow):
             box.setSpecialValueText("不監控")
         self.cycle_minutes = QSpinBox()
         self.cycle_minutes.setRange(1, 120)
-        for key, widget, default in (
-            ("min_gold", self.min_gold, 500000),
-            ("min_elixir", self.min_elixir, 500000),
-            ("min_dark", self.min_dark, 5000),
-            ("stop_gold", self.stop_gold, 15000000),
-            ("stop_elixir", self.stop_elixir, 15000000),
-            ("stop_dark", self.stop_dark, 0),
-            ("cycle_minutes", self.cycle_minutes, 10),
+        for widget, value in (
+            (self.min_gold, self.config.thresholds.min_gold),
+            (self.min_elixir, self.config.thresholds.min_elixir),
+            (self.min_dark, self.config.thresholds.min_dark),
+            (self.stop_gold, self.config.stock.stop_gold),
+            (self.stop_elixir, self.config.stock.stop_elixir),
+            (self.stop_dark, self.config.stock.stop_dark),
+            # Only the window ever waits, so this one stays in the registry.
+            (self.cycle_minutes, int(self.settings.value("cycle_minutes", 10))),
         ):
-            widget.setValue(int(self.settings.value(key, default)))
+            widget.setValue(value)
         battle_form.addRow("最低金幣", self.min_gold)
         battle_form.addRow("最低聖水", self.min_elixir)
         battle_form.addRow("最低黑水", self.min_dark)
@@ -572,19 +622,23 @@ class MainWindow(QMainWindow):
             ("auto_attack", self.auto_attack),
         ):
             self.settings.setValue(key, widget.isChecked())
-        for key, widget in (
-            ("min_gold", self.min_gold),
-            ("min_elixir", self.min_elixir),
-            ("min_dark", self.min_dark),
-            ("stop_gold", self.stop_gold),
-            ("stop_elixir", self.stop_elixir),
-            ("stop_dark", self.stop_dark),
-            ("cycle_minutes", self.cycle_minutes),
-        ):
-            self.settings.setValue(key, widget.value())
-        for key, box in self.timing_delays.items():
-            self.settings.setValue(f"hero_{key}", box.value())
+        self.settings.setValue("cycle_minutes", self.cycle_minutes.value())
+        self._save_config(
+            thresholds=self._thresholds(),
+            stock=self._limits(),
+            timings=AttackTimings(**{key: box.value() for key, box in self.timing_delays.items()}),
+        )
         self.automation_log.appendPlainText("自動化設定已保存。")
+
+    def _save_config(self, **changes: object) -> None:
+        """Change part of the shared config and write the whole of it back.
+
+        The window keeps reading its own widgets while it runs, so this is only
+        about what the next run finds — including the next one started from a
+        terminal, which has nowhere else to look.
+        """
+        self.config = self.config.model_copy(update=changes)
+        ConfigStore().save(self.config)
 
     def toggle_automation(self) -> None:
         if self.automation_active:
@@ -674,18 +728,24 @@ class MainWindow(QMainWindow):
         self.automation_log.appendPlainText(f"建立自主任務 #{task_id}：{instruction}")
         self.execute_agent_command(instruction, task_id, automated=True)
 
-    def run_attack(self) -> None:
-        m, a = self._require()
-        thresholds = LootThresholds(
+    def _thresholds(self) -> LootThresholds:
+        return LootThresholds(
             min_gold=self.min_gold.value(),
             min_elixir=self.min_elixir.value(),
             min_dark=self.min_dark.value(),
         )
-        limits = StockLimits(
+
+    def _limits(self) -> StockLimits:
+        return StockLimits(
             stop_gold=self.stop_gold.value(),
             stop_elixir=self.stop_elixir.value(),
             stop_dark=self.stop_dark.value(),
         )
+
+    def run_attack(self) -> None:
+        m, a = self._require()
+        thresholds = self._thresholds()
+        limits = self._limits()
 
         # The client is only used once an opponent has passed the thresholds, to
         # pick the flank and the spell targets; screen reading never needs it.
@@ -738,14 +798,9 @@ class MainWindow(QMainWindow):
         self.api_key.setEchoMode(QLineEdit.Password)
         self.api_key.setPlaceholderText("Stored with Windows DPAPI")
         self.model_combo = QComboBox()
-        self.model_combo.addItem(
-            str(self.settings.value("gemini_model", DEFAULT_GEMINI_MODEL)) or DEFAULT_GEMINI_MODEL
-        )
+        self.model_combo.addItem(self.config.gemini_model or DEFAULT_GEMINI_MODEL)
         self.model_combo.setToolTip("按「測試連線並載入模型」後會列出這把金鑰可用的文字模型")
-        # The OpenAI-compatible endpoint the previous release defaulted to is
-        # not a google-genai base URL; drop it rather than carry it forward.
-        saved_endpoint = str(self.settings.value("gemini_endpoint", ""))
-        self.endpoint = QLineEdit("" if "openai" in saved_endpoint.lower() else saved_endpoint)
+        self.endpoint = QLineEdit(self.config.gemini_endpoint)
         self.endpoint.setPlaceholderText("留空即使用 Google 官方端點")
         try:
             self.api_key.setText(self.secrets.load())
@@ -1101,8 +1156,9 @@ class MainWindow(QMainWindow):
     def save_api(self) -> None:
         try:
             self.secrets.save(self.api_key.text())
-            self.settings.setValue("gemini_model", self.model_combo.currentText())
-            self.settings.setValue("gemini_endpoint", self.endpoint.text())
+            self._save_config(
+                gemini_model=self.model_combo.currentText(), gemini_endpoint=self.endpoint.text()
+            )
             logger.info("Saved API settings, model=%s", self.model_combo.currentText())
             QMessageBox.information(self, "Saved", "API Key 已使用 Windows DPAPI 儲存。")
         except Exception as exc:

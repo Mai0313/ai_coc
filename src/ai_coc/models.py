@@ -398,6 +398,25 @@ class LootThresholds(BaseModel):
         )
 
 
+class LootOverrides(BaseModel):
+    """The minimums one run was told to use in place of the configured ones.
+
+    None and 0 mean different things here, and the difference is the whole
+    point: an omitted flag leaves the configured threshold alone, while a flag
+    passed as zero deliberately takes that threshold out, which is how a run
+    being studied gets back to attacking the first opponent it is shown.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    min_gold: int | None = None
+    min_elixir: int | None = None
+    min_dark: int | None = None
+
+    def over(self, base: LootThresholds) -> LootThresholds:
+        return base.model_copy(update=self.model_dump(exclude_none=True))
+
+
 class VillageStock(BaseModel):
     """What the village itself is holding, read off the home screen's storage bars.
 
@@ -606,6 +625,35 @@ class AttackTimings(BaseModel):
 
     def seconds(self, kind: HeroKind) -> int:
         return int(getattr(self, kind, self.unknown))
+
+
+class AppConfig(BaseModel):
+    """Everything a run needs that the window and the terminal both read.
+
+    These used to live in QSettings, which only the window can reach, so a run
+    started from a terminal got the field defaults instead — all three loot
+    thresholds at zero, which is "attack the first opponent shown". That was
+    written down as deliberate and was, for a loop being studied; it stopped
+    being deliberate the moment the same command became how the game is played.
+    The model picker had the same split, quietly sending every headless call to
+    `DEFAULT_GEMINI_MODEL` whatever the settings tab said.
+
+    What is here is what both sides use. Which checkboxes are ticked and whether
+    the live preview is on stay in QSettings, because no terminal command asks.
+    """
+
+    # The defaults are the ones the window has always shown, not the field
+    # defaults underneath them. `LootThresholds()` means "take anything" and
+    # `StockLimits()` means "never stop", which are the right neutral values for
+    # a model and the wrong ones to farm with — and they were only ever reached
+    # by a caller that had no way of asking the user.
+    thresholds: LootThresholds = LootThresholds(
+        min_gold=500_000, min_elixir=500_000, min_dark=5_000
+    )
+    stock: StockLimits = StockLimits(stop_gold=15_000_000, stop_elixir=15_000_000)
+    timings: AttackTimings = AttackTimings()
+    gemini_model: str = DEFAULT_GEMINI_MODEL
+    gemini_endpoint: str = ""
 
 
 class AttackPlan(BaseModel):
