@@ -780,7 +780,7 @@ class AttackRunner(BaseModel):
         )
         return moved
 
-    def _settle_camera(self, frame: bytes | None) -> bytes | None:
+    def _settle_camera(self, frame: bytes) -> bytes:
         """Put the village in the middle of the screen, and hand back what it looks like.
 
         Everything downstream reads the camera without being able to check it:
@@ -789,19 +789,11 @@ class AttackRunner(BaseModel):
         does open every attack centred — measured across nine battles it was never
         more than 35 px out — but that is the sort of fact that is true until it
         is not, and a camera left anywhere else puts the whole army somewhere
-        nobody asked for.
-
-        It reads a *battle* frame and not the scout screen it used to be handed.
-        `village_box` was calibrated on battles, and the scout screen carries an
-        orange 下一個 button its mask does not cover: measured live, that pulled
-        the box out to x 1500 against 1269 for the same village a moment later,
-        and the loop then spent two drags and five seconds shoving a perfectly
-        centred village 72 px left and 48 px back. The plan is drawn before this
-        now, which costs nothing, because `_panned` moves its points with the
-        camera.
+        nobody asked for. This runs before the plan is drawn so the planner is
+        looking at the same screen the drops will land on, which is also what
+        keeps `_panned` to one meaning: the flanks and the plan are both drawn
+        against a centred village, so one offset moves both.
         """
-        if frame is None:
-            return None
         for _ in range(CAMERA_ATTEMPTS):
             box = village_box(frame)
             if box is None:
@@ -824,7 +816,19 @@ class AttackRunner(BaseModel):
                 )
                 return frame
             logger.info("Village sits at %s; dragging the camera by %s", middle, drift)
-            frame = self._pan(frame, drift)
+            # Not `_pan`: this drag ends with the village back in the middle, so
+            # there is nothing for `_panned` to record. Recording it would send
+            # every preset flank off by the drag, since a preset is drawn for a
+            # centred village and the village is centred again by the time this
+            # returns.
+            self.adb.swipe(
+                CAMERA_GRIP,
+                clear_of_controls((CAMERA_GRIP[0] + drift[0], CAMERA_GRIP[1] + drift[1])),
+                CAMERA_DRAG_MS,
+                self.display,
+            )
+            time.sleep(CAMERA_SETTLE)
+            frame = self._frame("camera")
         return frame
 
     def _clear_flank(
@@ -860,6 +864,7 @@ class AttackRunner(BaseModel):
 
     def _deploy(self, frame: bytes) -> None:
         """Spread the main troops along one flank; everything else drops once, mid-line."""
+        frame = self._settle_camera(frame)
         groups = card_groups(frame)
         if not groups:
             logger.warning("No cards found on the battle row; nothing to deploy")
@@ -900,7 +905,7 @@ class AttackRunner(BaseModel):
         # With Gemini in the loop the planning call happens to outlast the
         # countdown, which is what has been hiding this; without a key `_plan`
         # returns at once and the run would probe into the countdown every time.
-        battle = self._settle_camera(self._wait_for_battle())
+        battle = self._wait_for_battle()
         for preset in deploy_candidates(plan):
             # The camera moves first, because a lower flank on a village that
             # fills the playfield has nothing to drop on until it does, and

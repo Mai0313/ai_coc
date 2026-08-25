@@ -125,6 +125,14 @@ def army_centre(before: bytes, after: bytes) -> tuple[int, int] | None:
             )
             if busy > best[0]:
                 best = (busy, left, top)
+    if not best[0]:
+        # Every cell rounded away, which is what a barely-lit mask spread thinly
+        # over the whole playfield does: a cell is 1640 px, so three lit ones in
+        # it average to less than half a level and BOX hands back a zero. Left
+        # alone the search would then answer with its first window, which is a
+        # corner of the map and the one place a rage certainly does nothing.
+        logger.info("%d pixel(s) moved, too thinly spread to be an army", lit)
+        return None
     centre = (
         round((best[1] + wide / 2) * SCREEN_SIZE[0] / across),
         round((best[2] + tall / 2) * SCREEN_SIZE[1] / down),

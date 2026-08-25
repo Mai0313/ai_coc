@@ -631,6 +631,13 @@ class FieldTests(unittest.TestCase):
     def test_a_village_nobody_is_attacking_reads_as_nothing(self) -> None:
         assert army_centre(self._frame(), self._frame()) is None
 
+    def test_a_shimmer_spread_over_the_whole_map_is_not_an_army(self) -> None:
+        """Thin enough and every cell rounds away, which used to answer with a map corner."""
+        # One pixel per mark, three to a cell, which averages to under half a
+        # level and comes back from the grid as a zero.
+        speckle = [(x, y, x, y) for x in range(50, 1540, 40) for y in range(115, 690, 14)]
+        assert army_centre(self._frame(), self._frame(*speckle)) is None
+
     def test_leaving_the_battle_is_not_an_army(self) -> None:
         """Measured, a screen change moves 338k pixels where the busiest battle moved 162k."""
         assert army_centre(self._frame(), self._frame((60, 120, 1560, 690))) is None
@@ -848,9 +855,9 @@ class AttackTests(unittest.TestCase):
         """The game centres every attack itself; dragging a good camera can only hurt."""
         assert self._settled((200, 120, 1380, 680)) == []
 
-    def test_a_battle_frame_that_will_not_measure_leaves_the_camera_alone(self) -> None:
+    def test_a_frame_that_will_not_measure_leaves_the_camera_alone(self) -> None:
         assert self._settled(None) == []
-        assert self._dragged(None, lambda runner: runner._settle_camera(None))[0] == []
+        assert self._cleared(DEPLOY_LINES["bottom_left"], None)[0] == []
 
     def _cleared(
         self,
