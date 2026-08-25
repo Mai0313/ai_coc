@@ -675,10 +675,16 @@ class AttackPlan(BaseModel):
     # place it ended up before, but without pretending it had a plan.
     deploy_start: ScreenPoint
     deploy_end: ScreenPoint
-    rage_points: list[ScreenPoint] = Field(default_factory=list)
-    freeze_points: list[ScreenPoint] = Field(default_factory=list)
+    # Required for the same reason as the two endpoints, and measured the same
+    # way: with defaults these were optional in the JSON schema, and a live run
+    # came back naming five rage points, no freeze point and no hero at all,
+    # against a screen holding a freeze bottle and four hero cards. The loop then
+    # stacked the freeze on its fallback spot and gave every hero the unknown
+    # ability delay, which is a queen's cloak thrown away on every attack.
+    rage_points: list[ScreenPoint]
+    freeze_points: list[ScreenPoint]
     # Left to right, so each hero card can be matched to its own ability timing.
-    heroes: list[HeroKind] = Field(default_factory=list)
+    heroes: list[HeroKind]
     # Carried on the plan so a written-out one is the whole tactic in one file,
     # rather than a set of points whose timing lives somewhere else entirely.
     # None leaves the runner on whatever the caller configured.

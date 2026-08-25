@@ -77,11 +77,16 @@ from ai_coc.adapters.database import Database
 
 FRAMES = Path(__file__).parent / "frames"
 
-# A plan has to carry both ends of its line, so tests that do not care about
-# the line still have to supply one.
+# A plan has to carry both ends of its line and each of the three lists the
+# planner is asked to fill, so tests that do not care about any of them still
+# have to supply them. They are required on purpose: a field with a default is
+# optional in the JSON schema, and that is how a live run came back naming
+# neither a hero nor a freeze point against a screen holding four hero cards.
+_ANSWERED = {"rage_points": [], "freeze_points": [], "heroes": []}
 _LINE = {
     "deploy_start": ScreenPoint(x_pct=37.5, y_pct=12.2),
     "deploy_end": ScreenPoint(x_pct=14.4, y_pct=42.2),
+    **_ANSWERED,
 }
 
 # Trimmed from a live MuMu instance: the launcher holds display 0 and the game
@@ -652,6 +657,7 @@ class AttackTests(unittest.TestCase):
         plan = AttackPlan(
             deploy_start=ScreenPoint(x_pct=37.5, y_pct=12.2),
             deploy_end=ScreenPoint(x_pct=14.4, y_pct=42.2),
+            **_ANSWERED,
         )
         assert planned_line(plan) == DEPLOY_LINES["top_left"]
 
@@ -660,6 +666,7 @@ class AttackTests(unittest.TestCase):
         plan = AttackPlan(
             deploy_start=ScreenPoint(x_pct=25, y_pct=30),
             deploy_end=ScreenPoint(x_pct=75, y_pct=70),
+            **_ANSWERED,
         )
         assert planned_line(plan) is None
 
@@ -773,6 +780,7 @@ class AttackTests(unittest.TestCase):
             deploy_start=ScreenPoint(x_pct=25, y_pct=30),
             deploy_end=ScreenPoint(x_pct=75, y_pct=70),
             deploy_from="bottom_right",
+            **_ANSWERED,
         )
         # That line runs across the village, so only the named flanks are left.
         assert planned_line(plan) is None
@@ -780,15 +788,21 @@ class AttackTests(unittest.TestCase):
         assert candidates[0] == DEPLOY_LINES["bottom_right"]
         assert sorted(candidates) == sorted(DEPLOY_LINES.values())
 
-    def test_both_ends_of_the_line_are_required_of_the_planner(self) -> None:
-        """Gemini answered three runs running with a start and no end; half a line is none."""
+    def test_everything_the_planner_is_asked_for_is_required_of_it(self) -> None:
+        """A field with a default is optional in the schema, and Gemini leaves those out.
+
+        Three runs running answered a start and no end; a fourth named five rage
+        points, no freeze point and no hero at all, against a screen holding a
+        freeze bottle and four hero cards.
+        """
         required = set(AttackPlan.model_json_schema()["required"])
-        assert {"deploy_start", "deploy_end"} <= required
+        assert {"deploy_start", "deploy_end", "rage_points", "freeze_points", "heroes"} <= required
 
     def test_a_usable_planned_line_is_tried_before_any_flank(self) -> None:
         plan = AttackPlan(
             deploy_start=ScreenPoint(x_pct=62.5, y_pct=12.2),
             deploy_end=ScreenPoint(x_pct=85.6, y_pct=42.2),
+            **_ANSWERED,
         )
         candidates = deploy_candidates(plan)
         assert candidates[0] == planned_line(plan)
