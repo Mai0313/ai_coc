@@ -263,6 +263,26 @@ class ScoutTests(unittest.TestCase):
         """A hero keeps its card once it lands, so nothing else separates the two."""
         assert field_units((FRAMES / "cards_full.png").read_bytes(), [815, 925, 1046, 1167]) == []
 
+    def test_the_grass_above_the_card_row_is_not_a_health_bar(self) -> None:
+        """The strip sits above the cards, so the battlefield shows through it.
+
+        A live battle over a bright village read every hero card as landed while
+        all four were still in their cards, which is the whole failure this
+        reader exists to catch. The two measured colours are what tells them
+        apart: the bar has almost no blue in it and grass keeps a third of a
+        channel, so the fill ratio alone cannot separate them.
+        """
+
+        def strip(colour: tuple[int, int, int]) -> bytes:
+            frame = Image.new("RGB", (1600, 900), (20, 20, 20))
+            frame.paste(Image.new("RGB", (120, 30), colour), (640, 712))
+            buffer = io.BytesIO()
+            frame.save(buffer, format="PNG")
+            return buffer.getvalue()
+
+        assert field_units(strip((131, 184, 53)), [694]) == []
+        assert field_units(strip((101, 231, 9)), [694]) == [694]
+
     def test_army_strength_splits_on_the_glyphs_that_are_not_digits(self) -> None:
         """The troop icon and the slash are found by matching no digit well."""
         assert army_strength((FRAMES / "army_full.png").read_bytes()) == (305, 305)
