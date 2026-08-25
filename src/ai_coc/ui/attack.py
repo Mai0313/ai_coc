@@ -179,6 +179,16 @@ CAMERA_GRIP = (800, 400)
 CAMERA_DRAG_MS = 350
 CAMERA_SETTLE = 1.5
 
+# How long the planner gets before the loop stops waiting and plays the flat
+# plan instead. It is the scout countdown, because the call starts at the top of
+# one — measured on a recorded run, the opponent is read at 20:21:02 and the
+# countdown ends at 20:21:31 — so a reply that arrives after it has already
+# missed the window it was for. Thirty also clears every call measured so far,
+# thirteen of them running 11.2 to 25.6 s, so it cuts none of them off. Without
+# it one call took 180.7 s and then failed validation, by which point the
+# three-minute battle it was planning was over and the army was spent on nothing.
+PLAN_TIMEOUT = 30
+
 # The scout countdown is 30 seconds; this polls a second at a time and leaves
 # room for a slow frame rather than sitting through a whole battle.
 COUNTDOWN_ATTEMPTS = 45
@@ -484,6 +494,7 @@ class AttackRunner(BaseModel):
                 PLAN_PROMPT.format(rage_count=rage_count, freeze_count=freeze_count),
                 AttackPlan,
                 frame,
+                PLAN_TIMEOUT,
             )
         except Exception:
             logger.warning("Attack planning failed; falling back to the flat plan", exc_info=True)

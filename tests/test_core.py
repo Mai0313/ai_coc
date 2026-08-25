@@ -26,6 +26,7 @@ from ai_coc.models import (
     DisplayTarget,
     LootOverrides,
     BoundarySurvey,
+    GeminiSettings,
     LootThresholds,
 )
 from ai_coc.prompts import PROMPTS, PROMPT_DIR, render
@@ -36,6 +37,7 @@ from ai_coc.ui.attack import (
     LINE_POINTS,
     DEPLOY_LINES,
     DEPLOY_START,
+    PLAN_TIMEOUT,
     ABANDON_BUTTON,
     DROPS_PER_PASS,
     DEPLOY_ATTEMPTS,
@@ -47,6 +49,7 @@ from ai_coc.ui.attack import (
     single_spots,
     deploy_candidates,
 )
+from ai_coc.adapters.ai import GeminiClient
 from ai_coc.adapters.adb import AdbController, focused_display, physical_display
 from ai_coc.parsers.scout import (
     card_count,
@@ -365,6 +368,24 @@ class PlanTests(unittest.TestCase):
         """A written plan is the whole tactic, so its schedule is the one that fires."""
         plan = AttackPlan(**_LINE, timings=AttackTimings(queen=7))
         assert (plan.timings or AttackTimings()).seconds("queen") == 7
+
+    def test_the_planner_is_asked_with_a_deadline_and_falls_back_without_one(self) -> None:
+        """One call took 180.7 s and the three-minute battle it planned was over.
+
+        The flat plan is right there and costs nothing, so a planner that will
+        not answer inside the scout countdown is simply not waited for.
+        """
+        runner = AttackRunner(
+            adb=AdbController(endpoint=AdbEndpoint(port=16384)),
+            display=DisplayTarget(logical_id="1", physical_id="2"),
+            thresholds=LootThresholds(),
+            ai=GeminiClient(settings=GeminiSettings(api_key="not-a-real-key")),
+        )
+        with patch.object(
+            GeminiClient, "generate_structured", side_effect=TimeoutError("Request timed out")
+        ) as asked:
+            assert runner._plan(b"", 5, 1) == plans.flat()
+        assert asked.call_args.args[3] == PLAN_TIMEOUT
 
 
 class ConfigTests(unittest.TestCase):
