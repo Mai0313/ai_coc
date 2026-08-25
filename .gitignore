@@ -236,5 +236,8 @@ data/accounts/
 data/runtime/
 screenshots/
 captures/
+# Where `ai_coc attack --frames` is pointed while a tactic is being worked on;
+# a recorded battle is hundreds of frames of a live account.
+/.runs/
 adbkey
 adbkey.pub

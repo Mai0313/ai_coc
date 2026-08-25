@@ -5,8 +5,9 @@ from pathlib import Path
 import tempfile
 import unittest
 from unittest.mock import patch
+from collections.abc import Callable
 
-from PIL import Image
+from PIL import Image, ImageDraw
 import pytest
 from pydantic import ValidationError
 
@@ -51,6 +52,7 @@ from ai_coc.ui.attack import (
 )
 from ai_coc.adapters.ai import GeminiClient
 from ai_coc.adapters.adb import AdbController, focused_display, physical_display
+from ai_coc.parsers.field import view_shift, army_centre
 from ai_coc.parsers.scout import (
     card_count,
     live_cards,
@@ -600,6 +602,83 @@ class BoundaryTests(unittest.TestCase):
             assert min(radii) > 200, (name, sorted(radii))
 
 
+class FieldTests(unittest.TestCase):
+    """Locating the fighting from what changed between two captures."""
+
+    def _frame(self, *blobs: tuple[int, int, int, int]) -> bytes:
+        image = Image.new("RGB", (1600, 900), (60, 120, 40))
+        painter = ImageDraw.Draw(image)
+        for box in blobs:
+            painter.rectangle(box, fill=(230, 230, 230))
+        buffer = io.BytesIO()
+        image.save(buffer, format="PNG")
+        return buffer.getvalue()
+
+    def test_the_reading_lands_on_what_moved(self) -> None:
+        centre = army_centre(self._frame(), self._frame((560, 290, 800, 410)))
+        assert centre is not None
+        assert 560 <= centre[0] <= 800
+        assert 290 <= centre[1] <= 410
+
+    def test_the_busiest_patch_beats_the_average(self) -> None:
+        """A base fires back across its whole width; the army works at one edge of it."""
+        centre = army_centre(
+            self._frame(), self._frame((400, 300, 560, 420), (1100, 250, 1400, 550))
+        )
+        assert centre is not None
+        assert centre[0] > 1000
+
+    def test_a_village_nobody_is_attacking_reads_as_nothing(self) -> None:
+        assert army_centre(self._frame(), self._frame()) is None
+
+    def test_a_shimmer_spread_over_the_whole_map_is_not_an_army(self) -> None:
+        """Thin enough and every cell rounds away, which used to answer with a map corner."""
+        # One pixel per mark, three to a cell, which averages to under half a
+        # level and comes back from the grid as a zero.
+        speckle = [(x, y, x, y) for x in range(50, 1540, 40) for y in range(115, 690, 14)]
+        assert army_centre(self._frame(), self._frame(*speckle)) is None
+
+    def test_leaving_the_battle_is_not_an_army(self) -> None:
+        """Measured, a screen change moves 338k pixels where the busiest battle moved 162k."""
+        assert army_centre(self._frame(), self._frame((60, 120, 1560, 690))) is None
+
+    def test_the_panels_that_change_on_their_own_are_not_the_fighting(self) -> None:
+        """The loot counts down, our storages climb and the clock ticks every second."""
+        moved = self._frame((40, 120, 300, 260), (620, 20, 980, 100), (1310, 30, 1580, 180))
+        assert army_centre(self._frame(), moved) is None
+
+    def test_a_frame_of_another_resolution_is_rejected(self) -> None:
+        buffer = io.BytesIO()
+        Image.new("RGB", (1280, 720)).save(buffer, format="PNG")
+        with pytest.raises(ValueError, match="1600x900"):
+            army_centre(buffer.getvalue(), buffer.getvalue())
+
+    def _village(self, drop: int) -> bytes:
+        """Something with enough texture to line up, drawn `drop` px further down."""
+        image = Image.new("RGB", (1600, 900), (60, 120, 40))
+        painter = ImageDraw.Draw(image)
+        for row in range(6):
+            for column in range(9):
+                left, top = 420 + column * 80, 180 + row * 70 + drop
+                painter.rectangle(
+                    (left, top, left + 40 + column * 2, top + 30 + row * 3),
+                    fill=(40 + column * 20, 80, 200 - row * 25),
+                )
+        buffer = io.BytesIO()
+        image.save(buffer, format="PNG")
+        return buffer.getvalue()
+
+    def test_the_drag_the_game_took_is_read_off_the_two_frames(self) -> None:
+        """`village_box` said 23 px of a 98 px drag the game had taken in full."""
+        shift = view_shift(self._village(0), self._village(98), (0, 98))
+        # The search is in steps, so the answer is to within one of them.
+        assert shift[0] == 0
+        assert abs(shift[1] - 98) <= 10
+
+    def test_a_drag_the_game_never_took_reads_as_none_of_it(self) -> None:
+        assert view_shift(self._village(0), self._village(0), (0, 98)) == (0, 0)
+
+
 class AttackTests(unittest.TestCase):
     def test_every_threshold_has_to_be_met(self) -> None:
         offer = LootOffer(gold=700000, elixir=500000, dark=2000)
@@ -735,11 +814,25 @@ class AttackTests(unittest.TestCase):
 
     def _settled(self, box: tuple[int, int, int, int]) -> list[tuple[int, int]]:
         """Every drag `_settle_camera` asks for, given a village measured at `box`."""
+        return self._dragged(box, lambda runner: runner._settle_camera(b""))[0]
+
+    def _dragged(
+        self,
+        box: tuple[int, int, int, int] | None,
+        move: Callable[[AttackRunner], object],
+        taken: float = 1.0,
+    ) -> tuple[list[tuple[int, int]], AttackRunner]:
+        """Every drag `move` asks for, with the game taking `taken` of each one."""
         runner = self._runner()
         swipes: list[tuple[int, int]] = []
         with (
             patch.object(AttackRunner, "_frame", return_value=b""),
             patch.object(attack, "village_box", return_value=box),
+            patch.object(
+                attack,
+                "view_shift",
+                lambda _before, _after, drift: (round(drift[0] * taken), round(drift[1] * taken)),
+            ),
             patch.object(attack.time, "sleep"),
             patch.object(
                 type(runner.adb),
@@ -750,8 +843,8 @@ class AttackTests(unittest.TestCase):
                 )),
             ),
         ):
-            runner._settle_camera(b"")
-        return swipes
+            move(runner)
+        return swipes, runner
 
     def test_a_camera_left_off_centre_is_dragged_back(self) -> None:
         """Measured live: knocked 96 px left, one drag put it back within 15."""
@@ -761,6 +854,76 @@ class AttackTests(unittest.TestCase):
     def test_a_camera_already_on_the_village_is_left_alone(self) -> None:
         """The game centres every attack itself; dragging a good camera can only hurt."""
         assert self._settled((200, 120, 1380, 680)) == []
+
+    def test_a_frame_that_will_not_measure_leaves_the_camera_alone(self) -> None:
+        assert self._settled(None) == []
+        assert self._cleared(DEPLOY_LINES["bottom_left"], None)[0] == []
+
+    def _cleared(
+        self,
+        preset: tuple[tuple[int, int], ...],
+        box: tuple[int, int, int, int] | None,
+        taken: float = 1.0,
+    ) -> tuple[list[tuple[int, int]], AttackRunner]:
+        return self._dragged(box, lambda runner: runner._clear_flank(b"", preset), taken)
+
+    # A village filling the playfield, which is the ordinary case: measured over
+    # nine battles the red line spans 530 to 575 px of the 595 there are.
+    FULL_VILLAGE = (270, 115, 1330, 673)
+
+    def test_a_lower_flank_with_no_ground_left_drags_the_village_up(self) -> None:
+        """Under 30 px below the village is what lost a whole army without deploying it."""
+        swipes, runner = self._cleared(DEPLOY_LINES["bottom_left"], self.FULL_VILLAGE)
+        assert swipes == [(0, -83)]
+        # And the coordinates everything downstream holds follow the camera.
+        assert runner._panned == (0, -83)
+        assert runner._middle == (800, 317)
+        assert runner._onscreen(DEPLOY_LINES["bottom_left"]) == ((230, 347), (600, 577))
+
+    def test_an_upper_flank_with_no_ground_left_drags_the_village_down(self) -> None:
+        swipes, runner = self._cleared(DEPLOY_LINES["top_right"], self.FULL_VILLAGE)
+        assert swipes == [(0, 100)]
+        assert runner._panned == (0, 100)
+
+    def test_a_village_the_flank_already_clears_is_left_alone(self) -> None:
+        """Dragging a camera that is fine can only take room off the other side."""
+        swipes, runner = self._cleared(DEPLOY_LINES["bottom_left"], (400, 200, 1200, 560))
+        assert swipes == []
+        assert runner._panned == (0, 0)
+
+    def test_a_drag_the_game_swallowed_moves_no_coordinates(self) -> None:
+        """A card left selected turns the same swipe into a deployment, and nothing pans."""
+        _, runner = self._cleared(DEPLOY_LINES["bottom_left"], self.FULL_VILLAGE, taken=0)
+        assert runner._panned == (0, 0)
+
+    def test_only_the_part_of_the_drag_the_game_took_is_recorded(self) -> None:
+        """Measured live, a drag of 98 px was taken as 100 and one of 81 as 72."""
+        _, runner = self._cleared(DEPLOY_LINES["top_right"], self.FULL_VILLAGE, taken=0.6)
+        assert runner._panned == (0, 60)
+
+    def _aimed(
+        self, targets: tuple[tuple[int, int], ...], centre: tuple[int, int] | None
+    ) -> tuple[tuple[int, int], ...]:
+        runner = self._runner()
+        with (
+            patch.object(AttackRunner, "_frame", return_value=b""),
+            patch.object(attack, "army_centre", return_value=centre),
+            patch.object(attack.time, "sleep"),
+        ):
+            return runner._onto_army(targets)
+
+    def test_the_rage_pattern_slides_onto_the_fighting(self) -> None:
+        """The plan draws the shape; the screen says where the army has got to."""
+        targets = ((500, 300), (700, 300), (500, 420), (700, 420))
+        moved = self._aimed(targets, (700, 400))
+        # The spacing is what keeps two bottles from overlapping, so it survives.
+        assert [b[0] - a[0] for a, b in zip(targets, moved, strict=True)] == [100] * 4
+        assert [b[1] - a[1] for a, b in zip(targets, moved, strict=True)] == [40] * 4
+
+    def test_an_unreadable_field_leaves_the_planned_rage_where_it_was(self) -> None:
+        """A bad shift is worse than a stale one: the plan at least aimed at the village."""
+        targets = ((500, 300), (700, 420))
+        assert self._aimed(targets, None) == targets
 
     def test_a_one_off_drop_keeps_pushing_out_while_that_moves_it(self) -> None:
         """The middle of the line first, then further from the village, as it always was."""
