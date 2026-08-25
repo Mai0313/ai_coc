@@ -121,6 +121,7 @@ TIMING_FIELDS = (
     ("warden", "大守護者（落地後）"),
     ("champion", "皇家守護（落地後）"),
     ("minion_prince", "飛盾王子（落地後）"),
+    ("rage", "狂暴法術（開打後）"),
     ("freeze", "冰凍法術（開打後）"),
 )
 # What the registry used to hold, read once so a machine that has been running

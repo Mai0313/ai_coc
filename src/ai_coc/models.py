@@ -595,22 +595,24 @@ class AttackTimings(BaseModel):
     upgraded cannot take the field, so its card is simply absent and every
     position shifts.
 
-    Freeze is here rather than left to fall out of the code's ordering, which is
-    what it used to do — cast after the last ability, it waited out the slowest
-    hero on the field, so a champion's 45 seconds put it a minute and a half into
-    a three-minute battle, long after the defences it was meant to stop had done
-    their work. It is the one spell held back, so it is the one with a time.
+    Both spells are here rather than left to fall out of the code's ordering,
+    which is what they used to do. Freeze was cast after the last ability, so it
+    waited out the slowest hero on the field and a champion's 45 seconds put it a
+    minute and a half into a three-minute battle. Rage was cast the moment the
+    troop cards emptied, which was fine while emptying them took half a minute
+    and is not now that it takes five seconds: a rage lasts 18 seconds, and cast
+    as the troops land it has expired before they reach anything worth raging.
 
-    It is also the one measured from a different moment. An ability's delay runs
-    from its own hero landing; the freeze's runs from the attack opening, which
-    is how it is judged on screen — about half a minute in, as the push reaches
-    the first line of defences — and hanging it off the heroes would move it by
-    however long the army happened to take to go down.
+    They are also measured from a different moment than the abilities. An
+    ability's delay runs from its own hero landing; a spell's runs from the
+    attack opening, which is how both are judged on screen — rage as the push
+    reaches the outer wall, freeze as it reaches the first line of defences —
+    and hanging them off the heroes would move them by however long the army
+    happened to take to go down.
 
-    Read it as the earliest moment rather than the exact one: the loop is single
-    threaded and the deployment only offers the clock a turn between one card and
-    the next. Measured over four battles that offset was 5 to 8 seconds, which is
-    why the default is 30 for a spell wanted 30 to 40 seconds in.
+    Read them as the earliest moment rather than the exact one: the loop is
+    single threaded and the deployment only offers the clock a turn between one
+    card and the next.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -621,6 +623,7 @@ class AttackTimings(BaseModel):
     champion: int = 45
     minion_prince: int = 20
     unknown: int = 20
+    rage: int = 15
     freeze: int = 30
 
     def seconds(self, kind: HeroKind) -> int:
