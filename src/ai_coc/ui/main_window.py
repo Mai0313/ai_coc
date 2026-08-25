@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 import time
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, get_args
 import logging
 from pathlib import Path
 from functools import partial
@@ -57,6 +57,7 @@ from ai_coc.models import (
     AttackTimings,
     DisplayTarget,
     LocatedTarget,
+    ThinkingLevel,
     UiElementList,
     AccountRowList,
     ChatTranscript,
@@ -124,6 +125,8 @@ TIMING_FIELDS = (
     ("rage", "狂暴法術（開打後）"),
     ("freeze", "冰凍法術（開打後）"),
 )
+# Taken from the model so the picker cannot drift from what Gemini accepts.
+THINKING_LEVELS = list(get_args(ThinkingLevel))
 # What the registry used to hold, read once so a machine that has been running
 # this for months keeps its settings when they move into the config file. Saving
 # through the window is what writes the file, so without this step the first
@@ -810,6 +813,16 @@ class MainWindow(QMainWindow):
         self.model_combo.setToolTip("按「測試連線並載入模型」後會列出這把金鑰可用的文字模型")
         self.endpoint = QLineEdit(self.config.gemini_endpoint)
         self.endpoint.setPlaceholderText("留空即使用 Google 官方端點")
+        # Every call this app makes is a screen read against a fixed prompt, so
+        # the thinking budget mostly buys latency. It is a picker rather than a
+        # constant because a model that refuses the level, or a prompt that turns
+        # out to want the reasoning, should be one choice away from working.
+        self.thinking_combo = QComboBox()
+        self.thinking_combo.addItems(THINKING_LEVELS)
+        self.thinking_combo.setCurrentText(self.config.gemini_thinking)
+        self.thinking_combo.setToolTip(
+            "模型回答前思考多久。進攻計畫是看圖判讀,low 已經夠用而且快得多"
+        )
         try:
             self.api_key.setText(self.secrets.load())
         except Exception:
@@ -817,6 +830,7 @@ class MainWindow(QMainWindow):
         form.addRow("Provider", self.provider_combo)
         form.addRow("API Key", self.api_key)
         form.addRow("Model", self.model_combo)
+        form.addRow("思考程度", self.thinking_combo)
         form.addRow("Endpoint", self.endpoint)
         buttons = QHBoxLayout()
         for text, fn in (
@@ -1158,6 +1172,7 @@ class MainWindow(QMainWindow):
                 api_key=self.api_key.text(),
                 model=self.model_combo.currentText().strip() or DEFAULT_GEMINI_MODEL,
                 base_url=self.endpoint.text().strip(),
+                thinking_level=self.thinking_combo.currentText(),
             )
         )
 
@@ -1165,7 +1180,9 @@ class MainWindow(QMainWindow):
         try:
             self.secrets.save(self.api_key.text())
             self._save_config(
-                gemini_model=self.model_combo.currentText(), gemini_endpoint=self.endpoint.text()
+                gemini_model=self.model_combo.currentText(),
+                gemini_endpoint=self.endpoint.text(),
+                gemini_thinking=self.thinking_combo.currentText(),
             )
             logger.info("Saved API settings, model=%s", self.model_combo.currentText())
             QMessageBox.information(self, "Saved", "API Key 已使用 Windows DPAPI 儲存。")

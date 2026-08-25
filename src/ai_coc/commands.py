@@ -82,7 +82,10 @@ def _planner(config: AppConfig) -> GeminiClient | None:
         return None
     return GeminiClient(
         settings=GeminiSettings(
-            api_key=key, model=config.gemini_model, base_url=config.gemini_endpoint
+            api_key=key,
+            model=config.gemini_model,
+            base_url=config.gemini_endpoint,
+            thinking_level=config.gemini_thinking,
         )
     )
 

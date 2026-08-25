@@ -587,6 +587,14 @@ class ScreenPoint(BaseModel):
 
 HeroKind = Literal["king", "queen", "warden", "champion", "minion_prince", "unknown"]
 
+# What Gemini accepts for `generation_config.thinking_level`, cheapest first.
+# Every call this application makes is a screen read against a fixed prompt, so
+# the thinking budget buys latency rather than a better answer. It is a setting
+# because a model that refuses the level, or a prompt that turns out to want the
+# reasoning, should be a picker away from working rather than a release away.
+ThinkingLevel = Literal["minimal", "low", "medium", "high"]
+DEFAULT_THINKING_LEVEL: ThinkingLevel = "low"
+
 
 class AttackTimings(BaseModel):
     """How long after the army is down each thing that waits on a clock happens.
@@ -657,6 +665,7 @@ class AppConfig(BaseModel):
     timings: AttackTimings = AttackTimings()
     gemini_model: str = DEFAULT_GEMINI_MODEL
     gemini_endpoint: str = ""
+    gemini_thinking: ThinkingLevel = DEFAULT_THINKING_LEVEL
 
 
 class AttackPlan(BaseModel):
@@ -747,6 +756,7 @@ class GeminiSettings(BaseModel):
     api_key: str = ""
     model: str = DEFAULT_GEMINI_MODEL
     base_url: str = ""
+    thinking_level: ThinkingLevel = DEFAULT_THINKING_LEVEL
 
 
 class GeminiTextPart(BaseModel):
@@ -768,12 +778,19 @@ class GeminiResponseFormat(BaseModel):
     json_schema: dict[str, Any] = Field(serialization_alias="schema")
 
 
+class GeminiGenerationConfig(BaseModel):
+    """How hard the model is asked to think before it answers."""
+
+    thinking_level: ThinkingLevel
+
+
 class GeminiRequest(BaseModel):
     """One `interactions.create` body, built here instead of as a loose dict."""
 
     model: str
     input: list[GeminiTextPart | GeminiImagePart]
     response_format: GeminiResponseFormat | None = None
+    generation_config: GeminiGenerationConfig | None = None
 
     def body(self) -> dict[str, Any]:
         return self.model_dump(by_alias=True, exclude_none=True)

@@ -15,6 +15,7 @@ from ai_coc.models import (
     GeminiTextPart,
     GeminiImagePart,
     GeminiResponseFormat,
+    GeminiGenerationConfig,
 )
 from ai_coc.prompts import PROMPTS, render
 
@@ -71,15 +72,19 @@ class GeminiClient(BaseModel):
         if image_png:
             parts.append(GeminiImagePart(data=base64.b64encode(image_png).decode("ascii")))
         logger.info(
-            "Gemini request: model=%s prompt=%d chars image=%s structured=%s",
+            "Gemini request: model=%s prompt=%d chars image=%s structured=%s thinking=%s",
             self.settings.model,
             len(prompt),
             f"{len(image_png)} bytes" if image_png else "none",
             bool(response_format),
+            self.settings.thinking_level,
         )
         logger.debug("Gemini prompt: %s", prompt)
         return GeminiRequest(
-            model=self.settings.model, input=parts, response_format=response_format
+            model=self.settings.model,
+            input=parts,
+            response_format=response_format,
+            generation_config=GeminiGenerationConfig(thinking_level=self.settings.thinking_level),
         )
 
     def _create(
