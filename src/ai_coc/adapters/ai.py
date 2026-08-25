@@ -92,13 +92,25 @@ class GeminiClient(BaseModel):
         prompt: str,
         image_png: bytes | None,
         response_format: GeminiResponseFormat | None = None,
+        timeout: float | None = None,
     ) -> str:
+        """One request; `timeout` is seconds, and giving up is the caller's to handle.
+
+        The deadline belongs to the call rather than to the client because one
+        client serves the chat, the agent loop and the attack planner, and only
+        the planner has a window it can miss. A timed-out call raises the SDK's
+        own `APITimeoutError`, which is **not** a `google.genai.errors.APIError`
+        and so does not reach the handler below — that is deliberate, since the
+        only caller passing a deadline is the one that answers a failure by
+        falling back to a plan it already has.
+        """
         request = self._request(prompt, image_png, response_format)
         started = time.monotonic()
         try:
             # create() also returns a Stream when stream=True, which this never sets.
             interaction = cast(
-                "interactions.Interaction", self.client.interactions.create(**request.body())
+                "interactions.Interaction",
+                self.client.interactions.create(**request.body(), timeout=timeout),
             )
         except errors.APIError as exc:
             logger.exception("Gemini request failed on model %s", self.settings.model)
@@ -144,11 +156,18 @@ class GeminiClient(BaseModel):
             raise RuntimeError("Gemini 沒有回傳內容")
 
     def generate_structured(
-        self, prompt: str, schema: type[T], image_png: bytes | None = None
+        self,
+        prompt: str,
+        schema: type[T],
+        image_png: bytes | None = None,
+        timeout: float | None = None,
     ) -> T:
         """Ask for one JSON object and hand back the validated Pydantic model."""
         text = self._create(
-            prompt, image_png, GeminiResponseFormat(json_schema=schema.model_json_schema())
+            prompt,
+            image_png,
+            GeminiResponseFormat(json_schema=schema.model_json_schema()),
+            timeout,
         )
         try:
             return schema.model_validate_json(text)
