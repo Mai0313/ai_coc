@@ -222,7 +222,11 @@ OUTLIER_RATIO = 0.6
 
 
 def fitted_line(
-    png: bytes, start: tuple[int, int], end: tuple[int, int], margin: int = 30
+    png: bytes,
+    start: tuple[int, int],
+    end: tuple[int, int],
+    margin: int = 30,
+    centre: tuple[int, int] = VILLAGE_CENTRE,
 ) -> tuple[tuple[int, int], ...] | None:
     """The same flank bent out to sit just outside this village's own red line.
 
@@ -235,20 +239,21 @@ def fitted_line(
 
     None when any of the three rays never met the stroke, so the caller keeps the
     flank it had and probes its way out as before.
+
+    `centre` is where the village is sitting, which the attack loop moves when it
+    drags a flank out from behind the card row.
     """
     image = Image.open(io.BytesIO(png)).convert("RGB")
     middle = ((start[0] + end[0]) // 2, (start[1] + end[1]) // 2)
     moved: list[tuple[int, int]] = []
     radii: list[float] = []
     for point in (start, middle, end):
-        angle = math.degrees(
-            math.atan2(point[1] - VILLAGE_CENTRE[1], point[0] - VILLAGE_CENTRE[0])
-        )
-        reach = boundary_reach(image, angle)
+        angle = math.degrees(math.atan2(point[1] - centre[1], point[0] - centre[0]))
+        reach = boundary_reach(image, angle, centre)
         if reach is None:
             logger.info("No boundary on the ray through %s; keeping the preset flank", point)
             return None
-        radii.append(math.hypot(reach[0] - VILLAGE_CENTRE[0], reach[1] - VILLAGE_CENTRE[1]))
+        radii.append(math.hypot(reach[0] - centre[0], reach[1] - centre[1]))
         dx, dy = math.cos(math.radians(angle)), math.sin(math.radians(angle))
         moved.append((round(reach[0] + dx * margin), round(reach[1] + dy * margin)))
     # The boundary does not fold in on itself across one flank, so three anchors

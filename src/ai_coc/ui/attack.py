@@ -30,6 +30,7 @@ from ai_coc.models import (
 from ai_coc.prompts import PROMPTS
 from ai_coc.adapters.ai import GeminiClient
 from ai_coc.adapters.adb import AdbController
+from ai_coc.parsers.field import view_shift, army_centre
 from ai_coc.parsers.scout import (
     card_count,
     live_cards,
@@ -111,6 +112,11 @@ RAGE_PATH = (
 # under fire, and goes where they are rather than where they were headed.
 FREEZE_TARGET = (800, 420)
 
+# How far apart the two captures that locate the army are taken. It is the one
+# number `parsers.field`'s own thresholds are tied to, since both the moving
+# pixels and the ambient shimmer scale with it.
+MOTION_GAP = 1.5
+
 # Between selecting a one-off card and placing what it holds. It was 0.6 on the
 # reasoning that a hero gets one attempt where a troop card is tapped repeatedly,
 # so a swallowed tap costs the whole hero. Measured against a live battle, a
@@ -178,6 +184,20 @@ CAMERA_ATTEMPTS = 2
 CAMERA_GRIP = (800, 400)
 CAMERA_DRAG_MS = 350
 CAMERA_SETTLE = 1.5
+
+# How much clear ground a flank needs between the village's own red line and the
+# edge of the playfield. `fitted_line` already sits 30 px outside the stroke and
+# a refusal is answered by pushing 70 px further, so this is the line plus one
+# push and nothing spare.
+#
+# It is why the camera has to move at all. The card row takes the bottom of the
+# screen, which leaves the playfield 595 px tall, and a village fills nearly all
+# of it: measured over nine battles the red line spans 530 to 575 of those. So a
+# lower flank has under 30 px of ground to work with, which is how one recorded
+# battle spent three pushes clamped against y 700 and another deployed nothing at
+# all. Dragging the village up hands that side the room, at the cost of the side
+# nobody is attacking.
+FLANK_ROOM = 110
 
 # How long the planner gets before the loop stops waiting and plays the flat
 # plan instead. It is the scout countdown, because the call starts at the top of
@@ -261,28 +281,35 @@ def deploy_line(count: int, *anchors: tuple[int, int]) -> list[tuple[int, int]]:
     return points
 
 
-def push_out(point: tuple[int, int], steps: int) -> tuple[int, int]:
-    """Move a drop further from the middle, kept on the map, the screen and off the UI.
+def push_out(
+    point: tuple[int, int], steps: int, centre: tuple[int, int] = SCREEN_CENTRE
+) -> tuple[int, int]:
+    """Move a drop further from the village, kept on the map, the screen and off the UI.
 
     The map is a diamond, so clamping to the playfield rectangle alone pushed
     drops into corners that are not on the map at all: a hero refused four times
     ended up at (30, 175), where the map only spans x 596 to 1004, and the game
     had nothing to accept. `DEPLOY_BOUND.clamp` is what keeps a push heading
     outwards from leaving the board.
+
+    `centre` is where the village is sitting, which is the screen middle until
+    the camera is dragged to free up a flank hidden behind the card row.
     """
-    dx, dy = point[0] - SCREEN_CENTRE[0], point[1] - SCREEN_CENTRE[1]
+    dx, dy = point[0] - centre[0], point[1] - centre[1]
     span = max((dx * dx + dy * dy) ** 0.5, 1.0)
     return clear_of_controls(
-        DEPLOY_BOUND.clamp((
+        DEPLOY_BOUND.model_copy(update={"centre": centre}).clamp((
             round(point[0] + dx / span * PUSH_STEP * steps),
             round(point[1] + dy / span * PUSH_STEP * steps),
         ))
     )
 
 
-def push_line(anchors: tuple[tuple[int, int], ...], steps: int) -> list[tuple[int, int]]:
-    """Every anchor of a flank moved the same distance further from the middle."""
-    return [push_out(anchor, steps) for anchor in anchors]
+def push_line(
+    anchors: tuple[tuple[int, int], ...], steps: int, centre: tuple[int, int] = SCREEN_CENTRE
+) -> list[tuple[int, int]]:
+    """Every anchor of a flank moved the same distance further from the village."""
+    return [push_out(anchor, steps, centre) for anchor in anchors]
 
 
 def planned_line(plan: AttackPlan | None) -> tuple[tuple[int, int], tuple[int, int]] | None:
@@ -323,7 +350,9 @@ def deploy_candidates(plan: AttackPlan | None) -> list[tuple[tuple[int, int], tu
     return ([line] if line else []) + [DEPLOY_LINES[side] for side in sides]
 
 
-def single_spots(line: list[tuple[int, int]]) -> list[tuple[int, int]]:
+def single_spots(
+    line: list[tuple[int, int]], centre: tuple[int, int] = SCREEN_CENTRE
+) -> list[tuple[int, int]]:
     """Where to try a one-off drop, best first: the middle of the line, then out, then along.
 
     `push_out` stops moving a point once it reaches the edge of `DEPLOY_BOUND`,
@@ -338,7 +367,7 @@ def single_spots(line: list[tuple[int, int]]) -> list[tuple[int, int]]:
     middle = len(line) // 2
     spots: list[tuple[int, int]] = []
     for spot in (
-        *(push_out(line[middle], step) for step in range(DEPLOY_ATTEMPTS)),
+        *(push_out(line[middle], step, centre) for step in range(DEPLOY_ATTEMPTS)),
         *(line[(middle + offset) % len(line)] for offset in (2, -2, 4, -4)),
     ):
         if all(((spot[0] - x) ** 2 + (spot[1] - y) ** 2) ** 0.5 >= SPOT_APART for x, y in spots):
@@ -391,11 +420,26 @@ class AttackRunner(BaseModel):
     _seen: LootOffer | None = PrivateAttr(default=None)
     # Whatever `_plan` settled on, kept so a run can be written down and replayed.
     _played: AttackPlan | None = PrivateAttr(default=None)
+    # How far the village has moved on screen since the attack opened, which is
+    # only ever the deliberate drag that frees up a flank. Every coordinate the
+    # loop holds — the preset flanks, the plan's line and its spell points — is
+    # drawn for a village in the middle of the screen, so once the camera moves
+    # they are all read through this.
+    _panned: tuple[int, int] = PrivateAttr(default=(0, 0))
 
     @property
     def played(self) -> AttackPlan | None:
         """The plan this run actually used, once one has been settled on."""
         return self._played
+
+    @property
+    def _middle(self) -> tuple[int, int]:
+        """Where the village is sitting now, which is what a drop is pushed away from."""
+        return (SCREEN_CENTRE[0] + self._panned[0], SCREEN_CENTRE[1] + self._panned[1])
+
+    def _onscreen(self, points: tuple[tuple[int, int], ...]) -> tuple[tuple[int, int], ...]:
+        """Points drawn for a centred village, read against wherever the camera is now."""
+        return tuple((x + self._panned[0], y + self._panned[1]) for x, y in points)
 
     def _tap(self, point: tuple[int, int]) -> None:
         self.adb.tap(point[0], point[1], self.display)
@@ -566,7 +610,7 @@ class AttackRunner(BaseModel):
             if card is None:
                 logger.warning("Every troop card is spent before a flank was settled")
                 return None
-            line = deploy_line(LINE_POINTS, *push_line(anchors, attempt))
+            line = deploy_line(LINE_POINTS, *push_line(anchors, attempt, self._middle))
             probes = [line[0], line[len(line) // 2], line[-1]]
             self.adb.tap_many([(card, CARD_ROW_Y), *probes], self.display)
             time.sleep(DROP_SETTLE)
@@ -600,7 +644,7 @@ class AttackRunner(BaseModel):
         refusal was answered by moving nothing at all.
         """
         remaining = list(troops)
-        line = deploy_line(LINE_POINTS, *push_line(anchors, pushed))
+        line = deploy_line(LINE_POINTS, *push_line(anchors, pushed, self._middle))
         shot = self._frame("before-pass")
         for index in range(DEPLOY_PASSES):
             for card, x in enumerate(remaining):
@@ -611,7 +655,7 @@ class AttackRunner(BaseModel):
             if not card_drained(before, shot, remaining) and pushed + 1 < DEPLOY_ATTEMPTS:
                 pushed += 1
                 logger.info("The whole pass landed nothing; flank pushed out to %d", pushed)
-                line = deploy_line(LINE_POINTS, *push_line(anchors, pushed))
+                line = deploy_line(LINE_POINTS, *push_line(anchors, pushed, self._middle))
             remaining = live_cards(shot, remaining)
             logger.info("%d troop card(s) still hold something", len(remaining))
             if not remaining:
@@ -661,7 +705,7 @@ class AttackRunner(BaseModel):
         # happens to be holding when it stops: it breaks at the top of the next
         # iteration, so by then `spot` has already moved past the one that worked.
         worked = line[len(line) // 2]
-        for spot in single_spots(line):
+        for spot in single_spots(line, self._middle):
             if not pending:
                 break
             before = self._frame("before-drop")
@@ -710,18 +754,54 @@ class AttackRunner(BaseModel):
         logger.warning("The scout countdown never ended; deploying without a battle frame")
         return None
 
-    def _settle_camera(self, frame: bytes) -> bytes:
+    def _pan(self, frame: bytes, drift: tuple[int, int]) -> bytes:
+        """Drag the battle camera, and write down how far it really went.
+
+        Every coordinate the loop holds is drawn for a village in the middle of
+        the screen, so a camera that moves has to be recorded or all of them
+        point somewhere else. `_panned` is that record and `_onscreen` is how
+        everything reads it.
+        """
+        self.adb.swipe(
+            CAMERA_GRIP,
+            clear_of_controls((CAMERA_GRIP[0] + drift[0], CAMERA_GRIP[1] + drift[1])),
+            CAMERA_DRAG_MS,
+            self.display,
+        )
+        time.sleep(CAMERA_SETTLE)
+        moved = self._frame("camera")
+        shift = view_shift(frame, moved, drift)
+        self._panned = (self._panned[0] + shift[0], self._panned[1] + shift[1])
+        logger.info(
+            "Dragged the camera by %s; the village moved %s, now %s off where the battle opened",
+            drift,
+            shift,
+            self._panned,
+        )
+        return moved
+
+    def _settle_camera(self, frame: bytes | None) -> bytes | None:
         """Put the village in the middle of the screen, and hand back what it looks like.
 
         Everything downstream reads the camera without being able to check it:
-        `push_out` moves a drop away from the screen centre, the preset flanks are
+        `push_out` moves a drop away from the village, the preset flanks are
         screen coordinates, and the spell grid is spaced off the middle. The game
         does open every attack centred — measured across nine battles it was never
         more than 35 px out — but that is the sort of fact that is true until it
         is not, and a camera left anywhere else puts the whole army somewhere
-        nobody asked for. This runs before the plan is drawn so the planner is
-        looking at the same screen the drops will land on.
+        nobody asked for.
+
+        It reads a *battle* frame and not the scout screen it used to be handed.
+        `village_box` was calibrated on battles, and the scout screen carries an
+        orange 下一個 button its mask does not cover: measured live, that pulled
+        the box out to x 1500 against 1269 for the same village a moment later,
+        and the loop then spent two drags and five seconds shoving a perfectly
+        centred village 72 px left and 48 px back. The plan is drawn before this
+        now, which costs nothing, because `_panned` moves its points with the
+        camera.
         """
+        if frame is None:
+            return None
         for _ in range(CAMERA_ATTEMPTS):
             box = village_box(frame)
             if box is None:
@@ -744,19 +824,42 @@ class AttackRunner(BaseModel):
                 )
                 return frame
             logger.info("Village sits at %s; dragging the camera by %s", middle, drift)
-            self.adb.swipe(
-                CAMERA_GRIP,
-                clear_of_controls((CAMERA_GRIP[0] + drift[0], CAMERA_GRIP[1] + drift[1])),
-                CAMERA_DRAG_MS,
-                self.display,
-            )
-            time.sleep(CAMERA_SETTLE)
-            frame = self._frame("camera")
+            frame = self._pan(frame, drift)
         return frame
+
+    def _clear_flank(
+        self, frame: bytes | None, preset: tuple[tuple[int, int], ...]
+    ) -> bytes | None:
+        """Drag the village clear of the card row so this flank has ground to drop on.
+
+        Which way comes from the flank about to be tried rather than from the
+        plan's own `deploy_from`, because the loop falls through to other flanks
+        when one is refused and the camera has to follow whichever is really
+        being used.
+
+        How much comes from where the village's own red line already reaches, so
+        a village small enough to leave the flank room is left alone: dragging a
+        camera that is fine only takes the room off the other side.
+        """
+        if frame is None:
+            return None
+        box = village_box(frame)
+        if box is None:
+            logger.info("The village will not measure; the camera stays where it is")
+            return frame
+        below = sum(y for _, y in preset) / len(preset) > SCREEN_CENTRE[1]
+        wanted = (
+            min(0, PLAYFIELD[3] - box[3] - FLANK_ROOM)
+            if below
+            else max(0, PLAYFIELD[1] - box[1] + FLANK_ROOM)
+        )
+        if not wanted:
+            return frame
+        logger.info("The %s flank has %d px too little ground", preset, abs(wanted))
+        return self._pan(frame, (0, wanted))
 
     def _deploy(self, frame: bytes) -> None:
         """Spread the main troops along one flank; everything else drops once, mid-line."""
-        frame = self._settle_camera(frame)
         groups = card_groups(frame)
         if not groups:
             logger.warning("No cards found on the battle row; nothing to deploy")
@@ -797,28 +900,46 @@ class AttackRunner(BaseModel):
         # With Gemini in the loop the planning call happens to outlast the
         # countdown, which is what has been hiding this; without a key `_plan`
         # returns at once and the run would probe into the countdown every time.
-        battle = self._wait_for_battle()
+        battle = self._settle_camera(self._wait_for_battle())
         for preset in deploy_candidates(plan):
+            # The camera moves first, because a lower flank on a village that
+            # fills the playfield has nothing to drop on until it does, and
+            # everything after this reads its coordinates through where it ended.
+            battle = self._clear_flank(battle, preset)
+            flank = self._onscreen(preset)
             # The boundary the game draws beats a flank drawn for a village that
             # does not exist, and fitting to it is what saves probing outwards one
             # refused troop at a time. It is still probed once before it is used.
-            anchors = (fitted_line(battle, *preset) if battle else None) or preset
+            anchors = (
+                fitted_line(battle, *flank, centre=self._middle) if battle else None
+            ) or flank
             pushed = self._usable_line(troops, anchors)
             if pushed is not None:
                 break
         else:
             logger.warning("Every flank was refused; the boundary reaches past the playfield")
             return
-        line = deploy_line(LINE_POINTS, *push_line(anchors, pushed))
-        planned = tuple(point.pixels() for point in plan.rage_points) if plan else ()
+        line = deploy_line(LINE_POINTS, *push_line(anchors, pushed, self._middle))
+        planned = self._onscreen(
+            tuple(point.pixels() for point in plan.rage_points) if plan else ()
+        )
         # A plan can name fewer spots than the army carries rages, and `_cast`
         # cycles back over its targets — which would stack two rages on one spot
         # and waste one. The fixed grid fills the tail so each gets its own.
-        rage_path = planned + tuple(point for point in RAGE_PATH if point not in planned)
+        #
+        # Cut to the bottles actually carried, because the tail is otherwise
+        # dead weight that the aiming below would average into its idea of where
+        # the plan was pointing. The one tap of slack `_cast` adds then wraps
+        # back onto the first spot rather than spending a real bottle on a
+        # fallback point nobody chose.
+        rage_path = (planned + tuple(p for p in self._onscreen(RAGE_PATH) if p not in planned))[
+            : max(rage_count, 1)
+        ]
         # Every freeze used to stack on one spot, which is one spell's worth of
         # effect for the whole cargo. A plan names one per bottle instead.
-        freeze_targets = tuple(point.pixels() for point in plan.freeze_points) if plan else ()
-        freeze_targets = freeze_targets or (FREEZE_TARGET,)
+        freeze_targets = self._onscreen(
+            tuple(point.pixels() for point in plan.freeze_points) if plan else ()
+        ) or self._onscreen((FREEZE_TARGET,))
         # The army goes down as fast as the game will take it: siege machine
         # first to open the path, then the troops along the flank, then the
         # heroes straight behind them. Every second one of them spends in its
@@ -845,7 +966,7 @@ class AttackRunner(BaseModel):
             pending.append((
                 opened + timings.rage,
                 f"{len(rages)} rage card(s)",
-                partial(self._cast, rages, rage_path, frame),
+                partial(self._rage, rages, rage_path, frame),
             ))
         if freezes:
             pending.append((
@@ -924,6 +1045,41 @@ class AttackRunner(BaseModel):
         logger.info("Played the %s, %.0fs into the attack", what, time.monotonic() - opened)
         return True
 
+    def _rage(self, cards: list[int], targets: tuple[tuple[int, int], ...], frame: bytes) -> None:
+        """Cast rage over the army rather than over the ground it started from.
+
+        The plan draws its rage points while the scout screen is still up, which
+        is a good half minute before the bottles land, and the army does not
+        wait there. Measured over a recorded battle, the fighting moved from
+        (610, 305) five seconds in to (934, 456) a minute later, so the points
+        are a whole footprint behind by the time they are used — which is what a
+        run of frames showed: rage rings sitting on empty grass with the troops
+        already at the next wall.
+
+        The plan still decides the *shape*, because the spacing is what keeps two
+        bottles from overlapping and the spread is what covers a group that
+        arrived along a line. Only where that shape sits comes off the screen.
+        """
+        self._cast(cards, self._onto_army(targets), frame)
+
+    def _onto_army(self, targets: tuple[tuple[int, int], ...]) -> tuple[tuple[int, int], ...]:
+        """The same points slid across so their middle sits on the fighting.
+
+        Unreadable leaves them where the plan put them: a bad shift is worse
+        than a stale one, since the plan at least aimed at the village.
+        """
+        before = self._frame("before-front")
+        time.sleep(MOTION_GAP)
+        centre = army_centre(before, self._frame("front"))
+        if centre is None:
+            return targets
+        drift = (
+            round(centre[0] - sum(x for x, _ in targets) / len(targets)),
+            round(centre[1] - sum(y for _, y in targets) / len(targets)),
+        )
+        logger.info("The fighting is at %s, %s from the planned rage; moving them", centre, drift)
+        return tuple(clear_of_controls((x + drift[0], y + drift[1])) for x, y in targets)
+
     def _cast(self, cards: list[int], targets: tuple[tuple[int, int], ...], frame: bytes) -> None:
         """Empty every spell card over `targets`, and say so when one would not go.
 
@@ -991,6 +1147,9 @@ class AttackRunner(BaseModel):
         # short enough that nothing ever read its panel would be judged against
         # the previous opponent's remaining loot and reported as a success.
         self._seen = None
+        # A new battle opens on its own camera, so whatever the last one was
+        # dragged to has nothing to do with this one.
+        self._panned = (0, 0)
         home = self._open_attack_menu()
         if home is None:
             logger.warning("The attack menu did not open; the game is not on the home village")
