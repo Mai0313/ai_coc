@@ -97,7 +97,8 @@ def attack(
 
     Thresholds, storage limits and ability timings all come from the shared
     config file, so a run started here plays the same way as one started from
-    the window. `minimums` overrides the loot thresholds for this run alone,
+    the window — the storage limits included, which means a full village stands
+    this down before it searches. `minimums` overrides the thresholds alone,
     which is how a loop being studied gets the old behaviour back: all three at
     zero is "attack the first opponent shown", and skipping nothing is what puts
     the code worth watching on screen.

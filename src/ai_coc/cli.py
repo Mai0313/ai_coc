@@ -15,7 +15,7 @@ from ai_coc import commands, __version__
 from ai_coc.models import LootOverrides
 from ai_coc.constants import APP_NAME
 from ai_coc.logging_setup import configure_logging
-from ai_coc.ui.main_window import MainWindow
+from ai_coc.ui.main_window import MainWindow, migrate_settings
 
 logger = logging.getLogger(__name__)
 
@@ -93,6 +93,7 @@ def _run_command(arguments: argparse.Namespace) -> int:
 def main() -> int:
     configure_logging()
     sys.excepthook = _log_uncaught
+    migrate_settings()
     arguments = _parser().parse_args()
     if arguments.command:
         return _run_command(arguments)

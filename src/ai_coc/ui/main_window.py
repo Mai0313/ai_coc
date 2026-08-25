@@ -159,6 +159,23 @@ def _migrated_config(settings: QSettings) -> AppConfig | None:
     )
 
 
+def migrate_settings() -> None:
+    """Move whatever the registry still holds into the config file, once.
+
+    Called from `main()` before anything else reads the file, rather than from
+    the window alone: a terminal run can easily be the first thing to look after
+    an upgrade, and it would otherwise find no file and use the defaults while
+    the user's own settings sat in the registry unread.
+    """
+    store = ConfigStore()
+    if store.path.is_file():
+        return
+    migrated = _migrated_config(QSettings(ORGANISATION, "CoCAIController"))
+    if migrated is not None:
+        store.save(migrated)
+        logger.info("Carried the saved settings over into %s", store.path)
+
+
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
@@ -168,7 +185,7 @@ class MainWindow(QMainWindow):
         self.db = Database()
         self.secrets = SecretStore()
         self.settings = QSettings(ORGANISATION, "CoCAIController")
-        self.config = self._load_config()
+        self.config = ConfigStore().load()
         self.mumu: MuMuAdapter | None = None
         self.instances: list[EmulatorInstance] = []
         self.active: EmulatorInstance | None = None
@@ -206,16 +223,6 @@ class MainWindow(QMainWindow):
         self.refresh_entity_mapping()
         if self.live_view.isChecked():
             self.live_timer.start(LIVE_INTERVAL)
-
-    def _load_config(self) -> AppConfig:
-        """The shared config file, carrying over whatever the registry still holds."""
-        store = ConfigStore()
-        if not store.path.is_file():
-            migrated = _migrated_config(self.settings)
-            if migrated is not None:
-                store.save(migrated)
-                logger.info("Carried the saved settings over into %s", store.path)
-        return store.load()
 
     def _build_ui(self) -> None:
         self.setStyleSheet("""
