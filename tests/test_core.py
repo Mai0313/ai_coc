@@ -35,6 +35,7 @@ from ai_coc.ui.attack import (
     PLAYFIELD,
     RAGE_PATH,
     DEPLOY_END,
+    DROP_STRIDE,
     LINE_POINTS,
     DEPLOY_LINES,
     DEPLOY_START,
@@ -751,6 +752,17 @@ class AttackTests(unittest.TestCase):
         first, second = drop_points(line, 0), drop_points(line, 1)
         assert len(set(first)) == DROPS_PER_PASS
         assert first[0] != second[0]
+
+    def test_the_stride_still_covers_the_whole_line(self) -> None:
+        """Coprime with the line, or a pass walks a few points over and over."""
+        assert math.gcd(DROP_STRIDE, LINE_POINTS) == 1
+
+    def test_a_part_filled_card_lands_its_troops_well_apart(self) -> None:
+        """Three baby dragons 41 px apart are inside each other's 84 px rage radius."""
+        line = deploy_line(LINE_POINTS, *DEPLOY_LINES["top_left"])
+        held = drop_points(line, 1)[:3]
+        for index, (x, y) in enumerate(held):
+            assert all(math.hypot(x - a, y - b) > 150 for a, b in held[index + 1 :])
 
     def test_a_planned_line_along_the_village_edge_is_used(self) -> None:
         """The percentages of the top-left flank, which is a line the loop can push out."""

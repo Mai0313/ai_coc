@@ -79,6 +79,19 @@ RETURN_HOME = (798, 768)
 CARD_ROW_Y = 800
 DROPS_PER_PASS = 12
 DEPLOY_PASSES = 6
+# How many points along the line each tap of a pass moves. Coprime with
+# LINE_POINTS, so a pass still visits every point exactly once and a full card
+# lands exactly where it used to — what changes is that consecutive taps are
+# five points apart rather than neighbours.
+#
+# It used to be one, and a card holding fewer troops than a pass has taps then
+# emptied into a huddle at whichever point it started on. Three baby dragons
+# went down 41 px apart that way, and a baby dragon rages only while no other
+# air troop is within about three and a half tiles — 84 px across at this
+# camera — so all three sat in each other's way and not one of them ever raged.
+# At this stride they land 208 px apart. Two headhunters had the same problem
+# and the same fix; a full card of twelve hog riders is unaffected either way.
+DROP_STRIDE = 5
 
 # Lines just outside the deployment boundary on each flank, used when there is
 # no plan or the line it drew crosses the village. A drop inside the boundary is
@@ -380,9 +393,13 @@ def drop_points(line: list[tuple[int, int]], seed: int) -> list[tuple[int, int]]
 
     `seed` rotates the starting point per card and per pass, so a card holding
     a single troop does not put it on the same spot every other card started on.
+
+    A pass covers the whole line either way; what `DROP_STRIDE` decides is the
+    order, and the order is what a card holding fewer troops than the pass has
+    taps gets judged on — it runs out partway through, so the ones it did put
+    down are wherever the first few taps went.
     """
-    step = max(len(line) // DROPS_PER_PASS, 1)
-    return [line[(seed + i * step) % len(line)] for i in range(DROPS_PER_PASS)]
+    return [line[(seed + i * DROP_STRIDE) % len(line)] for i in range(DROPS_PER_PASS)]
 
 
 PLAN_PROMPT = PROMPTS["attack_plan"]
