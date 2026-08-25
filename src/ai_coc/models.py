@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 from typing import Any, Literal
+from pathlib import Path
 from datetime import UTC, datetime
 
 from pydantic import Field, BaseModel, RootModel, ConfigDict, AliasChoices, field_validator
@@ -713,6 +714,37 @@ class AttackReport(BaseModel):
     # Farming has met its goal, so the automation is meant to stop rather than
     # come round again: the next pass would only read the same full storage.
     stock_full: bool = False
+
+
+class AttackOptions(BaseModel):
+    """What one `attack` command was told to do, beyond the shared config file.
+
+    Everything here is about the run rather than the tactic: where to keep the
+    frames, how many rounds to play, whether to record a heartbeat alongside the
+    frames the loop reads. The tactic itself lives in the config file and in
+    whatever plan is handed in.
+    """
+
+    frame_dir: Path | None = None
+    plan_in: Path | None = None
+    plan_out: Path | None = None
+    minimums: LootOverrides = LootOverrides()
+    # 0 keeps going until it is interrupted, which is what watching the loop play
+    # needs: a tactic is judged over a run of battles rather than one.
+    rounds: int = 1
+    # 0 records nothing beyond the frames the loop reads for itself.
+    shot_every: float = 0.0
+
+
+class AttackSeries(RootModel[list[AttackReport]]):
+    """Every round one `attack` command ran, in the order they ran.
+
+    A run told to keep going answers with all of them rather than only the last:
+    what a session is judged on is how the rounds differ, and a single report
+    cannot say whether the army was ready three times out of five.
+    """
+
+    root: list[AttackReport] = Field(default_factory=list)
 
 
 class FrameReading(BaseModel):

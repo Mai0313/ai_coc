@@ -974,6 +974,11 @@ class AttackRunner(BaseModel):
 
     def run(self) -> AttackReport:
         logger.info("Attack run starts, thresholds=%s", self.thresholds.model_dump())
+        # The same runner plays round after round, and the loot it last saw is
+        # what `_wait_out_battle` judges the battle on. Carried over, a battle
+        # short enough that nothing ever read its panel would be judged against
+        # the previous opponent's remaining loot and reported as a success.
+        self._seen = None
         home = self._open_attack_menu()
         if home is None:
             logger.warning("The attack menu did not open; the game is not on the home village")
