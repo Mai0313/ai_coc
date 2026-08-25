@@ -620,8 +620,8 @@ class AttackTimings(BaseModel):
     happened to take to go down.
 
     Read them as the earliest moment rather than the exact one: the loop is
-    single threaded and the deployment only offers the clock a turn between one
-    card and the next.
+    single threaded and nothing on the clock runs until the last hero is down,
+    so a delay shorter than the deployment takes is served the moment it ends.
     """
 
     model_config = ConfigDict(frozen=True)

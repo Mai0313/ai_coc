@@ -621,9 +621,11 @@ class AttackRunner(BaseModel):
         four of four while the fourth never left its card.
         """
         on_field = field_units(after, cards)
-        emptied = [
-            card for card in live_cards(before, cards) if card not in live_cards(after, cards)
-        ]
+        # Both readings are taken once. Asking `live_cards` inside the
+        # comprehension decoded the whole screenshot again for every card it
+        # walked, which on a row of four heroes is four PNG decodes nobody wanted.
+        was_live, still_live = live_cards(before, cards), live_cards(after, cards)
+        emptied = [card for card in was_live if card not in still_live]
         return [card for card in cards if card in on_field or card in emptied]
 
     def _drop_singles(self, cards: list[int], line: list[tuple[int, int]], what: str) -> list[int]:
@@ -644,7 +646,10 @@ class AttackRunner(BaseModel):
         """
         landed: list[int] = []
         pending = list(cards)
-        spot = line[len(line) // 2]
+        # Where the last card actually went, which is not the spot the loop
+        # happens to be holding when it stops: it breaks at the top of the next
+        # iteration, so by then `spot` has already moved past the one that worked.
+        worked = line[len(line) // 2]
         for spot in single_spots(line):
             if not pending:
                 break
@@ -658,11 +663,13 @@ class AttackRunner(BaseModel):
             down = self._landed(before, self._frame("dropped"), pending)
             landed += down
             pending = [card for card in pending if card not in down]
+            if down:
+                worked = spot
             if pending:
                 logger.info("%d %s card(s) took nothing at %s", len(pending), what, spot)
         for card in pending:
             logger.warning("The %s card at %d never landed; its unit stays put", what, card)
-        logger.info("%d of %d %s card(s) landed at %s", len(landed), len(cards), what, spot)
+        logger.info("%d of %d %s card(s) landed at %s", len(landed), len(cards), what, worked)
         return landed
 
     def _wait_for_battle(self) -> bytes | None:
@@ -937,10 +944,10 @@ class AttackRunner(BaseModel):
                 logger.info("Spell card at %d held %s, tapped %d", x, count, cast_count)
             time.sleep(DROP_SETTLE)
             after = self._frame("cast")
-            cast = card_drained(before, after, pending) + [
-                x for x in pending if not live_cards(after, [x])
-            ]
-            pending = [x for x in pending if x not in cast]
+            # One reading apiece rather than one per card: `live_cards` decodes
+            # the frame it is handed, so asking it per card decodes it per card.
+            drained, still_live = card_drained(before, after, pending), live_cards(after, pending)
+            pending = [x for x in pending if x not in drained and x in still_live]
             if pending:
                 logger.info("%d spell card(s) held on to their bottles", len(pending))
         for x in pending:
