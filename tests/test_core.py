@@ -1,7 +1,6 @@
 import io
 import json
 import math
-import time
 from pathlib import Path
 import tempfile
 import unittest
@@ -45,6 +44,7 @@ from ai_coc.ui.attack import (
     deploy_line,
     drop_points,
     planned_line,
+    single_spots,
     deploy_candidates,
 )
 from ai_coc.adapters.adb import AdbController, focused_display, physical_display
@@ -741,18 +741,31 @@ class AttackTests(unittest.TestCase):
         """The game centres every attack itself; dragging a good camera can only hurt."""
         assert self._settled((200, 120, 1380, 680)) == []
 
-    def test_a_move_already_due_is_played_before_the_army_is_all_down(self) -> None:
-        """Putting the army down outlasts the freeze's own timer, so it is offered a turn."""
-        played: list[str] = []
-        pending = [
-            (0.0, "freeze", lambda: played.append("freeze")),
-            (time.monotonic() + 600, "later", lambda: played.append("later")),
-        ]
-        on = ScoutView(loot=LootOffer(gold=1, elixir=1, dark=1), can_skip=False)
-        with patch.object(AttackRunner, "_battle_view", return_value=on):
-            self._runner()._play_due(0.0, pending)
-        assert played == ["freeze"]
-        assert [what for _, what, _ in pending] == ["later"]
+    def test_a_one_off_drop_keeps_pushing_out_while_that_moves_it(self) -> None:
+        """The middle of the line first, then further from the village, as it always was."""
+        line = deploy_line(LINE_POINTS, *DEPLOY_LINES["top_left"])
+        spots = single_spots(line)
+        assert len(spots) == DEPLOY_ATTEMPTS
+        assert spots[0] == line[len(line) // 2]
+        pushed = [math.hypot(x - 800, y - 400) for x, y in spots if (x, y) not in line]
+        assert len(pushed) >= 3
+        assert pushed == sorted(pushed)
+
+    def test_a_one_off_drop_pinned_on_the_map_edge_moves_along_the_line(self) -> None:
+        """A spot already on the map's edge clamps back onto itself, so pushing is no retry.
+
+        Measured live on a flank fitted to the village: a siege machine refused
+        at (266, 199) was pushed four more times, came back within two pixels of
+        itself every time, and its unit was never deployed at all.
+        """
+        line = deploy_line(LINE_POINTS, (581, 80), (273, 187), (150, 380))
+        spots = single_spots(line)
+        assert len(spots) == DEPLOY_ATTEMPTS
+        # Every push clamps straight back, so the retries come off the line.
+        assert sum(spot in line for spot in spots) >= DEPLOY_ATTEMPTS - 1
+        # And no two of them are the same drop.
+        for index, (x, y) in enumerate(spots):
+            assert all(math.hypot(x - a, y - b) >= 20 for a, b in spots[index + 1 :])
 
     def test_the_freeze_no_longer_queues_behind_the_slowest_hero(self) -> None:
         """Cast after the last ability it sat out a champion's 45 seconds first."""

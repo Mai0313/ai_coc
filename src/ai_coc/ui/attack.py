@@ -141,6 +141,11 @@ HERO_SETTLE = 1.5
 SCREEN_CENTRE = (800, 400)
 PUSH_STEP = 70
 DEPLOY_ATTEMPTS = 5
+# A tile is about 24x12 px here, so two drops closer together than this are the
+# same drop. It is what tells a push that moved the spot from one that was
+# clamped straight back onto it: measured live, four pushes in a row of a point
+# already on the map's edge came back within two pixels of each other.
+SPOT_APART = 20
 # A spell card that would not cast is offered the run once more and no further:
 # past that it is a card the game is refusing, not a tap it happened to swallow.
 SPELL_ATTEMPTS = 2
@@ -306,6 +311,29 @@ def deploy_candidates(plan: AttackPlan | None) -> list[tuple[tuple[int, int], tu
     sides = sorted(DEPLOY_LINES, key=lambda side: side != (plan.deploy_from if plan else ""))
     line = planned_line(plan)
     return ([line] if line else []) + [DEPLOY_LINES[side] for side in sides]
+
+
+def single_spots(line: list[tuple[int, int]]) -> list[tuple[int, int]]:
+    """Where to try a one-off drop, best first: the middle of the line, then out, then along.
+
+    `push_out` stops moving a point once it reaches the edge of `DEPLOY_BOUND`,
+    because everything past that is clamped back onto the same place. Measured
+    live, a siege machine refused at (266, 199) was pushed four more times and
+    came back to within two pixels of itself every time, so it spent nine seconds
+    finding out what the first attempt had already said and the unit was lost.
+
+    Whatever the pushes cannot reach is tried along the line instead, which is
+    ground the troops are about to be spread over anyway.
+    """
+    middle = len(line) // 2
+    spots: list[tuple[int, int]] = []
+    for spot in (
+        *(push_out(line[middle], step) for step in range(DEPLOY_ATTEMPTS)),
+        *(line[(middle + offset) % len(line)] for offset in (2, -2, 4, -4)),
+    ):
+        if all(((spot[0] - x) ** 2 + (spot[1] - y) ** 2) ** 0.5 >= SPOT_APART for x, y in spots):
+            spots.append(spot)
+    return spots[:DEPLOY_ATTEMPTS]
 
 
 def drop_points(line: list[tuple[int, int]], seed: int) -> list[tuple[int, int]]:
@@ -540,11 +568,7 @@ class AttackRunner(BaseModel):
         return None
 
     def _spread_troops(
-        self,
-        troops: list[int],
-        anchors: tuple[tuple[int, int], ...],
-        pushed: int,
-        between: Callable[[], None] = lambda: None,
+        self, troops: list[int], anchors: tuple[tuple[int, int], ...], pushed: int
     ) -> list[tuple[int, int]]:
         """Empty the troop cards along the flank; returns the line ending up in use.
 
@@ -571,12 +595,6 @@ class AttackRunner(BaseModel):
             for card, x in enumerate(remaining):
                 drops = drop_points(line, index * len(remaining) + card)
                 self.adb.tap_many([(x, CARD_ROW_Y), *drops], self.display)
-                # Most of the minute the army takes to go down is spent here, so
-                # anything on the clock gets its turn between cards rather than
-                # waiting for the last one to empty. Asking costs nothing when
-                # nothing is due; between whole passes instead left the freeze
-                # eight seconds late, which is a pass and a capture.
-                between()
             time.sleep(DROP_SETTLE)
             before, shot = shot, self._frame("pass")
             if not card_drained(before, shot, remaining) and pushed + 1 < DEPLOY_ATTEMPTS:
@@ -608,14 +626,8 @@ class AttackRunner(BaseModel):
         ]
         return [card for card in cards if card in on_field or card in emptied]
 
-    def _drop_singles(
-        self,
-        cards: list[int],
-        point: tuple[int, int],
-        what: str,
-        between: Callable[[], None] = lambda: None,
-    ) -> list[int]:
-        """Every one-off card onto the same spot at once, pushed out and retried as a group.
+    def _drop_singles(self, cards: list[int], line: list[tuple[int, int]], what: str) -> list[int]:
+        """Every one-off card onto the same spot at once, retried as a group where refused.
 
         They used to go down one at a time, each paying a capture to frame the
         drop, a settle and another capture to judge it — three and a half seconds
@@ -623,7 +635,7 @@ class AttackRunner(BaseModel):
         they were meant to follow were already under fire. Measured live, one
         burst carrying the siege machine and all four heroes put every one of
         them on the field, so the whole row goes in one shell round-trip and only
-        the cards the game did not take are offered a spot further out.
+        the cards the game did not take are offered another spot.
 
         Getting the verdict wrong is not free, which is what the settle is for: a
         second tap on a hero already on the field is its ability, so a drop
@@ -632,11 +644,10 @@ class AttackRunner(BaseModel):
         """
         landed: list[int] = []
         pending = list(cards)
-        spot = point
-        for attempt in range(DEPLOY_ATTEMPTS):
+        spot = line[len(line) // 2]
+        for spot in single_spots(line):
             if not pending:
                 break
-            spot = push_out(point, attempt)
             before = self._frame("before-drop")
             self.adb.tap_many(
                 [tap for card in pending for tap in ((card, CARD_ROW_Y), spot)],
@@ -648,12 +659,7 @@ class AttackRunner(BaseModel):
             landed += down
             pending = [card for card in pending if card not in down]
             if pending:
-                logger.info(
-                    "%d %s card(s) took nothing at %s; pushing out", len(pending), what, spot
-                )
-            # A spell timed from the attack opening can come due while this is
-            # still working through its pushes.
-            between()
+                logger.info("%d %s card(s) took nothing at %s", len(pending), what, spot)
         for card in pending:
             logger.warning("The %s card at %d never landed; its unit stays put", what, card)
         logger.info("%d of %d %s card(s) landed at %s", len(landed), len(cards), what, spot)
@@ -786,7 +792,6 @@ class AttackRunner(BaseModel):
             logger.warning("Every flank was refused; the boundary reaches past the playfield")
             return
         line = deploy_line(LINE_POINTS, *push_line(anchors, pushed))
-        middle = line[len(line) // 2]
         planned = tuple(point.pixels() for point in plan.rage_points) if plan else ()
         # A plan can name fewer spots than the army carries rages, and `_cast`
         # cycles back over its targets — which would stack two rages on one spot
@@ -830,19 +835,23 @@ class AttackRunner(BaseModel):
                 f"{len(freezes)} freeze card(s)",
                 partial(self._cast, freezes, freeze_targets, frame),
             ))
-        # A spell can come due while the army is still going down, so the
-        # schedule is offered a turn between one card and the next rather than
-        # only once everything has landed.
-        catch_up = partial(self._play_due, opened, pending)
-        self._drop_singles(vanguard, middle, "siege", catch_up)
-        line = self._spread_troops(troops, anchors, pushed, catch_up)
-        # Recomputed, not reused: the flank moves while the troops go down, and
-        # a hero sent to the pre-push midpoint is sent somewhere already refused.
-        middle = line[len(line) // 2]
+        # Nothing on the clock is allowed to interrupt this. The schedule used to
+        # be offered a turn between one card and the next, because putting the
+        # army down took about as long as the freeze was meant to wait; now that
+        # it takes ten seconds the only battles where a spell comes due mid-
+        # deployment are the ones where the deployment is going badly, and those
+        # are exactly the battles that need finishing rather than interrupting.
+        # Measured live on a flank half inside the boundary: rage fired 21 s in
+        # while a troop card was still draining and the heroes landed at 41 s,
+        # where finishing first would have had them down at about 31 s.
+        self._drop_singles(vanguard, line, "siege")
+        line = self._spread_troops(troops, anchors, pushed)
         # Only the heroes that actually went down get an ability. A hero still in
         # its card answers an ability tap by deploying instead, with nothing
-        # around it and no ability fired.
-        down = self._drop_singles(followers, middle, "hero", catch_up)
+        # around it and no ability fired. The line is the one the troops ended up
+        # on rather than the one they started on: the flank moves while they go
+        # down, and a hero sent to the old midpoint is sent somewhere refused.
+        down = self._drop_singles(followers, line, "hero")
         landed = time.monotonic()
         kinds = list(plan.heroes) if plan else []
         kinds += ["unknown"] * (len(followers) - len(kinds))
@@ -881,21 +890,6 @@ class AttackRunner(BaseModel):
             if remaining > 0:
                 time.sleep(remaining)
             if not self._play(opened, move):
-                return
-
-    def _play_due(self, opened: float, pending: Moves) -> None:
-        """Play whatever is already due, dropping it from `pending` as it goes.
-
-        Handed to the deployment to call between passes, because a spell timed
-        from the attack opening comes due while the army is still going down and
-        waiting for the last hero would put it half a minute late.
-        """
-        for move in sorted(
-            [move for move in pending if move[0] <= time.monotonic()], key=lambda move: move[0]
-        ):
-            pending.remove(move)
-            if not self._play(opened, move):
-                pending.clear()
                 return
 
     def _play(self, opened: float, move: tuple[float, str, Callable[[], None]]) -> bool:
