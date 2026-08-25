@@ -132,11 +132,14 @@ CARD_CORNER_PIXELS = 20
 #
 # The bar sits above the card row, which means the battlefield shows through this
 # strip until the bar is drawn, and grass is green too. A brightness-and-hue test
-# read it as a bar on every hero card of a village whose ground was bright, which
-# is a hero reported as landed while it sits in its card — the exact failure this
-# reader exists to catch. Blue is what separates them: measured over the two,
-# the bar runs (101, 231, 9) and grass (131, 184, 53), so the bar is both greener
-# and has almost no blue in it at all where grass keeps a third of a channel.
+# read that as a bar — a hero reported as landed while it sits in its card, which
+# is the exact failure this reader exists to catch. Swept over 126 recorded
+# frames taken before anything had been deployed, across eleven battles and their
+# themes, it called a hero landed on 52 of them; this test calls none.
+#
+# Blue is what separates them: measured over the two, the bar runs (101, 231, 9)
+# and grass (131, 184, 53), so the bar is both greener and has almost no blue in
+# it at all where grass keeps a third of a channel.
 HERO_BAR_TOP, HERO_BAR_BOTTOM = 714, 738
 HERO_BAR_HALF_WIDTH = 50
 HERO_BAR_GREEN = 0.15
