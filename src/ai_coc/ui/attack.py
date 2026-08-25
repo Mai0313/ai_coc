@@ -911,7 +911,7 @@ class AttackRunner(BaseModel):
             # does not exist, and fitting to it is what saves probing outwards one
             # refused troop at a time. It is still probed once before it is used.
             anchors = (
-                fitted_line(battle, *flank, centre=self._middle) if battle else None
+                fitted_line(battle, flank[0], flank[1], centre=self._middle) if battle else None
             ) or flank
             pushed = self._usable_line(troops, anchors)
             if pushed is not None:
