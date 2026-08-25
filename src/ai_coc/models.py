@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 from typing import Any, Literal
+from pathlib import Path
 from datetime import UTC, datetime
 
 from pydantic import Field, BaseModel, RootModel, ConfigDict, AliasChoices, field_validator
@@ -587,6 +588,14 @@ class ScreenPoint(BaseModel):
 
 HeroKind = Literal["king", "queen", "warden", "champion", "minion_prince", "unknown"]
 
+# What Gemini accepts for `generation_config.thinking_level`, cheapest first.
+# Every call this application makes is a screen read against a fixed prompt, so
+# the thinking budget buys latency rather than a better answer. It is a setting
+# because a model that refuses the level, or a prompt that turns out to want the
+# reasoning, should be a picker away from working rather than a release away.
+ThinkingLevel = Literal["minimal", "low", "medium", "high"]
+DEFAULT_THINKING_LEVEL: ThinkingLevel = "low"
+
 
 class AttackTimings(BaseModel):
     """How long after the army is down each thing that waits on a clock happens.
@@ -595,22 +604,24 @@ class AttackTimings(BaseModel):
     upgraded cannot take the field, so its card is simply absent and every
     position shifts.
 
-    Freeze is here rather than left to fall out of the code's ordering, which is
-    what it used to do — cast after the last ability, it waited out the slowest
-    hero on the field, so a champion's 45 seconds put it a minute and a half into
-    a three-minute battle, long after the defences it was meant to stop had done
-    their work. It is the one spell held back, so it is the one with a time.
+    Both spells are here rather than left to fall out of the code's ordering,
+    which is what they used to do. Freeze was cast after the last ability, so it
+    waited out the slowest hero on the field and a champion's 45 seconds put it a
+    minute and a half into a three-minute battle. Rage was cast the moment the
+    troop cards emptied, which was fine while emptying them took half a minute
+    and is not now that it takes five seconds: a rage lasts 18 seconds, and cast
+    as the troops land it has expired before they reach anything worth raging.
 
-    It is also the one measured from a different moment. An ability's delay runs
-    from its own hero landing; the freeze's runs from the attack opening, which
-    is how it is judged on screen — about half a minute in, as the push reaches
-    the first line of defences — and hanging it off the heroes would move it by
-    however long the army happened to take to go down.
+    They are also measured from a different moment than the abilities. An
+    ability's delay runs from its own hero landing; a spell's runs from the
+    attack opening, which is how both are judged on screen — rage as the push
+    reaches the outer wall, freeze as it reaches the first line of defences —
+    and hanging them off the heroes would move them by however long the army
+    happened to take to go down.
 
-    Read it as the earliest moment rather than the exact one: the loop is single
-    threaded and the deployment only offers the clock a turn between one card and
-    the next. Measured over four battles that offset was 5 to 8 seconds, which is
-    why the default is 30 for a spell wanted 30 to 40 seconds in.
+    Read them as the earliest moment rather than the exact one: the loop is
+    single threaded and nothing on the clock runs until the last hero is down,
+    so a delay shorter than the deployment takes is served the moment it ends.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -621,6 +632,7 @@ class AttackTimings(BaseModel):
     champion: int = 45
     minion_prince: int = 20
     unknown: int = 20
+    rage: int = 15
     freeze: int = 30
 
     def seconds(self, kind: HeroKind) -> int:
@@ -654,6 +666,7 @@ class AppConfig(BaseModel):
     timings: AttackTimings = AttackTimings()
     gemini_model: str = DEFAULT_GEMINI_MODEL
     gemini_endpoint: str = ""
+    gemini_thinking: ThinkingLevel = DEFAULT_THINKING_LEVEL
 
 
 class AttackPlan(BaseModel):
@@ -675,10 +688,16 @@ class AttackPlan(BaseModel):
     # place it ended up before, but without pretending it had a plan.
     deploy_start: ScreenPoint
     deploy_end: ScreenPoint
-    rage_points: list[ScreenPoint] = Field(default_factory=list)
-    freeze_points: list[ScreenPoint] = Field(default_factory=list)
+    # Required for the same reason as the two endpoints, and measured the same
+    # way: with defaults these were optional in the JSON schema, and a live run
+    # came back naming five rage points, no freeze point and no hero at all,
+    # against a screen holding a freeze bottle and four hero cards. The loop then
+    # stacked the freeze on its fallback spot and gave every hero the unknown
+    # ability delay, which is a queen's cloak thrown away on every attack.
+    rage_points: list[ScreenPoint]
+    freeze_points: list[ScreenPoint]
     # Left to right, so each hero card can be matched to its own ability timing.
-    heroes: list[HeroKind] = Field(default_factory=list)
+    heroes: list[HeroKind]
     # Carried on the plan so a written-out one is the whole tactic in one file,
     # rather than a set of points whose timing lives somewhere else entirely.
     # None leaves the runner on whatever the caller configured.
@@ -695,6 +714,37 @@ class AttackReport(BaseModel):
     # Farming has met its goal, so the automation is meant to stop rather than
     # come round again: the next pass would only read the same full storage.
     stock_full: bool = False
+
+
+class AttackOptions(BaseModel):
+    """What one `attack` command was told to do, beyond the shared config file.
+
+    Everything here is about the run rather than the tactic: where to keep the
+    frames, how many rounds to play, whether to record a heartbeat alongside the
+    frames the loop reads. The tactic itself lives in the config file and in
+    whatever plan is handed in.
+    """
+
+    frame_dir: Path | None = None
+    plan_in: Path | None = None
+    plan_out: Path | None = None
+    minimums: LootOverrides = LootOverrides()
+    # 0 keeps going until it is interrupted, which is what watching the loop play
+    # needs: a tactic is judged over a run of battles rather than one.
+    rounds: int = 1
+    # 0 records nothing beyond the frames the loop reads for itself.
+    shot_every: float = 0.0
+
+
+class AttackSeries(RootModel[list[AttackReport]]):
+    """Every round one `attack` command ran, in the order they ran.
+
+    A run told to keep going answers with all of them rather than only the last:
+    what a session is judged on is how the rounds differ, and a single report
+    cannot say whether the army was ready three times out of five.
+    """
+
+    root: list[AttackReport] = Field(default_factory=list)
 
 
 class FrameReading(BaseModel):
@@ -738,6 +788,7 @@ class GeminiSettings(BaseModel):
     api_key: str = ""
     model: str = DEFAULT_GEMINI_MODEL
     base_url: str = ""
+    thinking_level: ThinkingLevel = DEFAULT_THINKING_LEVEL
 
 
 class GeminiTextPart(BaseModel):
@@ -759,12 +810,19 @@ class GeminiResponseFormat(BaseModel):
     json_schema: dict[str, Any] = Field(serialization_alias="schema")
 
 
+class GeminiGenerationConfig(BaseModel):
+    """How hard the model is asked to think before it answers."""
+
+    thinking_level: ThinkingLevel
+
+
 class GeminiRequest(BaseModel):
     """One `interactions.create` body, built here instead of as a loose dict."""
 
     model: str
     input: list[GeminiTextPart | GeminiImagePart]
     response_format: GeminiResponseFormat | None = None
+    generation_config: GeminiGenerationConfig | None = None
 
     def body(self) -> dict[str, Any]:
         return self.model_dump(by_alias=True, exclude_none=True)

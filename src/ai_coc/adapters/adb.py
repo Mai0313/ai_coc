@@ -18,6 +18,18 @@ logger = logging.getLogger(__name__)
 
 PNG_MAGIC = b"\x89PNG"
 
+# How long `tap_many` leaves between one tap and the next. It exists because the
+# game samples touches once a display frame and keeps one of whatever arrived in
+# that frame, so the taps have to be more than a frame apart or troops go missing.
+# Measured against this emulator: the shell round trip is 47 ms and each `input`
+# inside it costs about 12 ms, so five taps chained with no sleep at all take
+# 109 ms in total — a spacing well under one frame, which is the bug. This adds
+# up to roughly 62 ms between taps, two frames at 30 fps and four at 60. It was
+# 0.12, which is safe and is also two thirds of the time a whole army takes to
+# deploy: 300 taps at that spacing is 36 seconds of a three-minute battle spent
+# sleeping.
+TAP_GAP = 0.05
+
 
 class AdbControlError(RuntimeError):
     pass
@@ -122,7 +134,7 @@ class AdbController(BaseModel):
         self.input(display, "tap", str(int(x)), str(int(y)))
 
     def tap_many(
-        self, points: list[tuple[int, int]], display: DisplayTarget, gap: float = 0.12
+        self, points: list[tuple[int, int]], display: DisplayTarget, gap: float = TAP_GAP
     ) -> None:
         """A burst of taps in one shell round-trip, spaced far enough apart to land.
 

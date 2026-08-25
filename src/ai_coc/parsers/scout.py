@@ -129,9 +129,22 @@ CARD_CORNER_PIXELS = 20
 # from one still waiting. The health bar the game draws over the card can —
 # measured, it fills 0.33 to 0.37 of this strip while a hero still in the card
 # leaves at most 0.02. It takes a second or so to appear, so read it after a wait.
+#
+# The bar sits above the card row, which means the battlefield shows through this
+# strip until the bar is drawn, and grass is green too. A brightness-and-hue test
+# read that as a bar — a hero reported as landed while it sits in its card, which
+# is the exact failure this reader exists to catch. Swept over 126 recorded
+# frames taken before anything had been deployed, across eleven battles and their
+# themes, it called a hero landed on 52 of them; this test calls none.
+#
+# Blue is what separates them: measured over the two, the bar runs (101, 231, 9)
+# and grass (131, 184, 53), so the bar is both greener and has almost no blue in
+# it at all where grass keeps a third of a channel.
 HERO_BAR_TOP, HERO_BAR_BOTTOM = 714, 738
 HERO_BAR_HALF_WIDTH = 50
 HERO_BAR_GREEN = 0.15
+HERO_BAR_MIN_GREEN = 200
+HERO_BAR_MAX_BLUE = 30
 
 # The village's own storages, on the four bars down the home screen's right edge.
 # Only the first three are read; the fourth is gems. The numbers are right-aligned
@@ -465,7 +478,9 @@ def field_units(png: bytes, slots: Sequence[int]) -> list[int]:
             HERO_BAR_BOTTOM,
         )).tobytes()
         green = sum(
-            data[i + 1] > 150 and data[i + 1] - data[i] > 40 and data[i + 1] - data[i + 2] > 40
+            data[i + 1] > HERO_BAR_MIN_GREEN
+            and data[i + 2] < HERO_BAR_MAX_BLUE
+            and data[i + 1] - data[i] > 60
             for i in range(0, len(data), 3)
         )
         if green / (len(data) // 3) >= HERO_BAR_GREEN:

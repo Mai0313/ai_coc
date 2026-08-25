@@ -1,7 +1,6 @@
 import io
 import json
 import math
-import time
 from pathlib import Path
 import tempfile
 import unittest
@@ -45,6 +44,7 @@ from ai_coc.ui.attack import (
     deploy_line,
     drop_points,
     planned_line,
+    single_spots,
     deploy_candidates,
 )
 from ai_coc.adapters.adb import AdbController, focused_display, physical_display
@@ -77,11 +77,16 @@ from ai_coc.adapters.database import Database
 
 FRAMES = Path(__file__).parent / "frames"
 
-# A plan has to carry both ends of its line, so tests that do not care about
-# the line still have to supply one.
+# A plan has to carry both ends of its line and each of the three lists the
+# planner is asked to fill, so tests that do not care about any of them still
+# have to supply them. They are required on purpose: a field with a default is
+# optional in the JSON schema, and that is how a live run came back naming
+# neither a hero nor a freeze point against a screen holding four hero cards.
+_ANSWERED = {"rage_points": [], "freeze_points": [], "heroes": []}
 _LINE = {
     "deploy_start": ScreenPoint(x_pct=37.5, y_pct=12.2),
     "deploy_end": ScreenPoint(x_pct=14.4, y_pct=42.2),
+    **_ANSWERED,
 }
 
 # Trimmed from a live MuMu instance: the launcher holds display 0 and the game
@@ -262,6 +267,26 @@ class ScoutTests(unittest.TestCase):
     def test_a_hero_still_in_its_card_carries_no_bar(self) -> None:
         """A hero keeps its card once it lands, so nothing else separates the two."""
         assert field_units((FRAMES / "cards_full.png").read_bytes(), [815, 925, 1046, 1167]) == []
+
+    def test_the_grass_above_the_card_row_is_not_a_health_bar(self) -> None:
+        """The strip sits above the cards, so the battlefield shows through it.
+
+        A live battle over a bright village read every hero card as landed while
+        all four were still in their cards, which is the whole failure this
+        reader exists to catch. The two measured colours are what tells them
+        apart: the bar has almost no blue in it and grass keeps a third of a
+        channel, so the fill ratio alone cannot separate them.
+        """
+
+        def strip(colour: tuple[int, int, int]) -> bytes:
+            frame = Image.new("RGB", (1600, 900), (20, 20, 20))
+            frame.paste(Image.new("RGB", (120, 30), colour), (640, 712))
+            buffer = io.BytesIO()
+            frame.save(buffer, format="PNG")
+            return buffer.getvalue()
+
+        assert field_units(strip((131, 184, 53)), [694]) == []
+        assert field_units(strip((101, 231, 9)), [694]) == [694]
 
     def test_army_strength_splits_on_the_glyphs_that_are_not_digits(self) -> None:
         """The troop icon and the slash are found by matching no digit well."""
@@ -632,6 +657,7 @@ class AttackTests(unittest.TestCase):
         plan = AttackPlan(
             deploy_start=ScreenPoint(x_pct=37.5, y_pct=12.2),
             deploy_end=ScreenPoint(x_pct=14.4, y_pct=42.2),
+            **_ANSWERED,
         )
         assert planned_line(plan) == DEPLOY_LINES["top_left"]
 
@@ -640,6 +666,7 @@ class AttackTests(unittest.TestCase):
         plan = AttackPlan(
             deploy_start=ScreenPoint(x_pct=25, y_pct=30),
             deploy_end=ScreenPoint(x_pct=75, y_pct=70),
+            **_ANSWERED,
         )
         assert planned_line(plan) is None
 
@@ -714,18 +741,31 @@ class AttackTests(unittest.TestCase):
         """The game centres every attack itself; dragging a good camera can only hurt."""
         assert self._settled((200, 120, 1380, 680)) == []
 
-    def test_a_move_already_due_is_played_before_the_army_is_all_down(self) -> None:
-        """Putting the army down outlasts the freeze's own timer, so it is offered a turn."""
-        played: list[str] = []
-        pending = [
-            (0.0, "freeze", lambda: played.append("freeze")),
-            (time.monotonic() + 600, "later", lambda: played.append("later")),
-        ]
-        on = ScoutView(loot=LootOffer(gold=1, elixir=1, dark=1), can_skip=False)
-        with patch.object(AttackRunner, "_battle_view", return_value=on):
-            self._runner()._play_due(0.0, pending)
-        assert played == ["freeze"]
-        assert [what for _, what, _ in pending] == ["later"]
+    def test_a_one_off_drop_keeps_pushing_out_while_that_moves_it(self) -> None:
+        """The middle of the line first, then further from the village, as it always was."""
+        line = deploy_line(LINE_POINTS, *DEPLOY_LINES["top_left"])
+        spots = single_spots(line)
+        assert len(spots) == DEPLOY_ATTEMPTS
+        assert spots[0] == line[len(line) // 2]
+        pushed = [math.hypot(x - 800, y - 400) for x, y in spots if (x, y) not in line]
+        assert len(pushed) >= 3
+        assert pushed == sorted(pushed)
+
+    def test_a_one_off_drop_pinned_on_the_map_edge_moves_along_the_line(self) -> None:
+        """A spot already on the map's edge clamps back onto itself, so pushing is no retry.
+
+        Measured live on a flank fitted to the village: a siege machine refused
+        at (266, 199) was pushed four more times, came back within two pixels of
+        itself every time, and its unit was never deployed at all.
+        """
+        line = deploy_line(LINE_POINTS, (581, 80), (273, 187), (150, 380))
+        spots = single_spots(line)
+        assert len(spots) == DEPLOY_ATTEMPTS
+        # Every push clamps straight back, so the retries come off the line.
+        assert sum(spot in line for spot in spots) >= DEPLOY_ATTEMPTS - 1
+        # And no two of them are the same drop.
+        for index, (x, y) in enumerate(spots):
+            assert all(math.hypot(x - a, y - b) >= 20 for a, b in spots[index + 1 :])
 
     def test_the_freeze_no_longer_queues_behind_the_slowest_hero(self) -> None:
         """Cast after the last ability it sat out a champion's 45 seconds first."""
@@ -753,6 +793,7 @@ class AttackTests(unittest.TestCase):
             deploy_start=ScreenPoint(x_pct=25, y_pct=30),
             deploy_end=ScreenPoint(x_pct=75, y_pct=70),
             deploy_from="bottom_right",
+            **_ANSWERED,
         )
         # That line runs across the village, so only the named flanks are left.
         assert planned_line(plan) is None
@@ -760,15 +801,21 @@ class AttackTests(unittest.TestCase):
         assert candidates[0] == DEPLOY_LINES["bottom_right"]
         assert sorted(candidates) == sorted(DEPLOY_LINES.values())
 
-    def test_both_ends_of_the_line_are_required_of_the_planner(self) -> None:
-        """Gemini answered three runs running with a start and no end; half a line is none."""
+    def test_everything_the_planner_is_asked_for_is_required_of_it(self) -> None:
+        """A field with a default is optional in the schema, and Gemini leaves those out.
+
+        Three runs running answered a start and no end; a fourth named five rage
+        points, no freeze point and no hero at all, against a screen holding a
+        freeze bottle and four hero cards.
+        """
         required = set(AttackPlan.model_json_schema()["required"])
-        assert {"deploy_start", "deploy_end"} <= required
+        assert {"deploy_start", "deploy_end", "rage_points", "freeze_points", "heroes"} <= required
 
     def test_a_usable_planned_line_is_tried_before_any_flank(self) -> None:
         plan = AttackPlan(
             deploy_start=ScreenPoint(x_pct=62.5, y_pct=12.2),
             deploy_end=ScreenPoint(x_pct=85.6, y_pct=42.2),
+            **_ANSWERED,
         )
         candidates = deploy_candidates(plan)
         assert candidates[0] == planned_line(plan)

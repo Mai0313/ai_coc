@@ -12,10 +12,12 @@ from __future__ import annotations
 
 import math
 import time
-from typing import TYPE_CHECKING
+from typing import Self
 import logging
+from pathlib import Path
+import threading
 
-from pydantic import PrivateAttr
+from pydantic import BaseModel, PrivateAttr
 
 from ai_coc import plans
 from ai_coc.models import (
@@ -23,15 +25,21 @@ from ai_coc.models import (
     ProbeRay,
     AppConfig,
     MapSurvey,
-    AttackReport,
+    AttackSeries,
     FrameReading,
-    LootOverrides,
+    AttackOptions,
+    DisplayTarget,
     BoundarySurvey,
     GeminiSettings,
     LootThresholds,
 )
 from ai_coc.constants import COC_PACKAGE
 from ai_coc.adapters.ai import GeminiClient
+
+# A runtime import rather than a TYPE_CHECKING one: `FrameTicker` declares it as
+# a field, and a model whose field type is only importable to a type checker
+# cannot be built at all.
+from ai_coc.adapters.adb import AdbController
 from ai_coc.adapters.mumu import MuMuAdapter
 from ai_coc.parsers.scout import (
     card_count,
@@ -52,11 +60,6 @@ from ai_coc.adapters.secrets import SecretStore
 from ai_coc.parsers.boundary import PLAYFIELD, VILLAGE_CENTRE, boundary_reach
 
 from .ui.attack import CARD_ROW_Y, DROP_SETTLE, SINGLE_DROP_DELAY, AttackRunner
-
-if TYPE_CHECKING:
-    from pathlib import Path
-
-    from ai_coc.adapters.adb import AdbController
 
 logger = logging.getLogger(__name__)
 
@@ -82,18 +85,72 @@ def _planner(config: AppConfig) -> GeminiClient | None:
         return None
     return GeminiClient(
         settings=GeminiSettings(
-            api_key=key, model=config.gemini_model, base_url=config.gemini_endpoint
+            api_key=key,
+            model=config.gemini_model,
+            base_url=config.gemini_endpoint,
+            thinking_level=config.gemini_thinking,
         )
     )
 
 
-def attack(
-    frame_dir: Path | None = None,
-    plan_in: Path | None = None,
-    plan_out: Path | None = None,
-    minimums: LootOverrides | None = None,
-) -> AttackReport:
-    """One pass of the attack loop, with no window in the way.
+class FrameTicker(BaseModel):
+    """Saves a frame every few seconds for as long as a run lasts.
+
+    The loop's own captures are the ones it reads, and it only looks where it has
+    a question; between them a battle can go badly with nothing recorded at all.
+    This is the other view — a fixed heartbeat, each frame named by how far into
+    the run it was taken, so a recording lines up against the log afterwards.
+
+    It costs the emulator a PNG encode every tick and competes with the loop for
+    the same ADB connection, which is why it is off unless asked for.
+    """
+
+    adb: AdbController
+    display: DisplayTarget
+    out_dir: Path
+    seconds: float
+
+    _stop: threading.Event = PrivateAttr(default_factory=threading.Event)
+    _thread: threading.Thread | None = PrivateAttr(default=None)
+
+    def __enter__(self) -> Self:
+        """Start ticking, or do nothing at all when no interval was asked for."""
+        if self.seconds > 0:
+            self._thread = threading.Thread(target=self._tick, daemon=True)
+            self._thread.start()
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        """Stop ticking and wait for a capture already in flight to be written."""
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join(timeout=self.seconds + 30)
+
+    def _tick(self) -> None:
+        started = time.monotonic()
+        while not self._stop.is_set():
+            elapsed = time.monotonic() - started
+            try:
+                png = self.adb.screenshot(self.display)
+            except Exception:
+                # Loud, but never fatal: this is a recording of the run, not
+                # part of it, and losing the battle to a missed frame is worse
+                # than the gap in the recording.
+                logger.warning("A heartbeat capture failed", exc_info=True)
+            else:
+                (self.out_dir / f"tick_{elapsed:07.1f}s.png").write_bytes(png)
+            self._stop.wait(self.seconds)
+
+
+# A round that fought nothing is nearly always an army still training, which
+# takes minutes rather than seconds. Coming straight round again would walk the
+# same menus to read the same half-full camp, so a round that did not attack
+# waits before the next one is started.
+IDLE_REST = 60
+
+
+def attack(options: AttackOptions) -> AttackSeries:
+    """The attack loop, with no window in the way, for as many rounds as asked.
 
     Thresholds, storage limits and ability timings all come from the shared
     config file, so a run started here plays the same way as one started from
@@ -106,28 +163,60 @@ def attack(
     `plan_in` replaces the AI entirely — the loop plays that file and asks for
     nothing — and `plan_out` writes down whichever plan actually ran, so a battle
     worth repeating can be repeated and one worth arguing with can be edited.
+
+    `rounds` of 0 keeps going until it is interrupted, which is what watching the
+    loop play needs: a tactic is judged over a run of battles rather than one,
+    and the interesting ones are the battles nobody was sitting there to start.
+    Ctrl-C ends the series rather than the process, so the rounds already played
+    are still reported.
     """
     adb = _controller()
-    if frame_dir is not None:
-        frame_dir.mkdir(parents=True, exist_ok=True)
-    plan = plans.load(plan_in) if plan_in else None
+    if options.frame_dir is not None:
+        options.frame_dir.mkdir(parents=True, exist_ok=True)
+    elif options.shot_every > 0:
+        raise ValueError("--shot-every 需要 --frames 指定存放位置")
+    plan = plans.load(options.plan_in) if options.plan_in else None
     config = ConfigStore().load()
+    display = adb.display_for(COC_PACKAGE)
     runner = AttackRunner(
         adb=adb,
-        display=adb.display_for(COC_PACKAGE),
-        thresholds=(minimums or LootOverrides()).over(config.thresholds),
+        display=display,
+        thresholds=options.minimums.over(config.thresholds),
         stock=config.stock,
         abilities=config.timings,
         ai=None if plan else _planner(config),
         plan=plan,
-        frame_dir=frame_dir,
+        frame_dir=options.frame_dir,
     )
-    report = runner.run()
-    if plan_out is not None and runner.played is not None:
-        plan_out.write_text(runner.played.model_dump_json(indent=2), encoding="utf-8")
-        logger.info("Wrote the plan that ran to %s", plan_out)
-    logger.info("Attack finished: %s", report.message)
-    return report
+    series = AttackSeries()
+    rounds = options.rounds
+    with FrameTicker(
+        adb=adb, display=display, out_dir=options.frame_dir or Path(), seconds=options.shot_every
+    ):
+        while rounds <= 0 or len(series.root) < rounds:
+            logger.info("Round %d of %s", len(series.root) + 1, rounds or "no limit")
+            try:
+                report = runner.run()
+            except KeyboardInterrupt:
+                logger.info("Interrupted; stopping after %d round(s)", len(series.root))
+                break
+            series.root.append(report)
+            logger.info("Attack finished: %s", report.message)
+            if options.plan_out is not None and runner.played is not None:
+                options.plan_out.write_text(
+                    runner.played.model_dump_json(indent=2), encoding="utf-8"
+                )
+                logger.info("Wrote the plan that ran to %s", options.plan_out)
+            if report.stock_full:
+                logger.info("The storages are full; there is nothing left to farm for")
+                break
+            if report.attacked is None and (rounds <= 0 or len(series.root) < rounds):
+                logger.info("Nothing was attacked; waiting %ds for the army", IDLE_REST)
+                try:
+                    time.sleep(IDLE_REST)
+                except KeyboardInterrupt:
+                    break
+    return series
 
 
 # Twelve rays is the whole village at 30 degree steps, and two drops on each is

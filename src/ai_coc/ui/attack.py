@@ -63,12 +63,21 @@ END_BATTLE = (118, 670)
 RETURN_HOME = (798, 768)
 
 # Card positions come from the frame rather than a constant, because the row
-# depends on the army. Cards are then emptied in small passes: `live_cards`
-# reports which ones are done, so a card is never tapped more than a few times
-# past its last troop, and a card holding one troop is not tapped a dozen times.
+# depends on the army. Cards are then emptied in passes: `live_cards` reports
+# which ones are done, so the passes stop as soon as the cards are empty rather
+# than running a tap count guessed up front.
+#
+# A pass used to drop four per card and there used to be ten of them, which read
+# as cautious and was the opposite. A pass costs a settle and a capture whatever
+# it carries, so four-at-a-time meant a twelve-giant card took three passes and
+# nine seconds of overhead to put down nine seconds' worth of troops; measured,
+# the whole troop deployment took 37 seconds and still left a card holding
+# something. A pass now walks the whole line, which is both the fastest way to
+# empty a card and the spread a person would use. An over-tap on a card that has
+# just emptied costs nothing but a red banner nothing reads any more.
 CARD_ROW_Y = 800
-DROPS_PER_PASS = 4
-DEPLOY_PASSES = 10
+DROPS_PER_PASS = 12
+DEPLOY_PASSES = 6
 
 # Lines just outside the deployment boundary on each flank, used when there is
 # no plan or the line it drew crosses the village. A drop inside the boundary is
@@ -102,26 +111,28 @@ RAGE_PATH = (
 # under fire, and goes where they are rather than where they were headed.
 FREEZE_TARGET = (800, 420)
 
-# A one-off drop needs far longer between selecting the card and placing it than
-# a troop does. A troop card is tapped repeatedly, so a swallowed tap costs one
-# troop; a hero or siege machine gets one attempt.
-SINGLE_DROP_DELAY = 0.6
+# Between selecting a one-off card and placing what it holds. It was 0.6 on the
+# reasoning that a hero gets one attempt where a troop card is tapped repeatedly,
+# so a swallowed tap costs the whole hero. Measured against a live battle, a
+# single burst that selected and placed the siege machine and all four heroes at
+# 0.15 put every one of the five on the field.
+SINGLE_DROP_DELAY = 0.15
 # Selecting a spell opens a radius indicator that has to be up before a
-# placement lands: measured live, 0.6 s was still swallowed where 1.5 s went
-# through. Only the selection is slow, though — the card stays selected while it
-# still holds something, so the rest of a card's spells follow as a fast burst.
-# Casting them one full select-and-place at a time took 18 s, by which point a
-# rage cast first had nearly run its 18 s out before the troops even landed.
-SPELL_SELECT_DELAY = 1.2
-SPELL_PLACE_GAP = 0.3
+# placement lands: measured live, 0.6 s goes through where the 0.1 a troop is
+# happy with does not. Only the selection is slow, though — the card stays
+# selected while it still holds something, so the rest of a card's spells follow
+# as a fast burst.
+SPELL_SELECT_DELAY = 0.6
+SPELL_PLACE_GAP = 0.15
 
-# A card takes a moment to show that it lost something: the digits redraw and a
-# hero's health bar fades in about a second behind the drop. Measured across the
-# recorded runs, a card read straight after the tap still showed the old corner
-# and the bar was not there yet, which read as a drop the game had refused —
-# and on a hero that is not a free mistake, because the retry taps its card
-# again, which is its ability.
-DROP_SETTLE = 1.5
+# A card takes a moment to show that it lost something. Measured live, a corner
+# read by the first capture taken after the tap — which lands 0.86 s later,
+# because a capture is 0.7 s of that on its own — had already repainted.
+DROP_SETTLE = 0.5
+# A hero's health bar is the slower of the two signals, and the expensive one to
+# read early: a hero wrongly called refused has its card tapped again, which is
+# its ability. This is the delay the five-in-one-burst measurement was taken at.
+HERO_SETTLE = 1.5
 
 # A village whose boundary reaches past the chosen line refuses every drop, and
 # layouts vary far more than one line can allow for. So the line is tested with a
@@ -130,6 +141,14 @@ DROP_SETTLE = 1.5
 SCREEN_CENTRE = (800, 400)
 PUSH_STEP = 70
 DEPLOY_ATTEMPTS = 5
+# A tile is about 24x12 px here, so two drops closer together than this are the
+# same drop. It is what tells a push that moved the spot from one that was
+# clamped straight back onto it: measured live, four pushes in a row of a point
+# already on the map's edge came back within two pixels of each other.
+SPOT_APART = 20
+# A spell card that would not cast is offered the run once more and no further:
+# past that it is a card the game is refusing, not a tap it happened to swallow.
+SPELL_ATTEMPTS = 2
 PLAYFIELD = (30, 105, 1570, 700)
 # The 放棄 button, measured at x 12-205 and y 636-700 on the battle screen. It
 # is the one piece of UI the playfield would otherwise reach over, and a drop
@@ -292,6 +311,29 @@ def deploy_candidates(plan: AttackPlan | None) -> list[tuple[tuple[int, int], tu
     sides = sorted(DEPLOY_LINES, key=lambda side: side != (plan.deploy_from if plan else ""))
     line = planned_line(plan)
     return ([line] if line else []) + [DEPLOY_LINES[side] for side in sides]
+
+
+def single_spots(line: list[tuple[int, int]]) -> list[tuple[int, int]]:
+    """Where to try a one-off drop, best first: the middle of the line, then out, then along.
+
+    `push_out` stops moving a point once it reaches the edge of `DEPLOY_BOUND`,
+    because everything past that is clamped back onto the same place. Measured
+    live, a siege machine refused at (266, 199) was pushed four more times and
+    came back to within two pixels of itself every time, so it spent nine seconds
+    finding out what the first attempt had already said and the unit was lost.
+
+    Whatever the pushes cannot reach is tried along the line instead, which is
+    ground the troops are about to be spread over anyway.
+    """
+    middle = len(line) // 2
+    spots: list[tuple[int, int]] = []
+    for spot in (
+        *(push_out(line[middle], step) for step in range(DEPLOY_ATTEMPTS)),
+        *(line[(middle + offset) % len(line)] for offset in (2, -2, 4, -4)),
+    ):
+        if all(((spot[0] - x) ** 2 + (spot[1] - y) ** 2) ** 0.5 >= SPOT_APART for x, y in spots):
+            spots.append(spot)
+    return spots[:DEPLOY_ATTEMPTS]
 
 
 def drop_points(line: list[tuple[int, int]], seed: int) -> list[tuple[int, int]]:
@@ -526,11 +568,7 @@ class AttackRunner(BaseModel):
         return None
 
     def _spread_troops(
-        self,
-        troops: list[int],
-        anchors: tuple[tuple[int, int], ...],
-        pushed: int,
-        between: Callable[[], None] = lambda: None,
+        self, troops: list[int], anchors: tuple[tuple[int, int], ...], pushed: int
     ) -> list[tuple[int, int]]:
         """Empty the troop cards along the flank; returns the line ending up in use.
 
@@ -557,12 +595,6 @@ class AttackRunner(BaseModel):
             for card, x in enumerate(remaining):
                 drops = drop_points(line, index * len(remaining) + card)
                 self.adb.tap_many([(x, CARD_ROW_Y), *drops], self.display)
-                # Most of the minute the army takes to go down is spent here, so
-                # anything on the clock gets its turn between cards rather than
-                # waiting for the last one to empty. Asking costs nothing when
-                # nothing is due; between whole passes instead left the freeze
-                # eight seconds late, which is a pass and a capture.
-                between()
             time.sleep(DROP_SETTLE)
             before, shot = shot, self._frame("pass")
             if not card_drained(before, shot, remaining) and pushed + 1 < DEPLOY_ATTEMPTS:
@@ -575,71 +607,69 @@ class AttackRunner(BaseModel):
                 break
         return line
 
-    def _drop_single(self, card: int, point: tuple[int, int]) -> bool:
-        """One unit off one card onto one spot; False when the game did not take it.
+    def _landed(self, before: bytes, after: bytes, cards: list[int]) -> list[int]:
+        """Which of these one-off cards actually put something on the field.
 
         The card is the evidence and the screen is not. A hero keeps its card
         once it is down — the card becomes the ability button — so what says it
-        landed is the health bar the game draws over it; the siege machine has
-        no bar and instead greys out, which `live_cards` already reads.
+        landed is the health bar the game draws over it; a card that greys out
+        instead is what the second test is for.
 
         This used to answer the red warning banner, which cannot say it: a tap
         inside the boundary is as often swallowed in silence, so every hero came
         back "landed" whether it went down or not. One recorded run reported
         four of four while the fourth never left its card.
-
-        Getting it wrong the other way is not free either, which is what the
-        settle is for: a second tap on a hero already on the field is its
-        ability, so a drop wrongly called refused burns the cloak or the tome and
-        leaves the schedule tapping a card that has nothing left to give.
         """
-        before = self._frame("before-drop")
-        self.adb.tap_many([(card, CARD_ROW_Y), point], self.display, gap=SINGLE_DROP_DELAY)
-        time.sleep(DROP_SETTLE)
-        after = self._frame("dropped")
-        return bool(field_units(after, [card])) or (
-            bool(live_cards(before, [card])) and not live_cards(after, [card])
-        )
+        on_field = field_units(after, cards)
+        # Both readings are taken once. Asking `live_cards` inside the
+        # comprehension decoded the whole screenshot again for every card it
+        # walked, which on a row of four heroes is four PNG decodes nobody wanted.
+        was_live, still_live = live_cards(before, cards), live_cards(after, cards)
+        emptied = [card for card in was_live if card not in still_live]
+        return [card for card in cards if card in on_field or card in emptied]
 
-    def _drop_singles(
-        self,
-        cards: list[int],
-        point: tuple[int, int],
-        what: str,
-        between: Callable[[], None] = lambda: None,
-    ) -> list[int]:
-        """Empty the one-off cards onto the same spot, pushing it out when nothing lands.
+    def _drop_singles(self, cards: list[int], line: list[tuple[int, int]], what: str) -> list[int]:
+        """Every one-off card onto the same spot at once, retried as a group where refused.
 
-        Every card gets its own attempts, starting from wherever the last one
-        worked. Sharing one budget across the row meant a spot that took five
-        pushes to work for the first hero left the other three never tapped at
-        all, and a hero that stays in its card is silent — the troops already on
-        the field keep the loot moving, so `_wait_out_battle` sees a battle going
-        fine and the report says the attack went in.
+        They used to go down one at a time, each paying a capture to frame the
+        drop, a settle and another capture to judge it — three and a half seconds
+        a card, so four heroes spent seventeen seconds arriving while the troops
+        they were meant to follow were already under fire. Measured live, one
+        burst carrying the siege machine and all four heroes put every one of
+        them on the field, so the whole row goes in one shell round-trip and only
+        the cards the game did not take are offered another spot.
+
+        Getting the verdict wrong is not free, which is what the settle is for: a
+        second tap on a hero already on the field is its ability, so a drop
+        wrongly called refused burns the cloak or the tome and leaves the
+        schedule tapping a card that has nothing left to give.
         """
         landed: list[int] = []
-        pushed = 0
-        for card in cards:
-            for attempt in range(pushed, DEPLOY_ATTEMPTS):
-                if self._drop_single(card, push_out(point, attempt)):
-                    landed.append(card)
-                    # The next card starts where this one worked rather than back
-                    # on the spot already known to take nothing.
-                    pushed = attempt
-                    break
-                logger.info("The %s card at %d took nothing at push %d", what, card, attempt)
-            else:
-                logger.warning("The %s card at %d never landed; its unit stays put", what, card)
-            # Four heroes take twenty seconds between them, which is the last gap
-            # a spell timed from the attack opening could fall into.
-            between()
-        logger.info(
-            "%d of %d %s card(s) landed at %s",
-            len(landed),
-            len(cards),
-            what,
-            push_out(point, pushed),
-        )
+        pending = list(cards)
+        # Where the last card actually went, which is not the spot the loop
+        # happens to be holding when it stops: it breaks at the top of the next
+        # iteration, so by then `spot` has already moved past the one that worked.
+        worked = line[len(line) // 2]
+        for spot in single_spots(line):
+            if not pending:
+                break
+            before = self._frame("before-drop")
+            self.adb.tap_many(
+                [tap for card in pending for tap in ((card, CARD_ROW_Y), spot)],
+                self.display,
+                gap=SINGLE_DROP_DELAY,
+            )
+            time.sleep(HERO_SETTLE)
+            down = self._landed(before, self._frame("dropped"), pending)
+            landed += down
+            pending = [card for card in pending if card not in down]
+            if down:
+                worked = spot
+            if pending:
+                logger.info("%d %s card(s) took nothing at %s", len(pending), what, spot)
+        for card in pending:
+            logger.warning("The %s card at %d never landed; its unit stays put", what, card)
+        logger.info("%d of %d %s card(s) landed at %s", len(landed), len(cards), what, worked)
         return landed
 
     def _wait_for_battle(self) -> bytes | None:
@@ -769,7 +799,6 @@ class AttackRunner(BaseModel):
             logger.warning("Every flank was refused; the boundary reaches past the playfield")
             return
         line = deploy_line(LINE_POINTS, *push_line(anchors, pushed))
-        middle = line[len(line) // 2]
         planned = tuple(point.pixels() for point in plan.rage_points) if plan else ()
         # A plan can name fewer spots than the army carries rages, and `_cast`
         # cycles back over its targets — which would stack two rages on one spot
@@ -779,51 +808,57 @@ class AttackRunner(BaseModel):
         # effect for the whole cargo. A plan names one per bottle instead.
         freeze_targets = tuple(point.pixels() for point in plan.freeze_points) if plan else ()
         freeze_targets = freeze_targets or (FREEZE_TARGET,)
-        # The siege machine opens the path, then the troops go down, and only
-        # then does rage land on the route ahead of them.
+        # The army goes down as fast as the game will take it: siege machine
+        # first to open the path, then the troops along the flank, then the
+        # heroes straight behind them. Every second one of them spends in its
+        # card is a second the ones already out are taking fire alone, which is
+        # what a whole minute of arriving used to cost.
         #
-        # Rage used to be cast first, on the reasoning that the troops should be
-        # inside it the whole way in. That holds only if they land at once, and
-        # they do not: measured across three battles, the last troop is down 30
-        # seconds after the first spell and the heroes 39, while a rage lasts 18.
-        # Cast first, it had expired before most of the army was on the field.
-        # Cast here it starts as they begin walking, and the heroes join them
-        # inside it. Freeze is the one thing still held back, and it waits on its
-        # own clock rather than on the last hero's.
+        # Both spells wait on the clock instead. Rage used to be cast the moment
+        # the troop cards emptied, and that was right while emptying them took
+        # half a minute: the troops were at the wall by then. It stops being
+        # right once they are all down in five seconds, because a rage lasts 18
+        # and would expire on troops still walking. So it goes where the freeze
+        # already went, on a delay from the attack opening.
         #
-        # Two clocks, because the two numbers mean different things. A hero's
-        # ability is timed from that hero landing, which is what the setting says
-        # and what a queen's cloak is worth. The freeze is timed from the attack
-        # opening, because that is how it is judged on screen — about half a
-        # minute in, as the push reaches the first line of defences.
+        # Two clocks, because the two kinds of number mean different things. A
+        # hero's ability is timed from that hero landing, which is what the
+        # setting says and what a queen's cloak is worth. A spell is timed from
+        # the attack opening, because that is how both are judged on screen and
+        # hanging them off the heroes would move them by however long the army
+        # happened to take to go down.
         timings = plan.timings if plan and plan.timings else self.abilities
         opened = time.monotonic()
         pending: Moves = []
+        if rages:
+            pending.append((
+                opened + timings.rage,
+                f"{len(rages)} rage card(s)",
+                partial(self._cast, rages, rage_path, frame),
+            ))
         if freezes:
             pending.append((
                 opened + timings.freeze,
                 f"{len(freezes)} freeze card(s)",
                 partial(self._cast, freezes, freeze_targets, frame),
             ))
-        # Putting the army down takes about as long as the freeze is meant to
-        # wait — measured, the last hero lands 65 seconds in where the freeze
-        # wants to go at 35 — so a schedule that only starts once everything is
-        # down can never be early enough. It is offered a turn between the troop
-        # passes instead, which is where most of that minute goes; checking only
-        # between the larger steps left it 5 to 10 seconds late, because a rage
-        # cast is ten seconds nobody can interrupt.
-        catch_up = partial(self._play_due, opened, pending)
-        self._drop_singles(vanguard, middle, "siege", catch_up)
-        line = self._spread_troops(troops, anchors, pushed, catch_up)
-        self._cast(rages, rage_path, frame)
-        catch_up()
-        # Recomputed, not reused: the flank moves while the troops go down, and
-        # a hero sent to the pre-push midpoint is sent somewhere already refused.
-        middle = line[len(line) // 2]
+        # Nothing on the clock is allowed to interrupt this. The schedule used to
+        # be offered a turn between one card and the next, because putting the
+        # army down took about as long as the freeze was meant to wait; now that
+        # it takes ten seconds the only battles where a spell comes due mid-
+        # deployment are the ones where the deployment is going badly, and those
+        # are exactly the battles that need finishing rather than interrupting.
+        # Measured live on a flank half inside the boundary: rage fired 21 s in
+        # while a troop card was still draining and the heroes landed at 41 s,
+        # where finishing first would have had them down at about 31 s.
+        self._drop_singles(vanguard, line, "siege")
+        line = self._spread_troops(troops, anchors, pushed)
         # Only the heroes that actually went down get an ability. A hero still in
         # its card answers an ability tap by deploying instead, with nothing
-        # around it and no ability fired.
-        down = self._drop_singles(followers, middle, "hero", catch_up)
+        # around it and no ability fired. The line is the one the troops ended up
+        # on rather than the one they started on: the flank moves while they go
+        # down, and a hero sent to the old midpoint is sent somewhere refused.
+        down = self._drop_singles(followers, line, "hero")
         landed = time.monotonic()
         kinds = list(plan.heroes) if plan else []
         kinds += ["unknown"] * (len(followers) - len(kinds))
@@ -864,21 +899,6 @@ class AttackRunner(BaseModel):
             if not self._play(opened, move):
                 return
 
-    def _play_due(self, opened: float, pending: Moves) -> None:
-        """Play whatever is already due, dropping it from `pending` as it goes.
-
-        Handed to the deployment to call between passes, because a spell timed
-        from the attack opening comes due while the army is still going down and
-        waiting for the last hero would put it half a minute late.
-        """
-        for move in sorted(
-            [move for move in pending if move[0] <= time.monotonic()], key=lambda move: move[0]
-        ):
-            pending.remove(move)
-            if not self._play(opened, move):
-                pending.clear()
-                return
-
     def _play(self, opened: float, move: tuple[float, str, Callable[[], None]]) -> bool:
         """One scheduled move, or False once the battle is over and there is no point.
 
@@ -894,36 +914,44 @@ class AttackRunner(BaseModel):
         return True
 
     def _cast(self, cards: list[int], targets: tuple[tuple[int, int], ...], frame: bytes) -> None:
-        """Empty each spell card over `targets`, and say so when a card would not go.
+        """Empty every spell card over `targets`, and say so when one would not go.
 
-        One slow selection per card, then the placements as a burst, since the
-        card stays selected while it still holds something. How many to tap
-        comes from the card's own `xN` plus one for slack, falling back to the
-        whole target list when the artwork makes the count unreadable.
+        One slow selection per card, then that card's placements as a burst,
+        since the card stays selected while it still holds something. How many to
+        tap comes from the card's own `xN` plus one for slack, falling back to
+        the whole target list when the artwork makes the count unreadable.
 
         A cargo that never leaves the card is the quiet half of the same bug the
         heroes had: nothing downstream notices, and the report says the attack
-        went in. The card is asked, and a card that did not move is offered the
-        run once more — measured live, a spell placed straight after another was
-        the one that got swallowed, so a second selection is usually all it wants.
+        went in. So the cards are asked, and the ones that did not move are
+        offered the run once more — measured live, a spell placed straight after
+        another was the one that got swallowed, so a second selection is usually
+        all it wants. They are asked together rather than one at a time, because
+        a capture and a settle apiece was most of what a cast cost.
         """
-        for index, x in enumerate(cards):
-            count = card_count(frame, x)
-            cast_count = count + 1 if count else len(targets)
-            cells = [targets[(index + i) % len(targets)] for i in range(cast_count)]
-            for attempt in range(2):
-                before = self._frame("before-cast")
+        pending = list(cards)
+        for _attempt in range(SPELL_ATTEMPTS):
+            if not pending:
+                return
+            before = self._frame("before-cast")
+            for index, x in enumerate(pending):
+                count = card_count(frame, x)
+                cast_count = count + 1 if count else len(targets)
+                cells = [targets[(index + i) % len(targets)] for i in range(cast_count)]
                 self._tap((x, CARD_ROW_Y))
                 time.sleep(SPELL_SELECT_DELAY)
                 self.adb.tap_many(cells, self.display, gap=SPELL_PLACE_GAP)
-                time.sleep(DROP_SETTLE)
-                after = self._frame("cast")
-                if card_drained(before, after, [x]) or not live_cards(after, [x]):
-                    logger.info("Spell card at %d held %s, tapped %d", x, count, cast_count)
-                    break
-                logger.info("Nothing left the spell card at %d on attempt %d", x, attempt + 1)
-            else:
-                logger.warning("The spell card at %d never cast; its bottles stay in it", x)
+                logger.info("Spell card at %d held %s, tapped %d", x, count, cast_count)
+            time.sleep(DROP_SETTLE)
+            after = self._frame("cast")
+            # One reading apiece rather than one per card: `live_cards` decodes
+            # the frame it is handed, so asking it per card decodes it per card.
+            drained, still_live = card_drained(before, after, pending), live_cards(after, pending)
+            pending = [x for x in pending if x not in drained and x in still_live]
+            if pending:
+                logger.info("%d spell card(s) held on to their bottles", len(pending))
+        for x in pending:
+            logger.warning("The spell card at %d never cast; its bottles stay in it", x)
 
     def _wait_out_battle(self, opening: LootOffer) -> bool:
         """Sit through the battle and leave through 回營; False if no loot ever moved.
@@ -947,6 +975,11 @@ class AttackRunner(BaseModel):
 
     def run(self) -> AttackReport:
         logger.info("Attack run starts, thresholds=%s", self.thresholds.model_dump())
+        # The same runner plays round after round, and the loot it last saw is
+        # what `_wait_out_battle` judges the battle on. Carried over, a battle
+        # short enough that nothing ever read its panel would be judged against
+        # the previous opponent's remaining loot and reported as a success.
+        self._seen = None
         home = self._open_attack_menu()
         if home is None:
             logger.warning("The attack menu did not open; the game is not on the home village")

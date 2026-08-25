@@ -12,7 +12,7 @@ from PyQt5.QtWidgets import QApplication
 # PyInstaller runs this file as `__main__`, which has no package context, so these
 # stay absolute even for same-layer modules.
 from ai_coc import commands, __version__
-from ai_coc.models import LootOverrides
+from ai_coc.models import AttackOptions, LootOverrides
 from ai_coc.constants import APP_NAME
 from ai_coc.logging_setup import configure_logging
 from ai_coc.ui.main_window import MainWindow, migrate_settings
@@ -36,10 +36,18 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--live-test", action="store_true", help="開視窗後對目前畫面問 AI 一次")
     parser.add_argument("--agent-command", default="", help="開視窗後把這句話送進 AI 助手執行")
     sub = parser.add_subparsers(dest="command")
-    run = sub.add_parser("attack", help="跑一輪進攻迴圈,不開視窗")
+    run = sub.add_parser("attack", help="跑進攻迴圈,不開視窗")
     run.add_argument("--frames", type=Path, help="把迴圈讀到的每一張畫面存進這個資料夾")
     run.add_argument("--plan-in", type=Path, help="照這份 JSON 打，完全不呼叫 AI")
     run.add_argument("--plan-out", type=Path, help="把這一場實際用的計畫寫成 JSON")
+    run.add_argument("--repeat", type=int, default=1, help="連打幾輪,0 代表打到手動中止為止")
+    run.add_argument(
+        "--shot-every",
+        type=float,
+        default=0.0,
+        metavar="秒",
+        help="除了迴圈自己讀的畫面之外,每隔這麼多秒再存一張,需要搭配 --frames",
+    )
     # Omitted means "whatever the config file says". Three zeros is how a run
     # being studied gets back to attacking the first opponent it is shown.
     for flag, resource in (("gold", "金幣"), ("elixir", "聖水"), ("dark", "黑水")):
@@ -66,17 +74,20 @@ def _run_command(arguments: argparse.Namespace) -> int:
     on stderr, and this is the answer.
     """
     if arguments.command == "attack":
-        report = commands.attack(
-            arguments.frames,
-            arguments.plan_in,
-            arguments.plan_out,
-            LootOverrides(
-                min_gold=arguments.min_gold,
-                min_elixir=arguments.min_elixir,
-                min_dark=arguments.min_dark,
-            ),
-        )
-        result = report.model_dump_json(indent=2)
+        result = commands.attack(
+            AttackOptions(
+                frame_dir=arguments.frames,
+                plan_in=arguments.plan_in,
+                plan_out=arguments.plan_out,
+                minimums=LootOverrides(
+                    min_gold=arguments.min_gold,
+                    min_elixir=arguments.min_elixir,
+                    min_dark=arguments.min_dark,
+                ),
+                rounds=arguments.repeat,
+                shot_every=arguments.shot_every,
+            )
+        ).model_dump_json(indent=2)
     elif arguments.command == "probe":
         result = commands.probe(arguments.frames).model_dump_json(indent=2)
     elif arguments.command == "bounds":
