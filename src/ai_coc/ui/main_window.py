@@ -599,9 +599,13 @@ class MainWindow(QMainWindow):
         self.stop_dark = QSpinBox()
         self.stop_dark.setRange(0, 500000)
         self.stop_dark.setSingleStep(10000)
+        # The row text only names the resource, so what the number means lives here.
+        for box in (self.min_gold, self.min_elixir, self.min_dark):
+            box.setToolTip("對手身上至少要有這麼多，才值得出手")
         # 0 is the minimum, so this labels it in place rather than in the row text.
         for box in (self.stop_gold, self.stop_elixir, self.stop_dark):
             box.setSpecialValueText("不監控")
+            box.setToolTip("自己的儲量到這個數字就停止刷資源")
         self.cycle_minutes = QSpinBox()
         self.cycle_minutes.setRange(1, 120)
         for widget, value in (
@@ -615,13 +619,13 @@ class MainWindow(QMainWindow):
             (self.cycle_minutes, int(self.settings.value("cycle_minutes", 10))),
         ):
             widget.setValue(value)
-        battle_form.addRow("最低金幣", self.min_gold)
-        battle_form.addRow("最低聖水", self.min_elixir)
-        battle_form.addRow("最低黑水", self.min_dark)
-        battle_form.addRow("金幣達到此值停止刷資源", self.stop_gold)
-        battle_form.addRow("聖水達到此值停止刷資源", self.stop_elixir)
-        battle_form.addRow("黑水達到此值停止刷資源", self.stop_dark)
-        battle_form.addRow("閒置時重試間隔（分鐘）", self.cycle_minutes)
+        battle_form.addRow("對手金幣", self.min_gold)
+        battle_form.addRow("對手聖水", self.min_elixir)
+        battle_form.addRow("對手黑水", self.min_dark)
+        battle_form.addRow("金幣存量", self.stop_gold)
+        battle_form.addRow("聖水存量", self.stop_elixir)
+        battle_form.addRow("黑水存量", self.stop_dark)
+        battle_form.addRow("閒置重試（分鐘）", self.cycle_minutes)
         return battle
 
     def save_automation(self) -> None:
