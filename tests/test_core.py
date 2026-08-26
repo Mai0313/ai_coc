@@ -4,7 +4,7 @@ import math
 from pathlib import Path
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 from collections.abc import Callable
 
 from PIL import Image, ImageDraw
@@ -12,25 +12,30 @@ import pytest
 from pydantic import ValidationError
 
 from ai_coc import plans
-from ai_coc.ui import attack
+from ai_coc.ui import walls, attack
 from ai_coc.models import (
     ProbeRay,
+    WallMenu,
     AppConfig,
     LootOffer,
     ScoutView,
+    WallBatch,
     AttackPlan,
     AdbEndpoint,
     ScreenPoint,
     StockLimits,
+    WallUpgrade,
     VillageStock,
     AttackTimings,
     DisplayTarget,
     LootOverrides,
+    WallCandidate,
     BoundarySurvey,
     GeminiSettings,
     LootThresholds,
 )
 from ai_coc.prompts import PROMPTS, PROMPT_DIR, render
+from ai_coc.ui.walls import WallRunner
 from ai_coc.ui.attack import (
     PLAYFIELD,
     RAGE_PATH,
@@ -56,6 +61,7 @@ from ai_coc.ui.attack import (
 )
 from ai_coc.adapters.ai import GeminiClient
 from ai_coc.adapters.adb import AdbController, focused_display, physical_display
+from ai_coc.parsers.wall import wall_menu, game_dialog
 from ai_coc.parsers.field import view_shift, army_centre
 from ai_coc.parsers.scout import (
     PANEL_LEFT,
@@ -1189,6 +1195,190 @@ class AttackTests(unittest.TestCase):
             env.write_text('GEMINI_API_KEY="AQ.secret"\n', encoding="utf-8")
             assert dotenv_value("GEMINI_API_KEY", env) == "AQ.secret"
             assert dotenv_value("ABSENT", env) == ""
+
+
+def _menu(price: int, gold: int = 887) -> WallMenu:
+    """A wall menu whose buttons sit where a row of this width puts them."""
+    return WallMenu(gold=(gold, 700), elixir=(gold + 176, 700), add=(gold - 176, 700), price=price)
+
+
+class WallMenuTests(unittest.TestCase):
+    """Live building menus, masked down to the button row the parser reads.
+
+    Nothing here is a picture of a wall, and that is the point: every level
+    repaints one, so what is read is the UI the game paints on top of the village.
+    """
+
+    def test_a_wall_is_the_one_building_priced_in_both_resources(self) -> None:
+        menu = wall_menu((FRAMES / "wall_menu_plain.png").read_bytes())
+        assert menu is not None
+        assert menu.price == 1_600_000
+        assert (menu.gold, menu.elixir) == ((887, 700), (1063, 700))
+        # 升級更多 on this menu, 新增城牆 on a batch: the same place in the row
+        # and the same effect, which is what saves the loop from telling the two
+        # menus apart. The wall ring sits on the far side of the elixir button
+        # and is never worked out at all, so it cannot be tapped by mistake.
+        assert menu.add == (711, 700)
+
+    def test_a_building_that_takes_one_resource_is_not_a_wall(self) -> None:
+        """A dark elixir drill: one price, one icon, and so no wall menu here."""
+        assert wall_menu((FRAMES / "wall_menu_elixir_only.png").read_bytes()) is None
+
+    def test_the_button_row_is_located_rather_than_written_down(self) -> None:
+        """A batch with under ten walls left to add loses 新增城牆+10.
+
+        The row is laid out from the middle of the screen outwards, so losing one
+        button moves every other button half a pitch. Written down, the loop
+        would be tapping 升級 where 聖水 now is.
+        """
+        menu = wall_menu((FRAMES / "wall_menu_short_row.png").read_bytes())
+        assert menu is not None
+        assert menu.price == 4_800_000
+        assert (menu.gold, menu.elixir, menu.add) == ((799, 700), (975, 700), (623, 700))
+
+    def test_a_price_the_village_cannot_afford_is_still_read(self) -> None:
+        """The game writes it in red, and red is not a reason to stop reading it.
+
+        The loop sizes its own batch, so it needs the number rather than the
+        warning; a price that came back as None here would have the whole menu
+        read as "not a wall".
+        """
+        menu = wall_menu((FRAMES / "wall_menu_unaffordable.png").read_bytes())
+        assert menu is not None
+        assert menu.price == 11_200_000
+
+    def test_a_menu_on_its_own_is_not_a_dialog(self) -> None:
+        assert game_dialog((FRAMES / "wall_menu_plain.png").read_bytes()) is None
+
+    def test_the_exit_prompt_is_the_spend_dialog_in_the_very_same_pixels(self) -> None:
+        """Which is why the reader hands back both buttons and picks neither.
+
+        確定退出遊戲嗎 and 升級城牆 are one panel with one green 確定, and only the
+        caller knows which question it just asked. A reader that reached for 確定
+        on its own would sooner or later close the game.
+        """
+        spend = game_dialog((FRAMES / "wall_spend_dialog.png").read_bytes())
+        leaving = game_dialog((FRAMES / "wall_exit_dialog.png").read_bytes())
+        assert spend is not None
+        assert spend == leaving
+        assert spend.confirm == (973, 562)
+        assert spend.cancel == (623, 572)
+
+
+class WallRunnerTests(unittest.TestCase):
+    """The arithmetic between the taps, with the emulator taken out."""
+
+    def _runner(self, **fields: object) -> WallRunner:
+        return WallRunner(
+            adb=AdbController(endpoint=AdbEndpoint(port=16384)),
+            display=DisplayTarget(logical_id="1", physical_id="2"),
+            **fields,
+        )
+
+    def _sized(
+        self, runner: WallRunner, opening: WallMenu, answers: list[WallMenu], purse: int
+    ) -> tuple[WallBatch | None, MagicMock]:
+        with (
+            patch.object(walls.time, "sleep"),
+            patch.object(runner, "_after_tap", return_value=b""),
+            patch.object(runner, "_frame", return_value=b""),
+            patch.object(walls, "wall_menu", side_effect=answers),
+            patch.object(AdbController, "tap_many") as tapped,
+        ):
+            return runner._sized(opening, purse), tapped
+
+    def test_a_price_that_does_not_move_means_the_batch_holds_one_wall(self) -> None:
+        """升級更多 makes a batch of the wall already selected, so it costs the same.
+
+        That is the whole of telling a plain menu from a batch: the loop taps the
+        same button either way and reads the answer, rather than trying to
+        recognise which of the two rows it is looking at.
+        """
+        runner = self._runner()
+        batch, tapped = self._sized(
+            runner, _menu(1_600_000), [_menu(1_600_000), _menu(4_800_000)], purse=5_000_000
+        )
+        assert batch is not None
+        assert (batch.unit, batch.count) == (1_600_000, 3)
+        assert len(tapped.call_args.args[0]) == 2
+
+    def test_the_unit_price_is_what_one_more_wall_adds(self) -> None:
+        runner = self._runner()
+        batch, tapped = self._sized(
+            runner, _menu(4_800_000), [_menu(6_400_000), _menu(9_600_000)], purse=10_000_000
+        )
+        assert batch is not None
+        assert (batch.unit, batch.count) == (1_600_000, 6)
+        # Four walls in the batch already, six affordable: two more taps.
+        assert len(tapped.call_args.args[0]) == 2
+
+    def test_a_batch_the_game_would_not_grow_is_reported_at_its_real_size(self) -> None:
+        """It stops at the last wall of that level and says so with a notice."""
+        runner = self._runner()
+        batch, _ = self._sized(
+            runner, _menu(1_600_000), [_menu(3_200_000), _menu(4_800_000)], purse=16_000_000
+        )
+        assert batch is not None
+        assert batch.count == 3
+
+    def test_a_batch_already_dearer_than_the_purse_is_left_alone(self) -> None:
+        """Growing it is the only thing this can do, and it is already too big."""
+        runner = self._runner()
+        batch, tapped = self._sized(
+            runner, _menu(16_000_000), [_menu(17_600_000)], purse=5_000_000
+        )
+        assert batch is None
+        tapped.assert_not_called()
+
+    def test_a_storage_that_never_moved_is_not_an_upgrade(self) -> None:
+        """Confirming the dialog is not proof: a tap the game swallows raises nothing.
+
+        Without this the loop counts walls it never bought, and the report says
+        the run succeeded.
+        """
+        runner = self._runner()
+        stock = VillageStock(gold=10_000_000, elixir=1_000_000, dark=0)
+        with (
+            patch.object(walls.time, "sleep"),
+            patch.object(runner, "_after_tap", return_value=b""),
+            patch.object(runner, "_frame", return_value=b""),
+            patch.object(runner, "_tap"),
+            patch.object(runner, "_confirm", return_value=True),
+            patch.object(
+                runner,
+                "_sized",
+                return_value=WallBatch(menu=_menu(3_200_000), unit=1_600_000, count=2),
+            ),
+            patch.object(walls, "wall_menu", return_value=_menu(1_600_000)),
+            patch.object(walls, "read_stock", return_value=stock),
+        ):
+            assert runner._buy((100, 100), stock) is None
+
+    def test_a_batch_that_was_paid_for_stops_being_the_cheapest(self) -> None:
+        """The next round moves to another wall rather than pushing this one on.
+
+        A batch left selected shows its next level's price, which is dearer than
+        every wall still at the old level — so re-reading it is all it takes to
+        keep one section of the village from running away from the rest.
+        """
+        runner = self._runner(rounds=2)
+        stock = VillageStock(gold=99_000_000, elixir=0, dark=0)
+        walls_found = [
+            WallCandidate(point=(100, 100), price=1_600_000),
+            WallCandidate(point=(200, 200), price=1_600_000),
+        ]
+        bought = WallUpgrade(unit=1_600_000, count=2, resource="gold")
+        with (
+            patch.object(runner, "_home", return_value=stock),
+            patch.object(runner, "_scan", return_value=walls_found),
+            patch.object(runner, "_frame", return_value=b""),
+            patch.object(runner, "_buy", return_value=bought) as buy,
+            patch.object(walls, "read_stock", return_value=stock),
+            patch.object(walls, "wall_menu", return_value=_menu(14_400_000)),
+        ):
+            report = runner.run()
+        assert [call.args[0] for call in buy.call_args_list] == [(100, 100), (200, 200)]
+        assert report.walls == 4
 
 
 if __name__ == "__main__":
