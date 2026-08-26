@@ -27,10 +27,12 @@ Other Languages: [English](README.md) | [繁體中文](README.zh-TW.md) | [简�
 - Captures the screen over ADB and asks Gemini what is on it, with structured replies validated through Pydantic
 - Runs an agent loop that taps, swipes and goes back, re-observing after every step
 - Imports village JSON exports and battle scripts, keeping unknown fields and unknown `data_id`s instead of failing on them
+- Farms resource opponents on its own, reading the screen with template matching rather than a vision call
+- Spends the storages on wall upgrades, sizing each batch to what the village can afford
 - Persists every agent command as a task, so an interrupted run is picked up again on the next start
 - Stores the Gemini API key through Windows DPAPI, never in plain settings
 
-Live battle tactics are deliberately out of scope: battle scripts are validated for army requirements and stop at a reserved handoff boundary.
+Imported battle scripts are not played back: they are validated for army requirements and stop at a reserved handoff boundary.
 
 ## 📋 Requirements
 

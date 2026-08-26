@@ -747,6 +747,121 @@ class AttackSeries(RootModel[list[AttackReport]]):
     root: list[AttackReport] = Field(default_factory=list)
 
 
+class WallMenu(BaseModel):
+    """The wall menu's own buttons, located by the icons the game paints on them.
+
+    Nothing in this row sits at a fixed x. The buttons are laid out from the
+    middle of the screen outwards, so the row loses one the moment a batch has no
+    more walls left to add and every button after it shifts a place along. What
+    is fixed is the spacing, which is why these are read off each frame.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    gold: tuple[int, int]
+    elixir: tuple[int, int]
+    # 升級更多 on a plain menu and 新增城牆 on a batch, which as far as the loop
+    # is concerned is one button: both put another wall into the selection, and
+    # both sit one place to the left of the gold button. That is what saves the
+    # loop from having to tell the two menus apart at all.
+    add: tuple[int, int]
+    # What the whole selection costs — the same number in gold as in elixir, and
+    # that is a wall's own signature. Every other building takes one resource, so
+    # no other menu carries both icons with one price between them.
+    price: int
+
+
+class WallCandidate(BaseModel):
+    """Somewhere on the village a tap opened a wall menu, and what it asked for.
+
+    The price stands in for the level without anything having to read one: walls
+    get dearer every level, so the cheapest candidate is the lowest wall on the
+    map. It is what it cost *when it was tapped*, which on a wall left selected
+    from an earlier batch is several walls' worth — the loop works the real unit
+    price out for itself before spending anything.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    point: tuple[int, int]
+    price: int
+
+
+class GameDialog(BaseModel):
+    """The game's own yes/no panel, which very different questions all share.
+
+    Both buttons come back because which one to press is the caller's to decide
+    and the two are not interchangeable: 升級城牆 and 確定退出遊戲嗎 are drawn as
+    the same panel with 確定 in the same green in the same place, so a caller
+    that reached for 確定 by reflex would sooner or later close the game.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    confirm: tuple[int, int]
+    cancel: tuple[int, int]
+
+
+class WallBatch(BaseModel):
+    """A batch grown to what the village can pay for, and what it now holds.
+
+    The menu comes back with it because growing a batch can drop a button from
+    the row — the game takes 新增城牆+10 away once fewer than ten walls are left
+    to add — and every button after it shifts a place along. The menu read before
+    the batch grew points at the wrong buttons afterwards.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    menu: WallMenu
+    unit: int
+    count: int
+
+
+class WallUpgrade(BaseModel):
+    """One batch of walls that was paid for."""
+
+    model_config = ConfigDict(frozen=True)
+
+    unit: int
+    count: int
+    resource: Literal["gold", "elixir"]
+
+    @property
+    def spent(self) -> int:
+        return self.unit * self.count
+
+
+class WallReport(BaseModel):
+    """What one `walls` run bought, and what stopped it."""
+
+    upgrades: list[WallUpgrade] = Field(default_factory=list)
+    message: str = ""
+
+    @property
+    def walls(self) -> int:
+        return sum(upgrade.count for upgrade in self.upgrades)
+
+    def paid(self, resource: str) -> int:
+        return sum(u.spent for u in self.upgrades if u.resource == resource)
+
+
+class WallOptions(BaseModel):
+    """What one `walls` command was told to do."""
+
+    frame_dir: Path | None = None
+    # What to leave in the storages rather than spend. A run that empties them
+    # leaves nothing to train an army with, which is the other half of farming.
+    keep_gold: int = 0
+    keep_elixir: int = 0
+    # 0 keeps buying until neither storage will pay for another wall.
+    rounds: int = 0
+    # A wall to start from, for a run that would rather not spend the scan. The
+    # scan is the part most likely to go wrong on a village this was not written
+    # against, so naming a wall is how to work on everything downstream of it.
+    at: tuple[int, int] | None = None
+
+
 class FrameReading(BaseModel):
     """Everything the parsers make of one frame, for the `read` command.
 
@@ -758,6 +873,7 @@ class FrameReading(BaseModel):
     scout: ScoutView | None = None
     stock: VillageStock | None = None
     army: tuple[int, int] | None = None
+    wall_menu: WallMenu | None = None
     attack_menu: bool = False
     idle_dialog: bool = False
     card_groups: list[list[int]] = Field(default_factory=list)

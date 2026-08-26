@@ -22,7 +22,7 @@ make gen-docs                        # rebuild docs/ from the READMEs and the so
 
 Run the app with `uv run ai_coc`. Two CLI hooks exist for smoke tests: `--live-test` captures a frame and asks Gemini to describe it, and `--agent-command=<text>` types a command into the AI tab and executes it. Both save a proof screenshot of the window when `COC_LIVE_TEST_SCREENSHOT` / `COC_AGENT_SCREENSHOT` point at a path.
 
-Five sub-commands run headless instead, and they are how the game is worked on:
+Six sub-commands run headless instead, and they are how the game is worked on:
 
 ```bash
 uv run ai_coc attack --frames <dir>       # one attack pass, no window, every frame it reads kept
@@ -31,6 +31,9 @@ uv run ai_coc attack --plan-out used.json  # write down whichever plan actually 
 uv run ai_coc attack --min-gold 0 --min-elixir 0 --min-dark 0   # attack whatever comes up first
 uv run ai_coc attack --repeat 0            # keep attacking until interrupted
 uv run ai_coc attack --frames <dir> --shot-every 4   # plus a frame every four seconds
+uv run ai_coc walls                       # spend the storages on walls until they will not stretch
+uv run ai_coc walls --keep-elixir 2000000  # leave that much behind to train an army with
+uv run ai_coc walls --at 260,260          # start from this wall, skipping the village scan
 uv run ai_coc read <png>                  # what each parser makes of one frame
 uv run ai_coc capture <dir> --count 30    # a burst off the live game
 uv run ai_coc probe --frames <dir>        # spend a battle measuring the real boundary
@@ -123,7 +126,25 @@ Where those retries go is `single_spots`, and it is not simply "further out". `p
 
 **Spells are verified too, and a card that would not cast is offered the run once more.** `_cast` reads the same corner: a cargo that never leaves the card is the quiet half of the same bug, since nothing downstream notices and the report says the attack went in. The cards are asked together rather than one at a time, for the reason the heroes are — a capture and a settle apiece was most of what a cast cost. Freeze can be placed inside the red line — measured, a rage dropped on the town hall landed while a troop aimed at the same spot did not — so a spell that fails is a swallowed tap rather than a refused position.
 
-**Authorization is prompt-level only.** The automation-tab checkboxes are interpolated into the prompt as 自主升級／刷牆／自主進攻 flags, and the prompt forbids gems, cash, deletion and account operations. Nothing below the prompt enforces this. Treat any new capability that spends resources as needing its own guard in code.
+**Wall loop** (`ui/walls.py`, `parsers/wall.py`). Walls are the one thing in the village that upgrade the instant they are paid for, tying up no builder and running no timer, so they are where a village puts loot when every builder is busy and the storages are filling towards the point `StockLimits` stands the farming down at. Like the attack loop it is Qt-free and asks Gemini nothing at all.
+
+**Nothing in it looks at a wall.** Every level repaints the wall, every building is its own artwork, and troops and heroes are the same — so a reader taught to recognise the thing selected needs re-teaching at each level and again after any retexturing update. What is read is only the UI the game paints on top: the resource icons on the button row and the price beside them, identical whatever is selected. **A wall is then identified by the one thing no other building can do — being upgradeable with gold *or* elixir.** Everything else takes a single resource, so a row carrying an elixir drop with a gold coin one `BUTTON_PITCH` to its left, and the same price written beside each, is a wall and nothing else is. The drop is the anchor rather than the coin because the wall ring on the *next* button along is gold too, and that is the one button that must never be tapped: it is only ever reached by counting rightwards from the drop, which nothing does.
+
+**Not one button in that row sits at a fixed x.** They are laid out from the middle of the screen outwards, so a batch with fewer than ten walls left to add loses its 新增城牆+10 and every button after it shifts half a pitch — measured, the gold button moves from 887 to 799. One located button locates the rest; a written-down one taps 聖水 where 升級 used to be.
+
+**The two menus are never told apart, because they do not need to be.** 升級更多 on a plain menu and 新增城牆 on a batch occupy the same place in the row and do the same thing, so the loop taps that place and reads the answer. **The unit price is the difference one more wall makes**, which settles both questions at once and in pure arithmetic: a plain menu answers the same price back, because 升級更多 makes a batch of the wall already selected, and that means one wall at that price; a batch answers one wall dearer, and the total over the difference is how many it holds. Nothing reads a level, and nothing reads Chinese.
+
+The price is read in red as readily as in white. Red is the game saying the village cannot afford this, and the loop sizes its own batch against `read_stock`, so what it needs is the number — a price abandoned for being red would have the whole menu read as "not a wall". Both prices must read and must agree, since a wall costs the same in either resource and two different numbers mean one was misread.
+
+**Which wall is next is decided by price, and that is the seam an AI planner replaces** (`_pick`). Walls get dearer at every level, so the cheapest menu on the map belongs to the lowest wall on it — lowest-first without anything reading a level. A batch that was just paid for is re-read before the next round, and it now quotes its *next* level, which is dearer than every wall still at the old one; that one re-read is the whole of what stops a run pushing one section of the village further and further ahead of the rest.
+
+Finding a wall is a sweep, not a remembered spot: layouts differ between villages and buildings move, so `_scan` taps a grid and keeps whatever opened a wall menu. A tap that opens a screen instead — a barracks, a laboratory — is caught by `read_stock` coming back None and backed out of.
+
+**`back` must never be pressed on a clear home village.** Measured live, it raises 確定退出遊戲嗎 there, with a wall menu open as readily as without, and that dialog is drawn as the *same panel with 確定 in the same green in the same pixels* as the one that pays for a batch — `game_dialog` reports both buttons and picks neither, because only the caller knows which question it just asked. So `_home` waits out a frame that reads as nothing (far more often the game loading than a panel), answers any dialog with 取消, and presses `back` only on a frame that is neither. A dialog has to be answered rather than read past: its own dimming is what stops the storage bars reading, though they stay perfectly legible to the eye.
+
+A batch is judged bought by the storage really moving, not by the dialog being confirmed — a tap the game swallows raises nothing, and the alternative is a loop counting walls it never paid for. `MAX_BATCH` is not a limit the game imposes: it keeps the price inside its 127 px button, and a price that will not read is the one number every decision here rests on.
+
+**Authorization is prompt-level only.** The automation-tab checkboxes are interpolated into the prompt as 自主升級／刷牆／自主進攻 flags, and the prompt forbids gems, cash, deletion and account operations. Nothing below the prompt enforces this. Treat any new capability that spends resources as needing its own guard in code. The wall loop is the one place that spends without a prompt, and its guard is structural rather than a check: it only ever taps coordinates derived leftwards from the elixir drop, so the wall ring and every gem button on the row are unreachable by construction.
 
 **Task durability.** Every agent command becomes a row in `tasks`. A task left `PENDING` is picked up again by `resume_pending_tasks` shortly after startup and after each completion, and `automation_cycle` refuses to queue new work while one is running.
 

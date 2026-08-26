@@ -12,7 +12,7 @@ from PyQt5.QtWidgets import QApplication
 # PyInstaller runs this file as `__main__`, which has no package context, so these
 # stay absolute even for same-layer modules.
 from ai_coc import commands, __version__
-from ai_coc.models import AttackOptions, LootOverrides
+from ai_coc.models import WallOptions, AttackOptions, LootOverrides
 from ai_coc.constants import APP_NAME
 from ai_coc.logging_setup import configure_logging
 from ai_coc.ui.main_window import MainWindow, migrate_settings
@@ -54,6 +54,14 @@ def _parser() -> argparse.ArgumentParser:
         run.add_argument(
             f"--min-{flag}", type=int, help=f"只打{resource}至少這麼多的對手,蓋過設定檔"
         )
+    upgrade = sub.add_parser("walls", help="把儲量拿去升級城牆,不開視窗")
+    upgrade.add_argument("--frames", type=Path, help="把迴圈讀到的每一張畫面存進這個資料夾")
+    upgrade.add_argument("--keep-gold", type=int, default=0, help="留下這麼多金幣不要花")
+    upgrade.add_argument("--keep-elixir", type=int, default=0, help="留下這麼多聖水不要花")
+    upgrade.add_argument("--rounds", type=int, default=0, help="最多買幾批,0 代表買到資源不夠為止")
+    upgrade.add_argument(
+        "--at", metavar="X,Y", help="直接從這個座標上的城牆開始,跳過整個村莊的掃描"
+    )
     survey = sub.add_parser("probe", help="花一場戰鬥實測邊界，對照判讀器說的")
     survey.add_argument("--frames", type=Path, help="把每一次探測的畫面存起來")
     edges = sub.add_parser("bounds", help="花一場戰鬥實測地圖邊緣，回推村莊範圍")
@@ -86,6 +94,17 @@ def _run_command(arguments: argparse.Namespace) -> int:
                 ),
                 rounds=arguments.repeat,
                 shot_every=arguments.shot_every,
+            )
+        ).model_dump_json(indent=2)
+    elif arguments.command == "walls":
+        spot = arguments.at.split(",") if arguments.at else None
+        result = commands.walls(
+            WallOptions(
+                frame_dir=arguments.frames,
+                keep_gold=arguments.keep_gold,
+                keep_elixir=arguments.keep_elixir,
+                rounds=arguments.rounds,
+                at=(int(spot[0]), int(spot[1])) if spot else None,
             )
         ).model_dump_json(indent=2)
     elif arguments.command == "probe":

@@ -25,6 +25,8 @@ from ai_coc.models import (
     ProbeRay,
     AppConfig,
     MapSurvey,
+    WallReport,
+    WallOptions,
     AttackSeries,
     FrameReading,
     AttackOptions,
@@ -40,6 +42,7 @@ from ai_coc.adapters.ai import GeminiClient
 # a field, and a model whose field type is only importable to a type checker
 # cannot be built at all.
 from ai_coc.adapters.adb import AdbController
+from ai_coc.parsers.wall import wall_menu
 from ai_coc.adapters.mumu import MuMuAdapter
 from ai_coc.parsers.scout import (
     card_count,
@@ -59,6 +62,7 @@ from ai_coc.adapters.config import ConfigStore
 from ai_coc.adapters.secrets import SecretStore
 from ai_coc.parsers.boundary import PLAYFIELD, VILLAGE_CENTRE, boundary_reach
 
+from .ui.walls import WallRunner
 from .ui.attack import CARD_ROW_Y, DROP_SETTLE, SINGLE_DROP_DELAY, AttackRunner
 
 logger = logging.getLogger(__name__)
@@ -401,6 +405,33 @@ def bounds(frame_dir: Path | None = None) -> MapSurvey:
     return runner.survey
 
 
+def walls(options: WallOptions) -> WallReport:
+    """Spend the storages on wall upgrades, with no window in the way.
+
+    Walls upgrade the instant they are paid for and tie up no builder, so this is
+    what a village does with loot it has nowhere else to put — every builder busy
+    and both storages filling towards the point where the attack loop stands
+    itself down.
+    """
+    adb = _controller()
+    if options.frame_dir is not None:
+        options.frame_dir.mkdir(parents=True, exist_ok=True)
+    runner = WallRunner(
+        adb=adb,
+        display=adb.display_for(COC_PACKAGE),
+        keep_gold=options.keep_gold,
+        keep_elixir=options.keep_elixir,
+        rounds=options.rounds,
+        at=options.at,
+        frame_dir=options.frame_dir,
+    )
+    report = runner.run()
+    logger.info(
+        "Walls: %s (金幣 %d／聖水 %d)", report.message, report.paid("gold"), report.paid("elixir")
+    )
+    return report
+
+
 def capture(out_dir: Path, count: int = 1, gap: float = 1.5) -> list[Path]:
     """Save frames off the live game, for measuring a screen the parsers cannot read yet.
 
@@ -430,6 +461,7 @@ def read(png: bytes) -> FrameReading:
         scout=read_scout(png),
         stock=read_stock(png),
         army=army_strength(png),
+        wall_menu=wall_menu(png),
         attack_menu=attack_menu_open(png),
         idle_dialog=idle_disconnected(png),
         card_groups=groups,

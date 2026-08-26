@@ -149,13 +149,26 @@ HERO_BAR_MAX_BLUE = 30
 # The village's own storages, on the four bars down the home screen's right edge.
 # Only the first three are read; the fourth is gems. The numbers are right-aligned
 # against the icons, so the box reaches far enough left for eight digits and their
-# separators, which is more than any storage holds. Behind them sits the bar's own
-# fill highlight, which moves with the amount stored and is the reason for the
-# tolerance: measured, a real digit here matches within 11 while the highlight
-# never resolves into one at all.
+# separators, which is more than any storage holds.
+#
+# The tolerance was 22 on the reasoning that a real digit here matches within 11,
+# and that turned out to be a measurement of one village rather than of the font:
+# a gold row reading 10 649 867 matched every glyph but its 9, which came in at
+# 25 and failed the whole row. It failed it on every frame, because the number
+# does not change between them — so this was not a flicker to be retried, it was
+# a village whose storages simply could not be read, and both callers treat that
+# as "not now": the farming loop stops watching for a full storage and the wall
+# loop cannot see what it has to spend.
+#
+# Swept over 48 live village frames the worst real glyph is that 25 and the rest
+# sit at 15 or below, so the line goes above it. What the tolerance is not
+# holding back is the other screens: measured over 18 frames of loading screens,
+# the army screen and spend dialogs, not one produces a single glyph in any of
+# these three boxes, so a screen that is not the home village reads as no screen
+# whatever this is set to.
 STOCK_LEFT, STOCK_RIGHT = 1300, 1512
 STOCK_ROW_BOUNDS = ((33, 72), (117, 156), (200, 239))
-STOCK_DIGIT_TOLERANCE = 22
+STOCK_DIGIT_TOLERANCE = 30
 
 # The 回營 button on the battle result screen. It is the one screen a farming
 # loop reliably ends on and the one it could not get off: the button only comes
@@ -348,21 +361,31 @@ def _row_glyphs(mask: list[list[bool]]) -> Iterator[tuple[str, int]]:
             yield match
 
 
-def _read_row(
-    image: Image.Image, box: tuple[int, int, int, int], tolerance: int | None = None
-) -> int | None:
-    """The number written across one row, or None where it does not read as one.
+def digits_from(mask: list[list[bool]], tolerance: int | None = None) -> int | None:
+    """The number a mask of ink spells, or None where it does not read as one.
 
     `tolerance` gives up on the whole row as soon as one glyph is a poor match,
     which is what keeps a storage bar's fill highlight from being read as a
     digit, and is how a screen that is not the home village reads as no screen.
+
+    The mask is handed in rather than built here because what counts as ink
+    depends on what the text is painted over. `_ink_mask` is right for a number
+    the game writes across a village and wrong for one written on a button's own
+    plate, which `parsers.wall` has to separate by colour instead.
     """
     digits = ""
-    for digit, distance in _row_glyphs(_ink_mask(image.crop(box))):
+    for digit, distance in _row_glyphs(mask):
         if tolerance is not None and distance > tolerance:
             return None
         digits += digit
     return int(digits) if digits else None
+
+
+def _read_row(
+    image: Image.Image, box: tuple[int, int, int, int], tolerance: int | None = None
+) -> int | None:
+    """The number written across one row of the screen, over the village behind it."""
+    return digits_from(_ink_mask(image.crop(box)), tolerance)
 
 
 def _read_loot_row(image: Image.Image, box: tuple[int, int, int, int]) -> int | None:
