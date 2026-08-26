@@ -232,6 +232,9 @@ def idle_disconnected(png: bytes) -> bool:
 INK_BRIGHTNESS = 200
 INK_SATURATION = 70
 # Bright background speckle passes that test but never spans a digit's height.
+# It is the same line twice over in `_signature`: what a whole span has to reach
+# to be measured at all, and what an unbroken band of one has to reach before the
+# rest of that span is taken for speckle and trimmed off.
 MIN_GLYPH_ROWS = 12
 
 # Every glyph is normalised to this many pixels and compared as a bit pattern.
@@ -297,11 +300,42 @@ def _glyph_columns(mask: list[list[bool]]) -> list[tuple[int, int]]:
     return spans
 
 
+def _tallest_band(rows: list[int]) -> list[int]:
+    """The longest unbroken run of row numbers in a sorted list."""
+    bands: list[list[int]] = [[rows[0]]]
+    for y in rows[1:]:
+        if y == bands[-1][-1] + 1:
+            bands[-1].append(y)
+        else:
+            bands.append([y])
+    return max(bands, key=len)
+
+
 def _signature(mask: list[list[bool]], left: int, right: int) -> int | None:
-    """Normalise one glyph to a CELL_WIDTH x CELL_HEIGHT bit pattern."""
+    """Normalise one glyph to a CELL_WIDTH x CELL_HEIGHT bit pattern.
+
+    A glyph is measured from its tallest unbroken band of rows rather than from
+    its first inked row to its last. What lies outside that band is the panel's
+    own furniture and the village showing through it, and it does not have to
+    touch a digit to ruin it: two lit pixels four rows under the 9 of 297 906
+    stretched the normalised cell by a quarter, and the glyph came out 51 bits
+    off its template — failing a row that was perfectly legible, and with it the
+    loot reading for a whole battle. Measured over 421 recorded frames, taking
+    the band reads nine rows that failed outright and changes nothing that
+    already read.
+
+    A band shorter than a digit is not trimmed to, because there the short band
+    *is* the digit and the speckle is what is left standing. `scout_smudged_digit`
+    is one such: trimmed, its broken 0 drops out of the row without a trace and
+    1 746 707 reads back as 174 677. Those fall through to the whole extent,
+    which matches nothing and fails the row — which is the point of them.
+    """
     rows = [y for y, row in enumerate(mask) if any(row[left:right])]
     if len(rows) < MIN_GLYPH_ROWS:
         return None
+    band = _tallest_band(rows)
+    if len(band) >= MIN_GLYPH_ROWS:
+        rows = band
     glyph = Image.frombytes(
         "L",
         (right - left, rows[-1] + 1 - rows[0]),

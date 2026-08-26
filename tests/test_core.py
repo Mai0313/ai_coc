@@ -319,6 +319,18 @@ class ScoutTests(unittest.TestCase):
         """
         assert read_scout((FRAMES / "scout_smudged_digit.png").read_bytes()) is None
 
+    def test_speckle_beside_a_digit_does_not_fail_the_row(self) -> None:
+        """Two lit pixels under the 9 of 297 906 cost a whole battle its loot reading.
+
+        Live, this village read as nothing on all four of the polls its battle
+        got, so the run reported an attack that took 875k gold as one where
+        nothing had been deployed. The panel is kept and the rest of the frame
+        flattened; whole, it is 3 MB.
+        """
+        view = read_scout((FRAMES / "scout_speckled_panel.png").read_bytes())
+        assert view is not None
+        assert view.loot == LootOffer(gold=297906, elixir=94145, dark=0)
+
     def test_a_started_battle_is_no_longer_skippable(self) -> None:
         """The loot panel stays on screen once the countdown expires; 下一個 does not."""
         view = read_scout((FRAMES / "scout_in_battle.png").read_bytes())
