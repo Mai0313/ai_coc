@@ -34,6 +34,7 @@ from ai_coc.prompts import PROMPTS, PROMPT_DIR, render
 from ai_coc.ui.attack import (
     PLAYFIELD,
     RAGE_PATH,
+    RAGE_SPAN,
     DEPLOY_END,
     DROP_STRIDE,
     LINE_POINTS,
@@ -44,6 +45,7 @@ from ai_coc.ui.attack import (
     DROPS_PER_PASS,
     DEPLOY_ATTEMPTS,
     AttackRunner,
+    spaced,
     push_out,
     deploy_line,
     drop_points,
@@ -232,6 +234,18 @@ class ScoutTests(unittest.TestCase):
         view = read_scout((FRAMES / "scout_bright_backdrop.png").read_bytes())
         assert view is not None
         assert (view.loot.gold, view.loot.elixir, view.loot.dark) == (180728, 24752, 505)
+
+    def test_a_digit_the_frame_cannot_read_fails_its_whole_row(self) -> None:
+        """Skipping it instead divides the number by ten, which reads as a poor village.
+
+        Live, the second 7 of an opponent's 1 047 758 swung between 14 and 42
+        bits off its template from one frame to the next, so four readings in ten
+        came back as 104 758 — under the 500k threshold that had just accepted
+        it. The fixture reproduces that on the 0 of 1 746 707, five digits into
+        seven: skipped, the row reads 174 677. A row the caller can re-read on
+        the next frame is worth more than one that is quietly wrong.
+        """
+        assert read_scout((FRAMES / "scout_smudged_digit.png").read_bytes()) is None
 
     def test_a_started_battle_is_no_longer_skippable(self) -> None:
         """The loot panel stays on screen once the countdown expires; 下一個 does not."""
@@ -794,12 +808,18 @@ class AttackTests(unittest.TestCase):
         )
 
     def _verdict(self, opening: LootOffer, readings: list[ScoutView | None]) -> bool:
-        """Run the battle wait against canned panel readings, with the clock removed."""
+        """Run the battle wait against canned panel readings, with the clock removed.
+
+        The trailing Nones are padded out because the wait takes the panel as
+        gone only after consecutive failures, not after one. Each case below says
+        what the loop saw while the battle ran; how many frames it takes to be
+        sure the panel has gone is its own pair of tests.
+        """
         runner = self._runner()
         with (
             patch.object(AttackRunner, "_frame", return_value=b""),
             patch.object(AttackRunner, "_tap"),
-            patch.object(attack, "read_scout", side_effect=readings),
+            patch.object(attack, "read_scout", side_effect=[*readings, None, None, None]),
             # The result screen is left through its own poll now, and these
             # canned frames are not images.
             patch.object(attack, "battle_over", return_value=False),
@@ -937,6 +957,25 @@ class AttackTests(unittest.TestCase):
         targets = ((500, 300), (700, 420))
         assert self._aimed(targets, None) == targets
 
+    def test_a_planned_bottle_landing_inside_another_is_dropped(self) -> None:
+        """The planner is given the footprint and overlaps its points regardless.
+
+        These five are one live reply, and four of their ten pairs sit inside one
+        another. Rage does not stack, so each of those pairs buys one bottle's
+        worth of ground for two bottles. The closest of the four is (768, 495)
+        against (800, 378): 121 px apart, which clears the ellipse's 240 px axis
+        and sits just inside its 120 px one — the sort of call a model reading a
+        screenshot cannot make, which is why the prompt saying "do not overlap"
+        does not settle it and this does.
+        """
+        planned = [(448, 522), (608, 450), (560, 585), (768, 495), (800, 378)]
+        assert spaced(planned) == [(448, 522), (768, 495)]
+
+    def test_the_fixed_grid_is_already_spaced(self) -> None:
+        """Which is what makes it usable to top up whatever the planner's points lose."""
+        assert spaced(RAGE_PATH) == list(RAGE_PATH)
+        assert RAGE_PATH[1][0] - RAGE_PATH[0][0] == RAGE_SPAN[0]
+
     def test_a_one_off_drop_keeps_pushing_out_while_that_moves_it(self) -> None:
         """The middle of the line first, then further from the village, as it always was."""
         line = deploy_line(LINE_POINTS, *DEPLOY_LINES["top_left"])
@@ -982,6 +1021,37 @@ class AttackTests(unittest.TestCase):
         ):
             self._runner()._run_schedule(opened, moves)
         assert played == ["queen", "freeze", "champion"]
+
+    def _schedule_over(self, readings: list[ScoutView | None]) -> list[str]:
+        """One scheduled move played against canned panel readings."""
+        played: list[str] = []
+        with (
+            patch.object(AttackRunner, "_frame", return_value=b""),
+            patch.object(attack, "read_scout", side_effect=readings),
+            patch.object(attack.time, "sleep"),
+        ):
+            self._runner()._run_schedule(0.0, [(0.0, "freeze", lambda: played.append("freeze"))])
+        return played
+
+    def test_one_unreadable_frame_does_not_abandon_the_schedule(self) -> None:
+        """A row that will not read is not a battle that has ended.
+
+        The loot reader now fails a row rather than dropping a digit out of the
+        middle of it, so a battle still being fought produces the occasional
+        None where it used to produce a number that was wrong by a factor of
+        ten. Taken for the result screen, one of those drops every spell and
+        hero ability still to come.
+        """
+        on = ScoutView(loot=LootOffer(gold=1, elixir=1, dark=1), can_skip=False)
+        assert self._schedule_over([None, on]) == ["freeze"]
+
+    def test_a_panel_that_is_really_gone_still_stops_the_schedule(self) -> None:
+        """Some card slots sit under the result screen's 回營 button, so this matters.
+
+        The panel does not come back once the battle is over, which is what makes
+        consecutive failures the thing that tells the two Nones apart.
+        """
+        assert self._schedule_over([None, None, None]) == []
 
     def test_a_refused_flank_leaves_the_other_three_to_try(self) -> None:
         """The plan's own side goes first behind its line, then the flanks it did not pick."""

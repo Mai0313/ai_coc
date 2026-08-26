@@ -12,7 +12,7 @@ import time
 import logging
 from pathlib import Path
 from functools import partial
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 
 from pydantic import BaseModel, PrivateAttr
 
@@ -124,6 +124,10 @@ RAGE_PATH = (
 # Freeze is the opposite: it is held back until the troops are deep enough to be
 # under fire, and goes where they are rather than where they were headed.
 FREEZE_TARGET = (800, 420)
+# One bottle's own footprint, which is what tells two of them apart. It is the
+# pitch RAGE_PATH is already laid out on; naming it is what lets a planned point
+# be measured against the same ellipse.
+RAGE_SPAN = (240, 120)
 
 # How far apart the two captures that locate the army are taken. It is the one
 # number `parsers.field`'s own thresholds are tied to, since both the moving
@@ -236,7 +240,17 @@ BATTLE_TIMEOUT = 240
 # certainly meet.
 RELOGIN_BUTTON = (485, 528)
 RELOGIN_WAIT = 14
-HOME_ATTEMPTS = 3
+# A battle that pays out a reward covers the village with it, and the card tears
+# itself open over about fifteen seconds before its 繼續 button appears. Nothing
+# can be read off those frames — measured over one payout, `battle_over`,
+# `attack_menu_open`, `idle_disconnected` and `read_stock` all answer no on every
+# one of them — and the 攻擊 tap lands on the popup instead of the corner. Three
+# attempts ran out a beat before the button arrived, so the whole round stood
+# down with 畫面不在主村 and waited a minute for the next one to walk the same
+# path. Five covers the animation with room for the card that follows it; once
+# the button is up `_leave_result` already knows what to do with it, because a
+# reward dismisses from where the result screen's 回營 sits.
+HOME_ATTEMPTS = 5
 HOME_RETRY_DELAY = 3
 # The result screen animates its stars in before its button answers, so leaving
 # it is a poll rather than a tap.
@@ -388,6 +402,34 @@ def single_spots(
     return spots[:DEPLOY_ATTEMPTS]
 
 
+def spaced(points: Iterable[tuple[int, int]]) -> list[tuple[int, int]]:
+    """The points, minus every one landing inside a bottle already placed.
+
+    `prompts/attack_plan.md` gives the planner the footprint and tells it two
+    rages must not overlap, and the planner does not comply: measured on one
+    five-point reply, four of its ten pairs sat inside one another and only two
+    points came through here. The board is isometric, which is what makes the
+    spacing impossible to eyeball — the closest of those four, (768, 495) against
+    (800, 378), is 121 px apart, clear of the ellipse's 240 px axis and just
+    inside its 120 px one. That is not a wording problem, since a model reading a
+    screenshot cannot measure the distance between two points it has itself just
+    invented, so the geometry is settled here instead of asked for.
+
+    It is worth settling because an overlapping bottle is a whole spell's worth
+    of nothing: rage does not stack, so the second one over the same ground buys
+    the cargo one footprint of effect rather than two. Whatever this drops is
+    made back up from RAGE_PATH by the caller, which is spaced on this same
+    pitch by construction.
+    """
+    kept: list[tuple[int, int]] = []
+    for x, y in points:
+        if all(
+            ((x - px) / RAGE_SPAN[0]) ** 2 + ((y - py) / RAGE_SPAN[1]) ** 2 >= 1 for px, py in kept
+        ):
+            kept.append((x, y))
+    return kept
+
+
 def drop_points(line: list[tuple[int, int]], seed: int) -> list[tuple[int, int]]:
     """One pass worth of drops, spread over the whole line rather than bunched.
 
@@ -490,6 +532,24 @@ class AttackRunner(BaseModel):
         if view is not None:
             self._seen = view.loot
         return view
+
+    def _battle_ended(self, label: str) -> bool:
+        """Whether the loot panel has really gone, rather than having failed to read once.
+
+        `read_scout` answers None both to the result screen and to a frame whose
+        digits will not resolve, and to the two callers here those mean opposite
+        things: one says stop, the other says look again. One None used to settle
+        it because an unreadable row still produced a number — the wrong one,
+        short by a digit. Now that such a row fails honestly, a lone None is as
+        likely to be one marginal glyph as a finished battle, and acting on it
+        drops every spell and ability still on the schedule of a battle that is
+        still being fought, or reports one as over while it runs on.
+
+        Consecutive failures are what tell them apart, since the panel does not
+        come back once it is gone. `_wait_for_battle` already holds the countdown
+        to this same bar, for the same reason.
+        """
+        return all(self._battle_view(label) is None for _ in range(UNREADABLE_ATTEMPTS))
 
     def _open_attack_menu(self) -> bytes | None:
         """Get to the attack menu, clearing whatever is covering the village.
@@ -947,16 +1007,17 @@ class AttackRunner(BaseModel):
         )
         # A plan can name fewer spots than the army carries rages, and `_cast`
         # cycles back over its targets — which would stack two rages on one spot
-        # and waste one. The fixed grid fills the tail so each gets its own.
+        # and waste one. The fixed grid fills the tail so each gets its own, and
+        # `spaced` is what makes "its own" true: the planner's points overlap
+        # each other as often as not, and two bottles on one footprint are one
+        # bottle's worth of effect.
         #
         # Cut to the bottles actually carried, because the tail is otherwise
         # dead weight that the aiming below would average into its idea of where
         # the plan was pointing. The one tap of slack `_cast` adds then wraps
         # back onto the first spot rather than spending a real bottle on a
         # fallback point nobody chose.
-        rage_path = (planned + tuple(p for p in self._onscreen(RAGE_PATH) if p not in planned))[
-            : max(rage_count, 1)
-        ]
+        rage_path = tuple(spaced(planned + self._onscreen(RAGE_PATH)))[: max(rage_count, 1)]
         # Every freeze used to stack on one spot, which is one spell's worth of
         # effect for the whole cargo. A plan names one per bottle instead.
         freeze_targets = self._onscreen(
@@ -1060,7 +1121,7 @@ class AttackRunner(BaseModel):
         tapped unless the battle is genuinely still on.
         """
         _, what, act = move
-        if self._battle_view("scheduled") is None:
+        if self._battle_ended("scheduled"):
             logger.info("Battle ended with the %s still to come", what)
             return False
         act()
@@ -1157,7 +1218,7 @@ class AttackRunner(BaseModel):
         while time.monotonic() < deadline:
             time.sleep(10)
             # The result screen is the first one with no loot panel on it.
-            if self._battle_view("battle") is None:
+            if self._battle_ended("battle"):
                 break
         self._leave_result()
         return self._seen is not None and self._seen != opening
