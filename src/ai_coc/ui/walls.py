@@ -24,7 +24,6 @@ import logging
 
 from ai_coc.models import WallMenu, WallBatch, WallReport, WallUpgrade, VillageStock, WallCandidate
 from ai_coc.ui.runner import MENU_SETTLE, GameRunner
-from ai_coc.parsers.scout import read_stock
 from ai_coc.parsers.building import wall_menu, game_dialog
 
 logger = logging.getLogger(__name__)
@@ -180,7 +179,7 @@ class WallRunner(GameRunner):
         if not self._confirm():
             return None
         time.sleep(BUY_SETTLE)
-        paid = read_stock(self._frame("bought"))
+        paid = self._home()
         if paid is None:
             logger.warning("The storages could not be read after paying")
             return None
@@ -220,7 +219,11 @@ class WallRunner(GameRunner):
         # re-read each time rather than carried from the scan.
         prices = {wall.point: wall.price for wall in walls}
         while prices and (self.rounds <= 0 or len(report.upgrades) < self.rounds):
-            stock = read_stock(self._frame("stock"))
+            # Through `_home` rather than a bare read: between one batch and the
+            # next the screen can be anything from a settling animation to the
+            # idle-disconnect dialog, and a run that stopped on the first of
+            # those had bought one wall out of the six it could afford.
+            stock = self._home()
             if stock is None:
                 report.message = "看不到村莊的儲量，先停下來"
                 break

@@ -1352,7 +1352,7 @@ class WallRunnerTests(unittest.TestCase):
                 return_value=WallBatch(menu=_menu(3_200_000), unit=1_600_000, count=2),
             ),
             patch.object(walls, "wall_menu", return_value=_menu(1_600_000)),
-            patch.object(walls, "read_stock", return_value=stock),
+            patch.object(runner, "_home", return_value=stock),
         ):
             assert runner._buy((100, 100), stock) is None
 
@@ -1375,7 +1375,6 @@ class WallRunnerTests(unittest.TestCase):
             patch.object(runner, "_scan", return_value=walls_found),
             patch.object(runner, "_frame", return_value=b""),
             patch.object(runner, "_buy", return_value=bought) as buy,
-            patch.object(walls, "read_stock", return_value=stock),
             patch.object(walls, "wall_menu", return_value=_menu(14_400_000)),
         ):
             report = runner.run()
