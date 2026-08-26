@@ -34,6 +34,7 @@ from ai_coc.prompts import PROMPTS, PROMPT_DIR, render
 from ai_coc.ui.attack import (
     PLAYFIELD,
     RAGE_PATH,
+    RAGE_SPAN,
     DEPLOY_END,
     DROP_STRIDE,
     LINE_POINTS,
@@ -44,6 +45,7 @@ from ai_coc.ui.attack import (
     DROPS_PER_PASS,
     DEPLOY_ATTEMPTS,
     AttackRunner,
+    spaced,
     push_out,
     deploy_line,
     drop_points,
@@ -948,6 +950,24 @@ class AttackTests(unittest.TestCase):
         """A bad shift is worse than a stale one: the plan at least aimed at the village."""
         targets = ((500, 300), (700, 420))
         assert self._aimed(targets, None) == targets
+
+    def test_a_planned_bottle_landing_inside_another_is_dropped(self) -> None:
+        """The planner is given the footprint and overlaps its points regardless.
+
+        These five are one live reply. Three of the pairs sit inside one
+        another — (768, 495) and (800, 378) are 32 px apart across a 240 px
+        ellipse — and rage does not stack, so each of those pairs buys one
+        bottle's worth of ground for two bottles. The model cannot measure the
+        distance between two points it has just invented, so the prompt saying
+        "do not overlap" does not settle it and this does.
+        """
+        planned = [(448, 522), (608, 450), (560, 585), (768, 495), (800, 378)]
+        assert spaced(planned) == [(448, 522), (768, 495)]
+
+    def test_the_fixed_grid_is_already_spaced(self) -> None:
+        """Which is what makes it usable to top up whatever the planner's points lose."""
+        assert spaced(RAGE_PATH) == list(RAGE_PATH)
+        assert RAGE_PATH[1][0] - RAGE_PATH[0][0] == RAGE_SPAN[0]
 
     def test_a_one_off_drop_keeps_pushing_out_while_that_moves_it(self) -> None:
         """The middle of the line first, then further from the village, as it always was."""
