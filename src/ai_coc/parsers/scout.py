@@ -166,9 +166,28 @@ HERO_BAR_MAX_BLUE = 30
 # the army screen and spend dialogs, not one produces a single glyph in any of
 # these three boxes, so a screen that is not the home village reads as no screen
 # whatever this is set to.
+#
+# The bars carry a gloss of their own along the top of the filled part, and it
+# reaches into the row above the digits. Under the shared ink test it survives as
+# a four-row blob, which is far too short to be a digit and would be thrown away
+# for it — except that a blob landing in the gap between two digits joins them
+# into one span too wide to be a glyph and too poor a match to be cut, and the
+# whole row fails. Measured live on a village holding 130 480 dark, the gloss
+# bridged the 1 and the 3 on every frame; every cut of that 24 px span left one
+# half 33 bits or worse off its template, so the row read as nothing and `_home`
+# spent five rounds pressing `back` at a village that was already up.
+#
+# The gloss is blue-grey, (143, 180, 203) give or take, where a digit is white —
+# so what separates them is saturation rather than brightness, which the gloss
+# clears by a handful of levels. Measured, the gloss reads 56 to 62 while all
+# three rows of six recorded villages read the same number at every ceiling from
+# 20 to 55, so the line goes between with room on both sides. Scoped to these
+# rows because it is these bars the text is painted over; the loot panel and the
+# army screen are painted over other things and keep the shared ceiling.
 STOCK_LEFT, STOCK_RIGHT = 1300, 1512
 STOCK_ROW_BOUNDS = ((33, 72), (117, 156), (200, 239))
 STOCK_DIGIT_TOLERANCE = 30
+STOCK_INK_SATURATION = 45
 
 # The 回營 button on the battle result screen. It is the one screen a farming
 # loop reliably ends on and the one it could not get off: the button only comes
@@ -245,7 +264,9 @@ TEMPLATES = {
 }
 
 
-def _ink_mask(band: Image.Image, brightness: int = INK_BRIGHTNESS) -> list[list[bool]]:
+def _ink_mask(
+    band: Image.Image, brightness: int = INK_BRIGHTNESS, saturation: int = INK_SATURATION
+) -> list[list[bool]]:
     """One row of text reduced to the pixels belonging to its digits."""
     width, height = band.size
     # Raw bytes rather than getdata(): three per RGB pixel, and typed as integers.
@@ -256,7 +277,7 @@ def _ink_mask(band: Image.Image, brightness: int = INK_BRIGHTNESS) -> list[list[
         for offset in range(y * width * 3, (y + 1) * width * 3, 3):
             high = max(data[offset], data[offset + 1], data[offset + 2])
             low = min(data[offset], data[offset + 1], data[offset + 2])
-            row.append(high > brightness and high - low < INK_SATURATION)
+            row.append(high > brightness and high - low < saturation)
         mask.append(row)
     return mask
 
@@ -384,8 +405,12 @@ def digits_from(mask: list[list[bool]], tolerance: int | None = None) -> int | N
 def _read_row(
     image: Image.Image, box: tuple[int, int, int, int], tolerance: int | None = None
 ) -> int | None:
-    """The number written across one row of the screen, over the village behind it."""
-    return digits_from(_ink_mask(image.crop(box)), tolerance)
+    """One storage bar's number, read off the bar the game paints it on.
+
+    The tighter saturation ceiling belongs to those bars rather than to rows in
+    general; see `STOCK_INK_SATURATION` for what it is holding back.
+    """
+    return digits_from(_ink_mask(image.crop(box), saturation=STOCK_INK_SATURATION), tolerance)
 
 
 def _read_loot_row(image: Image.Image, box: tuple[int, int, int, int]) -> int | None:

@@ -393,6 +393,17 @@ class ScoutTests(unittest.TestCase):
             gold=1053405, elixir=375386, dark=143079
         )
 
+    def test_a_bar_gloss_between_two_digits_does_not_fail_the_row(self) -> None:
+        """The dark bar's gloss bridged the 1 and the 3, and took the whole row down.
+
+        The frame is a live one with everything outside the bars flattened: whole,
+        this village comes to 3 MB and no colour reduction gets it under the
+        repo's file-size limit without also flattening away the gloss itself.
+        """
+        assert read_stock((FRAMES / "home_storage_gloss.png").read_bytes()) == VillageStock(
+            gold=447824, elixir=5141375, dark=130480
+        )
+
     def test_storages_are_none_away_from_the_home_screen(self) -> None:
         """Three readable rows is what says the home village is up; nothing else does."""
         assert read_stock((FRAMES / "scout_grass.png").read_bytes()) is None
