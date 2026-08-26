@@ -300,16 +300,29 @@ def _split(mask: list[list[bool]], left: int, right: int) -> list[tuple[str, int
     17, and they touch — which matched "3" at 47 bits. That row was then read as
     1 829, an opponent worth 741k skipped for being poor.
 
-    Every cut that leaves both halves wide enough to be a digit is tried, and the
-    one whose worse half reads best wins. Scoring on the worse half rather than
-    the total is what stops a cut that leaves one excellent digit and one
-    unrecognisable smear from beating an even one — and it is what separates two
-    touching digits from a blob of village, which comes apart badly whichever way
-    it is cut. Nothing at all comes back when no cut clears `SPLIT_TOLERANCE`,
-    leaving the span to be judged whole as it was before.
+    Only cuts leaving both halves the size of a digit are tried — wide enough to
+    be one, and no wider than one. The ceiling is what keeps three touching
+    digits from being read as two: a 39 px run of 164 comes apart into a 6 at 24
+    bits and a 4 at 14, both well inside the tolerance, and the row is then
+    quietly 64. Twelve of the runs that can be built from the recorded digits do
+    that, and most of them failed their row outright before splitting existed —
+    so an unbounded cut turns a re-read into a wrong number, which is the trade
+    this reader exists to refuse. Bounded, no cut through a run that wide leaves
+    both halves small enough and the span fails whole. What still slips through
+    is a narrow run containing a 1, since two touching 1s are 14 px and look like
+    one digit; catching those needs a per-digit width rather than one ceiling.
+
+    Of the cuts that qualify, the one whose worse half reads best wins. Scoring
+    on the worse half rather than the total is what stops a cut leaving one
+    excellent digit and one unrecognisable smear from beating an even one — and
+    it is what separates two touching digits from a blob of village, which comes
+    apart badly whichever way it is cut. Nothing at all comes back when no cut
+    clears `SPLIT_TOLERANCE`, leaving the span to be judged whole as it was.
     """
     best: tuple[int, list[tuple[str, int]]] | None = None
-    for cut in range(left + MIN_GLYPH_WIDTH, right - MIN_GLYPH_WIDTH + 1):
+    first = max(left + MIN_GLYPH_WIDTH, right - MAX_GLYPH_WIDTH)
+    last = min(right - MIN_GLYPH_WIDTH, left + MAX_GLYPH_WIDTH)
+    for cut in range(first, last + 1):
         halves = [_match(mask, left, cut), _match(mask, cut, right)]
         if None in halves:
             continue

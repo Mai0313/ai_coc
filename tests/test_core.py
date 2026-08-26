@@ -58,6 +58,9 @@ from ai_coc.adapters.ai import GeminiClient
 from ai_coc.adapters.adb import AdbController, focused_display, physical_display
 from ai_coc.parsers.field import view_shift, army_centre
 from ai_coc.parsers.scout import (
+    PANEL_LEFT,
+    ROW_BOUNDS,
+    PANEL_RIGHT,
     card_count,
     live_cards,
     read_scout,
@@ -259,6 +262,42 @@ class ScoutTests(unittest.TestCase):
         view = read_scout((FRAMES / "scout_touching_digits.png").read_bytes())
         assert view is not None
         assert (view.loot.gold, view.loot.elixir, view.loot.dark) == (741829, 713776, 6328)
+
+    def test_three_touching_digits_fail_rather_than_read_as_two(self) -> None:
+        """A cut hands back two digits, so a run of three has to fail instead.
+
+        This one is 164, and cut anywhere it comes apart into a 6 at 24 bits and
+        a 4 at 14 — both comfortably inside the tolerance, so nothing downstream
+        objects to a row that has quietly become 64. That is the silent kind of
+        wrong this reader exists to avoid, and it is the kind splitting can
+        introduce: before splitting existed the whole span failed and the caller
+        re-read the next frame.
+
+        Bounding each half to a digit's own width is what keeps that: no cut
+        through a 39 px run leaves both halves small enough to be digits, so
+        none is believed. Eleven other runs built from this fixture's digits
+        behave the same way.
+
+        Built by butting three of the fixture's own digits together, since the
+        recorded frames only ever caught two touching.
+        """
+        image = Image.open(io.BytesIO((FRAMES / "scout_seven_digits.png").read_bytes())).convert(
+            "RGB"
+        )
+        top, bottom = ROW_BOUNDS[0]
+        # The 1, 6 and 4 of 1 746 707, each measured off this frame's gold row.
+        digits = [
+            image.crop((PANEL_LEFT + a, top, PANEL_LEFT + b, bottom))
+            for a, b in ((10, 17), (59, 74), (41, 58))
+        ]
+        ImageDraw.Draw(image).rectangle((PANEL_LEFT, top, PANEL_RIGHT, bottom), fill=(18, 20, 16))
+        offset = 10
+        for digit in digits:
+            image.paste(digit, (PANEL_LEFT + offset, top))
+            offset += digit.width
+        frame = io.BytesIO()
+        image.save(frame, "PNG")
+        assert read_scout(frame.getvalue()) is None
 
     def test_a_digit_the_frame_cannot_read_fails_its_whole_row(self) -> None:
         """Skipping it instead divides the number by ten, which reads as a poor village.
