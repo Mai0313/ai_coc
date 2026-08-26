@@ -303,16 +303,25 @@ def _read_row(
 def _read_loot_row(image: Image.Image, box: tuple[int, int, int, int]) -> int | None:
     """One row of the loot panel, with the village showing through it dropped.
 
-    A poor match is skipped rather than failing the row, which is the opposite of
-    `_read_row` and deliberately so: `read_scout` returning None means "no
-    opponent on screen", so one speckle of village would leave the loop waiting
-    out a search it had already paid for.
+    The village only shows through to the right of the digits, so that is the one
+    end a poor match can be dropped from. Dropping it there rather than failing
+    the row is the opposite of `_read_row` and deliberately so: `read_scout`
+    returning None means "no opponent on screen", so one speckle of village would
+    leave the loop waiting out a search it had already paid for.
+
+    A poor match with digits still to its right is different in kind: it is a
+    digit this frame cannot read, and dropping it silently divides the number by
+    ten. Measured on one opponent's gold row, the second 7 of 1 047 758 swung
+    between 14 and 42 bits off its template from frame to frame, so four readings
+    in ten came back as 104 758 — which a 500k threshold skips outright. The row
+    fails instead, and the caller reads the next frame.
     """
-    digits = "".join(
-        digit
-        for digit, distance in _row_glyphs(_ink_mask(image.crop(box), LOOT_INK_BRIGHTNESS))
-        if distance <= LOOT_DIGIT_TOLERANCE
-    )
+    glyphs = list(_row_glyphs(_ink_mask(image.crop(box), LOOT_INK_BRIGHTNESS)))
+    while glyphs and glyphs[-1][1] > LOOT_DIGIT_TOLERANCE:
+        glyphs.pop()
+    if any(distance > LOOT_DIGIT_TOLERANCE for _, distance in glyphs):
+        return None
+    digits = "".join(digit for digit, _ in glyphs)
     return int(digits) if digits else None
 
 

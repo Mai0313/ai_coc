@@ -233,6 +233,18 @@ class ScoutTests(unittest.TestCase):
         assert view is not None
         assert (view.loot.gold, view.loot.elixir, view.loot.dark) == (180728, 24752, 505)
 
+    def test_a_digit_the_frame_cannot_read_fails_its_whole_row(self) -> None:
+        """Skipping it instead divides the number by ten, which reads as a poor village.
+
+        Live, the second 7 of an opponent's 1 047 758 swung between 14 and 42
+        bits off its template from one frame to the next, so four readings in ten
+        came back as 104 758 — under the 500k threshold that had just accepted
+        it. The fixture reproduces that on the 0 of 1 746 707, five digits into
+        seven: skipped, the row reads 174 677. A row the caller can re-read on
+        the next frame is worth more than one that is quietly wrong.
+        """
+        assert read_scout((FRAMES / "scout_smudged_digit.png").read_bytes()) is None
+
     def test_a_started_battle_is_no_longer_skippable(self) -> None:
         """The loot panel stays on screen once the countdown expires; 下一個 does not."""
         view = read_scout((FRAMES / "scout_in_battle.png").read_bytes())
