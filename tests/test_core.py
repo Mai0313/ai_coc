@@ -230,10 +230,34 @@ class ScoutTests(unittest.TestCase):
         assert (view.loot.gold, view.loot.elixir, view.loot.dark) == (185482, 133614, 2780)
 
     def test_village_showing_through_the_panel_is_not_read_as_digits(self) -> None:
-        """Bright paving behind the panel used to add a digit to the end of every row."""
+        """Bright paving behind the panel used to add a digit to the end of every row.
+
+        Two of those blobs are wider than any digit, so this is also what holds
+        the line on splitting one: cut, they come apart at 52/63 and 30/52 bits
+        against real digits' 12 and 4, and believing either cut would put an
+        invented digit on the end of a row rather than a rejected one.
+        """
         view = read_scout((FRAMES / "scout_bright_backdrop.png").read_bytes())
         assert view is not None
         assert (view.loot.gold, view.loot.elixir, view.loot.dark) == (180728, 24752, 505)
+
+    def test_two_digits_with_no_gap_between_them_are_cut_apart(self) -> None:
+        """Nothing guarantees a gap between digits, and this opponent's 7 and 4 left none.
+
+        The 74 of 741 829 arrives as a single 30 px span — 7 is 13 px wide, 4 is
+        17, and they touch — which matches "3" at 47 bits. Dropping that glyph
+        read the row as 1 829, so an opponent holding 741k was passed over for
+        being poor. Failing the row instead is no better here: every one of the
+        seventeen frames of that scout screen read the same way, so the round was
+        spent polling a panel that was never going to resolve, and ended with
+        等不到對手畫面 after the search had already been paid for.
+
+        Only the two boxes `read_scout` reads are the live capture; the rest of
+        the frame is filled flat, because the village it came with is 2.9 MB.
+        """
+        view = read_scout((FRAMES / "scout_touching_digits.png").read_bytes())
+        assert view is not None
+        assert (view.loot.gold, view.loot.elixir, view.loot.dark) == (741829, 713776, 6328)
 
     def test_a_digit_the_frame_cannot_read_fails_its_whole_row(self) -> None:
         """Skipping it instead divides the number by ten, which reads as a poor village.

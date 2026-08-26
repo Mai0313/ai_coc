@@ -204,6 +204,20 @@ MIN_GLYPH_ROWS = 12
 
 # Every glyph is normalised to this many pixels and compared as a bit pattern.
 CELL_WIDTH, CELL_HEIGHT = 10, 14
+# What one digit measures across. Swept over the recorded frames, every digit
+# that read correctly spans 7 px — which is only ever "1" — to 17, so a span
+# wider than that is two of them touching rather than one wide glyph. The floor
+# is what keeps a cut from carving a sliver off the side of a real digit.
+MIN_GLYPH_WIDTH = 7
+MAX_GLYPH_WIDTH = 18
+# A cut is only believed when both halves come out looking like real digits,
+# because the village showing through the panel produces wide blobs too and
+# splitting one of those invents a digit out of nothing. Measured, the 74 that
+# needs cutting comes apart as 7 at 12 bits and 4 at 4, while the two blobs in
+# the recorded frames come apart at 52/63 and 30/52. The line sits between them
+# and nearer the blobs: a span left uncut is still judged on its own merits,
+# where a wrong cut hands back a number nobody can tell is wrong.
+SPLIT_TOLERANCE = 25
 TEMPLATES = {
     "0": 0b00011111000111111110011111111111111111111111001111111100111111110011111111001111111100111111110011111111001111111111111101111111100001111000,
     "1": 0b01111111111111111111011111111100011111110001111111000111111100011111110001111111000111111100011111110001111111000111111100011111110001111110,
@@ -269,6 +283,43 @@ def _signature(mask: list[list[bool]], left: int, right: int) -> int | None:
     return bits
 
 
+def _match(mask: list[list[bool]], left: int, right: int) -> tuple[str, int] | None:
+    """One column span as the digit it matches best and how far off that was."""
+    signature = _signature(mask, left, right)
+    if signature is None:
+        return None
+    digit = min(TEMPLATES, key=lambda d: (TEMPLATES[d] ^ signature).bit_count())
+    return digit, (TEMPLATES[digit] ^ signature).bit_count()
+
+
+def _split(mask: list[list[bool]], left: int, right: int) -> list[tuple[str, int]]:
+    """Two digits the mask never separated, cut where both halves read best.
+
+    Nothing guarantees a gap between two digits: measured on a live panel, the
+    74 of 741 829 came through as a single 30 px span — 7 is 13 px wide and 4 is
+    17, and they touch — which matched "3" at 47 bits. That row was then read as
+    1 829, an opponent worth 741k skipped for being poor.
+
+    Every cut that leaves both halves wide enough to be a digit is tried, and the
+    one whose worse half reads best wins. Scoring on the worse half rather than
+    the total is what stops a cut that leaves one excellent digit and one
+    unrecognisable smear from beating an even one — and it is what separates two
+    touching digits from a blob of village, which comes apart badly whichever way
+    it is cut. Nothing at all comes back when no cut clears `SPLIT_TOLERANCE`,
+    leaving the span to be judged whole as it was before.
+    """
+    best: tuple[int, list[tuple[str, int]]] | None = None
+    for cut in range(left + MIN_GLYPH_WIDTH, right - MIN_GLYPH_WIDTH + 1):
+        halves = [_match(mask, left, cut), _match(mask, cut, right)]
+        if None in halves:
+            continue
+        read = [half for half in halves if half is not None]
+        worst = max(distance for _, distance in read)
+        if worst <= SPLIT_TOLERANCE and (best is None or worst < best[0]):
+            best = (worst, read)
+    return best[1] if best else []
+
+
 def _row_glyphs(mask: list[list[bool]]) -> Iterator[tuple[str, int]]:
     """Each glyph on a row as the digit it matches best and how far off that was.
 
@@ -276,11 +327,12 @@ def _row_glyphs(mask: list[list[bool]]) -> Iterator[tuple[str, int]]:
     the digit rather than being judged here.
     """
     for left, right in _glyph_columns(mask):
-        signature = _signature(mask, left, right)
-        if signature is None:
+        if right - left > MAX_GLYPH_WIDTH and (halves := _split(mask, left, right)):
+            yield from halves
             continue
-        digit = min(TEMPLATES, key=lambda d: (TEMPLATES[d] ^ signature).bit_count())
-        yield digit, (TEMPLATES[digit] ^ signature).bit_count()
+        match = _match(mask, left, right)
+        if match is not None:
+            yield match
 
 
 def _read_row(
