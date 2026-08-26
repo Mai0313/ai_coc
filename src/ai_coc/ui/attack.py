@@ -1166,17 +1166,25 @@ class AttackRunner(BaseModel):
 
         A cargo that never leaves the card is the quiet half of the same bug the
         heroes had: nothing downstream notices, and the report says the attack
-        went in. So the cards are asked, and the ones that did not move are
+        went in. So the cards are asked, and the ones still holding something are
         offered the run once more — measured live, a spell placed straight after
         another was the one that got swallowed, so a second selection is usually
         all it wants. They are asked together rather than one at a time, because
         a capture and a settle apiece was most of what a cast cost.
+
+        **A card is finished when it is empty, not when something left it.** That
+        distinction used to be missing: the test was whether the `xN` corner had
+        repainted, and it repaints on the first bottle to go, so a card that cast
+        four of its five read as a success. Measured over three recorded
+        battles, the rage card came off the row at x1 on two of them — a whole
+        bottle carried home each time, which is the one thing a spell must never
+        do. `live_cards` answers the question that was meant all along, since a
+        spent card goes fully greyscale and a card with one bottle left does not.
         """
         pending = list(cards)
         for _attempt in range(SPELL_ATTEMPTS):
             if not pending:
                 return
-            before = self._frame("before-cast")
             for index, x in enumerate(pending):
                 count = card_count(frame, x)
                 cast_count = count + 1 if count else len(targets)
@@ -1186,11 +1194,10 @@ class AttackRunner(BaseModel):
                 self.adb.tap_many(cells, self.display, gap=SPELL_PLACE_GAP)
                 logger.info("Spell card at %d held %s, tapped %d", x, count, cast_count)
             time.sleep(DROP_SETTLE)
-            after = self._frame("cast")
-            # One reading apiece rather than one per card: `live_cards` decodes
-            # the frame it is handed, so asking it per card decodes it per card.
-            drained, still_live = card_drained(before, after, pending), live_cards(after, pending)
-            pending = [x for x in pending if x not in drained and x in still_live]
+            # One reading for the whole row rather than one per card: `live_cards`
+            # decodes the frame it is handed, so asking it per card decodes it
+            # per card.
+            pending = list(live_cards(self._frame("cast"), pending))
             if pending:
                 logger.info("%d spell card(s) held on to their bottles", len(pending))
         for x in pending:

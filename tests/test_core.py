@@ -1061,6 +1061,27 @@ class AttackTests(unittest.TestCase):
         assert spaced(RAGE_PATH) == list(RAGE_PATH)
         assert RAGE_PATH[1][0] - RAGE_PATH[0][0] == RAGE_SPAN[0]
 
+    def _casts(self, alive: list[list[int]]) -> int:
+        """How many passes `_cast` makes, given what the row reads after each one."""
+        runner = self._runner()
+        with (
+            patch.object(AttackRunner, "_frame", return_value=b""),
+            patch.object(AttackRunner, "_tap"),
+            patch.object(type(runner.adb), "tap_many"),
+            patch.object(attack, "card_count", return_value=5),
+            patch.object(attack, "live_cards", side_effect=alive) as reads,
+            patch.object(attack.time, "sleep"),
+        ):
+            runner._cast([1060], RAGE_PATH[:5], b"")
+            return reads.call_count
+
+    def test_a_card_still_holding_a_bottle_is_offered_the_run_again(self) -> None:
+        """x5 to x1 used to read as a success, because the corner had repainted."""
+        assert self._casts([[1060], []]) == 2
+
+    def test_a_card_that_emptied_is_not_asked_twice(self) -> None:
+        assert self._casts([[]]) == 1
+
     def test_a_one_off_drop_keeps_pushing_out_while_that_moves_it(self) -> None:
         """The middle of the line first, then further from the village, as it always was."""
         line = deploy_line(LINE_POINTS, *DEPLOY_LINES["top_left"])
