@@ -26,10 +26,13 @@ from ai_coc.models import (
     AppConfig,
     MapSurvey,
     WallReport,
+    BuildReport,
     WallOptions,
     AttackSeries,
+    DonateReport,
     FrameReading,
     AttackOptions,
+    CollectReport,
     DisplayTarget,
     BoundarySurvey,
     GeminiSettings,
@@ -42,7 +45,7 @@ from ai_coc.adapters.ai import GeminiClient
 # a field, and a model whose field type is only importable to a type checker
 # cannot be built at all.
 from ai_coc.adapters.adb import AdbController
-from ai_coc.parsers.wall import wall_menu
+from ai_coc.parsers.home import free_builders, collect_bubbles
 from ai_coc.adapters.mumu import MuMuAdapter
 from ai_coc.parsers.scout import (
     card_count,
@@ -61,9 +64,12 @@ from ai_coc.parsers.scout import (
 from ai_coc.adapters.config import ConfigStore
 from ai_coc.adapters.secrets import SecretStore
 from ai_coc.parsers.boundary import PLAYFIELD, VILLAGE_CENTRE, boundary_reach
+from ai_coc.parsers.building import wall_menu
 
+from .ui.clan import ClanRunner
 from .ui.walls import WallRunner
 from .ui.attack import CARD_ROW_Y, DROP_SETTLE, SINGLE_DROP_DELAY, AttackRunner
+from .ui.upkeep import UpkeepRunner
 
 logger = logging.getLogger(__name__)
 
@@ -432,6 +438,67 @@ def walls(options: WallOptions) -> WallReport:
     return report
 
 
+def collect(frame_dir: Path | None = None) -> CollectReport:
+    """Tap every collector the village has left standing, with no window in the way.
+
+    Collectors stop once they are full, so a village nobody has emptied has spent
+    most of its time doing nothing. This is the cheapest thing in the project to
+    run and the one worth running most often.
+    """
+    adb = _controller()
+    if frame_dir is not None:
+        frame_dir.mkdir(parents=True, exist_ok=True)
+    report = UpkeepRunner(
+        adb=adb, display=adb.display_for(COC_PACKAGE), frame_dir=frame_dir
+    ).collect()
+    logger.info("Collect: %s", report.message)
+    return report
+
+
+def upgrade(
+    frame_dir: Path | None = None, keep_gold: int = 0, keep_elixir: int = 0
+) -> BuildReport:
+    """Put the village's idle builders to work, with no window in the way.
+
+    A builder standing around is the one thing a village cannot buy its way out
+    of, so this is worth running whenever an upgrade finishes. Walls are left to
+    `walls`, which needs no builder at all.
+    """
+    adb = _controller()
+    if frame_dir is not None:
+        frame_dir.mkdir(parents=True, exist_ok=True)
+    report = UpkeepRunner(
+        adb=adb,
+        display=adb.display_for(COC_PACKAGE),
+        frame_dir=frame_dir,
+        keep_gold=keep_gold,
+        keep_elixir=keep_elixir,
+    ).upgrade()
+    logger.info("Upgrade: %s", report.message)
+    return report
+
+
+def donate(frame_dir: Path | None = None, dry_run: bool = False, rounds: int = 0) -> DonateReport:
+    """Give troops to whoever in the clan is asking, with no window in the way.
+
+    Cheap to run and cheap to find nothing: a clan with no request open costs one
+    tap on the chat tab and one capture. `dry_run` walks the whole path and stops
+    before the tap that gives something away, because the panel does not confirm.
+    """
+    adb = _controller()
+    if frame_dir is not None:
+        frame_dir.mkdir(parents=True, exist_ok=True)
+    report = ClanRunner(
+        adb=adb,
+        display=adb.display_for(COC_PACKAGE),
+        frame_dir=frame_dir,
+        dry_run=dry_run,
+        rounds=rounds,
+    ).donate()
+    logger.info("Donate: %s", report.message)
+    return report
+
+
 def capture(out_dir: Path, count: int = 1, gap: float = 1.5) -> list[Path]:
     """Save frames off the live game, for measuring a screen the parsers cannot read yet.
 
@@ -462,6 +529,8 @@ def read(png: bytes) -> FrameReading:
         stock=read_stock(png),
         army=army_strength(png),
         wall_menu=wall_menu(png),
+        bubbles=collect_bubbles(png),
+        builders=free_builders(png),
         attack_menu=attack_menu_open(png),
         idle_dialog=idle_disconnected(png),
         card_groups=groups,

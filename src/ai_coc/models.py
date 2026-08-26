@@ -747,6 +747,90 @@ class AttackSeries(RootModel[list[AttackReport]]):
     root: list[AttackReport] = Field(default_factory=list)
 
 
+class ResourceBubble(BaseModel):
+    """A collector marker on the home village, and what it is holding.
+
+    Tapping one collects it outright: no menu opens and nothing asks. So the
+    marker is both the target and the receipt, since a collected one disappears.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    resource: Literal["gold", "elixir", "dark"]
+    point: tuple[int, int]
+
+
+class CollectReport(BaseModel):
+    """What one sweep of the collectors picked up.
+
+    The amounts are what the storages actually gained rather than what the
+    markers promised, because a storage already full takes none of it and a
+    marker tapped twice pays once. `markers` is what was tapped, so the two
+    disagreeing is the interesting case rather than an inconsistency.
+    """
+
+    markers: int = 0
+    gold: int = 0
+    elixir: int = 0
+    dark: int = 0
+    message: str = ""
+
+
+class BuildCandidate(BaseModel):
+    """A building the sweep found with an upgrade on offer, and what it asks for.
+
+    Only where it is and what it costs. Nothing here names the building, because
+    nothing on its menu does — and nothing downstream needs it named: what an
+    idle builder is worth putting on is a judgement about price and time, and
+    only one of those is on screen.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    point: tuple[int, int]
+    resource: Literal["gold", "elixir"]
+    price: int
+
+
+class BuildReport(BaseModel):
+    """What one `upgrade` run put the idle builders on."""
+
+    started: list[BuildCandidate] = Field(default_factory=list)
+    message: str = ""
+
+    def paid(self, resource: str) -> int:
+        return sum(job.price for job in self.started if job.resource == resource)
+
+
+class DonateReport(BaseModel):
+    """What one `donate` run gave away.
+
+    `gifts` is where each tap landed rather than what it gave, because nothing on
+    the panel names a troop. `offered` is how many cards stood in colour at the
+    richest point, which is what a dry run has to report instead.
+    """
+
+    gifts: list[tuple[int, int]] = Field(default_factory=list)
+    offered: int = 0
+    message: str = ""
+
+
+class UpgradeButton(BaseModel):
+    """One 升級 button on a building's menu: where it is and what it asks for.
+
+    The price is what makes it an upgrade rather than any other button carrying a
+    resource icon — 收集 on a collector's menu has a gold coin on it too, and so
+    does the wall ring. Nothing here says which building the menu belongs to,
+    because nothing on the row does.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    resource: Literal["gold", "elixir"]
+    point: tuple[int, int]
+    price: int
+
+
 class WallMenu(BaseModel):
     """The wall menu's own buttons, located by the icons the game paints on them.
 
@@ -874,6 +958,8 @@ class FrameReading(BaseModel):
     stock: VillageStock | None = None
     army: tuple[int, int] | None = None
     wall_menu: WallMenu | None = None
+    bubbles: list[ResourceBubble] = Field(default_factory=list)
+    builders: tuple[int, int] | None = None
     attack_menu: bool = False
     idle_dialog: bool = False
     card_groups: list[list[int]] = Field(default_factory=list)

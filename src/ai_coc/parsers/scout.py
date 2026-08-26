@@ -371,7 +371,7 @@ def digits_from(mask: list[list[bool]], tolerance: int | None = None) -> int | N
     The mask is handed in rather than built here because what counts as ink
     depends on what the text is painted over. `_ink_mask` is right for a number
     the game writes across a village and wrong for one written on a button's own
-    plate, which `parsers.wall` has to separate by colour instead.
+    plate, which `parsers.building` has to separate by colour instead.
     """
     digits = ""
     for digit, distance in _row_glyphs(mask):
@@ -585,6 +585,28 @@ def field_units(png: bytes, slots: Sequence[int]) -> list[int]:
     return down
 
 
+def split_numbers(mask: list[list[bool]], tolerance: int) -> list[int]:
+    """The numbers on a row, cut wherever a glyph is too poor a match to be one.
+
+    What separates the two numbers of `305/305` or `1/5` is not a gap but a
+    character that is not a digit at all, and it is found by how badly it
+    matches rather than by being recognised: measured, every real digit on either
+    of those rows lands within 18 of its template while the slash between them
+    reads 25 on the army screen and 40 on the builder counter.
+    """
+    numbers: list[str] = [""]
+    for left, right in _glyph_columns(mask):
+        signature = _signature(mask, left, right)
+        if signature is None:
+            continue
+        digit = min(TEMPLATES, key=lambda d: (TEMPLATES[d] ^ signature).bit_count())
+        if (TEMPLATES[digit] ^ signature).bit_count() > tolerance:
+            numbers.append("")
+            continue
+        numbers[-1] += digit
+    return [int(value) for value in numbers if value]
+
+
 def army_strength(png: bytes) -> tuple[int, int] | None:
     """Trained and total army size off the 我的軍隊 screen, or None if not on it.
 
@@ -593,20 +615,10 @@ def army_strength(png: bytes) -> tuple[int, int] | None:
     """
     image = Image.open(io.BytesIO(png)).convert("RGB")
     mask = _ink_mask(image.crop(ARMY_BOX), ARMY_INK_BRIGHTNESS)
-    numbers: list[str] = [""]
-    for left, right in _glyph_columns(mask):
-        signature = _signature(mask, left, right)
-        if signature is None:
-            continue
-        digit = min(TEMPLATES, key=lambda d: (TEMPLATES[d] ^ signature).bit_count())
-        if (TEMPLATES[digit] ^ signature).bit_count() > ARMY_DIGIT_TOLERANCE:
-            numbers.append("")
-            continue
-        numbers[-1] += digit
-    found = [value for value in numbers if value]
+    found = split_numbers(mask, ARMY_DIGIT_TOLERANCE)
     if len(found) != 2:
         return None
-    return int(found[0]), int(found[1])
+    return found[0], found[1]
 
 
 def freeze_cards(png: bytes, slots: Sequence[int]) -> list[int]:

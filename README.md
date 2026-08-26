@@ -29,6 +29,8 @@ Other Languages: [English](README.md) | [繁體中文](README.zh-TW.md) | [简�
 - Imports village JSON exports and battle scripts, keeping unknown fields and unknown `data_id`s instead of failing on them
 - Farms resource opponents on its own, reading the screen with template matching rather than a vision call
 - Spends the storages on wall upgrades, sizing each batch to what the village can afford
+- Empties the collectors, puts idle builders on the dearest upgrade affordable, and donates to clan requests
+- Recovers on its own from a session dropped for idling, whichever loop was running
 - Persists every agent command as a task, so an interrupted run is picked up again on the next start
 - Stores the Gemini API key through Windows DPAPI, never in plain settings
 

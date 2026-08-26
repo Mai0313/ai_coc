@@ -62,6 +62,18 @@ def _parser() -> argparse.ArgumentParser:
     upgrade.add_argument(
         "--at", metavar="X,Y", help="直接從這個座標上的城牆開始,跳過整個村莊的掃描"
     )
+    gather = sub.add_parser("collect", help="把採集器裡的資源全部收起來,不開視窗")
+    gather.add_argument("--frames", type=Path, help="把迴圈讀到的每一張畫面存進這個資料夾")
+    build = sub.add_parser("upgrade", help="把閒著的工人派去升級建築,不開視窗")
+    build.add_argument("--frames", type=Path, help="把迴圈讀到的每一張畫面存進這個資料夾")
+    build.add_argument("--keep-gold", type=int, default=0, help="留下這麼多金幣不要花")
+    build.add_argument("--keep-elixir", type=int, default=0, help="留下這麼多聖水不要花")
+    give = sub.add_parser("donate", help="有人請求增援就捐兵,不開視窗")
+    give.add_argument("--frames", type=Path, help="把迴圈讀到的每一張畫面存進這個資料夾")
+    give.add_argument(
+        "--dry-run", action="store_true", help="走完流程但不真的捐,只回報畫面上能捐什麼"
+    )
+    give.add_argument("--rounds", type=int, default=0, help="最多捐幾次,0 代表捐到不能捐為止")
     survey = sub.add_parser("probe", help="花一場戰鬥實測邊界，對照判讀器說的")
     survey.add_argument("--frames", type=Path, help="把每一次探測的畫面存起來")
     edges = sub.add_parser("bounds", help="花一場戰鬥實測地圖邊緣，回推村莊範圍")
@@ -106,6 +118,16 @@ def _run_command(arguments: argparse.Namespace) -> int:
                 rounds=arguments.rounds,
                 at=(int(spot[0]), int(spot[1])) if spot else None,
             )
+        ).model_dump_json(indent=2)
+    elif arguments.command == "collect":
+        result = commands.collect(arguments.frames).model_dump_json(indent=2)
+    elif arguments.command == "upgrade":
+        result = commands.upgrade(
+            arguments.frames, arguments.keep_gold, arguments.keep_elixir
+        ).model_dump_json(indent=2)
+    elif arguments.command == "donate":
+        result = commands.donate(
+            arguments.frames, arguments.dry_run, arguments.rounds
         ).model_dump_json(indent=2)
     elif arguments.command == "probe":
         result = commands.probe(arguments.frames).model_dump_json(indent=2)
