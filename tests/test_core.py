@@ -44,6 +44,7 @@ from ai_coc.ui.attack import (
     ABANDON_BUTTON,
     DROPS_PER_PASS,
     DEPLOY_ATTEMPTS,
+    RESULT_ATTEMPTS,
     AttackRunner,
     spaced,
     push_out,
@@ -57,6 +58,9 @@ from ai_coc.adapters.ai import GeminiClient
 from ai_coc.adapters.adb import AdbController, focused_display, physical_display
 from ai_coc.parsers.field import view_shift, army_centre
 from ai_coc.parsers.scout import (
+    PANEL_LEFT,
+    ROW_BOUNDS,
+    PANEL_RIGHT,
     card_count,
     live_cards,
     read_scout,
@@ -230,10 +234,70 @@ class ScoutTests(unittest.TestCase):
         assert (view.loot.gold, view.loot.elixir, view.loot.dark) == (185482, 133614, 2780)
 
     def test_village_showing_through_the_panel_is_not_read_as_digits(self) -> None:
-        """Bright paving behind the panel used to add a digit to the end of every row."""
+        """Bright paving behind the panel used to add a digit to the end of every row.
+
+        Two of those blobs are wider than any digit, so this is also what holds
+        the line on splitting one: cut, they come apart at 52/63 and 30/52 bits
+        against real digits' 12 and 4, and believing either cut would put an
+        invented digit on the end of a row rather than a rejected one.
+        """
         view = read_scout((FRAMES / "scout_bright_backdrop.png").read_bytes())
         assert view is not None
         assert (view.loot.gold, view.loot.elixir, view.loot.dark) == (180728, 24752, 505)
+
+    def test_two_digits_with_no_gap_between_them_are_cut_apart(self) -> None:
+        """Nothing guarantees a gap between digits, and this opponent's 7 and 4 left none.
+
+        The 74 of 741 829 arrives as a single 30 px span — 7 is 13 px wide, 4 is
+        17, and they touch — which matches "3" at 47 bits. Dropping that glyph
+        read the row as 1 829, so an opponent holding 741k was passed over for
+        being poor. Failing the row instead is no better here: every one of the
+        seventeen frames of that scout screen read the same way, so the round was
+        spent polling a panel that was never going to resolve, and ended with
+        等不到對手畫面 after the search had already been paid for.
+
+        Only the two boxes `read_scout` reads are the live capture; the rest of
+        the frame is filled flat, because the village it came with is 2.9 MB.
+        """
+        view = read_scout((FRAMES / "scout_touching_digits.png").read_bytes())
+        assert view is not None
+        assert (view.loot.gold, view.loot.elixir, view.loot.dark) == (741829, 713776, 6328)
+
+    def test_three_touching_digits_fail_rather_than_read_as_two(self) -> None:
+        """A cut hands back two digits, so a run of three has to fail instead.
+
+        This one is 164, and cut anywhere it comes apart into a 6 at 24 bits and
+        a 4 at 14 — both comfortably inside the tolerance, so nothing downstream
+        objects to a row that has quietly become 64. That is the silent kind of
+        wrong this reader exists to avoid, and it is the kind splitting can
+        introduce: before splitting existed the whole span failed and the caller
+        re-read the next frame.
+
+        Bounding each half to a digit's own width is what keeps that: no cut
+        through a 39 px run leaves both halves small enough to be digits, so
+        none is believed. Eleven other runs built from this fixture's digits
+        behave the same way.
+
+        Built by butting three of the fixture's own digits together, since the
+        recorded frames only ever caught two touching.
+        """
+        image = Image.open(io.BytesIO((FRAMES / "scout_seven_digits.png").read_bytes())).convert(
+            "RGB"
+        )
+        top, bottom = ROW_BOUNDS[0]
+        # The 1, 6 and 4 of 1 746 707, each measured off this frame's gold row.
+        digits = [
+            image.crop((PANEL_LEFT + a, top, PANEL_LEFT + b, bottom))
+            for a, b in ((10, 17), (59, 74), (41, 58))
+        ]
+        ImageDraw.Draw(image).rectangle((PANEL_LEFT, top, PANEL_RIGHT, bottom), fill=(18, 20, 16))
+        offset = 10
+        for digit in digits:
+            image.paste(digit, (PANEL_LEFT + offset, top))
+            offset += digit.width
+        frame = io.BytesIO()
+        image.save(frame, "PNG")
+        assert read_scout(frame.getvalue()) is None
 
     def test_a_digit_the_frame_cannot_read_fails_its_whole_row(self) -> None:
         """Skipping it instead divides the number by ten, which reads as a poor village.
@@ -810,23 +874,25 @@ class AttackTests(unittest.TestCase):
     def _verdict(self, opening: LootOffer, readings: list[ScoutView | None]) -> bool:
         """Run the battle wait against canned panel readings, with the clock removed.
 
-        The trailing Nones are padded out because the wait takes the panel as
-        gone only after consecutive failures, not after one. Each case below says
-        what the loop saw while the battle ran; how many frames it takes to be
-        sure the panel has gone is its own pair of tests.
+        A reading of None here stands for the result screen, which is what ends
+        the wait: a panel that merely will not read no longer does, since a
+        battlefield showing through one is not a battle that has ended. The
+        trailing Falses are for `_leave_result`, which polls the same button.
         """
         runner = self._runner()
         with (
             patch.object(AttackRunner, "_frame", return_value=b""),
             patch.object(AttackRunner, "_tap"),
-            patch.object(attack, "read_scout", side_effect=[*readings, None, None, None]),
-            # The result screen is left through its own poll now, and these
-            # canned frames are not images.
-            patch.object(attack, "battle_over", return_value=False),
+            patch.object(attack, "read_scout", side_effect=readings),
+            patch.object(
+                attack,
+                "battle_over",
+                side_effect=[view is None for view in readings] + [False] * RESULT_ATTEMPTS,
+            ),
             patch.object(attack.time, "sleep"),
         ):
             # Whatever the abilities saw counts too, which is the whole point.
-            runner._battle_view("ability")
+            runner._battle_ended("ability")
             return runner._wait_out_battle(opening)
 
     def test_a_battle_won_before_the_first_poll_still_counts(self) -> None:
@@ -1014,44 +1080,39 @@ class AttackTests(unittest.TestCase):
             (landed + timings.seconds("queen"), "queen", lambda: played.append("queen")),
             (opened + timings.freeze, "freeze", lambda: played.append("freeze")),
         ]
-        on = ScoutView(loot=LootOffer(gold=1, elixir=1, dark=1), can_skip=False)
         with (
-            patch.object(AttackRunner, "_battle_view", return_value=on),
+            patch.object(AttackRunner, "_battle_ended", return_value=False),
             patch.object(attack.time, "sleep"),
         ):
             self._runner()._run_schedule(opened, moves)
         assert played == ["queen", "freeze", "champion"]
 
-    def _schedule_over(self, readings: list[ScoutView | None]) -> list[str]:
-        """One scheduled move played against canned panel readings."""
+    def _schedule_over(self, reads: bool, result_screen: bool) -> list[str]:
+        """One scheduled move played against a canned frame."""
         played: list[str] = []
+        view = ScoutView(loot=LootOffer(gold=1, elixir=1, dark=1), can_skip=False)
         with (
             patch.object(AttackRunner, "_frame", return_value=b""),
-            patch.object(attack, "read_scout", side_effect=readings),
+            patch.object(attack, "read_scout", return_value=view if reads else None),
+            patch.object(attack, "battle_over", return_value=result_screen),
             patch.object(attack.time, "sleep"),
         ):
             self._runner()._run_schedule(0.0, [(0.0, "freeze", lambda: played.append("freeze"))])
         return played
 
-    def test_one_unreadable_frame_does_not_abandon_the_schedule(self) -> None:
-        """A row that will not read is not a battle that has ended.
+    def test_an_unreadable_panel_is_not_a_battle_that_ended(self) -> None:
+        """The battlefield shows through the panel, and then no row of it resolves.
 
-        The loot reader now fails a row rather than dropping a digit out of the
-        middle of it, so a battle still being fought produces the occasional
-        None where it used to produce a number that was wrong by a factor of
-        ten. Taken for the result screen, one of those drops every spell and
-        hero ability still to come.
+        Measured on a live battle at 69% with two stars and every rage still in
+        its card, the gold row of 485 715 read on none of its frames. Taken for
+        the result screen, that abandons every spell and hero ability still to
+        come — and it did, for five rounds of one recorded run.
         """
-        on = ScoutView(loot=LootOffer(gold=1, elixir=1, dark=1), can_skip=False)
-        assert self._schedule_over([None, on]) == ["freeze"]
+        assert self._schedule_over(reads=False, result_screen=False) == ["freeze"]
 
-    def test_a_panel_that_is_really_gone_still_stops_the_schedule(self) -> None:
-        """Some card slots sit under the result screen's 回營 button, so this matters.
-
-        The panel does not come back once the battle is over, which is what makes
-        consecutive failures the thing that tells the two Nones apart.
-        """
-        assert self._schedule_over([None, None, None]) == []
+    def test_the_result_screen_stops_the_schedule(self) -> None:
+        """Some card slots sit under its 回營 button, so this is what must not be tapped."""
+        assert self._schedule_over(reads=False, result_screen=True) == []
 
     def test_a_refused_flank_leaves_the_other_three_to_try(self) -> None:
         """The plan's own side goes first behind its line, then the flanks it did not pick."""
