@@ -21,37 +21,15 @@ from __future__ import annotations
 
 import time
 import logging
-from pathlib import Path
 
-from pydantic import BaseModel, PrivateAttr
-
-from ai_coc.models import (
-    WallMenu,
-    WallBatch,
-    WallReport,
-    WallUpgrade,
-    VillageStock,
-    DisplayTarget,
-    WallCandidate,
-)
-from ai_coc.adapters.adb import AdbController
-from ai_coc.parsers.wall import wall_menu, game_dialog
-from ai_coc.parsers.scout import read_stock
+from ai_coc.models import WallMenu, WallBatch, WallReport, WallUpgrade, VillageStock, WallCandidate
+from ai_coc.ui.runner import MENU_SETTLE, GameRunner
+from ai_coc.parsers.building import wall_menu, game_dialog
 
 logger = logging.getLogger(__name__)
 
-# Where a tap could land on a wall. The row of buttons a selected building opens
-# runs across the bottom of the screen, so a scan that reached down there would
-# be pressing the previous tap's own buttons; the left and right edges are the
-# village's own UI columns for the same reason.
-SCAN_X = (260, 420, 580, 740, 900, 1060, 1220)
-SCAN_Y = (140, 260, 380, 500)
-
-# How long a menu takes to open, and how long the game takes to charge for a
-# batch and repaint the row. Both measured against this emulator by walking the
-# menus by hand: a capture taken 0.8 s after the tap already had the new menu on
-# it, and this leaves room for the emulator being busy.
-MENU_SETTLE = 1.0
+# How long the game takes to charge for a batch and repaint the row, measured
+# against this emulator by walking the menus by hand.
 BUY_SETTLE = 1.5
 # The confirmation slides in, so the first capture after 升級 can miss it.
 DIALOG_TRIES = 4
@@ -69,21 +47,10 @@ ADD_GAP = 0.12
 # button, which the number every decision here rests on has to stay legible in.
 MAX_BATCH = 25
 
-# Getting back to the village, which two different things can be in the way of.
-# A game still loading wants waiting on and nothing else — measured, it takes
-# around twenty seconds from a cold launch — so nothing is pressed until the
-# patience runs out. A screen a scan tap opened wants `back`, which closes it.
-HOME_TRIES = 16
-LOADING_PATIENCE = 10
-LOAD_WAIT = 2.0
-BACK_SETTLE = 1.2
 
-
-class WallRunner(BaseModel):
+class WallRunner(GameRunner):
     """Buys wall upgrades until the storages will not pay for another one."""
 
-    adb: AdbController
-    display: DisplayTarget
     # What to leave behind rather than spend. A run that empties the storages
     # leaves nothing to train an army with, which is the other half of farming.
     keep_gold: int = 0
@@ -94,90 +61,15 @@ class WallRunner(BaseModel):
     # likely to disagree with a village this was not written against, so naming a
     # wall is how to exercise everything downstream of it.
     at: tuple[int, int] | None = None
-    frame_dir: Path | None = None
-
-    _captures: int = PrivateAttr(default=0)
-
-    def _tap(self, point: tuple[int, int]) -> None:
-        self.adb.tap(point[0], point[1], self.display)
-
-    def _frame(self, label: str) -> bytes:
-        """One capture, kept on disk when the run is being recorded."""
-        png = self.adb.screenshot(self.display)
-        if self.frame_dir is not None:
-            self._captures += 1
-            (self.frame_dir / f"{self._captures:04d}_{label}.png").write_bytes(png)
-        return png
-
-    def _after_tap(self, point: tuple[int, int], label: str) -> bytes:
-        self._tap(point)
-        time.sleep(MENU_SETTLE)
-        return self._frame(label)
-
-    def _home(self) -> VillageStock | None:
-        """The village's storages, once nothing is covering the village any more.
-
-        The storage bars double as the check that the home village is up at all:
-        `read_stock` answers None for every other screen, which is exactly what a
-        scan tap that opened a barracks needs to be told.
-
-        **`back` is only ever pressed on a frame that is not a clear village**,
-        and that restriction is the whole reason this is not three lines.
-        Measured live: on the home village `back` raises 確定退出遊戲嗎 — with a
-        wall menu open as readily as without — and that dialog's 確定 is the same
-        green in the same pixels as the one that pays for a batch. So a frame
-        that reads as nothing at all is waited on rather than pressed at, since
-        far more often than a panel it is the game still loading.
-
-        A dialog already standing is answered with 取消, not with another `back`
-        whose effect on one this has no business guessing at. Any dialog: the
-        only one that can be up here is that exit prompt, and 取消 is the
-        harmless answer to every other one the game raises too. It has to be
-        answered rather than read past, because its own dimming is what stops the
-        storages reading — measured, the bars stay perfectly legible to the eye
-        and come back as nothing at all.
-        """
-        for attempt in range(HOME_TRIES):
-            png = self._frame("home")
-            dialog = game_dialog(png)
-            if dialog is not None:
-                logger.info("A dialog is covering the village; answering 取消")
-                self._tap(dialog.cancel)
-                time.sleep(BACK_SETTLE)
-                continue
-            stock = read_stock(png)
-            if stock is not None:
-                return stock
-            if attempt < LOADING_PATIENCE:
-                time.sleep(LOAD_WAIT)
-                continue
-            self.adb.back(self.display)
-            time.sleep(BACK_SETTLE)
-        return None
 
     def _scan(self) -> list[WallCandidate]:
-        """Tap across the village and keep every point that opened a wall menu.
-
-        Walls cannot be found by looking for one — the art changes at every level
-        — so they are found by tapping and reading what the game opens. Buildings
-        move between villages and layouts, which is why this is a sweep rather
-        than a remembered spot.
-        """
+        """Every point on the sweep that opened a wall menu, and what it asked for."""
         found: list[WallCandidate] = []
-        for y in SCAN_Y:
-            for x in SCAN_X:
-                png = self._after_tap((x, y), f"scan_{x:04d}_{y:04d}")
-                menu = wall_menu(png)
-                if menu is not None:
-                    logger.info("Wall at (%d, %d), asking %d", x, y, menu.price)
-                    found.append(WallCandidate(point=(x, y), price=menu.price))
-                elif read_stock(png) is None:
-                    # The tap opened a screen rather than a menu, which is what a
-                    # barracks or a laboratory does. Nothing more can be tapped
-                    # until the village is back.
-                    logger.info("The tap at (%d, %d) covered the village; backing out", x, y)
-                    if self._home() is None:
-                        return found
+        for point, png in self._sweep("scan"):
+            menu = wall_menu(png)
+            if menu is not None:
+                logger.info("Wall at (%d, %d), asking %d", point[0], point[1], menu.price)
+                found.append(WallCandidate(point=point, price=menu.price))
         return found
 
     def _pick(self, prices: dict[tuple[int, int], int]) -> tuple[int, int]:
@@ -287,7 +179,7 @@ class WallRunner(BaseModel):
         if not self._confirm():
             return None
         time.sleep(BUY_SETTLE)
-        paid = read_stock(self._frame("bought"))
+        paid = self._home()
         if paid is None:
             logger.warning("The storages could not be read after paying")
             return None
@@ -327,7 +219,11 @@ class WallRunner(BaseModel):
         # re-read each time rather than carried from the scan.
         prices = {wall.point: wall.price for wall in walls}
         while prices and (self.rounds <= 0 or len(report.upgrades) < self.rounds):
-            stock = read_stock(self._frame("stock"))
+            # Through `_home` rather than a bare read: between one batch and the
+            # next the screen can be anything from a settling animation to the
+            # idle-disconnect dialog, and a run that stopped on the first of
+            # those had bought one wall out of the six it could afford.
+            stock = self._home()
             if stock is None:
                 report.message = "看不到村莊的儲量，先停下來"
                 break

@@ -61,7 +61,8 @@ from ai_coc.ui.attack import (
 )
 from ai_coc.adapters.ai import GeminiClient
 from ai_coc.adapters.adb import AdbController, focused_display, physical_display
-from ai_coc.parsers.wall import wall_menu, game_dialog
+from ai_coc.parsers.clan import panel_top, donatable_cards, reinforce_button
+from ai_coc.parsers.home import free_builders, collect_bubbles
 from ai_coc.parsers.field import view_shift, army_centre
 from ai_coc.parsers.scout import (
     PANEL_LEFT,
@@ -91,6 +92,7 @@ from ai_coc.parsers.boundary import (
     boundary_line,
     boundary_reach,
 )
+from ai_coc.parsers.building import wall_menu, game_dialog, upgrade_sheet, upgrade_buttons
 from ai_coc.adapters.database import Database
 
 FRAMES = Path(__file__).parent / "frames"
@@ -1350,7 +1352,7 @@ class WallRunnerTests(unittest.TestCase):
                 return_value=WallBatch(menu=_menu(3_200_000), unit=1_600_000, count=2),
             ),
             patch.object(walls, "wall_menu", return_value=_menu(1_600_000)),
-            patch.object(walls, "read_stock", return_value=stock),
+            patch.object(runner, "_home", return_value=stock),
         ):
             assert runner._buy((100, 100), stock) is None
 
@@ -1373,7 +1375,6 @@ class WallRunnerTests(unittest.TestCase):
             patch.object(runner, "_scan", return_value=walls_found),
             patch.object(runner, "_frame", return_value=b""),
             patch.object(runner, "_buy", return_value=bought) as buy,
-            patch.object(walls, "read_stock", return_value=stock),
             patch.object(walls, "wall_menu", return_value=_menu(14_400_000)),
         ):
             report = runner.run()
@@ -1383,3 +1384,89 @@ class WallRunnerTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class HomeHudTests(unittest.TestCase):
+    """The village's own overlay, masked down to what is read off it."""
+
+    def test_collector_markers_are_found_by_size_not_by_what_they_stand_on(self) -> None:
+        """Colour alone answers the storage bars, the shop button and a spell factory.
+
+        A collector is repainted at every level and sits wherever the player put
+        it, so nothing here looks at one — only at the marker floated above it,
+        which is the same pixels on every village.
+        """
+        markers = collect_bubbles((FRAMES / "home_markers.png").read_bytes())
+        assert len(markers) == 11
+        assert {marker.resource for marker in markers} == {"gold", "elixir", "dark"}
+        # Every one on the collectors, none on the storage bars carrying the very
+        # same icons a few hundred pixels to the right.
+        assert all(940 <= x <= 1420 and 180 <= y <= 470 for x, y in (m.point for m in markers))
+
+    def test_the_builder_counter_is_split_on_its_slash(self) -> None:
+        """Idle over total. The slash is not a digit and is found by matching badly."""
+        assert free_builders((FRAMES / "home_markers.png").read_bytes()) == (1, 5)
+
+    def test_a_frame_with_no_village_on_it_has_no_builders(self) -> None:
+        assert free_builders((FRAMES / "wall_spend_dialog.png").read_bytes()) is None
+
+
+class BuildingUpgradeTests(unittest.TestCase):
+    """Menus for the buildings that are not walls."""
+
+    def test_a_single_resource_menu_offers_one_upgrade(self) -> None:
+        offers = upgrade_buttons((FRAMES / "menu_with_gem_plate.png").read_bytes())
+        assert [(offer.resource, offer.price) for offer in offers] == [("elixir", 60_000)]
+
+    def test_a_button_on_a_blue_plate_is_never_an_upgrade(self) -> None:
+        """加速所有同類項目 spends a magic item and carries a potion the elixir test
+        answers outright, so without the plate check this menu reports an
+        "upgrade costing 1 elixir" and a loop taps the item away. The wall ring
+        is the same button in a different hat.
+        """
+        frame = (FRAMES / "menu_with_gem_plate.png").read_bytes()
+        assert len(upgrade_buttons(frame)) == 1
+        assert wall_menu(frame) is None
+
+    def test_the_upgrade_sheet_is_told_from_grass_by_the_storage_bars(self) -> None:
+        """A building confirms on a full-screen sheet whose 確認 is green — and so
+        is a village, all over. What separates them is that the sheet covers the
+        storage bars and a village does not.
+        """
+        assert upgrade_sheet((FRAMES / "upgrade_sheet.png").read_bytes()) == (1121, 783)
+        assert upgrade_sheet((FRAMES / "home_markers.png").read_bytes()) is None
+        assert upgrade_sheet((FRAMES / "menu_with_gem_plate.png").read_bytes()) is None
+
+
+class ClanTests(unittest.TestCase):
+    """The clan chat, and the panel a donation request opens."""
+
+    def test_a_friendly_challenge_is_not_a_donation_request(self) -> None:
+        """偵察 is the same green at a larger size — measured 5154 px against
+        增援's 4754 — so "the biggest green" opens somebody's village instead.
+        The challenge is the one with 進攻 in red on its row.
+        """
+        frame = (FRAMES / "clan_request_and_challenge.png").read_bytes()
+        assert reinforce_button(frame) == (477, 440)
+
+    def test_a_village_is_not_a_chat_full_of_green_buttons(self) -> None:
+        assert reinforce_button((FRAMES / "home_markers.png").read_bytes()) is None
+
+    def test_the_donation_panel_is_read_from_its_own_top(self) -> None:
+        """It floats: it is drawn against the request card that opened it, so the
+        same panel sat 57 px further down on one live run than the other. Fixed
+        rows would have read the cards off the gap above them.
+        """
+        low = (FRAMES / "clan_donate_low.png").read_bytes()
+        high = (FRAMES / "clan_donate_high.png").read_bytes()
+        assert panel_top(low) == 166
+        assert panel_top(high) == 109
+        assert len(donatable_cards(low)) == 10
+        assert len(donatable_cards(high)) == 14
+
+    def test_a_greyed_card_is_not_offered(self) -> None:
+        """Four of the fourteen are greyscale on one frame and none on the other,
+        which is what a card the village cannot give looks like.
+        """
+        assert len(donatable_cards((FRAMES / "clan_donate_low.png").read_bytes())) == 10
+        assert donatable_cards((FRAMES / "home_markers.png").read_bytes()) == []

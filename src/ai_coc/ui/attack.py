@@ -28,6 +28,7 @@ from ai_coc.models import (
     LootThresholds,
 )
 from ai_coc.prompts import PROMPTS
+from ai_coc.ui.runner import restart_game
 from ai_coc.adapters.ai import GeminiClient
 from ai_coc.adapters.adb import AdbController
 from ai_coc.parsers.field import view_shift, army_centre
@@ -236,10 +237,11 @@ UNREADABLE_ATTEMPTS = 3
 BATTLE_TIMEOUT = 240
 # Two things routinely cover the home village between runs: a building panel
 # left open by a stray tap, which back closes, and the idle-disconnect dialog,
-# which only a relogin clears and which a loop that waits for barracks will
-# certainly meet.
-RELOGIN_BUTTON = (485, 528)
-RELOGIN_WAIT = 14
+# which a loop that waits minutes for barracks will certainly meet. That one is
+# answered by restarting the game rather than by tapping its 重新登入遊戲 button:
+# the button reloads the game anyway, so the two cost the same seconds, and the
+# tap also costs a hard-coded position belonging to this emulator's resolution
+# alone. `ui.runner` owns the restart.
 # A battle that pays out a reward covers the village with it, and the card tears
 # itself open over about fifteen seconds before its 繼續 button appears. Nothing
 # can be read off those frames — measured over one payout, `battle_over`,
@@ -553,9 +555,8 @@ class AttackRunner(BaseModel):
         for _ in range(HOME_ATTEMPTS):
             home = self._frame("home")
             if idle_disconnected(home):
-                logger.info("Idle-disconnect dialog is up; logging back in")
-                self._tap(RELOGIN_BUTTON)
-                time.sleep(RELOGIN_WAIT)
+                logger.info("Idle-disconnect dialog is up; restarting the game")
+                self.display = restart_game(self.adb, self.display)
                 continue
             if battle_over(home):
                 logger.info("The last battle's result screen is still up; leaving it")
