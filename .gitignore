@@ -239,10 +239,5 @@ captures/
 # Where `ai_coc attack --frames` is pointed while a tactic is being worked on;
 # a recorded battle is hundreds of frames of a live account.
 /.runs/
-# A directory junction onto `.agents/skills`, which is where the skills really
-# live. This checkout has core.symlinks off, so the link cannot be committed;
-# rebuild it after a clone with:
-#     cmd /c mklink /J .claude\skills .agents\skills
-/.claude/skills/
 adbkey
 adbkey.pub
