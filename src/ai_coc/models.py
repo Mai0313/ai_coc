@@ -960,6 +960,8 @@ class FrameReading(BaseModel):
     wall_menu: WallMenu | None = None
     bubbles: list[ResourceBubble] = Field(default_factory=list)
     builders: tuple[int, int] | None = None
+    upgrades: list[UpgradeButton] = Field(default_factory=list)
+    donatable: int = 0
     attack_menu: bool = False
     idle_dialog: bool = False
     card_groups: list[list[int]] = Field(default_factory=list)

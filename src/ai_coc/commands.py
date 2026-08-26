@@ -45,6 +45,7 @@ from ai_coc.adapters.ai import GeminiClient
 # a field, and a model whose field type is only importable to a type checker
 # cannot be built at all.
 from ai_coc.adapters.adb import AdbController
+from ai_coc.parsers.clan import donatable_cards
 from ai_coc.parsers.home import free_builders, collect_bubbles
 from ai_coc.adapters.mumu import MuMuAdapter
 from ai_coc.parsers.scout import (
@@ -64,7 +65,7 @@ from ai_coc.parsers.scout import (
 from ai_coc.adapters.config import ConfigStore
 from ai_coc.adapters.secrets import SecretStore
 from ai_coc.parsers.boundary import PLAYFIELD, VILLAGE_CENTRE, boundary_reach
-from ai_coc.parsers.building import wall_menu
+from ai_coc.parsers.building import wall_menu, upgrade_buttons
 
 from .ui.clan import ClanRunner
 from .ui.walls import WallRunner
@@ -531,6 +532,8 @@ def read(png: bytes) -> FrameReading:
         wall_menu=wall_menu(png),
         bubbles=collect_bubbles(png),
         builders=free_builders(png),
+        upgrades=upgrade_buttons(png),
+        donatable=len(donatable_cards(png)),
         attack_menu=attack_menu_open(png),
         idle_dialog=idle_disconnected(png),
         card_groups=groups,
