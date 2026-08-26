@@ -407,10 +407,13 @@ def spaced(points: Iterable[tuple[int, int]]) -> list[tuple[int, int]]:
 
     `prompts/attack_plan.md` gives the planner the footprint and tells it two
     rages must not overlap, and the planner does not comply: measured on one
-    reply, three of the five pairs it drew overlapped, two of them with centres
-    32 px apart. That is not a wording problem — a model reading a screenshot
-    cannot measure the distance between two points it has just invented — so the
-    geometry is settled here instead of asked for.
+    five-point reply, four of its ten pairs sat inside one another and only two
+    points came through here. The board is isometric, which is what makes the
+    spacing impossible to eyeball — the closest of those four, (768, 495) against
+    (800, 378), is 121 px apart, clear of the ellipse's 240 px axis and just
+    inside its 120 px one. That is not a wording problem, since a model reading a
+    screenshot cannot measure the distance between two points it has itself just
+    invented, so the geometry is settled here instead of asked for.
 
     It is worth settling because an overlapping bottle is a whole spell's worth
     of nothing: rage does not stack, so the second one over the same ground buys
@@ -529,6 +532,24 @@ class AttackRunner(BaseModel):
         if view is not None:
             self._seen = view.loot
         return view
+
+    def _battle_ended(self, label: str) -> bool:
+        """Whether the loot panel has really gone, rather than having failed to read once.
+
+        `read_scout` answers None both to the result screen and to a frame whose
+        digits will not resolve, and to the two callers here those mean opposite
+        things: one says stop, the other says look again. One None used to settle
+        it because an unreadable row still produced a number — the wrong one,
+        short by a digit. Now that such a row fails honestly, a lone None is as
+        likely to be one marginal glyph as a finished battle, and acting on it
+        drops every spell and ability still on the schedule of a battle that is
+        still being fought, or reports one as over while it runs on.
+
+        Consecutive failures are what tell them apart, since the panel does not
+        come back once it is gone. `_wait_for_battle` already holds the countdown
+        to this same bar, for the same reason.
+        """
+        return all(self._battle_view(label) is None for _ in range(UNREADABLE_ATTEMPTS))
 
     def _open_attack_menu(self) -> bytes | None:
         """Get to the attack menu, clearing whatever is covering the village.
@@ -1100,7 +1121,7 @@ class AttackRunner(BaseModel):
         tapped unless the battle is genuinely still on.
         """
         _, what, act = move
-        if self._battle_view("scheduled") is None:
+        if self._battle_ended("scheduled"):
             logger.info("Battle ended with the %s still to come", what)
             return False
         act()
@@ -1197,7 +1218,7 @@ class AttackRunner(BaseModel):
         while time.monotonic() < deadline:
             time.sleep(10)
             # The result screen is the first one with no loot panel on it.
-            if self._battle_view("battle") is None:
+            if self._battle_ended("battle"):
                 break
         self._leave_result()
         return self._seen is not None and self._seen != opening

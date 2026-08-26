@@ -808,12 +808,18 @@ class AttackTests(unittest.TestCase):
         )
 
     def _verdict(self, opening: LootOffer, readings: list[ScoutView | None]) -> bool:
-        """Run the battle wait against canned panel readings, with the clock removed."""
+        """Run the battle wait against canned panel readings, with the clock removed.
+
+        The trailing Nones are padded out because the wait takes the panel as
+        gone only after consecutive failures, not after one. Each case below says
+        what the loop saw while the battle ran; how many frames it takes to be
+        sure the panel has gone is its own pair of tests.
+        """
         runner = self._runner()
         with (
             patch.object(AttackRunner, "_frame", return_value=b""),
             patch.object(AttackRunner, "_tap"),
-            patch.object(attack, "read_scout", side_effect=readings),
+            patch.object(attack, "read_scout", side_effect=[*readings, None, None, None]),
             # The result screen is left through its own poll now, and these
             # canned frames are not images.
             patch.object(attack, "battle_over", return_value=False),
@@ -954,12 +960,13 @@ class AttackTests(unittest.TestCase):
     def test_a_planned_bottle_landing_inside_another_is_dropped(self) -> None:
         """The planner is given the footprint and overlaps its points regardless.
 
-        These five are one live reply. Three of the pairs sit inside one
-        another — (768, 495) and (800, 378) are 32 px apart across a 240 px
-        ellipse — and rage does not stack, so each of those pairs buys one
-        bottle's worth of ground for two bottles. The model cannot measure the
-        distance between two points it has just invented, so the prompt saying
-        "do not overlap" does not settle it and this does.
+        These five are one live reply, and four of their ten pairs sit inside one
+        another. Rage does not stack, so each of those pairs buys one bottle's
+        worth of ground for two bottles. The closest of the four is (768, 495)
+        against (800, 378): 121 px apart, which clears the ellipse's 240 px axis
+        and sits just inside its 120 px one — the sort of call a model reading a
+        screenshot cannot make, which is why the prompt saying "do not overlap"
+        does not settle it and this does.
         """
         planned = [(448, 522), (608, 450), (560, 585), (768, 495), (800, 378)]
         assert spaced(planned) == [(448, 522), (768, 495)]
@@ -1014,6 +1021,37 @@ class AttackTests(unittest.TestCase):
         ):
             self._runner()._run_schedule(opened, moves)
         assert played == ["queen", "freeze", "champion"]
+
+    def _schedule_over(self, readings: list[ScoutView | None]) -> list[str]:
+        """One scheduled move played against canned panel readings."""
+        played: list[str] = []
+        with (
+            patch.object(AttackRunner, "_frame", return_value=b""),
+            patch.object(attack, "read_scout", side_effect=readings),
+            patch.object(attack.time, "sleep"),
+        ):
+            self._runner()._run_schedule(0.0, [(0.0, "freeze", lambda: played.append("freeze"))])
+        return played
+
+    def test_one_unreadable_frame_does_not_abandon_the_schedule(self) -> None:
+        """A row that will not read is not a battle that has ended.
+
+        The loot reader now fails a row rather than dropping a digit out of the
+        middle of it, so a battle still being fought produces the occasional
+        None where it used to produce a number that was wrong by a factor of
+        ten. Taken for the result screen, one of those drops every spell and
+        hero ability still to come.
+        """
+        on = ScoutView(loot=LootOffer(gold=1, elixir=1, dark=1), can_skip=False)
+        assert self._schedule_over([None, on]) == ["freeze"]
+
+    def test_a_panel_that_is_really_gone_still_stops_the_schedule(self) -> None:
+        """Some card slots sit under the result screen's 回營 button, so this matters.
+
+        The panel does not come back once the battle is over, which is what makes
+        consecutive failures the thing that tells the two Nones apart.
+        """
+        assert self._schedule_over([None, None, None]) == []
 
     def test_a_refused_flank_leaves_the_other_three_to_try(self) -> None:
         """The plan's own side goes first behind its line, then the flanks it did not pick."""
