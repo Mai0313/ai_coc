@@ -44,6 +44,7 @@ from ai_coc.ui.attack import (
     ABANDON_BUTTON,
     DROPS_PER_PASS,
     DEPLOY_ATTEMPTS,
+    RESULT_ATTEMPTS,
     AttackRunner,
     spaced,
     push_out,
@@ -834,23 +835,25 @@ class AttackTests(unittest.TestCase):
     def _verdict(self, opening: LootOffer, readings: list[ScoutView | None]) -> bool:
         """Run the battle wait against canned panel readings, with the clock removed.
 
-        The trailing Nones are padded out because the wait takes the panel as
-        gone only after consecutive failures, not after one. Each case below says
-        what the loop saw while the battle ran; how many frames it takes to be
-        sure the panel has gone is its own pair of tests.
+        A reading of None here stands for the result screen, which is what ends
+        the wait: a panel that merely will not read no longer does, since a
+        battlefield showing through one is not a battle that has ended. The
+        trailing Falses are for `_leave_result`, which polls the same button.
         """
         runner = self._runner()
         with (
             patch.object(AttackRunner, "_frame", return_value=b""),
             patch.object(AttackRunner, "_tap"),
-            patch.object(attack, "read_scout", side_effect=[*readings, None, None, None]),
-            # The result screen is left through its own poll now, and these
-            # canned frames are not images.
-            patch.object(attack, "battle_over", return_value=False),
+            patch.object(attack, "read_scout", side_effect=readings),
+            patch.object(
+                attack,
+                "battle_over",
+                side_effect=[view is None for view in readings] + [False] * RESULT_ATTEMPTS,
+            ),
             patch.object(attack.time, "sleep"),
         ):
             # Whatever the abilities saw counts too, which is the whole point.
-            runner._battle_view("ability")
+            runner._battle_ended("ability")
             return runner._wait_out_battle(opening)
 
     def test_a_battle_won_before_the_first_poll_still_counts(self) -> None:
@@ -1038,44 +1041,39 @@ class AttackTests(unittest.TestCase):
             (landed + timings.seconds("queen"), "queen", lambda: played.append("queen")),
             (opened + timings.freeze, "freeze", lambda: played.append("freeze")),
         ]
-        on = ScoutView(loot=LootOffer(gold=1, elixir=1, dark=1), can_skip=False)
         with (
-            patch.object(AttackRunner, "_battle_view", return_value=on),
+            patch.object(AttackRunner, "_battle_ended", return_value=False),
             patch.object(attack.time, "sleep"),
         ):
             self._runner()._run_schedule(opened, moves)
         assert played == ["queen", "freeze", "champion"]
 
-    def _schedule_over(self, readings: list[ScoutView | None]) -> list[str]:
-        """One scheduled move played against canned panel readings."""
+    def _schedule_over(self, reads: bool, result_screen: bool) -> list[str]:
+        """One scheduled move played against a canned frame."""
         played: list[str] = []
+        view = ScoutView(loot=LootOffer(gold=1, elixir=1, dark=1), can_skip=False)
         with (
             patch.object(AttackRunner, "_frame", return_value=b""),
-            patch.object(attack, "read_scout", side_effect=readings),
+            patch.object(attack, "read_scout", return_value=view if reads else None),
+            patch.object(attack, "battle_over", return_value=result_screen),
             patch.object(attack.time, "sleep"),
         ):
             self._runner()._run_schedule(0.0, [(0.0, "freeze", lambda: played.append("freeze"))])
         return played
 
-    def test_one_unreadable_frame_does_not_abandon_the_schedule(self) -> None:
-        """A row that will not read is not a battle that has ended.
+    def test_an_unreadable_panel_is_not_a_battle_that_ended(self) -> None:
+        """The battlefield shows through the panel, and then no row of it resolves.
 
-        The loot reader now fails a row rather than dropping a digit out of the
-        middle of it, so a battle still being fought produces the occasional
-        None where it used to produce a number that was wrong by a factor of
-        ten. Taken for the result screen, one of those drops every spell and
-        hero ability still to come.
+        Measured on a live battle at 69% with two stars and every rage still in
+        its card, the gold row of 485 715 read on none of its frames. Taken for
+        the result screen, that abandons every spell and hero ability still to
+        come — and it did, for five rounds of one recorded run.
         """
-        on = ScoutView(loot=LootOffer(gold=1, elixir=1, dark=1), can_skip=False)
-        assert self._schedule_over([None, on]) == ["freeze"]
+        assert self._schedule_over(reads=False, result_screen=False) == ["freeze"]
 
-    def test_a_panel_that_is_really_gone_still_stops_the_schedule(self) -> None:
-        """Some card slots sit under the result screen's 回營 button, so this matters.
-
-        The panel does not come back once the battle is over, which is what makes
-        consecutive failures the thing that tells the two Nones apart.
-        """
-        assert self._schedule_over([None, None, None]) == []
+    def test_the_result_screen_stops_the_schedule(self) -> None:
+        """Some card slots sit under its 回營 button, so this is what must not be tapped."""
+        assert self._schedule_over(reads=False, result_screen=True) == []
 
     def test_a_refused_flank_leaves_the_other_three_to_try(self) -> None:
         """The plan's own side goes first behind its line, then the flanks it did not pick."""

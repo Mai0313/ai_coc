@@ -517,39 +517,31 @@ class AttackRunner(BaseModel):
             (self.frame_dir / f"{self._captures:04d}_{label}.png").write_bytes(png)
         return png
 
-    def _battle_view(self, label: str) -> ScoutView | None:
-        """The loot panel mid-battle, kept here so every caller's reading counts.
+    def _battle_ended(self, label: str) -> bool:
+        """Whether the result screen is up, and the loot on the way past.
 
-        Three places poll it to ask whether the battle is still on, and all three
-        readings are evidence of the same thing, so the last one lives on the
-        runner rather than in whichever method happened to take it. A battle that
-        ends quickly is what this is for: the loot had visibly fallen while the
-        abilities were firing, but `_wait_out_battle` trusted only its own
-        ten-second poll, met the result screen on the first one, and reported a
-        village it had three-starred as one where nothing was ever deployed.
+        A loot panel that will not read is not a battle that has ended, and this
+        used to treat the two as one thing. Measured on a live battle sitting at
+        69% with two stars and every rage still in its card, the gold row of
+        485 715 resolved on no frame at all — the battlefield shows through the
+        panel, its 48 arrives as a single 32 px span, and no cut through that
+        reads as two digits — so the wait declared the battle over, left through
+        a 回營 button that was not there, and the next round opened onto a battle
+        still being fought. Five rounds of one recorded run went that way, each
+        standing down with 畫面不在主村 while the battle behind it played itself
+        out unattended.
+
+        The green 回營 button needs no digits, which is the whole reason to ask
+        it instead. The loot is still read on the way past, because whether
+        anything was ever deployed is judged on the last reading anyone took —
+        including the ones the abilities took, on a battle short enough that this
+        poll never saw the panel at all.
         """
-        view = read_scout(self._frame(label))
+        png = self._frame(label)
+        view = read_scout(png)
         if view is not None:
             self._seen = view.loot
-        return view
-
-    def _battle_ended(self, label: str) -> bool:
-        """Whether the loot panel has really gone, rather than having failed to read once.
-
-        `read_scout` answers None both to the result screen and to a frame whose
-        digits will not resolve, and to the two callers here those mean opposite
-        things: one says stop, the other says look again. One None used to settle
-        it because an unreadable row still produced a number — the wrong one,
-        short by a digit. Now that such a row fails honestly, a lone None is as
-        likely to be one marginal glyph as a finished battle, and acting on it
-        drops every spell and ability still on the schedule of a battle that is
-        still being fought, or reports one as over while it runs on.
-
-        Consecutive failures are what tell them apart, since the panel does not
-        come back once it is gone. `_wait_for_battle` already holds the countdown
-        to this same bar, for the same reason.
-        """
-        return all(self._battle_view(label) is None for _ in range(UNREADABLE_ATTEMPTS))
+        return battle_over(png)
 
     def _open_attack_menu(self) -> bytes | None:
         """Get to the attack menu, clearing whatever is covering the village.
