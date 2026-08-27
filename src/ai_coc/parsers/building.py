@@ -75,7 +75,12 @@ INK_WHITE = 245
 INK_RED_LEVEL = 200
 INK_RED_MARGIN = 80
 # Swept over the recorded menus, every digit that read correctly landed within 24
-# of its template, red and white alike.
+# of its template, red and white alike. It was defined and never passed, which is
+# why a row this reader only half resolved came back as a shorter number rather
+# than as nothing: 10 400 000 was reported as 14. A truncated price is the
+# dangerous kind of wrong, because one that keeps seven of its eight digits still
+# clears `MIN_PRICE` and is spent against. Swept over 548 recorded frames,
+# applying it changes eight readings and every one is a stray 1 becoming None.
 PRICE_TOLERANCE = 30
 # How short a digit may be here, which is lower than the loot panel's floor
 # because **a price is shrunk to fit its button**. Measured across the recorded
@@ -181,7 +186,9 @@ def _price(image: Image.Image, centre: int) -> int | None:
     """What the button centred here asks for, or None where it does not read."""
     left, top, right, bottom = PRICE_BOX
     return digits_from(
-        _price_mask(image.crop((centre + left, top, centre + right, bottom))), floor=PRICE_ROWS
+        _price_mask(image.crop((centre + left, top, centre + right, bottom))),
+        PRICE_TOLERANCE,
+        floor=PRICE_ROWS,
     )
 
 
