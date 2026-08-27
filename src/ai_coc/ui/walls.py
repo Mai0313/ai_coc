@@ -1,10 +1,18 @@
 """Spend whatever the storages can spare on wall upgrades.
 
 Walls are the one thing in the village that upgrade the instant they are paid
-for: no builder is tied up and no timer runs. So a village with every builder
-busy and both storages filling up has nowhere else to put the loot a farming run
-brings home, which is what this is for — and why it runs to the same shape as
+for: no builder is tied up and no timer runs, and one run buys as many batches as
+the storages will stretch to. So a village whose builders are all on multi-day
+jobs and whose storages are filling up has nowhere else to put the loot a farming
+run brings home, which is what this is for — and why it runs to the same shape as
 `attack.py`, driven from screen reads with no Gemini call anywhere in it.
+
+**It still wants one builder standing idle, though it never uses them.** Measured
+live on a village at 0/5, every batch was confirmed and then not charged for, the
+game answering 所有建築工人都在忙碌中 and offering to finish something with gems
+— one wall at 1 600 000 refused exactly as an eight-wall batch at 12 800 000 was.
+So the loop stops on that rather than walking the rest of the village at forty
+seconds a wall, and `ai_coc builders` is what says how long the wait is.
 
 The game does most of the work. Tapping a wall opens its menu; 升級更多 turns
 that into a batch and 新增城牆 grows it, with the game itself deciding which
@@ -24,6 +32,7 @@ import logging
 
 from ai_coc.models import WallMenu, WallBatch, WallReport, WallUpgrade, VillageStock, WallCandidate
 from ai_coc.ui.runner import MENU_SETTLE, GameRunner
+from ai_coc.parsers.home import free_builders
 from ai_coc.parsers.building import wall_menu, game_dialog
 
 logger = logging.getLogger(__name__)
@@ -234,6 +243,22 @@ class WallRunner(GameRunner):
             point = self._pick(prices)
             bought = self._buy(point, stock)
             if bought is None:
+                # A batch the game confirms and then does not charge for is
+                # nearly always one thing, and it says so: measured live with
+                # every builder busy, 確定 raised 所有建築工人都在忙碌中 and
+                # nothing was spent — one wall at 1 600 000 refused exactly as an
+                # eight-wall batch at 12 800 000 was, so it is not the size or
+                # the purse. That dialog is answered and gone by the time this
+                # runs, but the counter it was complaining about is not, and
+                # walking the rest of the village would fail the same way at
+                # forty seconds a wall.
+                counted = free_builders(self._frame("builders"))
+                if counted is not None and counted[0] == 0:
+                    report.message = (
+                        f"{counted[1]} 個工人都在忙，遊戲不讓升級城牆；"
+                        "跑 ai_coc builders 看最快的還要多久"
+                    )
+                    break
                 # This point is spent as far as this run is concerned. Dropping
                 # it rather than retrying is what keeps a wall the game will not
                 # sell from being asked about once a round for the whole run.
