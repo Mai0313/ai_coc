@@ -1531,6 +1531,30 @@ class BuildingUpgradeTests(unittest.TestCase):
         assert len(upgrade_buttons(frame)) == 1
         assert wall_menu(frame) is None
 
+    def test_an_eight_figure_price_is_drawn_too_short_for_the_loot_panel_floor(self) -> None:
+        """A price is shrunk to fit its button, so how tall a digit is depends on
+        how many of them there are: five figures are drawn 16 px tall, seven 13
+        to 14, and eight 12 — of which the digits with no ascender are 11. At the
+        loot panel's floor those drop out one at a time and whatever survives is
+        reported as the price, which had 英雄殿堂's own 10 400 000 reading as 14
+        and left `ai_coc upgrade` unable to see any eight-figure upgrade at all.
+        """
+        offers = upgrade_buttons((FRAMES / "hero_hall_menu.png").read_bytes())
+        assert [(offer.resource, offer.price) for offer in offers] == [("elixir", 10_400_000)]
+
+    def test_a_shorter_floor_does_not_invent_prices_on_the_menus_that_already_read(self) -> None:
+        """Swept over 548 recorded frames, the lower floor changed four readings
+        and every one of them was this same eight-figure price. Nothing that read
+        before stopped reading, and nothing unreadable became a number.
+        """
+        plain = upgrade_buttons((FRAMES / "wall_menu_plain.png").read_bytes())
+        assert [(offer.resource, offer.price) for offer in plain] == [
+            ("gold", 1_600_000),
+            ("elixir", 1_600_000),
+        ]
+        assert upgrade_buttons((FRAMES / "home_storages.png").read_bytes()) == []
+        assert upgrade_buttons((FRAMES / "army_screen.png").read_bytes()) == []
+
     def test_the_upgrade_sheet_is_told_from_grass_by_the_storage_bars(self) -> None:
         """A building confirms on a full-screen sheet whose 確認 is green — and so
         is a village, all over. What separates them is that the sheet covers the
