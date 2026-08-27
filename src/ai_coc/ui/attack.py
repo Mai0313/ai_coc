@@ -42,6 +42,7 @@ from ai_coc.parsers.scout import (
     field_units,
     card_drained,
     freeze_cards,
+    skip_offered,
     army_strength,
     counted_cards,
     attack_menu_open,
@@ -226,6 +227,22 @@ FLANK_ROOM = 110
 # it one call took 180.7 s and then failed validation, by which point the
 # three-minute battle it was planning was over and the army was spent on nothing.
 PLAN_TIMEOUT = 30
+
+# How many frames in a row may show an opponent whose loot will not read before
+# the loop stops waiting on it and asks for a different one. Measured over 72
+# groups of consecutive scout frames across four batches: of the 70 that
+# eventually read, not one took more than **2** consecutive misses to do it,
+# while both of the two that never read ran to 17. This sits in that gap.
+#
+# Being wrong in the two directions does not cost the same. Waiting is what the
+# loop used to do, and the scout countdown expires while it waits: measured live
+# on one ten-round batch, two rounds stood on an unreadable panel until the game
+# force-started the battle with the whole army still in its cards, and each then
+# spent two more rounds standing down with 畫面不在主村 before the result screen
+# could be cleared. About four and a half minutes and a search fee, twice, for a
+# battle that ended 戰敗 at 0% with nothing deployed. Asking for another opponent
+# costs 1400 gold.
+UNREADABLE_SKIPS = 5
 
 # The scout countdown is 30 seconds; this polls a second at a time and leaves
 # room for a slow frame rather than sitting through a whole battle.
@@ -638,13 +655,33 @@ class AttackRunner(BaseModel):
 
         The frame comes back with the view because `card_groups` only holds on a
         full card row, and this is the last moment one is guaranteed.
+
+        **An opponent whose loot will not read is not an empty search**, and
+        waiting on one is the expensive way to find that out: the countdown is
+        running the whole time, and when it ends the game starts the battle
+        whether anything was deployed or not. `skip_offered` is what tells the
+        two apart, since the 下一個 button needs none of the digits, and the
+        answer to the second is to ask for another opponent rather than to stand
+        there. Each skip leaves the rest of the window to the one that follows,
+        so a screen this cannot read at all still ends the round — just without
+        paying for a battle nobody fought.
         """
         deadline = time.monotonic() + timeout
+        unread = 0
         while time.monotonic() < deadline:
             png = self._frame("scout")
             view = read_scout(png)
             if view:
                 return view, png
+            unread = unread + 1 if skip_offered(png) else 0
+            if unread >= UNREADABLE_SKIPS:
+                logger.warning(
+                    "An opponent is on screen but %d frames running would not read its loot; "
+                    "asking for another rather than letting the countdown start the battle",
+                    unread,
+                )
+                self._tap(NEXT_TARGET)
+                unread = 0
             time.sleep(1)
         return None
 

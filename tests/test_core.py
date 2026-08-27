@@ -54,6 +54,7 @@ from ai_coc.ui.attack import (
     DROPS_PER_PASS,
     DEPLOY_ATTEMPTS,
     RESULT_ATTEMPTS,
+    UNREADABLE_SKIPS,
     AttackRunner,
     spaced,
     push_out,
@@ -977,6 +978,34 @@ class AttackTests(unittest.TestCase):
             display=DisplayTarget(logical_id="1", physical_id="2"),
             thresholds=LootThresholds(),
         )
+
+    def _scouted(self, readings: list[ScoutView | None], offered: list[bool]) -> int:
+        """Poll the scout screen over canned readings; how many times 下一個 was tapped."""
+        runner = self._runner()
+        with (
+            patch.object(AttackRunner, "_frame", return_value=b""),
+            patch.object(AttackRunner, "_tap") as tapped,
+            patch.object(attack, "read_scout", side_effect=readings),
+            patch.object(attack, "skip_offered", side_effect=offered),
+            patch.object(attack.time, "sleep"),
+        ):
+            runner._scout(timeout=60)
+        return tapped.call_count
+
+    def test_a_search_still_running_is_waited_out(self) -> None:
+        """正在搜尋對手 has no 下一個 on it, and nothing is owed to a search but patience."""
+        found = ScoutView(loot=LootOffer(gold=1, elixir=1, dark=1), can_skip=True)
+        assert self._scouted([None] * 8 + [found], [False] * 8 + [True]) == 0
+
+    def test_an_opponent_whose_loot_will_not_read_is_swapped_for_another(self) -> None:
+        """Standing on one is what lets the countdown start the battle with the army in hand.
+
+        Measured over 72 groups of consecutive scout frames, every opponent that
+        eventually read did so within 2 consecutive misses and the two that never
+        read ran to 17 — so a run this long is a panel, not a slow frame.
+        """
+        found = ScoutView(loot=LootOffer(gold=1, elixir=1, dark=1), can_skip=True)
+        assert self._scouted([None] * UNREADABLE_SKIPS + [found], [True] * UNREADABLE_SKIPS) == 1
 
     def _verdict(self, opening: LootOffer, readings: list[ScoutView | None]) -> bool:
         return self._watched(opening, readings)[0]
