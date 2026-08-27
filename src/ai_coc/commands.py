@@ -22,9 +22,11 @@ from pydantic import BaseModel, PrivateAttr
 from ai_coc import plans
 from ai_coc.models import (
     MapEdge,
+    HeroKind,
     ProbeRay,
     AppConfig,
     MapSurvey,
+    HeroReport,
     WallReport,
     BuildReport,
     WallOptions,
@@ -47,6 +49,7 @@ from ai_coc.adapters.ai import GeminiClient
 # cannot be built at all.
 from ai_coc.adapters.adb import AdbController
 from ai_coc.parsers.clan import donatable_cards
+from ai_coc.parsers.hero import hero_cards
 from ai_coc.parsers.home import builder_jobs, free_builders, collect_bubbles
 from ai_coc.adapters.mumu import MuMuAdapter
 from ai_coc.parsers.scout import (
@@ -69,6 +72,7 @@ from ai_coc.parsers.boundary import PLAYFIELD, VILLAGE_CENTRE, boundary_reach
 from ai_coc.parsers.building import wall_menu, upgrade_buttons
 
 from .ui.clan import ClanRunner
+from .ui.hero import HeroRunner
 from .ui.walls import WallRunner
 from .ui.attack import CARD_ROW_Y, DROP_SETTLE, SINGLE_DROP_DELAY, AttackRunner
 from .ui.upkeep import UpkeepRunner
@@ -498,6 +502,30 @@ def upgrade(
     return report
 
 
+def hero(
+    frame_dir: Path | None = None, which: HeroKind | None = None, at: tuple[int, int] | None = None
+) -> HeroReport:
+    """Read the 英雄殿堂, and raise the hero named, with no window in the way.
+
+    Reading is the default and spends nothing: what each hero costs next is the
+    number the decision rests on, and a hall nobody has looked at is the most
+    expensive kind of idle builder — a hero level runs for the better part of a
+    day, so one not started this evening is one not finished tomorrow.
+
+    `which` is what turns it into a purchase, and only ever for the hero named:
+    which hero is worth raising is a judgement about how the village plays, not
+    something a price can settle.
+    """
+    adb = _controller()
+    if frame_dir is not None:
+        frame_dir.mkdir(parents=True, exist_ok=True)
+    report = HeroRunner(
+        adb=adb, display=adb.display_for(COC_PACKAGE), frame_dir=frame_dir, hero=which, at=at
+    ).run()
+    logger.info("Hero: %s", report.message)
+    return report
+
+
 def donate(frame_dir: Path | None = None, dry_run: bool = False, rounds: int = 0) -> DonateReport:
     """Give troops to whoever in the clan is asking, with no window in the way.
 
@@ -550,6 +578,7 @@ def read(png: bytes) -> FrameReading:
         army=army_strength(png),
         wall_menu=wall_menu(png),
         bubbles=collect_bubbles(png),
+        heroes=hero_cards(png),
         builders=free_builders(png),
         queue=builder_jobs(png),
         upgrades=upgrade_buttons(png),

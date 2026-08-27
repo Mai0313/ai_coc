@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import sys
-from typing import Any
+from typing import Any, get_args
 import logging
 from pathlib import Path
 import argparse
@@ -12,7 +12,7 @@ from PyQt5.QtWidgets import QApplication
 # PyInstaller runs this file as `__main__`, which has no package context, so these
 # stay absolute even for same-layer modules.
 from ai_coc import commands, __version__
-from ai_coc.models import WallOptions, AttackOptions, LootOverrides
+from ai_coc.models import HeroKind, WallOptions, AttackOptions, LootOverrides
 from ai_coc.constants import APP_NAME
 from ai_coc.logging_setup import configure_logging
 from ai_coc.ui.main_window import MainWindow, migrate_settings
@@ -70,6 +70,18 @@ def _parser() -> argparse.ArgumentParser:
     build.add_argument("--frames", type=Path, help="把迴圈讀到的每一張畫面存進這個資料夾")
     build.add_argument("--keep-gold", type=int, default=0, help="留下這麼多金幣不要花")
     build.add_argument("--keep-elixir", type=int, default=0, help="留下這麼多聖水不要花")
+    champions = sub.add_parser("hero", help="讀英雄殿堂,把閒著的工人派去升級指定的英雄")
+    champions.add_argument("--frames", type=Path, help="把迴圈讀到的每一張畫面存進這個資料夾")
+    # Reading is the default and starting an upgrade is the exception, because
+    # only one of the two spends anything. Which hero is worth a builder is a
+    # judgement about the village, so nothing here picks one on its own.
+    champions.add_argument(
+        "--upgrade",
+        metavar="英雄",
+        choices=[kind for kind in get_args(HeroKind) if kind != "unknown"],
+        help="真的把這個英雄送去升級,不給就只讀不動",
+    )
+    champions.add_argument("--at", metavar="X,Y", help="直接點這個座標上的建築,跳過整個村莊的掃描")
     give = sub.add_parser("donate", help="有人請求增援就捐兵,不開視窗")
     give.add_argument("--frames", type=Path, help="把迴圈讀到的每一張畫面存進這個資料夾")
     give.add_argument(
@@ -95,7 +107,19 @@ def _run_command(arguments: argparse.Namespace) -> int:
     Written rather than logged: the log already carries the running commentary
     on stderr, and this is the answer.
     """
-    if arguments.command == "attack":
+    # The commands whose whole argument list is a frame directory, dispatched
+    # through a table rather than a branch each. They are the same shape, and
+    # four copies of that shape is most of what this function's branching budget
+    # was being spent on.
+    plain = {
+        "collect": commands.collect,
+        "builders": commands.builders,
+        "probe": commands.probe,
+        "bounds": commands.bounds,
+    }
+    if arguments.command in plain:
+        result = plain[arguments.command](arguments.frames).model_dump_json(indent=2)
+    elif arguments.command == "attack":
         result = commands.attack(
             AttackOptions(
                 frame_dir=arguments.frames,
@@ -121,22 +145,19 @@ def _run_command(arguments: argparse.Namespace) -> int:
                 at=(int(spot[0]), int(spot[1])) if spot else None,
             )
         ).model_dump_json(indent=2)
-    elif arguments.command == "collect":
-        result = commands.collect(arguments.frames).model_dump_json(indent=2)
-    elif arguments.command == "builders":
-        result = commands.builders(arguments.frames).model_dump_json(indent=2)
     elif arguments.command == "upgrade":
         result = commands.upgrade(
             arguments.frames, arguments.keep_gold, arguments.keep_elixir
+        ).model_dump_json(indent=2)
+    elif arguments.command == "hero":
+        spot = arguments.at.split(",") if arguments.at else None
+        result = commands.hero(
+            arguments.frames, arguments.upgrade, (int(spot[0]), int(spot[1])) if spot else None
         ).model_dump_json(indent=2)
     elif arguments.command == "donate":
         result = commands.donate(
             arguments.frames, arguments.dry_run, arguments.rounds
         ).model_dump_json(indent=2)
-    elif arguments.command == "probe":
-        result = commands.probe(arguments.frames).model_dump_json(indent=2)
-    elif arguments.command == "bounds":
-        result = commands.bounds(arguments.frames).model_dump_json(indent=2)
     elif arguments.command == "capture":
         saved = commands.capture(arguments.out, arguments.count, arguments.gap)
         result = "\n".join(str(path) for path in saved)
