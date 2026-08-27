@@ -45,6 +45,7 @@ from ai_coc.ui.attack import (
     RAGE_PATH,
     RAGE_SPAN,
     DEPLOY_END,
+    END_BATTLE,
     DROP_STRIDE,
     LINE_POINTS,
     DEPLOY_LINES,
@@ -98,6 +99,7 @@ from ai_coc.parsers.scout import (
     field_units,
     card_drained,
     freeze_cards,
+    skip_offered,
     army_strength,
     counted_cards,
     attack_menu_open,
@@ -1006,6 +1008,43 @@ class AttackTests(unittest.TestCase):
         """
         found = ScoutView(loot=LootOffer(gold=1, elixir=1, dark=1), can_skip=True)
         assert self._scouted([None] * UNREADABLE_SKIPS + [found], [True] * UNREADABLE_SKIPS) == 1
+
+    def test_the_button_separates_the_two_screens_read_scout_cannot(self) -> None:
+        """The premise the swap rests on, on the two frames that actually differ.
+
+        `read_scout` answers None for both of these, so nothing else on either
+        screen can say which one a run is looking at.
+        """
+        assert skip_offered((FRAMES / "searching.png").read_bytes()) is False
+        smudged = (FRAMES / "scout_smudged_digit.png").read_bytes()
+        assert read_scout(smudged) is None
+        assert skip_offered(smudged) is True
+
+    def test_a_search_given_up_on_is_left_through_the_button(self) -> None:
+        """Walking away leaves a live countdown to start the battle without an army.
+
+        That is what the timeout used to land on only after the countdown had
+        expired; a swap can now put a seconds-old opponent on screen instead, so
+        leaving has to be deliberate. 結束戰鬥 is only safe while 下一個 is up,
+        which is exactly what the last frame `_scout` read answers.
+        """
+        runner = self._runner()
+        with (
+            patch.object(AttackRunner, "_frame", return_value=b""),
+            patch.object(AttackRunner, "_tap") as tapped,
+            patch.object(AttackRunner, "_open_attack_menu", return_value=b""),
+            patch.object(attack, "read_stock", return_value=None),
+            patch.object(attack, "army_strength", return_value=None),
+            patch.object(attack, "read_scout", return_value=None),
+            patch.object(attack, "skip_offered", return_value=True),
+            patch.object(attack.time, "sleep"),
+            # The deadline as well as the sleeps, or the poll spins for a real
+            # thirty seconds: the first reading sets it and the rest walk past it.
+            patch.object(attack.time, "monotonic", side_effect=[0, *range(0, 200, 7)]),
+        ):
+            report = runner.run()
+        assert "等不到對手畫面" in report.message
+        assert tapped.call_args_list[-1].args[0] == END_BATTLE
 
     def _verdict(self, opening: LootOffer, readings: list[ScoutView | None]) -> bool:
         return self._watched(opening, readings)[0]

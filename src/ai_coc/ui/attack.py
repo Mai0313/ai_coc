@@ -496,6 +496,15 @@ class AttackRunner(BaseModel):
 
     _captures: int = PrivateAttr(default=0)
     _seen: LootOffer | None = PrivateAttr(default=None)
+    # Whether the last frame `_scout` gave up on still had 下一個 on it, which
+    # decides how the round is left: 結束戰鬥 is only on the screen while that
+    # button is, and walking out of 正在搜尋對手 instead would pay for a battle
+    # nothing is deployed in.
+    _offered: bool = PrivateAttr(default=False)
+    # Opponents `_scout` swapped out because their loot would not read. They are
+    # skips like any other — a search fee each — so they belong in the report
+    # rather than only in the log, which is the number a run is judged on.
+    _swapped: int = PrivateAttr(default=0)
     # Whatever `_plan` settled on, kept so a run can be written down and replayed.
     _played: AttackPlan | None = PrivateAttr(default=None)
     # How far the village has moved on screen since the attack opened, which is
@@ -662,9 +671,14 @@ class AttackRunner(BaseModel):
         whether anything was deployed or not. `skip_offered` is what tells the
         two apart, since the 下一個 button needs none of the digits, and the
         answer to the second is to ask for another opponent rather than to stand
-        there. Each skip leaves the rest of the window to the one that follows,
-        so a screen this cannot read at all still ends the round — just without
-        paying for a battle nobody fought.
+        there. Each skip leaves the rest of the window to the one that follows.
+
+        Running out of window is a different screen from the one this used to
+        give up on, and `_offered` is what says so. The timeout used to land on a
+        countdown that had already expired; now it can land on an opponent that
+        arrived seconds ago with most of its own still to run, so the caller has
+        to leave through 結束戰鬥 rather than walk away — which is only safe
+        while 下一個 is up, and that is exactly what this last read answers.
         """
         deadline = time.monotonic() + timeout
         unread = 0
@@ -673,7 +687,8 @@ class AttackRunner(BaseModel):
             view = read_scout(png)
             if view:
                 return view, png
-            unread = unread + 1 if skip_offered(png) else 0
+            self._offered = skip_offered(png)
+            unread = unread + 1 if self._offered else 0
             if unread >= UNREADABLE_SKIPS:
                 logger.warning(
                     "An opponent is on screen but %d frames running would not read its loot; "
@@ -681,6 +696,7 @@ class AttackRunner(BaseModel):
                     unread,
                 )
                 self._tap(NEXT_TARGET)
+                self._swapped += 1
                 unread = 0
             time.sleep(1)
         return None
@@ -1294,6 +1310,9 @@ class AttackRunner(BaseModel):
         # A new battle opens on its own camera, so whatever the last one was
         # dragged to has nothing to do with this one.
         self._panned = (0, 0)
+        # Both belong to one round's own search, and both are reported on it.
+        self._offered = False
+        self._swapped = 0
         home = self._open_attack_menu()
         if home is None:
             logger.warning("The attack menu did not open; the game is not on the home village")
@@ -1329,7 +1348,15 @@ class AttackRunner(BaseModel):
         while True:
             scouted = self._scout()
             if scouted is None:
-                return AttackReport(skipped=skipped, message="等不到對手畫面，已放棄這一輪搜尋")
+                # An opponent still offering 下一個 has a countdown of its own
+                # running, and leaving it to expire is what starts a battle the
+                # army sits out. 結束戰鬥 is on that screen for exactly this.
+                if self._offered:
+                    logger.info("Leaving through 結束戰鬥 rather than letting the countdown run")
+                    self._tap(END_BATTLE)
+                return AttackReport(
+                    skipped=skipped + self._swapped, message="等不到對手畫面，已放棄這一輪搜尋"
+                )
             view, frame = scouted
             forced = not view.can_skip
             # Leaving is only safe on an opponent that can still be skipped: 結束
@@ -1345,12 +1372,14 @@ class AttackRunner(BaseModel):
                 self._deploy(frame)
                 took = self._wait_out_battle(view.loot)
                 return AttackReport(
-                    skipped=skipped, attacked=view.loot, message=self._outcome(reason, took)
+                    skipped=skipped + self._swapped,
+                    attacked=view.loot,
+                    message=self._outcome(reason, took),
                 )
             if stopping or skipped >= self.max_skips:
                 self._tap(END_BATTLE)
                 return AttackReport(
-                    skipped=skipped,
+                    skipped=skipped + self._swapped,
                     message="已停止，未開打就離開搜尋"
                     if stopping
                     else f"連續跳過 {skipped} 個對手都未達門檻，已結束搜尋",
