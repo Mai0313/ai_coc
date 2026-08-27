@@ -20,11 +20,11 @@ import logging
 
 from PIL import Image, ImageChops
 
-from ai_coc.models import ResourceBubble
+from ai_coc.models import BuildQueue, ResourceBubble
 
 # The digit reader and the mask it wants both live in `scout`, which owns the
 # templates. Nothing here is worth a second copy of either.
-from ai_coc.parsers.scout import _ink_mask, split_numbers
+from ai_coc.parsers.scout import TEMPLATES, _ink_mask, _signature, split_numbers, _glyph_columns
 
 logger = logging.getLogger(__name__)
 
@@ -64,6 +64,52 @@ MARKERS = (
 # so anything over the line separates one number from the other.
 BUILDER_BOX = (795, 33, 860, 66)
 BUILDER_TOLERANCE = 22
+
+# Tapping that counter opens the panel listing every upgrade the village has
+# running, and tapping it again closes it — the button toggles rather than
+# opens, which is why the runner reads the panel before deciding it failed.
+BUILDER_BUTTON = (745, 48)
+
+# Each running upgrade gets a progress bar with its remaining time drawn over
+# it, and **the bar is the only thing that says which rows those are**. The panel
+# carries two more sections under them, 建議升級 and 其他升級, whose rows carry a
+# price in the same place in the same white — so a reader going by the text alone
+# would report a gold cost as a countdown. Nothing below the running rows has a
+# bar. Nothing reads the names beside them either: they are Chinese, they are
+# different in every village, and none of them is needed to answer when a
+# builder comes free.
+#
+# Measured on live panels the bars share one column and one pair of colours: the
+# unfilled track is a flat (47, 47, 47) and the filled part a bright green, and
+# together they cover the column edge to edge. Rows sit 48 px apart, so anything
+# within BAR_GAP of a bar already found is the same bar found again a row down.
+BAR_LEFT, BAR_RIGHT = 870, 1010
+BAR_TRACK, BAR_TRACK_SPREAD = 47, 12
+BAR_COVERAGE = 0.8
+BAR_GAP = 20
+PANEL_TOP, PANEL_BOTTOM = 150, 700
+
+# The time sits in the band directly above its own bar, right-aligned.
+TIME_BOX = (860, 1015)
+TIME_HEIGHT = 26
+# A digit here matches its template within 16 while every unit character misses
+# by 49 or more, so this line only has to sit between the two.
+TIME_DIGIT_TOLERANCE = 30
+
+# 天, 小時 and 分鐘, as the seconds one of each is worth. Only the **first**
+# character of a unit is matched, which is what keeps this to three templates:
+# 小 and 分 each lead a two-character unit, and the second unit on a row is
+# always the next step down the ladder rather than something to be read.
+#
+# Measured across every recorded panel, one unit's own readings land within 16
+# bits of each other while the nearest other unit is 49 away and the nearest
+# digit 54, so the same 30 the digits use separates these too.
+UNIT_TEMPLATES = {
+    86400: 694176028518715082074175994823591921588995,
+    3600: 1362459995062295920913326796806252659743,
+    60: 98001493513730352222404855677119927554332,
+}
+UNIT_LADDER = (86400, 3600, 60, 1)
 
 
 class _Patch:
@@ -192,6 +238,92 @@ def collect_bubbles(png: bytes) -> list[ResourceBubble]:
             if not _in_storage_bars(middle):
                 found.append(ResourceBubble(resource=resource, point=middle))
     return sorted(found, key=lambda bubble: (bubble.point[1], bubble.point[0]))
+
+
+def _bar_tops(image: Image.Image) -> list[int]:
+    """The top row of each progress bar in the panel's own column.
+
+    Every fourth pixel is enough to tell a bar from anything else: it has to run
+    the whole column, and nothing else in the panel does.
+    """
+    width = BAR_RIGHT - BAR_LEFT
+    data = image.crop((BAR_LEFT, PANEL_TOP, BAR_RIGHT, PANEL_BOTTOM)).tobytes()
+    wanted = len(range(0, width, 4)) * BAR_COVERAGE
+    tops: list[int] = []
+    for row in range(PANEL_BOTTOM - PANEL_TOP):
+        base = row * width * 3
+        covered = 0
+        for offset in range(base, base + width * 3, 12):
+            red, green, blue = data[offset], data[offset + 1], data[offset + 2]
+            track = all(abs(value - BAR_TRACK) < BAR_TRACK_SPREAD for value in (red, green, blue))
+            if track or (green > 140 and green - red > 40 and green - blue > 60):
+                covered += 1
+        y = PANEL_TOP + row
+        if covered >= wanted and (not tops or y - tops[-1] > BAR_GAP):
+            tops.append(y)
+    return tops
+
+
+def _remaining(image: Image.Image, bar_top: int) -> int | None:
+    """The seconds written above one progress bar, or None where they will not read.
+
+    A row reads as a number, a unit, and usually a second number in the next unit
+    down — 9小時 23分鐘, or 1天 17小時. The second unit is never matched, because
+    the game writes them in descending order and adjacent, so knowing the first
+    settles it.
+    """
+    box = (TIME_BOX[0], bar_top - TIME_HEIGHT, TIME_BOX[1], bar_top)
+    mask = _ink_mask(image.crop(box))
+    numbers: list[int] = []
+    digits = ""
+    scale: int | None = None
+    for left, right in _glyph_columns(mask):
+        signature = _signature(mask, left, right)
+        if signature is None:
+            continue
+        digit = min(TEMPLATES, key=lambda d: (TEMPLATES[d] ^ signature).bit_count())
+        if (TEMPLATES[digit] ^ signature).bit_count() <= TIME_DIGIT_TOLERANCE:
+            digits += digit
+            continue
+        if digits:
+            numbers.append(int(digits))
+            digits = ""
+        if scale is not None or len(numbers) != 1:
+            continue
+        # The first character after the first number is the one unit worth
+        # matching; everything after it follows from the ladder.
+        unit = min(
+            UNIT_TEMPLATES, key=lambda seconds: (UNIT_TEMPLATES[seconds] ^ signature).bit_count()
+        )
+        if (UNIT_TEMPLATES[unit] ^ signature).bit_count() <= TIME_DIGIT_TOLERANCE:
+            scale = unit
+    if digits:
+        numbers.append(int(digits))
+    if scale is None or not numbers:
+        return None
+    below = UNIT_LADDER[UNIT_LADDER.index(scale) + 1]
+    return numbers[0] * scale + (numbers[1] * below if len(numbers) > 1 else 0)
+
+
+def builder_jobs(png: bytes) -> BuildQueue | None:
+    """What the builder panel says is running, soonest first.
+
+    None means the panel is not on screen at all, which is what a caller that
+    tapped a button that toggles needs to be told apart from a village with
+    nothing being built.
+
+    A row whose time will not read is counted but left out of the times rather
+    than guessed at, which is why both numbers are reported: the two disagreeing
+    is worth seeing rather than hiding.
+    """
+    image = Image.open(io.BytesIO(png)).convert("RGB")
+    if image.size != SCREEN_SIZE:
+        raise ValueError(f"工人面板座標只適用 1600x900，收到 {image.size[0]}x{image.size[1]}")
+    tops = _bar_tops(image)
+    if not tops:
+        return None
+    found = [_remaining(image, top) for top in tops]
+    return BuildQueue(running=len(tops), remaining=sorted(s for s in found if s is not None))
 
 
 def free_builders(png: bytes) -> tuple[int, int] | None:

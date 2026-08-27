@@ -709,6 +709,11 @@ class AttackReport(BaseModel):
     """What one run of the attack loop did, for the automation log."""
 
     skipped: int = 0
+    # The opponent that was fought, as its scout screen advertised it — what was
+    # **on offer**, not what came home. None means no battle was fought at all,
+    # which is the one thing to test a round on. What actually landed is the
+    # difference between two `read_stock` readings and nothing else: a full
+    # storage takes none of what it is handed, and the star bonus pays on top.
     attacked: LootOffer | None = None
     message: str = ""
     # Farming has met its goal, so the automation is meant to stop rather than
@@ -773,6 +778,31 @@ class CollectReport(BaseModel):
     gold: int = 0
     elixir: int = 0
     dark: int = 0
+    message: str = ""
+
+
+class BuildQueue(BaseModel):
+    """What the builder panel shows running, read off the progress bars.
+
+    `running` counts the bars and `remaining` carries only the times that read,
+    so a row whose countdown could not be made out is visible as the two
+    disagreeing rather than as a queue quietly one short.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    running: int = 0
+    # Seconds, soonest first, which is the order the question is asked in: the
+    # first of them is when the next builder comes free.
+    remaining: list[int] = Field(default_factory=list)
+
+
+class BuilderReport(BaseModel):
+    """Who is busy and for how long, for a run deciding whether to wait."""
+
+    free: int = 0
+    total: int = 0
+    queue: BuildQueue = BuildQueue()
     message: str = ""
 
 
@@ -960,6 +990,7 @@ class FrameReading(BaseModel):
     wall_menu: WallMenu | None = None
     bubbles: list[ResourceBubble] = Field(default_factory=list)
     builders: tuple[int, int] | None = None
+    queue: BuildQueue | None = None
     upgrades: list[UpgradeButton] = Field(default_factory=list)
     donatable: int = 0
     attack_menu: bool = False

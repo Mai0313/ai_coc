@@ -166,9 +166,28 @@ HERO_BAR_MAX_BLUE = 30
 # the army screen and spend dialogs, not one produces a single glyph in any of
 # these three boxes, so a screen that is not the home village reads as no screen
 # whatever this is set to.
+#
+# The bars carry a gloss of their own along the top of the filled part, and it
+# reaches into the row above the digits. Under the shared ink test it survives as
+# a four-row blob, which is far too short to be a digit and would be thrown away
+# for it — except that a blob landing in the gap between two digits joins them
+# into one span too wide to be a glyph and too poor a match to be cut, and the
+# whole row fails. Measured live on a village holding 130 480 dark, the gloss
+# bridged the 1 and the 3 on every frame; every cut of that 24 px span left one
+# half 33 bits or worse off its template, so the row read as nothing and `_home`
+# spent five rounds pressing `back` at a village that was already up.
+#
+# The gloss is blue-grey, (143, 180, 203) give or take, where a digit is white —
+# so what separates them is saturation rather than brightness, which the gloss
+# clears by a handful of levels. Measured, the gloss reads 56 to 62 while all
+# three rows of six recorded villages read the same number at every ceiling from
+# 20 to 55, so the line goes between with room on both sides. Scoped to these
+# rows because it is these bars the text is painted over; the loot panel and the
+# army screen are painted over other things and keep the shared ceiling.
 STOCK_LEFT, STOCK_RIGHT = 1300, 1512
 STOCK_ROW_BOUNDS = ((33, 72), (117, 156), (200, 239))
 STOCK_DIGIT_TOLERANCE = 30
+STOCK_INK_SATURATION = 45
 
 # The 回營 button on the battle result screen. It is the one screen a farming
 # loop reliably ends on and the one it could not get off: the button only comes
@@ -213,6 +232,9 @@ def idle_disconnected(png: bytes) -> bool:
 INK_BRIGHTNESS = 200
 INK_SATURATION = 70
 # Bright background speckle passes that test but never spans a digit's height.
+# It is the same line twice over in `_signature`: what a whole span has to reach
+# to be measured at all, and what an unbroken band of one has to reach before the
+# rest of that span is taken for speckle and trimmed off.
 MIN_GLYPH_ROWS = 12
 
 # Every glyph is normalised to this many pixels and compared as a bit pattern.
@@ -245,7 +267,9 @@ TEMPLATES = {
 }
 
 
-def _ink_mask(band: Image.Image, brightness: int = INK_BRIGHTNESS) -> list[list[bool]]:
+def _ink_mask(
+    band: Image.Image, brightness: int = INK_BRIGHTNESS, saturation: int = INK_SATURATION
+) -> list[list[bool]]:
     """One row of text reduced to the pixels belonging to its digits."""
     width, height = band.size
     # Raw bytes rather than getdata(): three per RGB pixel, and typed as integers.
@@ -256,7 +280,7 @@ def _ink_mask(band: Image.Image, brightness: int = INK_BRIGHTNESS) -> list[list[
         for offset in range(y * width * 3, (y + 1) * width * 3, 3):
             high = max(data[offset], data[offset + 1], data[offset + 2])
             low = min(data[offset], data[offset + 1], data[offset + 2])
-            row.append(high > brightness and high - low < INK_SATURATION)
+            row.append(high > brightness and high - low < saturation)
         mask.append(row)
     return mask
 
@@ -276,11 +300,42 @@ def _glyph_columns(mask: list[list[bool]]) -> list[tuple[int, int]]:
     return spans
 
 
+def _tallest_band(rows: list[int]) -> list[int]:
+    """The longest unbroken run of row numbers in a sorted list."""
+    bands: list[list[int]] = [[rows[0]]]
+    for y in rows[1:]:
+        if y == bands[-1][-1] + 1:
+            bands[-1].append(y)
+        else:
+            bands.append([y])
+    return max(bands, key=len)
+
+
 def _signature(mask: list[list[bool]], left: int, right: int) -> int | None:
-    """Normalise one glyph to a CELL_WIDTH x CELL_HEIGHT bit pattern."""
+    """Normalise one glyph to a CELL_WIDTH x CELL_HEIGHT bit pattern.
+
+    A glyph is measured from its tallest unbroken band of rows rather than from
+    its first inked row to its last. What lies outside that band is the panel's
+    own furniture and the village showing through it, and it does not have to
+    touch a digit to ruin it: two lit pixels four rows under the 9 of 297 906
+    stretched the normalised cell by a quarter, and the glyph came out 51 bits
+    off its template — failing a row that was perfectly legible, and with it the
+    loot reading for a whole battle. Measured over 421 recorded frames, taking
+    the band reads nine rows that failed outright and changes nothing that
+    already read.
+
+    A band shorter than a digit is not trimmed to, because there the short band
+    *is* the digit and the speckle is what is left standing. `scout_smudged_digit`
+    is one such: trimmed, its broken 0 drops out of the row without a trace and
+    1 746 707 reads back as 174 677. Those fall through to the whole extent,
+    which matches nothing and fails the row — which is the point of them.
+    """
     rows = [y for y, row in enumerate(mask) if any(row[left:right])]
     if len(rows) < MIN_GLYPH_ROWS:
         return None
+    band = _tallest_band(rows)
+    if len(band) >= MIN_GLYPH_ROWS:
+        rows = band
     glyph = Image.frombytes(
         "L",
         (right - left, rows[-1] + 1 - rows[0]),
@@ -384,8 +439,12 @@ def digits_from(mask: list[list[bool]], tolerance: int | None = None) -> int | N
 def _read_row(
     image: Image.Image, box: tuple[int, int, int, int], tolerance: int | None = None
 ) -> int | None:
-    """The number written across one row of the screen, over the village behind it."""
-    return digits_from(_ink_mask(image.crop(box)), tolerance)
+    """One storage bar's number, read off the bar the game paints it on.
+
+    The tighter saturation ceiling belongs to those bars rather than to rows in
+    general; see `STOCK_INK_SATURATION` for what it is holding back.
+    """
+    return digits_from(_ink_mask(image.crop(box), saturation=STOCK_INK_SATURATION), tolerance)
 
 
 def _read_loot_row(image: Image.Image, box: tuple[int, int, int, int]) -> int | None:

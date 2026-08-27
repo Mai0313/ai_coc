@@ -62,7 +62,7 @@ from ai_coc.ui.attack import (
 from ai_coc.adapters.ai import GeminiClient
 from ai_coc.adapters.adb import AdbController, focused_display, physical_display
 from ai_coc.parsers.clan import panel_top, donatable_cards, reinforce_button
-from ai_coc.parsers.home import free_builders, collect_bubbles
+from ai_coc.parsers.home import builder_jobs, free_builders, collect_bubbles
 from ai_coc.parsers.field import view_shift, army_centre
 from ai_coc.parsers.scout import (
     PANEL_LEFT,
@@ -319,6 +319,18 @@ class ScoutTests(unittest.TestCase):
         """
         assert read_scout((FRAMES / "scout_smudged_digit.png").read_bytes()) is None
 
+    def test_speckle_beside_a_digit_does_not_fail_the_row(self) -> None:
+        """Two lit pixels under the 9 of 297 906 cost a whole battle its loot reading.
+
+        Live, this village read as nothing on all four of the polls its battle
+        got, so the run reported an attack that took 875k gold as one where
+        nothing had been deployed. The panel is kept and the rest of the frame
+        flattened; whole, it is 3 MB.
+        """
+        view = read_scout((FRAMES / "scout_speckled_panel.png").read_bytes())
+        assert view is not None
+        assert view.loot == LootOffer(gold=297906, elixir=94145, dark=0)
+
     def test_a_started_battle_is_no_longer_skippable(self) -> None:
         """The loot panel stays on screen once the countdown expires; 下一個 does not."""
         view = read_scout((FRAMES / "scout_in_battle.png").read_bytes())
@@ -391,6 +403,17 @@ class ScoutTests(unittest.TestCase):
         """The bars carry their own fill highlight behind the digits."""
         assert read_stock((FRAMES / "home_storages.png").read_bytes()) == VillageStock(
             gold=1053405, elixir=375386, dark=143079
+        )
+
+    def test_a_bar_gloss_between_two_digits_does_not_fail_the_row(self) -> None:
+        """The dark bar's gloss bridged the 1 and the 3, and took the whole row down.
+
+        The frame is a live one with everything outside the bars flattened: whole,
+        this village comes to 3 MB and no colour reduction gets it under the
+        repo's file-size limit without also flattening away the gloss itself.
+        """
+        assert read_stock((FRAMES / "home_storage_gloss.png").read_bytes()) == VillageStock(
+            gold=447824, elixir=5141375, dark=130480
         )
 
     def test_storages_are_none_away_from_the_home_screen(self) -> None:
@@ -880,6 +903,11 @@ class AttackTests(unittest.TestCase):
         )
 
     def _verdict(self, opening: LootOffer, readings: list[ScoutView | None]) -> bool:
+        return self._watched(opening, readings)[0]
+
+    def _watched(
+        self, opening: LootOffer, readings: list[ScoutView | None]
+    ) -> tuple[bool, AttackRunner]:
         """Run the battle wait against canned panel readings, with the clock removed.
 
         A reading of None here stands for the result screen, which is what ends
@@ -901,7 +929,7 @@ class AttackTests(unittest.TestCase):
         ):
             # Whatever the abilities saw counts too, which is the whole point.
             runner._battle_ended("ability")
-            return runner._wait_out_battle(opening)
+            return runner._wait_out_battle(opening), runner
 
     def test_a_battle_won_before_the_first_poll_still_counts(self) -> None:
         """100% three stars, but over so fast that only the ability check saw the loot fall."""
@@ -917,6 +945,18 @@ class AttackTests(unittest.TestCase):
 
     def test_a_battle_nobody_ever_read_is_not_called_a_success(self) -> None:
         assert not self._verdict(LootOffer(gold=1, elixir=1, dark=1), [None, None])
+
+    def test_a_panel_nobody_could_read_is_told_apart_from_one_that_never_moved(self) -> None:
+        """Both come back False, and only one of them is an army that never landed.
+
+        Measured over one twelve-round run, two rounds polled a panel that would
+        not resolve on any frame and had in fact taken 800k and 1.1M. `_seen` is
+        what keeps the message for those off the deployment alarm.
+        """
+        opening = LootOffer(gold=1031321, elixir=420990, dark=2525)
+        stuck = ScoutView(loot=opening, can_skip=False)
+        assert self._watched(opening, [None, None])[1]._seen is None
+        assert self._watched(opening, [stuck, None])[1]._seen == opening
 
     def _settled(self, box: tuple[int, int, int, int]) -> list[tuple[int, int]]:
         """Every drag `_settle_camera` asks for, given a village measured at `box`."""
@@ -1049,6 +1089,27 @@ class AttackTests(unittest.TestCase):
         """Which is what makes it usable to top up whatever the planner's points lose."""
         assert spaced(RAGE_PATH) == list(RAGE_PATH)
         assert RAGE_PATH[1][0] - RAGE_PATH[0][0] == RAGE_SPAN[0]
+
+    def _casts(self, alive: list[list[int]]) -> int:
+        """How many passes `_cast` makes, given what the row reads after each one."""
+        runner = self._runner()
+        with (
+            patch.object(AttackRunner, "_frame", return_value=b""),
+            patch.object(AttackRunner, "_tap"),
+            patch.object(type(runner.adb), "tap_many"),
+            patch.object(attack, "card_count", return_value=5),
+            patch.object(attack, "live_cards", side_effect=alive) as reads,
+            patch.object(attack.time, "sleep"),
+        ):
+            runner._cast([1060], RAGE_PATH[:5], b"")
+            return reads.call_count
+
+    def test_a_card_still_holding_a_bottle_is_offered_the_run_again(self) -> None:
+        """x5 to x1 used to read as a success, because the corner had repainted."""
+        assert self._casts([[1060], []]) == 2
+
+    def test_a_card_that_emptied_is_not_asked_twice(self) -> None:
+        assert self._casts([[]]) == 1
 
     def test_a_one_off_drop_keeps_pushing_out_while_that_moves_it(self) -> None:
         """The middle of the line first, then further from the village, as it always was."""
@@ -1409,6 +1470,23 @@ class HomeHudTests(unittest.TestCase):
 
     def test_a_frame_with_no_village_on_it_has_no_builders(self) -> None:
         assert free_builders((FRAMES / "wall_spend_dialog.png").read_bytes()) is None
+
+    def test_the_builder_panel_is_read_off_its_progress_bars(self) -> None:
+        """9小時23分鐘, 19小時12分鐘, 21小時38分鐘 and 1天17小時, in seconds.
+
+        Two units and two ladders: only the first character of the first unit is
+        matched, and the second number follows it one step down. The frame keeps
+        the panel's own column and blacks out the rest; whole, it is 3 MB.
+        """
+        queue = builder_jobs((FRAMES / "builder_panel.png").read_bytes())
+        assert queue is not None
+        assert queue.running == 4
+        assert queue.remaining == [33780, 69120, 77880, 147600]
+
+    def test_a_village_with_no_panel_up_has_no_queue(self) -> None:
+        """The button toggles, so "no panel" is what a second tap is for."""
+        assert builder_jobs((FRAMES / "home_markers.png").read_bytes()) is None
+        assert builder_jobs((FRAMES / "home_storages.png").read_bytes()) is None
 
 
 class BuildingUpgradeTests(unittest.TestCase):

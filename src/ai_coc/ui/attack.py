@@ -1166,17 +1166,25 @@ class AttackRunner(BaseModel):
 
         A cargo that never leaves the card is the quiet half of the same bug the
         heroes had: nothing downstream notices, and the report says the attack
-        went in. So the cards are asked, and the ones that did not move are
+        went in. So the cards are asked, and the ones still holding something are
         offered the run once more — measured live, a spell placed straight after
         another was the one that got swallowed, so a second selection is usually
         all it wants. They are asked together rather than one at a time, because
         a capture and a settle apiece was most of what a cast cost.
+
+        **A card is finished when it is empty, not when something left it.** That
+        distinction used to be missing: the test was whether the `xN` corner had
+        repainted, and it repaints on the first bottle to go, so a card that cast
+        four of its five read as a success. Measured over three recorded
+        battles, the rage card came off the row at x1 on two of them — a whole
+        bottle carried home each time, which is the one thing a spell must never
+        do. `live_cards` answers the question that was meant all along, since a
+        spent card goes fully greyscale and a card with one bottle left does not.
         """
         pending = list(cards)
         for _attempt in range(SPELL_ATTEMPTS):
             if not pending:
                 return
-            before = self._frame("before-cast")
             for index, x in enumerate(pending):
                 count = card_count(frame, x)
                 cast_count = count + 1 if count else len(targets)
@@ -1186,11 +1194,10 @@ class AttackRunner(BaseModel):
                 self.adb.tap_many(cells, self.display, gap=SPELL_PLACE_GAP)
                 logger.info("Spell card at %d held %s, tapped %d", x, count, cast_count)
             time.sleep(DROP_SETTLE)
-            after = self._frame("cast")
-            # One reading apiece rather than one per card: `live_cards` decodes
-            # the frame it is handed, so asking it per card decodes it per card.
-            drained, still_live = card_drained(before, after, pending), live_cards(after, pending)
-            pending = [x for x in pending if x not in drained and x in still_live]
+            # One reading for the whole row rather than one per card: `live_cards`
+            # decodes the frame it is handed, so asking it per card decodes it
+            # per card.
+            pending = list(live_cards(self._frame("cast"), pending))
             if pending:
                 logger.info("%d spell card(s) held on to their bottles", len(pending))
         for x in pending:
@@ -1206,6 +1213,15 @@ class AttackRunner(BaseModel):
         enough that the first poll ten seconds in already finds the result screen
         is a battle that went *well*, and judging it on nothing was how a village
         taken to 100% got reported as one the army never reached.
+
+        **False is not the alarm on its own; `_seen` is what separates the two.**
+        A panel read on every poll and never moving is the deployment that came
+        to nothing. A panel that never read at all says only that — measured over
+        one twelve-round run, two rounds polled a village whose loot panel would
+        not resolve on any frame, and both of them had in fact taken their
+        opponent for 800k and 1.1M. Reported as the same thing, the check that
+        exists to catch an army that never landed cried wolf on one round in six,
+        which is worth less than no check at all.
         """
         deadline = time.monotonic() + BATTLE_TIMEOUT
         while time.monotonic() < deadline:
@@ -1215,6 +1231,21 @@ class AttackRunner(BaseModel):
                 break
         self._leave_result()
         return self._seen is not None and self._seen != opening
+
+    def _outcome(self, reason: str, took: bool) -> str:
+        """How a battle that was actually fought is reported.
+
+        Three answers rather than two, and the third is the whole point: see
+        `_wait_out_battle` for why a panel nobody could read is not the same
+        thing as an army that never landed.
+        """
+        if took:
+            return f"{reason}，已進攻並回營"
+        if self._seen is None:
+            logger.warning("Nothing ever read the loot panel; this round cannot be judged")
+            return f"{reason}，已進攻並回營，但整場都讀不到戰利品面板，成果無從判斷"
+        logger.warning("The whole battle passed without any loot moving")
+        return f"{reason}，但整場戰利品沒有變化，部隊可能沒有成功部署"
 
     def run(self) -> AttackReport:
         logger.info("Attack run starts, thresholds=%s", self.thresholds.model_dump())
@@ -1276,14 +1307,8 @@ class AttackRunner(BaseModel):
                 logger.info("Attacking after %d skips (%s)", skipped, reason)
                 self._deploy(frame)
                 took = self._wait_out_battle(view.loot)
-                if not took:
-                    logger.warning("The whole battle passed without any loot moving")
                 return AttackReport(
-                    skipped=skipped,
-                    attacked=view.loot,
-                    message=f"{reason}，已進攻並回營"
-                    if took
-                    else f"{reason}，但整場戰利品沒有變化，部隊可能沒有成功部署",
+                    skipped=skipped, attacked=view.loot, message=self._outcome(reason, took)
                 )
             if stopping or skipped >= self.max_skips:
                 self._tap(END_BATTLE)

@@ -32,6 +32,7 @@ from ai_coc.models import (
     DonateReport,
     FrameReading,
     AttackOptions,
+    BuilderReport,
     CollectReport,
     DisplayTarget,
     BoundarySurvey,
@@ -46,7 +47,7 @@ from ai_coc.adapters.ai import GeminiClient
 # cannot be built at all.
 from ai_coc.adapters.adb import AdbController
 from ai_coc.parsers.clan import donatable_cards
-from ai_coc.parsers.home import free_builders, collect_bubbles
+from ai_coc.parsers.home import builder_jobs, free_builders, collect_bubbles
 from ai_coc.adapters.mumu import MuMuAdapter
 from ai_coc.parsers.scout import (
     card_count,
@@ -439,6 +440,24 @@ def walls(options: WallOptions) -> WallReport:
     return report
 
 
+def builders(frame_dir: Path | None = None) -> BuilderReport:
+    """Say who is building what and how much longer, with no window in the way.
+
+    The one thing a village cannot be talked out of is a busy builder, and until
+    now nothing here could see past the 1/5 to how long that would last. It is
+    read-only and costs three captures, so it is cheap enough to ask before
+    deciding whether a run is worth starting at all.
+    """
+    adb = _controller()
+    if frame_dir is not None:
+        frame_dir.mkdir(parents=True, exist_ok=True)
+    report = UpkeepRunner(
+        adb=adb, display=adb.display_for(COC_PACKAGE), frame_dir=frame_dir
+    ).builders()
+    logger.info("Builders: %s", report.message)
+    return report
+
+
 def collect(frame_dir: Path | None = None) -> CollectReport:
     """Tap every collector the village has left standing, with no window in the way.
 
@@ -532,6 +551,7 @@ def read(png: bytes) -> FrameReading:
         wall_menu=wall_menu(png),
         bubbles=collect_bubbles(png),
         builders=free_builders(png),
+        queue=builder_jobs(png),
         upgrades=upgrade_buttons(png),
         donatable=len(donatable_cards(png)),
         attack_menu=attack_menu_open(png),
