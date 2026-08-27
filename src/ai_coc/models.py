@@ -837,6 +837,20 @@ class BuildReport(BaseModel):
         return sum(job.price for job in self.started if job.resource == resource)
 
 
+class ViewReport(BaseModel):
+    """What one `view` command asked of the camera.
+
+    There is nothing to read back. The game exposes no zoom level and the scale
+    is not written anywhere on screen, so this says what was sent rather than
+    what the camera ended up at — and a zoom the camera was already at is a
+    no-op rather than an error.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    message: str = ""
+
+
 class HeroCard(BaseModel):
     """One card on the 英雄殿堂 screen: who is on it, and what raising him costs.
 

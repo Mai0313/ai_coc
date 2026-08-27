@@ -26,7 +26,7 @@ from typing import TYPE_CHECKING
 import logging
 
 from ai_coc.models import HeroCard, HeroKind, HeroReport, VillageStock
-from ai_coc.ui.runner import BACK_SETTLE, MENU_SETTLE, GameRunner
+from ai_coc.ui.runner import BACK_SETTLE, MENU_SETTLE, SWEEP_STAGGER, GameRunner
 from ai_coc.parsers.hero import SCROLL_LEFT, SCROLL_RIGHT, can_scroll, hero_cards, hall_buttons
 from ai_coc.parsers.home import free_builders
 from ai_coc.parsers.building import upgrade_sheet
@@ -148,11 +148,24 @@ class HeroRunner(GameRunner):
             logger.info("Nothing at (%d, %d) opened the hall; sweeping for it", *self.at)
             if self._home() is None:
                 return None
-        for point, png in self._sweep("hall"):
-            found = self._try_menu(png)
-            if found is not None:
-                logger.info("The 英雄殿堂 is at (%d, %d)", *point)
-                return found
+        # Two passes, the second landing between the first one's points. The
+        # hall is smaller than the grid steps, so one pass can step over it
+        # entirely — measured on this village it sits 86 px from the nearest
+        # grid point and 14 px from the staggered one, and the first pass walked
+        # the whole village without ever opening it. The second pass is only
+        # paid for when the first came back empty.
+        for offset in ((0, 0), SWEEP_STAGGER):
+            for point, png in self._sweep("hall", offset):
+                found = self._try_menu(png)
+                if found is not None:
+                    logger.info("The 英雄殿堂 is at (%d, %d)", *point)
+                    return found
+            # A pass ends either because it finished or because it lost the
+            # village, and only one of those is worth starting another on: the
+            # second would open with a blind tap on whatever screen the first
+            # could not get out of.
+            if self._home() is None:
+                return None
         return None
 
     def _close(self) -> None:
@@ -233,8 +246,9 @@ class HeroRunner(GameRunner):
         # A run that was asked to spend and has no builder to spend with is
         # finished here, before the sweep. Every builder busy is the ordinary
         # state of a farming village, and finding the hall costs minutes — a
-        # tap on each of 28 grid points, plus a candidate button on every menu
-        # that offers one, some of which open a full screen to back out of.
+        # tap on each of up to 52 grid points across two passes, plus a candidate
+        # button on every menu that offers one, some of which open a full screen
+        # to back out of.
         # Reading the hall still runs, because that costs nothing to be wrong
         # about and is the half worth having when nothing can be started.
         if self.hero is not None and builders[0] == 0:

@@ -113,6 +113,25 @@ ICON_BAND = (638, 668)
 # selects a hero.
 SCROLL_RIGHT = (1537, 428)
 SCROLL_LEFT = (65, 428)
+
+# How many places right of a priced button to keep looking for the way in, and
+# what a button's own plate reads there.
+#
+# **The entrance is not a fixed number of places along.** The row gains and
+# loses buttons with the building's state: the same 英雄殿堂 menu came up five
+# buttons wide with a 強化 running — 資訊, 加速, 強化英雄, 升級, 英雄殿堂, the
+# hall one place right of 升級 — and four buttons wide without it, which slid
+# every button half a pitch and left 強化英雄 in that place instead. A reader
+# that only looked one place along found the hall on the first layout and a
+# gem-plated button it must not tap on the second, so it reported nothing and
+# the sweep walked past the hall it had just opened.
+#
+# The plate is what separates a button from the village showing between two of
+# them. Measured across both layouts, 升級 reads a minimum channel of 185 and
+# the hall's own button 144 to 146, against 12 to 74 for the village.
+HALL_STEPS = 4
+PLATE_BOX = (-70, 630, 70, 700)
+PLATE_PALE = 120
 ARROW_BOX = (14, 22)
 # Measured, an arrow lights 0.16 to 0.19 of its box in near-white and the card
 # that stands there when the row has run out lights none of it at all.
@@ -120,13 +139,24 @@ ARROW_PALE = 170
 ARROW_SHARE = 0.05
 
 
+def _plated(image: Image.Image, centre: int) -> bool:
+    """Whether a button really sits here, rather than the village between two."""
+    left, top, right, bottom = PLATE_BOX
+    data = image.crop((centre + left, top, centre + right, bottom)).tobytes()
+    count = len(data) // 3
+    channels = (sum(data[i + c] for i in range(0, len(data), 3)) / count for c in range(3))
+    return min(channels) > PLATE_PALE
+
+
 def hall_buttons(png: bytes) -> list[tuple[int, int]]:
-    """Where this building menu has a button one place right of a priced one.
+    """Where this building menu has a button to the right of a priced one.
 
     The way into the hall is a button on the 英雄殿堂's own menu, and no reader
     here can recognise it: it is a gold crown, which is artwork. What can be
     located is the 升級 button beside it, and the row is laid out from the middle
     outwards a fixed pitch apart, so one located button locates its neighbours.
+    How many places along it is varies with the row, which is what `HALL_STEPS`
+    is about.
 
     That neighbour is found from the resource icon alone rather than through
     `upgrade_buttons`, which also wants the price to read. Here the price is not
@@ -147,12 +177,17 @@ def hall_buttons(png: bytes) -> list[tuple[int, int]]:
     found: list[tuple[int, int]] = []
     for test in (_is_gold, _is_elixir):
         for icon in _icon_centres(image, test):
-            centre = icon - ICON_OFFSET + BUTTON_PITCH
-            if not _on_grid(centre - BUTTON_PITCH) or centre >= image.width:
+            priced = icon - ICON_OFFSET
+            if not _on_grid(priced):
                 continue
-            if _on_gem_plate(image, centre) or (centre, BUTTON_ROW_Y) in found:
-                continue
-            found.append((centre, BUTTON_ROW_Y))
+            for step in range(1, HALL_STEPS + 1):
+                centre = priced + BUTTON_PITCH * step
+                if centre + PLATE_BOX[2] >= image.width:
+                    break
+                if _on_gem_plate(image, centre) or not _plated(image, centre):
+                    continue
+                if (centre, BUTTON_ROW_Y) not in found:
+                    found.append((centre, BUTTON_ROW_Y))
     return found
 
 

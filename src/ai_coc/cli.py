@@ -82,6 +82,14 @@ def _parser() -> argparse.ArgumentParser:
         help="真的把這個英雄送去升級,不給就只讀不動",
     )
     champions.add_argument("--at", metavar="X,Y", help="直接點這個座標上的建築,跳過整個村莊的掃描")
+    camera = sub.add_parser("view", help="拉遠或拉近村莊鏡頭,不開視窗")
+    camera.add_argument(
+        "--zoom",
+        choices=("out", "in"),
+        default="out",
+        help="out 是拉遠回到所有座標量測時的視野,in 是拉近,預設 out",
+    )
+    camera.add_argument("--times", type=int, default=3, help="做幾次,已經到底的話多做無害")
     give = sub.add_parser("donate", help="有人請求增援就捐兵,不開視窗")
     give.add_argument("--frames", type=Path, help="把迴圈讀到的每一張畫面存進這個資料夾")
     give.add_argument(
@@ -154,6 +162,8 @@ def _run_command(arguments: argparse.Namespace) -> int:
         result = commands.hero(
             arguments.frames, arguments.upgrade, (int(spot[0]), int(spot[1])) if spot else None
         ).model_dump_json(indent=2)
+    elif arguments.command == "view":
+        result = commands.view(arguments.zoom, arguments.times).model_dump_json(indent=2)
     elif arguments.command == "donate":
         result = commands.donate(
             arguments.frames, arguments.dry_run, arguments.rounds
