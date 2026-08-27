@@ -1052,6 +1052,10 @@ class FrameReading(BaseModel):
     upgrades: list[UpgradeButton] = Field(default_factory=list)
     donatable: int = 0
     attack_menu: bool = False
+    # Whether 下一個 is up, which `scout` cannot answer where it matters: it is
+    # None both for 正在搜尋對手 and for an opponent whose loot will not read,
+    # and this is what tells a run debugging the second one which it is looking at.
+    skip_offered: bool = False
     idle_dialog: bool = False
     card_groups: list[list[int]] = Field(default_factory=list)
     counted: list[int] = Field(default_factory=list)

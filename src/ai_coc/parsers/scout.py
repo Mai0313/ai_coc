@@ -562,6 +562,20 @@ def _orange_ratio(image: Image.Image, box: tuple[int, int, int, int]) -> float:
     return orange / (len(data) // 3)
 
 
+def skip_offered(png: bytes) -> bool:
+    """Whether 下一個 is on screen, which takes none of the loot digits to answer.
+
+    `read_scout` says None both for 正在搜尋對手 and for an opponent whose loot
+    panel this frame cannot read, and those want opposite things from a caller:
+    the first is worth waiting out and the second is worth leaving. This is the
+    only part of that screen that separates them, because it is read off one
+    saturated orange rather than off the digits — the same test `can_skip`
+    already uses, asked without needing a whole `ScoutView` to exist first.
+    """
+    image = Image.open(io.BytesIO(png)).convert("RGB")
+    return _orange_ratio(image, NEXT_BUTTON_BOX) >= BUTTON_ORANGE
+
+
 def attack_menu_open(png: bytes) -> bool:
     """Whether the 多人遊戲 menu is up with its 尋找對戰目標 button.
 
