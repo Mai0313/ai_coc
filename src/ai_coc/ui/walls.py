@@ -28,12 +28,17 @@ live game without a window.
 from __future__ import annotations
 
 import time
+from typing import TYPE_CHECKING
 import logging
 
 from ai_coc.models import WallMenu, WallBatch, WallReport, WallUpgrade, VillageStock, WallCandidate
 from ai_coc.ui.runner import MENU_SETTLE, GameRunner
 from ai_coc.parsers.home import free_builders
+from ai_coc.parsers.scout import read_stock
 from ai_coc.parsers.building import wall_menu, game_dialog
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +61,27 @@ ADD_GAP = 0.12
 # button, which the number every decision here rests on has to stay legible in.
 MAX_BATCH = 25
 
+# How far apart two neighbouring walls sit on this camera. Measured live: taps
+# 45 px apart opened two different walls, one asking 1 600 000 and the other
+# 4 000 000.
+#
+# **The village sweep steps 160 px, so it passes over three walls between
+# samples, and what it lands on is *a* wall rather than the cheapest one.** A
+# section is not one level: swept at this pitch over one live village, the strip
+# held 32 walls at 1 600 000, three at 2 400 000, two at 3 200 000 and three at
+# 4 000 000 — and the sweep's own six samples all landed on the 4 000 000 ones,
+# which are the level the town hall caps. `_pick` then chose the cheapest of
+# those, the game refused every batch, and the run bought nothing at all while
+# 32 walls three levels lower stood beside them.
+#
+# One pitch for both axes, which the camera argues against — it is isometric, so
+# 45 px down crosses about twice the tiles 45 px across does. Measured on the run
+# that proved this fix, it makes no difference: of the eight neighbours that
+# opened a wall, four came from the horizontal offsets and four from the
+# vertical. A section is a solid block of walls several deep, so a tap that
+# overshoots by a tile lands on another wall of the same section.
+WALL_PITCH = 45
+
 
 class WallRunner(GameRunner):
     """Buys wall upgrades until the storages will not pay for another one."""
@@ -71,25 +97,72 @@ class WallRunner(GameRunner):
     # wall is how to exercise everything downstream of it.
     at: tuple[int, int] | None = None
 
-    def _scan(self) -> list[WallCandidate]:
-        """Every point on the sweep that opened a wall menu, and what it asked for."""
-        found: list[WallCandidate] = []
-        for point, png in self._sweep("scan"):
+    def _neighbours(self, point: tuple[int, int]) -> Iterator[WallCandidate]:
+        """The walls immediately around this one, and what each of them asks.
+
+        Level varies within a section, so the wall the sweep happened to land on
+        says nothing about the cheapest one beside it — see `WALL_PITCH` for the
+        run this cost. Four taps is what separates "a wall" from "the wall worth
+        buying", and they are cheap: the sweep is already open on the village,
+        so each is a tap and a capture.
+
+        **Each tap goes in on a confirmed village frame**, which is the rule the
+        sweep is built around and the reason it reads the storages after every
+        one of its own. A neighbour can be a barracks as easily as a wall, and a
+        tap that opened a full screen would leave the next three landing
+        somewhere inside it.
+
+        Nothing needs bounds-checking, though. The sweep's own grid stops more
+        than a pitch inside every edge these offsets could step over: its lowest
+        row is y 500 against the button row at 622, and its columns run 260 to
+        1220 on a 1600 px screen.
+        """
+        for dx, dy in ((-WALL_PITCH, 0), (WALL_PITCH, 0), (0, -WALL_PITCH), (0, WALL_PITCH)):
+            spot = (point[0] + dx, point[1] + dy)
+            png = self._after_tap(spot, f"near_{spot[0]:04d}_{spot[1]:04d}")
+            if read_stock(png) is None:
+                logger.info("The tap at (%d, %d) covered the village; backing out", *spot)
+                if self._home() is None:
+                    return
+                continue
             menu = wall_menu(png)
             if menu is not None:
-                logger.info("Wall at (%d, %d), asking %d", point[0], point[1], menu.price)
-                found.append(WallCandidate(point=point, price=menu.price))
-        return found
+                logger.info("Wall beside it at (%d, %d), asking %d", spot[0], spot[1], menu.price)
+                yield WallCandidate(point=spot, price=menu.price)
+
+    def _scan(self) -> list[WallCandidate]:
+        """Every wall this run could spend on, and what each of them asks for.
+
+        The sweep finds the sections and the neighbours find the levels. A wall
+        the sweep lands on is only a sample of its section, and a section holds
+        several levels at once, so a run that took the sample at face value would
+        pick the cheapest *sample* rather than the cheapest wall.
+        """
+        found: dict[tuple[int, int], int] = {}
+        for point, png in self._sweep("scan"):
+            menu = wall_menu(png)
+            if menu is None:
+                continue
+            logger.info("Wall at (%d, %d), asking %d", point[0], point[1], menu.price)
+            found[point] = menu.price
+            for near in self._neighbours(point):
+                found.setdefault(near.point, near.price)
+        return [WallCandidate(point=point, price=price) for point, price in found.items()]
 
     def _pick(self, prices: dict[tuple[int, int], int]) -> tuple[int, int]:
         """Which wall to upgrade next. Cheapest wins, which is the lowest level.
 
-        Walls get dearer at every level, so the cheapest menu on the map belongs
-        to the lowest wall on it, and nothing has to read a level to know that.
+        Walls get dearer at every level, so the cheapest menu found belongs to
+        the lowest wall found, and nothing has to read a level to know that.
         Lowest-first is the ordinary way to spend on walls — the weakest section
         is what an attacker walks through — and it is also the seam an AI planner
         would replace, since which section is worth raising first is a judgement
         about the layout rather than arithmetic about the price.
+
+        Found, not "on the map": nothing here sees every wall, and what the scan
+        did see decides this. That is why `_scan` looks beside each wall the
+        sweep lands on — a sample of one wall per section is what had this
+        picking a town-hall-capped wall while 32 cheaper ones stood beside it.
         """
         return min(prices, key=lambda point: prices[point])
 

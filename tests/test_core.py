@@ -1382,6 +1382,52 @@ class WallRunnerTests(unittest.TestCase):
         ):
             return runner._sized(opening, purse), tapped
 
+    def test_the_scan_looks_beside_each_wall_the_sweep_lands_on(self) -> None:
+        """Walls sit 45 px apart and the sweep steps 160, so it passes over three
+        of them between samples — and a section is not one level. Measured on a
+        live village the strip held 32 walls at 1 600 000 and three at 4 000 000,
+        the sweep's six samples all landed on the 4 000 000 ones, which are the
+        level the town hall caps, and the run bought nothing at all.
+        """
+        runner = self._runner()
+        # The sweep's own sample, then the four taps around it: one wall three
+        # levels lower, and three misses.
+        answers = [_menu(4_000_000), _menu(1_600_000), None, None, None]
+        with (
+            patch.object(walls.time, "sleep"),
+            patch.object(runner, "_after_tap", return_value=b""),
+            patch.object(runner, "_sweep", return_value=iter([((580, 140), b"")])),
+            patch.object(walls, "read_stock", return_value=VillageStock(gold=0, elixir=0, dark=0)),
+            patch.object(walls, "wall_menu", side_effect=answers),
+        ):
+            found = runner._scan()
+        assert min(wall.price for wall in found) == 1_600_000
+        assert len(found) == 2
+
+    def test_a_neighbour_tap_that_opened_a_screen_is_backed_out_of(self) -> None:
+        """The sweep reads the storages after every one of its own taps for this
+        reason, and the neighbours are the first taps in this loop that go in on
+        raw village coordinates. A neighbour can be a barracks as easily as a
+        wall, and a tap that opened a full screen would leave the next three
+        landing somewhere inside it.
+        """
+        runner = self._runner()
+        held = VillageStock(gold=0, elixir=0, dark=0)
+        with (
+            patch.object(walls.time, "sleep"),
+            patch.object(runner, "_after_tap", return_value=b""),
+            patch.object(runner, "_sweep", return_value=iter([((580, 140), b"")])),
+            # The first neighbour opened a full screen; the rest are the village.
+            patch.object(walls, "read_stock", side_effect=[None, held, held, held]),
+            patch.object(
+                walls, "wall_menu", side_effect=[_menu(4_000_000), _menu(1_600_000), None, None]
+            ),
+            patch.object(runner, "_home", return_value=held) as home,
+        ):
+            found = runner._scan()
+        home.assert_called_once()
+        assert min(wall.price for wall in found) == 1_600_000
+
     def test_a_price_that_does_not_move_means_the_batch_holds_one_wall(self) -> None:
         """升級更多 makes a batch of the wall already selected, so it costs the same.
 
