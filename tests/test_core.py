@@ -712,6 +712,42 @@ class BoundaryTests(unittest.TestCase):
         far = self._painted([(1500, (170, 70, 26))])
         assert boundary_reach(far, 0) is not None
 
+    def test_the_ui_the_game_paints_in_red_is_not_the_boundary(self) -> None:
+        """摧毀率 and 結束戰鬥 sit in the corners a lower flank's rays run into.
+
+        The outermost crossing is the answer, so a panel painted in the game's
+        own red beats the real stroke every time. Measured on a recorded battle,
+        the midpoint ray of the bottom-left flank answered (95, 665) — the 放棄
+        button, 753 px out against a boundary sitting around 350 — and the
+        bottom-right one answered (1556, 685).
+        """
+        image = Image.new("RGB", (1600, 900), (60, 120, 40))
+        pixels = image.load()
+        for step in (500, 691):
+            # 691 steps out along this ray lands at (1449, 636), inside 摧毀率.
+            pixels[self._along(20, step)] = (170, 70, 26)
+        assert boundary_reach(image, 20) == self._along(20, 500)
+
+    def test_a_ray_is_judged_on_the_distance_it_could_read(self) -> None:
+        """The blanked corner is not ground the ray was ever able to look at.
+
+        This ray meets 放棄 at 613 steps and the playfield edge at 825, so a
+        crossing 400 out is 0.65 of what was readable and 0.48 of what was
+        walked — under `MIN_REACH_RATIO` and thrown away, which is the same
+        correct reading the blanking above exists to expose.
+        """
+        image = Image.new("RGB", (1600, 900), (60, 120, 40))
+        pixels = image.load()
+        pixels[self._along(159, 400)] = (170, 70, 26)
+        assert boundary_reach(image, 159) == self._along(159, 400)
+
+    def _along(self, degrees: float, step: int) -> tuple[int, int]:
+        """The point a ray of `boundary_reach`'s own walks at this step."""
+        return (
+            round(800 + math.cos(math.radians(degrees)) * step),
+            round(400 + math.sin(math.radians(degrees)) * step),
+        )
+
     def test_a_flank_whose_anchors_disagree_is_thrown_away(self) -> None:
         """One ray matching a wall inside the village puts an anchor where drops are refused.
 
