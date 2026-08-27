@@ -1213,6 +1213,15 @@ class AttackRunner(BaseModel):
         enough that the first poll ten seconds in already finds the result screen
         is a battle that went *well*, and judging it on nothing was how a village
         taken to 100% got reported as one the army never reached.
+
+        **False is not the alarm on its own; `_seen` is what separates the two.**
+        A panel read on every poll and never moving is the deployment that came
+        to nothing. A panel that never read at all says only that — measured over
+        one twelve-round run, two rounds polled a village whose loot panel would
+        not resolve on any frame, and both of them had in fact taken their
+        opponent for 800k and 1.1M. Reported as the same thing, the check that
+        exists to catch an army that never landed cried wolf on one round in six,
+        which is worth less than no check at all.
         """
         deadline = time.monotonic() + BATTLE_TIMEOUT
         while time.monotonic() < deadline:
@@ -1222,6 +1231,21 @@ class AttackRunner(BaseModel):
                 break
         self._leave_result()
         return self._seen is not None and self._seen != opening
+
+    def _outcome(self, reason: str, took: bool) -> str:
+        """How a battle that was actually fought is reported.
+
+        Three answers rather than two, and the third is the whole point: see
+        `_wait_out_battle` for why a panel nobody could read is not the same
+        thing as an army that never landed.
+        """
+        if took:
+            return f"{reason}，已進攻並回營"
+        if self._seen is None:
+            logger.warning("Nothing ever read the loot panel; this round cannot be judged")
+            return f"{reason}，已進攻並回營，但整場都讀不到戰利品面板，成果無從判斷"
+        logger.warning("The whole battle passed without any loot moving")
+        return f"{reason}，但整場戰利品沒有變化，部隊可能沒有成功部署"
 
     def run(self) -> AttackReport:
         logger.info("Attack run starts, thresholds=%s", self.thresholds.model_dump())
@@ -1283,14 +1307,8 @@ class AttackRunner(BaseModel):
                 logger.info("Attacking after %d skips (%s)", skipped, reason)
                 self._deploy(frame)
                 took = self._wait_out_battle(view.loot)
-                if not took:
-                    logger.warning("The whole battle passed without any loot moving")
                 return AttackReport(
-                    skipped=skipped,
-                    attacked=view.loot,
-                    message=f"{reason}，已進攻並回營"
-                    if took
-                    else f"{reason}，但整場戰利品沒有變化，部隊可能沒有成功部署",
+                    skipped=skipped, attacked=view.loot, message=self._outcome(reason, took)
                 )
             if stopping or skipped >= self.max_skips:
                 self._tap(END_BATTLE)

@@ -903,6 +903,11 @@ class AttackTests(unittest.TestCase):
         )
 
     def _verdict(self, opening: LootOffer, readings: list[ScoutView | None]) -> bool:
+        return self._watched(opening, readings)[0]
+
+    def _watched(
+        self, opening: LootOffer, readings: list[ScoutView | None]
+    ) -> tuple[bool, AttackRunner]:
         """Run the battle wait against canned panel readings, with the clock removed.
 
         A reading of None here stands for the result screen, which is what ends
@@ -924,7 +929,7 @@ class AttackTests(unittest.TestCase):
         ):
             # Whatever the abilities saw counts too, which is the whole point.
             runner._battle_ended("ability")
-            return runner._wait_out_battle(opening)
+            return runner._wait_out_battle(opening), runner
 
     def test_a_battle_won_before_the_first_poll_still_counts(self) -> None:
         """100% three stars, but over so fast that only the ability check saw the loot fall."""
@@ -940,6 +945,18 @@ class AttackTests(unittest.TestCase):
 
     def test_a_battle_nobody_ever_read_is_not_called_a_success(self) -> None:
         assert not self._verdict(LootOffer(gold=1, elixir=1, dark=1), [None, None])
+
+    def test_a_panel_nobody_could_read_is_told_apart_from_one_that_never_moved(self) -> None:
+        """Both come back False, and only one of them is an army that never landed.
+
+        Measured over one twelve-round run, two rounds polled a panel that would
+        not resolve on any frame and had in fact taken 800k and 1.1M. `_seen` is
+        what keeps the message for those off the deployment alarm.
+        """
+        opening = LootOffer(gold=1031321, elixir=420990, dark=2525)
+        stuck = ScoutView(loot=opening, can_skip=False)
+        assert self._watched(opening, [None, None])[1]._seen is None
+        assert self._watched(opening, [stuck, None])[1]._seen == opening
 
     def _settled(self, box: tuple[int, int, int, int]) -> list[tuple[int, int]]:
         """Every drag `_settle_camera` asks for, given a village measured at `box`."""
