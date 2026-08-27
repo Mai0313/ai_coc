@@ -13,6 +13,7 @@ from pydantic import ValidationError
 
 from ai_coc import plans
 from ai_coc.ui import hero, walls, attack
+from ai_coc.ui import runner as shared
 from ai_coc.models import (
     HeroCard,
     ProbeRay,
@@ -1408,6 +1409,70 @@ class WallMenuTests(unittest.TestCase):
         assert spend == leaving
         assert spend.confirm == (973, 562)
         assert spend.cancel == (623, 572)
+
+
+class HomeTests(unittest.TestCase):
+    """Getting back to a village, and how long an unreadable frame is worth waiting on."""
+
+    def _backs(self, run: shared.GameRunner, reads: list[VillageStock | None]) -> int:
+        """Walk `_home` over these `read_stock` answers; how many times it pressed back."""
+        with (
+            patch.object(shared.time, "sleep"),
+            patch.object(run, "_frame", return_value=b""),
+            patch.object(shared, "idle_disconnected", return_value=False),
+            patch.object(shared, "game_dialog", return_value=None),
+            patch.object(shared, "read_stock", side_effect=reads),
+            patch.object(AdbController, "back") as back,
+        ):
+            run._home()
+        return back.call_count
+
+    def _runner(self) -> shared.GameRunner:
+        return shared.GameRunner(
+            adb=AdbController(endpoint=AdbEndpoint(port=16384)),
+            display=DisplayTarget(logical_id="1", physical_id="2"),
+        )
+
+    def test_a_game_that_may_still_be_starting_is_waited_on(self) -> None:
+        """Nothing is pressed at a launch: there is no village there to press back on."""
+        held = VillageStock(gold=1, elixir=1, dark=1)
+        assert self._backs(self._runner(), [None] * 4 + [held]) == 0
+
+    def test_a_panel_is_backed_out_of_at_once_once_a_village_has_read(self) -> None:
+        """`_sweep` opens one on most of its taps, and the launch patience is not owed to it.
+
+        Measured over three live wall runs, the blanket patience put 26, 26 and
+        34 seconds between the tap that opened a building panel and the first
+        `back` — 50 to 80 seconds of a 150 second run, waiting out a launch that
+        had finished before the run started.
+        """
+        held = VillageStock(gold=1, elixir=1, dark=1)
+        run = self._runner()
+        assert self._backs(run, [held]) == 0
+        assert self._backs(run, [None, None, None, held]) == 3
+
+    def test_a_restart_puts_the_launch_patience_back(self) -> None:
+        """The one branch that stops `back` being pressed at a game that is cold again.
+
+        A loop that waits minutes on barracks meets the idle-disconnect dialog
+        sooner or later, and the answer to it is a restart — so the frames right
+        after one are a launch, whatever this runner had already seen.
+        """
+        held = VillageStock(gold=1, elixir=1, dark=1)
+        run = self._runner()
+        assert self._backs(run, [held]) == 0
+        with (
+            patch.object(shared.time, "sleep"),
+            patch.object(run, "_frame", return_value=b""),
+            # Dropped on the first frame, then a launch nothing may press at.
+            patch.object(shared, "idle_disconnected", side_effect=[True, False, False, False]),
+            patch.object(shared, "game_dialog", return_value=None),
+            patch.object(shared, "read_stock", side_effect=[None, None, held]),
+            patch.object(shared, "restart_game", return_value=run.display),
+            patch.object(AdbController, "back") as back,
+        ):
+            run._home()
+        assert back.call_count == 0
 
 
 class WallRunnerTests(unittest.TestCase):
