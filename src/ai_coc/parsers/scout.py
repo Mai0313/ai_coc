@@ -93,6 +93,9 @@ COUNT_WHITE_RATIO = 0.10
 # village. `x` leads every count and is 16 px wide, which is the sanity check.
 COUNT_INK_BRIGHTNESS = 225
 COUNT_X_WIDTH = (13, 19)
+# A real count's digits sit at 18 and 9 bits off their templates over this
+# artwork while the scraps of it that survive read 31, so the line goes between.
+COUNT_DIGIT_TOLERANCE = 30
 
 # Freeze is the one spell CoC draws in cyan — rage, heal, clone and invisibility
 # are all violet or pink. Measured, a freeze card's lower half reads
@@ -236,6 +239,14 @@ INK_SATURATION = 70
 # to be measured at all, and what an unbroken band of one has to reach before the
 # rest of that span is taken for speckle and trimmed off.
 MIN_GLYPH_ROWS = 12
+# How tall a patch of ink has to be to be left in the mask at all. Lower than
+# `MIN_GLYPH_ROWS` and deliberately so: this one throws ink away rather than
+# giving up on it, and a digit that a frame has broken in half must survive to
+# fail its row. `scout_smudged_digit` is one — its 0 comes apart into halves of
+# about nine rows, and dropping either reads 1 746 707 back as 174 677 with
+# nothing to show anything went wrong. Every speckle measured, the icon bleed
+# included, is five rows or fewer, so the line sits between at eight.
+SPECKLE_ROWS = 8
 
 # Every glyph is normalised to this many pixels and compared as a bit pattern.
 CELL_WIDTH, CELL_HEIGHT = 10, 14
@@ -245,6 +256,10 @@ CELL_WIDTH, CELL_HEIGHT = 10, 14
 # is what keeps a cut from carving a sliver off the side of a real digit.
 MIN_GLYPH_WIDTH = 7
 MAX_GLYPH_WIDTH = 18
+# What `_row_glyphs` reports for a span no width could make a digit of. Above
+# every tolerance in this module rather than a flag, so each caller goes on
+# treating it exactly as it treats any glyph it cannot read.
+NOT_A_GLYPH = 999
 # A cut is only believed when both halves come out looking like real digits,
 # because the village showing through the panel produces wide blobs too and
 # splitting one of those invents a digit out of nothing. Measured, the 74 that
@@ -285,13 +300,59 @@ def _ink_mask(
     return mask
 
 
-def _glyph_columns(mask: list[list[bool]]) -> list[tuple[int, int]]:
-    """Column spans of ink; the thousands separator is simply a wider gap."""
+def _patches(mask: list[list[bool]]) -> Iterator[list[tuple[int, int]]]:
+    """Every 8-connected patch of ink in a mask, as the cells it holds."""
+    height, width = len(mask), len(mask[0])
+    seen = [[False] * width for _ in range(height)]
+    for y in range(height):
+        for x in range(width):
+            if not mask[y][x] or seen[y][x]:
+                continue
+            seen[y][x] = True
+            stack, cells = [(y, x)], []
+            while stack:
+                cy, cx = stack.pop()
+                cells.append((cy, cx))
+                for ny in range(max(cy - 1, 0), min(cy + 2, height)):
+                    for nx in range(max(cx - 1, 0), min(cx + 2, width)):
+                        if mask[ny][nx] and not seen[ny][nx]:
+                            seen[ny][nx] = True
+                            stack.append((ny, nx))
+            yield cells
+
+
+def _glyph_columns(mask: list[list[bool]], *, speckle: bool = True) -> list[tuple[int, int]]:
+    """Column spans of ink; the thousands separator is simply a wider gap.
+
+    `speckle=False` is for a row that is not only digits: 小 and its like are
+    drawn as separate short strokes, and dropping them is the difference between
+    reading 9小時 23分鐘 and reading nothing. Only `parsers.home` wants it, and
+    only because it matches those characters on purpose.
+
+    Ink too short to be part of a digit is dropped before the columns are cut,
+    and it has to be dropped **as a patch** rather than where it stands alone:
+    `MIN_GLYPH_ROWS` already throws away a lone speckle, but one that merely
+    shares a column with a digit joins whatever is on the other side of it into
+    a single span, and nothing downstream can undo that. Measured live, the dark
+    resource icon bled a five-row blob past the panel's left edge into the
+    column beside the 1 of 10 428, the two came out as one glyph matching 3, and
+    **the whole opponent read as no opponent**: the round never deployed, the
+    countdown started the battle anyway, and the army was lost along with the two
+    rounds spent tapping at a battle nothing recognised.
+    """
+    kept = [row.copy() for row in mask]
+    if speckle:
+        for cells in _patches(mask):
+            rows = [y for y, _ in cells]
+            if max(rows) - min(rows) + 1 >= SPECKLE_ROWS:
+                continue
+            for y, x in cells:
+                kept[y][x] = False
     width = len(mask[0])
     spans: list[tuple[int, int]] = []
     start: int | None = None
     for x in range(width + 1):
-        inked = x < width and any(row[x] for row in mask)
+        inked = x < width and any(row[x] for row in kept)
         if inked and start is None:
             start = x
         elif not inked and start is not None:
@@ -406,6 +467,15 @@ def _row_glyphs(mask: list[list[bool]]) -> Iterator[tuple[str, int]]:
 
     The distance is what the two callers disagree about, so it comes back with
     the digit rather than being judged here.
+
+    **A span too wide to be a digit is not one, whatever it resembles.** One that
+    no cut could be believed for used to be matched whole and handed back at
+    face value, and a run of village that wide resembles something: measured on
+    a live panel, 47 px of it came back as a 1 at 41 bits — over the tolerance,
+    so the row survived — and the same run cleaned of its speckle came back as a
+    1 at 33, under it, which turned a correct 505 into 5 051. The reading is
+    still reported, because both callers already know what to do with a glyph
+    that matches badly, but the distance says what the width does.
     """
     for left, right in _glyph_columns(mask):
         if right - left > MAX_GLYPH_WIDTH and (halves := _split(mask, left, right)):
@@ -413,7 +483,7 @@ def _row_glyphs(mask: list[list[bool]]) -> Iterator[tuple[str, int]]:
             continue
         match = _match(mask, left, right)
         if match is not None:
-            yield match
+            yield (match[0], NOT_A_GLYPH) if right - left > MAX_GLYPH_WIDTH else match
 
 
 def digits_from(mask: list[list[bool]], tolerance: int | None = None) -> int | None:
@@ -573,6 +643,12 @@ def card_count(png: bytes, slot: int) -> int | None:
     Lets a one-off drop be tapped as many times as the card actually holds
     instead of a fixed guess. A pale illustration merges into the count, and
     that shows up as an `x` glyph of the wrong width, so it reports the failure.
+
+    The `x`'s width was the only check here, and it is not enough: what follows
+    it was matched against the templates with no tolerance at all, so any scrap
+    of card art left standing became a digit. Measured, a four-pixel sliver off
+    the `x` matched a 1 at 31 bits and turned a card of twelve into one of a
+    hundred and twenty-one.
     """
     image = Image.open(io.BytesIO(png)).convert("RGB")
     band = image.crop((slot + COUNT_LEFT, COUNT_TOP, slot + COUNT_RIGHT, COUNT_BOTTOM))
@@ -585,7 +661,10 @@ def card_count(png: bytes, slot: int) -> int | None:
         signature = _signature(mask, left, right)
         if signature is None:
             continue
-        digits += min(TEMPLATES, key=lambda d: (TEMPLATES[d] ^ signature).bit_count())
+        digit = min(TEMPLATES, key=lambda d: (TEMPLATES[d] ^ signature).bit_count())
+        if (TEMPLATES[digit] ^ signature).bit_count() > COUNT_DIGIT_TOLERANCE:
+            return None
+        digits += digit
     return int(digits) if digits else None
 
 

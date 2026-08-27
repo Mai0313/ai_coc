@@ -331,6 +331,20 @@ class ScoutTests(unittest.TestCase):
         assert view is not None
         assert view.loot == LootOffer(gold=297906, elixir=94145, dark=0)
 
+    def test_the_resource_icon_bleeding_into_the_box_costs_nothing(self) -> None:
+        """The dark drop's glow reached the column beside the 1 of 10 428.
+
+        The two never touched, but they shared a column, so they came out as one
+        glyph matching 3 and the row failed — and one unreadable row is an
+        opponent nobody read at all. Live, that round never deployed, the
+        countdown started the battle anyway, and the army went with it, along
+        with the two rounds spent tapping at a battle nothing recognised.
+        """
+        view = read_scout((FRAMES / "scout_icon_bleed.png").read_bytes())
+        assert view is not None
+        assert view.loot == LootOffer(gold=742073, elixir=778243, dark=10428)
+        assert view.can_skip
+
     def test_a_started_battle_is_no_longer_skippable(self) -> None:
         """The loot panel stays on screen once the countdown expires; 下一個 does not."""
         view = read_scout((FRAMES / "scout_in_battle.png").read_bytes())
@@ -1240,8 +1254,15 @@ class AttackTests(unittest.TestCase):
         assert card_count(frame, 1423) == 1
 
     def test_a_count_over_pale_artwork_reads_as_unknown(self) -> None:
-        """The giant's illustration merges into its count, and a guess is worse."""
-        assert card_count((FRAMES / "cards_full.png").read_bytes(), 171) is None
+        """Two frames of the same x12 card: one resolves, the other says it cannot.
+
+        The pale illustration merges into the count, and what is left of the `x`
+        used to be matched against the templates with no tolerance at all — so
+        the unreadable one came back as a card of a hundred and twenty-one
+        rather than as a card nobody could count.
+        """
+        assert card_count((FRAMES / "cards_full.png").read_bytes(), 171) == 12
+        assert card_count((FRAMES / "cards_with_empty_slot.png").read_bytes(), 171) is None
 
     def test_freeze_is_told_apart_from_rage_by_its_cyan(self) -> None:
         assert freeze_cards((FRAMES / "cards_full.png").read_bytes(), [1302, 1423]) == [1423]

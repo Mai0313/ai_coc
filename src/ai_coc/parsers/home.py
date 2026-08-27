@@ -277,7 +277,9 @@ def _remaining(image: Image.Image, bar_top: int) -> int | None:
     numbers: list[int] = []
     digits = ""
     scale: int | None = None
-    for left, right in _glyph_columns(mask):
+    # Speckle is left in: half of what this row has to read is Chinese, and 小
+    # is three short strokes that the digit reader's filter takes for noise.
+    for left, right in _glyph_columns(mask, speckle=False):
         signature = _signature(mask, left, right)
         if signature is None:
             continue
