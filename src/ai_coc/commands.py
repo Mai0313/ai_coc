@@ -27,6 +27,7 @@ from ai_coc.models import (
     AppConfig,
     MapSurvey,
     HeroReport,
+    ViewReport,
     WallReport,
     BuildReport,
     WallOptions,
@@ -163,6 +164,8 @@ class FrameTicker(BaseModel):
 # same menus to read the same half-full camp, so a round that did not attack
 # waits before the next one is started.
 IDLE_REST = 60
+# How long the camera takes to settle after a pinch.
+PINCH_SETTLE = 1.5
 
 
 def attack(options: AttackOptions) -> AttackSeries:
@@ -544,6 +547,40 @@ def donate(frame_dir: Path | None = None, dry_run: bool = False, rounds: int = 0
         rounds=rounds,
     ).donate()
     logger.info("Donate: %s", report.message)
+    return report
+
+
+# Where a pinch puts its two fingers, and how far they travel. Centred on the
+# playfield so the zoom keeps the village in view, and wide enough that the game
+# reads it as a gesture rather than as two taps.
+PINCH_NEAR, PINCH_FAR = 150, 500
+PINCH_ROW = 450
+
+
+def view(zoom: str = "out", times: int = 3) -> ViewReport:
+    """Zoom the village camera, with no window in the way.
+
+    **The game has no zoom control to tap and reports no zoom level**, so this
+    writes the two-finger gesture straight to the touch device — see
+    `AdbController.pinch` for why `input` cannot. Zooming out past the far limit
+    does nothing at all, which is what makes `--zoom out` safe to run blind: it
+    is how a session that zoomed in to look at something gets back to the view
+    every coordinate in this project was measured against.
+
+    Measured live, one pinch covers the whole range: from fully zoomed in, a
+    single gesture came back to the far limit and a second changed nothing.
+    """
+    adb = _controller()
+    middle = 800
+    near = ((middle - PINCH_NEAR, PINCH_ROW), (middle + PINCH_NEAR, PINCH_ROW))
+    far = ((middle - PINCH_FAR, PINCH_ROW), (middle + PINCH_FAR, PINCH_ROW))
+    # Fingers converging is the game zooming out, which widens the view.
+    starts, ends = (far, near) if zoom == "out" else (near, far)
+    for _ in range(times):
+        adb.pinch((starts[0], ends[0]), (starts[1], ends[1]))
+        time.sleep(PINCH_SETTLE)
+    report = ViewReport(message=f"鏡頭{'拉遠' if zoom == 'out' else '拉近'}了 {times} 次")
+    logger.info("View: %s", report.message)
     return report
 
 

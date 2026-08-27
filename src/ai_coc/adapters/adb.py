@@ -30,6 +30,19 @@ PNG_MAGIC = b"\x89PNG"
 # sleeping.
 TAP_GAP = 0.05
 
+# The Linux input-event codes a pinch is written with. `input` has no two-finger
+# gesture of any kind, so the only way to zoom is to write the multi-touch
+# protocol straight to the device node.
+EV_SYN, EV_KEY, EV_ABS = 0, 1, 3
+SYN_REPORT = 0
+BTN_TOUCH = 0x14A
+ABS_MT_SLOT, ABS_MT_POSITION_X, ABS_MT_POSITION_Y, ABS_MT_TRACKING_ID = 0x2F, 0x35, 0x36, 0x39
+# Any two ids the kernel is not already using for a live finger.
+FIRST_TRACKING_ID = 100
+# How many moves the gesture is broken into. One jump from start to end reads as
+# a teleport and the game keeps the scale it started at.
+PINCH_STEPS = 16
+
 
 class AdbControlError(RuntimeError):
     pass
@@ -65,6 +78,57 @@ def physical_display(display_dump: str, logical_id: str) -> str:
         re.findall(r'DisplayDeviceInfo\{"([^"]*)": uniqueId="local:(\d+)"', display_dump)
     )
     return physical.get(names.get(logical_id, ""), "")
+
+
+def pinch_events(
+    first: tuple[tuple[int, int], tuple[int, int]],
+    second: tuple[tuple[int, int], tuple[int, int]],
+    steps: int = PINCH_STEPS,
+) -> list[tuple[int, int, int]]:
+    """One two-finger gesture as the multi-touch events it is written with.
+
+    Each finger is given as (start, end) in **screen** coordinates. **The
+    device's own axes are the screen's swapped**: it reports x to 900 and y to
+    1600 against a 1600x900 screen, so a point goes down as (y, x). Measured by
+    tapping (430, 990) through this path and watching the building at screen
+    (990, 430) open.
+
+    **`BTN_TOUCH` is not optional.** Without it the whole gesture is accepted,
+    reported, and ignored — which is what a first attempt at this looked like,
+    several times over, on all three of the device nodes MuMu publishes. Both
+    tracking ids are cleared at the end for the matching reason: one left live
+    holds the touch down, and the next gesture reads as one finger moving.
+    """
+    events: list[tuple[int, int, int]] = []
+
+    def place(slot: int, point: tuple[int, int]) -> None:
+        events.append((EV_ABS, ABS_MT_SLOT, slot))
+        events.append((EV_ABS, ABS_MT_POSITION_X, point[1]))
+        events.append((EV_ABS, ABS_MT_POSITION_Y, point[0]))
+
+    for slot, (start, _) in enumerate((first, second)):
+        events.append((EV_ABS, ABS_MT_SLOT, slot))
+        events.append((EV_ABS, ABS_MT_TRACKING_ID, FIRST_TRACKING_ID + slot))
+        place(slot, start)
+        if slot == 0:
+            events.append((EV_KEY, BTN_TOUCH, 1))
+    events.append((EV_SYN, SYN_REPORT, 0))
+    for step in range(1, steps + 1):
+        for slot, (start, end) in enumerate((first, second)):
+            place(
+                slot,
+                (
+                    round(start[0] + (end[0] - start[0]) * step / steps),
+                    round(start[1] + (end[1] - start[1]) * step / steps),
+                ),
+            )
+        events.append((EV_SYN, SYN_REPORT, 0))
+    for slot in (0, 1):
+        events.append((EV_ABS, ABS_MT_SLOT, slot))
+        events.append((EV_ABS, ABS_MT_TRACKING_ID, -1))
+    events.append((EV_KEY, BTN_TOUCH, 0))
+    events.append((EV_SYN, SYN_REPORT, 0))
+    return events
 
 
 class AdbController(BaseModel):
@@ -164,6 +228,55 @@ class AdbController(BaseModel):
         logger.info("Swipe %s %s -> %s in %d ms", self.serial, start, end, duration_ms)
         coordinates = [str(start[0]), str(start[1]), str(end[0]), str(end[1])]
         self.input(display, "swipe", *coordinates, str(duration_ms))
+
+    def touch_devices(self) -> list[str]:
+        """Every multi-touch input node this device exposes.
+
+        `input` cannot do two fingers, so a pinch has to be written straight to
+        the kernel with `sendevent` — and that goes to a device node rather than
+        to a display, so nothing routes it the way `input -d` is routed. MuMu
+        publishes one touchscreen per display and does not say which is which,
+        so the pinch is sent to all of them: the game answers on its own and the
+        rest are a launcher nobody is looking at.
+
+        An empty list is a failure rather than a quiet nothing — a pinch with
+        nowhere to send it would otherwise report a zoom that never happened.
+        """
+        nodes: list[str] = []
+        for block in self.shell("getevent -pl 2>/dev/null").split("add device ")[1:]:
+            if "ABS_MT_POSITION_X" not in block:
+                continue
+            node = block.split(":", 1)[1].split()[0] if ":" in block else ""
+            if node.startswith("/dev/input/"):
+                nodes.append(node)
+        logger.debug("Multi-touch nodes: %s", nodes)
+        return nodes
+
+    def pinch(
+        self,
+        first: tuple[tuple[int, int], tuple[int, int]],
+        second: tuple[tuple[int, int], tuple[int, int]],
+        steps: int = PINCH_STEPS,
+    ) -> None:
+        """Two fingers, each moving from its own start to its own end.
+
+        Screen coordinates, like everything else here; `pinch_events` owns the
+        protocol and the reasons for it. The same stream goes to every
+        multi-touch node, because `sendevent` addresses a device rather than a
+        display and nothing says which node is the game's.
+        """
+        nodes = self.touch_devices()
+        if not nodes:
+            raise AdbControlError(f"{self.serial} 找不到任何多點觸控裝置，縮放送不出去")
+        stream = pinch_events(first, second, steps)
+        logger.info("Pinch %s %s and %s", self.serial, first, second)
+        for node in nodes:
+            self.shell(
+                " ; ".join(
+                    f"sendevent {node} {kind} {code} {value}" for kind, code, value in stream
+                ),
+                timeout=30,
+            )
 
     def back(self, display: DisplayTarget) -> None:
         logger.info("Back key on %s display %s", self.serial, display.logical_id)

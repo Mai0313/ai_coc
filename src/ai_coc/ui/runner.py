@@ -43,6 +43,17 @@ MENU_SETTLE = 1.0
 # and right edges are the game's own button columns for the same reason.
 SWEEP_X = (260, 420, 580, 740, 900, 1060, 1220)
 SWEEP_Y = (140, 260, 380, 500)
+# Half a grid step, for the second pass a caller makes when the first missed
+# what it was looking for. Buildings are three to five tiles across — 70 to
+# 120 px on this camera — against a grid that steps 160 by 120, so a small one
+# fits between four points with room to spare. Staggered, the same grid lands on
+# the middle of each of those gaps.
+SWEEP_STAGGER = (SWEEP_X[1] - SWEEP_X[0]) // 2, (SWEEP_Y[1] - SWEEP_Y[0]) // 2
+# How far a tap may go before it stops being the village. The plain grid stays
+# inside this by construction; a staggered one has to be held to it, and its
+# last column would otherwise land on the storage bars — which start at x 1260,
+# with the dark elixir reading beginning at exactly (1300, 200).
+SWEEP_LIMIT = (SWEEP_X[-1], 620)
 
 # Getting back to the village, which four different things can be in the way of,
 # and they do not want the same treatment.
@@ -160,7 +171,9 @@ class GameRunner(BaseModel):
         logger.warning("Never got back to a village that could be tapped")
         return None
 
-    def _sweep(self, label: str) -> Iterator[tuple[tuple[int, int], bytes]]:
+    def _sweep(
+        self, label: str, offset: tuple[int, int] = (0, 0)
+    ) -> Iterator[tuple[tuple[int, int], bytes]]:
         """Tap across the village, handing back the frame each tap opened.
 
         This is the only way to find anything on the map. Every building is its
@@ -173,13 +186,26 @@ class GameRunner(BaseModel):
         somewhere on that screen. A barracks and a laboratory both do this. The
         storage bars are the test: a building menu leaves them readable and a
         full-screen panel does not.
+
+        **The grid steps further than a small building is wide, so one pass is a
+        sample rather than a search.** At `SWEEP_STAGGER` it lands between four
+        of its own points, which is where whatever the first pass stepped over
+        is: measured, 英雄殿堂 sits at (990, 430) with the nearest grid point 86
+        px away and the staggered one 14 px away. A caller that has to find one
+        particular building runs both, and pays for the second only when the
+        first came back without it. A staggered point past `SWEEP_LIMIT` is
+        dropped rather than clamped, because a clamped one lands on a point the
+        other pass already covered.
         """
         for y in SWEEP_Y:
             for x in SWEEP_X:
-                png = self._after_tap((x, y), f"{label}_{x:04d}_{y:04d}")
+                spot = (x + offset[0], y + offset[1])
+                if spot[0] > SWEEP_LIMIT[0] or spot[1] > SWEEP_LIMIT[1]:
+                    continue
+                png = self._after_tap(spot, f"{label}_{spot[0]:04d}_{spot[1]:04d}")
                 if read_stock(png) is None:
-                    logger.info("The tap at (%d, %d) covered the village; backing out", x, y)
+                    logger.info("The tap at (%d, %d) covered the village; backing out", *spot)
                     if self._home() is None:
                         return
                     continue
-                yield (x, y), png
+                yield spot, png

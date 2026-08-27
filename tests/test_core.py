@@ -62,8 +62,22 @@ from ai_coc.ui.attack import (
     single_spots,
     deploy_candidates,
 )
+from ai_coc.ui.runner import SWEEP_X, SWEEP_Y, SWEEP_LIMIT, SWEEP_STAGGER
 from ai_coc.adapters.ai import GeminiClient
-from ai_coc.adapters.adb import AdbController, focused_display, physical_display
+from ai_coc.adapters.adb import (
+    EV_ABS,
+    EV_KEY,
+    EV_SYN,
+    BTN_TOUCH,
+    SYN_REPORT,
+    ABS_MT_POSITION_X,
+    ABS_MT_POSITION_Y,
+    ABS_MT_TRACKING_ID,
+    AdbController,
+    pinch_events,
+    focused_display,
+    physical_display,
+)
 from ai_coc.parsers.clan import panel_top, donatable_cards, reinforce_button
 from ai_coc.parsers.hero import SCROLL_LEFT, SCROLL_RIGHT, can_scroll, hero_cards, hall_buttons
 from ai_coc.parsers.home import builder_jobs, free_builders, collect_bubbles
@@ -1635,6 +1649,83 @@ class BuildingUpgradeTests(unittest.TestCase):
         assert upgrade_sheet((FRAMES / "menu_with_gem_plate.png").read_bytes()) is None
 
 
+class SweepGridTests(unittest.TestCase):
+    """Where a sweep may tap, which is not everywhere the grid can reach."""
+
+    def test_the_staggered_grid_lands_between_the_plain_one(self) -> None:
+        """Buildings are narrower than the grid steps, so one pass is a sample.
+        英雄殿堂 sits 86 px from the nearest plain point and was walked past
+        twice; the staggered grid puts a point 14 px from it.
+        """
+        hall = (990, 430)
+
+        def nearest(points: list[tuple[int, int]]) -> float:
+            return min(math.dist(point, hall) for point in points)
+
+        plain = [(x, y) for y in SWEEP_Y for x in SWEEP_X]
+        staggered = [
+            (x + SWEEP_STAGGER[0], y + SWEEP_STAGGER[1]) for y in SWEEP_Y for x in SWEEP_X
+        ]
+        assert round(nearest(plain)) == 86
+        assert round(nearest(staggered)) == 14
+
+    def test_no_staggered_point_lands_on_the_game_hud(self) -> None:
+        """The plain grid stops at x 1220 to stay left of the storage bars, which
+        start at 1260 — and the staggered one would put (1300, 200) on the exact
+        corner of the dark elixir reading. Those points are dropped rather than
+        clamped, since a clamped one lands where the other pass already went.
+        """
+        kept = [
+            (x + SWEEP_STAGGER[0], y + SWEEP_STAGGER[1])
+            for y in SWEEP_Y
+            for x in SWEEP_X
+            if x + SWEEP_STAGGER[0] <= SWEEP_LIMIT[0] and y + SWEEP_STAGGER[1] <= SWEEP_LIMIT[1]
+        ]
+        assert kept, "the staggered pass has to keep some points"
+        assert max(point[0] for point in kept) <= SWEEP_X[-1]
+        # The button row a tap opens starts at 622.
+        assert max(point[1] for point in kept) < 622
+        assert round(min(math.dist(point, (990, 430)) for point in kept)) == 14
+
+
+class PinchTests(unittest.TestCase):
+    """The two-finger gesture, which `input` cannot express at all."""
+
+    def _events(self) -> list[tuple[int, int, int]]:
+        return pinch_events(((500, 450), (760, 450)), ((1100, 450), (840, 450)), steps=2)
+
+    def test_the_gesture_carries_btn_touch(self) -> None:
+        """Without it the whole thing is accepted, reported, and ignored — which
+        is what a first attempt looked like, several times over, on all three of
+        the device nodes MuMu publishes.
+        """
+        events = self._events()
+        assert (EV_KEY, BTN_TOUCH, 1) in events
+        assert (EV_KEY, BTN_TOUCH, 0) in events
+
+    def test_a_point_goes_down_with_its_axes_swapped(self) -> None:
+        """The device reports x to 900 and y to 1600 against a 1600x900 screen,
+        so a screen point goes down as (y, x). Measured by tapping (430, 990)
+        through this path and watching the building at screen (990, 430) open.
+        """
+        events = self._events()
+        # The first finger starts at screen (500, 450): x carries 450, y carries 500.
+        assert (EV_ABS, ABS_MT_POSITION_X, 450) in events
+        assert (EV_ABS, ABS_MT_POSITION_Y, 500) in events
+
+    def test_every_finger_is_lifted_by_id(self) -> None:
+        """A tracking id left live holds the touch down, and the next gesture
+        then reads as one finger moving rather than two.
+        """
+        assert self._events().count((EV_ABS, ABS_MT_TRACKING_ID, -1)) == 2
+
+    def test_the_move_is_broken_into_steps(self) -> None:
+        """One jump from start to end reads as a teleport and the game keeps the
+        scale it started at.
+        """
+        assert self._events().count((EV_SYN, SYN_REPORT, 0)) == 4
+
+
 class HeroHallTests(unittest.TestCase):
     """The 英雄殿堂 screen, and the button on the village that opens it."""
 
@@ -1695,6 +1786,16 @@ class HeroHallTests(unittest.TestCase):
         would only be a second way to miss a menu that is really there.
         """
         assert hall_buttons((FRAMES / "hero_hall_menu.png").read_bytes()) == [(1151, 700)]
+
+    def test_the_way_in_is_not_a_fixed_number_of_places_along(self) -> None:
+        """The row gains and loses buttons with the building's state. The same
+        menu came up five buttons wide with a 強化 running, putting the hall one
+        place right of 升級, and four wide without it — which slid every button
+        half a pitch and left the gem-plated 強化英雄 in that place instead. A
+        reader that only looked one place along reported nothing on the second
+        layout, and the sweep walked past the hall it had just opened.
+        """
+        assert hall_buttons((FRAMES / "hero_hall_menu_short.png").read_bytes()) == [(1238, 700)]
 
     def test_a_screen_with_no_menu_on_it_offers_no_way_in(self) -> None:
         assert hall_buttons((FRAMES / "hero_hall.png").read_bytes()) == []
