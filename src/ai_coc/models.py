@@ -709,6 +709,11 @@ class AttackReport(BaseModel):
     """What one run of the attack loop did, for the automation log."""
 
     skipped: int = 0
+    # The opponent that was fought, as its scout screen advertised it — what was
+    # **on offer**, not what came home. None means no battle was fought at all,
+    # which is the one thing to test a round on. What actually landed is the
+    # difference between two `read_stock` readings and nothing else: a full
+    # storage takes none of what it is handed, and the star bonus pays on top.
     attacked: LootOffer | None = None
     message: str = ""
     # Farming has met its goal, so the automation is meant to stop rather than
