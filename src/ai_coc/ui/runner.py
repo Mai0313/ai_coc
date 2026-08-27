@@ -62,6 +62,15 @@ SWEEP_LIMIT = (SWEEP_X[-1], 620)
 # seconds from a cold launch — so nothing is pressed until the patience runs out.
 # A panel a tap opened wants `back`. A dialog wants 取消. And a dropped session
 # wants 重新登入遊戲, after which the game reloads from scratch.
+#
+# **The patience is only owed to a game that might still be starting**, which is
+# what `_seen_village` settles: once a village has read, an unreadable frame is a
+# panel and waiting on it buys nothing. That distinction is worth a private
+# attribute because `_sweep` spends most of its taps opening panels — its grid
+# steps 160 px over buildings 70 to 120 px across — and each one used to cost the
+# full patience before the first `back`. Measured over three live wall runs the
+# stalls were 26, 26 and 34 seconds, which is 50 to 80 of a 150 second run spent
+# waiting for a launch that had already happened.
 HOME_TRIES = 20
 LOADING_PATIENCE = 10
 LOAD_WAIT = 2.0
@@ -107,6 +116,10 @@ class GameRunner(BaseModel):
     frame_dir: Path | None = None
 
     _captures: int = PrivateAttr(default=0)
+    # Whether a village has ever read on this runner, which is what says the game
+    # has finished starting. Cleared when the game is restarted, since that is the
+    # one moment a cold launch can be under way again.
+    _seen_village: bool = PrivateAttr(default=False)
 
     def _tap(self, point: tuple[int, int]) -> None:
         self.adb.tap(point[0], point[1], self.display)
@@ -136,9 +149,15 @@ class GameRunner(BaseModel):
         Measured live: on the home village `back` raises 確定退出遊戲嗎 — with a
         building menu open as readily as without — and that dialog is drawn as
         the same panel with 確定 in the same green in the same pixels as the one
-        that pays for an upgrade. So a frame that reads as nothing at all is
-        waited on rather than pressed at, since far more often than a panel it is
-        the game still loading.
+        that pays for an upgrade. A frame that reads as nothing at all is
+        therefore never a clear village, whatever else it turns out to be.
+
+        **How long it is worth waiting on one depends on whether the game has
+        finished starting**, and `_seen_village` is what says so. Before the
+        first village reads, an unreadable frame is far more often a launch still
+        under way than a panel, so it is waited on. After one has, a launch is
+        over and the frame is a panel, so `back` goes in at once; see the
+        constants above for what the old blanket patience cost a sweep.
 
         The two overlays are cleared rather than read past, because each dims
         the whole screen enough to stop the storage bars reading even though they
@@ -153,6 +172,7 @@ class GameRunner(BaseModel):
             if idle_disconnected(png):
                 logger.info("The session was dropped for idling; restarting the game")
                 self.display = restart_game(self.adb, self.display)
+                self._seen_village = False
                 continue
             dialog = game_dialog(png)
             if dialog is not None:
@@ -162,8 +182,9 @@ class GameRunner(BaseModel):
                 continue
             stock = read_stock(png)
             if stock is not None:
+                self._seen_village = True
                 return stock
-            if attempt < LOADING_PATIENCE:
+            if not self._seen_village and attempt < LOADING_PATIENCE:
                 time.sleep(LOAD_WAIT)
                 continue
             self.adb.back(self.display)
