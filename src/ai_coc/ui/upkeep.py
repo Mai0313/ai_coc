@@ -21,12 +21,25 @@ from __future__ import annotations
 import time
 import logging
 
-from ai_coc.models import BuildReport, VillageStock, CollectReport, BuildCandidate
+from ai_coc.models import BuildReport, VillageStock, BuilderReport, CollectReport, BuildCandidate
 from ai_coc.ui.runner import MENU_SETTLE, GameRunner
-from ai_coc.parsers.home import free_builders, collect_bubbles
+from ai_coc.parsers.home import BUILDER_BUTTON, builder_jobs, free_builders, collect_bubbles
 from ai_coc.parsers.building import wall_menu, game_dialog, upgrade_sheet, upgrade_buttons
 
 logger = logging.getLogger(__name__)
+
+
+def _spell_out(seconds: int) -> str:
+    """A countdown as the game writes it, for a message a person reads."""
+    days, rest = divmod(seconds, 86400)
+    hours, rest = divmod(rest, 3600)
+    minutes = rest // 60
+    if days:
+        return f"{days} 天 {hours} 小時"
+    if hours:
+        return f"{hours} 小時 {minutes} 分鐘"
+    return f"{minutes} 分鐘"
+
 
 # How far apart the taps go, and how long to leave the game to swallow them
 # before looking again. Wider than the attack loop's spacing because nothing here
@@ -202,6 +215,54 @@ class UpkeepRunner(GameRunner):
             logger.warning("Tapped 升級 but %s only moved by %d", offer.resource, spent)
             return False
         return True
+
+    def builders(self) -> BuilderReport:
+        """Read the builder panel: who is busy, and how long each of them has left.
+
+        This is what makes waiting a decision rather than a guess. Every other
+        loop here can only see the 1/5 beside the builder's head, so a village
+        with none free reads the same whether the next one comes back in ten
+        minutes or in two days — and the wall loop walked into exactly that, its
+        every batch answered with 所有建築工人都在忙碌中 and nothing to say when
+        trying again would be worth it.
+
+        **The button toggles.** A panel left open by an earlier run closes on the
+        first tap, so a read that comes back with no panel is worth one more tap
+        before it is called a failure. The last tap shuts it again, because the
+        panel covers the middle of the village and the next loop along taps there.
+        """
+        report = BuilderReport()
+        if self._home() is None:
+            report.message = "畫面沒辦法回到村莊，讀不到工人"
+            return report
+        counted = free_builders(self._frame("builders"))
+        if counted is None:
+            report.message = "讀不到工人數量，先停下來"
+            return report
+        report.free, report.total = counted
+        queue = builder_jobs(self._after_tap(BUILDER_BUTTON, "panel"))
+        if queue is None:
+            queue = builder_jobs(self._after_tap(BUILDER_BUTTON, "panel"))
+        if queue is None:
+            report.message = f"工人 {report.free}/{report.total}，但工人面板打不開"
+            return report
+        report.queue = queue
+        self._tap(BUILDER_BUTTON)
+        time.sleep(MENU_SETTLE)
+        logger.info(
+            "%d of %d builder(s) free, %d upgrade(s) running",
+            report.free,
+            report.total,
+            queue.running,
+        )
+        if not queue.remaining:
+            report.message = f"工人 {report.free}/{report.total}，沒有在跑的升級"
+            return report
+        report.message = (
+            f"工人 {report.free}/{report.total}，{queue.running} 個升級在跑，"
+            f"最快的還要 {_spell_out(queue.remaining[0])}"
+        )
+        return report
 
     def upgrade(self) -> BuildReport:
         """Put every idle builder on the dearest upgrade the village can pay for."""

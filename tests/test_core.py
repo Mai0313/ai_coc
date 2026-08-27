@@ -62,7 +62,7 @@ from ai_coc.ui.attack import (
 from ai_coc.adapters.ai import GeminiClient
 from ai_coc.adapters.adb import AdbController, focused_display, physical_display
 from ai_coc.parsers.clan import panel_top, donatable_cards, reinforce_button
-from ai_coc.parsers.home import free_builders, collect_bubbles
+from ai_coc.parsers.home import builder_jobs, free_builders, collect_bubbles
 from ai_coc.parsers.field import view_shift, army_centre
 from ai_coc.parsers.scout import (
     PANEL_LEFT,
@@ -1453,6 +1453,23 @@ class HomeHudTests(unittest.TestCase):
 
     def test_a_frame_with_no_village_on_it_has_no_builders(self) -> None:
         assert free_builders((FRAMES / "wall_spend_dialog.png").read_bytes()) is None
+
+    def test_the_builder_panel_is_read_off_its_progress_bars(self) -> None:
+        """9小時23分鐘, 19小時12分鐘, 21小時38分鐘 and 1天17小時, in seconds.
+
+        Two units and two ladders: only the first character of the first unit is
+        matched, and the second number follows it one step down. The frame keeps
+        the panel's own column and blacks out the rest; whole, it is 3 MB.
+        """
+        queue = builder_jobs((FRAMES / "builder_panel.png").read_bytes())
+        assert queue is not None
+        assert queue.running == 4
+        assert queue.remaining == [33780, 69120, 77880, 147600]
+
+    def test_a_village_with_no_panel_up_has_no_queue(self) -> None:
+        """The button toggles, so "no panel" is what a second tap is for."""
+        assert builder_jobs((FRAMES / "home_markers.png").read_bytes()) is None
+        assert builder_jobs((FRAMES / "home_storages.png").read_bytes()) is None
 
 
 class BuildingUpgradeTests(unittest.TestCase):

@@ -64,6 +64,8 @@ def _parser() -> argparse.ArgumentParser:
     )
     gather = sub.add_parser("collect", help="把採集器裡的資源全部收起來,不開視窗")
     gather.add_argument("--frames", type=Path, help="把迴圈讀到的每一張畫面存進這個資料夾")
+    crew = sub.add_parser("builders", help="每個工人在蓋什麼、還要多久,不開視窗")
+    crew.add_argument("--frames", type=Path, help="把迴圈讀到的每一張畫面存進這個資料夾")
     build = sub.add_parser("upgrade", help="把閒著的工人派去升級建築,不開視窗")
     build.add_argument("--frames", type=Path, help="把迴圈讀到的每一張畫面存進這個資料夾")
     build.add_argument("--keep-gold", type=int, default=0, help="留下這麼多金幣不要花")
@@ -121,6 +123,8 @@ def _run_command(arguments: argparse.Namespace) -> int:
         ).model_dump_json(indent=2)
     elif arguments.command == "collect":
         result = commands.collect(arguments.frames).model_dump_json(indent=2)
+    elif arguments.command == "builders":
+        result = commands.builders(arguments.frames).model_dump_json(indent=2)
     elif arguments.command == "upgrade":
         result = commands.upgrade(
             arguments.frames, arguments.keep_gold, arguments.keep_elixir

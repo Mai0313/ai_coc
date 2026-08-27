@@ -776,6 +776,31 @@ class CollectReport(BaseModel):
     message: str = ""
 
 
+class BuildQueue(BaseModel):
+    """What the builder panel shows running, read off the progress bars.
+
+    `running` counts the bars and `remaining` carries only the times that read,
+    so a row whose countdown could not be made out is visible as the two
+    disagreeing rather than as a queue quietly one short.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    running: int = 0
+    # Seconds, soonest first, which is the order the question is asked in: the
+    # first of them is when the next builder comes free.
+    remaining: list[int] = Field(default_factory=list)
+
+
+class BuilderReport(BaseModel):
+    """Who is busy and for how long, for a run deciding whether to wait."""
+
+    free: int = 0
+    total: int = 0
+    queue: BuildQueue = BuildQueue()
+    message: str = ""
+
+
 class BuildCandidate(BaseModel):
     """A building the sweep found with an upgrade on offer, and what it asks for.
 
@@ -960,6 +985,7 @@ class FrameReading(BaseModel):
     wall_menu: WallMenu | None = None
     bubbles: list[ResourceBubble] = Field(default_factory=list)
     builders: tuple[int, int] | None = None
+    queue: BuildQueue | None = None
     upgrades: list[UpgradeButton] = Field(default_factory=list)
     donatable: int = 0
     attack_menu: bool = False
