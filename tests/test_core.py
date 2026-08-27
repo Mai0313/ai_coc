@@ -78,6 +78,7 @@ from ai_coc.parsers.scout import (
     read_stock,
     battle_over,
     card_groups,
+    digits_from,
     field_units,
     card_drained,
     freeze_cards,
@@ -96,7 +97,13 @@ from ai_coc.parsers.boundary import (
     boundary_line,
     boundary_reach,
 )
-from ai_coc.parsers.building import wall_menu, game_dialog, upgrade_sheet, upgrade_buttons
+from ai_coc.parsers.building import (
+    PRICE_TOLERANCE,
+    wall_menu,
+    game_dialog,
+    upgrade_sheet,
+    upgrade_buttons,
+)
 from ai_coc.adapters.database import Database
 
 FRAMES = Path(__file__).parent / "frames"
@@ -1531,6 +1538,47 @@ class BuildingUpgradeTests(unittest.TestCase):
         assert len(upgrade_buttons(frame)) == 1
         assert wall_menu(frame) is None
 
+    def test_an_eight_figure_price_is_drawn_too_short_for_the_loot_panel_floor(self) -> None:
+        """A price is shrunk to fit its button, so how tall a digit is depends on
+        how many of them there are: five figures are drawn 16 px tall, seven 13
+        to 14, and eight 12 — of which the digits with no ascender are 11. At the
+        loot panel's floor those drop out one at a time and whatever survives is
+        reported as the price, which had 英雄殿堂's own 10 400 000 reading as 14
+        and left `ai_coc upgrade` unable to see any eight-figure upgrade at all.
+        """
+        offers = upgrade_buttons((FRAMES / "hero_hall_menu.png").read_bytes())
+        assert [(offer.resource, offer.price) for offer in offers] == [("elixir", 10_400_000)]
+
+    def test_a_shorter_floor_does_not_invent_prices_on_the_menus_that_already_read(self) -> None:
+        """Swept over 548 recorded frames, the lower floor changed four readings
+        and every one of them was this same eight-figure price. Nothing that read
+        before stopped reading, and nothing unreadable became a number.
+        """
+        plain = upgrade_buttons((FRAMES / "wall_menu_plain.png").read_bytes())
+        assert [(offer.resource, offer.price) for offer in plain] == [
+            ("gold", 1_600_000),
+            ("elixir", 1_600_000),
+        ]
+        assert upgrade_buttons((FRAMES / "home_storages.png").read_bytes()) == []
+        assert upgrade_buttons((FRAMES / "army_screen.png").read_bytes()) == []
+
+    def test_a_price_the_reader_only_half_resolved_is_not_a_shorter_price(self) -> None:
+        """`PRICE_TOLERANCE` was defined and never passed, so a row this reader
+        got partway through came back as whatever survived rather than as
+        nothing — which is how 10 400 000 was reported as 14. A truncated price
+        is the dangerous kind of wrong: one that keeps seven of its eight digits
+        still clears `MIN_PRICE` and gets spent against.
+        """
+        # Ink shaped like no digit at all. Without a tolerance the reader still
+        # names its nearest template and hands the number back; the real ones
+        # this rejects are patches of village that read as a stray 1.
+        mask = [
+            [(x + y) % 2 == 0 and 4 <= x < 18 and 6 <= y < 24 for x in range(40)]
+            for y in range(30)
+        ]
+        assert digits_from(mask) == 0
+        assert digits_from(mask, PRICE_TOLERANCE) is None
+
     def test_the_upgrade_sheet_is_told_from_grass_by_the_storage_bars(self) -> None:
         """A building confirms on a full-screen sheet whose 確認 is green — and so
         is a village, all over. What separates them is that the sheet covers the
@@ -1597,8 +1645,8 @@ class HeroHallTests(unittest.TestCase):
     def test_the_way_in_is_placed_by_the_icon_beside_it(self) -> None:
         """英雄殿堂's own button is a gold crown, which is artwork. What is read
         is the resource icon on the 升級 beside it, and the row's fixed pitch
-        does the rest — its price is deliberately not needed, because at eight
-        figures the game shrinks it below what the digit reader can resolve.
+        does the rest — its price is deliberately not wanted, because needing one
+        would only be a second way to miss a menu that is really there.
         """
         assert hall_buttons((FRAMES / "hero_hall_menu.png").read_bytes()) == [(1151, 700)]
 

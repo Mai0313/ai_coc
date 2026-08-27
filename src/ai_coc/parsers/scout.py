@@ -372,7 +372,9 @@ def _tallest_band(rows: list[int]) -> list[int]:
     return max(bands, key=len)
 
 
-def _signature(mask: list[list[bool]], left: int, right: int) -> int | None:
+def _signature(
+    mask: list[list[bool]], left: int, right: int, floor: int = MIN_GLYPH_ROWS
+) -> int | None:
     """Normalise one glyph to a CELL_WIDTH x CELL_HEIGHT bit pattern.
 
     A glyph is measured from its tallest unbroken band of rows rather than from
@@ -392,10 +394,10 @@ def _signature(mask: list[list[bool]], left: int, right: int) -> int | None:
     which matches nothing and fails the row — which is the point of them.
     """
     rows = [y for y, row in enumerate(mask) if any(row[left:right])]
-    if len(rows) < MIN_GLYPH_ROWS:
+    if len(rows) < floor:
         return None
     band = _tallest_band(rows)
-    if len(band) >= MIN_GLYPH_ROWS:
+    if len(band) >= floor:
         rows = band
     glyph = Image.frombytes(
         "L",
@@ -412,16 +414,16 @@ def _signature(mask: list[list[bool]], left: int, right: int) -> int | None:
     return bits
 
 
-def _match(mask: list[list[bool]], left: int, right: int) -> tuple[str, int] | None:
+def _match(mask: list[list[bool]], left: int, right: int, floor: int) -> tuple[str, int] | None:
     """One column span as the digit it matches best and how far off that was."""
-    signature = _signature(mask, left, right)
+    signature = _signature(mask, left, right, floor)
     if signature is None:
         return None
     digit = min(TEMPLATES, key=lambda d: (TEMPLATES[d] ^ signature).bit_count())
     return digit, (TEMPLATES[digit] ^ signature).bit_count()
 
 
-def _split(mask: list[list[bool]], left: int, right: int) -> list[tuple[str, int]]:
+def _split(mask: list[list[bool]], left: int, right: int, floor: int) -> list[tuple[str, int]]:
     """Two digits the mask never separated, cut where both halves read best.
 
     Nothing guarantees a gap between two digits: measured on a live panel, the
@@ -452,7 +454,7 @@ def _split(mask: list[list[bool]], left: int, right: int) -> list[tuple[str, int
     first = max(left + MIN_GLYPH_WIDTH, right - MAX_GLYPH_WIDTH)
     last = min(right - MIN_GLYPH_WIDTH, left + MAX_GLYPH_WIDTH)
     for cut in range(first, last + 1):
-        halves = [_match(mask, left, cut), _match(mask, cut, right)]
+        halves = [_match(mask, left, cut, floor), _match(mask, cut, right, floor)]
         if None in halves:
             continue
         read = [half for half in halves if half is not None]
@@ -462,7 +464,7 @@ def _split(mask: list[list[bool]], left: int, right: int) -> list[tuple[str, int
     return best[1] if best else []
 
 
-def _row_glyphs(mask: list[list[bool]]) -> Iterator[tuple[str, int]]:
+def _row_glyphs(mask: list[list[bool]], floor: int = MIN_GLYPH_ROWS) -> Iterator[tuple[str, int]]:
     """Each glyph on a row as the digit it matches best and how far off that was.
 
     The distance is what the two callers disagree about, so it comes back with
@@ -478,20 +480,29 @@ def _row_glyphs(mask: list[list[bool]]) -> Iterator[tuple[str, int]]:
     that matches badly, but the distance says what the width does.
     """
     for left, right in _glyph_columns(mask):
-        if right - left > MAX_GLYPH_WIDTH and (halves := _split(mask, left, right)):
+        if right - left > MAX_GLYPH_WIDTH and (halves := _split(mask, left, right, floor)):
             yield from halves
             continue
-        match = _match(mask, left, right)
+        match = _match(mask, left, right, floor)
         if match is not None:
             yield (match[0], NOT_A_GLYPH) if right - left > MAX_GLYPH_WIDTH else match
 
 
-def digits_from(mask: list[list[bool]], tolerance: int | None = None) -> int | None:
+def digits_from(
+    mask: list[list[bool]], tolerance: int | None = None, floor: int = MIN_GLYPH_ROWS
+) -> int | None:
     """The number a mask of ink spells, or None where it does not read as one.
 
     `tolerance` gives up on the whole row as soon as one glyph is a poor match,
     which is what keeps a storage bar's fill highlight from being read as a
     digit, and is how a screen that is not the home village reads as no screen.
+
+    `floor` is how tall a glyph has to be to be measured at all, and it is a
+    parameter because **the game shrinks a number to fit its box**. Measured on
+    a building menu, a five-figure price is drawn 16 px tall, a seven-figure one
+    13 to 14, and an eight-figure one 12 — of which the digits with no ascender
+    are 11. At `MIN_GLYPH_ROWS` every one of those short digits drops out, and
+    what is left reads as a number: 10 400 000 came back as 14.
 
     The mask is handed in rather than built here because what counts as ink
     depends on what the text is painted over. `_ink_mask` is right for a number
@@ -499,7 +510,7 @@ def digits_from(mask: list[list[bool]], tolerance: int | None = None) -> int | N
     plate, which `parsers.building` has to separate by colour instead.
     """
     digits = ""
-    for digit, distance in _row_glyphs(mask):
+    for digit, distance in _row_glyphs(mask, floor):
         if tolerance is not None and distance > tolerance:
             return None
         digits += digit

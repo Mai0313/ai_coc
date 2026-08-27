@@ -129,11 +129,10 @@ def hall_buttons(png: bytes) -> list[tuple[int, int]]:
     outwards a fixed pitch apart, so one located button locates its neighbours.
 
     That neighbour is found from the resource icon alone rather than through
-    `upgrade_buttons`, which also wants the price to read. The hall's own 升級
-    asks eight figures, and at eight figures the game shrinks the price to 11 px
-    tall — under `MIN_GLYPH_ROWS`, so most of its digits do not resolve and the
-    button is not reported at all. Here the price is not needed: what a button
-    is gets settled by tapping it and reading the screen that came up.
+    `upgrade_buttons`, which also wants the price to read. Here the price is not
+    needed for anything — what a button is gets settled by tapping it and
+    reading the screen that came up — so wanting one would only be a second way
+    to miss a menu that is really there.
 
     So this says where to try, not what is there. Plenty of buildings have a
     button in that place — a barracks has 訓練, a laboratory has 研究 — and each

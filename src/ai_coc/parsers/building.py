@@ -75,8 +75,21 @@ INK_WHITE = 245
 INK_RED_LEVEL = 200
 INK_RED_MARGIN = 80
 # Swept over the recorded menus, every digit that read correctly landed within 24
-# of its template, red and white alike.
+# of its template, red and white alike. It was defined and never passed, which is
+# why a row this reader only half resolved came back as a shorter number rather
+# than as nothing: 10 400 000 was reported as 14. A truncated price is the
+# dangerous kind of wrong, because one that keeps seven of its eight digits still
+# clears `MIN_PRICE` and is spent against. Swept over 548 recorded frames,
+# applying it changes eight readings and every one is a stray 1 becoming None.
 PRICE_TOLERANCE = 30
+# How short a digit may be here, which is lower than the loot panel's floor
+# because **a price is shrunk to fit its button**. Measured across the recorded
+# menus, five figures are drawn 16 px tall, seven 13 to 14, and eight 12 — of
+# which the digits with no ascender measure 11. At `MIN_GLYPH_ROWS` those drop
+# out one by one and whatever survives is reported as the price: the 英雄殿堂's
+# own 10 400 000 came back as 14, and `ai_coc upgrade` could not see a single
+# eight-figure upgrade while picking the dearest one it could find.
+PRICE_ROWS = 10
 # Nothing in the village upgrades for single figures, so a price that small is a
 # number read off some other button — a count, a level badge — rather than a
 # cost. The cheapest real upgrade in the game is a level-1 wall at 5000.
@@ -172,7 +185,11 @@ def _price_mask(band: Image.Image) -> list[list[bool]]:
 def _price(image: Image.Image, centre: int) -> int | None:
     """What the button centred here asks for, or None where it does not read."""
     left, top, right, bottom = PRICE_BOX
-    return digits_from(_price_mask(image.crop((centre + left, top, centre + right, bottom))))
+    return digits_from(
+        _price_mask(image.crop((centre + left, top, centre + right, bottom))),
+        PRICE_TOLERANCE,
+        floor=PRICE_ROWS,
+    )
 
 
 def _on_gem_plate(image: Image.Image, centre: int) -> bool:
