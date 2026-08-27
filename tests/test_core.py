@@ -12,8 +12,9 @@ import pytest
 from pydantic import ValidationError
 
 from ai_coc import plans
-from ai_coc.ui import walls, attack
+from ai_coc.ui import hero, walls, attack
 from ai_coc.models import (
+    HeroCard,
     ProbeRay,
     WallMenu,
     AppConfig,
@@ -21,6 +22,7 @@ from ai_coc.models import (
     ScoutView,
     WallBatch,
     AttackPlan,
+    HeroReport,
     AdbEndpoint,
     ScreenPoint,
     StockLimits,
@@ -35,6 +37,7 @@ from ai_coc.models import (
     LootThresholds,
 )
 from ai_coc.prompts import PROMPTS, PROMPT_DIR, render
+from ai_coc.ui.hero import HeroRunner
 from ai_coc.ui.walls import WallRunner
 from ai_coc.ui.attack import (
     PLAYFIELD,
@@ -62,6 +65,7 @@ from ai_coc.ui.attack import (
 from ai_coc.adapters.ai import GeminiClient
 from ai_coc.adapters.adb import AdbController, focused_display, physical_display
 from ai_coc.parsers.clan import panel_top, donatable_cards, reinforce_button
+from ai_coc.parsers.hero import SCROLL_LEFT, SCROLL_RIGHT, can_scroll, hero_cards, hall_buttons
 from ai_coc.parsers.home import builder_jobs, free_builders, collect_bubbles
 from ai_coc.parsers.field import view_shift, army_centre
 from ai_coc.parsers.scout import (
@@ -1535,6 +1539,198 @@ class BuildingUpgradeTests(unittest.TestCase):
         assert upgrade_sheet((FRAMES / "upgrade_sheet.png").read_bytes()) == (1121, 783)
         assert upgrade_sheet((FRAMES / "home_markers.png").read_bytes()) is None
         assert upgrade_sheet((FRAMES / "menu_with_gem_plate.png").read_bytes()) is None
+
+
+class HeroHallTests(unittest.TestCase):
+    """The 英雄殿堂 screen, and the button on the village that opens it."""
+
+    def test_every_card_reads_its_hero_and_what_the_next_level_costs(self) -> None:
+        """The banner is the identifying mark, and it is UI rather than artwork:
+        the same flat colour at level 1 as at level 100, and the same wherever
+        the row has been scrolled to.
+        """
+        cards = hero_cards((FRAMES / "hero_hall.png").read_bytes())
+        assert [(card.hero, card.price, card.resource) for card in cards] == [
+            ("king", 4_000, "dark"),
+            ("queen", 4_800, "dark"),
+            ("minion_prince", 4_400, "dark"),
+            ("warden", 1_360_000, "elixir"),
+            ("champion", 8_000, "dark"),
+        ]
+
+    def test_the_sixth_hero_is_only_there_once_the_row_has_scrolled(self) -> None:
+        """Five of the six cards fit, so the last one is off screen until it is
+        scrolled to — and a card only half on screen is not read at all, because
+        the price beside its middle would be its neighbour's.
+        """
+        cards = hero_cards((FRAMES / "hero_hall_scrolled.png").read_bytes())
+        assert [card.hero for card in cards] == [
+            "queen",
+            "minion_prince",
+            "warden",
+            "champion",
+            "duke",
+        ]
+        assert (cards[-1].price, cards[-1].resource) == (56_000, "dark")
+
+    def test_a_screen_of_coloured_plates_is_not_the_hall(self) -> None:
+        """我的軍隊 stands its heroes on tall coloured plates of their own, and a
+        run that took those for hall cards walked into that screen, called it the
+        Hero Hall and stopped sweeping for the real one. A banner matching no
+        hero is dropped rather than reported as an unknown one, which is what
+        leaves this screen answering nothing at all.
+        """
+        assert hero_cards((FRAMES / "army_screen.png").read_bytes()) == []
+        assert hero_cards((FRAMES / "home_storages.png").read_bytes()) == []
+        assert hero_cards((FRAMES / "upgrade_sheet.png").read_bytes()) == []
+
+    def test_an_arrow_is_read_before_it_is_tapped(self) -> None:
+        """The end the row has run out of is not drawn, and a card stands where
+        that arrow was — so a run that tapped blindly would open a hero instead
+        of scrolling.
+        """
+        left = (FRAMES / "hero_hall.png").read_bytes()
+        right = (FRAMES / "hero_hall_scrolled.png").read_bytes()
+        assert (can_scroll(left, SCROLL_LEFT), can_scroll(left, SCROLL_RIGHT)) == (False, True)
+        assert (can_scroll(right, SCROLL_LEFT), can_scroll(right, SCROLL_RIGHT)) == (True, False)
+
+    def test_the_way_in_is_placed_by_the_icon_beside_it(self) -> None:
+        """英雄殿堂's own button is a gold crown, which is artwork. What is read
+        is the resource icon on the 升級 beside it, and the row's fixed pitch
+        does the rest — its price is deliberately not needed, because at eight
+        figures the game shrinks it below what the digit reader can resolve.
+        """
+        assert hall_buttons((FRAMES / "hero_hall_menu.png").read_bytes()) == [(1151, 700)]
+
+    def test_a_screen_with_no_menu_on_it_offers_no_way_in(self) -> None:
+        assert hall_buttons((FRAMES / "hero_hall.png").read_bytes()) == []
+        assert hall_buttons((FRAMES / "home_storages.png").read_bytes()) == []
+        assert hall_buttons((FRAMES / "army_screen.png").read_bytes()) == []
+
+    def test_the_confirmation_covers_the_cards_and_confirms_where_it_is_sought(self) -> None:
+        """The whole spending half of the command rests on these two readings.
+
+        `_start` calls a frame that still has cards on it a tap that never
+        landed, and it needs 確認 inside the span `upgrade_sheet` searches — the
+        same one a building's sheet uses. A hero's sheet is a different screen,
+        so that it lands in the same place is a measurement rather than a given.
+        """
+        sheet = (FRAMES / "hero_upgrade_sheet.png").read_bytes()
+        assert hero_cards(sheet) == []
+        assert upgrade_sheet(sheet) == (1121, 783)
+
+
+class HeroRunnerTests(unittest.TestCase):
+    """The arithmetic between the taps, with the emulator taken out."""
+
+    def _runner(self, **fields: object) -> HeroRunner:
+        return HeroRunner(
+            adb=AdbController(endpoint=AdbEndpoint(port=16384)),
+            display=DisplayTarget(logical_id="1", physical_id="2"),
+            **fields,
+        )
+
+    def _duke(self, **fields: object) -> HeroCard:
+        return HeroCard(hero="duke", point=(1407, 648), price=56_000, resource="dark", **fields)
+
+    def test_an_upgrade_the_village_cannot_pay_for_is_never_tapped(self) -> None:
+        """This is the guard, not a courtesy. The game answers an upgrade it
+        cannot charge for with a gem purchase, and nothing below the prompt layer
+        would stop a loop walking into one.
+        """
+        runner = self._runner(hero="duke")
+        report = HeroReport()
+        with patch.object(AdbController, "tap") as tapped:
+            message = runner._raise(
+                report, {"duke": self._duke()}, VillageStock(gold=0, elixir=0, dark=55_999)
+            )
+        assert "資源不夠" in message
+        assert report.started is None
+        tapped.assert_not_called()
+
+    def test_a_village_with_no_builder_free_never_looks_for_the_hall(self) -> None:
+        """Every builder busy is the ordinary state of a farming village, and
+        finding the hall costs minutes of tapping. The count is known before any
+        of that, so a run that was asked to spend ends on it.
+        """
+        runner = self._runner(hero="duke")
+        with (
+            patch.object(runner, "_home", return_value=VillageStock(gold=0, elixir=0, dark=0)),
+            patch.object(runner, "_frame", return_value=b""),
+            patch.object(hero, "free_builders", return_value=(0, 5)),
+            patch.object(runner, "_open") as opened,
+        ):
+            report = runner.run()
+        assert "都在忙" in report.message
+        opened.assert_not_called()
+
+    def test_a_run_that_only_reads_still_opens_the_hall_with_no_builder_free(self) -> None:
+        """Reading costs nothing to be wrong about, and what each hero's next
+        level costs is the half worth having when nothing can be started.
+        """
+        runner = self._runner()
+        with (
+            patch.object(runner, "_home", return_value=VillageStock(gold=0, elixir=0, dark=0)),
+            patch.object(runner, "_frame", return_value=b""),
+            patch.object(hero, "free_builders", return_value=(0, 5)),
+            patch.object(runner, "_open", return_value=b"") as opened,
+            patch.object(runner, "_walk", return_value={}),
+            patch.object(runner, "_close"),
+        ):
+            runner.run()
+        opened.assert_called_once()
+
+    def test_a_hero_already_being_upgraded_has_no_button_to_tap(self) -> None:
+        """Its card is on the screen with a countdown where the button was, which
+        is why a price that does not read leaves the card in the list rather than
+        out of it.
+        """
+        runner = self._runner(hero="duke")
+        report = HeroReport()
+        with patch.object(AdbController, "tap") as tapped:
+            message = runner._raise(
+                report,
+                {"duke": HeroCard(hero="duke", point=(1407, 648))},
+                VillageStock(gold=0, elixir=0, dark=200_000),
+            )
+        assert "正在升級中" in message
+        tapped.assert_not_called()
+
+    def test_a_storage_that_never_moved_is_not_an_upgrade(self) -> None:
+        """Confirming the sheet is not proof: a tap the game swallows raises
+        nothing at all, and the sheet closes the same way either way.
+        """
+        runner = self._runner(hero="duke")
+        report = HeroReport()
+        held = VillageStock(gold=0, elixir=0, dark=200_000)
+        with (
+            patch.object(hero, "hero_cards", return_value=[self._duke()]),
+            patch.object(runner, "_frame", return_value=b""),
+            patch.object(runner, "_start", return_value=True),
+            patch.object(runner, "_close"),
+            patch.object(runner, "_home", return_value=held),
+        ):
+            message = runner._raise(report, {"duke": self._duke()}, held)
+        assert report.started is None
+        assert "只少了 0" in message
+
+    def test_the_hall_is_read_again_before_the_button_is_tapped(self) -> None:
+        """The walk ends wherever the row ran out, which is not where it was when
+        the card was read — so tapping the remembered point would tap whichever
+        card has slid into that place.
+        """
+        runner = self._runner(hero="duke")
+        report = HeroReport()
+        with (
+            patch.object(hero, "hero_cards", return_value=[]),
+            patch.object(runner, "_frame", return_value=b""),
+            patch.object(AdbController, "tap") as tapped,
+        ):
+            message = runner._raise(
+                report, {"duke": self._duke()}, VillageStock(gold=0, elixir=0, dark=200_000)
+            )
+        assert "不在畫面上" in message
+        tapped.assert_not_called()
 
 
 class ClanTests(unittest.TestCase):

@@ -586,7 +586,7 @@ class ScreenPoint(BaseModel):
         return round(self.x_pct * 16), round(self.y_pct * 9)
 
 
-HeroKind = Literal["king", "queen", "warden", "champion", "minion_prince", "unknown"]
+HeroKind = Literal["king", "queen", "warden", "champion", "minion_prince", "duke", "unknown"]
 
 # What Gemini accepts for `generation_config.thinking_level`, cheapest first.
 # Every call this application makes is a screen read against a fixed prompt, so
@@ -631,6 +631,11 @@ class AttackTimings(BaseModel):
     warden: int = 30
     champion: int = 45
     minion_prince: int = 20
+    # 飛龍公爵's own 皇家狂暴 is passive — the game says so on its upgrade sheet —
+    # so there is nothing here for a tap to fire and the number only decides when
+    # a card that answers nothing gets tapped. The neutral value keeps it out of
+    # the way of the abilities that do something.
+    duke: int = 20
     unknown: int = 20
     rage: int = 15
     freeze: int = 30
@@ -832,6 +837,44 @@ class BuildReport(BaseModel):
         return sum(job.price for job in self.started if job.resource == resource)
 
 
+class HeroCard(BaseModel):
+    """One card on the 英雄殿堂 screen: who is on it, and what raising him costs.
+
+    `price` and `resource` are read off the same button, so they are both set or
+    both absent. A card without them is a hero the screen is showing but not
+    offering — one already being upgraded has a countdown where its button was —
+    which is a different thing from a card that is not on screen at all, and the
+    two are told apart because only the second is missing from the list.
+
+    A banner whose colour matches no hero never reaches here at all: the reader
+    drops it, because far more often than a hero the game has just added it is
+    some other screen with coloured plates on it. What that costs is a hero
+    added by an update reading as absent, which is a run that says it cannot
+    find him — and what it buys is a run that does not mistake the 我的軍隊
+    screen for the hall.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    hero: HeroKind
+    point: tuple[int, int]
+    price: int | None = None
+    resource: Literal["elixir", "dark"] | None = None
+
+
+class HeroReport(BaseModel):
+    """What one `hero` run saw in the hall, and which upgrade it started.
+
+    The cards are reported whether or not anything was started, because that is
+    the read-only half of the command and the half worth running on its own:
+    what each hero costs next is the number a player decides against.
+    """
+
+    cards: list[HeroCard] = Field(default_factory=list)
+    started: HeroCard | None = None
+    message: str = ""
+
+
 class DonateReport(BaseModel):
     """What one `donate` run gave away.
 
@@ -989,6 +1032,7 @@ class FrameReading(BaseModel):
     army: tuple[int, int] | None = None
     wall_menu: WallMenu | None = None
     bubbles: list[ResourceBubble] = Field(default_factory=list)
+    heroes: list[HeroCard] = Field(default_factory=list)
     builders: tuple[int, int] | None = None
     queue: BuildQueue | None = None
     upgrades: list[UpgradeButton] = Field(default_factory=list)
