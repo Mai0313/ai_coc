@@ -177,9 +177,10 @@ class HeroRunner(GameRunner):
         the sheet that pays for an upgrade. So the frame is read first, and a
         run that has already made its way home presses nothing.
 
-        It is also what makes reading the storages afterwards cheap: `_home`
-        would sit through its whole loading patience before pressing anything,
-        which is twenty seconds spent staring at a panel that a key closes.
+        It also reads the hall before pressing rather than leaving the whole job
+        to `_home`, which cannot: the storages do not read on the hall either, so
+        `_home` would answer it with the same `back` having spent a capture and a
+        settle finding out what this already knows.
         """
         if hero_cards(self._frame("close")):
             self.adb.back(self.display)

@@ -1451,6 +1451,29 @@ class HomeTests(unittest.TestCase):
         assert self._backs(run, [held]) == 0
         assert self._backs(run, [None, None, None, held]) == 3
 
+    def test_a_restart_puts_the_launch_patience_back(self) -> None:
+        """The one branch that stops `back` being pressed at a game that is cold again.
+
+        A loop that waits minutes on barracks meets the idle-disconnect dialog
+        sooner or later, and the answer to it is a restart — so the frames right
+        after one are a launch, whatever this runner had already seen.
+        """
+        held = VillageStock(gold=1, elixir=1, dark=1)
+        run = self._runner()
+        assert self._backs(run, [held]) == 0
+        with (
+            patch.object(shared.time, "sleep"),
+            patch.object(run, "_frame", return_value=b""),
+            # Dropped on the first frame, then a launch nothing may press at.
+            patch.object(shared, "idle_disconnected", side_effect=[True, False, False, False]),
+            patch.object(shared, "game_dialog", return_value=None),
+            patch.object(shared, "read_stock", side_effect=[None, None, held]),
+            patch.object(shared, "restart_game", return_value=run.display),
+            patch.object(AdbController, "back") as back,
+        ):
+            run._home()
+        assert back.call_count == 0
+
 
 class WallRunnerTests(unittest.TestCase):
     """The arithmetic between the taps, with the emulator taken out."""
