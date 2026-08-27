@@ -62,6 +62,9 @@ STROKE_SCORE = 55
 # Where a ray may look. Below the playfield the card row starts, and a stroke
 # found there is a card, not a boundary.
 PLAYFIELD = (30, 105, 1570, 700)
+# Four pieces of UI the game paints in its own red, which every reader here has
+# to blank: the loot panel, our resource bars, 結束戰鬥 and 摧毀率.
+UI_PANELS = ((0, 0, 320, 280), (1320, 0, 1600, 200), (0, 620, 230, 712), (1320, 600, 1600, 712))
 # The stroke is one to two pixels wide, so a ray steps a pixel at a time.
 RAY_STEP = 1
 # A ray crosses the stroke in a pixel or two and a wall in far more, which is
@@ -80,10 +83,8 @@ MAX_STROKE_RUN = 4
 MIN_REACH_RATIO = 0.5
 
 
-# Where the village sits on screen, taken from the same red stroke. Four pieces
-# of UI are painted in the game's own red and would otherwise drag the box out to
-# the screen edge: the loot panel, our resource bars, 結束戰鬥 and 摧毀率.
-UI_PANELS = ((0, 0, 320, 280), (1320, 0, 1600, 200), (0, 620, 230, 712), (1320, 600, 1600, 712))
+# Where the village sits on screen, taken from the same red stroke, with the same
+# UI panels blanked or they would drag the box out to the screen edge.
 # The stroke is thin, so the profiles are taken over bands rather than whole
 # columns: averaged over 600 rows a two-pixel crossing rounds away to nothing.
 PROFILE_BANDS = 32
@@ -103,6 +104,11 @@ def _stroke(data: bytes, offset: int) -> bool:
     return STROKE_RED[0] <= red <= STROKE_RED[1] and red - max(green, blue) >= STROKE_SCORE
 
 
+def _on_panel(x: int, y: int) -> bool:
+    """Whether this point sits on a piece of UI the game paints in its own red."""
+    return any(left <= x <= right and top <= y <= bottom for left, top, right, bottom in UI_PANELS)
+
+
 def boundary_reach(
     png: bytes | Image.Image, degrees: float, centre: tuple[int, int] = VILLAGE_CENTRE
 ) -> tuple[int, int] | None:
@@ -111,6 +117,18 @@ def boundary_reach(
     Outermost rather than first: the stroke is a closed stair-step, so a ray
     leaving the middle can cross it several times where the village juts out.
     Only the last crossing bounds the ground the loop may drop on.
+
+    Outermost is also why the UI has to be blanked here and not only in
+    `village_box`: 結束戰鬥 and 摧毀率 are painted in the game's own red in the
+    two corners a lower flank's rays run into, so they are the *last* thing a ray
+    meets and they win. Measured on a recorded battle, the midpoint ray of the
+    bottom-left flank answered (95, 665) — that is the 放棄 button, 753 px out,
+    against a real boundary around 350 — and the bottom-right one answered
+    (1556, 685). `fitted_line` threw both flanks away for having anchors at
+    wildly different distances, which is the cheap way for this to go wrong; the
+    expensive way is a fit that passes with the line's middle on a button.
+    Swept over 24 recorded battle frames, the two together take the flanks that
+    fit from 11 of 96 to 40.
     """
     image = png if isinstance(png, Image.Image) else Image.open(io.BytesIO(png)).convert("RGB")
     if image.size != SCREEN_SIZE:
@@ -129,6 +147,19 @@ def boundary_reach(
         y = round(centre[1] + dy * step)
         if not (left <= x <= right and top <= y <= bottom):
             break
+        # A blanked step is not distance the ray was able to look through, so it
+        # does not count towards what `MIN_REACH_RATIO` divides by either. Left
+        # in, the ratio judges a real crossing against a stretch of ray nothing
+        # could have been read on: the bottom-left flank's midpoint ray enters
+        # 放棄 at 625 and runs to the playfield edge at 823, which turns a
+        # boundary at 353 from 0.57 of what was readable into 0.43 of what was
+        # walked. Blanking alone took the flanks that fit over 24 recorded
+        # battle frames from 11 of 96 to 26; not counting the blanked steps
+        # takes it to 40. Nothing is lost by skipping the rest of the step: all
+        # four panels are anchored to a screen corner and the playfield edge
+        # lies outside them, so a ray that enters one never leaves it again.
+        if _on_panel(x, y):
+            continue
         reached = step
         if _stroke(data, (y * width + x) * 3):
             run.append((x, y))
