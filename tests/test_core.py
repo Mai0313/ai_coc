@@ -6,7 +6,7 @@ import logging
 from pathlib import Path
 import tempfile
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 from collections.abc import Callable, Sequence
 
 from PIL import Image, ImageDraw
@@ -110,6 +110,7 @@ from ai_coc.parsers.scout import (
     counted_cards,
     attack_menu_open,
 )
+from ai_coc.ui.main_window import LIVE_INTERVAL, MainWindow
 from ai_coc.adapters.config import ConfigStore
 from ai_coc.parsers.village import parse_village
 from ai_coc.adapters.secrets import dotenv_value
@@ -1813,6 +1814,48 @@ class RunLogTests(unittest.TestCase):
                 handler.close()
             assert "only the second run" in second.log_path.read_text(encoding="utf-8")
             assert "only the second run" not in first.log_path.read_text(encoding="utf-8")
+
+
+class WindowToggleTests(unittest.TestCase):
+    """The two checkboxes beside the preview, with no Qt event loop involved.
+
+    Called unbound against a stand-in for `self`, which is all a slot that only
+    touches its own attributes needs. This is the coverage whose absence let a
+    real regression through: a checkbox added below `_toggle_live_view` took
+    that method's timer branch with it, so unchecking 即時畫面 no longer stopped
+    the preview and the new checkbox started and stopped it instead. The whole
+    suite stayed green, because nothing here touches the window at all.
+    """
+
+    def test_the_live_toggle_still_owns_the_timer(self) -> None:
+        """Matched whole rather than call by call, because the interval is half
+        the point: a bare `start()` runs the preview every time round the event
+        loop, which is what `LIVE_INTERVAL` exists to avoid.
+        """
+        window = MagicMock()
+        MainWindow._toggle_live_view(window, True)
+        assert window.mock_calls == [
+            call.settings.setValue("live_view", True),
+            call.live_timer.start(LIVE_INTERVAL),
+        ]
+        window.reset_mock()
+        MainWindow._toggle_live_view(window, False)
+        assert window.mock_calls == [
+            call.settings.setValue("live_view", False),
+            call.live_timer.stop(),
+        ]
+
+    def test_the_recording_toggle_touches_nothing_but_its_setting(self) -> None:
+        """What reads it is `run_attack`, when it opens the run. A round already
+        under way keeps whatever it started with, and the preview is none of its
+        business.
+        """
+        window = MagicMock()
+        MainWindow._toggle_record_frames(window, True)
+        # The whole call list, not a list of things it did not do: the
+        # regression this class exists for was a branch appearing where none
+        # belonged, and naming `live_timer` alone would miss the next one.
+        assert window.mock_calls == [call.settings.setValue("record_frames", True)]
 
 
 def _menu(price: int, gold: int = 887) -> WallMenu:
