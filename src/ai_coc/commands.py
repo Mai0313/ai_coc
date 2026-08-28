@@ -244,16 +244,17 @@ STOP_POLL = 2.0
 
 
 def stop() -> str:
-    """Ask a running attack loop to stand down, and return without waiting.
+    """Ask whichever long loop is running to stand down, without waiting for it.
 
     Nothing here touches the game or looks for a process: this writes the flag
-    and ends. What actually stops is the loop, when it next looks — between
-    rounds, and between opponents within a round. Never mid-battle, because a
-    battle abandoned halfway leaves the army on the field and the game on a
-    screen the next run does not know how to get home from.
+    and ends. What actually stops is the loop, when it next looks, and where
+    that is belongs to each of them — `attack` between rounds and between
+    opponents, `walls` between batches and during the opening scan. Never
+    mid-battle or mid-batch, because either one abandoned halfway leaves the
+    game on a screen the next run does not know how to get home from.
     """
     STOP_FLAG.write_text("", encoding="utf-8")
-    return f"已要求停止,旗標寫在 {STOP_FLAG}。正在跑的那一輪會打完當下這一場才結束。"
+    return f"已要求停止,旗標寫在 {STOP_FLAG}。正在跑的迴圈會做完手上這一件事才收工。"
 
 
 def stop_requested() -> bool:
@@ -587,9 +588,13 @@ def walls(options: WallOptions) -> WallReport:
     report = runner.run()
     # Said here rather than inside the loop: what the runner knows is how many
     # batches it bought, and "已停止" is a fact about this call rather than about
-    # the walls. Its own message stays, because it is still true.
+    # the walls. A run stopped before it bought anything is the exception — its
+    # own fallback message is a verdict on positions it never tried, and that
+    # sentence has been read as "the walls are finished" and taken for it.
     if stop_requested():
-        report.message = f"已停止，{report.message}"
+        report.message = (
+            f"已停止，{report.message}" if report.upgrades else "已停止，還沒買成任何一批"
+        )
     _clear_stop()
     logger.info(
         "Walls: %s (金幣 %d／聖水 %d)", report.message, report.paid("gold"), report.paid("elixir")

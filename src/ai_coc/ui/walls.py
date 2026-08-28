@@ -140,6 +140,13 @@ class WallRunner(GameRunner):
         """
         found: dict[tuple[int, int], int] = {}
         for point, png in self._sweep("scan"):
+            # The scan is the longest unguarded stretch of a run that was not
+            # told where to start: a grid tap costs a `MENU_SETTLE` and a
+            # capture, and every wall it lands on costs four more. Leaving here
+            # is safe in a way that leaving a batch is not, because the sweep
+            # already backs out of whatever each tap opened.
+            if self.should_stop():
+                break
             menu = wall_menu(png)
             if menu is None:
                 continue

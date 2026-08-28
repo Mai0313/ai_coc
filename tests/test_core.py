@@ -1917,6 +1917,26 @@ class WallRunnerTests(unittest.TestCase):
             report = runner.run()
         assert not report.upgrades
 
+    def test_a_stop_during_the_scan_does_not_wait_for_the_whole_sweep(self) -> None:
+        """The scan is the longest unguarded stretch of a run not told where to
+        start, and it is the opening of every run without `--at`: a grid tap
+        costs a settle and a capture, and each wall it lands on costs four more.
+        Leaving here is safe in a way that leaving a batch is not, because the
+        sweep already backs out of whatever each tap opened.
+        """
+        runner = self._runner(should_stop=lambda: True)
+        swept = iter([((580, 140), b""), ((740, 140), b"")])
+        with (
+            patch.object(walls.time, "sleep"),
+            patch.object(runner, "_sweep", return_value=swept),
+            patch.object(walls, "wall_menu", return_value=_menu(1_600_000)),
+        ):
+            found = runner._scan()
+        assert not found
+        # The second point is still sitting there, so the sweep was cut short
+        # rather than walked to the end and thrown away.
+        assert next(swept, None) is not None
+
     def test_the_scan_looks_beside_each_wall_the_sweep_lands_on(self) -> None:
         """Walls sit 45 px apart and the sweep steps 160, so it passes over three
         of them between samples — and a section is not one level. Measured on a
