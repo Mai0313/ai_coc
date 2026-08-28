@@ -17,194 +17,161 @@
 
 </div>
 
-一个 Windows 桌面应用程序，用来操作跑在 MuMu 模拟器 12 里的《部落冲突》。Gemini 负责读画面，这个程序把它的回答转成 ADB 点击，并在下一张截图上确认结果。
+一个 Windows 桌面应用程序, 用来玩跑在 MuMu 模拟器 12 里的《部落冲突》。画面识别是它自己做的, 读到什么就转成 ADB 点击, 并在下一张截图上确认结果。Gemini 每一场只被问一个问题: 这个村庄该怎么打。
 
 其他语言版本：[English](README.md) | [繁體中文](README.zh-TW.md) | [简体中文](README.zh-CN.md)
 
 ## ✨ 功能
 
-- 检测 MuMu 模拟器 12 的实例，启动模拟器并打开游戏
-- 通过 ADB 截取画面并询问 Gemini 画面上有什么，结构化回复一律经过 Pydantic 验证
-- 执行 agent 循环，可以点击、滑动与返回，每一步之后重新观察画面
-- 导入村庄 JSON 与战斗脚本，遇到未知字段与未知的 `data_id` 会保留而不是让导入失败
-- 自己刷资源对手，画面判读走模板匹配而不是每次都问 AI
-- 把储量拿去升级城墙，每一批的数量按照村庄付得起的算
-- 收采集器、把闲着的工人派去升级建筑、有人请求增援就捐兵
-- 闲置太久被中断连线时会自己重开游戏接回去，每一个入口都是
-- 每个 agent 指令都会存成一条任务，中断的执行会在下次启动时继续
-- Gemini API key 通过 Windows DPAPI 保存，不会以明文写进设置
+**自己打资源。** 搜索对手, 跳过战利品不到门槛的, 十秒左右把整支军队放下去, 打完回营再来下一场, 仓库满了自己停。画面识别是在本机做的而不是送出去问: 战利品面板、兵力条、卡片行全部靠模板匹配, 所以跳过一个对手不花钱, 一场战斗也不会卡在网络上。
 
-导入的战斗脚本不会被重播：只验证兵种需求，到保留的交接边界为止。
+**每一场只问 Gemini 一个问题**, 而且是在对手已经通过门槛之后才问: 这个村庄该怎么打。它回答投兵线的两端、每瓶狂暴跟冰冻的落点, 还有每张英雄卡是谁。没有 API key 的话会改用固定战术, 其他功能照常。
+
+**把打到的花掉。** 城墙付钱的当下就升级完成, 不占工人也不跑计时器, 所以仓库满了就是它的出口: 循环自己在地图上找墙, 算出村庄买得起的最便宜批次再买。闲着的工人可以派去做买得起的最贵升级, 英雄也能一个一个往上升。
+
+**顾着村庄不停摆。** 收采集器、读每个工人在盖什么还剩多久、有人在部落聊天室要兵就捐给他。
+
+**自己爬得回来。** 挂太久被踢掉的连线会自动重开游戏继续跑, 不管当下在跑哪个循环。AI 助手打的每一个指令都存成任务, 中途断掉下次启动会接着做完。
+
+**密钥不放在明文设置里。** Gemini API key 走 Windows DPAPI, 不进注册表也不进配置文件。
+
+导入的村庄 JSON 会保留看不懂的字段跟 `data_id` 而不是直接失败; 导入的战斗脚本不会被播放, 只验证兵力需求, 停在保留的交接边界。
 
 ## 📋 环境需求
 
-- Windows。程序会调用 `mumu-cli.exe`、通过 `winreg` 读注册表、用 `ctypes.windll` 调用 DPAPI，这些在其他平台上都不存在
-- [MuMu 模拟器 12](https://www.mumuplayer.com/)，已安装《部落冲突》，分辨率设为 1600x900
-- 一组 Gemini API key，在程序的设置页输入
+- Windows。程序要调用 `mumu-cli.exe`、用 `winreg` 读注册表、用 `ctypes.windll` 调用 DPAPI, 这些在别的系统上都不存在
+- [MuMu 模拟器 12](https://www.mumuplayer.com/), 装好部落冲突, 分辨率 1600x900
+- 想要每场的战术建议就需要一把 Gemini API key, 在设置页填。其他功能没有它也能跑
 
 ## 🚀 安装与运行
 
-从 PyPI 直接跑，不留下任何安装：
+从 PyPI 运行, 不留任何东西在系统上:
 
 ```bash
 uvx ai_coc
 ```
 
-或者正式安装：
+或者正常安装:
 
 ```bash
 uv tool install ai_coc
 ai_coc
 ```
 
-每个 [release](https://github.com/Mai0313/ai_coc/releases) 也都附上预先打包好的 Windows 可执行文件。
+每个 [release](https://github.com/Mai0313/ai_coc/releases) 都附了编译好的 Windows 可执行文件。
 
-## 🛠️ 本地开发
+## 🎮 从终端玩
 
-```bash
-git clone https://github.com/Mai0313/ai_coc.git
-cd ai_coc
-uv sync --group test          # 安装依赖
-uvx pre-commit install        # 安装 git hooks
-uv run ai_coc                 # 启动程序
-```
+窗口是一种用法, 另一种是下 sub-command, 跑的是同一套循环但完全不开窗口。平常都是这样玩的, 因为终端空着就能盯 log。
 
-另外有两个命令行开关可以做冒烟测试。`--live-test` 会截取一张画面并请 Gemini 描述它，`--agent-command=<text>` 会把指令打进 AI 页并执行。两者在 `COC_LIVE_TEST_SCREENSHOT` / `COC_AGENT_SCREENSHOT` 指向某个路径时会存下截图存证。
-
-## 🧰 命令参考
+### 打资源
 
 ```bash
-# 开发
-make help               # 列出可用的 make 目标
-make clean              # 清除缓存、产物与生成的文档
-make fmt                # 执行所有 pre-commit hooks
-make test               # 对整个 repo 执行 pytest
-make gen-docs           # 从 src/ 与 scripts/ 生成文档
-
-# 依赖（通过 uv）
-make uv-install         # 在系统上安装 uv
-uv add <pkg>            # 新增正式依赖
-uv add <pkg> --dev      # 新增开发依赖
-# 安装可选的分组
-uv sync --group dev     # 只装开发用依赖（pre-commit、poe、notebook）
-uv sync --group test    # 只装测试用依赖
-uv sync --group docs    # 只装文档用依赖
+ai_coc attack                    # 打一场
+ai_coc attack --repeat 5         # 连打五场
+ai_coc attack --repeat 0         # 一直打到某个仓库满为止
+ai_coc stop                      # 打完当下这一场就收工
 ```
 
-## 🧱 架构
+`stop` 写一个标志文件就返回。循环在回合之间跟对手之间读它, 绝不会在战斗中途停, 所以最坏是多打一场: 打到一半弃权会把军队丢在场上, 游戏停在下一轮回不了家的画面。
 
-三个层次就是三个目录，所以跨层的 import 在 import 那一行就看得出来：
-
-- **UI 与流程调度**：`ui/main_window.py` 放主窗口与所有工作流程，`ui/workers.py` 放线程池的 worker，`ui/render.py` 负责 Markdown 与日志的呈现。`cli.py` 只有 `main()`
-- **适配层**：`adapters/mumu.py`（模拟器生命周期）、`adapters/adb.py`（所有 ADB 调用）、`adapters/ai.py`（Gemini）、`adapters/secrets.py`（DPAPI）、`adapters/config.py`（共用配置文件）、`adapters/database.py`（SQLite）
-- **纯解析器**：`parsers/village.py`、`parsers/battle.py`
-
-每一个结构化的值都是 Pydantic model，全部集中在 `models.py`。会阻塞的调用一律走 `QThreadPool` 的 worker，再用 signal 回到 UI 线程。
-
-程序状态放在 `~/.ai_coc`：SQLite 数据库、截取的画面、导入的账号 JSON、DPAPI 保护的 key 文件，以及窗口与终端共用的配置文件 `config.json`。
-
-## 📚 文档
-
-文档用 [Zensical](https://zensical.org/) 构建，并由 `scripts/gen_docs.py` 从源码自动生成。
+战利品门槛读配置文件, 也可以只盖过这一次。**不给旗标跟给 `0` 是两件事** —— 不给是沿用配置文件的值, `0` 才是把那条门槛整个拿掉:
 
 ```bash
-uv sync --group docs
-make gen-docs                  # 从源码生成 markdown
-uv run zensical serve          # http://0.0.0.0:9987
+ai_coc attack --min-gold 800000
+ai_coc attack --min-gold 0 --min-elixir 0 --min-dark 0    # 打第一个看到的对手
 ```
 
-`make gen-docs` 会重建 `docs/`，把三份 README 复制进去，再对 `./src` 与 `./scripts` 执行 `gen_docs.py`。
-
-## 📦 打包与发布
-
-用 uv 构建产物，wheel 与 sdist 会放到 `dist/`：
+一轮可以把它看过的画面全部留下来, 那是事后跟这场吵架的依据:
 
 ```bash
-uv build
+ai_coc attack --frames ./run          # 循环自己读的每一张, 文件名就是它当下在问什么
+ai_coc attack --frames ./run --shot-every 4   # 另外每四秒再存一张
 ```
 
-发布到 PyPI（需要 `UV_PUBLISH_TOKEN`）：
+战术是一份文件而不是写死的常量, 所以打得好的那场可以重来, 打得烂的那场可以改。重播的时候完全不会调用 Gemini:
 
 ```bash
-UV_PUBLISH_TOKEN=... uv publish
+ai_coc attack --plan-out used.json    # 把这一场实际用的计划存下来
+ai_coc attack --plan-in used.json     # 照那份再打一次, 改过的也算
 ```
 
-推一个 `v*` tag 会触发 `build_release.yml`，它用 `dunamai` 从 git 推导版本号，构建 wheel 与 sdist、发布到 PyPI，再用 PyInstaller 打包 Windows 版本，最后把全部产物挂到 GitHub Release 上。
-
-打包默认走 `--onedir`：zip 里是可执行文件加上一个 `_internal/` 文件夹，启动比单文件版本快好几秒，因为单文件版本每次启动都要先把自己解压开。手动触发这个 workflow 时有一个 `package_mode` 选项，需要单一 `.exe` 的话从那里选。
-
-## 🧭 可选的任务执行器（Poe the Poet）
-
-方便用的任务定义在 `pyproject.toml` 的 `[tool.poe.tasks]`，安装 dev 分组（`uv sync --group dev`）之后或通过 `uvx` 就可以用：
+### 把打到的花掉
 
 ```bash
-uv run poe docs        # 生成并启动文档服务器（需要 dev 分组）
-uv run poe gen         # 生成并部署文档（gh-deploy）（需要 dev 分组）
-uv run poe main        # 启动程序（等同 uv run ai_coc）
-
-# 或者用 uvx 临时执行，不安装到本地
-uvx poe docs
+ai_coc walls                          # 拿仓库去升级城墙, 买到钱不够为止
+ai_coc walls --keep-elixir 2000000    # 留这么多圣水下来练兵
+ai_coc upgrade                        # 把闲着的工人派去做买得起最贵的升级
+ai_coc hero                           # 每个英雄升下一级要多少
+ai_coc hero --upgrade queen           # 真的派一个工人去升那个英雄
 ```
 
-## 🔁 CI/CD 流程总览
+城墙自己不占工人, 但工人全忙的时候游戏会把整批退掉, 所以 `walls` 会停下来讲。`hero` 默认只读不花钱, 要指名哪个英雄才会真的升 —— 哪个英雄值得一个工人是关于村庄怎么玩的判断, 不是价格能决定的。
 
-所有的 workflow 都放在 `.github/workflows/`。
+### 顾着村庄
 
-- 测试（`test.yml`）
+```bash
+ai_coc collect                        # 把有东西的采集器全部收掉
+ai_coc builders                       # 每个工人在盖什么、还要多久
+ai_coc donate                         # 部落里有人要兵就捐
+ai_coc donate --dry-run               # 走完整个流程但停在真的捐出去之前
+```
 
-    - 触发时机：推送与 pull request 到 `main` 或 `release/*`（忽略 md 文件）
-    - 在 Python 3.12/3.13/3.14 上跑 pytest 与覆盖率，并留下摘要评论
+### 把游戏弄起来
 
-- 代码质量检查（`code-quality-check.yml`）
+其他每个指令都假设游戏已经在跑, 没开的话它们自己会开。它们处理不了的是「开着但不理人」的模拟器或游戏, 那是这几个的用途:
 
-    - 触发时机：pull request
-    - 执行 ruff 与其余的 pre-commit 检查
+```bash
+ai_coc launch                         # 模拟器没开就开, 然后把游戏叫起来
+ai_coc launch --restart game          # 只重开游戏, 模拟器不动
+ai_coc launch --restart emulator      # 连模拟器一起重开, 再把游戏叫起来
+```
 
-- 文档部署（`deploy.yml`）
+### 看它看到了什么
 
-    - 触发时机：推送到 `main` 以及 `v*` tag
-    - 构建 `zensical` 网站并发布到 GitHub Pages
-    - 需要设置：在 repo 开启 GitHub Pages（Settings → Pages → Source: GitHub Actions）
+```bash
+ai_coc capture ./shots --count 30     # 从活着的游戏连续抓画面
+ai_coc read shot.png                  # 每个识别器从这张图读到什么
+ai_coc view --zoom out                # 把镜头拉回所有坐标当初测量的那个视野
+```
 
-- 构建与发布（`build_release.yml`）
+`read` 是回答「是识别错了, 还是那一下没点到」最快的方法: 它把一张图丢给每个识别器, 打印出战利品面板、仓库、卡片行、工人面板、边界各自读到什么。
 
-    - 触发时机：推送 `v*` tag 或手动触发
-    - 用 PyInstaller 构建 Windows x64 可执行文件，另外构建 wheel 与 sdist
-    - 发布到 PyPI（需要 `UV_PUBLISH_TOKEN` secret），并把所有产物上传到 GitHub Release
+## ⚙️ 设置
 
-- 发布 Docker 镜像（`build_image.yml`）
+`~/.ai_coc/config.json` 窗口跟终端都会读, 所以两边跑出来的结果一样:
 
-    - 触发时机：推送到 `main` 以及 `v*` tag
-    - 构建镜像并推送到 GHCR：`ghcr.io/<owner>/<repo>`
+```json
+{
+  "thresholds": {
+    "min_gold": 500000,
+    "min_elixir": 500000,
+    "min_dark": 5000
+  },
+  "stock": {
+    "stop_gold": 18000000,
+    "stop_elixir": 18000000,
+    "stop_dark": 0
+  },
+  "timings": {
+    "queen": 1,
+    "warden": 30,
+    "champion": 45,
+    "freeze": 30
+  }
+}
+```
 
-- Release Drafter（`release_drafter.yml`）
+- **thresholds** —— 谁值得打。订太高的话一轮会跳过几十个对手还开不了打
+- **stock** —— 什么时候收工。任何一项到顶就结束, 不是等三项都满。`0` 代表这一项不看
+- **timings** —— 开打之后几秒放每个英雄的大招, 以及法术什么时候丢。是按英雄而不是按卡片位置记的, 因为升级中的英雄根本没有卡片
 
-    - 触发时机：推送到 `main` 以及 PR 事件
-    - 依照 Conventional Commits 维护一份草稿 release
-
-- 代码扫描（`code_scan.yml`）
-
-    - 触发时机：推送与 PR
-    - 执行 gitleaks；CodeQL 那个 job 需要 GitHub Advanced Security，在 repo 还是 private 的期间会被跳过
-
-- 语义化 Pull Request（`semantic-pull-request.yml`）
-
-    - 触发时机：PR 开启、编辑、同步
-    - 强制 PR 标题符合 Conventional Commit 格式
-
-### CI/CD 设置检查清单
-
-- PR 标题要用 conventional commits（由 workflow 强制）
-- 设置 `UV_PUBLISH_TOKEN` secret 才能发布到 PyPI（Settings → Secrets and variables → Actions）
-- 可选：开启 GitHub Pages 以部署文档（Settings → Pages → Source: GitHub Actions）
-- Container Registry 的权限由 `GITHUB_TOKEN` 自动处理
+其他东西都放在 `~/.ai_coc`: SQLite 数据库、存下来的画面、导入的账号 JSON、log, 还有 DPAPI 保护的密钥文件。
 
 ## 🤝 参与贡献
 
-- 欢迎开 issue 或 PR
-- 遵循既有的代码风格（ruff、type hints）
-- 使用 Conventional Commit 消息与清楚的 PR 标题
+开发环境、架构、打包发布跟 CI 的说明都在 [CONTRIBUTING.md](.github/CONTRIBUTING.md)。
 
 ## 📄 许可
 
-MIT，详见 `LICENSE`。
+MIT, 见 `LICENSE`。

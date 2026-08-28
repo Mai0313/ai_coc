@@ -17,30 +17,31 @@
 
 </div>
 
-A Windows desktop application that drives Clash of Clans running inside MuMu Player 12. Gemini reads the screen; the app turns its answers into ADB taps and verifies the outcome on the next screenshot.
+A Windows desktop application that plays Clash of Clans for you inside MuMu Player 12. It reads the screen itself and turns what it finds into ADB taps, checking the outcome on the next screenshot. Gemini is asked exactly one question per battle: how to attack this village.
 
 Other Languages: [English](README.md) | [繁體中文](README.zh-TW.md) | [简体中文](README.zh-CN.md)
 
 ## ✨ What it does
 
-- Detects MuMu Player 12 instances, starts the emulator and launches the game
-- Captures the screen over ADB and asks Gemini what is on it, with structured replies validated through Pydantic
-- Runs an agent loop that taps, swipes and goes back, re-observing after every step
-- Imports village JSON exports and battle scripts, keeping unknown fields and unknown `data_id`s instead of failing on them
-- Farms resource opponents on its own, reading the screen with template matching rather than a vision call
-- Spends the storages on wall upgrades, sizing each batch to what the village can afford
-- Empties the collectors, puts idle builders on the dearest upgrade affordable, and donates to clan requests
-- Recovers on its own from a session dropped for idling, whichever loop was running
-- Persists every agent command as a task, so an interrupted run is picked up again on the next start
-- Stores the Gemini API key through Windows DPAPI, never in plain settings
+**Attacks for loot on its own.** It searches for opponents, skips the ones carrying less than your thresholds, puts the whole army down in about ten seconds and plays the battle out, then comes round for the next one. It stops by itself when the storages are full. Screen reading is done here rather than sent away: the loot panel, the army bar and every card in the row are matched against templates, so a skipped opponent costs nothing and a battle is never waiting on a network call.
 
-Imported battle scripts are not played back: they are validated for army requirements and stop at a reserved handoff boundary.
+**Asks Gemini exactly one question per battle**, and only after an opponent has already passed your thresholds: how to attack this particular village. It answers where to drop the line of troops, where each rage and freeze goes, and which hero is on which card. Without an API key the app plays a fixed tactic instead and everything else still works.
+
+**Spends what it farms.** Wall upgrades finish the moment they are paid for, so they are where a full storage goes; the loop finds walls on the map, works out the cheapest batch the village can afford and buys it. Idle builders can be put on the most expensive upgrade affordable, and heroes raised one at a time.
+
+**Keeps the village ticking.** Empties the collectors, reads what every builder is on and how long is left, and donates troops to whoever is asking in the clan chat.
+
+**Recovers on its own.** A session dropped for idling restarts the game and carries on, whichever loop was running. Every command typed into the AI tab is stored as a task, so an interrupted run is picked up again on the next start.
+
+**Keeps your key out of plain settings.** The Gemini API key is stored through Windows DPAPI, never in the registry or a config file.
+
+Imported village exports keep unknown fields and unknown `data_id`s instead of failing on them, and imported battle scripts are not played back: they are validated for army requirements and stop at a reserved handoff boundary.
 
 ## 📋 Requirements
 
 - Windows. The app talks to `mumu-cli.exe`, reads the registry through `winreg` and calls DPAPI through `ctypes.windll`, none of which exist elsewhere
 - [MuMu Player 12](https://www.mumuplayer.com/) with Clash of Clans installed, running at 1600x900
-- A Gemini API key, entered in the app's settings tab
+- A Gemini API key if you want the per-battle tactic. Enter it in the app's settings tab; everything else runs without one
 
 ## 🚀 Install and run
 
@@ -59,152 +60,118 @@ ai_coc
 
 Prebuilt Windows executables are attached to every [release](https://github.com/Mai0313/ai_coc/releases).
 
-## 🛠️ Local development
+## 🎮 Playing from the terminal
+
+The window is one way in. The other is a sub-command, which runs the same loops with no window at all — this is how the game is usually played, because it leaves the terminal free to watch the log.
+
+### Attacking
 
 ```bash
-git clone https://github.com/Mai0313/ai_coc.git
-cd ai_coc
-uv sync --group test          # install dependencies
-uvx pre-commit install        # install git hooks
-uv run ai_coc                 # start the app
+ai_coc attack                    # one battle
+ai_coc attack --repeat 5         # five in a row
+ai_coc attack --repeat 0         # keep going until a storage fills up
+ai_coc stop                      # stand down after the battle in progress
 ```
 
-Two command-line hooks exist for smoke tests. `--live-test` captures a frame and asks Gemini to describe it; `--agent-command=<text>` types a command into the AI tab and runs it. Both save a proof screenshot when `COC_LIVE_TEST_SCREENSHOT` / `COC_AGENT_SCREENSHOT` point at a path.
+`stop` writes a flag and returns at once. The loop reads it between battles and between opponents, never mid-battle, so the worst case is one more battle: abandoning one halfway would leave the army on the field and the game on a screen the next run cannot get home from.
 
-## 🧰 Commands Reference
+Loot thresholds come from the settings file, and can be overridden for one run. Passing `0` is different from leaving a flag out — out means "use the configured value", `0` means "take this threshold out entirely":
 
 ```bash
-# Development
-make help               # List available make targets
-make clean              # Clean caches, artifacts and generated docs
-make fmt                # Run all pre-commit hooks
-make test               # Run pytest across the repository
-make gen-docs           # Generate docs from src/ and scripts/
-
-# Dependencies (via uv)
-make uv-install         # Install uv on your system
-uv add <pkg>            # Add production dependency
-uv add <pkg> --dev      # Add development dependency
-# Sync optional groups
-uv sync --group dev     # Install dev-only deps (pre-commit, poe, notebook)
-uv sync --group test    # Install test-only deps
-uv sync --group docs    # Install docs-only deps
+ai_coc attack --min-gold 800000
+ai_coc attack --min-gold 0 --min-elixir 0 --min-dark 0    # attack whoever comes up first
 ```
 
-## 🧱 Architecture
-
-The three layers are directories, so an import that crosses them is visible in the import line:
-
-- **UI and orchestration** — `ui/main_window.py` holds the window and every workflow, `ui/workers.py` the thread-pool workers, `ui/render.py` the Markdown and log rendering. `cli.py` is only `main()`
-- **Adapters** — `adapters/mumu.py` (emulator lifecycle), `adapters/adb.py` (every ADB call), `adapters/ai.py` (Gemini), `adapters/secrets.py` (DPAPI), `adapters/config.py` (the shared settings file), `adapters/database.py` (SQLite)
-- **Pure parsers** — `parsers/village.py`, `parsers/battle.py`
-
-Every structured value is a Pydantic model, collected in `models.py`. Blocking calls go through a `QThreadPool` worker and come back to the UI thread as a signal.
-
-Application state lives in `~/.ai_coc`: the SQLite database, captured frames, imported account JSON, the DPAPI-protected key file and `config.json`, which is the one settings file the window and the terminal both read.
-
-## 📚 Documentation
-
-Documentation is built with [Zensical](https://zensical.org/) and auto-generated from source code via `scripts/gen_docs.py`.
+A run can keep everything it looked at, which is what makes a battle worth arguing with afterwards:
 
 ```bash
-uv sync --group docs
-make gen-docs                  # generate markdown from source
-uv run zensical serve          # http://0.0.0.0:9987
+ai_coc attack --frames ./run          # every frame the loop reads, named for what it was asking
+ai_coc attack --frames ./run --shot-every 4   # plus one frame every four seconds
 ```
 
-`make gen-docs` recreates `docs/`, copies the three READMEs in, then runs `gen_docs.py` over `./src` and `./scripts`.
-
-## 📦 Packaging and Distribution
-
-Build artifacts with uv (wheel and sdist go to `dist/`):
+A tactic is a file rather than a set of constants, so a battle worth repeating can be repeated and one worth arguing with can be edited. Replaying one calls Gemini not at all:
 
 ```bash
-uv build
+ai_coc attack --plan-out used.json    # write down whichever plan actually ran
+ai_coc attack --plan-in used.json     # play that one again, edits included
 ```
 
-Publish to PyPI (requires `UV_PUBLISH_TOKEN`):
+### Spending what you farmed
 
 ```bash
-UV_PUBLISH_TOKEN=... uv publish
+ai_coc walls                          # buy wall upgrades until the storages will not stretch
+ai_coc walls --keep-elixir 2000000    # leave that much behind to train an army with
+ai_coc upgrade                        # put idle builders on the dearest upgrade affordable
+ai_coc hero                           # what raising each hero next would cost
+ai_coc hero --upgrade duke            # put a builder on that one
 ```
 
-Pushing a `v*` tag runs `build_release.yml`, which derives the version from git via `dunamai`, builds the wheel and sdist, publishes to PyPI, packages a Windows build with PyInstaller and attaches everything to the GitHub Release.
+Walls need one builder standing idle even though they never use one, so `walls` stops and says so when every builder is busy. `hero` reads by default and only spends when told which hero, because which one is worth a builder is a judgement about how the village plays.
 
-That build is `--onedir` by default: the zip holds the executable next to an `_internal/` folder, which starts several seconds faster than a single-file build that has to unpack itself on every launch. Running the workflow by hand offers a `package_mode` choice if you want the single `.exe` instead.
-
-## 🧭 Optional task runner (Poe the Poet)
-
-Convenience tasks are defined under `[tool.poe.tasks]` in `pyproject.toml` and available after installing the dev group (`uv sync --group dev`) or via `uvx`:
+### Keeping the village going
 
 ```bash
-uv run poe docs        # generate + serve docs (requires dev group)
-uv run poe gen         # generate + deploy docs (gh-deploy) (requires dev group)
-uv run poe main        # run the app (same as uv run ai_coc)
-
-# or ephemeral via uvx (no local install)
-uvx poe docs
+ai_coc collect                        # empty every collector that has something waiting
+ai_coc builders                       # what each builder is on, and how long is left
+ai_coc donate                         # give troops to whoever in the clan is asking
+ai_coc donate --dry-run               # walk the whole path and stop before giving anything
 ```
 
-## 🔁 CI/CD Actions Overview
+### Getting the game up
 
-All workflows live in `.github/workflows/`.
+Every other command assumes the game is already running and brings it up if it simply is not. What it cannot fix is an emulator or a game that is up and no longer answering, which is what these are for:
 
-- Tests (`test.yml`)
+```bash
+ai_coc launch                         # start the emulator if it is down, bring the game up
+ai_coc launch --restart game          # relaunch the game, leave the emulator alone
+ai_coc launch --restart emulator      # restart the emulator, then bring the game up again
+```
 
-    - Trigger: pushes and pull requests to `main` or `release/*` (ignores md files)
-    - Runs pytest on Python 3.12/3.13/3.14 with coverage and comments a summary
+### Looking at what it sees
 
-- Code Quality Check (`code-quality-check.yml`)
+```bash
+ai_coc capture ./shots --count 30     # a burst off the live game
+ai_coc read shot.png                  # what each reader makes of one frame
+ai_coc view --zoom out                # put the camera back where every coordinate was measured
+```
 
-    - Trigger: pull requests
-    - Runs ruff and the rest of the pre-commit suite
+`read` is the quickest way to answer "did it misread the screen, or did the tap miss?" — it prints what every reader got from one frame: the loot panel, the storages, the card row, the builder panel, the boundary.
 
-- Docs Deploy (`deploy.yml`)
+## ⚙️ Settings
 
-    - Trigger: push to `main` and tags `v*`
-    - Builds the `zensical` site and publishes to GitHub Pages
-    - Setup needed: enable GitHub Pages for the repo (Settings → Pages → Source: GitHub Actions)
+`~/.ai_coc/config.json` is read by both the window and the terminal, so a run plays the same way from either side:
 
-- Build and Release (`build_release.yml`)
+```json
+{
+  "thresholds": {
+    "min_gold": 500000,
+    "min_elixir": 500000,
+    "min_dark": 5000
+  },
+  "stock": {
+    "stop_gold": 18000000,
+    "stop_elixir": 18000000,
+    "stop_dark": 0
+  },
+  "timings": {
+    "queen": 1,
+    "warden": 30,
+    "champion": 45,
+    "freeze": 30
+  }
+}
+```
 
-    - Trigger: tags `v*` push or manual workflow dispatch
-    - Builds a Windows x64 executable with PyInstaller, plus the wheel and sdist
-    - Publishes to PyPI (requires the `UV_PUBLISH_TOKEN` secret) and uploads every artifact to the GitHub Release
+- **thresholds** — who is worth attacking. Set them too high and a run skips dozens of opponents without ever starting a battle
+- **stock** — when to stand down. Any one resource reaching its limit ends the run, not all three. `0` means "never stop on this one"
+- **timings** — how many seconds after the attack opens each hero fires its ability, and when the spells are cast. Keyed by hero rather than by card position, because a hero being upgraded has no card at all
 
-- Publish Docker Image (`build_image.yml`)
-
-    - Trigger: push to `main` and tags `v*`
-    - Builds and pushes an image to GHCR: `ghcr.io/<owner>/<repo>`
-
-- Release Drafter (`release_drafter.yml`)
-
-    - Trigger: push to `main` and PR events
-    - Maintains a draft release based on Conventional Commits
-
-- Code Scanning (`code_scan.yml`)
-
-    - Trigger: push and PR
-    - Runs gitleaks; the CodeQL job needs GitHub Advanced Security and stays skipped while the repo is private
-
-- Semantic Pull Request (`semantic-pull-request.yml`)
-
-    - Trigger: PR open/edit/sync
-    - Enforces Conventional Commit style PR titles
-
-### CI/CD Configuration Checklist
-
-- Conventional commits for PR titles (enforced by the workflow)
-- Set the `UV_PUBLISH_TOKEN` secret to publish to PyPI (Settings → Secrets and variables → Actions)
-- Optional: enable GitHub Pages for docs deployment (Settings → Pages → Source: GitHub Actions)
-- Container Registry permissions are handled automatically via `GITHUB_TOKEN`
+Everything else lives in `~/.ai_coc`: the SQLite database, captured frames, imported account JSON, the log, and the DPAPI-protected key file.
 
 ## 🤝 Contributing
 
-- Open issues/PRs
-- Follow the coding style (ruff, type hints)
-- Use Conventional Commit messages and descriptive PR titles
+Setup, architecture, packaging and the CI layout live in [CONTRIBUTING.md](.github/CONTRIBUTING.md).
 
 ## 📄 License
 
-MIT — see `LICENSE`.
+MIT, see `LICENSE`.
