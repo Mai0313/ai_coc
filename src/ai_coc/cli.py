@@ -12,7 +12,7 @@ from PyQt5.QtWidgets import QApplication
 # PyInstaller runs this file as `__main__`, which has no package context, so these
 # stay absolute even for same-layer modules.
 from ai_coc import commands, __version__
-from ai_coc.models import HeroKind, WallOptions, AttackOptions, LootOverrides
+from ai_coc.models import HeroKind, WallOptions, RestartScope, AttackOptions, LootOverrides
 from ai_coc.constants import APP_NAME
 from ai_coc.logging_setup import configure_logging
 from ai_coc.ui.main_window import MainWindow, migrate_settings
@@ -36,7 +36,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--live-test", action="store_true", help="開視窗後對目前畫面問 AI 一次")
     parser.add_argument("--agent-command", default="", help="開視窗後把這句話送進 AI 助手執行")
     sub = parser.add_subparsers(dest="command")
-    run = sub.add_parser("attack", help="跑進攻迴圈,不開視窗")
+    run = sub.add_parser("attack", help="跑進攻迴圈")
     run.add_argument("--frames", type=Path, help="把迴圈讀到的每一張畫面存進這個資料夾")
     run.add_argument("--plan-in", type=Path, help="照這份 JSON 打，完全不呼叫 AI")
     run.add_argument("--plan-out", type=Path, help="把這一場實際用的計畫寫成 JSON")
@@ -58,7 +58,7 @@ def _parser() -> argparse.ArgumentParser:
     # stopped is a different process: whatever put that one in the background
     # cannot send it a Ctrl-C, and killing it leaves the game mid-battle.
     sub.add_parser("stop", help="請正在跑的進攻迴圈打完這一場就收工")
-    upgrade = sub.add_parser("walls", help="把儲量拿去升級城牆,不開視窗")
+    upgrade = sub.add_parser("walls", help="把儲量拿去升級城牆")
     upgrade.add_argument("--frames", type=Path, help="把迴圈讀到的每一張畫面存進這個資料夾")
     upgrade.add_argument("--keep-gold", type=int, default=0, help="留下這麼多金幣不要花")
     upgrade.add_argument("--keep-elixir", type=int, default=0, help="留下這麼多聖水不要花")
@@ -66,11 +66,11 @@ def _parser() -> argparse.ArgumentParser:
     upgrade.add_argument(
         "--at", metavar="X,Y", help="直接從這個座標上的城牆開始,跳過整個村莊的掃描"
     )
-    gather = sub.add_parser("collect", help="把採集器裡的資源全部收起來,不開視窗")
+    gather = sub.add_parser("collect", help="把採集器裡的資源全部收起來")
     gather.add_argument("--frames", type=Path, help="把迴圈讀到的每一張畫面存進這個資料夾")
-    crew = sub.add_parser("builders", help="每個工人在蓋什麼、還要多久,不開視窗")
+    crew = sub.add_parser("builders", help="每個工人在蓋什麼、還要多久")
     crew.add_argument("--frames", type=Path, help="把迴圈讀到的每一張畫面存進這個資料夾")
-    build = sub.add_parser("upgrade", help="把閒著的工人派去升級建築,不開視窗")
+    build = sub.add_parser("upgrade", help="把閒著的工人派去升級建築")
     build.add_argument("--frames", type=Path, help="把迴圈讀到的每一張畫面存進這個資料夾")
     build.add_argument("--keep-gold", type=int, default=0, help="留下這麼多金幣不要花")
     build.add_argument("--keep-elixir", type=int, default=0, help="留下這麼多聖水不要花")
@@ -86,7 +86,7 @@ def _parser() -> argparse.ArgumentParser:
         help="真的把這個英雄送去升級,不給就只讀不動",
     )
     champions.add_argument("--at", metavar="X,Y", help="直接點這個座標上的建築,跳過整個村莊的掃描")
-    camera = sub.add_parser("view", help="拉遠或拉近村莊鏡頭,不開視窗")
+    camera = sub.add_parser("view", help="拉遠或拉近村莊鏡頭")
     camera.add_argument(
         "--zoom",
         choices=("out", "in"),
@@ -94,7 +94,18 @@ def _parser() -> argparse.ArgumentParser:
         help="out 是拉遠回到所有座標量測時的視野,in 是拉近,預設 out",
     )
     camera.add_argument("--times", type=int, default=3, help="做幾次,已經到底的話多做無害")
-    give = sub.add_parser("donate", help="有人請求增援就捐兵,不開視窗")
+    # Every other command assumes the game is up and gives up when it is not, so
+    # this is the one that puts it there. The scopes exist because neither an
+    # emulator nor a game that has stopped answering looks any different from a
+    # working one down here; only whoever is watching the screen can tell.
+    boot = sub.add_parser("launch", help="開模擬器並啟動部落衝突")
+    boot.add_argument(
+        "--restart",
+        choices=get_args(RestartScope),
+        default="none",
+        help="要重開到哪一層: none 只確保遊戲在跑,game 重開遊戲但不動模擬器,emulator 連模擬器一起重開,預設 none",
+    )
+    give = sub.add_parser("donate", help="有人請求增援就捐兵")
     give.add_argument("--frames", type=Path, help="把迴圈讀到的每一張畫面存進這個資料夾")
     give.add_argument(
         "--dry-run", action="store_true", help="走完流程但不真的捐,只回報畫面上能捐什麼"
@@ -129,8 +140,17 @@ def _run_command(arguments: argparse.Namespace) -> int:
         "probe": commands.probe,
         "bounds": commands.bounds,
     }
+    # The same again for the ones whose arguments are a couple of plain scalars
+    # instead of a frame directory. Two is already worth a table: a branch each
+    # is what tipped this function past the complexity limit.
+    scalar = {
+        "view": lambda: commands.view(arguments.zoom, arguments.times),
+        "launch": lambda: commands.launch(arguments.restart),
+    }
     if arguments.command in plain:
         result = plain[arguments.command](arguments.frames).model_dump_json(indent=2)
+    elif arguments.command in scalar:
+        result = scalar[arguments.command]().model_dump_json(indent=2)
     elif arguments.command == "attack":
         result = commands.attack(
             AttackOptions(
@@ -168,8 +188,6 @@ def _run_command(arguments: argparse.Namespace) -> int:
         result = commands.hero(
             arguments.frames, arguments.upgrade, (int(spot[0]), int(spot[1])) if spot else None
         ).model_dump_json(indent=2)
-    elif arguments.command == "view":
-        result = commands.view(arguments.zoom, arguments.times).model_dump_json(indent=2)
     elif arguments.command == "donate":
         result = commands.donate(
             arguments.frames, arguments.dry_run, arguments.rounds

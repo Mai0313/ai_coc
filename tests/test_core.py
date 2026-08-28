@@ -1613,6 +1613,80 @@ class StopFlagTests(unittest.TestCase):
             assert runner.call_args.kwargs["should_stop"] is commands.stop_requested
 
 
+class LaunchTests(unittest.TestCase):
+    """Bringing the game up, tearing down only as much as was asked for.
+
+    The adapters have done all three of these since long before anything could
+    reach them, so what is worth testing is the wiring: each scope restarting
+    exactly what it names and nothing else.
+    """
+
+    @staticmethod
+    def _mumu(*, running: bool = True) -> MagicMock:
+        instance = MagicMock(
+            index=0, adb_serial="127.0.0.1:16384", coc_running=running, android_started=True
+        )
+        mumu = MagicMock()
+        mumu.enumerate_instances.return_value = [instance]
+        mumu.ensure_coc.return_value = instance
+        return mumu
+
+    def test_the_ordinary_case_restarts_nothing(self) -> None:
+        mumu = self._mumu()
+        with patch.object(commands, "MuMuAdapter", return_value=mumu):
+            report = commands.launch("none")
+        mumu.restart_instance.assert_not_called()
+        mumu.restart_coc.assert_not_called()
+        mumu.ensure_coc.assert_called_once_with(0)
+        assert report.was_running
+
+    def test_a_cold_machine_says_so_rather_than_claiming_it_was_already_up(self) -> None:
+        """This scope does the same work either way; only the report tells them apart."""
+        mumu = self._mumu(running=False)
+        with patch.object(commands, "MuMuAdapter", return_value=mumu):
+            report = commands.launch("none")
+        assert not report.was_running
+        assert "開起來" in report.message
+
+    def test_restarting_the_game_leaves_the_emulator_alone(self) -> None:
+        mumu = self._mumu()
+        with patch.object(commands, "MuMuAdapter", return_value=mumu):
+            commands.launch("game")
+        mumu.restart_coc.assert_called_once()
+        mumu.restart_instance.assert_not_called()
+
+    def test_restarting_the_emulator_waits_for_it_to_really_go_down(self) -> None:
+        """`control restart` returns the moment it is sent, so the state read
+        straight after is still the old one — and an instance still reporting
+        itself started skips `ensure_coc`'s whole boot wait, which aims a launch
+        at an emulator on its way down. Missing from the listing is not down
+        either: `ensure_coc` raises on an index it cannot find.
+        """
+        up = MagicMock(
+            index=0, adb_serial="127.0.0.1:16384", coc_running=True, android_started=True
+        )
+        down = MagicMock(
+            index=0, adb_serial="127.0.0.1:16384", coc_running=True, android_started=False
+        )
+        mumu = MagicMock()
+        mumu.enumerate_instances.side_effect = [[up], [up], [], [down]]
+        mumu.ensure_coc.return_value = down
+        with (
+            patch.object(commands, "MuMuAdapter", return_value=mumu),
+            patch.object(commands, "SHUTDOWN_GAP", 0),
+        ):
+            commands.launch("emulator")
+        assert mumu.enumerate_instances.call_count == 4
+        mumu.restart_instance.assert_called_once_with(0)
+        mumu.restart_coc.assert_not_called()
+
+    def test_no_emulator_at_all_is_an_error_rather_than_a_report(self) -> None:
+        mumu = MagicMock()
+        mumu.enumerate_instances.return_value = []
+        with patch.object(commands, "MuMuAdapter", return_value=mumu), pytest.raises(RuntimeError):
+            commands.launch("none")
+
+
 def _menu(price: int, gold: int = 887) -> WallMenu:
     """A wall menu whose buttons sit where a row of this width puts them."""
     return WallMenu(gold=(gold, 700), elixir=(gold + 176, 700), add=(gold - 176, 700), price=price)

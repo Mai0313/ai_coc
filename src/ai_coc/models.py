@@ -851,6 +851,33 @@ class ViewReport(BaseModel):
     message: str = ""
 
 
+# How much to tear down before bringing the game back up. `none` is the ordinary
+# case and the cheapest: `ensure_coc` starts whatever is not already running, so
+# a village that is already up costs a couple of seconds. The other two are for
+# a game or an emulator that is up but no longer answering, which nothing below
+# can detect — only the person watching it can.
+RestartScope = Literal["none", "game", "emulator"]
+
+
+class LaunchReport(BaseModel):
+    """Which instance one `launch` command left the game running on.
+
+    There is deliberately no "is it running now" field: `ensure_coc` either
+    returns an instance with the game up or raises, so such a field could only
+    ever read True and would say nothing. `was_running` is the answer that is
+    actually worth having — whether this command found the game already up or
+    had to bring it there, which is the difference between a cold machine and
+    a wasted call.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    index: int
+    serial: str
+    was_running: bool
+    message: str = ""
+
+
 class HeroCard(BaseModel):
     """One card on the 英雄殿堂 screen: who is on it, and what raising him costs.
 
