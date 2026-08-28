@@ -41,7 +41,7 @@ Imported village exports keep unknown fields and unknown `data_id`s instead of f
 
 - Windows. The app talks to `mumu-cli.exe`, reads the registry through `winreg` and calls DPAPI through `ctypes.windll`, none of which exist elsewhere
 - [MuMu Player 12](https://www.mumuplayer.com/) with Clash of Clans installed, running at 1600x900
-- A Gemini API key if you want the per-battle tactic. Enter it in the app's settings tab; everything else runs without one
+- A Gemini API key. The per-battle tactic and the whole AI tab need it; enter it in the app's settings tab. Without one the attack loop falls back to a fixed tactic, and the wall, collector, builder, hero and donation commands never ask it anything in the first place
 
 ## 🚀 Install and run
 
@@ -135,7 +135,7 @@ ai_coc read shot.png                  # what each reader makes of one frame
 ai_coc view --zoom out                # put the camera back where every coordinate was measured
 ```
 
-`read` is the quickest way to answer "did it misread the screen, or did the tap miss?" It prints what every reader got from one frame: the loot panel, the storages, the card row, the builder panel, the boundary.
+`read` is the quickest way to answer "did it misread the screen, or did the tap miss?" It prints what every reader got from one frame: the loot panel, the storages, the card row and the builder panel.
 
 ## ⚙️ Settings
 
@@ -149,8 +149,8 @@ ai_coc view --zoom out                # put the camera back where every coordina
     "min_dark": 5000
   },
   "stock": {
-    "stop_gold": 18000000,
-    "stop_elixir": 18000000,
+    "stop_gold": 15000000,
+    "stop_elixir": 15000000,
     "stop_dark": 0
   },
   "timings": {
@@ -164,13 +164,13 @@ ai_coc view --zoom out                # put the camera back where every coordina
 
 - **thresholds**: who is worth attacking. Set them too high and a run skips dozens of opponents without ever starting a battle
 - **stock**: when to stand down. Any one resource reaching its limit ends the run, not all three. `0` means "never stop on this one"
-- **timings**: how many seconds after the attack opens each hero fires its ability, and when the spells are cast. Keyed by hero rather than by card position, because a hero being upgraded has no card at all
+- **timings**: the seconds each hero waits after **it lands** before firing its ability, and the seconds each spell waits after the **attack opens**. Two clocks on purpose: a queen's cloak is worth having a second after she arrives, while a spell hung off the heroes would drift by however long the army took to go down. Keyed by hero rather than by card position, because a hero being upgraded has no card at all
 
 Everything else lives in `~/.ai_coc`: the SQLite database, captured frames, imported account JSON, the log, and the DPAPI-protected key file.
 
 ## 🤝 Contributing
 
-Setup, architecture, packaging and the CI layout live in [CONTRIBUTING.md](.github/CONTRIBUTING.md).
+Setup, architecture, packaging and the CI layout live in [CONTRIBUTING.md](https://github.com/Mai0313/ai_coc/blob/main/.github/CONTRIBUTING.md).
 
 ## 📄 License
 

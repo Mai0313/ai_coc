@@ -269,11 +269,12 @@ All workflows live in `.github/workflows/`.
 
 - **Tests** (`test.yml`): pushes and pull requests to `main` or `release/*`, ignoring md files. Runs pytest on Python 3.12/3.13/3.14 with coverage and comments a summary
 - **Code Quality Check** (`code-quality-check.yml`): pull requests. Runs ruff and the rest of the pre-commit suite
-- **Docs Deploy** (`deploy.yml`): push to `main` and tags `v*`. Builds the Zensical site and publishes to GitHub Pages. Needs GitHub Pages enabled (Settings → Pages → Source: GitHub Actions)
+- **Docs Deploy** (`deploy.yml`): push to `main`. Builds the Zensical site and publishes to GitHub Pages. There is deliberately no `v*` tag trigger, because the `github-pages` environment only accepts deployments from `main` and a tag push fails before any step runs. Needs GitHub Pages enabled (Settings → Pages → Source: GitHub Actions)
 - **Build and Release** (`build_release.yml`): tags `v*` or manual dispatch. Builds a Windows x64 executable with PyInstaller plus the wheel and sdist, publishes to PyPI (needs the `UV_PUBLISH_TOKEN` secret) and uploads everything to the GitHub Release
 - **Publish Docker Image** (`build_image.yml`): push to `main` and tags `v*`. Pushes to GHCR: `ghcr.io/<owner>/<repo>`
 - **Release Drafter** (`release_drafter.yml`): push to `main` and PR events. Maintains a draft release from Conventional Commits
-- **Code Scanning** (`code_scan.yml`): push and PR. Runs gitleaks; CodeQL and dependency review stay skipped while the repo is private
+- **Code Scanning** (`code_scan.yml`): push and PR. Runs gitleaks and trufflehog; the CodeQL job in the same file needs GitHub Advanced Security and stays skipped while the repo is private
+- **Dependabot Auto Merge** (`auto_review_merge.yml`): pull requests. Auto-merges Dependabot PRs, and carries the dependency-review job, which is gated on the same visibility check as CodeQL
 - **Semantic Pull Request** (`semantic-pull-request.yml`): PR open/edit/sync. Enforces Conventional Commit style PR titles
 
 ### Configuration checklist
