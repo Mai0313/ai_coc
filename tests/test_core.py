@@ -6,7 +6,7 @@ import logging
 from pathlib import Path
 import tempfile
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 from collections.abc import Callable, Sequence
 
 from PIL import Image, ImageDraw
@@ -110,7 +110,7 @@ from ai_coc.parsers.scout import (
     counted_cards,
     attack_menu_open,
 )
-from ai_coc.ui.main_window import MainWindow
+from ai_coc.ui.main_window import LIVE_INTERVAL, MainWindow
 from ai_coc.adapters.config import ConfigStore
 from ai_coc.parsers.village import parse_village
 from ai_coc.adapters.secrets import dotenv_value
@@ -1828,14 +1828,22 @@ class WindowToggleTests(unittest.TestCase):
     """
 
     def test_the_live_toggle_still_owns_the_timer(self) -> None:
+        """Matched whole rather than call by call, because the interval is half
+        the point: a bare `start()` runs the preview every time round the event
+        loop, which is what `LIVE_INTERVAL` exists to avoid.
+        """
         window = MagicMock()
         MainWindow._toggle_live_view(window, True)
-        window.live_timer.start.assert_called_once()
-        window.live_timer.stop.assert_not_called()
-        window.live_timer.reset_mock()
+        assert window.mock_calls == [
+            call.settings.setValue("live_view", True),
+            call.live_timer.start(LIVE_INTERVAL),
+        ]
+        window.reset_mock()
         MainWindow._toggle_live_view(window, False)
-        window.live_timer.stop.assert_called_once()
-        window.live_timer.start.assert_not_called()
+        assert window.mock_calls == [
+            call.settings.setValue("live_view", False),
+            call.live_timer.stop(),
+        ]
 
     def test_the_recording_toggle_touches_nothing_but_its_setting(self) -> None:
         """What reads it is `run_attack`, when it opens the run. A round already
@@ -1844,9 +1852,10 @@ class WindowToggleTests(unittest.TestCase):
         """
         window = MagicMock()
         MainWindow._toggle_record_frames(window, True)
-        window.settings.setValue.assert_called_once_with("record_frames", True)
-        window.live_timer.start.assert_not_called()
-        window.live_timer.stop.assert_not_called()
+        # The whole call list, not a list of things it did not do: the
+        # regression this class exists for was a branch appearing where none
+        # belonged, and naming `live_timer` alone would miss the next one.
+        assert window.mock_calls == [call.settings.setValue("record_frames", True)]
 
 
 def _menu(price: int, gold: int = 887) -> WallMenu:
