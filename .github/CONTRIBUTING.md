@@ -78,7 +78,7 @@ The `test` group is what the suite needs; a plain `uv sync` installs enough to r
 
 Two command-line hooks exist for smoke tests against the live game. `--live-test` captures a frame and asks Gemini to describe it; `--agent-command=<text>` types a command into the AI tab and runs it. Both save a proof screenshot when `COC_LIVE_TEST_SCREENSHOT` / `COC_AGENT_SCREENSHOT` point at a path.
 
-Beyond those, every loop has a headless sub-command (`uv run ai_coc attack`, `walls`, `collect`, and the rest — see the README). Those are how the game is actually worked on: a feature reachable only through a widget cannot be driven against the live game while it is being written.
+Beyond those, every loop has a headless sub-command (`uv run ai_coc attack`, `walls`, `collect`, and the rest; see the README). Those are how the game is actually worked on: a feature reachable only through a widget cannot be driven against the live game while it is being written.
 
 Supported Python versions are declared in `pyproject.toml`. Use `uv` to manage interpreters when needed:
 
@@ -103,15 +103,15 @@ Always run `make fmt` and `make test` before opening a pull request.
 
 The three layers are directories, so an import that crosses them is visible in the import line:
 
-- **UI and orchestration** — `ui/main_window.py` holds the window and every tab; `ui/workers.py` the thread-pool workers; `ui/render.py` the Markdown and log rendering. The loops themselves are kept Qt-free so they can be driven and tested without a window: `ui/attack.py` (the attack loop), and `ui/walls.py`, `ui/upkeep.py`, `ui/clan.py`, `ui/hero.py` on top of the shared `ui/runner.py`
-- **Adapters** — `adapters/mumu.py` (emulator lifecycle), `adapters/adb.py` (every ADB call), `adapters/ai.py` (Gemini), `adapters/secrets.py` (DPAPI), `adapters/config.py` (the shared settings file), `adapters/database.py` (SQLite), `adapters/mapping.py` (the community `data_id` table)
-- **Pure parsers** — `parsers/scout.py` (loot panel, card row, storage bars), `parsers/building.py` (building menus and their prices), `parsers/home.py` (collector markers, builder panel), plus `parsers/village.py`, `parsers/boundary.py`, `parsers/field.py`, `parsers/clan.py` and `parsers/hero.py`
+- **UI and orchestration**: `ui/main_window.py` holds the window and every tab; `ui/workers.py` the thread-pool workers; `ui/render.py` the Markdown and log rendering. The loops themselves are kept Qt-free so they can be driven and tested without a window: `ui/attack.py` (the attack loop), and `ui/walls.py`, `ui/upkeep.py`, `ui/clan.py`, `ui/hero.py` on top of the shared `ui/runner.py`
+- **Adapters**: `adapters/mumu.py` (emulator lifecycle), `adapters/adb.py` (every ADB call), `adapters/ai.py` (Gemini), `adapters/secrets.py` (DPAPI), `adapters/config.py` (the shared settings file), `adapters/database.py` (SQLite), `adapters/mapping.py` (the community `data_id` table)
+- **Pure parsers**: `parsers/scout.py` (loot panel, card row, storage bars), `parsers/building.py` (building menus and their prices), `parsers/home.py` (collector markers, builder panel), plus `parsers/village.py`, `parsers/boundary.py`, `parsers/field.py`, `parsers/clan.py` and `parsers/hero.py`
 
 `cli.py` is argument parsing and `main()`; `commands.py` is the headless side it dispatches to. New work belongs somewhere `commands.py` can call it.
 
 Prompts are one Markdown file each under `prompts/`, loaded once and filled in by `render`, because a prompt is reworded far more often than the code around it.
 
-Every structured value is a Pydantic model, collected in `models.py` — no `dataclass`, no `TypedDict`, and no bare `dict[str, Any]` travelling between functions. Blocking calls go through a `QThreadPool` worker and come back to the UI thread as a signal; never call an adapter directly from a slot.
+Every structured value is a Pydantic model, collected in `models.py`: no `dataclass`, no `TypedDict`, and no bare `dict[str, Any]` travelling between functions. Blocking calls go through a `QThreadPool` worker and come back to the UI thread as a signal; never call an adapter directly from a slot.
 
 `CLAUDE.md` at the repo root carries the reasoning behind every measured constant in these loops. It is worth reading before changing any of them, because most of them were paid for by a battle that went wrong.
 
@@ -267,14 +267,14 @@ uvx poe docs
 
 All workflows live in `.github/workflows/`.
 
-- **Tests** (`test.yml`) — pushes and pull requests to `main` or `release/*`, ignoring md files. Runs pytest on Python 3.12/3.13/3.14 with coverage and comments a summary
-- **Code Quality Check** (`code-quality-check.yml`) — pull requests. Runs ruff and the rest of the pre-commit suite
-- **Docs Deploy** (`deploy.yml`) — push to `main` and tags `v*`. Builds the Zensical site and publishes to GitHub Pages. Needs GitHub Pages enabled (Settings → Pages → Source: GitHub Actions)
-- **Build and Release** (`build_release.yml`) — tags `v*` or manual dispatch. Builds a Windows x64 executable with PyInstaller plus the wheel and sdist, publishes to PyPI (needs the `UV_PUBLISH_TOKEN` secret) and uploads everything to the GitHub Release
-- **Publish Docker Image** (`build_image.yml`) — push to `main` and tags `v*`. Pushes to GHCR: `ghcr.io/<owner>/<repo>`
-- **Release Drafter** (`release_drafter.yml`) — push to `main` and PR events. Maintains a draft release from Conventional Commits
-- **Code Scanning** (`code_scan.yml`) — push and PR. Runs gitleaks; CodeQL and dependency review stay skipped while the repo is private
-- **Semantic Pull Request** (`semantic-pull-request.yml`) — PR open/edit/sync. Enforces Conventional Commit style PR titles
+- **Tests** (`test.yml`): pushes and pull requests to `main` or `release/*`, ignoring md files. Runs pytest on Python 3.12/3.13/3.14 with coverage and comments a summary
+- **Code Quality Check** (`code-quality-check.yml`): pull requests. Runs ruff and the rest of the pre-commit suite
+- **Docs Deploy** (`deploy.yml`): push to `main` and tags `v*`. Builds the Zensical site and publishes to GitHub Pages. Needs GitHub Pages enabled (Settings → Pages → Source: GitHub Actions)
+- **Build and Release** (`build_release.yml`): tags `v*` or manual dispatch. Builds a Windows x64 executable with PyInstaller plus the wheel and sdist, publishes to PyPI (needs the `UV_PUBLISH_TOKEN` secret) and uploads everything to the GitHub Release
+- **Publish Docker Image** (`build_image.yml`): push to `main` and tags `v*`. Pushes to GHCR: `ghcr.io/<owner>/<repo>`
+- **Release Drafter** (`release_drafter.yml`): push to `main` and PR events. Maintains a draft release from Conventional Commits
+- **Code Scanning** (`code_scan.yml`): push and PR. Runs gitleaks; CodeQL and dependency review stay skipped while the repo is private
+- **Semantic Pull Request** (`semantic-pull-request.yml`): PR open/edit/sync. Enforces Conventional Commit style PR titles
 
 ### Configuration checklist
 

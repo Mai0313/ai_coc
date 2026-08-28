@@ -62,7 +62,7 @@ Prebuilt Windows executables are attached to every [release](https://github.com/
 
 ## 🎮 Playing from the terminal
 
-The window is one way in. The other is a sub-command, which runs the same loops with no window at all — this is how the game is usually played, because it leaves the terminal free to watch the log.
+The window is one way in. The other is a sub-command, which runs the same loops with no window at all, and this is how the game is usually played, because it leaves the terminal free to watch the log.
 
 ### Attacking
 
@@ -75,7 +75,7 @@ ai_coc stop                      # stand down after the battle in progress
 
 `stop` writes a flag and returns at once. The loop reads it between battles and between opponents, never mid-battle, so the worst case is one more battle: abandoning one halfway would leave the army on the field and the game on a screen the next run cannot get home from.
 
-Loot thresholds come from the settings file, and can be overridden for one run. Passing `0` is different from leaving a flag out — out means "use the configured value", `0` means "take this threshold out entirely":
+Loot thresholds come from the settings file, and can be overridden for one run. Passing `0` is different from leaving a flag out: out means "use the configured value", `0` means "take this threshold out entirely":
 
 ```bash
 ai_coc attack --min-gold 800000
@@ -135,7 +135,7 @@ ai_coc read shot.png                  # what each reader makes of one frame
 ai_coc view --zoom out                # put the camera back where every coordinate was measured
 ```
 
-`read` is the quickest way to answer "did it misread the screen, or did the tap miss?" — it prints what every reader got from one frame: the loot panel, the storages, the card row, the builder panel, the boundary.
+`read` is the quickest way to answer "did it misread the screen, or did the tap miss?" It prints what every reader got from one frame: the loot panel, the storages, the card row, the builder panel, the boundary.
 
 ## ⚙️ Settings
 
@@ -162,9 +162,9 @@ ai_coc view --zoom out                # put the camera back where every coordina
 }
 ```
 
-- **thresholds** — who is worth attacking. Set them too high and a run skips dozens of opponents without ever starting a battle
-- **stock** — when to stand down. Any one resource reaching its limit ends the run, not all three. `0` means "never stop on this one"
-- **timings** — how many seconds after the attack opens each hero fires its ability, and when the spells are cast. Keyed by hero rather than by card position, because a hero being upgraded has no card at all
+- **thresholds**: who is worth attacking. Set them too high and a run skips dozens of opponents without ever starting a battle
+- **stock**: when to stand down. Any one resource reaching its limit ends the run, not all three. `0` means "never stop on this one"
+- **timings**: how many seconds after the attack opens each hero fires its ability, and when the spells are cast. Keyed by hero rather than by card position, because a hero being upgraded has no card at all
 
 Everything else lives in `~/.ai_coc`: the SQLite database, captured frames, imported account JSON, the log, and the DPAPI-protected key file.
 
