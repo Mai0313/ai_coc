@@ -63,6 +63,14 @@ def _parser() -> argparse.ArgumentParser:
         metavar="秒",
         help="除了迴圈自己讀的畫面之外,每隔這麼多秒再存一張,需要搭配 --record",
     )
+    # Omitted means "whatever the config file says", like the loot thresholds
+    # below; 0 is how one run turns the restart off without editing the file.
+    run.add_argument(
+        "--restart-every",
+        type=int,
+        metavar="場",
+        help="每真的打完這麼多場就重開模擬器跟遊戲,蓋過設定檔,0 代表這次不重開",
+    )
     # Omitted means "whatever the config file says". Three zeros is how a run
     # being studied gets back to attacking the first opponent it is shown.
     for flag, resource in (("gold", "金幣"), ("elixir", "聖水"), ("dark", "黑水")):
@@ -177,6 +185,7 @@ def _run_command(arguments: argparse.Namespace, run: RunLog) -> int:
                 ),
                 rounds=arguments.repeat,
                 shot_every=arguments.shot_every,
+                restart_every=arguments.restart_every,
             )
         ).model_dump_json(indent=2)
     elif arguments.command == "stop":
