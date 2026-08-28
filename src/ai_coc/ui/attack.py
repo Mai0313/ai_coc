@@ -1130,7 +1130,7 @@ class AttackRunner(BaseModel):
         # Measured live on a flank half inside the boundary: rage fired 21 s in
         # while a troop card was still draining and the heroes landed at 41 s,
         # where finishing first would have had them down at about 31 s.
-        _, led = self._drop_singles(vanguard, line, "siege")
+        _, led = self._drop_singles(vanguard, line, "leading")
         opener = time.monotonic()
         line = self._spread_troops(troops, anchors, pushed)
         # Only the heroes that actually went down get an ability. A hero still in
@@ -1140,20 +1140,27 @@ class AttackRunner(BaseModel):
         # down, and a hero sent to the old midpoint is sent somewhere refused.
         down, _ = self._drop_singles(followers, line, "hero")
         landed = time.monotonic()
+        kinds = list(plan.heroes) if plan else []
         # **The leading card is a hero on any army that carries no siege
         # machine**, and it is the one card nothing on the row can tell apart:
-        # neither it nor a hero shows an `xN`, and the two sit in the same group.
-        # So the game's own ordering picks it, and where the ordering is wrong
-        # the health bar corrects it — `led` is the leader only if the game drew
-        # one over its card, which it never does for a siege machine. Without
-        # this that hero got no ability at all and every kind in the plan's list
-        # was read a slot off the card it names, so a queen's cloak went to
+        # neither it nor a hero shows an `xN`, and the two sit in the same
+        # group. So the game's own ordering picks it — siege machine first —
+        # and two things correct that ordering where it is wrong. The health
+        # bar is the hard one, since the game never draws one over a siege
+        # machine. It says nothing about a leader that was refused at every
+        # spot, though, and that leader still holds its slot in the plan's
+        # list, so the plan's own count answers for it: as many heroes named as
+        # there are one-off cards is an army carrying no siege machine.
+        #
+        # Without either, that hero got no ability at all and every kind after
+        # it was read a slot off the card it names, so a queen's cloak went to
         # whoever stood next to her.
-        order = led + followers
+        order = (vanguard if led or len(kinds) == len(singles) else []) + followers
         # Each hero's ability runs from its own hero landing, which for the
-        # leader is a whole troop deployment earlier than for the rest.
+        # leader is a whole troop deployment earlier than for the rest. Only
+        # what really went down is in here: an ability tap on a hero still in
+        # its card deploys it instead, with nothing around it.
         arrived = dict.fromkeys(led, opener) | {x: landed for x in followers if x in down}
-        kinds = list(plan.heroes) if plan else []
         kinds += ["unknown"] * (len(order) - len(kinds))
         self._run_schedule(
             opened,

@@ -1346,6 +1346,21 @@ class AttackTests(unittest.TestCase):
         assert [card for _, card in played] == [700, 800]
         assert [delay for delay, _ in played] == [1, 20]
 
+    def test_a_leading_hero_the_game_refused_still_holds_its_slot(self) -> None:
+        """The bar cannot speak for a card that never went down anywhere.
+
+        A leader refused at all five spots draws no health bar, so the plan's
+        own count answers instead: three heroes named against three one-off
+        cards is an army with no siege machine, whether or not the leader made
+        it onto the field. Without that the two behind it take the queen's and
+        the king's timings while they hold the king and the champion.
+        """
+        played = self._abilities(
+            [600, 700, 800], on_field=[700, 800], kinds=["queen", "king", "champion"]
+        )
+        assert [card for _, card in played] == [700, 800]
+        assert [delay for delay, _ in played] == [20, 45]
+
     def test_a_hero_that_never_left_its_card_is_not_given_an_ability(self) -> None:
         """An ability tap on a hero still in its card deploys it with nothing around it."""
         played = self._abilities(
