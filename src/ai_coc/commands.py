@@ -314,7 +314,7 @@ def attack(options: AttackOptions) -> AttackSeries:
     if options.frame_dir is not None:
         options.frame_dir.mkdir(parents=True, exist_ok=True)
     elif options.shot_every > 0:
-        raise ValueError("--shot-every 需要 --frames 指定存放位置")
+        raise ValueError("--shot-every 要搭配 --record，不然心跳畫面沒有地方放")
     plan = plans.load(options.plan_in) if options.plan_in else None
     config = ConfigStore().load()
     display = adb.display_for(COC_PACKAGE)
@@ -352,6 +352,9 @@ def attack(options: AttackOptions) -> AttackSeries:
             series.root.append(report)
             logger.info("Attack finished: %s", report.message)
             if options.plan_out is not None and runner.played is not None:
+                # A path the caller chose is a path they meant, so make room for
+                # it rather than failing on a directory they have not made yet.
+                options.plan_out.parent.mkdir(parents=True, exist_ok=True)
                 options.plan_out.write_text(
                     runner.played.model_dump_json(indent=2), encoding="utf-8"
                 )

@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 
 from pydantic import Field, BaseModel, RootModel, ConfigDict, AliasChoices, field_validator
 
-from .constants import DEFAULT_ADB_HOST, ENTITY_CATEGORIES, DEFAULT_GEMINI_MODEL
+from .constants import LOG_DIR, DEFAULT_ADB_HOST, ENTITY_CATEGORIES, DEFAULT_GEMINI_MODEL
 
 # Village JSON, Battle Scripts and the MuMu CLI all gain fields between game and
 # emulator releases. Models that mirror them allow extras so an unknown field is
@@ -849,6 +849,75 @@ class ViewReport(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     message: str = ""
+
+
+class RunLog(BaseModel):
+    """One execution's own directory: its log, its answer, and what it saw.
+
+    The rotating `controller.log` answers "what has this machine been doing";
+    this answers "what did *that* run do", which is the question anyone looking
+    into a bad round actually has. Both stay, because neither is the other:
+    picking one run out of a rotating file means reading past everything that
+    came before it, and a per-run directory cannot show a pattern across a week.
+
+    It exists because the layout was a convention rather than a feature. The
+    skills told a session to build this directory with shell redirection, so it
+    existed only for the reader who could have built it anyway — a person
+    running the CLI by hand, or using the window, got a rotating file and
+    nothing else.
+
+    `recording` is off by default because it is not free: the frames a loop
+    reads are a PNG encode each on the emulator, and the heartbeat competes with
+    the loop for the same ADB connection.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    directory: Path
+    recording: bool = False
+
+    @classmethod
+    def open(cls, command: str, recording: bool = False) -> RunLog:
+        """Make the directory a run about to start will write into.
+
+        Named `<when>-<what>` so that a plain listing of the log directory reads
+        as a history, which is what makes a run from three days ago findable
+        without opening any of them.
+        """
+        stamp = datetime.now().astimezone().strftime("%Y-%m-%d-%H%M%S")
+        base = LOG_DIR / f"{stamp}-{command}"
+        # Two runs of the same command inside one second would otherwise land in
+        # one directory, one `result.json` overwriting the other and both logs
+        # interleaved. A shell loop over `ai_coc read` is how that really
+        # happens, and it is the documented way to answer a misread question.
+        directory = base
+        attempt = 2
+        while directory.exists():
+            directory = base.with_name(f"{base.name}-{attempt}")
+            attempt += 1
+        directory.mkdir(parents=True)
+        return cls(directory=directory, recording=recording)
+
+    @property
+    def log_path(self) -> Path:
+        return self.directory / "run.log"
+
+    @property
+    def frames(self) -> Path | None:
+        """Where a loop keeps what it reads, or None when nothing is recorded.
+
+        None rather than a directory left empty, because every loop here already
+        takes `frame_dir: Path | None` and reads None as "do not save".
+        """
+        if not self.recording:
+            return None
+        path = self.directory / "frames"
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
+    def answer(self, text: str) -> None:
+        """Keep a run's result beside the log that explains how it got there."""
+        (self.directory / "result.json").write_text(text, encoding="utf-8")
 
 
 # How much to tear down before bringing the game back up. `none` is the ordinary

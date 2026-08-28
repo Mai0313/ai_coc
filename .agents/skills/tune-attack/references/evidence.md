@@ -4,7 +4,7 @@
 
 ## 三種畫面
 
-**迴圈自己讀的那些** (`--frames`). 檔名是迴圈當下在問的問題, 像 `0006_probe`, `0010_pass`, `0018_dropped`. 標籤是 `AttackRunner._frame` 的呼叫端給的, 所以要知道現在有哪些標籤就去 grep `self._frame(`. 這批畫面的價值在於它們是**判讀器真的看過的那一張**, 所以判讀錯的時候證據就在這裡.
+**迴圈自己讀的那些** (`--record`). 檔名是迴圈當下在問的問題, 像 `0006_probe`, `0010_pass`, `0018_dropped`. 標籤是 `AttackRunner._frame` 的呼叫端給的, 所以要知道現在有哪些標籤就去 grep `self._frame(`. 這批畫面的價值在於它們是**判讀器真的看過的那一張**, 所以判讀錯的時候證據就在這裡.
 
 **成對的那些.** `before-drop` 跟 `dropped` 是一對, 一次出兵到底有沒有成功是靠比較這兩張的卡片角落決定的, 不是靠 log 那行字. 查「英雄到底有沒有下去」就看這一對, 不要看戰場.
 
@@ -35,8 +35,8 @@ uv run ai_coc capture <dir> --count 30 --gap 1.5
 ## 花一場戰鬥去量
 
 ```bash
-uv run ai_coc probe --frames <dir>    # 實測出兵邊界, 對照判讀器的說法
-uv run ai_coc bounds --frames <dir>   # 實測地圖邊緣, 回推村莊範圍
+uv run ai_coc probe --record          # 實測出兵邊界, 對照判讀器的說法
+uv run ai_coc bounds --record         # 實測地圖邊緣, 回推村莊範圍
 ```
 
 兩個都是丟掉一場戰鬥去換一組數字. 值得跑的時機: 遊戲更新之後, 村莊換了主題之後, 或者連續好幾場都在同一個地方出兵失敗而畫面看不出原因. 兩個指令的細節跟它們第一次跑出來的結果都寫在 `CLAUDE.md` 裡.

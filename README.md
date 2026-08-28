@@ -85,8 +85,8 @@ ai_coc attack --min-gold 0 --min-elixir 0 --min-dark 0    # attack whoever comes
 A run can keep everything it looked at, which is what makes a battle worth arguing with afterwards:
 
 ```bash
-ai_coc attack --frames ./run          # every frame the loop reads, named for what it was asking
-ai_coc attack --frames ./run --shot-every 4   # plus one frame every four seconds
+ai_coc attack --record                # every frame the loop reads, named for what it was asking
+ai_coc attack --record --shot-every 4 # plus one frame every four seconds
 ```
 
 A tactic is a file rather than a set of constants, so a battle worth repeating can be repeated and one worth arguing with can be edited. Replaying one calls Gemini not at all:
@@ -136,6 +136,19 @@ ai_coc view --zoom out                # put the camera back where every coordina
 ```
 
 `read` is the quickest way to answer "did it misread the screen, or did the tap miss?" It prints what every reader got from one frame: the loot panel, the storages, the card row and the builder panel.
+
+### Where a run leaves what it saw
+
+Every run gets a directory of its own, whichever side of the app started it:
+
+```
+~/.ai_coc/logs/2026-08-29-011423-attack/
+├── run.log        # this run's log, and nothing else
+├── result.json    # what the command answered
+└── frames/        # only with --record
+```
+
+The first line of every run says which directory it is, and the name is `<when>-<what>` so a listing reads as a history. `controller.log` sits beside them with every run mixed together, which is what to read when you are looking for a pattern across a week rather than into one run.
 
 ## ⚙️ Settings
 

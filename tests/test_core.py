@@ -2,6 +2,7 @@ import io
 import json
 import math
 import time
+import logging
 from pathlib import Path
 import tempfile
 import unittest
@@ -12,10 +13,11 @@ from PIL import Image, ImageDraw
 import pytest
 from pydantic import ValidationError
 
-from ai_coc import plans, commands
+from ai_coc import plans, models, commands
 from ai_coc.ui import hero, walls, attack
 from ai_coc.ui import runner as shared
 from ai_coc.models import (
+    RunLog,
     HeroCard,
     ProbeRay,
     WallMenu,
@@ -87,6 +89,7 @@ from ai_coc.adapters.adb import (
 from ai_coc.parsers.clan import panel_top, donatable_cards, reinforce_button
 from ai_coc.parsers.hero import SCROLL_LEFT, SCROLL_RIGHT, can_scroll, hero_cards, hall_buttons
 from ai_coc.parsers.home import builder_jobs, free_builders, collect_bubbles
+from ai_coc.logging_setup import _attach_run
 from ai_coc.parsers.field import view_shift, army_centre
 from ai_coc.parsers.scout import (
     PANEL_LEFT,
@@ -1748,6 +1751,68 @@ class LaunchTests(unittest.TestCase):
         mumu.enumerate_instances.return_value = []
         with patch.object(commands, "MuMuAdapter", return_value=mumu), pytest.raises(RuntimeError):
             commands.launch("none")
+
+
+class RunLogTests(unittest.TestCase):
+    """One directory per run, which used to be a convention in a skill file.
+
+    The layout came from `.agents/skills/farm/references/running.md`, built with
+    shell redirection, so it existed only for the reader who could have built it
+    anyway. A person running the CLI by hand, or using the window, got a
+    rotating file and nothing else.
+    """
+
+    def _run(self, folder: str, command: str = "attack", *, recording: bool = False) -> RunLog:
+        with patch.object(models, "LOG_DIR", Path(folder)):
+            return RunLog.open(command, recording=recording)
+
+    def test_a_directory_is_named_for_when_and_what(self) -> None:
+        """A plain listing has to read as a history, or a run from three days
+        ago is only findable by opening them.
+        """
+        with tempfile.TemporaryDirectory() as folder:
+            run = self._run(folder, "walls")
+            assert run.directory.parent == Path(folder)
+            assert run.directory.name.endswith("-walls")
+            assert run.directory.is_dir()
+
+    def test_nothing_is_recorded_unless_it_was_asked_for(self) -> None:
+        """None rather than an empty directory: every loop reads None as "do not
+        save", and a directory that is always there says nothing about whether
+        this run was worth recording.
+        """
+        with tempfile.TemporaryDirectory() as folder:
+            assert self._run(folder).frames is None
+
+    def test_recording_gets_a_frames_directory_ready(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            frames = self._run(folder, recording=True).frames
+            assert frames is not None
+            assert frames.is_dir()
+
+    def test_the_answer_lands_beside_the_log_that_explains_it(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            run = self._run(folder)
+            run.answer('{"ok": true}')
+            assert (run.directory / "result.json").read_text(encoding="utf-8") == '{"ok": true}'
+
+    def test_a_second_run_takes_the_first_ones_file_away(self) -> None:
+        """The window opens a run per job, so without the removal its tenth job
+        would still be writing into the first job's directory as well.
+        """
+        with tempfile.TemporaryDirectory() as folder:
+            first = self._run(folder, "attack")
+            second = self._run(folder, "walls")
+            # A logger of its own: `configure_logging` touches the root one, and
+            # a test has no business rearranging where the suite's logging goes.
+            log = logging.getLogger("run-log-test")
+            _attach_run(log, first)
+            _attach_run(log, second)
+            log.info("only the second run")
+            for handler in log.handlers:
+                handler.close()
+            assert "only the second run" in second.log_path.read_text(encoding="utf-8")
+            assert "only the second run" not in first.log_path.read_text(encoding="utf-8")
 
 
 def _menu(price: int, gold: int = 887) -> WallMenu:

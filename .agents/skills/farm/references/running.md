@@ -6,29 +6,26 @@
 
 一輪進攻是搜尋加上最多三分鐘的戰鬥加上回營, 四到五分鐘起跳; `--repeat 0` 打到倉庫滿可能是好幾個小時. 前景跑的話這段時間你什麼都做不了, 使用者也插不進話. 背景跑之後你可以在戰鬥進行的同時讀程式碼, 改東西, 或者回答使用者的問題.
 
-## 東西放哪
-
-`.gitignore` 裡已經有 `/.runs/`, 所以 repo 根目錄下的 `.runs/` 是現成的地方, 不會弄髒 git status. 一次跑一個目錄:
-
-```
-.runs/2026-08-27-1930-farm/
-├── run.log        # stderr, 也就是那串 rich 印出來的執行紀錄
-├── result.json    # stdout, 跑完才會有內容
-├── frames/        # 只有需要查東西的時候才開
-└── played.json    # --plan-out, 只有 tune-attack 用得到
-```
-
-目錄名帶上時間跟這次在做什麼, 因為一個 session 常常會跑好幾輪, 事後要分辨哪個是哪個.
-
 ## 開跑
 
 ```bash
-uv run ai_coc attack --repeat 0 > .runs/<run>/result.json 2> .runs/<run>/run.log
+uv run ai_coc attack --repeat 0 --record
 ```
 
-用 Bash 工具的 `run_in_background` 送出去. 重點在那兩個重導向: **stdout 是答案, stderr 是過程**. `cli.py` 的 `_run_command` 把報告的 JSON 寫到 stdout, 而 `configure_logging()` 把所有 log 送到 stderr 的 rich console. 兩個混在一起就沒辦法 parse 了.
+用 Bash 工具的 `run_in_background` 送出去. **不必自己重導向**, log 跟結果都是程式自己寫的, 一次執行一個目錄:
 
-`result.json` 要等整個 series 跑完才會有東西, 所以跑的過程中唯一能看的是 `run.log`.
+```
+~/.ai_coc/logs/2026-08-29-011423-attack/
+├── run.log        # 這次執行的完整紀錄, 純文字
+├── result.json    # 這次的答案, 跑完才會有內容
+└── frames/        # 只有 --record 才有
+```
+
+**目錄在哪不用猜, 開跑第一行 log 就會說** (`This run is being kept in ...`). 名字是「時間-指令」, 所以 `ls -t ~/.ai_coc/logs` 最上面那個就是最近的一次.
+
+`--record` 決定要不要留畫面. 留了事後可以一張一張看它當時到底看到什麼, 代價是一張 PNG 一兩百 KB、一場加起來幾十 MB, 而且每一張都是模擬器的一次編碼. 這批會有東西要查就開著, 單純掛機就不用開.
+
+`--shot-every` 另外加一條固定心跳 (`tick_0012.3s.png`), 要搭配 `--record`. 迴圈只在有問題要問的地方截圖, 兩張之間打壞掉是看不到的, 這條補的就是那段.
 
 ## 盯
 
@@ -40,7 +37,7 @@ uv run ai_coc attack --repeat 0 > .runs/<run>/result.json 2> .runs/<run>/run.log
 
 **幾分鐘看一次就好.** 一輪四五分鐘, 每三十秒去 tail 一次只是在浪費 context, 而且中間本來就沒有新東西. 背景指令跑完的時候會通知你, 那才是必須處理的時刻.
 
-`~/.ai_coc/logs/controller.log` 是同一批 log 的另一份, 純文字, 會轉檔. 你導出來的那份不見了或者要翻更早以前的跑, 才去看它.
+`~/.ai_coc/logs/controller.log` 是**所有執行混在一起**的那一份, 會轉檔. 它回答的是另一個問題: 這台機器最近都在做什麼. 要在某一次跑裡面找東西就看那次自己的 `run.log`, 要跨好幾次跑找模式才來翻它.
 
 ## 中止
 
