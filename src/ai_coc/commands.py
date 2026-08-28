@@ -311,6 +311,30 @@ RESTART_POLLS = 45
 RESTART_POLL_GAP = 4.0
 
 
+def _pinch_camera(adb: AdbController, zoom: str, times: int) -> None:
+    """The pinch itself, so the restart can reach it without going through `view`.
+
+    `view` resolves its own controller, which a restart must not do — it already
+    holds the one `launch` just handed it, and `_controller` would enumerate the
+    instances again and fire a second `monkey`.
+    """
+    middle = 800
+    near = ((middle - PINCH_NEAR, PINCH_ROW), (middle + PINCH_NEAR, PINCH_ROW))
+    far = ((middle - PINCH_FAR, PINCH_ROW), (middle + PINCH_FAR, PINCH_ROW))
+    # Fingers converging is the game zooming out, which widens the view.
+    starts, ends = (far, near) if zoom == "out" else (near, far)
+    for _ in range(times):
+        adb.pinch((starts[0], ends[0]), (starts[1], ends[1]))
+        time.sleep(PINCH_SETTLE)
+
+
+# How many pinches to spend putting the camera back after a restart. `view`'s
+# docstring measured one gesture as covering the whole range and a second as
+# changing nothing, so two is that plus a spare — the cost is a second and the
+# alternative is every battle of the rest of the run landing nothing.
+RESTART_ZOOM_PINCHES = 2
+
+
 def _restart_emulator(runner: AttackRunner, ticker: FrameTicker) -> bool:
     """Restart the emulator and the game, and point the run at what came back.
 
@@ -374,6 +398,15 @@ def _restart_emulator(runner: AttackRunner, ticker: FrameTicker) -> bool:
         runner.display = display
         ticker.adb = adb
         ticker.display = display
+        # **A restarted game does not come back at the zoom everything was
+        # measured at.** Observed live: the restart succeeded, the village read,
+        # and every battle afterwards deployed nothing at all — the drop line,
+        # the card row and the spell grid are all screen coordinates taken at
+        # the far zoom limit, and the game had come back zoomed in. Two rounds
+        # were spent reporting `0 of 4 hero card(s) landed` before a recorded
+        # frame showed why. Zooming out past the limit does nothing, which is
+        # what makes this safe to do blind on every restart.
+        _pinch_camera(adb, "out", RESTART_ZOOM_PINCHES)
         # That the village reads at all is the signal; what it reads is not, and
         # logging the number would present it as one. Measured on a live restart,
         # the storage bars animate up from zero while the game loads and the
@@ -895,15 +928,7 @@ def view(zoom: str = "out", times: int = 3) -> ViewReport:
     Measured live, one pinch covers the whole range: from fully zoomed in, a
     single gesture came back to the far limit and a second changed nothing.
     """
-    adb = _controller()
-    middle = 800
-    near = ((middle - PINCH_NEAR, PINCH_ROW), (middle + PINCH_NEAR, PINCH_ROW))
-    far = ((middle - PINCH_FAR, PINCH_ROW), (middle + PINCH_FAR, PINCH_ROW))
-    # Fingers converging is the game zooming out, which widens the view.
-    starts, ends = (far, near) if zoom == "out" else (near, far)
-    for _ in range(times):
-        adb.pinch((starts[0], ends[0]), (starts[1], ends[1]))
-        time.sleep(PINCH_SETTLE)
+    _pinch_camera(_controller(), zoom, times)
     report = ViewReport(message=f"鏡頭{'拉遠' if zoom == 'out' else '拉近'}了 {times} 次")
     logger.info("View: %s", report.message)
     return report
