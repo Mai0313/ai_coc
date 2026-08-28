@@ -57,6 +57,11 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Install dependencies
+        # Every step without a shell of its own runs under `pwsh` on a Windows
+        # runner, and PowerShell neither aborts on a native command's non-zero
+        # exit nor reports anything but the last one's. Two commands here, so
+        # without this a failed pin would be invisible.
+        shell: bash
         run: |
           uv python pin ${{ matrix.python-version }}
           uv sync --group test
@@ -75,11 +80,13 @@ jobs:
 
       - name: Run pytest
         if: ${{ steps.check_tests.outputs.has_tests == 'true' }}
+        # `shell: bash` is the load-bearing half: Actions runs it as
+        # `bash --noprofile --norc -eo pipefail`, while the implicit shell it
+        # replaces is `bash -e` — errexit without pipefail, which is what let
+        # `tee` report success over a pytest that had failed. The explicit
+        # `set -o pipefail` below is belt and braces, and says so out loud.
         shell: bash
         run: |
-          # `pipefail` because a pipeline reports the exit code of its last
-          # command: without it `tee` succeeds whatever pytest did, and every
-          # failing run reads as a passing one.
           set -o pipefail
           uv run pytest -vv | tee .coverage.txt
 
