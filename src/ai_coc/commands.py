@@ -244,21 +244,35 @@ STOP_POLL = 2.0
 
 
 def stop() -> str:
-    """Ask a running attack loop to stand down, and return without waiting.
+    """Ask whichever long loop is running to stand down, without waiting for it.
 
     Nothing here touches the game or looks for a process: this writes the flag
-    and ends. What actually stops is the loop, when it next looks — between
-    rounds, and between opponents within a round. Never mid-battle, because a
-    battle abandoned halfway leaves the army on the field and the game on a
-    screen the next run does not know how to get home from.
+    and ends. What actually stops is the loop, when it next looks, and where
+    that is belongs to each of them — `attack` between rounds and between
+    opponents, `walls` between batches and during the opening scan. Never
+    mid-battle or mid-batch, because either one abandoned halfway leaves the
+    game on a screen the next run does not know how to get home from.
     """
     STOP_FLAG.write_text("", encoding="utf-8")
-    return f"已要求停止,旗標寫在 {STOP_FLAG}。正在跑的那一輪會打完當下這一場才結束。"
+    return f"已要求停止,旗標寫在 {STOP_FLAG}。正在跑的迴圈會做完手上這一件事才收工。"
 
 
 def stop_requested() -> bool:
     """Whether somebody has asked the loop that is running now to stand down."""
     return STOP_FLAG.exists()
+
+
+def _clear_stop() -> None:
+    """Take the flag, and call this at both ends of every loop that reads it.
+
+    At the start because a process killed outright never reaches the other end,
+    and a flag left behind that way would stand the next run down before it had
+    done anything — reported as a stop nobody asked for. At the end because a
+    request that has been served should stop looking like one still waiting: a
+    flag that is still there means somebody asked and no loop has taken it yet,
+    which is what makes the file worth looking at to tell whether a stop landed.
+    """
+    STOP_FLAG.unlink(missing_ok=True)
 
 
 def _rest(seconds: float) -> bool:
@@ -295,10 +309,7 @@ def attack(options: AttackOptions) -> AttackSeries:
     the rounds already played are still reported. The flag is the one that
     reaches a run put in the background, which nothing can send a Ctrl-C to.
     """
-    # A flag left behind by an earlier run would stand this one down before it
-    # had played a round. Stopping means the loop that is running now, so the
-    # flag is consumed here rather than left for whatever starts next.
-    STOP_FLAG.unlink(missing_ok=True)
+    _clear_stop()
     adb = _controller()
     if options.frame_dir is not None:
         options.frame_dir.mkdir(parents=True, exist_ok=True)
@@ -361,6 +372,7 @@ def attack(options: AttackOptions) -> AttackSeries:
                 logger.info("Nothing was attacked; waiting %ds for the army", IDLE_REST)
                 if _rest(IDLE_REST):
                     break
+    _clear_stop()
     return series
 
 
@@ -553,7 +565,13 @@ def walls(options: WallOptions) -> WallReport:
     what a village does with loot it has nowhere else to put — every builder busy
     and both storages filling towards the point where the attack loop stands
     itself down.
+
+    `ai_coc stop` ends this one too, between batches. A run with `--rounds 0`
+    against a village full of walls is the other loop here that goes on long
+    enough to be worth interrupting, and it answers the same flag rather than a
+    second mechanism of its own.
     """
+    _clear_stop()
     adb = _controller()
     if options.frame_dir is not None:
         options.frame_dir.mkdir(parents=True, exist_ok=True)
@@ -564,9 +582,20 @@ def walls(options: WallOptions) -> WallReport:
         keep_elixir=options.keep_elixir,
         rounds=options.rounds,
         at=options.at,
+        should_stop=stop_requested,
         frame_dir=options.frame_dir,
     )
     report = runner.run()
+    # Said here rather than inside the loop: what the runner knows is how many
+    # batches it bought, and "已停止" is a fact about this call rather than about
+    # the walls. A run stopped before it bought anything is the exception — its
+    # own fallback message is a verdict on positions it never tried, and that
+    # sentence has been read as "the walls are finished" and taken for it.
+    if stop_requested():
+        report.message = (
+            f"已停止，{report.message}" if report.upgrades else "已停止，還沒買成任何一批"
+        )
+    _clear_stop()
     logger.info(
         "Walls: %s (金幣 %d／聖水 %d)", report.message, report.paid("gold"), report.paid("elixir")
     )

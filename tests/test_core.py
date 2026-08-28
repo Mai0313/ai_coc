@@ -28,6 +28,7 @@ from ai_coc.models import (
     AdbEndpoint,
     ScreenPoint,
     StockLimits,
+    WallOptions,
     WallUpgrade,
     VillageStock,
     AttackOptions,
@@ -1593,6 +1594,68 @@ class StopFlagTests(unittest.TestCase):
                 assert commands._rest(commands.IDLE_REST)
             assert time.monotonic() - started < commands.IDLE_REST / 2
 
+    def test_a_finished_run_takes_the_flag_with_it(self) -> None:
+        """A flag still sitting there means no loop has picked it up yet, which
+        is what makes the file worth looking at to tell whether a stop landed.
+        Asked for mid-run, so the clear at the start cannot be what answers it.
+        """
+        with tempfile.TemporaryDirectory() as folder:
+            flag = Path(folder) / "stop"
+
+            def asked_mid_run() -> MagicMock:
+                flag.write_text("", encoding="utf-8")
+                return MagicMock(stock_full=True)
+
+            with (
+                patch.object(commands, "STOP_FLAG", flag),
+                patch.object(commands, "_controller"),
+                patch.object(commands, "_planner", return_value=None),
+                patch.object(commands, "ConfigStore"),
+                patch.object(commands, "FrameTicker"),
+                patch.object(commands, "AttackRunner") as runner,
+            ):
+                runner.return_value.run.side_effect = asked_mid_run
+                commands.attack(AttackOptions(rounds=1))
+            assert not flag.exists()
+
+    def test_the_wall_command_answers_the_same_flag(self) -> None:
+        """One flag for every long loop rather than a mechanism each."""
+        with tempfile.TemporaryDirectory() as folder:
+            flag = Path(folder) / "stop"
+            report = MagicMock(message="")
+            report.paid.return_value = 0
+            with (
+                patch.object(commands, "STOP_FLAG", flag),
+                patch.object(commands, "_controller"),
+                patch.object(commands, "WallRunner") as runner,
+            ):
+                runner.return_value.run.return_value = report
+                commands.walls(WallOptions())
+            assert runner.call_args.kwargs["should_stop"] is commands.stop_requested
+
+    def test_a_stopped_wall_run_says_so_and_keeps_what_it_bought(self) -> None:
+        """The runner counts batches; whether this call was stopped is the
+        command's own fact, so the prefix goes on here rather than in the loop.
+        """
+        with tempfile.TemporaryDirectory() as folder:
+            flag = Path(folder) / "stop"
+
+            def asked_mid_run() -> MagicMock:
+                flag.write_text("", encoding="utf-8")
+                report = MagicMock(message="升級了 3 面城牆")
+                report.paid.return_value = 0
+                return report
+
+            with (
+                patch.object(commands, "STOP_FLAG", flag),
+                patch.object(commands, "_controller"),
+                patch.object(commands, "WallRunner") as runner,
+            ):
+                runner.return_value.run.side_effect = asked_mid_run
+                result = commands.walls(WallOptions())
+            assert result.message == "已停止，升級了 3 面城牆"
+            assert not flag.exists()
+
     def test_a_headless_run_hands_the_flag_to_the_runner(self) -> None:
         """The interface was there all along; only the window ever passed it.
 
@@ -1840,6 +1903,39 @@ class WallRunnerTests(unittest.TestCase):
             patch.object(AdbController, "tap_many") as tapped,
         ):
             return runner._sized(opening, purse), tapped
+
+    def test_a_stopped_run_starts_no_further_batch(self) -> None:
+        """Between batches is the only safe place: a batch is a menu, a
+        confirmation and a storage read, and leaving mid-way strands a dialog
+        over the village. Whatever it already bought stays bought, because a
+        wall upgrades the moment it is paid for and there is nothing to undo.
+        """
+        runner = self._runner(at=(500, 300), should_stop=lambda: True)
+        with patch.object(
+            runner, "_home", return_value=VillageStock(gold=99999999, elixir=99999999, dark=1)
+        ):
+            report = runner.run()
+        assert not report.upgrades
+
+    def test_a_stop_during_the_scan_does_not_wait_for_the_whole_sweep(self) -> None:
+        """The scan is the longest unguarded stretch of a run not told where to
+        start, and it is the opening of every run without `--at`: a grid tap
+        costs a settle and a capture, and each wall it lands on costs four more.
+        Leaving here is safe in a way that leaving a batch is not, because the
+        sweep already backs out of whatever each tap opened.
+        """
+        runner = self._runner(should_stop=lambda: True)
+        swept = iter([((580, 140), b""), ((740, 140), b"")])
+        with (
+            patch.object(walls.time, "sleep"),
+            patch.object(runner, "_sweep", return_value=swept),
+            patch.object(walls, "wall_menu", return_value=_menu(1_600_000)),
+        ):
+            found = runner._scan()
+        assert not found
+        # The second point is still sitting there, so the sweep was cut short
+        # rather than walked to the end and thrown away.
+        assert next(swept, None) is not None
 
     def test_the_scan_looks_beside_each_wall_the_sweep_lands_on(self) -> None:
         """Walls sit 45 px apart and the sweep steps 160, so it passes over three

@@ -16,6 +16,7 @@ import time
 from typing import TYPE_CHECKING
 import logging
 from pathlib import Path
+from collections.abc import Callable
 
 from pydantic import BaseModel, PrivateAttr
 
@@ -112,6 +113,11 @@ class GameRunner(BaseModel):
 
     adb: AdbController
     display: DisplayTarget
+    # Asked between whole units of work, never inside one, for the reason
+    # `AttackRunner` has the same field: a batch abandoned halfway leaves the
+    # game on a screen the next run has to dig itself out of. What a unit is
+    # belongs to each loop — a wall batch here, an opponent there.
+    should_stop: Callable[[], bool] = lambda: False
     # Where to keep every frame the loop reads, for a run being studied afterwards.
     frame_dir: Path | None = None
 
