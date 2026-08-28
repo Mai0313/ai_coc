@@ -110,6 +110,7 @@ from ai_coc.parsers.scout import (
     counted_cards,
     attack_menu_open,
 )
+from ai_coc.ui.main_window import MainWindow
 from ai_coc.adapters.config import ConfigStore
 from ai_coc.parsers.village import parse_village
 from ai_coc.adapters.secrets import dotenv_value
@@ -1813,6 +1814,39 @@ class RunLogTests(unittest.TestCase):
                 handler.close()
             assert "only the second run" in second.log_path.read_text(encoding="utf-8")
             assert "only the second run" not in first.log_path.read_text(encoding="utf-8")
+
+
+class WindowToggleTests(unittest.TestCase):
+    """The two checkboxes beside the preview, with no Qt event loop involved.
+
+    Called unbound against a stand-in for `self`, which is all a slot that only
+    touches its own attributes needs. This is the coverage whose absence let a
+    real regression through: a checkbox added below `_toggle_live_view` took
+    that method's timer branch with it, so unchecking 即時畫面 no longer stopped
+    the preview and the new checkbox started and stopped it instead. The whole
+    suite stayed green, because nothing here touches the window at all.
+    """
+
+    def test_the_live_toggle_still_owns_the_timer(self) -> None:
+        window = MagicMock()
+        MainWindow._toggle_live_view(window, True)
+        window.live_timer.start.assert_called_once()
+        window.live_timer.stop.assert_not_called()
+        window.live_timer.reset_mock()
+        MainWindow._toggle_live_view(window, False)
+        window.live_timer.stop.assert_called_once()
+        window.live_timer.start.assert_not_called()
+
+    def test_the_recording_toggle_touches_nothing_but_its_setting(self) -> None:
+        """What reads it is `run_attack`, when it opens the run. A round already
+        under way keeps whatever it started with, and the preview is none of its
+        business.
+        """
+        window = MagicMock()
+        MainWindow._toggle_record_frames(window, True)
+        window.settings.setValue.assert_called_once_with("record_frames", True)
+        window.live_timer.start.assert_not_called()
+        window.live_timer.stop.assert_not_called()
 
 
 def _menu(price: int, gold: int = 887) -> WallMenu:
