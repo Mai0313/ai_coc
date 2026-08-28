@@ -2566,14 +2566,3 @@ class ClanTests(unittest.TestCase):
         """
         assert len(donatable_cards((FRAMES / "clan_donate_low.png").read_bytes())) == 10
         assert donatable_cards((FRAMES / "home_markers.png").read_bytes()) == []
-
-
-class ProbeThatMustGoRed(unittest.TestCase):
-    """Temporary: proves the pipeline reports pytest's exit code, not tee's.
-
-    Removed in the next commit. If CI is green with this in place, the fix in
-    this PR did not work.
-    """
-
-    def test_this_must_fail_in_ci(self) -> None:
-        raise AssertionError("probe: CI has to go red on this")
