@@ -66,6 +66,23 @@ CARD_GROUP_GAP = 20
 # first card instead of keeping a gap.
 CARD_MIN_WIDTH = 80
 CARD_EDGE_GAP = 5
+# What one whole card spans, which is how a card broken in two is put back
+# together. The strip is judged on a single averaged row of brightness, so a
+# **dark band in a card's own artwork cuts that card in half** — and both halves
+# can land under CARD_MIN_WIDTH, at which point the card is gone and nothing
+# downstream can tell it was ever there. Measured live on a row of four heroes,
+# the fourth came apart into 46 px and 63 px pieces and was dropped on every
+# frame of a five-round run: the loop reported "3 of 3 hero card(s) landed" four
+# battles running while that hero sat in a card nothing knew about. The card
+# beside it survived the same way by luck, its remaining piece measuring 87.
+#
+# Two pieces are only joined where their combined span is one card wide, and
+# only while neither is already wide enough to be a card on its own. Swept over
+# 43 recorded frames every whole card spans 105 to 112 px and every piece a seam
+# leaves is 87 or less, so the floor sits between the two: a card that already
+# reads is never joined to the speckle beside it, which on a battle frame is
+# what would move its centre off the card and take every reader with it.
+CARD_SPAN = (100, 116)
 CARD_LIT_BRIGHTNESS = 60
 # Every real card carries its level in a badge at the bottom-left corner. The
 # empty slot the row ends with does not: it is a dashed outline with the
@@ -601,6 +618,22 @@ def _badged(image: Image.Image, centre: int) -> bool:
     return lit / (len(data) // 3) >= BADGE_LIT
 
 
+def _rejoined(spans: list[tuple[int, int]]) -> list[tuple[int, int]]:
+    """Pieces a dark seam cut one card into, put back together; see `CARD_SPAN`."""
+    joined: list[tuple[int, int]] = []
+    for left, right in spans:
+        if (
+            joined
+            and joined[-1][1] - joined[-1][0] < CARD_SPAN[0]
+            and right - left < CARD_SPAN[0]
+            and CARD_SPAN[0] <= right - joined[-1][0] <= CARD_SPAN[1]
+        ):
+            joined[-1] = (joined[-1][0], right)
+        else:
+            joined.append((left, right))
+    return joined
+
+
 def card_groups(png: bytes) -> list[list[int]]:
     """Card centres in the battle row, split into the groups the game lays them out in.
 
@@ -611,20 +644,25 @@ def card_groups(png: bytes) -> list[list[int]]:
     Only valid on a full row. A spent card greys out below the detection floor
     and the row fragments, at which point the battlefield visible past its ends
     reads as a card too.
+
+    A card whose own artwork is dark enough to break the strip is put back
+    together before anything is measured, because a piece narrow enough to be
+    dropped takes the whole card with it; `CARD_SPAN` is what that costs and how
+    it is judged.
     """
     image = Image.open(io.BytesIO(png)).convert("RGB")
     strip = image.crop((0, CARD_TOP, image.width, CARD_BOTTOM)).convert("L")
     columns = strip.resize((image.width, 1), Image.Resampling.BILINEAR).tobytes()
-    spans: list[tuple[int, int]] = []
+    pieces: list[tuple[int, int]] = []
     start: int | None = None
     for x in range(image.width + 1):
         lit = x < image.width and columns[x] > CARD_LIT_BRIGHTNESS
         if lit and start is None:
             start = x
         elif not lit and start is not None:
-            if x - start >= CARD_MIN_WIDTH:
-                spans.append((start, x))
+            pieces.append((start, x))
             start = None
+    spans = [span for span in _rejoined(pieces) if span[1] - span[0] >= CARD_MIN_WIDTH]
     if len(spans) > 1 and spans[1][0] - spans[0][1] < CARD_EDGE_GAP:
         spans = spans[1:]
     spans = [span for span in spans if _badged(image, (span[0] + span[1]) // 2)]
