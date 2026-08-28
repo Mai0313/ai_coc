@@ -34,12 +34,12 @@ description: >-
 跟 `farm` 不同, 這裡一定要留畫面, 因為事後只有畫面能分辨「判讀器讀錯」跟「點下去沒生效」這兩件事:
 
 ```bash
-uv run ai_coc attack --repeat 5 --record --shot-every 5 --plan-out played.json
+uv run ai_coc attack --repeat 5 --record --shot-every 5 --plan-out .runs/played.json
 ```
 
 `--record` 存的是迴圈自己讀的畫面, 檔名帶著它當下在問什麼問題; `--shot-every` 存的是另一種視角, 檔名帶著跑到第幾秒. 兩種都要, 理由跟怎麼讀在 `references/evidence.md`.
 
-畫面、`run.log` 跟 `result.json` 都在這次執行自己的目錄底下, 路徑由開跑第一行 log 說出來, 不必自己重導向.
+畫面、`run.log` 跟 `result.json` 都在這次執行自己的目錄底下, 路徑由開跑第一行 log 說出來, 不必自己重導向. `--plan-out` 是你指定的路徑, 放 `.runs/` 底下, 因為 `.gitignore` 只認得那一個.
 
 ## 卡住的時候先問對問題
 

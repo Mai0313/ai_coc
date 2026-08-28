@@ -352,6 +352,9 @@ def attack(options: AttackOptions) -> AttackSeries:
             series.root.append(report)
             logger.info("Attack finished: %s", report.message)
             if options.plan_out is not None and runner.played is not None:
+                # A path the caller chose is a path they meant, so make room for
+                # it rather than failing on a directory they have not made yet.
+                options.plan_out.parent.mkdir(parents=True, exist_ok=True)
                 options.plan_out.write_text(
                     runner.played.model_dump_json(indent=2), encoding="utf-8"
                 )

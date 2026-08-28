@@ -142,7 +142,7 @@ ai_coc view --zoom out                # 把鏡頭拉回所有座標當初量測�
 每一次執行都有自己的目錄, 不管是從哪一邊開的:
 
 ```
-~/.ai_coc/logs/2026-08-29-0114-attack/
+~/.ai_coc/logs/2026-08-29-011423-attack/
 ├── run.log        # 這一次的紀錄, 不摻別的
 ├── result.json    # 這個指令回答了什麼
 └── frames/        # 只有 --record 才有

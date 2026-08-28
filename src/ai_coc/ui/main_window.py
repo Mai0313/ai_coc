@@ -822,6 +822,11 @@ class MainWindow(QMainWindow):
 
         def finished() -> None:
             self.attack_running = False
+            # This run is over, so its file closes here. Without it every later
+            # line the window logs — the preview, the chat, the next cycle's own
+            # setup — keeps landing in a finished battle's `run.log`, which is
+            # the one file someone opens to reconstruct that battle.
+            configure_logging(None)
             self._queue_next_cycle()
 
         self.automation_log.appendPlainText("開始搜尋對手…")
@@ -1035,13 +1040,15 @@ class MainWindow(QMainWindow):
 
     def _toggle_live_view(self, on: bool) -> None:
         self.settings.setValue("live_view", on)
-
-    def _toggle_record_frames(self, on: bool) -> None:
-        self.settings.setValue("record_frames", on)
         if on:
             self.live_timer.start(LIVE_INTERVAL)
         else:
             self.live_timer.stop()
+
+    def _toggle_record_frames(self, on: bool) -> None:
+        # Nothing but the setting: what reads it is `run_attack`, when it opens
+        # the run. A round already under way keeps whatever it started with.
+        self.settings.setValue("record_frames", on)
 
     def _live_tick(self) -> None:
         """Put one fresh frame in the preview, unless the last one is still in flight.

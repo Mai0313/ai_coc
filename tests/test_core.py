@@ -1806,8 +1806,8 @@ class RunLogTests(unittest.TestCase):
             # A logger of its own: `configure_logging` touches the root one, and
             # a test has no business rearranging where the suite's logging goes.
             log = logging.getLogger("run-log-test")
-            _attach_run(log, first, logging.INFO)
-            _attach_run(log, second, logging.INFO)
+            _attach_run(log, first)
+            _attach_run(log, second)
             log.info("only the second run")
             for handler in log.handlers:
                 handler.close()

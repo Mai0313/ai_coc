@@ -28,16 +28,19 @@ class _RunFileHandler(logging.FileHandler):
     """
 
 
-def _attach_run(root: logging.Logger, run: RunLog | None, level: int) -> None:
+def _attach_run(root: logging.Logger, run: RunLog | None) -> None:
     """Point the run-scoped sink at this run, or at nothing."""
     for handler in [item for item in root.handlers if isinstance(item, _RunFileHandler)]:
         root.removeHandler(handler)
         handler.close()
     if run is None:
         return
+    # No level of its own, like the rotating handler beside it: the window's
+    # 執行紀錄 selector lowers the root logger to DEBUG at runtime, and a handler
+    # carrying the level it was built with would keep exactly the material that
+    # selector exists to capture out of the one file someone opens afterwards.
     handler = _RunFileHandler(run.log_path, encoding="utf-8")
     handler.setFormatter(logging.Formatter(LOG_FORMAT, TIME_FORMAT))
-    handler.setLevel(level)
     root.addHandler(handler)
 
 
@@ -55,10 +58,10 @@ def configure_logging(run: RunLog | None = None) -> None:
         # Already set up, but a run directory asked for later still gets its
         # sink: the window configures logging once at startup and opens a run
         # for each job it runs afterwards.
-        _attach_run(root, run, level)
+        _attach_run(root, run)
         return
     root.setLevel(level)
-    _attach_run(root, run, level)
+    _attach_run(root, run)
     # The file stays plain text so it can still be read with a pager or grepped.
     file_handler = RotatingFileHandler(
         LOG_PATH, maxBytes=2_000_000, backupCount=3, encoding="utf-8"

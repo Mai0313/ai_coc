@@ -142,7 +142,7 @@ ai_coc view --zoom out                # put the camera back where every coordina
 Every run gets a directory of its own, whichever side of the app started it:
 
 ```
-~/.ai_coc/logs/2026-08-29-0114-attack/
+~/.ai_coc/logs/2026-08-29-011423-attack/
 ├── run.log        # this run's log, and nothing else
 ├── result.json    # what the command answered
 └── frames/        # only with --record

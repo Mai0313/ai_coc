@@ -885,8 +885,17 @@ class RunLog(BaseModel):
         without opening any of them.
         """
         stamp = datetime.now().astimezone().strftime("%Y-%m-%d-%H%M%S")
-        directory = LOG_DIR / f"{stamp}-{command}"
-        directory.mkdir(parents=True, exist_ok=True)
+        base = LOG_DIR / f"{stamp}-{command}"
+        # Two runs of the same command inside one second would otherwise land in
+        # one directory, one `result.json` overwriting the other and both logs
+        # interleaved. A shell loop over `ai_coc read` is how that really
+        # happens, and it is the documented way to answer a misread question.
+        directory = base
+        attempt = 2
+        while directory.exists():
+            directory = base.with_name(f"{base.name}-{attempt}")
+            attempt += 1
+        directory.mkdir(parents=True)
         return cls(directory=directory, recording=recording)
 
     @property

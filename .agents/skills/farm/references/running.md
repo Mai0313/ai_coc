@@ -15,7 +15,7 @@ uv run ai_coc attack --repeat 0 --record
 用 Bash 工具的 `run_in_background` 送出去. **不必自己重導向**, log 跟結果都是程式自己寫的, 一次執行一個目錄:
 
 ```
-~/.ai_coc/logs/2026-08-29-0114-attack/
+~/.ai_coc/logs/2026-08-29-011423-attack/
 ├── run.log        # 這次執行的完整紀錄, 純文字
 ├── result.json    # 這次的答案, 跑完才會有內容
 └── frames/        # 只有 --record 才有
