@@ -245,6 +245,11 @@ extend-exclude = [
     "data",
     "*.svg",
     "*.sql",
+    # Deviation from the template. `.agents/skills/` holds the agent skills and
+    # whatever small scripts they carry; those are skill assets rather than
+    # package code, so the package rules do not apply — a one-file helper whose
+    # whole job is to print a path back to its caller fails `T201` by design.
+    ".agents",
 ]
 
 # In addition to the standard set of inclusions, include `.pyw` files.
