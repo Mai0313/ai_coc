@@ -54,6 +54,10 @@ def _parser() -> argparse.ArgumentParser:
         run.add_argument(
             f"--min-{flag}", type=int, help=f"只打{resource}至少這麼多的對手,蓋過設定檔"
         )
+    # Its own command rather than a flag on `attack`, because the run being
+    # stopped is a different process: whatever put that one in the background
+    # cannot send it a Ctrl-C, and killing it leaves the game mid-battle.
+    sub.add_parser("stop", help="請正在跑的進攻迴圈打完這一場就收工")
     upgrade = sub.add_parser("walls", help="把儲量拿去升級城牆,不開視窗")
     upgrade.add_argument("--frames", type=Path, help="把迴圈讀到的每一張畫面存進這個資料夾")
     upgrade.add_argument("--keep-gold", type=int, default=0, help="留下這麼多金幣不要花")
@@ -142,6 +146,8 @@ def _run_command(arguments: argparse.Namespace) -> int:
                 shot_every=arguments.shot_every,
             )
         ).model_dump_json(indent=2)
+    elif arguments.command == "stop":
+        result = commands.stop()
     elif arguments.command == "walls":
         spot = arguments.at.split(",") if arguments.at else None
         result = commands.walls(

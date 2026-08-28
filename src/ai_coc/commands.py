@@ -42,7 +42,7 @@ from ai_coc.models import (
     GeminiSettings,
     LootThresholds,
 )
-from ai_coc.constants import COC_PACKAGE
+from ai_coc.constants import STOP_FLAG, COC_PACKAGE
 from ai_coc.adapters.ai import GeminiClient
 
 # A runtime import rather than a TYPE_CHECKING one: `FrameTicker` declares it as
@@ -167,6 +167,40 @@ class FrameTicker(BaseModel):
 IDLE_REST = 60
 # How long the camera takes to settle after a pinch.
 PINCH_SETTLE = 1.5
+# How often the barracks wait looks up to see whether it has been stood down.
+# Sleeping through the whole minute in one go would leave a stop unnoticed for
+# most of it, which reads as a stop that did nothing.
+STOP_POLL = 2.0
+
+
+def stop() -> str:
+    """Ask a running attack loop to stand down, and return without waiting.
+
+    Nothing here touches the game or looks for a process: this writes the flag
+    and ends. What actually stops is the loop, when it next looks — between
+    rounds, and between opponents within a round. Never mid-battle, because a
+    battle abandoned halfway leaves the army on the field and the game on a
+    screen the next run does not know how to get home from.
+    """
+    STOP_FLAG.write_text("", encoding="utf-8")
+    return f"已要求停止,旗標寫在 {STOP_FLAG}。正在跑的那一輪會打完當下這一場才結束。"
+
+
+def stop_requested() -> bool:
+    """Whether somebody has asked the loop that is running now to stand down."""
+    return STOP_FLAG.exists()
+
+
+def _rest(seconds: float) -> bool:
+    """Wait out the barracks, answering whether the wait was cut short."""
+    try:
+        for _ in range(int(seconds / STOP_POLL)):
+            if stop_requested():
+                return True
+            time.sleep(STOP_POLL)
+    except KeyboardInterrupt:
+        return True
+    return False
 
 
 def attack(options: AttackOptions) -> AttackSeries:
@@ -184,12 +218,17 @@ def attack(options: AttackOptions) -> AttackSeries:
     nothing — and `plan_out` writes down whichever plan actually ran, so a battle
     worth repeating can be repeated and one worth arguing with can be edited.
 
-    `rounds` of 0 keeps going until it is interrupted, which is what watching the
+    `rounds` of 0 keeps going until it is stopped, which is what watching the
     loop play needs: a tactic is judged over a run of battles rather than one,
     and the interesting ones are the battles nobody was sitting there to start.
-    Ctrl-C ends the series rather than the process, so the rounds already played
-    are still reported.
+    Either `ai_coc stop` or a Ctrl-C ends the series rather than the process, so
+    the rounds already played are still reported. The flag is the one that
+    reaches a run put in the background, which nothing can send a Ctrl-C to.
     """
+    # A flag left behind by an earlier run would stand this one down before it
+    # had played a round. Stopping means the loop that is running now, so the
+    # flag is consumed here rather than left for whatever starts next.
+    STOP_FLAG.unlink(missing_ok=True)
     adb = _controller()
     if options.frame_dir is not None:
         options.frame_dir.mkdir(parents=True, exist_ok=True)
@@ -206,6 +245,7 @@ def attack(options: AttackOptions) -> AttackSeries:
         abilities=config.timings,
         ai=None if plan else _planner(config),
         plan=plan,
+        should_stop=stop_requested,
         frame_dir=options.frame_dir,
     )
     series = AttackSeries()
@@ -214,6 +254,14 @@ def attack(options: AttackOptions) -> AttackSeries:
         adb=adb, display=display, out_dir=options.frame_dir or Path(), seconds=options.shot_every
     ):
         while rounds <= 0 or len(series.root) < rounds:
+            # Between rounds, which is the cheapest place to stop: the village is
+            # on screen, nothing is deployed, and the rounds already played are
+            # in the series either way.
+            if stop_requested():
+                logger.info(
+                    "Stop requested; ending the series after %d round(s)", len(series.root)
+                )
+                break
             logger.info("Round %d of %s", len(series.root) + 1, rounds or "no limit")
             try:
                 report = runner.run()
@@ -230,11 +278,18 @@ def attack(options: AttackOptions) -> AttackSeries:
             if report.stock_full:
                 logger.info("The storages are full; there is nothing left to farm for")
                 break
-            if report.attacked is None and (rounds <= 0 or len(series.root) < rounds):
+            # A stop that arrived mid-search comes back here having attacked
+            # nothing, and a run about to walk away has no reason to wait on
+            # barracks first. Falling through to the loop's own check is what
+            # logs why the series ended, and `run.log` is the only thing a
+            # background run leaves to read while it is still going.
+            if (
+                report.attacked is None
+                and not stop_requested()
+                and (rounds <= 0 or len(series.root) < rounds)
+            ):
                 logger.info("Nothing was attacked; waiting %ds for the army", IDLE_REST)
-                try:
-                    time.sleep(IDLE_REST)
-                except KeyboardInterrupt:
+                if _rest(IDLE_REST):
                     break
     return series
 

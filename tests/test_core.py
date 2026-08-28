@@ -1,6 +1,7 @@
 import io
 import json
 import math
+import time
 from pathlib import Path
 import tempfile
 import unittest
@@ -11,7 +12,7 @@ from PIL import Image, ImageDraw
 import pytest
 from pydantic import ValidationError
 
-from ai_coc import plans
+from ai_coc import plans, commands
 from ai_coc.ui import hero, walls, attack
 from ai_coc.ui import runner as shared
 from ai_coc.models import (
@@ -29,6 +30,7 @@ from ai_coc.models import (
     StockLimits,
     WallUpgrade,
     VillageStock,
+    AttackOptions,
     AttackTimings,
     DisplayTarget,
     LootOverrides,
@@ -1545,6 +1547,70 @@ class AttackTests(unittest.TestCase):
             env.write_text('GEMINI_API_KEY="AQ.secret"\n', encoding="utf-8")
             assert dotenv_value("GEMINI_API_KEY", env) == "AQ.secret"
             assert dotenv_value("ABSENT", env) == ""
+
+
+class StopFlagTests(unittest.TestCase):
+    """Stopping a headless run, which is a file because it cannot be a signal.
+
+    The window has a stop button; a run put in the background by whatever started
+    it has nothing, and killing the process never reaches the `KeyboardInterrupt`
+    handler that leaves the game somewhere the next run can start from.
+    """
+
+    def test_the_flag_is_written_and_read_by_the_same_pair(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            flag = Path(folder) / "stop"
+            with patch.object(commands, "STOP_FLAG", flag):
+                assert not commands.stop_requested()
+                commands.stop()
+                assert commands.stop_requested()
+
+    def test_a_new_run_consumes_a_flag_the_last_one_left_behind(self) -> None:
+        """Stopping means the loop running now, never the next one to start.
+
+        Checked through a run that dies on its first real step, which is what
+        says the flag is cleared before anything touches the game rather than
+        somewhere along the way.
+        """
+        with tempfile.TemporaryDirectory() as folder:
+            flag = Path(folder) / "stop"
+            flag.write_text("", encoding="utf-8")
+            with (
+                patch.object(commands, "STOP_FLAG", flag),
+                patch.object(commands, "_controller", side_effect=RuntimeError),
+                pytest.raises(RuntimeError),
+            ):
+                commands.attack(AttackOptions())
+            assert not flag.exists()
+
+    def test_the_barracks_wait_gives_up_the_moment_it_is_stood_down(self) -> None:
+        """A minute slept through in one go reads as a stop that did nothing."""
+        with tempfile.TemporaryDirectory() as folder:
+            flag = Path(folder) / "stop"
+            flag.write_text("", encoding="utf-8")
+            with patch.object(commands, "STOP_FLAG", flag):
+                started = time.monotonic()
+                assert commands._rest(commands.IDLE_REST)
+            assert time.monotonic() - started < commands.IDLE_REST / 2
+
+    def test_a_headless_run_hands_the_flag_to_the_runner(self) -> None:
+        """The interface was there all along; only the window ever passed it.
+
+        Which is the whole bug: `should_stop` defaults to never stopping, so a
+        run started from a terminal read as one that simply could not be stopped.
+        """
+        with tempfile.TemporaryDirectory() as folder:
+            flag = Path(folder) / "stop"
+            with (
+                patch.object(commands, "STOP_FLAG", flag),
+                patch.object(commands, "_controller"),
+                patch.object(commands, "_planner", return_value=None),
+                patch.object(commands, "ConfigStore"),
+                patch.object(commands, "FrameTicker"),
+                patch.object(commands, "AttackRunner") as runner,
+            ):
+                commands.attack(AttackOptions(rounds=1))
+            assert runner.call_args.kwargs["should_stop"] is commands.stop_requested
 
 
 def _menu(price: int, gold: int = 887) -> WallMenu:

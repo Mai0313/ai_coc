@@ -31,6 +31,15 @@ LOG_DIR = data_root() / "logs"
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 LOG_PATH = LOG_DIR / "controller.log"
 
+# Stopping a headless run is a file rather than a signal. The window has a stop
+# button, but a run started from a terminal has nothing: whatever put it in the
+# background cannot send it a Ctrl-C, so killing the process is the only other
+# way to end it — and a killed process never reaches the `KeyboardInterrupt`
+# handler, which leaves the army on the field and the game on a screen the next
+# run cannot get home from. `ai_coc stop` writes this file, the loop reads it
+# between rounds, and the process ends the way it would have anyway.
+STOP_FLAG = data_root() / "stop"
+
 # The community keeps this data_id → name table current with each game update.
 # Without it every imported entity shows as UNKNOWN.
 ENTITY_MAPPING_URL = "https://gist.githubusercontent.com/rahulkhatri137/a8449943df45100c5f1e1359cd9ec67a/raw/cocMapping.json"
