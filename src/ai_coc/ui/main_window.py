@@ -48,6 +48,7 @@ from PyQt5.QtWidgets import (
 
 from ai_coc.models import (
     Frame,
+    RunLog,
     ChatRole,
     AppConfig,
     AgentAction,
@@ -82,6 +83,7 @@ from ai_coc.constants import (
 )
 from ai_coc.adapters.ai import AGENT_PROFILE, GeminiClient, vision_prompt
 from ai_coc.adapters.mumu import MuMuAdapter
+from ai_coc.logging_setup import configure_logging
 from ai_coc.adapters.config import ConfigStore
 from ai_coc.parsers.village import parse_village, parse_village_text
 from ai_coc.adapters.mapping import fetch_entity_mapping
@@ -370,6 +372,20 @@ class MainWindow(QMainWindow):
         self.live_view.setChecked(str(self.settings.value("live_view", "true")).lower() == "true")
         self.live_view.toggled.connect(self._toggle_live_view)
         right_layout.addWidget(self.live_view)
+        # Off by default, and for a different reason than 即時畫面: this one keeps
+        # every frame a loop reads on disk, which is what turns a battle that
+        # went wrong into something anyone can look at afterwards. It costs the
+        # emulator a PNG encode per read and fills a directory per run.
+        self.record_frames = QCheckBox("保留這次的畫面")
+        self.record_frames.setToolTip(
+            "把每一輪讀到的畫面存進 ~/.ai_coc/logs 底下這次執行的資料夾，"
+            "事後可以逐張看它當時看到什麼；會多花一些硬碟跟模擬器的時間"
+        )
+        self.record_frames.setChecked(
+            str(self.settings.value("record_frames", "false")).lower() == "true"
+        )
+        self.record_frames.toggled.connect(self._toggle_record_frames)
+        right_layout.addWidget(self.record_frames)
         self.frame_label = QLabel("尚無畫面")
         self.frame_label.setAlignment(Qt.AlignCenter)
         self.frame_label.setMinimumSize(520, 300)
@@ -767,6 +783,11 @@ class MainWindow(QMainWindow):
         # pick the flank and the spell targets; screen reading never needs it.
         planner = self.gemini_client() if self.api_key.text().strip() else None
         abilities = AttackTimings(**{key: box.value() for key, box in self.timing_delays.items()})
+        # Opened here rather than inside the worker: it makes a directory and
+        # retargets the run-scoped log handler, and both belong on the thread
+        # that owns the settings this reads.
+        run = RunLog.open("attack", recording=self.record_frames.isChecked())
+        configure_logging(run)
 
         def task() -> AttackReport:
             active = m.ensure_coc(a.index)
@@ -779,9 +800,13 @@ class MainWindow(QMainWindow):
                 abilities=abilities,
                 ai=planner,
                 should_stop=lambda: not self.automation_active,
+                frame_dir=run.frames,
             ).run()
 
         def done(report: AttackReport) -> None:
+            # Beside its own log, so a round started from the window leaves the
+            # same evidence a headless one does.
+            run.answer(report.model_dump_json(indent=2))
             # The storage is full, so the next pass would only read it again and
             # come back here. Stopping is the whole point of the threshold. The
             # skip count is left out of this one: it returns before any opponent
@@ -1010,6 +1035,9 @@ class MainWindow(QMainWindow):
 
     def _toggle_live_view(self, on: bool) -> None:
         self.settings.setValue("live_view", on)
+
+    def _toggle_record_frames(self, on: bool) -> None:
+        self.settings.setValue("record_frames", on)
         if on:
             self.live_timer.start(LIVE_INTERVAL)
         else:

@@ -314,7 +314,7 @@ def attack(options: AttackOptions) -> AttackSeries:
     if options.frame_dir is not None:
         options.frame_dir.mkdir(parents=True, exist_ok=True)
     elif options.shot_every > 0:
-        raise ValueError("--shot-every 需要 --frames 指定存放位置")
+        raise ValueError("--shot-every 要搭配 --record，不然心跳畫面沒有地方放")
     plan = plans.load(options.plan_in) if options.plan_in else None
     config = ConfigStore().load()
     display = adb.display_for(COC_PACKAGE)
