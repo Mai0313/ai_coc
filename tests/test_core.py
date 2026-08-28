@@ -1362,16 +1362,45 @@ class AttackTests(unittest.TestCase):
         assert len(candidates) == len(DEPLOY_LINES) + 1
 
     def test_card_groups_keep_troops_apart_from_heroes_and_spells(self) -> None:
-        """Troops, siege machine, heroes and spells, told apart by the wider gaps."""
+        """Troops, the one-off drops and the spells, told apart by the wider gaps.
+
+        Only the first boundary carries any weight: the loop reads group 0 as
+        the troops and flattens everything after it, so where the siege machine
+        falls does not matter. It lands with the heroes because the gap between
+        them is really 16 px, which only ever read as a group boundary while a
+        dark seam was breaking the card beside it into pieces.
+        """
         groups = card_groups((FRAMES / "cards_full.png").read_bytes())
-        assert [len(group) for group in groups] == [4, 1, 4, 2]
+        assert [len(group) for group in groups] == [4, 5, 2]
         assert groups[0] == [171, 293, 413, 534]
 
     def test_the_empty_slot_the_row_ends_with_is_not_a_card(self) -> None:
         """It has no level badge, and it arrived downstream as one more hero to drop."""
         groups = card_groups((FRAMES / "cards_with_empty_slot.png").read_bytes())
-        assert [len(group) for group in groups] == [3, 1, 4, 2]
+        assert [len(group) for group in groups] == [3, 5, 2]
         assert 1416 not in [slot for group in groups for slot in group]
+
+    def test_a_hero_whose_artwork_breaks_the_row_is_still_a_card(self) -> None:
+        """A dark card cut in two by the brightness strip, put back together.
+
+        The third hero's own artwork broke this row into 46 px and 63 px pieces,
+        both under `CARD_MIN_WIDTH`, so the card vanished: five rounds of a live
+        run reported "3 of 3 hero card(s) landed" with four heroes on the
+        screen, and that hero never left its card in any of them. The five
+        rounds after the fix reported 4 of 4.
+
+        Everything outside the card row is blacked out in this frame. The
+        opponent's village behind it is 2.7 MB of PNG on its own, well past what
+        the repo will carry, and every reader here works inside y 700-890.
+        """
+        groups = card_groups((FRAMES / "cards_dark_hero.png").read_bytes())
+        assert groups == [[171, 293, 413], [557, 683, 804, 925, 1046], [1181, 1302]]
+        # What the loop actually reads off it: three troop cards, then the siege
+        # machine and all four heroes, with only the two spells counted.
+        rest = [slot for group in groups[1:] for slot in group]
+        spells = counted_cards((FRAMES / "cards_dark_hero.png").read_bytes(), rest)
+        assert spells == [1181, 1302]
+        assert [slot for slot in rest if slot not in spells] == [557, 683, 804, 925, 1046]
 
     def test_spells_are_told_apart_from_heroes_by_their_count(self) -> None:
         """Spells carry an xN in the corner; heroes and the siege machine do not."""
