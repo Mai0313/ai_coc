@@ -24,13 +24,17 @@ permissions: write-all
 jobs:
   run_tests:
     name: Run Tests
-    runs-on: ubuntu-latest
+    # Windows, and not as a preference: `adapters/mumu.py` imports `winreg` at
+    # module scope and `commands.py` imports that, so on Linux `test_core.py`
+    # fails to import at all. It did, silently, for as long as this matrix said
+    # ubuntu — 208 tests never ran and the job still went green.
+    runs-on: ${{ matrix.os }}
 
     strategy:
       fail-fast: false
       matrix:
         os:
-          - ubuntu-latest
+          - windows-latest
         python-version:
           - "3.12"
           - "3.13"
@@ -53,12 +57,18 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Install dependencies
+        # Every step without a shell of its own runs under `pwsh` on a Windows
+        # runner, and PowerShell neither aborts on a native command's non-zero
+        # exit nor reports anything but the last one's. Two commands here, so
+        # without this a failed pin would be invisible.
+        shell: bash
         run: |
           uv python pin ${{ matrix.python-version }}
           uv sync --group test
 
       - name: Check for tests
         id: check_tests
+        shell: bash
         run: |
           if [ -f tests/test_*.py ] || [ -d tests ]; then
               echo "Tests exist, proceeding to run them."
@@ -70,7 +80,14 @@ jobs:
 
       - name: Run pytest
         if: ${{ steps.check_tests.outputs.has_tests == 'true' }}
+        # `shell: bash` is the load-bearing half: Actions runs it as
+        # `bash --noprofile --norc -eo pipefail`, while the implicit shell it
+        # replaces is `bash -e` — errexit without pipefail, which is what let
+        # `tee` report success over a pytest that had failed. The explicit
+        # `set -o pipefail` below is belt and braces, and says so out loud.
+        shell: bash
         run: |
+          set -o pipefail
           uv run pytest -vv | tee .coverage.txt
 
       # There is no issue to comment on outside a pull request, so a push to main

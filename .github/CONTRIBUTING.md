@@ -220,10 +220,12 @@ Prefer clarity over cleverness, and avoid unrelated refactors in feature or fix 
 These are documented in `pyproject.toml` comments and are not oversights:
 
 - Coverage is gated at 12% rather than 80%, because almost everything above the parsers is the untested PyQt shell
-- `[tool.ty.environment] python-platform = "win32"` is required, or `winreg` and `ctypes.windll` fail to resolve on the Linux CI runners
+- `[tool.ty.environment] python-platform = "win32"` is required, or `winreg` and `ctypes.windll` fail to resolve when the linters run on Linux
 - ty excludes `cli.py`, `ui/main_window.py` and `ui/workers.py`, because PyQt5 ships inaccurate stubs
 - `allowed-confusables` carries `／` and `？` for the Chinese UI strings
 - The `build_release.yml` matrix is Windows-only, because nothing here runs elsewhere
+- **`test.yml`'s matrix is Windows-only for a harder reason**: `adapters/mumu.py` imports `winreg` at module scope, so on Linux `test_core.py` cannot be imported and its tests are silently skipped. That went unnoticed because `uv run pytest | tee` reported `tee`'s exit code rather than pytest's, so the job passed either way. Keep `set -o pipefail` in that step
+- Every other workflow still runs on Linux, and can: none of them imports `ai_coc`. ruff and ty read the source, and `gen_docs.py` parses it with `ast` while mkdocstrings goes through griffe. A new job that needs to *import* the package belongs on Windows
 - The CodeQL and dependency-review jobs are gated on the repository being public, because this one has no GitHub Advanced Security
 
 UI strings, prompts and user-facing messages are Traditional Chinese; code, comments, commit messages and anything published to GitHub are English.
