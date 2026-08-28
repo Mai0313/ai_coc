@@ -300,7 +300,16 @@ class WallRunner(GameRunner):
         # asked for. A price only stands until that wall is upgraded, so it is
         # re-read each time rather than carried from the scan.
         prices = {wall.point: wall.price for wall in walls}
-        while prices and (self.rounds <= 0 or len(report.upgrades) < self.rounds):
+        # `should_stop` sits in the condition rather than in a branch of its own
+        # because between batches is the only safe place to leave anyway: a batch
+        # is a menu, a confirmation and a storage read, and walking away mid-way
+        # strands a dialog over the village. Whatever was already bought stays
+        # bought, since a wall upgrades the moment it is paid for.
+        while (
+            prices
+            and not self.should_stop()
+            and (self.rounds <= 0 or len(report.upgrades) < self.rounds)
+        ):
             # Through `_home` rather than a bare read: between one batch and the
             # next the screen can be anything from a settling animation to the
             # idle-disconnect dialog, and a run that stopped on the first of

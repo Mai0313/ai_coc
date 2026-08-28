@@ -261,6 +261,19 @@ def stop_requested() -> bool:
     return STOP_FLAG.exists()
 
 
+def _clear_stop() -> None:
+    """Take the flag, and call this at both ends of every loop that reads it.
+
+    At the start because a process killed outright never reaches the other end,
+    and a flag left behind that way would stand the next run down before it had
+    done anything — reported as a stop nobody asked for. At the end because a
+    request that has been served should stop looking like one still waiting: a
+    flag that is still there means somebody asked and no loop has taken it yet,
+    which is what makes the file worth looking at to tell whether a stop landed.
+    """
+    STOP_FLAG.unlink(missing_ok=True)
+
+
 def _rest(seconds: float) -> bool:
     """Wait out the barracks, answering whether the wait was cut short."""
     try:
@@ -295,10 +308,7 @@ def attack(options: AttackOptions) -> AttackSeries:
     the rounds already played are still reported. The flag is the one that
     reaches a run put in the background, which nothing can send a Ctrl-C to.
     """
-    # A flag left behind by an earlier run would stand this one down before it
-    # had played a round. Stopping means the loop that is running now, so the
-    # flag is consumed here rather than left for whatever starts next.
-    STOP_FLAG.unlink(missing_ok=True)
+    _clear_stop()
     adb = _controller()
     if options.frame_dir is not None:
         options.frame_dir.mkdir(parents=True, exist_ok=True)
@@ -361,6 +371,7 @@ def attack(options: AttackOptions) -> AttackSeries:
                 logger.info("Nothing was attacked; waiting %ds for the army", IDLE_REST)
                 if _rest(IDLE_REST):
                     break
+    _clear_stop()
     return series
 
 
@@ -553,7 +564,13 @@ def walls(options: WallOptions) -> WallReport:
     what a village does with loot it has nowhere else to put — every builder busy
     and both storages filling towards the point where the attack loop stands
     itself down.
+
+    `ai_coc stop` ends this one too, between batches. A run with `--rounds 0`
+    against a village full of walls is the other loop here that goes on long
+    enough to be worth interrupting, and it answers the same flag rather than a
+    second mechanism of its own.
     """
+    _clear_stop()
     adb = _controller()
     if options.frame_dir is not None:
         options.frame_dir.mkdir(parents=True, exist_ok=True)
@@ -564,9 +581,16 @@ def walls(options: WallOptions) -> WallReport:
         keep_elixir=options.keep_elixir,
         rounds=options.rounds,
         at=options.at,
+        should_stop=stop_requested,
         frame_dir=options.frame_dir,
     )
     report = runner.run()
+    # Said here rather than inside the loop: what the runner knows is how many
+    # batches it bought, and "已停止" is a fact about this call rather than about
+    # the walls. Its own message stays, because it is still true.
+    if stop_requested():
+        report.message = f"已停止，{report.message}"
+    _clear_stop()
     logger.info(
         "Walls: %s (金幣 %d／聖水 %d)", report.message, report.paid("gold"), report.paid("elixir")
     )
