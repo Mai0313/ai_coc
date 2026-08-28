@@ -71,7 +71,10 @@ ai_coc attack                    # one battle
 ai_coc attack --repeat 5         # five in a row
 ai_coc attack --repeat 0         # keep going until a storage fills up
 ai_coc stop                      # stand down after the battle in progress
+ai_coc attack --restart-every 0  # skip the scheduled emulator restart this run
 ```
+
+**The emulator is restarted every so many battles**, because MuMu drops frames after running for a while and nothing short of a restart clears it. How many sits in the settings file (`restart_every`, 50 by default) rather than being hard-coded, because that number is whatever a given machine turns out to need — `--restart-every` overrides it for one run, and `0` there turns it off the same way the loot flags do. It counts battles rather than rounds, so a night mostly spent waiting on the barracks does not spend restarts on an emulator that has barely been working.
 
 `stop` writes a flag and returns at once. The loop reads it between battles and between opponents, never mid-battle, so the worst case is one more battle: abandoning one halfway would leave the army on the field and the game on a screen the next run cannot get home from.
 

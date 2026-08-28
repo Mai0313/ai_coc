@@ -669,6 +669,14 @@ class AppConfig(BaseModel):
     )
     stock: StockLimits = StockLimits(stop_gold=15_000_000, stop_elixir=15_000_000)
     timings: AttackTimings = AttackTimings()
+    # How many battles to fight before restarting the emulator and the game, 0
+    # turning it off. MuMu drops frames after running for a while and nothing
+    # short of a restart clears it — that is a property of the emulator rather
+    # than of anything here, so this number is where it starts hurting on one
+    # machine rather than anything this code can measure. It lives in the config
+    # file because that is the only place a number nobody can measure belongs:
+    # whoever is watching the frame rate is the one who gets to change it.
+    restart_every: int = 50
     gemini_model: str = DEFAULT_GEMINI_MODEL
     gemini_endpoint: str = ""
     gemini_thinking: ThinkingLevel = DEFAULT_THINKING_LEVEL
@@ -744,6 +752,17 @@ class AttackOptions(BaseModel):
     rounds: int = 1
     # 0 records nothing beyond the frames the loop reads for itself.
     shot_every: float = 0.0
+    # Overrides `AppConfig.restart_every` for one run, and `None` is not `0` for
+    # the reason the loot overrides are not: omitting the flag keeps whatever the
+    # config file says, while passing zero turns the restart off for this run
+    # alone. That is how a run being watched gets to skip it.
+    #
+    # **Battles, not rounds**, wherever the number comes from. A round that found
+    # no opponent, or backed out on a half-trained army, barely touched the
+    # emulator — counting those would spend a restart on a run that has mostly
+    # been waiting for barracks, and worse, the rounds a restart itself costs
+    # would feed back and make it restart more often still.
+    restart_every: int | None = None
 
 
 class AttackSeries(RootModel[list[AttackReport]]):

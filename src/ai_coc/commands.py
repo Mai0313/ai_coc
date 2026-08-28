@@ -26,6 +26,7 @@ from ai_coc.models import (
     ProbeRay,
     AppConfig,
     MapSurvey,
+    AttackPlan,
     HeroReport,
     ViewReport,
     WallReport,
@@ -50,7 +51,7 @@ from ai_coc.adapters.ai import GeminiClient
 # A runtime import rather than a TYPE_CHECKING one: `FrameTicker` declares it as
 # a field, and a model whose field type is only importable to a type checker
 # cannot be built at all.
-from ai_coc.adapters.adb import AdbController
+from ai_coc.adapters.adb import AdbController, AdbControlError
 from ai_coc.parsers.clan import donatable_cards
 from ai_coc.parsers.hero import hero_cards
 from ai_coc.parsers.home import builder_jobs, free_builders, collect_bubbles
@@ -287,6 +288,132 @@ def _rest(seconds: float) -> bool:
     return False
 
 
+# How long to give a restarted emulator before deciding it is not coming back.
+#
+# **The wait is not for the launch, it is for a frame the loop could play from.**
+# `launch("emulator")` returns as soon as `ensure_coc` has seen the game's
+# process, and that check is a `pidof` — the process exists a couple of seconds
+# after the `monkey` while the village is not on screen for much longer than
+# that. `read_stock` is what settles it, because reading the storage bars is how
+# every loop in this project tests for the home village.
+#
+# Much longer than `restart_game`'s flat 15 seconds, which only reopens the
+# package on an emulator that never went down; this sits through a cold boot.
+RESTART_POLLS = 30
+RESTART_POLL_GAP = 4.0
+
+
+def _restart_emulator(runner: AttackRunner, ticker: FrameTicker) -> bool:
+    """Restart the emulator and the game, and point the run at what came back.
+
+    MuMu drops frames after running for a while and nothing short of this clears
+    it. What makes it more than one `launch` call is that everything still
+    holding the old emulator has to be told — the display above all, because
+    MuMu opens the game on a display of its own choosing and nothing promises it
+    picks the same one. An `input tap` aimed at the old one lands silently on
+    the launcher, which is the exact failure the `-d` flags exist to prevent.
+
+    The controller is built from the serial `launch` already resolved rather
+    than through `_controller()`, which would enumerate the instances a second
+    time and fire another `monkey` at a game that had only just come up.
+
+    False means the village never appeared. What to do about that is the
+    caller's call, since it is a decision about the series rather than about the
+    emulator.
+    """
+    # Wider than it looks, and deliberately so: `launch` raises `RuntimeError`
+    # for an instance MuMu has dropped from its listing and `MuMuError` for a
+    # game that never came up, both of which are exactly the state this is here
+    # to recover from. Letting either escape would take the whole series with it
+    # — `cli.py` never reaches `run.answer` and `result.json` is left empty,
+    # which is the failure the False path below exists to avoid.
+    try:
+        launched = launch("emulator")
+    except (RuntimeError, KeyboardInterrupt):
+        logger.exception("The emulator did not come back up")
+        return False
+    adb = MuMuAdapter().controller(launched.serial)
+    for _ in range(RESTART_POLLS):
+        # Checked inside the wait rather than only around it: this is the
+        # longest stretch of a run where nothing else looks at the flag, and a
+        # stop that takes two minutes to show reads as one that did nothing.
+        if stop_requested():
+            logger.info("Stop requested while the emulator was coming back up")
+            return False
+        time.sleep(RESTART_POLL_GAP)
+        try:
+            display = adb.display_for(COC_PACKAGE)
+            village = read_stock(adb.screenshot(display))
+        except AdbControlError:
+            continue
+        if village is None:
+            continue
+        # Both of them. The ticker captures from its own thread and would
+        # otherwise spend the rest of the night timing out against a display
+        # that no longer exists, logged as warnings nobody is reading.
+        runner.adb = adb
+        runner.display = display
+        ticker.adb = adb
+        ticker.display = display
+        logger.info(
+            "The emulator is back, the village is on display %s, and it holds %d gold",
+            display.logical_id,
+            village.gold,
+        )
+        return True
+    return False
+
+
+def _prepare_frames(options: AttackOptions) -> None:
+    """Make room for whatever this run was told to keep, and refuse what it cannot.
+
+    A heartbeat with nowhere to write is the one combination that has to fail
+    loudly rather than quietly recording nothing: `--shot-every` is asked for by
+    somebody who wants to look at the frames afterwards.
+    """
+    if options.frame_dir is not None:
+        options.frame_dir.mkdir(parents=True, exist_ok=True)
+    elif options.shot_every > 0:
+        raise ValueError("--shot-every 要搭配 --record，不然心跳畫面沒有地方放")
+
+
+def _restarted(runner: AttackRunner, ticker: FrameTicker, fought: int, every: int) -> int | None:
+    """How many battles to carry forward, or None when the emulator never returned.
+
+    `fought` unchanged where no restart was due, and zero after one. The
+    decision, the restart and the reset are one thought, and keeping them in one
+    place is also what keeps `attack` under the complexity this repo lints for.
+    """
+    if not every or fought < every:
+        return fought
+    logger.info("%d battle(s) fought; restarting the emulator", fought)
+    if _restart_emulator(runner, ticker):
+        return 0
+    # The series ends either way, but only one of these is an alarm: a stop
+    # asked for mid-restart comes back the same False as an emulator that never
+    # returned, and an error line that cries wolf on an ordinary `ai_coc stop`
+    # is worth less than no error line at all.
+    if not stop_requested():
+        logger.error("The village never came back after the restart; stopping here")
+    return None
+
+
+def _write_plan(path: Path | None, plan: AttackPlan | None) -> None:
+    """Write down the plan that actually ran, so the battle can be repeated.
+
+    Both halves are optional and neither is an error: nobody asked for a copy,
+    or the round ended before there was a plan to copy. Answering that here
+    rather than at the call site keeps the round's own code to what it does.
+    """
+    if path is None or plan is None:
+        return
+    # A path the caller chose is a path they meant, so make room for it rather
+    # than failing on a directory they have not made yet.
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(plan.model_dump_json(indent=2), encoding="utf-8")
+    logger.info("Wrote the plan that ran to %s", path)
+
+
 def attack(options: AttackOptions) -> AttackSeries:
     """The attack loop, with no window in the way, for as many rounds as asked.
 
@@ -311,10 +438,7 @@ def attack(options: AttackOptions) -> AttackSeries:
     """
     _clear_stop()
     adb = _controller()
-    if options.frame_dir is not None:
-        options.frame_dir.mkdir(parents=True, exist_ok=True)
-    elif options.shot_every > 0:
-        raise ValueError("--shot-every 要搭配 --record，不然心跳畫面沒有地方放")
+    _prepare_frames(options)
     plan = plans.load(options.plan_in) if options.plan_in else None
     config = ConfigStore().load()
     display = adb.display_for(COC_PACKAGE)
@@ -331,9 +455,18 @@ def attack(options: AttackOptions) -> AttackSeries:
     )
     series = AttackSeries()
     rounds = options.rounds
+    # The file is the default and the flag overrides it for one run, the same
+    # shape the loot thresholds already have.
+    restart_every = (
+        config.restart_every if options.restart_every is None else options.restart_every
+    )
+    # Battles since the last restart rather than rounds over the whole series,
+    # for the reason `AttackOptions.restart_every` gives: a round spent waiting
+    # for barracks did not tire the emulator out.
+    fought = 0
     with FrameTicker(
         adb=adb, display=display, out_dir=options.frame_dir or Path(), seconds=options.shot_every
-    ):
+    ) as ticker:
         while rounds <= 0 or len(series.root) < rounds:
             # Between rounds, which is the cheapest place to stop: the village is
             # on screen, nothing is deployed, and the rounds already played are
@@ -343,6 +476,17 @@ def attack(options: AttackOptions) -> AttackSeries:
                     "Stop requested; ending the series after %d round(s)", len(series.root)
                 )
                 break
+            # And the cheapest place to restart, for the same reasons. After the
+            # stop check rather than before it, because a run being stood down
+            # has no use for a fresh emulator.
+            carried = _restarted(runner, ticker, fought, restart_every)
+            if carried is None:
+                # Everything after this would be aimed at an emulator that never
+                # came back, so the series ends here holding the rounds it really
+                # played rather than raising and taking them with it. Why it
+                # ended is logged where the two reasons can still be told apart.
+                break
+            fought = carried
             logger.info("Round %d of %s", len(series.root) + 1, rounds or "no limit")
             try:
                 report = runner.run()
@@ -350,15 +494,10 @@ def attack(options: AttackOptions) -> AttackSeries:
                 logger.info("Interrupted; stopping after %d round(s)", len(series.root))
                 break
             series.root.append(report)
+            if report.attacked is not None:
+                fought += 1
             logger.info("Attack finished: %s", report.message)
-            if options.plan_out is not None and runner.played is not None:
-                # A path the caller chose is a path they meant, so make room for
-                # it rather than failing on a directory they have not made yet.
-                options.plan_out.parent.mkdir(parents=True, exist_ok=True)
-                options.plan_out.write_text(
-                    runner.played.model_dump_json(indent=2), encoding="utf-8"
-                )
-                logger.info("Wrote the plan that ran to %s", options.plan_out)
+            _write_plan(options.plan_out, runner.played)
             if report.stock_full:
                 logger.info("The storages are full; there is nothing left to farm for")
                 break

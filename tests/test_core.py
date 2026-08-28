@@ -82,6 +82,7 @@ from ai_coc.adapters.adb import (
     ABS_MT_POSITION_Y,
     ABS_MT_TRACKING_ID,
     AdbController,
+    AdbControlError,
     pinch_events,
     focused_display,
     physical_display,
@@ -1614,7 +1615,7 @@ class StopFlagTests(unittest.TestCase):
                 patch.object(commands, "STOP_FLAG", flag),
                 patch.object(commands, "_controller"),
                 patch.object(commands, "_planner", return_value=None),
-                patch.object(commands, "ConfigStore"),
+                patch.object(commands.ConfigStore, "load", return_value=AppConfig()),
                 patch.object(commands, "FrameTicker"),
                 patch.object(commands, "AttackRunner") as runner,
             ):
@@ -1672,12 +1673,135 @@ class StopFlagTests(unittest.TestCase):
                 patch.object(commands, "STOP_FLAG", flag),
                 patch.object(commands, "_controller"),
                 patch.object(commands, "_planner", return_value=None),
-                patch.object(commands, "ConfigStore"),
+                patch.object(commands.ConfigStore, "load", return_value=AppConfig()),
                 patch.object(commands, "FrameTicker"),
                 patch.object(commands, "AttackRunner") as runner,
             ):
                 commands.attack(AttackOptions(rounds=1))
             assert runner.call_args.kwargs["should_stop"] is commands.stop_requested
+
+
+class RestartEveryTests(unittest.TestCase):
+    """Restarting the emulator on a schedule, because MuMu drops frames.
+
+    The mechanism is a few lines; what is worth testing is the two decisions
+    underneath them — what gets counted, and what the loop waits for before it
+    calls the emulator ready.
+    """
+
+    @staticmethod
+    def _fought() -> MagicMock:
+        return MagicMock(stock_full=False, attacked=MagicMock())
+
+    @staticmethod
+    def _idle() -> MagicMock:
+        return MagicMock(stock_full=False, attacked=None)
+
+    def _play(self, reports: list[MagicMock], options: AttackOptions, every: int) -> MagicMock:
+        """Run the loop over a fixed list of rounds and hand back the restart mock."""
+        with (
+            patch.object(commands, "_controller"),
+            patch.object(commands, "_planner", return_value=None),
+            patch.object(
+                commands.ConfigStore, "load", return_value=AppConfig(restart_every=every)
+            ),
+            patch.object(commands, "FrameTicker"),
+            patch.object(commands, "_rest", return_value=False),
+            patch.object(commands, "AttackRunner") as runner,
+            patch.object(commands, "_restart_emulator", return_value=True) as restart,
+        ):
+            runner.return_value.run.side_effect = reports
+            self.series = commands.attack(options)
+        return restart
+
+    def test_the_restart_counts_battles_rather_than_rounds(self) -> None:
+        """A round spent waiting for barracks did not tire the emulator out.
+
+        Five rounds, two of which fought nothing. Counting rounds would restart
+        after the second one; counting battles waits until the fourth, which is
+        where the second battle actually finished.
+        """
+        rounds = [self._idle(), self._fought(), self._idle(), self._fought(), self._fought()]
+        restart = self._play(rounds, AttackOptions(rounds=5), every=2)
+        assert len(self.series.root) == 5
+        assert restart.call_count == 1
+
+    def test_zero_on_the_flag_is_not_the_same_as_leaving_it_out(self) -> None:
+        """Omitting it keeps the configured value; passing zero turns it off.
+
+        The same distinction the loot overrides carry, and for the same reason:
+        a run being watched needs a way to skip the restart without editing the
+        file every other run reads.
+        """
+        assert self._play([self._fought()] * 2, AttackOptions(rounds=2), every=1).call_count == 1
+        off = AttackOptions(rounds=2, restart_every=0)
+        assert self._play([self._fought()] * 2, off, every=1).call_count == 0
+
+    def test_a_restart_that_never_came_back_keeps_the_rounds_already_played(self) -> None:
+        """Raising instead would leave `result.json` empty on `cli.py`'s side,
+        which reports a night of farming as nothing at all.
+        """
+        with (
+            patch.object(commands, "_controller"),
+            patch.object(commands, "_planner", return_value=None),
+            patch.object(commands.ConfigStore, "load", return_value=AppConfig(restart_every=1)),
+            patch.object(commands, "FrameTicker"),
+            patch.object(commands, "AttackRunner") as runner,
+            patch.object(commands, "_restart_emulator", return_value=False),
+        ):
+            runner.return_value.run.side_effect = [self._fought(), self._fought()]
+            series = commands.attack(AttackOptions(rounds=2))
+        assert len(series.root) == 1
+
+    def test_the_restart_waits_for_a_village_rather_than_for_the_process(self) -> None:
+        """`ensure_coc` is satisfied by a pid, which exists seconds after the
+        `monkey` while the village is not on screen for much longer. So the wait
+        is for a frame the loop could actually play from.
+        """
+        adb = MagicMock()
+        runner, ticker = MagicMock(), MagicMock()
+        with (
+            patch.object(commands, "launch"),
+            patch.object(commands, "MuMuAdapter") as mumu,
+            patch.object(commands.time, "sleep"),
+            patch.object(commands, "stop_requested", return_value=False),
+            patch.object(commands, "read_stock", side_effect=[None, None, MagicMock(gold=1)]),
+        ):
+            mumu.return_value.controller.return_value = adb
+            assert commands._restart_emulator(runner, ticker)
+        assert adb.screenshot.call_count == 3
+        # Both objects and both fields, or `--shot-every` spends the rest of the
+        # night timing out against a display that no longer exists.
+        assert (runner.adb, runner.display) == (adb, adb.display_for.return_value)
+        assert (ticker.adb, ticker.display) == (adb, adb.display_for.return_value)
+
+    def test_a_game_with_no_window_yet_is_waited_out_rather_than_given_up_on(self) -> None:
+        """`display_for` raises while the game has no focused window, which is
+        the ordinary state of one still loading rather than a failure.
+        """
+        adb = MagicMock()
+        adb.display_for.side_effect = [AdbControlError("not on a display"), MagicMock()]
+        with (
+            patch.object(commands, "launch"),
+            patch.object(commands, "MuMuAdapter") as mumu,
+            patch.object(commands.time, "sleep"),
+            patch.object(commands, "stop_requested", return_value=False),
+            patch.object(commands, "read_stock", return_value=MagicMock(gold=1)),
+        ):
+            mumu.return_value.controller.return_value = adb
+            assert commands._restart_emulator(MagicMock(), MagicMock())
+        assert adb.display_for.call_count == 2
+
+    def test_an_emulator_that_will_not_come_back_does_not_take_the_series_with_it(self) -> None:
+        """`launch` raises for exactly the states this exists to recover from —
+        an instance MuMu dropped, a game that never started — and a raise here
+        would leave `cli.py` writing an empty `result.json` over a night's work.
+        """
+        with (
+            patch.object(commands, "launch", side_effect=RuntimeError("找不到任何 MuMu instance")),
+            patch.object(commands, "MuMuAdapter"),
+        ):
+            assert not commands._restart_emulator(MagicMock(), MagicMock())
 
 
 class LaunchTests(unittest.TestCase):
