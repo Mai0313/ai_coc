@@ -24,13 +24,17 @@ permissions: write-all
 jobs:
   run_tests:
     name: Run Tests
-    runs-on: ubuntu-latest
+    # Windows, and not as a preference: `adapters/mumu.py` imports `winreg` at
+    # module scope and `commands.py` imports that, so on Linux `test_core.py`
+    # fails to import at all. It did, silently, for as long as this matrix said
+    # ubuntu — 208 tests never ran and the job still went green.
+    runs-on: ${{ matrix.os }}
 
     strategy:
       fail-fast: false
       matrix:
         os:
-          - ubuntu-latest
+          - windows-latest
         python-version:
           - "3.12"
           - "3.13"
@@ -59,6 +63,7 @@ jobs:
 
       - name: Check for tests
         id: check_tests
+        shell: bash
         run: |
           if [ -f tests/test_*.py ] || [ -d tests ]; then
               echo "Tests exist, proceeding to run them."
@@ -70,7 +75,12 @@ jobs:
 
       - name: Run pytest
         if: ${{ steps.check_tests.outputs.has_tests == 'true' }}
+        shell: bash
         run: |
+          # `pipefail` because a pipeline reports the exit code of its last
+          # command: without it `tee` succeeds whatever pytest did, and every
+          # failing run reads as a passing one.
+          set -o pipefail
           uv run pytest -vv | tee .coverage.txt
 
       # There is no issue to comment on outside a pull request, so a push to main
