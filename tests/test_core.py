@@ -1383,10 +1383,11 @@ class AttackTests(unittest.TestCase):
     def test_a_hero_whose_artwork_breaks_the_row_is_still_a_card(self) -> None:
         """A dark card cut in two by the brightness strip, put back together.
 
-        The fourth hero's own artwork broke this row into 46 px and 63 px
-        pieces, both under `CARD_MIN_WIDTH`, so the card vanished: five rounds
-        of a live run reported "3 of 3 hero card(s) landed" with four heroes on
-        the screen, and that hero never left its card in any of them.
+        The third hero's own artwork broke this row into 46 px and 63 px pieces,
+        both under `CARD_MIN_WIDTH`, so the card vanished: five rounds of a live
+        run reported "3 of 3 hero card(s) landed" with four heroes on the
+        screen, and that hero never left its card in any of them. The five
+        rounds after the fix reported 4 of 4.
 
         Everything outside the card row is blacked out in this frame. The
         opponent's village behind it is 2.7 MB of PNG on its own, well past what

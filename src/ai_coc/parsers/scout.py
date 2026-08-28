@@ -56,8 +56,13 @@ CARD_HALF_WIDTH = 45
 CARD_SPENT_SATURATION = 10
 
 # The row is laid out in groups — troops, siege machine, heroes, spells — and
-# only the boundaries are dependable: measured, cards sit 11 px apart inside a
-# group and 25 px or more apart across one.
+# the only boundary that has to hold is the first one, because `_deploy` reads
+# group 0 as the troops and flattens everything after it. Measured, cards sit
+# 11 px apart inside a group, and across one the gaps are 34 (troops to siege),
+# 16 (siege to heroes) and 25 (heroes to spells) — so the siege machine lands in
+# with the heroes, which is exactly what the flattening is for. It only ever
+# read as a group of its own while a seam was breaking the card beside it into
+# pieces; see `CARD_SPAN`.
 CARD_GROUP_GAP = 20
 # Cards measure 109-112 px across, though a dark seam over one leaves an 87 px
 # piece, so the floor stays low. Once the narrow fragments are gone every real
@@ -71,17 +76,24 @@ CARD_EDGE_GAP = 5
 # **dark band in a card's own artwork cuts that card in half** — and both halves
 # can land under CARD_MIN_WIDTH, at which point the card is gone and nothing
 # downstream can tell it was ever there. Measured live on a row of four heroes,
-# the fourth came apart into 46 px and 63 px pieces and was dropped on every
-# frame of a five-round run: the loop reported "3 of 3 hero card(s) landed" four
-# battles running while that hero sat in a card nothing knew about. The card
-# beside it survived the same way by luck, its remaining piece measuring 87.
+# the third came apart into 46 px and 63 px pieces and was dropped on every
+# frame of a five-round run: all five battles reported "3 of 3 hero card(s)
+# landed" while that hero sat in a card nothing knew about, and the five run
+# afterwards reported 4 of 4. The first hero on the same row was cut the same
+# way and survived only by luck, its remaining piece measuring 87.
 #
 # Two pieces are only joined where their combined span is one card wide, and
 # only while neither is already wide enough to be a card on its own. Swept over
-# 43 recorded frames every whole card spans 105 to 112 px and every piece a seam
+# 43 recorded frames a card at rest spans 105 to 112 px and every piece a seam
 # leaves is 87 or less, so the floor sits between the two: a card that already
 # reads is never joined to the speckle beside it, which on a battle frame is
 # what would move its centre off the card and take every reader with it.
+#
+# The ceiling is that resting width rather than the 118 to 120 a **selected**
+# card lights up to, because a card and the 11 px gap to its neighbour come to
+# 121 and a ceiling reaching that far would join two cards into one. Nothing is
+# selected when `card_groups` runs — `_deploy` reads the row before it taps
+# anything — so the wider reading is out of its way.
 CARD_SPAN = (100, 116)
 CARD_LIT_BRIGHTNESS = 60
 # Every real card carries its level in a badge at the bottom-left corner. The
