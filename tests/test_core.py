@@ -1774,6 +1774,10 @@ class RestartEveryTests(unittest.TestCase):
         # night timing out against a display that no longer exists.
         assert (runner.adb, runner.display) == (adb, adb.display_for.return_value)
         assert (ticker.adb, ticker.display) == (adb, adb.display_for.return_value)
+        # A restarted game comes back zoomed in, and every coordinate in this
+        # project was measured at the far limit — without this the run keeps
+        # going and deploys nothing for the rest of the night.
+        assert adb.pinch.call_count == commands.RESTART_ZOOM_PINCHES
 
     def test_a_game_with_no_window_yet_is_waited_out_rather_than_given_up_on(self) -> None:
         """`display_for` raises while the game has no focused window, which is
