@@ -25,7 +25,7 @@ Run the app with `uv run ai_coc`. Two CLI hooks exist for smoke tests: `--live-t
 Thirteen sub-commands run headless instead, and they are how the game is worked on:
 
 ```bash
-uv run ai_coc attack --frames <dir>       # one attack pass, no window, every frame it reads kept
+uv run ai_coc attack --frames <dir>       # one attack pass, every frame it reads kept
 uv run ai_coc attack --plan-in tuned.json  # play a written tactic, no AI call at all
 uv run ai_coc attack --plan-out used.json  # write down whichever plan actually ran
 uv run ai_coc attack --min-gold 0 --min-elixir 0 --min-dark 0   # attack whatever comes up first
