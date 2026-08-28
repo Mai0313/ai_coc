@@ -785,8 +785,10 @@ class AttackRunner(BaseModel):
                 break
         return line
 
-    def _landed(self, before: bytes, after: bytes, cards: list[int]) -> list[int]:
-        """Which of these one-off cards actually put something on the field.
+    def _landed(
+        self, before: bytes, after: bytes, cards: list[int]
+    ) -> tuple[list[int], list[int]]:
+        """Which of these one-off cards landed, and which of those were heroes.
 
         The card is the evidence and the screen is not. A hero keeps its card
         once it is down — the card becomes the ability button — so what says it
@@ -797,6 +799,15 @@ class AttackRunner(BaseModel):
         inside the boundary is as often swallowed in silence, so every hero came
         back "landed" whether it went down or not. One recorded run reported
         four of four while the fourth never left its card.
+
+        **The same bar is the only thing that says a card held a hero rather
+        than a siege machine.** The two look alike on the row — neither carries
+        an `xN`, and both sit in the same group — so the loop reads the leading
+        one as the siege machine on the game's own ordering. That is right for
+        an army carrying one and wrong for an army that does not, where the
+        leader is a hero and used to get no ability at all, with the plan's hero
+        list shifted a slot against the cards it names. Only a hero is drawn a
+        health bar, so this is what the caller matches them up by.
         """
         on_field = field_units(after, cards)
         # Both readings are taken once. Asking `live_cards` inside the
@@ -804,10 +815,15 @@ class AttackRunner(BaseModel):
         # walked, which on a row of four heroes is four PNG decodes nobody wanted.
         was_live, still_live = live_cards(before, cards), live_cards(after, cards)
         emptied = [card for card in was_live if card not in still_live]
-        return [card for card in cards if card in on_field or card in emptied]
+        return [card for card in cards if card in on_field or card in emptied], on_field
 
-    def _drop_singles(self, cards: list[int], line: list[tuple[int, int]], what: str) -> list[int]:
+    def _drop_singles(
+        self, cards: list[int], line: list[tuple[int, int]], what: str
+    ) -> tuple[list[int], list[int]]:
         """Every one-off card onto the same spot at once, retried as a group where refused.
+
+        Hands back what landed and, of that, which cards held a hero; `_landed`
+        is where the health bar that separates the two is read.
 
         They used to go down one at a time, each paying a capture to frame the
         drop, a settle and another capture to judge it — three and a half seconds
@@ -823,6 +839,7 @@ class AttackRunner(BaseModel):
         schedule tapping a card that has nothing left to give.
         """
         landed: list[int] = []
+        heroes: list[int] = []
         pending = list(cards)
         # Where the last card actually went, which is not the spot the loop
         # happens to be holding when it stops: it breaks at the top of the next
@@ -838,8 +855,9 @@ class AttackRunner(BaseModel):
                 gap=SINGLE_DROP_DELAY,
             )
             time.sleep(HERO_SETTLE)
-            down = self._landed(before, self._frame("dropped"), pending)
+            down, bars = self._landed(before, self._frame("dropped"), pending)
             landed += down
+            heroes += bars
             pending = [card for card in pending if card not in down]
             if down:
                 worked = spot
@@ -848,7 +866,7 @@ class AttackRunner(BaseModel):
         for card in pending:
             logger.warning("The %s card at %d never landed; its unit stays put", what, card)
         logger.info("%d of %d %s card(s) landed at %s", len(landed), len(cards), what, worked)
-        return landed
+        return landed, heroes
 
     def _wait_for_battle(self) -> bytes | None:
         """Hold until the scout countdown ends, and hand back the first battle frame.
@@ -1112,29 +1130,43 @@ class AttackRunner(BaseModel):
         # Measured live on a flank half inside the boundary: rage fired 21 s in
         # while a troop card was still draining and the heroes landed at 41 s,
         # where finishing first would have had them down at about 31 s.
-        self._drop_singles(vanguard, line, "siege")
+        _, led = self._drop_singles(vanguard, line, "siege")
+        opener = time.monotonic()
         line = self._spread_troops(troops, anchors, pushed)
         # Only the heroes that actually went down get an ability. A hero still in
         # its card answers an ability tap by deploying instead, with nothing
         # around it and no ability fired. The line is the one the troops ended up
         # on rather than the one they started on: the flank moves while they go
         # down, and a hero sent to the old midpoint is sent somewhere refused.
-        down = self._drop_singles(followers, line, "hero")
+        down, _ = self._drop_singles(followers, line, "hero")
         landed = time.monotonic()
+        # **The leading card is a hero on any army that carries no siege
+        # machine**, and it is the one card nothing on the row can tell apart:
+        # neither it nor a hero shows an `xN`, and the two sit in the same group.
+        # So the game's own ordering picks it, and where the ordering is wrong
+        # the health bar corrects it — `led` is the leader only if the game drew
+        # one over its card, which it never does for a siege machine. Without
+        # this that hero got no ability at all and every kind in the plan's list
+        # was read a slot off the card it names, so a queen's cloak went to
+        # whoever stood next to her.
+        order = led + followers
+        # Each hero's ability runs from its own hero landing, which for the
+        # leader is a whole troop deployment earlier than for the rest.
+        arrived = dict.fromkeys(led, opener) | {x: landed for x in followers if x in down}
         kinds = list(plan.heroes) if plan else []
-        kinds += ["unknown"] * (len(followers) - len(kinds))
+        kinds += ["unknown"] * (len(order) - len(kinds))
         self._run_schedule(
             opened,
             [
                 *pending,
                 *(
                     (
-                        landed + timings.seconds(kinds[i]),
+                        arrived[x] + timings.seconds(kinds[i]),
                         f"ability on the card at {x}",
                         partial(self._tap, (x, CARD_ROW_Y)),
                     )
-                    for i, x in enumerate(followers)
-                    if x in down
+                    for i, x in enumerate(order)
+                    if x in arrived
                 ),
             ],
         )

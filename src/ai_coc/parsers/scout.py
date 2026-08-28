@@ -126,12 +126,23 @@ COUNT_X_WIDTH = (13, 19)
 # artwork while the scraps of it that survive read 31, so the line goes between.
 COUNT_DIGIT_TOLERANCE = 30
 
-# Freeze is the one spell CoC draws in cyan — rage, heal, clone and invisibility
-# are all violet or pink. Measured, a freeze card's lower half reads
-# (141, 224, 242) against rage's (163, 137, 201), so green separates them.
+# Freeze is the one spell CoC draws in cyan. Measured over the recorded rows, a
+# freeze card's lower half reads (141, 224, 242) against rage's (163, 137, 201),
+# and every other card that reaches this test sits at 145 of green or below.
+#
+# Cyan is high green **and** high blue, and only the green half of that used to
+# be asked. What the missing half lets through is a spell that is merely green,
+# and heal is one: its bottle is green with none of the blue, so it would read
+# as freeze and be held back for the defences when what it is for is the troops
+# — where a spell this call does not claim already goes. Measured, blue runs 242
+# on freeze against at most 201 on everything else, so the line sits between.
+# Heal itself has not been measured here, because this village has never flown
+# one; the blue floor comes from what cyan is rather than from a sample of it,
+# which is why it is set off freeze's own margin and not off a guess at heal's.
 SPELL_ART_TOP, SPELL_ART_BOTTOM = 790, 860
 SPELL_ART_HALF_WIDTH = 40
 FREEZE_GREEN = 190
+FREEZE_BLUE = 220
 
 # `305/305` on the 我的軍隊 screen, which is the last point before the search fee
 # is charged. The troop icon before it and the slash between the two numbers are
@@ -835,7 +846,11 @@ def army_strength(png: bytes) -> tuple[int, int] | None:
 
 
 def freeze_cards(png: bytes, slots: Sequence[int]) -> list[int]:
-    """Which of these spell cards hold freeze, the one spell worth holding back."""
+    """Which of these spell cards hold freeze, the one spell worth holding back.
+
+    Both halves of cyan are asked for; see `FREEZE_BLUE` for what the green one
+    alone lets through.
+    """
     image = Image.open(io.BytesIO(png)).convert("RGB")
     frozen: list[int] = []
     for centre in slots:
@@ -845,8 +860,10 @@ def freeze_cards(png: bytes, slots: Sequence[int]) -> list[int]:
             centre + SPELL_ART_HALF_WIDTH,
             SPELL_ART_BOTTOM,
         )).tobytes()
-        green = sum(data[i + 1] for i in range(0, len(data), 3)) / (len(data) // 3)
-        if green > FREEZE_GREEN:
+        pixels = len(data) // 3
+        green = sum(data[i + 1] for i in range(0, len(data), 3)) / pixels
+        blue = sum(data[i + 2] for i in range(0, len(data), 3)) / pixels
+        if green > FREEZE_GREEN and blue > FREEZE_BLUE:
             frozen.append(centre)
     return frozen
 

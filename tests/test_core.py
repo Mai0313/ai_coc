@@ -5,7 +5,7 @@ from pathlib import Path
 import tempfile
 import unittest
 from unittest.mock import MagicMock, patch
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 
 from PIL import Image, ImageDraw
 import pytest
@@ -1281,6 +1281,78 @@ class AttackTests(unittest.TestCase):
         for index, (x, y) in enumerate(spots):
             assert all(math.hypot(x - a, y - b) >= 20 for a, b in spots[index + 1 :])
 
+    def _abilities(
+        self, singles: list[int], on_field: list[int], kinds: list[str], spent: Sequence[int] = ()
+    ) -> list[tuple[int, int]]:
+        """What `_deploy` schedules an ability for, and how long after the opening.
+
+        `singles` is the row's one-off cards left to right, `on_field` the ones
+        the game drew a health bar over — which is what says a card held a hero
+        rather than a siege machine — and `spent` the ones that landed by going
+        grey instead, which is every siege machine. A card in neither never left
+        its card.
+        """
+        runner = self._runner()
+        plan = plans.flat().model_copy(update={"heroes": kinds})
+        moves: list[tuple[float, str, object]] = []
+        opening: list[float] = []
+
+        def dropped(cards: list[int], line: object, what: str) -> tuple[list[int], list[int]]:
+            bars = [card for card in cards if card in on_field]
+            return [card for card in cards if card in on_field or card in spent], bars
+
+        def schedule(opened: float, scheduled: list[tuple[float, str, object]]) -> None:
+            opening.append(opened)
+            moves.extend(scheduled)
+
+        with (
+            patch.object(AttackRunner, "_settle_camera", side_effect=lambda frame: frame),
+            patch.object(attack, "card_groups", return_value=[[100], singles]),
+            patch.object(attack, "counted_cards", return_value=[]),
+            patch.object(attack, "freeze_cards", return_value=[]),
+            patch.object(AttackRunner, "_plan", return_value=plan),
+            patch.object(AttackRunner, "_wait_for_battle", return_value=None),
+            patch.object(AttackRunner, "_clear_flank", side_effect=lambda frame, preset: frame),
+            patch.object(AttackRunner, "_usable_line", return_value=0),
+            patch.object(AttackRunner, "_drop_singles", side_effect=dropped),
+            patch.object(AttackRunner, "_spread_troops", return_value=[(0, 0)]),
+            patch.object(AttackRunner, "_run_schedule", side_effect=schedule),
+            patch.object(attack.time, "sleep"),
+        ):
+            runner._deploy(b"")
+        return [(round(when - opening[0]), int(what.rsplit(" ", 1)[1])) for when, what, _ in moves]
+
+    def test_a_leading_card_with_a_health_bar_over_it_is_a_hero(self) -> None:
+        """An army carrying no siege machine puts a hero in the leader's slot.
+
+        Nothing on the row separates the two: neither carries an `xN` and both
+        sit in the same group, so the leader is picked off the game's own
+        ordering — siege machine first — and only the health bar can correct it,
+        since one is never drawn over a siege machine. Without that correction
+        the leading hero got no ability at all and every kind in the plan's list
+        was read a slot off the card it names, so a queen's cloak went to
+        whoever stood next to her.
+        """
+        cards = [600, 700, 800]
+        played = self._abilities(cards, on_field=cards, kinds=["queen", "king", "champion"])
+        assert [card for _, card in played] == cards
+        assert [delay for delay, _ in played] == [1, 20, 45]
+
+    def test_a_leading_siege_machine_is_not_given_a_hero_ability(self) -> None:
+        """The bar is what says so: the siege machine never gets one, the heroes do."""
+        played = self._abilities(
+            [600, 700, 800], on_field=[700, 800], kinds=["queen", "king"], spent=[600]
+        )
+        assert [card for _, card in played] == [700, 800]
+        assert [delay for delay, _ in played] == [1, 20]
+
+    def test_a_hero_that_never_left_its_card_is_not_given_an_ability(self) -> None:
+        """An ability tap on a hero still in its card deploys it with nothing around it."""
+        played = self._abilities(
+            [600, 700, 800], on_field=[700], kinds=["queen", "king"], spent=[600]
+        )
+        assert [card for _, card in played] == [700]
+
     def test_the_freeze_no_longer_queues_behind_the_slowest_hero(self) -> None:
         """Cast after the last ability it sat out a champion's 45 seconds first."""
         played: list[str] = []
@@ -1425,6 +1497,26 @@ class AttackTests(unittest.TestCase):
 
     def test_freeze_is_told_apart_from_rage_by_its_cyan(self) -> None:
         assert freeze_cards((FRAMES / "cards_full.png").read_bytes(), [1302, 1423]) == [1423]
+
+    def test_a_spell_that_is_merely_green_is_not_freeze(self) -> None:
+        """Cyan is high green *and* high blue, and only the green half was asked.
+
+        Heal's bottle is green with none of the blue, so the missing half would
+        have read it as freeze and held it back for the defences — where what a
+        heal is for is the troops, which is where a spell this call does not
+        claim already goes. The two colours here are freeze's own measured
+        (141, 224, 242) and the same green with the blue taken out of it.
+        """
+
+        def card(colour: tuple[int, int, int]) -> bytes:
+            frame = Image.new("RGB", (1600, 900), (20, 20, 20))
+            frame.paste(Image.new("RGB", (100, 80), colour), (1373, 786))
+            buffer = io.BytesIO()
+            frame.save(buffer, format="PNG")
+            return buffer.getvalue()
+
+        assert freeze_cards(card((141, 224, 242)), [1423]) == [1423]
+        assert freeze_cards(card((141, 224, 60)), [1423]) == []
 
     def test_a_spent_card_is_not_offered_again(self) -> None:
         """A spent card turns greyscale; brightness alone does not separate the two."""
