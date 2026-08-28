@@ -34,6 +34,8 @@ from ai_coc.models import (
     AttackSeries,
     DonateReport,
     FrameReading,
+    LaunchReport,
+    RestartScope,
     AttackOptions,
     BuilderReport,
     CollectReport,
@@ -89,6 +91,74 @@ def _controller() -> AdbController:
     if not instances:
         raise RuntimeError("找不到任何 MuMu instance")
     return mumu.controller(mumu.ensure_coc(instances[0].index).adb_serial)
+
+
+# How long to give MuMu to actually take an instance down. `control restart`
+# returns as soon as the request is sent, so the state read a moment later is
+# still the old one — and `ensure_coc` skips its whole boot wait for anything
+# still reporting `android_started`, which would aim a `monkey` launch at an
+# emulator on its way down.
+SHUTDOWN_POLLS = 15
+SHUTDOWN_GAP = 2.0
+
+
+def _await_shutdown(mumu: MuMuAdapter, index: int) -> None:
+    """Wait for a restarting instance to really go down before it comes back up.
+
+    An instance missing from the listing entirely is not treated as down: MuMu
+    drops one for a moment while it restarts, and `ensure_coc` cannot start from
+    there — it raises on an index it cannot find. So that keeps waiting, and
+    only an instance that is listed and no longer started ends the wait.
+    """
+    for _ in range(SHUTDOWN_POLLS):
+        time.sleep(SHUTDOWN_GAP)
+        current = next((item for item in mumu.enumerate_instances() if item.index == index), None)
+        if current is not None and not current.android_started:
+            return
+    logger.warning("MuMu instance %s never went down; bringing the game up anyway", index)
+
+
+def launch(restart: RestartScope) -> LaunchReport:
+    """Bring the game up on the first MuMu instance, tearing down as much as asked.
+
+    Every other headless command assumes the game is already running: they go
+    through `_controller`, which calls `ensure_coc` and gives up on whatever it
+    cannot fix. This is that step on its own, for the two states it cannot reach
+    from there — an emulator or a game that is up and no longer answering, which
+    from here looks exactly like a working one.
+    """
+    mumu = MuMuAdapter()
+    instances = mumu.enumerate_instances()
+    if not instances:
+        raise RuntimeError("找不到任何 MuMu instance")
+    index = instances[0].index
+    was_running = instances[0].coc_running
+    if restart == "emulator":
+        logger.info("Restarting MuMu instance %s before bringing the game up", index)
+        mumu.restart_instance(index)
+        _await_shutdown(mumu, index)
+    elif restart == "game":
+        # The game can only be stopped on an emulator that is already up, which
+        # is what the inner call is for. On a cold machine that call is also the
+        # whole job and `restart_coc` then costs one relaunch of a game that had
+        # only just started, which is cheaper than refusing and naming another
+        # command: either way the caller asked to end up with a fresh game.
+        mumu.restart_coc(mumu.ensure_coc(index))
+    instance = mumu.ensure_coc(index)
+    if restart == "none":
+        # Which of these it was is the only thing this scope can report: it does
+        # the same work either way, and on a cold machine that work is the whole
+        # job rather than the no-op the name suggests.
+        did = "部落衝突已經在跑" if was_running else "已把部落衝突開起來"
+    else:
+        did = "已重開部落衝突" if restart == "game" else "已重開模擬器與部落衝突"
+    logger.info("%s on instance %s (%s)", did, instance.index, instance.adb_serial)
+    return LaunchReport(
+        index=instance.index,
+        serial=instance.adb_serial,
+        was_running=was_running,
+        message=f"{did},模擬器 {instance.index} ({instance.adb_serial})",
+    )
 
 
 def _planner(config: AppConfig) -> GeminiClient | None:

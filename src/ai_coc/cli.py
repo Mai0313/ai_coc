@@ -12,7 +12,7 @@ from PyQt5.QtWidgets import QApplication
 # PyInstaller runs this file as `__main__`, which has no package context, so these
 # stay absolute even for same-layer modules.
 from ai_coc import commands, __version__
-from ai_coc.models import HeroKind, WallOptions, AttackOptions, LootOverrides
+from ai_coc.models import HeroKind, WallOptions, RestartScope, AttackOptions, LootOverrides
 from ai_coc.constants import APP_NAME
 from ai_coc.logging_setup import configure_logging
 from ai_coc.ui.main_window import MainWindow, migrate_settings
@@ -94,6 +94,17 @@ def _parser() -> argparse.ArgumentParser:
         help="out 是拉遠回到所有座標量測時的視野,in 是拉近,預設 out",
     )
     camera.add_argument("--times", type=int, default=3, help="做幾次,已經到底的話多做無害")
+    # Every other command assumes the game is up and gives up when it is not, so
+    # this is the one that puts it there. The scopes exist because neither an
+    # emulator nor a game that has stopped answering looks any different from a
+    # working one down here; only whoever is watching the screen can tell.
+    boot = sub.add_parser("launch", help="開模擬器並啟動部落衝突")
+    boot.add_argument(
+        "--restart",
+        choices=get_args(RestartScope),
+        default="none",
+        help="要重開到哪一層: none 只確保遊戲在跑,game 重開遊戲但不動模擬器,emulator 連模擬器一起重開,預設 none",
+    )
     give = sub.add_parser("donate", help="有人請求增援就捐兵")
     give.add_argument("--frames", type=Path, help="把迴圈讀到的每一張畫面存進這個資料夾")
     give.add_argument(
@@ -129,8 +140,17 @@ def _run_command(arguments: argparse.Namespace) -> int:
         "probe": commands.probe,
         "bounds": commands.bounds,
     }
+    # The same again for the ones whose arguments are a couple of plain scalars
+    # instead of a frame directory. Two is already worth a table: a branch each
+    # is what tipped this function past the complexity limit.
+    scalar = {
+        "view": lambda: commands.view(arguments.zoom, arguments.times),
+        "launch": lambda: commands.launch(arguments.restart),
+    }
     if arguments.command in plain:
         result = plain[arguments.command](arguments.frames).model_dump_json(indent=2)
+    elif arguments.command in scalar:
+        result = scalar[arguments.command]().model_dump_json(indent=2)
     elif arguments.command == "attack":
         result = commands.attack(
             AttackOptions(
@@ -168,8 +188,6 @@ def _run_command(arguments: argparse.Namespace) -> int:
         result = commands.hero(
             arguments.frames, arguments.upgrade, (int(spot[0]), int(spot[1])) if spot else None
         ).model_dump_json(indent=2)
-    elif arguments.command == "view":
-        result = commands.view(arguments.zoom, arguments.times).model_dump_json(indent=2)
     elif arguments.command == "donate":
         result = commands.donate(
             arguments.frames, arguments.dry_run, arguments.rounds
