@@ -355,11 +355,12 @@ def _restart_emulator(runner: AttackRunner, ticker: FrameTicker) -> bool:
         runner.display = display
         ticker.adb = adb
         ticker.display = display
-        logger.info(
-            "The emulator is back, the village is on display %s, and it holds %d gold",
-            display.logical_id,
-            village.gold,
-        )
+        # That the village reads at all is the signal; what it reads is not, and
+        # logging the number would present it as one. Measured on a live restart,
+        # the storage bars animate up from zero while the game loads and the
+        # first frame that resolved came back at 12.4M gold against a real
+        # 19.7M — printed here, that reads as a village raided overnight.
+        logger.info("The emulator is back and the village is on display %s", display.logical_id)
         return True
     return False
 
