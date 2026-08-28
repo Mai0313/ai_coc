@@ -299,7 +299,15 @@ def _rest(seconds: float) -> bool:
 #
 # Much longer than `restart_game`'s flat 15 seconds, which only reopens the
 # package on an emulator that never went down; this sits through a cold boot.
-RESTART_POLLS = 30
+#
+# **And a cold boot is not a fixed cost.** Measured on the same machine within
+# one run: the first restart had the village up 22 seconds after `launch`
+# returned, and the second one had not got there in 120 — which is the whole
+# reason this feature exists, since an emulator slow enough to need restarting
+# is also slow to come back. So the patience is sized for the bad case rather
+# than the good one; a run that reaches the end of it has lost the series, while
+# one that waits an extra minute has lost a minute.
+RESTART_POLLS = 45
 RESTART_POLL_GAP = 4.0
 
 
@@ -333,6 +341,7 @@ def _restart_emulator(runner: AttackRunner, ticker: FrameTicker) -> bool:
         logger.exception("The emulator did not come back up")
         return False
     adb = MuMuAdapter().controller(launched.serial)
+    waiting = "nothing was tried"
     for _ in range(RESTART_POLLS):
         # Checked inside the wait rather than only around it: this is the
         # longest stretch of a run where nothing else looks at the flag, and a
@@ -341,12 +350,22 @@ def _restart_emulator(runner: AttackRunner, ticker: FrameTicker) -> bool:
             logger.info("Stop requested while the emulator was coming back up")
             return False
         time.sleep(RESTART_POLL_GAP)
+        # Which of the two it is waiting on gets logged, because the two mean
+        # different things and a run that gives up says neither: no display is a
+        # game with no window yet, while a display whose frame will not read is
+        # a game that is up and still on its loading screen. Silence here left
+        # one real failure — the second restart of a live run — with nothing to
+        # tell those apart afterwards.
         try:
             display = adb.display_for(COC_PACKAGE)
-            village = read_stock(adb.screenshot(display))
         except AdbControlError:
-            continue
-        if village is None:
+            waiting = "the game is not on a display yet"
+            display = None
+        else:
+            village = read_stock(adb.screenshot(display))
+            waiting = "" if village is not None else "the village has not painted yet"
+        if display is None or waiting:
+            logger.debug("Still waiting for the emulator: %s", waiting)
             continue
         # Both of them. The ticker captures from its own thread and would
         # otherwise spend the rest of the night timing out against a display
@@ -362,6 +381,14 @@ def _restart_emulator(runner: AttackRunner, ticker: FrameTicker) -> bool:
         # 19.7M — printed here, that reads as a village raided overnight.
         logger.info("The emulator is back and the village is on display %s", display.logical_id)
         return True
+    # What it was still waiting on when the patience ran out, because the caller
+    # can only say that the village never came back and that is the same
+    # sentence for a game with no window and a game stuck on its loading screen.
+    logger.warning(
+        "Gave up after %.0fs waiting for the emulator: %s",
+        RESTART_POLLS * RESTART_POLL_GAP,
+        waiting,
+    )
     return False
 
 

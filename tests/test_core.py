@@ -1792,6 +1792,26 @@ class RestartEveryTests(unittest.TestCase):
             assert commands._restart_emulator(MagicMock(), MagicMock())
         assert adb.display_for.call_count == 2
 
+    def test_a_village_that_never_paints_gives_up_instead_of_waiting_forever(self) -> None:
+        """The patience is sized for the bad case but it is still finite.
+
+        Measured live, one restart had the village up in 22 seconds and the next
+        one on the same machine had not got there in 120 — so this path is real,
+        and a run that hangs in it is worse than one that ends holding the rounds
+        it played.
+        """
+        adb = MagicMock()
+        with (
+            patch.object(commands, "launch"),
+            patch.object(commands, "MuMuAdapter") as mumu,
+            patch.object(commands.time, "sleep"),
+            patch.object(commands, "stop_requested", return_value=False),
+            patch.object(commands, "read_stock", return_value=None),
+        ):
+            mumu.return_value.controller.return_value = adb
+            assert not commands._restart_emulator(MagicMock(), MagicMock())
+        assert adb.screenshot.call_count == commands.RESTART_POLLS
+
     def test_an_emulator_that_will_not_come_back_does_not_take_the_series_with_it(self) -> None:
         """`launch` raises for exactly the states this exists to recover from —
         an instance MuMu dropped, a game that never started — and a raise here
