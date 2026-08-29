@@ -1349,10 +1349,9 @@ class AttackTests(unittest.TestCase):
         """What `_deploy` schedules an ability for, and how long after the opening.
 
         `singles` is the row's one-off cards left to right, `on_field` the ones
-        the game drew a health bar over — which is what says a card held a hero
-        rather than a siege machine — and `spent` the ones that landed by going
-        grey instead, which is every siege machine. A card in neither never left
-        its card.
+        the game drew a health bar over — which says a unit is out, not that it
+        is a hero — and `spent` the ones that landed by going grey instead. A
+        card in neither never left its card.
         """
         runner = self._runner()
         plan = plans.flat().model_copy(update={"heroes": kinds})
@@ -1386,16 +1385,15 @@ class AttackTests(unittest.TestCase):
             runner._deploy(b"")
         return [(round(when - opening[0]), int(what.rsplit(" ", 1)[1])) for when, what, _ in moves]
 
-    def test_a_leading_card_with_a_health_bar_over_it_is_a_hero(self) -> None:
+    def test_a_leading_card_is_a_hero_when_the_plan_names_one_per_card(self) -> None:
         """An army carrying no siege machine puts a hero in the leader's slot.
 
         Nothing on the row separates the two: neither carries an `xN` and both
         sit in the same group, so the leader is picked off the game's own
-        ordering — siege machine first — and only the health bar can correct it,
-        since one is never drawn over a siege machine. Without that correction
-        the leading hero got no ability at all and every kind in the plan's list
-        was read a slot off the card it names, so a queen's cloak went to
-        whoever stood next to her.
+        ordering — siege machine first — and the plan's own count is what
+        corrects it. Without that correction the leading hero got no ability at
+        all and every kind in the plan's list was read a slot off the card it
+        names, so a queen's cloak went to whoever stood next to her.
         """
         cards = [600, 700, 800]
         played = self._abilities(cards, on_field=cards, kinds=["queen", "king", "champion"])
@@ -1403,12 +1401,26 @@ class AttackTests(unittest.TestCase):
         assert [delay for delay, _ in played] == [1, 20, 45]
 
     def test_a_leading_siege_machine_is_not_given_a_hero_ability(self) -> None:
-        """The bar is what says so: the siege machine never gets one, the heroes do."""
+        """Two heroes named against three one-off cards is an army carrying one."""
         played = self._abilities(
             [600, 700, 800], on_field=[700, 800], kinds=["queen", "king"], spent=[600]
         )
         assert [card for _, card in played] == [700, 800]
         assert [delay for delay, _ in played] == [1, 20]
+
+    def test_a_health_bar_over_the_siege_machine_does_not_make_it_a_hero(self) -> None:
+        """The game draws one over a siege machine as readily as over a hero.
+
+        Measured across all three rounds of a recorded run: the 攻城戰車 landed
+        and `field_units` read its card on the very next frame. Asked as the
+        hero test it used to be, that put a slot in front of every real hero —
+        the queen went out on the king's twenty seconds where her cloak wants
+        one, and the warden on the duke's, ten seconds early.
+        """
+        cards = [436, 562, 683, 804, 928]
+        played = self._abilities(cards, on_field=cards, kinds=["queen", "king", "warden", "duke"])
+        assert [card for _, card in played] == cards[1:]
+        assert [delay for delay, _ in played] == [1, 20, 30, 20]
 
     def test_a_leading_hero_the_game_refused_still_holds_its_slot(self) -> None:
         """The bar cannot speak for a card that never went down anywhere.
@@ -1424,6 +1436,44 @@ class AttackTests(unittest.TestCase):
         )
         assert [card for _, card in played] == [700, 800]
         assert [delay for delay, _ in played] == [20, 45]
+
+    def test_with_no_plan_to_count_the_health_bar_is_still_what_answers(self) -> None:
+        """There is nothing else to ask, and being wrong costs nothing there.
+
+        Every card takes the same `unknown` delay without a plan, so a leader
+        read the wrong way shifts no timing; the only cost is a tap on a card
+        that has already been spent.
+        """
+        cards = [600, 700, 800]
+        played = self._abilities(cards, on_field=cards, kinds=[])
+        assert [card for _, card in played] == cards
+        assert [delay for delay, _ in played] == [20, 20, 20]
+
+    def test_a_plan_naming_a_count_that_fits_neither_row_says_so(self) -> None:
+        """Two heroes against four one-off cards fits neither arithmetic.
+
+        One fewer than the cards is an army carrying a siege machine and as many
+        is one that is not; two fewer is a plan out of step with the row, which
+        a `--plan-in` file replayed after two heroes went into upgrades gives —
+        their cards simply disappear. Neither reading of the leader is safe
+        then, so the run is told rather than left to find out from timings that
+        are quietly a slot out.
+        """
+        cards = [600, 700, 800, 900]
+        with self.assertLogs("ai_coc.ui.attack", level="WARNING") as caught:
+            self._abilities(cards, on_field=cards, kinds=["queen", "king"])
+        assert any("2 hero(es) against 4 one-off card(s)" in line for line in caught.output)
+
+    def test_a_plan_one_hero_short_is_not_flagged_because_it_cannot_be_seen(self) -> None:
+        """It is the same count as an army carrying a siege machine, and read as one.
+
+        That costs the leading hero its ability. The bar it replaced got this
+        one case right — and every battle this army fights wrong, since it does
+        carry a siege machine and the game draws a bar over it.
+        """
+        cards = [600, 700, 800, 900]
+        played = self._abilities(cards, on_field=cards, kinds=["queen", "king", "warden"])
+        assert [card for _, card in played] == [700, 800, 900]
 
     def test_a_hero_that_never_left_its_card_is_not_given_an_ability(self) -> None:
         """An ability tap on a hero still in its card deploys it with nothing around it."""
