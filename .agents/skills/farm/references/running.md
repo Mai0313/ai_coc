@@ -40,7 +40,7 @@ uv run ai_coc attack --repeat 0 --record
 
 `plans.jsonl` 在同一個目錄, 也是純文字, 一場一行, 內容是那一輪 AI 回答的整份戰術. `jq -c 'select(.round==3)' plans.jsonl` 拿一輪出來看, `jq -r '"\(.round) \(.plan.deploy_from)"' plans.jsonl` 一眼看完整批打了哪些側邊. **一輪打壞的時候先讀它**, 因為它直接說出「這輪打算怎麼打」, 而 `run.log` 說的是「實際做了什麼」, 兩份對照才知道問題在指揮還是在執行.
 
-`~/.ai_coc/logs/controller.log` 是**所有執行混在一起**的那一份, 會轉檔. 它回答的是另一個問題: 這台機器最近都在做什麼. 要在某一次跑裡面找東西就看那次自己的 `run.log`, 要跨好幾次跑找模式才來翻它.
+**沒有第二份把所有執行混在一起的 log**. 要跨好幾次跑找同一個症狀就 `grep -r ~/.ai_coc/logs/*/run.log`, 它會告訴你每一筆出自哪一次; 要知道這台機器最近做過什麼就 `ls -t ~/.ai_coc/logs`, 目錄名本身就是那份歷史.
 
 ## 中止
 

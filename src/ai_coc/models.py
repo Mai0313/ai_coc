@@ -918,11 +918,13 @@ class ViewReport(BaseModel):
 class RunLog(BaseModel):
     """One execution's own directory: its log, its answer, and what it saw.
 
-    The rotating `controller.log` answers "what has this machine been doing";
-    this answers "what did *that* run do", which is the question anyone looking
-    into a bad round actually has. Both stay, because neither is the other:
-    picking one run out of a rotating file means reading past everything that
-    came before it, and a per-run directory cannot show a pattern across a week.
+    This answers "what did *that* run do", which is the question anyone looking
+    into a bad round actually has. A rotating `controller.log` used to sit
+    beside it answering "what has this machine been doing"; it was removed
+    because the directory names answer that already — they are `<when>-<what>`,
+    so a listing is the history — and because `grep -r` across the run logs
+    finds a pattern over a week while naming which run each hit came from,
+    which a merged file cannot.
 
     It exists because the layout was a convention rather than a feature. The
     skills told a session to build this directory with shell redirection, so it

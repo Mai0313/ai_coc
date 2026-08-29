@@ -68,8 +68,8 @@ from ai_coc.models import (
 )
 from ai_coc.prompts import PROMPTS, render
 from ai_coc.constants import (
+    LOG_DIR,
     APP_NAME,
-    LOG_PATH,
     NUDGE_MS,
     NUDGE_TO,
     NUDGE_ROW,
@@ -167,8 +167,14 @@ def migrate_settings() -> None:
 
 
 class MainWindow(QMainWindow):
-    def __init__(self) -> None:
+    def __init__(self, session: RunLog | None = None) -> None:
         super().__init__()
+        # The run `main()` opened for the window itself. Every job opens one of
+        # its own and hands the log back here when it ends, so without this the
+        # window's own lines — the preview, the chat, the next cycle's setup —
+        # would go to no file at all between jobs, which on the packaged build
+        # means the in-memory panel and nothing else.
+        self.session = session
         self.setWindowTitle(f"{APP_NAME} — {VERSION_LABEL}")
         self.resize(1260, 820)
         self.pool = QThreadPool.globalInstance()
@@ -264,9 +270,12 @@ class MainWindow(QMainWindow):
         self.log_level.currentTextChanged.connect(self._set_log_level)
         clear = QPushButton("清除")
         clear.clicked.connect(self.log_view.clear)
-        open_log = QPushButton("開啟記錄檔")
+        open_log = QPushButton("開啟記錄資料夾")
+        # The directory rather than one file: every run keeps its own, named
+        # `<when>-<what>`, so the listing is the history and the newest is the
+        # one at the top.
         open_log.clicked.connect(
-            lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(str(LOG_PATH)))
+            lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(str(LOG_DIR)))
         )
         row.addWidget(QLabel("等級"))
         row.addWidget(self.log_level)
@@ -282,7 +291,7 @@ class MainWindow(QMainWindow):
         self.log_bridge = LogBridge()
         self.log_bridge.message.connect(self._append_log)
         logging.getLogger().addHandler(UiLogHandler(self.log_bridge))
-        logger.info("%s %s started, log file: %s", APP_NAME, VERSION_LABEL, LOG_PATH)
+        logger.info("%s %s started, logs under: %s", APP_NAME, VERSION_LABEL, LOG_DIR)
 
     def _append_log(self, html: str) -> None:
         """Append one rich-rendered record, without yanking the view off what is being read."""
@@ -806,11 +815,12 @@ class MainWindow(QMainWindow):
 
         def finished() -> None:
             self.attack_running = False
-            # This run is over, so its file closes here. Without it every later
-            # line the window logs — the preview, the chat, the next cycle's own
-            # setup — keeps landing in a finished battle's `run.log`, which is
-            # the one file someone opens to reconstruct that battle.
-            configure_logging(None)
+            # This run is over, so the log goes back to the window's own. Without
+            # that every later line the window writes — the preview, the chat,
+            # the next cycle's own setup — keeps landing in a finished battle's
+            # `run.log`, which is the one file someone opens to reconstruct that
+            # battle; and handing back None instead would leave them nowhere.
+            configure_logging(self.session)
             self._queue_next_cycle()
 
         self.automation_log.appendPlainText("開始搜尋對手…")
