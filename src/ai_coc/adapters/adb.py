@@ -246,10 +246,11 @@ class AdbController(BaseModel):
 
         `input` cannot do two fingers, so a pinch has to be written straight to
         the kernel with `sendevent` — and that goes to a device node rather than
-        to a display, so nothing routes it the way `input -d` is routed. MuMu
-        publishes one touchscreen per display and does not say which is which,
-        so the pinch is sent to all of them: the game answers on its own and the
-        rest are a launcher nobody is looking at.
+        to a display, so nothing routes it the way `input -d` is routed.
+
+        Which node belongs to which display is what `touch_device_for` answers;
+        this is the fallback for when that cannot be worked out, and sending to
+        all of them is not harmless — see there.
 
         An empty list is a failure rather than a quiet nothing — a pinch with
         nowhere to send it would otherwise report a zoom that never happened.
@@ -264,33 +265,84 @@ class AdbController(BaseModel):
         logger.debug("Multi-touch nodes: %s", nodes)
         return nodes
 
+    def touch_device_for(self, display: DisplayTarget) -> str | None:
+        """The one touch node bound to this display, or None if it cannot be told.
+
+        **Android knows this and says so**, which is worth spelling out because
+        the first version of the pinch assumed the opposite and sent every
+        gesture to every node. That is not harmless: MuMu keeps a launcher on
+        its other displays, and two fingers landing there switch away from the
+        foreground app — observed live, a zoom that worked and left the emulator
+        showing the launcher with the game behind it.
+
+        The chain is three hops through `dumpsys input`, each one printed by the
+        system rather than guessed:
+
+        - the InputReader device whose viewport carries `uniqueId=local:<the
+          display's physical id>`, which is the same number `display_for`
+          already returns;
+        - its `EventHub Devices: [ N ]`;
+        - the EventHub entry headed `N:` whose `Path:` is the node.
+
+        None rather than a guess when any hop is missing, because the caller's
+        fallback — every node, then relaunch the game — is survivable, while a
+        pinch aimed at the wrong display silently does nothing to the camera it
+        was meant to fix.
+        """
+        dump = self.shell("dumpsys input 2>/dev/null")
+        reader = re.search(
+            rf"EventHub Devices:\s*\[\s*(\d+)[^\]]*\](?:(?!EventHub Devices).)*?"
+            rf"uniqueId=local:{display.physical_id}\b",
+            dump,
+            re.S,
+        )
+        if reader is None:
+            logger.debug("No input device is reported against display %s", display.physical_id)
+            return None
+        path = re.search(rf"\n\s*{reader.group(1)}:[^\n]*\n(?:[^\n]*\n)*?\s*Path:\s*(\S+)", dump)
+        if path is None:
+            logger.debug("EventHub device %s reports no path", reader.group(1))
+            return None
+        logger.debug("Display %s is driven by %s", display.physical_id, path.group(1))
+        return path.group(1)
+
     def pinch(
         self,
         first: tuple[tuple[int, int], tuple[int, int]],
         second: tuple[tuple[int, int], tuple[int, int]],
         steps: int = PINCH_STEPS,
+        node: str | None = None,
     ) -> None:
         """Two fingers, each moving from its own start to its own end.
 
         Screen coordinates, like everything else here; `pinch_events` owns the
-        protocol and the reasons for it. The same stream goes to every
-        multi-touch node, because `sendevent` addresses a device rather than a
-        display and nothing says which node is the game's.
+        protocol and the reasons for it.
+
+        `node` is the one to send to. Without it the stream goes to every
+        multi-touch node, which reaches the game but also the launcher MuMu
+        keeps on its other displays — see `touch_device_for` for why that is
+        not free.
         """
-        nodes = self.touch_devices()
+        nodes = [node] if node else self.touch_devices()
         if not nodes:
             raise AdbControlError(f"{self.serial} 找不到任何多點觸控裝置，縮放送不出去")
         stream = pinch_events(first, second, steps)
-        logger.info("Pinch %s %s and %s", self.serial, first, second)
-        for node in nodes:
+        logger.info("Pinch %s %s and %s on %s", self.serial, first, second, nodes)
+        for target in nodes:
             self.shell(
                 " ; ".join(
-                    f"sendevent {node} {kind} {code} {value}" for kind, code, value in stream
+                    f"sendevent {target} {kind} {code} {value}" for kind, code, value in stream
                 ),
                 timeout=30,
             )
 
-    def zoom(self, direction: str, times: int = 1, package: str = "") -> None:
+    def zoom(
+        self,
+        direction: str,
+        times: int = 1,
+        package: str = "",
+        display: DisplayTarget | None = None,
+    ) -> None:
         """Pinch the camera in or out, however many times.
 
         **Zooming out past the far limit does nothing at all**, which is what
@@ -300,24 +352,28 @@ class AdbController(BaseModel):
         else moving in it. So the way to be at the far limit is to ask for it
         rather than to check for it.
 
-        **`package` is what brings the game back afterwards, and it is not
-        optional in practice.** A pinch goes to every multi-touch node, because
-        `sendevent` addresses a device and nothing says which node is the game's
-        — so the same two fingers land on the launcher MuMu keeps on its other
-        display, where a two-finger gesture switches away from the foreground
-        app. Observed live: the zoom worked, and the emulator was left showing
-        the launcher with Clash of Clans in the background, so every command
-        after it was tapping at a home screen. Relaunching is cheap and does
-        nothing to a game already in front.
+        **`display` is what keeps the gesture off the other screens.** A pinch
+        with nowhere to aim goes to every multi-touch node, and MuMu keeps a
+        launcher on its other displays where two fingers switch away from the
+        foreground app — observed live, a zoom that worked and left the emulator
+        showing the launcher with the game behind it. Given a display, the
+        gesture goes to that display's node alone and nothing else sees it.
+
+        **`package` is the belt to that pair of braces.** It relaunches the game
+        afterwards, which costs nothing when it is already in front, and covers
+        the case where the node could not be worked out and the pinch had to go
+        everywhere after all.
         """
+        node = self.touch_device_for(display) if display is not None else None
         near = ((800 - PINCH_NEAR, PINCH_ROW), (800 + PINCH_NEAR, PINCH_ROW))
         far = ((800 - PINCH_FAR, PINCH_ROW), (800 + PINCH_FAR, PINCH_ROW))
         # Fingers converging is the game zooming out, which widens the view.
         starts, ends = (far, near) if direction == "out" else (near, far)
         for _ in range(times):
-            self.pinch((starts[0], ends[0]), (starts[1], ends[1]))
+            self.pinch((starts[0], ends[0]), (starts[1], ends[1]), node=node)
             time.sleep(PINCH_SETTLE)
-        if package:
+        # Skipped when the gesture was aimed, because then nothing else saw it.
+        if package and node is None:
             self.launch_app(package)
             time.sleep(PINCH_SETTLE)
 
