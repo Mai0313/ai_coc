@@ -1803,7 +1803,13 @@ class RestartEveryTests(unittest.TestCase):
     def _idle() -> MagicMock:
         return MagicMock(stock_full=False, attacked=None)
 
-    def _play(self, reports: list[MagicMock], options: AttackOptions, every: int) -> MagicMock:
+    def _play(
+        self,
+        reports: list[MagicMock],
+        options: AttackOptions,
+        every: int,
+        played: AttackPlan | None = None,
+    ) -> MagicMock:
         """Run the loop over a fixed list of rounds and hand back the restart mock."""
         with (
             patch.object(commands, "_controller"),
@@ -1817,8 +1823,66 @@ class RestartEveryTests(unittest.TestCase):
             patch.object(commands, "_restart_emulator", return_value=True) as restart,
         ):
             runner.return_value.run.side_effect = reports
+            runner.return_value.played = played
             self.series = commands.attack(options)
         return restart
+
+    def test_every_round_leaves_its_own_plan_behind(self) -> None:
+        """`--plan-out` keeps whichever round went last and overwrites the rest.
+
+        Which line a given round drew is otherwise unanswerable: `run.log` has a
+        one-line summary of it, and the frames cannot stand in, since a drop is
+        over inside the gap between two captures.
+        """
+        with tempfile.TemporaryDirectory() as td:
+            kept = Path(td) / "plans"
+            kept.mkdir()
+            self._play(
+                [self._fought()] * 3,
+                AttackOptions(rounds=3, plan_dir=kept),
+                every=0,
+                played=plans.flat(),
+            )
+            # Three digits, not two: `--repeat 0` runs until it is stopped, and
+            # an overnight series at a few minutes a round passes a hundred —
+            # where `round-100` sorts between `round-10` and `round-11` in the
+            # plain listing this directory is meant to be read as.
+            assert sorted(path.name for path in kept.iterdir()) == [
+                "round-001.json",
+                "round-002.json",
+                "round-003.json",
+            ]
+            assert plans.load(kept / "round-002.json") == plans.flat()
+
+    def test_a_round_that_never_got_a_plan_leaves_no_file(self) -> None:
+        """A round can end before there is a tactic to write down, and that is not
+        an error: an empty file would read as a plan that drew nothing.
+        """
+        with tempfile.TemporaryDirectory() as td:
+            kept = Path(td) / "plans"
+            kept.mkdir()
+            self._play([self._fought()], AttackOptions(rounds=1, plan_dir=kept), every=0)
+            assert list(kept.iterdir()) == []
+
+    def test_a_round_does_not_inherit_the_last_one_s_plan(self) -> None:
+        """One runner plays every round, so `played` has to be cleared with the rest.
+
+        Rounds that never reach the planner are ordinary — no opponent above the
+        thresholds, an army under `MIN_ARMY_RATIO`, the attack menu not opening.
+        Carried over, each would be filed under its own number holding the
+        previous round's tactic, which is worse than the absent file it replaces:
+        a `--plan-in` or flat-fallback series writes identical plans round after
+        round, so nothing downstream could tell a stale copy from a real one.
+        """
+        runner = AttackRunner(
+            adb=AdbController(endpoint=AdbEndpoint(port=16384)),
+            display=DisplayTarget(logical_id="1", physical_id="2"),
+            thresholds=LootThresholds(),
+        )
+        runner._played = plans.flat()
+        with patch.object(AttackRunner, "_open_attack_menu", return_value=None):
+            runner.run()
+        assert runner.played is None
 
     def test_the_restart_counts_battles_rather_than_rounds(self) -> None:
         """A round spent waiting for barracks did not tire the emulator out.

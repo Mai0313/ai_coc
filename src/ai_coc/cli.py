@@ -185,6 +185,7 @@ def _run_command(arguments: argparse.Namespace, run: RunLog) -> int:
                 frame_dir=run.frames,
                 plan_in=arguments.plan_in,
                 plan_out=arguments.plan_out,
+                plan_dir=run.plans,
                 minimums=LootOverrides(
                     min_gold=arguments.min_gold,
                     min_elixir=arguments.min_elixir,

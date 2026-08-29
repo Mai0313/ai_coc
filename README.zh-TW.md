@@ -151,6 +151,7 @@ ai_coc view --zoom out                # 把鏡頭拉回所有座標當初量測�
 ~/.ai_coc/logs/2026-08-29-011423-attack/
 ├── run.log        # 這一次的紀錄, 不摻別的
 ├── result.json    # 這個指令回答了什麼
+├── plans/         # 只有 ai_coc attack 有: 每打一場一個檔案, 那一場用的戰術
 └── frames/        # 只有 --record 才有
 ```
 
