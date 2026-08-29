@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import re
+import time
 from typing import TYPE_CHECKING
 import logging
 
@@ -42,6 +43,17 @@ FIRST_TRACKING_ID = 100
 # How many moves the gesture is broken into. One jump from start to end reads as
 # a teleport and the game keeps the scale it started at.
 PINCH_STEPS = 16
+# Where a pinch puts its two fingers, and how far they travel. Centred on the
+# playfield so the zoom keeps the village in view, and wide enough that the game
+# reads it as a gesture rather than as two taps.
+#
+# Here rather than beside `view`, because everything that drives the game needs
+# to be able to put the camera back and `commands` already imports the `ui`
+# layer — a caller in `ui` reaching the other way would be a cycle.
+PINCH_NEAR, PINCH_FAR = 150, 500
+PINCH_ROW = 450
+# How long the camera takes to settle after one.
+PINCH_SETTLE = 1.5
 
 
 class AdbControlError(RuntimeError):
@@ -277,6 +289,24 @@ class AdbController(BaseModel):
                 ),
                 timeout=30,
             )
+
+    def zoom(self, direction: str, times: int = 1) -> None:
+        """Pinch the camera in or out, however many times.
+
+        **Zooming out past the far limit does nothing at all**, which is what
+        makes `out` safe to send without knowing where the camera currently is
+        — and knowing is not on offer, since the game reports no zoom level and
+        every attempt here to read one off a frame was defeated by something
+        else moving in it. So the way to be at the far limit is to ask for it
+        rather than to check for it.
+        """
+        near = ((800 - PINCH_NEAR, PINCH_ROW), (800 + PINCH_NEAR, PINCH_ROW))
+        far = ((800 - PINCH_FAR, PINCH_ROW), (800 + PINCH_FAR, PINCH_ROW))
+        # Fingers converging is the game zooming out, which widens the view.
+        starts, ends = (far, near) if direction == "out" else (near, far)
+        for _ in range(times):
+            self.pinch((starts[0], ends[0]), (starts[1], ends[1]))
+            time.sleep(PINCH_SETTLE)
 
     def back(self, display: DisplayTarget) -> None:
         logger.info("Back key on %s display %s", self.serial, display.logical_id)

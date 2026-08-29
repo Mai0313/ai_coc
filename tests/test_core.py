@@ -1110,6 +1110,42 @@ class AttackTests(unittest.TestCase):
         assert self._watched(opening, [None, None])[1]._seen is None
         assert self._watched(opening, [stuck, None])[1]._seen == opening
 
+    def _zoomed(self, before: bytes, after: bytes) -> tuple[MagicMock, list[str]]:
+        """Run the pre-battle zoom over two canned frames; the adb mock and the warnings."""
+        runner = self._runner()
+        runner.adb = MagicMock()
+        with (
+            patch.object(AttackRunner, "_frame", return_value=after),
+            patch.object(attack.logger, "warning") as warned,
+        ):
+            runner._settle_zoom(before)
+        return runner.adb, [str(call.args[0]) for call in warned.call_args_list]
+
+    def test_the_camera_is_put_back_at_the_far_zoom_every_round(self) -> None:
+        """Asked for rather than checked, because there is nothing to check against.
+
+        The game reports no zoom level, and reading one off a frame was defeated
+        twice — the deployment boundary shrinks as buildings fall, and the
+        village ground gets covered by whatever panel the game opens. Zooming out
+        past the limit does nothing, so the way to be there is to ask.
+        """
+        adb, _ = self._zoomed(b"x" * 400_000, b"x" * 400_000)
+        adb.zoom.assert_called_once_with("out", attack.ZOOM_PINCHES)
+
+    def test_a_pinch_that_changed_the_screen_is_the_evidence_it_had_drifted(self) -> None:
+        """The safety net is also the only detector available.
+
+        A pinch that moves the picture means the camera was not at the limit,
+        which is what turns "it looked zoomed in that one time" into a line in
+        the log with a round against it. One live round came back spanning
+        1481x411 where every other round of that run was 535 to 572 tall — a
+        village grown too big for the screen and clipped — and it deployed
+        nothing.
+        """
+        assert not self._zoomed(b"x" * 400_000, b"x" * 405_000)[1]
+        drifted = self._zoomed(b"x" * 400_000, b"x" * 340_000)[1]
+        assert any("far zoom" in line for line in drifted)
+
     def _settled(self, box: tuple[int, int, int, int]) -> list[tuple[int, int]]:
         """Every drag `_settle_camera` asks for, given a village measured at `box`."""
         return self._dragged(box, lambda runner: runner._settle_camera(b""))[0]
@@ -1315,6 +1351,8 @@ class AttackTests(unittest.TestCase):
 
         with (
             patch.object(AttackRunner, "_settle_camera", side_effect=lambda frame: frame),
+            # The zoom that runs before it wants a real emulator to pinch.
+            patch.object(AttackRunner, "_settle_zoom", side_effect=lambda frame: frame),
             patch.object(attack, "card_groups", return_value=[[100], singles]),
             patch.object(attack, "counted_cards", return_value=[]),
             patch.object(attack, "freeze_cards", return_value=[]),
@@ -1777,7 +1815,7 @@ class RestartEveryTests(unittest.TestCase):
         # A restarted game comes back zoomed in, and every coordinate in this
         # project was measured at the far limit — without this the run keeps
         # going and deploys nothing for the rest of the night.
-        assert adb.pinch.call_count == commands.RESTART_ZOOM_PINCHES
+        adb.zoom.assert_called_once_with("out", commands.RESTART_ZOOM_PINCHES)
 
     def test_a_game_with_no_window_yet_is_waited_out_rather_than_given_up_on(self) -> None:
         """`display_for` raises while the game has no focused window, which is
