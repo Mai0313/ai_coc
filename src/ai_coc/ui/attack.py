@@ -200,6 +200,18 @@ MIN_LINE_RADIUS = 300
 # has genuinely been left somewhere else.
 CAMERA_TOLERANCE = 60
 CAMERA_ATTEMPTS = 2
+# Putting the camera back at the far zoom before every battle, and how much of a
+# change in the frame counts as evidence it had drifted there. Two pinches
+# because `view` measured one as covering the whole range and a second as doing
+# nothing, so this is that plus a spare; the whole thing costs about three
+# seconds against a battle of three minutes.
+#
+# The threshold is in PNG bytes. A screen at a different zoom re-encodes to a
+# very different size — the frames either side of a real drift differed by tens
+# of kilobytes — while the same scene twice differs only by whatever moved in
+# the two seconds between them. 20 KB sits well clear of the second.
+ZOOM_PINCHES = 2
+ZOOM_CHANGED = 20_000
 CAMERA_GRIP = (800, 400)
 CAMERA_DRAG_MS = 350
 CAMERA_SETTLE = 1.5
@@ -921,6 +933,38 @@ class AttackRunner(BaseModel):
         )
         return moved
 
+    def _settle_zoom(self, frame: bytes) -> bytes:
+        """Put the camera back at the far limit, and say whether it had left.
+
+        **Asked for rather than checked**, because there is nothing to check
+        against: the game reports no zoom level, and every attempt to read one
+        off a frame here was defeated by something else moving in it — the
+        deployment boundary shrinks as buildings fall, the village ground gets
+        covered by whatever panel the game feels like opening. What is known is
+        that zooming out past the far limit does nothing at all, so the way to
+        be there is to ask, every round, without knowing where you were.
+
+        The comparison afterwards is the other half. A pinch that changes the
+        screen means the camera was **not** at the limit, which is the only
+        evidence available that it drifts at all — one live round came back
+        spanning 1481x411 against 535 to 572 every other round, the shape of a
+        village grown too big for the screen and clipped top and bottom, and the
+        run that produced it deployed nothing. Without this that stays an
+        anecdote; with it, every occurrence is in the log with a round against it.
+        """
+        self.adb.zoom("out", ZOOM_PINCHES)
+        settled = self._frame("zoomed")
+        # Byte length rather than a pixel walk: a PNG of the same scene at a
+        # different zoom differs by a lot more than encoder noise, and this runs
+        # every round.
+        if abs(len(settled) - len(frame)) > ZOOM_CHANGED:
+            logger.warning(
+                "The camera was not at the far zoom; pinched out (frame %d -> %d bytes)",
+                len(frame),
+                len(settled),
+            )
+        return settled
+
     def _settle_camera(self, frame: bytes) -> bytes:
         """Put the village in the middle of the screen, and hand back what it looks like.
 
@@ -1005,7 +1049,10 @@ class AttackRunner(BaseModel):
 
     def _deploy(self, frame: bytes) -> None:
         """Spread the main troops along one flank; everything else drops once, mid-line."""
-        frame = self._settle_camera(frame)
+        # Zoom before centring, and not the other way round: centring measures
+        # the village against the screen, so it has to be looking at the view
+        # every one of those numbers was taken at.
+        frame = self._settle_camera(self._settle_zoom(frame))
         groups = card_groups(frame)
         if not groups:
             logger.warning("No cards found on the battle row; nothing to deploy")

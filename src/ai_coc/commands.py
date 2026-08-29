@@ -328,23 +328,6 @@ RESTART_POLLS = 45
 RESTART_POLL_GAP = 4.0
 
 
-def _pinch_camera(adb: AdbController, zoom: str, times: int) -> None:
-    """The pinch itself, so the restart can reach it without going through `view`.
-
-    `view` resolves its own controller, which a restart must not do — it already
-    holds the one `launch` just handed it, and `_controller` would enumerate the
-    instances again and fire a second `monkey`.
-    """
-    middle = 800
-    near = ((middle - PINCH_NEAR, PINCH_ROW), (middle + PINCH_NEAR, PINCH_ROW))
-    far = ((middle - PINCH_FAR, PINCH_ROW), (middle + PINCH_FAR, PINCH_ROW))
-    # Fingers converging is the game zooming out, which widens the view.
-    starts, ends = (far, near) if zoom == "out" else (near, far)
-    for _ in range(times):
-        adb.pinch((starts[0], ends[0]), (starts[1], ends[1]))
-        time.sleep(PINCH_SETTLE)
-
-
 # How many pinches to spend putting the camera back. `view`'s docstring measured
 # one gesture as covering the whole range and a second as changing nothing, so
 # two is that plus a spare — the cost is a second and the alternative is every
@@ -391,7 +374,7 @@ def _settle_game(
             waiting = "the game is not on a display yet"
         else:
             if read_stock(adb.screenshot(display)) is not None:
-                _pinch_camera(adb, "out", RESTART_ZOOM_PINCHES)
+                adb.zoom("out", RESTART_ZOOM_PINCHES)
                 return display
             waiting = "the village has not painted yet"
         logger.debug("Still waiting for the game: %s", waiting)
@@ -940,13 +923,6 @@ def donate(frame_dir: Path | None = None, dry_run: bool = False, rounds: int = 0
     return report
 
 
-# Where a pinch puts its two fingers, and how far they travel. Centred on the
-# playfield so the zoom keeps the village in view, and wide enough that the game
-# reads it as a gesture rather than as two taps.
-PINCH_NEAR, PINCH_FAR = 150, 500
-PINCH_ROW = 450
-
-
 def view(zoom: str = "out", times: int = 3) -> ViewReport:
     """Zoom the village camera, with no window in the way.
 
@@ -960,7 +936,7 @@ def view(zoom: str = "out", times: int = 3) -> ViewReport:
     Measured live, one pinch covers the whole range: from fully zoomed in, a
     single gesture came back to the far limit and a second changed nothing.
     """
-    _pinch_camera(_controller(), zoom, times)
+    _controller().zoom(zoom, times)
     report = ViewReport(message=f"鏡頭{'拉遠' if zoom == 'out' else '拉近'}了 {times} 次")
     logger.info("View: %s", report.message)
     return report
