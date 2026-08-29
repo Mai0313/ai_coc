@@ -609,6 +609,39 @@ class ConfigTests(unittest.TestCase):
             store.save(saved)
             assert store.load() == saved
 
+    def test_a_setting_nothing_reads_any_more_is_dropped_from_the_file(self) -> None:
+        """A key left behind reads as one still being honoured, and is not.
+
+        `timings` stayed in every existing file for a release after every clock
+        moved onto the plan, so someone editing 大守護者's thirty seconds there
+        would have been editing nothing at all. Pydantic ignoring the key is
+        what keeps the upgrade from failing; rewriting the file is what stops it
+        lying about what the run will do.
+        """
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "config.json"
+            path.write_text(
+                json.dumps({"restart_every": 7, "timings": {"queen": 1, "warden": 30}}),
+                encoding="utf-8",
+            )
+            config = ConfigStore(path=path).load()
+            written = json.loads(path.read_text(encoding="utf-8"))
+        assert config.restart_every == 7
+        assert "timings" not in written
+        # And a key the file never had is filled in, so it reads as what this run
+        # will actually do rather than as what happened to be saved once.
+        assert written["keepalive_seconds"] == AppConfig().keepalive_seconds
+
+    def test_a_file_already_matching_the_model_is_left_alone(self) -> None:
+        """Rewriting on every load would touch the file a run only ever reads."""
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "config.json"
+            store = ConfigStore(path=path)
+            store.save(AppConfig(restart_every=7))
+            stamp = path.stat().st_mtime_ns
+            assert store.load().restart_every == 7
+            assert path.stat().st_mtime_ns == stamp
+
     def test_a_file_that_will_not_parse_raises_rather_than_farming_on_defaults(self) -> None:
         """Silently defaulting is the failure this file was added to close."""
         with tempfile.TemporaryDirectory() as td:
