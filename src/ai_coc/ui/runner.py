@@ -169,7 +169,7 @@ class GameRunner(BaseModel):
         tapped anything on it. A pinch between wall batches would only be
         spending three seconds to confirm what this one already settled.
         """
-        self.adb.zoom("out", ZOOM_PINCHES, COC_PACKAGE)
+        self.adb.zoom("out", ZOOM_PINCHES, COC_PACKAGE, self.display)
 
     def _home(self) -> VillageStock | None:
         """The village's storages, once nothing is covering the village any more.

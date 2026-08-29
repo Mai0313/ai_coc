@@ -207,12 +207,14 @@ CAMERA_ATTEMPTS = 2
 # nothing, so this is that plus a spare; the whole thing costs about three
 # seconds against a battle of three minutes.
 #
-# The threshold is in PNG bytes. A screen at a different zoom re-encodes to a
-# very different size — the frames either side of a real drift differed by tens
-# of kilobytes — while the same scene twice differs only by whatever moved in
-# the two seconds between them. 20 KB sits well clear of the second.
+# How short the village has to read before the pinch to say the camera had
+# drifted. Swept over a day of live rounds, every healthy one measured 500 to
+# 572 px tall and the single round that deployed nothing measured 411 — a
+# village grown too big for the screen and clipped at top and bottom. 470 sits
+# between them with room on both sides. This is only ever reported, never acted
+# on: the pinch has already happened.
 ZOOM_PINCHES = 2
-ZOOM_CHANGED = 20_000
+ZOOM_CLIPPED = 470
 CAMERA_GRIP = (800, 400)
 CAMERA_DRAG_MS = 350
 CAMERA_SETTLE = 1.5
@@ -945,26 +947,34 @@ class AttackRunner(BaseModel):
         that zooming out past the far limit does nothing at all, so the way to
         be there is to ask, every round, without knowing where you were.
 
-        The comparison afterwards is the other half. A pinch that changes the
-        screen means the camera was **not** at the limit, which is the only
-        evidence available that it drifts at all — one live round came back
-        spanning 1481x411 against 535 to 572 every other round, the shape of a
-        village grown too big for the screen and clipped top and bottom, and the
-        run that produced it deployed nothing. Without this that stays an
-        anecdote; with it, every occurrence is in the log with a round against it.
+        The report afterwards is the other half, and it goes by **the height of
+        the deployment boundary before the pinch**. That is the one measurement
+        of this that survived contact with a live run:
+
+        - **Not the width.** Every round faces a different opponent, and their
+          villages are their own widths — swept over one day the widths ran 909
+          to 1560 while nothing was wrong.
+        - **Not the frame's byte length.** Tried first, and it cried wolf on its
+          second live round: 30 KB apart with the village measuring 549 and 559,
+          which is two seconds of animation rather than a changed camera.
+        - **The height.** A village too big for the screen is clipped top and
+          bottom, so it reads short whatever the opponent's layout. Every
+          healthy round of that day fell in 500 to 572; the one round that
+          deployed nothing came back 411.
+
+        An unreadable frame reports nothing rather than guessing. The pinch has
+        already happened by then, so the correction never depends on it.
         """
-        self.adb.zoom("out", ZOOM_PINCHES, COC_PACKAGE)
-        settled = self._frame("zoomed")
-        # Byte length rather than a pixel walk: a PNG of the same scene at a
-        # different zoom differs by a lot more than encoder noise, and this runs
-        # every round.
-        if abs(len(settled) - len(frame)) > ZOOM_CHANGED:
+        before = village_box(frame)
+        self.adb.zoom("out", ZOOM_PINCHES, COC_PACKAGE, self.display)
+        if before is not None and before[3] - before[1] < ZOOM_CLIPPED:
             logger.warning(
-                "The camera was not at the far zoom; pinched out (frame %d -> %d bytes)",
-                len(frame),
-                len(settled),
+                "The camera was not at the far zoom: the village measured %d tall before the "
+                "pinch, against %d for one that fits on screen",
+                before[3] - before[1],
+                ZOOM_CLIPPED,
             )
-        return settled
+        return self._frame("zoomed")
 
     def _settle_camera(self, frame: bytes) -> bytes:
         """Put the village in the middle of the screen, and hand back what it looks like.
