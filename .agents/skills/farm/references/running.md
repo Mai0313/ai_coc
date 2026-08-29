@@ -18,6 +18,7 @@ uv run ai_coc attack --repeat 0 --record
 ~/.ai_coc/logs/2026-08-29-011423-attack/
 ├── run.log        # 這次執行的完整紀錄, 純文字
 ├── result.json    # 這次的答案, 跑完才會有內容
+├── plans.jsonl    # 只有 attack 有: 一場一行, 那一場的整份戰術
 └── frames/        # 只有 --record 才有
 ```
 
@@ -36,6 +37,8 @@ uv run ai_coc attack --repeat 0 --record
 - `WARNING` 跟 `ERROR` 是真的要看的
 
 **幾分鐘看一次就好.** 一輪四五分鐘, 每三十秒去 tail 一次只是在浪費 context, 而且中間本來就沒有新東西. 背景指令跑完的時候會通知你, 那才是必須處理的時刻.
+
+`plans.jsonl` 在同一個目錄, 也是純文字, 一場一行, 內容是那一輪 AI 回答的整份戰術. `jq -c 'select(.round==3)' plans.jsonl` 拿一輪出來看, `jq -r '"\(.round) \(.plan.deploy_from)"' plans.jsonl` 一眼看完整批打了哪些側邊. **一輪打壞的時候先讀它**, 因為它直接說出「這輪打算怎麼打」, 而 `run.log` 說的是「實際做了什麼」, 兩份對照才知道問題在指揮還是在執行.
 
 `~/.ai_coc/logs/controller.log` 是**所有執行混在一起**的那一份, 會轉檔. 它回答的是另一個問題: 這台機器最近都在做什麼. 要在某一次跑裡面找東西就看那次自己的 `run.log`, 要跨好幾次跑找模式才來翻它.
 

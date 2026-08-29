@@ -609,6 +609,48 @@ class ConfigTests(unittest.TestCase):
             store.save(saved)
             assert store.load() == saved
 
+    def test_a_setting_nothing_reads_any_more_is_dropped_from_the_file(self) -> None:
+        """A key left behind reads as one still being honoured, and is not.
+
+        `timings` stayed in every existing file for a release after every clock
+        moved onto the plan, so someone editing 大守護者's thirty seconds there
+        would have been editing nothing at all. Pydantic ignoring the key is
+        what keeps the upgrade from failing; rewriting the file is what stops it
+        lying about what the run will do.
+        """
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "config.json"
+            path.write_text(
+                json.dumps({"restart_every": 7, "timings": {"queen": 1, "warden": 30}}),
+                encoding="utf-8",
+            )
+            config = ConfigStore(path=path).load()
+            written = json.loads(path.read_text(encoding="utf-8"))
+        assert config.restart_every == 7
+        assert "timings" not in written
+        # What it parsed is what it wrote. Rewriting `AppConfig()` instead would
+        # pass every other assertion here while wiping the user's settings, and
+        # this call is the first thing that runs after an upgrade.
+        assert written["restart_every"] == 7
+        # And a key the file never had is filled in, so it reads as what this run
+        # will actually do rather than as what happened to be saved once.
+        assert written["keepalive_seconds"] == AppConfig().keepalive_seconds
+
+    def test_a_file_already_matching_the_model_is_left_alone(self) -> None:
+        """Rewriting on every load would touch the file a run only ever reads.
+
+        Spying on `save` rather than watching the mtime: Windows advances a
+        file's last-write time on the ~15.6 ms system tick rather than per
+        write, so a timestamp comparison is asking the clock a question about
+        the code, and this suite runs on Windows alone.
+        """
+        with tempfile.TemporaryDirectory() as td:
+            store = ConfigStore(path=Path(td) / "config.json")
+            store.save(AppConfig(restart_every=7))
+            with patch.object(ConfigStore, "save") as saved:
+                assert store.load().restart_every == 7
+            saved.assert_not_called()
+
     def test_a_file_that_will_not_parse_raises_rather_than_farming_on_defaults(self) -> None:
         """Silently defaulting is the failure this file was added to close."""
         with tempfile.TemporaryDirectory() as td:
