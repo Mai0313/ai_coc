@@ -1338,8 +1338,9 @@ class AttackRunner(BaseModel):
         # hero: measured across all three rounds of a recorded run, the 攻城戰車
         # landed and `field_units` read its card as a hero on the very next
         # frame. That put a slot in front of every real hero, so the queen went
-        # out on the king's twenty seconds where her cloak wants one and the
-        # warden on the duke's, ten seconds before its tome is worth anything.
+        # out on the king's twenty seconds where her cloak wants one. She was
+        # the whole cost on that army, whose other three all want about twenty
+        # anyway; one carrying a warden or a champion pays on every card.
         # The bar stays as the answer when there is no plan to count, where
         # every card takes the same delay anyway and a tap on a spent siege
         # card costs nothing.
