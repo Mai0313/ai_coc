@@ -81,6 +81,11 @@ BACK_SETTLE = 1.2
 # the reload to sit through before looking at the screen again.
 RESTART_SETTLE = 2.0
 RELOAD_WAIT = 15.0
+# How many pinches to spend putting the camera back at the far zoom. `view`
+# measured one as covering the whole range and a second as doing nothing, so
+# this is that plus a spare — three seconds against a run that spends minutes
+# sweeping the village.
+ZOOM_PINCHES = 2
 
 
 def restart_game(adb: AdbController, display: DisplayTarget) -> DisplayTarget:
@@ -143,6 +148,29 @@ class GameRunner(BaseModel):
         time.sleep(MENU_SETTLE)
         return self._frame(label)
 
+    def _settle_zoom(self) -> None:
+        """Put the camera back at the far zoom, once per village these loops see.
+
+        **Every one of these loops taps buildings by screen coordinate**, and
+        those were measured at the game's far zoom limit — the sweep grid, the
+        button row on an opened menu, a remembered `--at`. A camera that has
+        drifted off that zoom sends all of them somewhere else, and the failure
+        is silent: a tap lands on the ground and the loop simply reports that
+        nothing opened.
+
+        The camera does drift. Whatever moves it has not been pinned down, and
+        `AttackRunner` answers the same problem the same way, for the same
+        reason: the game reports no zoom level and reading one off a frame was
+        defeated twice, while zooming out past the limit costs nothing. So this
+        asks rather than checks.
+
+        Once per run, hung off the first village that reads, because that is the
+        moment the loop knows it is looking at the village and before it has
+        tapped anything on it. A pinch between wall batches would only be
+        spending three seconds to confirm what this one already settled.
+        """
+        self.adb.zoom("out", ZOOM_PINCHES, COC_PACKAGE)
+
     def _home(self) -> VillageStock | None:
         """The village's storages, once nothing is covering the village any more.
 
@@ -188,6 +216,8 @@ class GameRunner(BaseModel):
                 continue
             stock = read_stock(png)
             if stock is not None:
+                if not self._seen_village:
+                    self._settle_zoom()
                 self._seen_village = True
                 return stock
             if not self._seen_village and attempt < LOADING_PATIENCE:

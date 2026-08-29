@@ -1130,7 +1130,9 @@ class AttackTests(unittest.TestCase):
         past the limit does nothing, so the way to be there is to ask.
         """
         adb, _ = self._zoomed(b"x" * 400_000, b"x" * 400_000)
-        adb.zoom.assert_called_once_with("out", attack.ZOOM_PINCHES)
+        # The package goes with it: a pinch reaches the launcher MuMu keeps on
+        # its other display, where two fingers switch away from the game.
+        adb.zoom.assert_called_once_with("out", attack.ZOOM_PINCHES, attack.COC_PACKAGE)
 
     def test_a_pinch_that_changed_the_screen_is_the_evidence_it_had_drifted(self) -> None:
         """The safety net is also the only detector available.
@@ -1815,7 +1817,9 @@ class RestartEveryTests(unittest.TestCase):
         # A restarted game comes back zoomed in, and every coordinate in this
         # project was measured at the far limit — without this the run keeps
         # going and deploys nothing for the rest of the night.
-        adb.zoom.assert_called_once_with("out", commands.RESTART_ZOOM_PINCHES)
+        adb.zoom.assert_called_once_with(
+            "out", commands.RESTART_ZOOM_PINCHES, commands.COC_PACKAGE
+        )
 
     def test_a_game_with_no_window_yet_is_waited_out_rather_than_given_up_on(self) -> None:
         """`display_for` raises while the game has no focused window, which is
@@ -2225,6 +2229,9 @@ class HomeTests(unittest.TestCase):
             patch.object(shared, "idle_disconnected", return_value=False),
             patch.object(shared, "game_dialog", return_value=None),
             patch.object(shared, "read_stock", side_effect=reads),
+            # The first village that reads pinches the camera back out, which
+            # wants a real emulator. What these cases are about is `back`.
+            patch.object(shared.GameRunner, "_settle_zoom"),
             patch.object(AdbController, "back") as back,
         ):
             run._home()
@@ -2272,6 +2279,7 @@ class HomeTests(unittest.TestCase):
             patch.object(shared, "game_dialog", return_value=None),
             patch.object(shared, "read_stock", side_effect=[None, None, held]),
             patch.object(shared, "restart_game", return_value=run.display),
+            patch.object(shared.GameRunner, "_settle_zoom"),
             patch.object(AdbController, "back") as back,
         ):
             run._home()

@@ -290,7 +290,7 @@ class AdbController(BaseModel):
                 timeout=30,
             )
 
-    def zoom(self, direction: str, times: int = 1) -> None:
+    def zoom(self, direction: str, times: int = 1, package: str = "") -> None:
         """Pinch the camera in or out, however many times.
 
         **Zooming out past the far limit does nothing at all**, which is what
@@ -299,6 +299,16 @@ class AdbController(BaseModel):
         every attempt here to read one off a frame was defeated by something
         else moving in it. So the way to be at the far limit is to ask for it
         rather than to check for it.
+
+        **`package` is what brings the game back afterwards, and it is not
+        optional in practice.** A pinch goes to every multi-touch node, because
+        `sendevent` addresses a device and nothing says which node is the game's
+        — so the same two fingers land on the launcher MuMu keeps on its other
+        display, where a two-finger gesture switches away from the foreground
+        app. Observed live: the zoom worked, and the emulator was left showing
+        the launcher with Clash of Clans in the background, so every command
+        after it was tapping at a home screen. Relaunching is cheap and does
+        nothing to a game already in front.
         """
         near = ((800 - PINCH_NEAR, PINCH_ROW), (800 + PINCH_NEAR, PINCH_ROW))
         far = ((800 - PINCH_FAR, PINCH_ROW), (800 + PINCH_FAR, PINCH_ROW))
@@ -306,6 +316,9 @@ class AdbController(BaseModel):
         starts, ends = (far, near) if direction == "out" else (near, far)
         for _ in range(times):
             self.pinch((starts[0], ends[0]), (starts[1], ends[1]))
+            time.sleep(PINCH_SETTLE)
+        if package:
+            self.launch_app(package)
             time.sleep(PINCH_SETTLE)
 
     def back(self, display: DisplayTarget) -> None:
