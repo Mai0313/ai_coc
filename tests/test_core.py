@@ -1041,8 +1041,20 @@ class AttackTests(unittest.TestCase):
         """A card holding one troop must not drop it where every other card started."""
         line = deploy_line(LINE_POINTS)
         first, second = drop_points(line, 0), drop_points(line, 1)
-        assert len(set(first)) == DROPS_PER_PASS
+        # Every point on the line, and no point the pass never reaches: the pass
+        # is longer than the line so that one of them empties the card, and the
+        # stride is what keeps those circuits from bunching.
+        assert set(first) == set(line)
         assert first[0] != second[0]
+
+    def test_a_pass_outlasts_the_biggest_card_this_village_fields(self) -> None:
+        """One pass has to empty the card, or the tail of it lands on its own.
+
+        Measured on a live row of x9 dragons and x16 balloons at one circuit: the
+        first pass left four balloons, and they went down 1.4 seconds later —
+        behind the push, and balloons are slow.
+        """
+        assert DROPS_PER_PASS >= 16
 
     def test_the_stride_still_covers_the_whole_line(self) -> None:
         """Coprime with the line, or a pass walks a few points over and over."""

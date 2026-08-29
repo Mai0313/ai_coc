@@ -76,11 +76,31 @@ RETURN_HOME = (798, 768)
 # it carries, so four-at-a-time meant a twelve-giant card took three passes and
 # nine seconds of overhead to put down nine seconds' worth of troops; measured,
 # the whole troop deployment took 37 seconds and still left a card holding
-# something. A pass now walks the whole line, which is both the fastest way to
-# empty a card and the spread a person would use. An over-tap on a card that has
-# just emptied costs nothing but a red banner nothing reads any more.
+# something.
+#
+# **A pass now walks the line twice, so one pass empties the card.** At one
+# circuit it was the card that decided: measured on a live row of x9 dragons and
+# x16 balloons, the first pass emptied the dragons and left four balloons, which
+# went down in a second pass **1.4 seconds later** — a settle, a capture and a
+# decode after the rest of the army. Four balloons arriving on ground the push
+# has already left are four balloons on their own, and balloons are slow.
+#
+# The exchange is deliberately not a saving. An over-tap costs `TAP_GAP`, 0.05 s,
+# where another pass costs that 1.4 s whatever it carries, so the second circuit
+# is bought at about a third of a second per card and this army spends 0.55 s
+# more in total than it used to. What it buys is that every troop on the row goes
+# down inside one uninterrupted burst. An over-tap on a card that has just
+# emptied costs nothing else: the selection clears with the card, so the taps
+# that follow land on ground with nothing selected.
+#
+# Two circuits rather than some larger number because the count is what would
+# make an exact figure possible and it cannot be read: measured on this row,
+# `card_count` answers None for both cards, its two-digit readings running
+# together into one span too wide for any single template. Sixteen is the
+# largest card this village has fielded, and `DEPLOY_PASSES` is still behind
+# this for anything bigger.
 CARD_ROW_Y = 800
-DROPS_PER_PASS = 12
+DROPS_PER_PASS = 24
 DEPLOY_PASSES = 6
 # How many points along the line each tap of a pass moves. Coprime with
 # LINE_POINTS, so a pass still visits every point exactly once and a full card
