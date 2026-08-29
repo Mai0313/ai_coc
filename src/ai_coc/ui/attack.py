@@ -1440,6 +1440,15 @@ class AttackRunner(BaseModel):
         # Both belong to one round's own search, and both are reported on it.
         self._offered = False
         self._swapped = 0
+        # And so does the tactic, which the run directory files under this
+        # round's own number. Rounds that never reach the planner are ordinary —
+        # no opponent above the thresholds, an army under `MIN_ARMY_RATIO`, the
+        # attack menu not opening — and carried over, each of them would be
+        # filed holding the previous round's plan. That is worse than no file:
+        # a `--plan-in` or flat-fallback series writes identical plans round
+        # after round, so nothing downstream can tell a stale copy from a real
+        # one.
+        self._played = None
         home = self._open_attack_menu()
         if home is None:
             logger.warning("The attack menu did not open; the game is not on the home village")
