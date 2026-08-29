@@ -1055,6 +1055,20 @@ class AttackTests(unittest.TestCase):
         """
         assert DROPS_PER_PASS >= 16
 
+    def test_a_counted_card_is_tapped_as_many_times_as_it_holds(self) -> None:
+        """Plus one for slack, the way a spell card already is.
+
+        A fixed pass spends whatever is left of its circuits on ground with
+        nothing selected: measured on a live row of x9, x3 and x2 against a
+        24-tap pass, that is 55 taps of nothing — about 3.4 s of a ten-second
+        deployment.
+        """
+        line = deploy_line(LINE_POINTS)
+        assert len(drop_points(line, 0, 4)) == 4
+        # And an unreadable corner still gets the whole pass, which is what the
+        # fixed count was always for.
+        assert len(drop_points(line, 0)) == DROPS_PER_PASS
+
     def test_a_card_bigger_than_the_line_does_not_stack_its_tail_on_its_head(self) -> None:
         """The stride orders one circuit; the second walks the same points again.
 
