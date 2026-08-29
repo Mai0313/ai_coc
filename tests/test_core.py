@@ -1349,10 +1349,9 @@ class AttackTests(unittest.TestCase):
         """What `_deploy` schedules an ability for, and how long after the opening.
 
         `singles` is the row's one-off cards left to right, `on_field` the ones
-        the game drew a health bar over — which is what says a card held a hero
-        rather than a siege machine — and `spent` the ones that landed by going
-        grey instead, which is every siege machine. A card in neither never left
-        its card.
+        the game drew a health bar over — which says a unit is out, not that it
+        is a hero — and `spent` the ones that landed by going grey instead. A
+        card in neither never left its card.
         """
         runner = self._runner()
         plan = plans.flat().model_copy(update={"heroes": kinds})
@@ -1386,16 +1385,15 @@ class AttackTests(unittest.TestCase):
             runner._deploy(b"")
         return [(round(when - opening[0]), int(what.rsplit(" ", 1)[1])) for when, what, _ in moves]
 
-    def test_a_leading_card_with_a_health_bar_over_it_is_a_hero(self) -> None:
+    def test_a_leading_card_is_a_hero_when_the_plan_names_one_per_card(self) -> None:
         """An army carrying no siege machine puts a hero in the leader's slot.
 
         Nothing on the row separates the two: neither carries an `xN` and both
         sit in the same group, so the leader is picked off the game's own
-        ordering — siege machine first — and only the health bar can correct it,
-        since one is never drawn over a siege machine. Without that correction
-        the leading hero got no ability at all and every kind in the plan's list
-        was read a slot off the card it names, so a queen's cloak went to
-        whoever stood next to her.
+        ordering — siege machine first — and the plan's own count is what
+        corrects it. Without that correction the leading hero got no ability at
+        all and every kind in the plan's list was read a slot off the card it
+        names, so a queen's cloak went to whoever stood next to her.
         """
         cards = [600, 700, 800]
         played = self._abilities(cards, on_field=cards, kinds=["queen", "king", "champion"])
@@ -1403,12 +1401,26 @@ class AttackTests(unittest.TestCase):
         assert [delay for delay, _ in played] == [1, 20, 45]
 
     def test_a_leading_siege_machine_is_not_given_a_hero_ability(self) -> None:
-        """The bar is what says so: the siege machine never gets one, the heroes do."""
+        """Two heroes named against three one-off cards is an army carrying one."""
         played = self._abilities(
             [600, 700, 800], on_field=[700, 800], kinds=["queen", "king"], spent=[600]
         )
         assert [card for _, card in played] == [700, 800]
         assert [delay for delay, _ in played] == [1, 20]
+
+    def test_a_health_bar_over_the_siege_machine_does_not_make_it_a_hero(self) -> None:
+        """The game draws one over a siege machine as readily as over a hero.
+
+        Measured across all three rounds of a recorded run: the 攻城戰車 landed
+        and `field_units` read its card on the very next frame. Asked as the
+        hero test it used to be, that put a slot in front of every real hero —
+        the queen went out on the king's twenty seconds where her cloak wants
+        one, and the duke took the five of `unknown`.
+        """
+        cards = [436, 562, 683, 804, 928]
+        played = self._abilities(cards, on_field=cards, kinds=["queen", "king", "warden", "duke"])
+        assert [card for _, card in played] == cards[1:]
+        assert [delay for delay, _ in played] == [1, 20, 30, 20]
 
     def test_a_leading_hero_the_game_refused_still_holds_its_slot(self) -> None:
         """The bar cannot speak for a card that never went down anywhere.

@@ -815,14 +815,12 @@ class AttackRunner(BaseModel):
         back "landed" whether it went down or not. One recorded run reported
         four of four while the fourth never left its card.
 
-        **The same bar is the only thing that says a card held a hero rather
-        than a siege machine.** The two look alike on the row — neither carries
-        an `xN`, and both sit in the same group — so the loop reads the leading
-        one as the siege machine on the game's own ordering. That is right for
-        an army carrying one and wrong for an army that does not, where the
-        leader is a hero and used to get no ability at all, with the plan's hero
-        list shifted a slot against the cards it names. Only a hero is drawn a
-        health bar, so this is what the caller matches them up by.
+        **The bar says a unit is on the field, not that the unit is a hero.**
+        It was read as the second for a while, because a leading card is a hero
+        on any army carrying no siege machine and nothing else on the row tells
+        the two apart — neither shows an `xN`, and both sit in the same group.
+        Measured on a recorded run, the game draws a bar over a siege machine
+        too, so the caller counts the plan's own heroes instead; see `_deploy`.
         """
         on_field = field_units(after, cards)
         # Both readings are taken once. Asking `live_cards` inside the
@@ -837,8 +835,8 @@ class AttackRunner(BaseModel):
     ) -> tuple[list[int], list[int]]:
         """Every one-off card onto the same spot at once, retried as a group where refused.
 
-        Hands back what landed and, of that, which cards held a hero; `_landed`
-        is where the health bar that separates the two is read.
+        Hands back what landed and, of that, which cards the game drew a health
+        bar over; `_landed` is where both are read.
 
         They used to go down one at a time, each paying a capture to frame the
         drop, a settle and another capture to judge it — three and a half seconds
@@ -1188,7 +1186,7 @@ class AttackRunner(BaseModel):
         # Measured live on a flank half inside the boundary: rage fired 21 s in
         # while a troop card was still draining and the heroes landed at 41 s,
         # where finishing first would have had them down at about 31 s.
-        _, led = self._drop_singles(vanguard, line, "leading")
+        lead_down, led = self._drop_singles(vanguard, line, "leading")
         opener = time.monotonic()
         line = self._spread_troops(troops, anchors, pushed)
         # Only the heroes that actually went down get an ability. A hero still in
@@ -1203,22 +1201,32 @@ class AttackRunner(BaseModel):
         # machine**, and it is the one card nothing on the row can tell apart:
         # neither it nor a hero shows an `xN`, and the two sit in the same
         # group. So the game's own ordering picks it — siege machine first —
-        # and two things correct that ordering where it is wrong. The health
-        # bar is the hard one, since the game never draws one over a siege
-        # machine. It says nothing about a leader that was refused at every
-        # spot, though, and that leader still holds its slot in the plan's
-        # list, so the plan's own count answers for it: as many heroes named as
-        # there are one-off cards is an army carrying no siege machine.
+        # and the plan's own count corrects that ordering where it is wrong: as
+        # many heroes named as there are one-off cards is an army carrying no
+        # siege machine. Without it that hero got no ability at all and every
+        # kind after it was read a slot off the card it names, so a queen's
+        # cloak went to whoever stood next to her.
         #
-        # Without either, that hero got no ability at all and every kind after
-        # it was read a slot off the card it names, so a queen's cloak went to
-        # whoever stood next to her.
-        order = (vanguard if led or len(kinds) == len(singles) else []) + followers
+        # **The health bar cannot answer this, though it used to be asked
+        # first.** The game draws one over a siege machine as readily as over a
+        # hero: measured across all three rounds of a recorded run, the 攻城戰車
+        # landed and `field_units` read its card as a hero on the very next
+        # frame. That put a slot in front of every real hero, so the queen went
+        # out on the king's twenty seconds where her cloak wants one, and the
+        # duke took the five of `unknown`. The bar stays as the answer when
+        # there is no plan to count, where every card takes the same `unknown`
+        # delay anyway and a tap on a spent siege card costs nothing.
+        leads = len(kinds) == len(singles) if kinds else bool(led)
+        order = (vanguard if leads else []) + followers
         # Each hero's ability runs from its own hero landing, which for the
         # leader is a whole troop deployment earlier than for the rest. Only
         # what really went down is in here: an ability tap on a hero still in
-        # its card deploys it instead, with nothing around it.
-        arrived = dict.fromkeys(led, opener) | {x: landed for x in followers if x in down}
+        # its card deploys it instead, with nothing around it. A leader refused
+        # at every spot still holds its slot above, because the plan named a
+        # kind for it either way and dropping it would shift all the rest.
+        arrived = dict.fromkeys(lead_down if leads else [], opener) | {
+            x: landed for x in followers if x in down
+        }
         kinds += ["unknown"] * (len(order) - len(kinds))
         self._run_schedule(
             opened,
