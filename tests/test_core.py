@@ -2725,7 +2725,36 @@ class HeroRunnerTests(unittest.TestCase):
         )
 
     def _duke(self, **fields: object) -> HeroCard:
+        """A card the hall is really offering, which is what these tests are about.
+
+        `upgradable` has to be said out loud because its default is False: a
+        card built without it is one whose button is greyed, and every test
+        below would stop on that rather than on the thing it is checking.
+        """
+        fields.setdefault("upgradable", True)
         return HeroCard(hero="duke", point=(1407, 648), price=56_000, resource="dark", **fields)
+
+    def test_a_button_the_hall_has_greyed_is_not_an_upgrade_that_can_be_started(self) -> None:
+        """A capped hero keeps its price and loses its button, so the price says
+        nothing about whether it can be raised.
+
+        Measured live: 飛龍公爵 at 15 asked for 220 000 dark against a village
+        holding exactly 220 000, and the game answered the tap with a red line
+        saying to raise the Hero Hall to 11 first — so the run had the money and
+        still could not spend it. Reported through the price alone it came back
+        as "no confirmation sheet came up", which reads as a swallowed tap.
+        """
+        runner = self._runner(hero="duke")
+        report = HeroReport()
+        with patch.object(runner, "_bring_on") as brought:
+            message = runner._raise(
+                report,
+                {"duke": self._duke(upgradable=False)},
+                VillageStock(gold=0, elixir=0, dark=999_999),
+            )
+        brought.assert_not_called()
+        assert "停用" in message
+        assert report.started is None
 
     def test_an_upgrade_the_village_cannot_pay_for_is_never_tapped(self) -> None:
         """This is the guard, not a courtesy. The game answers an upgrade it

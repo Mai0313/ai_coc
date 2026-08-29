@@ -93,6 +93,16 @@ PRICE_BOX = (-95, 640, 82, 662)
 PRICE_INK = 235
 # Swept over the recorded cards every digit landed within 22 of its template.
 PRICE_TOLERANCE = 30
+# Whether that button can actually be pressed, which the price does not say.
+# **A hero capped by the hall's own level keeps its price and loses its
+# button**: the game greys the plate, leaves the number on it, and answers a tap
+# with a red line naming the hall level it wants first — Chinese, so nothing
+# here reads it. Measured on one screen holding both, a live plate runs `green - max(red,
+# blue)` from 29 to 44 while a greyed one is a perfect grey at 0, so the two do
+# not overlap and the line goes between them.
+BUTTON_LIVE = 15
+PLATE_BAND = (640, 660)
+PLATE_SPAN = 60
 # Nothing in the Hero Hall costs single figures, and a price that small is ink
 # read off something else. The cheapest hero level in the game is 4000 dark.
 MIN_PRICE = 100
@@ -271,6 +281,22 @@ def _price(image: Image.Image, centre: int) -> int | None:
     return price if price is not None and price >= MIN_PRICE else None
 
 
+def _live_button(image: Image.Image, centre: int) -> bool:
+    """Whether this card's 升級 button is green rather than greyed out.
+
+    Read from the plate rather than from the price, because the price is there
+    either way. A hero the hall's own level has capped shows the number it would
+    cost with the button dead underneath it, which is indistinguishable from an
+    affordable one to anything that only reads digits.
+    """
+    top, bottom = PLATE_BAND
+    plate = image.crop((centre - PLATE_SPAN, top, centre + PLATE_SPAN, bottom))
+    data = plate.tobytes()
+    count = len(data) // 3
+    red, green, blue = (sum(data[i + c] for i in range(0, len(data), 3)) / count for c in range(3))
+    return green - max(red, blue) > BUTTON_LIVE
+
+
 def _resource(image: Image.Image, centre: int) -> Literal["elixir", "dark"]:
     """Which of the two resources this button's icon is, elixir or dark."""
     left, right = ICON_SPAN
@@ -316,6 +342,7 @@ def hero_cards(png: bytes) -> list[HeroCard]:
                 point=(centre, BUTTON_Y),
                 price=price,
                 resource=None if price is None else _resource(image, centre),
+                upgradable=price is not None and _live_button(image, centre),
             )
         )
     return cards
