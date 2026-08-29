@@ -155,7 +155,7 @@ Every run gets a directory of its own, whichever side of the app started it:
 └── frames/        # only with --record
 ```
 
-The first line of every run says which directory it is, and the name is `<when>-<what>` so a listing reads as a history. `controller.log` sits beside them with every run mixed together, which is what to read when you are looking for a pattern across a week rather than into one run.
+The first line of every run says which directory it is, and the name is `<when>-<what>` so a listing reads as a history. There is no second file mixing every run together — `grep -r ~/.ai_coc/logs/*/run.log` answers across runs and tells you which one each hit came from.
 
 ## ⚙️ Settings
 

@@ -42,7 +42,6 @@ ACCOUNT_JSON_DIR = data_root() / "account_json"
 ACCOUNT_JSON_DIR.mkdir(parents=True, exist_ok=True)
 LOG_DIR = data_root() / "logs"
 LOG_DIR.mkdir(parents=True, exist_ok=True)
-LOG_PATH = LOG_DIR / "controller.log"
 
 # Stopping a headless run is a file rather than a signal. The window has a stop
 # button, but a run started from a terminal has nothing: whatever put it in the

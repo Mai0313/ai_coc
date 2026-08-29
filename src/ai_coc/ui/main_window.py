@@ -68,8 +68,8 @@ from ai_coc.models import (
 )
 from ai_coc.prompts import PROMPTS, render
 from ai_coc.constants import (
+    LOG_DIR,
     APP_NAME,
-    LOG_PATH,
     NUDGE_MS,
     NUDGE_TO,
     NUDGE_ROW,
@@ -264,9 +264,12 @@ class MainWindow(QMainWindow):
         self.log_level.currentTextChanged.connect(self._set_log_level)
         clear = QPushButton("清除")
         clear.clicked.connect(self.log_view.clear)
-        open_log = QPushButton("開啟記錄檔")
+        open_log = QPushButton("開啟記錄資料夾")
+        # The directory rather than one file: every run keeps its own, named
+        # `<when>-<what>`, so the listing is the history and the newest is the
+        # one at the top.
         open_log.clicked.connect(
-            lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(str(LOG_PATH)))
+            lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(str(LOG_DIR)))
         )
         row.addWidget(QLabel("等級"))
         row.addWidget(self.log_level)
@@ -282,7 +285,7 @@ class MainWindow(QMainWindow):
         self.log_bridge = LogBridge()
         self.log_bridge.message.connect(self._append_log)
         logging.getLogger().addHandler(UiLogHandler(self.log_bridge))
-        logger.info("%s %s started, log file: %s", APP_NAME, VERSION_LABEL, LOG_PATH)
+        logger.info("%s %s started, logs under: %s", APP_NAME, VERSION_LABEL, LOG_DIR)
 
     def _append_log(self, html: str) -> None:
         """Append one rich-rendered record, without yanking the view off what is being read."""
