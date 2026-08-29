@@ -18,12 +18,12 @@ from pydantic import BaseModel, PrivateAttr
 
 from ai_coc import plans
 from ai_coc.models import (
+    HeroOrder,
     LootOffer,
     ScoutView,
     AttackPlan,
     StockLimits,
     AttackReport,
-    AttackTimings,
     DisplayTarget,
     LootThresholds,
 )
@@ -131,6 +131,20 @@ FREEZE_TARGET = (800, 420)
 # pitch RAGE_PATH is already laid out on; naming it is what lets a planned point
 # be measured against the same ellipse.
 RAGE_SPAN = (240, 120)
+
+# What waits on the clock when nothing named a moment for it. Every timing on an
+# attack belongs to the plan now, and `plans/flat.json` carries these same three
+# — so these are reached only by a card the plan did not name, which is what a
+# flat plan leaves every hero, and by a `_deploy` running without a plan at all.
+#
+# They are neutral rather than good. A queen wants her cloak inside a second or
+# two, a warden's tome wants the push to be under fire first, and no single
+# number is right for both; a card given this one fires somewhere between the
+# two and gets in the way of neither. That being unsatisfying is the point of
+# asking the planner instead.
+FALLBACK_ABILITY = 20
+FALLBACK_RAGE = 15
+FALLBACK_FREEZE = 30
 
 # How far apart the two captures that locate the army are taken. It is the one
 # number `parsers.field`'s own thresholds are tied to, since both the moving
@@ -495,7 +509,6 @@ class AttackRunner(BaseModel):
     thresholds: LootThresholds
     # Read once per run off the home village, before the search fee is charged.
     stock: StockLimits = StockLimits()
-    abilities: AttackTimings = AttackTimings()
     max_skips: int = 20
     ai: GeminiClient | None = None
     # A plan settled before the run, which skips the Gemini call entirely. This is
@@ -542,6 +555,30 @@ class AttackRunner(BaseModel):
     def _onscreen(self, points: tuple[tuple[int, int], ...]) -> tuple[tuple[int, int], ...]:
         """Points drawn for a centred village, read against wherever the camera is now."""
         return tuple((x + self._panned[0], y + self._panned[1]) for x, y in points)
+
+    def _spots(self, orders: list[HeroOrder], cards: list[int]) -> dict[int, tuple[int, int]]:
+        """Where the plan wants each of these cards dropped, keyed by card.
+
+        Left to right, one order per card, so a list shorter than the row simply
+        leaves the cards past its end to the shared spot `_drop_singles` falls
+        back to.
+
+        Every point goes through the same corrections the drop line does: the
+        camera may have been dragged clear of the card row since the plan drew
+        this against a centred village, and `push_out` at zero steps is what
+        pulls it onto the map without otherwise moving it. That last one matters
+        because the map is a diamond while the prompt hands the planner a
+        rectangle — `x_pct` 2 to 98 by `y_pct` 12 to 77 — whose corners are off
+        the board entirely. `clear_of_controls` alone holds a point inside that
+        rectangle and no further, which is how a hero refused four times ended
+        up at (30, 175) with the map spanning x 596 to 1004.
+        """
+        return {
+            card: push_out(point, 0, self._middle)
+            for card, point in zip(
+                cards, self._onscreen(tuple(order.drop.pixels() for order in orders)), strict=False
+            )
+        }
 
     def _tap(self, point: tuple[int, int]) -> None:
         self.adb.tap(point[0], point[1], self.display)
@@ -655,21 +692,28 @@ class AttackRunner(BaseModel):
             logger.warning("Attack planning failed; falling back to the flat plan", exc_info=True)
             self._played = plans.flat()
             return self._played
-        # Its own timings are dropped. `timings` is on the model, so it reaches
-        # the schema and the model will happily fill it in, but a still frame
-        # says nothing about how long this machine takes to put an army down —
-        # and a number invented there would silently replace the schedule the
-        # user set in 英雄大招時機. Only a written plan gets to carry timings.
-        plan = plan.model_copy(update={"timings": None})
+        # **Its timings are kept, and they used to be thrown away.** The reason
+        # given was that a still frame says nothing about how long this machine
+        # takes to put an army down — true, and beside the point, because what
+        # the numbers are really about is how long the army takes to *walk*.
+        # That is a property of the village on the frame: how far the drop line
+        # is from the first wall, how deep the defences sit, whether the push
+        # has to cross open ground. The table they fell back to was a set of
+        # constants somebody chose without seeing any village at all, so the
+        # exchange was a guess made with the layout in hand for one made
+        # without it.
         self._played = plan
         logger.info(
-            "Plan: from %s, line %s to %s, %d rage point(s), %d freeze point(s), heroes=%s (%s)",
+            "Plan: from %s, line %s to %s, %d rage point(s) at %ds, %d freeze point(s) at %ds, "
+            "heroes=%s (%s)",
             plan.deploy_from,
             plan.deploy_start,
             plan.deploy_end,
             len(plan.rage_points),
+            plan.rage_after,
             len(plan.freeze_points),
-            plan.heroes,
+            plan.freeze_after,
+            [(order.kind, order.ability_after) for order in plan.heroes],
             plan.reason,
         )
         return plan
@@ -831,9 +875,13 @@ class AttackRunner(BaseModel):
         return [card for card in cards if card in on_field or card in emptied], on_field
 
     def _drop_singles(
-        self, cards: list[int], line: list[tuple[int, int]], what: str
+        self,
+        cards: list[int],
+        line: list[tuple[int, int]],
+        what: str,
+        wanted: dict[int, tuple[int, int]] | None = None,
     ) -> tuple[list[int], list[int]]:
-        """Every one-off card onto the same spot at once, retried as a group where refused.
+        """Every one-off card onto its own spot at once, retried as a group where refused.
 
         Hands back what landed and, of that, which cards the game drew a health
         bar over; `_landed` is where both are read.
@@ -846,6 +894,17 @@ class AttackRunner(BaseModel):
         them on the field, so the whole row goes in one shell round-trip and only
         the cards the game did not take are offered another spot.
 
+        **`wanted` is what lets heroes do different jobs in one attack.** They
+        all used to go on the same spot, which can only express "everyone
+        follows the troops" — where a village usually wants one or two walking
+        the outside to clear the stray buildings that pull an army off course
+        and the rest going in behind the push. It goes **ahead of** the shared
+        ladder rather than replacing its first rung: a point the game refused
+        once is not worth insisting on, but the rung it would have displaced is
+        the midpoint `_usable_line` has already probed and proved the game
+        accepts, which is the one spot with evidence behind it. Overwriting it
+        cost a named hero both that spot and one of its retries.
+
         Getting the verdict wrong is not free, which is what the settle is for: a
         second tap on a hero already on the field is its ability, so a drop
         wrongly called refused burns the cloak or the tome and leaves the
@@ -854,16 +913,22 @@ class AttackRunner(BaseModel):
         landed: list[int] = []
         onfield: list[int] = []
         pending = list(cards)
+        shared = single_spots(line, self._middle)
+        # Where every card goes on each attempt in turn. A card the plan did not
+        # name falls straight through to the shared spot of that round.
+        rounds = [dict.fromkeys(cards, spot) for spot in shared]
+        if wanted:
+            rounds.insert(0, {card: wanted.get(card, shared[0]) for card in cards})
         # Where the last card actually went, which is not the spot the loop
         # happens to be holding when it stops: it breaks at the top of the next
-        # iteration, so by then `spot` has already moved past the one that worked.
+        # iteration, so by then it has already moved past the one that worked.
         worked = line[len(line) // 2]
-        for spot in single_spots(line, self._middle):
+        for aim in rounds:
             if not pending:
                 break
             before = self._frame("before-drop")
             self.adb.tap_many(
-                [tap for card in pending for tap in ((card, CARD_ROW_Y), spot)],
+                [tap for card in pending for tap in ((card, CARD_ROW_Y), aim[card])],
                 self.display,
                 gap=SINGLE_DROP_DELAY,
             )
@@ -873,9 +938,21 @@ class AttackRunner(BaseModel):
             onfield += bars
             pending = [card for card in pending if card not in down]
             if down:
-                worked = spot
+                # One of the spots that worked rather than the shared one, since
+                # on the first attempt each card may have gone somewhere of its
+                # own. It is a sample for the log, not the whole answer.
+                worked = aim[down[0]]
             if pending:
-                logger.info("%d %s card(s) took nothing at %s", len(pending), what, spot)
+                # Each card's own spot rather than one shared name for them all:
+                # on the round the plan aimed, they went to different places, and
+                # a recorded run read afterwards would otherwise point at a
+                # coordinate the card was never sent to.
+                logger.info(
+                    "%d %s card(s) took nothing: %s",
+                    len(pending),
+                    what,
+                    ", ".join(f"{card} at {aim[card]}" for card in pending),
+                )
         for card in pending:
             logger.warning("The %s card at %d never landed; its unit stays put", what, card)
         logger.info("%d of %d %s card(s) landed at %s", len(landed), len(cards), what, worked)
@@ -1157,23 +1234,23 @@ class AttackRunner(BaseModel):
         # already went, on a delay from the attack opening.
         #
         # Two clocks, because the two kinds of number mean different things. A
-        # hero's ability is timed from that hero landing, which is what the
-        # setting says and what a queen's cloak is worth. A spell is timed from
-        # the attack opening, because that is how both are judged on screen and
-        # hanging them off the heroes would move them by however long the army
-        # happened to take to go down.
-        timings = plan.timings if plan and plan.timings else self.abilities
+        # hero's ability is timed from that hero landing, which is what a queen's
+        # cloak is worth. A spell is timed from the attack opening, because that
+        # is how both are judged on screen and hanging them off the heroes would
+        # move them by however long the army happened to take to go down.
+        rage_after = plan.rage_after if plan else FALLBACK_RAGE
+        freeze_after = plan.freeze_after if plan else FALLBACK_FREEZE
         opened = time.monotonic()
         pending: Moves = []
         if rages:
             pending.append((
-                opened + timings.rage,
+                opened + rage_after,
                 f"{len(rages)} rage card(s)",
                 partial(self._rage, rages, rage_path, frame),
             ))
         if freezes:
             pending.append((
-                opened + timings.freeze,
+                opened + freeze_after,
                 f"{len(freezes)} freeze card(s)",
                 partial(self._cast, freezes, freeze_targets, frame),
             ))
@@ -1186,7 +1263,10 @@ class AttackRunner(BaseModel):
         # Measured live on a flank half inside the boundary: rage fired 21 s in
         # while a troop card was still draining and the heroes landed at 41 s,
         # where finishing first would have had them down at about 31 s.
-        lead_down, led = self._drop_singles(vanguard, line, "leading")
+        named, aimed = self._named_heroes(plan, singles)
+        lead_down, led = self._drop_singles(
+            vanguard, line, "leading", self._spots(named[:1] if aimed else [], vanguard)
+        )
         opener = time.monotonic()
         line = self._spread_troops(troops, anchors, pushed)
         # Only the heroes that actually went down get an ability. A hero still in
@@ -1194,9 +1274,55 @@ class AttackRunner(BaseModel):
         # around it and no ability fired. The line is the one the troops ended up
         # on rather than the one they started on: the flank moves while they go
         # down, and a hero sent to the old midpoint is sent somewhere refused.
-        down, _ = self._drop_singles(followers, line, "hero")
+        down, _ = self._drop_singles(
+            followers, line, "hero", self._spots(named[1:] if aimed else named, followers)
+        )
         landed = time.monotonic()
-        kinds = list(plan.heroes) if plan else []
+        # The same answer the drops above were aimed with, and the health bar
+        # only where there was no plan to count.
+        leads = aimed if aimed is not None else bool(led)
+        row = (vanguard if leads else []) + followers
+        # Each hero's ability runs from its own hero landing, which for the
+        # leader is a whole troop deployment earlier than for the rest. Only
+        # what really went down is in here: an ability tap on a hero still in
+        # its card deploys it instead, with nothing around it. A leader refused
+        # at every spot still holds its slot above, because the plan named a
+        # hero for it either way and dropping it would shift all the rest.
+        arrived = dict.fromkeys(lead_down if leads else [], opener) | {
+            x: landed for x in followers if x in down
+        }
+        # A card the plan did not name still gets an ability, on the neutral
+        # delay rather than none: a hero that never fires is a hero half spent.
+        delays = [order.ability_after for order in named]
+        delays += [FALLBACK_ABILITY] * (len(row) - len(delays))
+        self._run_schedule(
+            opened,
+            [
+                *pending,
+                *(
+                    (
+                        arrived[x] + delays[i],
+                        f"ability on the card at {x}",
+                        partial(self._tap, (x, CARD_ROW_Y)),
+                    )
+                    for i, x in enumerate(row)
+                    if x in arrived
+                ),
+            ],
+        )
+
+    def _named_heroes(
+        self, plan: AttackPlan | None, singles: list[int]
+    ) -> tuple[list[HeroOrder], bool | None]:
+        """The plan's hero orders, and whether the first of them holds the leading card.
+
+        Settled **before** anything is dropped, because it is what says where
+        each hero goes as well as when it fires. It can be: the arithmetic needs
+        only the two counts. The one reading not available this early is the
+        health bar, and that is reached only when the plan named nobody — where
+        there are no points to place either, so None is the honest answer.
+        """
+        named = list(plan.heroes) if plan else []
         # **The leading card is a hero on any army that carries no siege
         # machine**, and it is the one card nothing on the row can tell apart:
         # neither it nor a hero shows an `xN`, and the two sit in the same
@@ -1204,7 +1330,7 @@ class AttackRunner(BaseModel):
         # and the plan's own count corrects that ordering where it is wrong: as
         # many heroes named as there are one-off cards is an army carrying no
         # siege machine. Without it that hero got no ability at all and every
-        # kind after it was read a slot off the card it names, so a queen's
+        # hero after it was read a slot off the card it names, so a queen's
         # cloak went to whoever stood next to her.
         #
         # **The health bar cannot answer this, though it used to be asked
@@ -1230,41 +1356,16 @@ class AttackRunner(BaseModel):
         # A count matching neither arithmetic is past being a bet: the plan
         # cannot be trusted to name the cards in order either. It is said out
         # loud rather than guessed at quietly, because whichever way it falls
-        # the abilities after it are a slot out and nothing downstream notices.
-        if kinds and len(kinds) not in (len(singles), len(singles) - 1):
+        # both the drop points and the ability timings are a slot out from here
+        # on and nothing downstream notices.
+        if named and len(named) not in (len(singles), len(singles) - 1):
             logger.warning(
-                "The plan names %d hero(es) against %d one-off card(s); "
-                "the ability timings will not line up with the row",
-                len(kinds),
+                "The plan names %d hero(es) against %d one-off card(s); neither their "
+                "drop points nor their ability timings will line up with the row",
+                len(named),
                 len(singles),
             )
-        leads = len(kinds) == len(singles) if kinds else bool(led)
-        order = (vanguard if leads else []) + followers
-        # Each hero's ability runs from its own hero landing, which for the
-        # leader is a whole troop deployment earlier than for the rest. Only
-        # what really went down is in here: an ability tap on a hero still in
-        # its card deploys it instead, with nothing around it. A leader refused
-        # at every spot still holds its slot above, because the plan named a
-        # kind for it either way and dropping it would shift all the rest.
-        arrived = dict.fromkeys(lead_down if leads else [], opener) | {
-            x: landed for x in followers if x in down
-        }
-        kinds += ["unknown"] * (len(order) - len(kinds))
-        self._run_schedule(
-            opened,
-            [
-                *pending,
-                *(
-                    (
-                        arrived[x] + timings.seconds(kinds[i]),
-                        f"ability on the card at {x}",
-                        partial(self._tap, (x, CARD_ROW_Y)),
-                    )
-                    for i, x in enumerate(order)
-                    if x in arrived
-                ),
-            ],
-        )
+        return named, (len(named) == len(singles) if named else None)
 
     def _run_schedule(self, opened: float, moves: Moves) -> None:
         """Everything that waits on the clock, in time order, each at its own moment.

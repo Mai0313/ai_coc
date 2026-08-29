@@ -49,15 +49,7 @@
     }
   ],
   "heroes": [],
-  "timings": {
-    "king": 20,
-    "queen": 1,
-    "warden": 30,
-    "champion": 45,
-    "minion_prince": 20,
-    "unknown": 20,
-    "rage": 15,
-    "freeze": 30
-  },
-  "reason": "平鋪：沿著左上外緣撒開，狂暴鋪滿推進路徑，冰凍留到最後放在中央。"
+  "rage_after": 15,
+  "freeze_after": 30,
+  "reason": "平鋪：沿著左上外緣撒開，狂暴鋪滿推進路徑，冰凍留到最後放在中央。英雄不指名，所以每一張卡都落在線的中點、用同一個保底秒數開大。"
 }

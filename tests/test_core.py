@@ -22,6 +22,7 @@ from ai_coc.models import (
     ProbeRay,
     WallMenu,
     AppConfig,
+    HeroOrder,
     LootOffer,
     ScoutView,
     WallBatch,
@@ -34,7 +35,6 @@ from ai_coc.models import (
     WallUpgrade,
     VillageStock,
     AttackOptions,
-    AttackTimings,
     DisplayTarget,
     LootOverrides,
     WallCandidate,
@@ -139,7 +139,37 @@ FRAMES = Path(__file__).parent / "frames"
 # have to supply them. They are required on purpose: a field with a default is
 # optional in the JSON schema, and that is how a live run came back naming
 # neither a hero nor a freeze point against a screen holding four hero cards.
-_ANSWERED = {"rage_points": [], "freeze_points": [], "heroes": []}
+_ANSWERED = {
+    "rage_points": [],
+    "freeze_points": [],
+    "heroes": [],
+    "rage_after": 15,
+    "freeze_after": 30,
+}
+# What each hero's ability is worth waiting for, which used to be a table of
+# constants in the settings file and is now the planner's answer per battle.
+# Tests name a hero and mean its delay, so this is what keeps them readable.
+_ABILITY_SECONDS = {
+    "queen": 1,
+    "king": 20,
+    "warden": 30,
+    "champion": 45,
+    "minion_prince": 20,
+    "duke": 20,
+    "unknown": 20,
+}
+
+
+def _orders(*kinds: str) -> list[HeroOrder]:
+    """Hero orders on those delays, all dropped on the same nominal spot."""
+    return [
+        HeroOrder(
+            kind=kind, drop=ScreenPoint(x_pct=30, y_pct=30), ability_after=_ABILITY_SECONDS[kind]
+        )
+        for kind in kinds
+    ]
+
+
 _LINE = {
     "deploy_start": ScreenPoint(x_pct=37.5, y_pct=12.2),
     "deploy_end": ScreenPoint(x_pct=14.4, y_pct=42.2),
@@ -509,7 +539,8 @@ class PlanTests(unittest.TestCase):
         assert plan.deploy_end is not None
         assert len(plan.rage_points) == len(RAGE_PATH)
         assert plan.freeze_points
-        assert plan.timings is not None
+        assert plan.rage_after
+        assert plan.freeze_after
 
     def test_the_flat_plan_draws_the_line_the_loop_used_to_hold_in_constants(self) -> None:
         """It has to reproduce the old fallback, or the default quietly changed."""
@@ -521,16 +552,22 @@ class PlanTests(unittest.TestCase):
             path.write_text(plans.flat().model_dump_json(indent=2), encoding="utf-8")
             assert plans.load(path) == plans.flat()
 
-    def test_the_ai_is_not_allowed_to_invent_hero_timings(self) -> None:
-        """`timings` is on the schema, so the model can fill it; a still frame cannot know."""
-        assert "timings" in AttackPlan.model_json_schema()["properties"]
-        answered = AttackPlan(**_LINE, timings=AttackTimings(queen=30, warden=5))
-        assert answered.model_copy(update={"timings": None}).timings is None
+    def test_every_timing_on_an_attack_is_asked_for(self) -> None:
+        """The planner has to answer all of them, and there is nowhere else to look.
 
-    def test_a_plans_own_timings_beat_the_ones_the_runner_was_built_with(self) -> None:
-        """A written plan is the whole tactic, so its schedule is the one that fires."""
-        plan = AttackPlan(**_LINE, timings=AttackTimings(queen=7))
-        assert (plan.timings or AttackTimings()).seconds("queen") == 7
+        They used to be a table of constants in the settings file, chosen without
+        a village on screen — which is the same guess the planner makes, minus
+        the village. A field with a default is optional in the JSON schema, so
+        anything the schedule cannot run without carries none.
+        """
+        required = set(AttackPlan.model_json_schema()["required"])
+        assert {"rage_after", "freeze_after", "heroes"} <= required
+        assert "ability_after" in set(HeroOrder.model_json_schema()["required"])
+
+    def test_a_hero_carries_where_it_goes_as_well_as_when_it_fires(self) -> None:
+        """One order per card, so a queen sent to clear the edge is expressible."""
+        order = HeroOrder(kind="queen", drop=ScreenPoint(x_pct=20, y_pct=40), ability_after=2)
+        assert order.drop.pixels() == (320, 360)
 
     def test_the_planner_is_asked_with_a_deadline_and_falls_back_without_one(self) -> None:
         """One call took 180.7 s and the three-minute battle it planned was over.
@@ -566,7 +603,6 @@ class ConfigTests(unittest.TestCase):
             store = ConfigStore(path=Path(td) / "config.json")
             saved = AppConfig(
                 thresholds=LootThresholds(min_gold=1, min_elixir=2, min_dark=3),
-                timings=AttackTimings(queen=9),
                 gemini_model="gemini-not-the-default",
             )
             store.save(saved)
@@ -911,12 +947,16 @@ class AttackTests(unittest.TestCase):
         assert points[0] == DEPLOY_START
         assert points[-1] == DEPLOY_END
 
-    def test_ability_timing_is_per_hero_not_per_slot(self) -> None:
-        """An upgrading hero has no card at all, so every slot after it shifts."""
-        timings = AttackTimings(queen=1, warden=30)
-        assert timings.seconds("queen") == 1
-        assert timings.seconds("warden") == 30
-        assert timings.seconds("unknown") == timings.unknown
+    def test_a_hero_order_names_the_hero_rather_than_the_slot(self) -> None:
+        """An upgrading hero has no card at all, so every slot after it shifts.
+
+        Naming the hero on each order is what survives that: the loop matches
+        orders to cards left to right and reads the delay off the order, so a
+        row one card shorter costs the missing hero and nothing else.
+        """
+        orders = _orders("queen", "warden")
+        assert [order.kind for order in orders] == ["queen", "warden"]
+        assert [order.ability_after for order in orders] == [1, 30]
 
     def test_pushing_a_drop_out_moves_it_off_the_middle_and_stays_on_screen(self) -> None:
         point = DEPLOY_START
@@ -1354,11 +1394,13 @@ class AttackTests(unittest.TestCase):
         card in neither never left its card.
         """
         runner = self._runner()
-        plan = plans.flat().model_copy(update={"heroes": kinds})
+        plan = plans.flat().model_copy(update={"heroes": _orders(*kinds)})
         moves: list[tuple[float, str, object]] = []
         opening: list[float] = []
 
-        def dropped(cards: list[int], line: object, what: str) -> tuple[list[int], list[int]]:
+        def dropped(
+            cards: list[int], line: object, what: str, wanted: object = None
+        ) -> tuple[list[int], list[int]]:
             bars = [card for card in cards if card in on_field]
             return [card for card in cards if card in on_field or card in spent], bars
 
@@ -1482,17 +1524,99 @@ class AttackTests(unittest.TestCase):
         )
         assert [card for _, card in played] == [700]
 
+    def _aimed_at(self, singles: list[int], orders: list[HeroOrder]) -> dict[int, object]:
+        """Where `_deploy` sends each one-off card, given a plan naming these heroes."""
+        runner = self._runner()
+        plan = plans.flat().model_copy(update={"heroes": orders})
+        sent: dict[int, object] = {}
+
+        def dropped(
+            cards: list[int], line: object, what: str, wanted: dict | None = None
+        ) -> tuple[list[int], list[int]]:
+            sent.update(wanted or {})
+            return list(cards), list(cards)
+
+        with (
+            patch.object(AttackRunner, "_settle_camera", side_effect=lambda frame: frame),
+            patch.object(AttackRunner, "_settle_zoom", side_effect=lambda frame: frame),
+            patch.object(attack, "card_groups", return_value=[[100], singles]),
+            patch.object(attack, "counted_cards", return_value=[]),
+            patch.object(attack, "freeze_cards", return_value=[]),
+            patch.object(AttackRunner, "_plan", return_value=plan),
+            patch.object(AttackRunner, "_wait_for_battle", return_value=None),
+            patch.object(AttackRunner, "_clear_flank", side_effect=lambda frame, preset: frame),
+            patch.object(AttackRunner, "_usable_line", return_value=0),
+            patch.object(AttackRunner, "_drop_singles", side_effect=dropped),
+            patch.object(AttackRunner, "_spread_troops", return_value=[(0, 0)]),
+            patch.object(AttackRunner, "_run_schedule"),
+            patch.object(attack.time, "sleep"),
+        ):
+            runner._deploy(b"")
+        return sent
+
+    def test_a_refused_hero_still_gets_the_spot_the_probe_proved(self) -> None:
+        """The plan's point goes ahead of the shared ladder, not over its first rung.
+
+        `single_spots[0]` is the midpoint `_usable_line` already probed and the
+        game already accepted, so it is the one spot with evidence behind it.
+        Replacing it with the plan's point cost a named hero both that spot and
+        one of its retries.
+        """
+        runner = self._runner()
+        line = deploy_line(LINE_POINTS)
+        shared = single_spots(line, runner._middle)
+        aimed: list[tuple[int, int]] = []
+
+        def refuse(
+            _self: object, taps: list[tuple[int, int]], display: object, gap: float = 0
+        ) -> None:
+            # Taps alternate card, spot, card, spot; only the spots matter here.
+            aimed.extend(taps[1::2])
+
+        with (
+            patch.object(AttackRunner, "_frame", return_value=b""),
+            patch.object(AttackRunner, "_landed", return_value=([], [])),
+            patch.object(AdbController, "tap_many", autospec=True, side_effect=refuse),
+            patch.object(attack.time, "sleep"),
+        ):
+            runner._drop_singles([700], line, "hero", {700: (123, 456)})
+        assert aimed[0] == (123, 456)
+        # Every shared rung still follows, the probed midpoint included.
+        assert aimed[1:] == shared
+
+    def test_each_hero_goes_where_its_own_order_says(self) -> None:
+        """Heroes do different jobs in one attack, and one shared spot cannot say so.
+
+        A village usually wants one or two walking the outside to clear the
+        stray buildings that pull an army off course, and the rest going in
+        behind the push. The leading card is skipped here because the plan names
+        one hero fewer than there are one-off cards, which is an army carrying a
+        siege machine — and nothing plans where that goes.
+        """
+        edge = HeroOrder(kind="queen", drop=ScreenPoint(x_pct=25, y_pct=20), ability_after=2)
+        middle = HeroOrder(kind="warden", drop=ScreenPoint(x_pct=45, y_pct=35), ability_after=30)
+        sent = self._aimed_at([436, 562, 683], [edge, middle])
+        assert sent == {562: (400, 180), 683: (720, 315)}
+
+    def test_a_plan_that_names_every_card_aims_the_leader_too(self) -> None:
+        """Then the leading card is a hero rather than a siege machine, so it has an order."""
+        orders = [
+            HeroOrder(kind="king", drop=ScreenPoint(x_pct=25, y_pct=20), ability_after=20),
+            HeroOrder(kind="queen", drop=ScreenPoint(x_pct=45, y_pct=35), ability_after=2),
+        ]
+        assert self._aimed_at([436, 562], orders) == {436: (400, 180), 562: (720, 315)}
+
     def test_the_freeze_no_longer_queues_behind_the_slowest_hero(self) -> None:
         """Cast after the last ability it sat out a champion's 45 seconds first."""
         played: list[str] = []
-        timings = AttackTimings()
         # The heroes land twenty seconds into the attack; their abilities run
         # from there, the freeze from the opening.
         opened, landed = 0.0, 20.0
+        champion, queen = _orders("champion", "queen")
         moves = [
-            (landed + timings.seconds("champion"), "champion", lambda: played.append("champion")),
-            (landed + timings.seconds("queen"), "queen", lambda: played.append("queen")),
-            (opened + timings.freeze, "freeze", lambda: played.append("freeze")),
+            (landed + champion.ability_after, "champion", lambda: played.append("champion")),
+            (landed + queen.ability_after, "queen", lambda: played.append("queen")),
+            (opened + plans.flat().freeze_after, "freeze", lambda: played.append("freeze")),
         ]
         with (
             patch.object(AttackRunner, "_battle_ended", return_value=False),
