@@ -167,8 +167,14 @@ def migrate_settings() -> None:
 
 
 class MainWindow(QMainWindow):
-    def __init__(self) -> None:
+    def __init__(self, session: RunLog | None = None) -> None:
         super().__init__()
+        # The run `main()` opened for the window itself. Every job opens one of
+        # its own and hands the log back here when it ends, so without this the
+        # window's own lines — the preview, the chat, the next cycle's setup —
+        # would go to no file at all between jobs, which on the packaged build
+        # means the in-memory panel and nothing else.
+        self.session = session
         self.setWindowTitle(f"{APP_NAME} — {VERSION_LABEL}")
         self.resize(1260, 820)
         self.pool = QThreadPool.globalInstance()
@@ -809,11 +815,12 @@ class MainWindow(QMainWindow):
 
         def finished() -> None:
             self.attack_running = False
-            # This run is over, so its file closes here. Without it every later
-            # line the window logs — the preview, the chat, the next cycle's own
-            # setup — keeps landing in a finished battle's `run.log`, which is
-            # the one file someone opens to reconstruct that battle.
-            configure_logging(None)
+            # This run is over, so the log goes back to the window's own. Without
+            # that every later line the window writes — the preview, the chat,
+            # the next cycle's own setup — keeps landing in a finished battle's
+            # `run.log`, which is the one file someone opens to reconstruct that
+            # battle; and handing back None instead would leave them nowhere.
+            configure_logging(self.session)
             self._queue_next_cycle()
 
         self.automation_log.appendPlainText("開始搜尋對手…")

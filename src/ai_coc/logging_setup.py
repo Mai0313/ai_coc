@@ -15,6 +15,19 @@ LOG_FORMAT = "%(asctime)s %(levelname)-7s %(name)s: %(message)s"
 TIME_FORMAT = "%H:%M:%S"
 
 
+class _Configured(logging.NullHandler):
+    """Marks the root logger as set up, whatever sinks this process ended up with.
+
+    The guard used to key off the rotating file handler, which was added
+    unconditionally. Keying it off the console instead reads as equivalent and
+    is not: PyInstaller builds this `--windowed`, so the shipped executable has
+    no stderr, that handler is never added, and every later call would fall
+    through to `root.setLevel` — resetting the level on the one build where the
+    在執行紀錄 panel is the only log there is, and doing it just after the user
+    asked that selector for DEBUG.
+    """
+
+
 class _RunFileHandler(logging.FileHandler):
     """One run's own file, marked by its type so the next run can take it away.
 
@@ -53,20 +66,20 @@ def configure_logging(run: RunLog | None = None) -> None:
     `grep -r ~/.ai_coc/logs/*/run.log` answers across runs while naming which
     run each hit came from, which the merged file could not.
 
-    The console handler is what says this has already run, since it is the sink
-    that belongs to the process rather than to a job. A build with no stderr
-    at all — PyInstaller's windowed mode — has nothing to be a second time,
-    so re-running the rest of this costs it nothing.
+    What says this has already run is a marker handler of its own rather than
+    any of the sinks, because which sinks exist depends on the build; see
+    `_Configured`.
     """
     level = getattr(logging, os.environ.get("COC_LOG_LEVEL", "INFO").upper(), logging.INFO)
     root = logging.getLogger()
-    if any(isinstance(handler, RichHandler) for handler in root.handlers):
+    if any(isinstance(handler, _Configured) for handler in root.handlers):
         # Already set up, but a run directory asked for later still gets its
         # sink: the window configures logging once at startup and opens a run
         # for each job it runs afterwards.
         _attach_run(root, run)
         return
     root.setLevel(level)
+    root.addHandler(_Configured())
     _attach_run(root, run)
     if sys.stderr is not None:
         console_handler = RichHandler(

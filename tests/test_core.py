@@ -13,7 +13,7 @@ from PIL import Image, ImageDraw
 import pytest
 from pydantic import ValidationError
 
-from ai_coc import plans, models, commands
+from ai_coc import plans, models, commands, logging_setup
 from ai_coc.ui import hero, walls, attack
 from ai_coc.ui import runner as shared
 from ai_coc.models import (
@@ -91,7 +91,7 @@ from ai_coc.adapters.adb import (
 from ai_coc.parsers.clan import panel_top, donatable_cards, reinforce_button
 from ai_coc.parsers.hero import SCROLL_LEFT, SCROLL_RIGHT, can_scroll, hero_cards, hall_buttons
 from ai_coc.parsers.home import builder_jobs, free_builders, collect_bubbles
-from ai_coc.logging_setup import _attach_run
+from ai_coc.logging_setup import _attach_run, configure_logging
 from ai_coc.parsers.field import view_shift, army_centre
 from ai_coc.parsers.scout import (
     PANEL_LEFT,
@@ -2403,6 +2403,29 @@ class RunLogTests(unittest.TestCase):
                 handler.close()
             assert "only the second run" in second.log_path.read_text(encoding="utf-8")
             assert "only the second run" not in first.log_path.read_text(encoding="utf-8")
+
+    def test_a_second_setup_call_leaves_the_level_someone_chose(self) -> None:
+        """The window calls `configure_logging` again for every job it starts.
+
+        The 執行紀錄 selector lowers the root logger at runtime, so a second call
+        that fell through to `root.setLevel` would undo it — right after the user
+        asked for DEBUG to capture prompts. The guard therefore cannot key off
+        any of the sinks: which of them exist depends on the build, and
+        PyInstaller ships `--windowed`, where there is no stderr and so no
+        console handler at all.
+        """
+        root = logging.getLogger()
+        handlers, level = root.handlers[:], root.level
+        root.handlers.clear()
+        try:
+            with patch.object(logging_setup.sys, "stderr", None):
+                configure_logging()
+                root.setLevel(logging.DEBUG)
+                configure_logging()
+                assert root.level == logging.DEBUG
+        finally:
+            root.handlers[:] = handlers
+            root.setLevel(level)
 
 
 class WindowToggleTests(unittest.TestCase):

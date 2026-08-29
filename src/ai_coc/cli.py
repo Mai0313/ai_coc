@@ -249,7 +249,7 @@ def main() -> int:
     app.setApplicationName(APP_NAME)
     # Qt's own metadata slot, which takes the bare version, not a display label.
     app.setApplicationVersion(__version__)
-    window = MainWindow()
+    window = MainWindow(run)
     window.show()
     if arguments.live_test:
         QTimer.singleShot(2500, window.live_ai_test)
