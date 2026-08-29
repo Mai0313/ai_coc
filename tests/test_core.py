@@ -628,19 +628,28 @@ class ConfigTests(unittest.TestCase):
             written = json.loads(path.read_text(encoding="utf-8"))
         assert config.restart_every == 7
         assert "timings" not in written
+        # What it parsed is what it wrote. Rewriting `AppConfig()` instead would
+        # pass every other assertion here while wiping the user's settings, and
+        # this call is the first thing that runs after an upgrade.
+        assert written["restart_every"] == 7
         # And a key the file never had is filled in, so it reads as what this run
         # will actually do rather than as what happened to be saved once.
         assert written["keepalive_seconds"] == AppConfig().keepalive_seconds
 
     def test_a_file_already_matching_the_model_is_left_alone(self) -> None:
-        """Rewriting on every load would touch the file a run only ever reads."""
+        """Rewriting on every load would touch the file a run only ever reads.
+
+        Spying on `save` rather than watching the mtime: Windows advances a
+        file's last-write time on the ~15.6 ms system tick rather than per
+        write, so a timestamp comparison is asking the clock a question about
+        the code, and this suite runs on Windows alone.
+        """
         with tempfile.TemporaryDirectory() as td:
-            path = Path(td) / "config.json"
-            store = ConfigStore(path=path)
+            store = ConfigStore(path=Path(td) / "config.json")
             store.save(AppConfig(restart_every=7))
-            stamp = path.stat().st_mtime_ns
-            assert store.load().restart_every == 7
-            assert path.stat().st_mtime_ns == stamp
+            with patch.object(ConfigStore, "save") as saved:
+                assert store.load().restart_every == 7
+            saved.assert_not_called()
 
     def test_a_file_that_will_not_parse_raises_rather_than_farming_on_defaults(self) -> None:
         """Silently defaulting is the failure this file was added to close."""
