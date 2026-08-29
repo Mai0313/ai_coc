@@ -284,6 +284,16 @@ class HeroRunner(GameRunner):
         """
         if card.price is None:
             return f"{self.hero} 現在沒有升級按鈕，多半正在升級中"
+        # Before the affordability check, because this one is not about money:
+        # the village can be holding exactly what the card asks for and the
+        # button still be dead. Measured live, 飛龍公爵 at 15 asked for 220 000
+        # dark against a village holding 220 000, and the game answered the tap
+        # with a red line saying to raise the Hero Hall to 11 first.
+        if not card.upgradable:
+            return (
+                f"{self.hero} 的升級按鈕是停用的，"
+                f"多半是英雄殿堂的等級擋住了（要 {card.price} {card.resource}）"
+            )
         if not self._affordable(card, stock):
             return f"資源不夠，{self.hero} 要 {card.price} {card.resource}"
         return None

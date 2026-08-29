@@ -1014,6 +1014,13 @@ class HeroCard(BaseModel):
     point: tuple[int, int]
     price: int | None = None
     resource: Literal["elixir", "dark"] | None = None
+    # Whether that button can be pressed, which is not what a price says. A hero
+    # the Hero Hall's own level has capped keeps its price and loses its button:
+    # the plate greys, the number stays, and a tap is answered with a red line
+    # naming the hall level it wants first — Chinese, which nothing here reads.
+    # So a run that went by the price alone reported "no confirmation sheet came
+    # up", which reads as a swallowed tap rather than a button never live.
+    upgradable: bool = False
 
 
 class HeroReport(BaseModel):
