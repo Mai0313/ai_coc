@@ -1803,7 +1803,13 @@ class RestartEveryTests(unittest.TestCase):
     def _idle() -> MagicMock:
         return MagicMock(stock_full=False, attacked=None)
 
-    def _play(self, reports: list[MagicMock], options: AttackOptions, every: int) -> MagicMock:
+    def _play(
+        self,
+        reports: list[MagicMock],
+        options: AttackOptions,
+        every: int,
+        played: AttackPlan | None = None,
+    ) -> MagicMock:
         """Run the loop over a fixed list of rounds and hand back the restart mock."""
         with (
             patch.object(commands, "_controller"),
@@ -1817,8 +1823,42 @@ class RestartEveryTests(unittest.TestCase):
             patch.object(commands, "_restart_emulator", return_value=True) as restart,
         ):
             runner.return_value.run.side_effect = reports
+            runner.return_value.played = played
             self.series = commands.attack(options)
         return restart
+
+    def test_every_round_leaves_its_own_plan_behind(self) -> None:
+        """`--plan-out` keeps whichever round went last and overwrites the rest.
+
+        Which line a given round drew is otherwise unanswerable: `run.log` has a
+        one-line summary of it, and the frames cannot stand in, since a drop is
+        over inside the gap between two captures.
+        """
+        with tempfile.TemporaryDirectory() as td:
+            kept = Path(td) / "plans"
+            kept.mkdir()
+            self._play(
+                [self._fought()] * 3,
+                AttackOptions(rounds=3, plan_dir=kept),
+                every=0,
+                played=plans.flat(),
+            )
+            assert sorted(path.name for path in kept.iterdir()) == [
+                "round-01.json",
+                "round-02.json",
+                "round-03.json",
+            ]
+            assert plans.load(kept / "round-02.json") == plans.flat()
+
+    def test_a_round_that_never_got_a_plan_leaves_no_file(self) -> None:
+        """A round can end before there is a tactic to write down, and that is not
+        an error: an empty file would read as a plan that drew nothing.
+        """
+        with tempfile.TemporaryDirectory() as td:
+            kept = Path(td) / "plans"
+            kept.mkdir()
+            self._play([self._fought()], AttackOptions(rounds=1, plan_dir=kept), every=0)
+            assert list(kept.iterdir()) == []
 
     def test_the_restart_counts_battles_rather_than_rounds(self) -> None:
         """A round spent waiting for barracks did not tire the emulator out.

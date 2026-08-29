@@ -151,6 +151,7 @@ Every run gets a directory of its own, whichever side of the app started it:
 ~/.ai_coc/logs/2026-08-29-011423-attack/
 ├── run.log        # this run's log, and nothing else
 ├── result.json    # what the command answered
+├── plans/         # one file per attack round: the tactic it played
 └── frames/        # only with --record
 ```
 

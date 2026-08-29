@@ -574,6 +574,8 @@ def attack(options: AttackOptions) -> AttackSeries:
                 fought += 1
             logger.info("Attack finished: %s", report.message)
             _write_plan(options.plan_out, runner.played)
+            if options.plan_dir is not None:
+                _write_plan(options.plan_dir / f"round-{len(series.root):02d}.json", runner.played)
             if report.stock_full:
                 logger.info("The storages are full; there is nothing left to farm for")
                 break

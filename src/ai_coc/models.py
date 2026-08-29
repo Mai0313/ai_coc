@@ -772,6 +772,10 @@ class AttackOptions(BaseModel):
     frame_dir: Path | None = None
     plan_in: Path | None = None
     plan_out: Path | None = None
+    # Where to keep a copy of every round's plan, one file each. `plan_out` is
+    # the caller's own path and holds whichever round went last; this is the
+    # series. None only for a caller that has no run directory to write into.
+    plan_dir: Path | None = None
     minimums: LootOverrides = LootOverrides()
     # 0 keeps going until it is interrupted, which is what watching the loop play
     # needs: a tactic is judged over a run of battles rather than one.
@@ -957,6 +961,24 @@ class RunLog(BaseModel):
         if not self.recording:
             return None
         path = self.directory / "frames"
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
+    @property
+    def plans(self) -> Path:
+        """Where each round keeps the tactic it played.
+
+        Unconditional where `frames` is not, because the two cost nothing alike:
+        a plan is a few hundred bytes of JSON written once a battle, against a
+        PNG encode on the emulator for every frame a loop reads.
+
+        It is the only record of what the planner actually answered. `run.log`
+        carries a one-line summary and `--plan-out` keeps the last round alone,
+        overwriting every earlier one, so a series had no way to say which round
+        drew which line — and the loop's own frames cannot answer it either,
+        since a drop is over in a fraction of the gap between two captures.
+        """
+        path = self.directory / "plans"
         path.mkdir(parents=True, exist_ok=True)
         return path
 
