@@ -885,13 +885,25 @@ class AttackTests(unittest.TestCase):
     def test_a_threshold_left_at_zero_ignores_that_resource(self) -> None:
         assert LootThresholds().accepts(LootOffer(gold=0, elixir=0, dark=0))
 
-    def test_any_one_full_storage_stops_the_farming(self) -> None:
-        """Unlike the loot thresholds: loot past a full storage is thrown away."""
-        stock = VillageStock(gold=15000000, elixir=400000, dark=1000)
-        assert StockLimits(stop_gold=15000000, stop_elixir=15000000).reached(stock) == ["金幣"]
+    def test_one_full_storage_is_not_a_reason_to_stop(self) -> None:
+        """A battle brings home three resources, so one ceiling earns the fee out.
+
+        This stopped on the first storage to fill until a live village showed
+        what that costs: its elixir cap had grown past the configured limit, so
+        every check stood the run down with five million of gold room unused,
+        and no amount of farming could ever fill it.
+        """
+        limits = StockLimits(stop_gold=15_000_000, stop_elixir=15_000_000)
+        assert limits.full(VillageStock(gold=15_000_000, elixir=400_000, dark=1000)) is None
+
+    def test_farming_stops_once_every_watched_storage_is_full(self) -> None:
+        limits = StockLimits(stop_gold=15_000_000, stop_elixir=15_000_000)
+        full = limits.full(VillageStock(gold=15_000_000, elixir=15_400_000, dark=1000))
+        # Dark is left unwatched at 0, so it neither stops the run nor holds it open.
+        assert full == ["金幣", "聖水"]
 
     def test_a_stop_limit_left_at_zero_watches_nothing(self) -> None:
-        assert not StockLimits().reached(VillageStock(gold=99999999, elixir=1, dark=1))
+        assert StockLimits().full(VillageStock(gold=99999999, elixir=1, dark=1)) is None
 
     def test_deploy_line_runs_the_whole_flank(self) -> None:
         points = deploy_line(8)

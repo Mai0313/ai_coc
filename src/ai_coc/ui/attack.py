@@ -1414,12 +1414,14 @@ class AttackRunner(BaseModel):
         if home is None:
             logger.warning("The attack menu did not open; the game is not on the home village")
             return AttackReport(message="畫面不在主村，沒有開啟攻擊選單就停手")
-        # Before the search fee, like the army check below: a full storage means
-        # the loot this run wins is thrown away when it is collected. An
-        # unreadable frame stops nothing, because a village that cannot be read
-        # is not evidence of a full one.
+        # Before the search fee, like the army check below: a village with every
+        # storage full has nowhere to put what this run would win. **Every**, not
+        # any — a battle brings home three resources, so one of them being at the
+        # ceiling is no reason to stop paying a fee the other two still earn out.
+        # An unreadable frame stops nothing, because a village that cannot be
+        # read is not evidence of a full one.
         stock = read_stock(home)
-        if stock and (full := self.stock.reached(stock)):
+        if stock and (full := self.stock.full(stock)):
             logger.info(
                 "Storage limit reached (%s); farming stops with gold=%d elixir=%d dark=%d",
                 "/".join(full),
