@@ -1415,7 +1415,7 @@ class AttackTests(unittest.TestCase):
         and `field_units` read its card on the very next frame. Asked as the
         hero test it used to be, that put a slot in front of every real hero —
         the queen went out on the king's twenty seconds where her cloak wants
-        one, and the duke took the five of `unknown`.
+        one, and the warden on the duke's, ten seconds early.
         """
         cards = [436, 562, 683, 804, 928]
         played = self._abilities(cards, on_field=cards, kinds=["queen", "king", "warden", "duke"])
@@ -1436,6 +1436,44 @@ class AttackTests(unittest.TestCase):
         )
         assert [card for _, card in played] == [700, 800]
         assert [delay for delay, _ in played] == [20, 45]
+
+    def test_with_no_plan_to_count_the_health_bar_is_still_what_answers(self) -> None:
+        """There is nothing else to ask, and being wrong costs nothing there.
+
+        Every card takes the same `unknown` delay without a plan, so a leader
+        read the wrong way shifts no timing; the only cost is a tap on a card
+        that has already been spent.
+        """
+        cards = [600, 700, 800]
+        played = self._abilities(cards, on_field=cards, kinds=[])
+        assert [card for _, card in played] == cards
+        assert [delay for delay, _ in played] == [20, 20, 20]
+
+    def test_a_plan_naming_a_count_that_fits_neither_row_says_so(self) -> None:
+        """Two heroes against four one-off cards fits neither arithmetic.
+
+        One fewer than the cards is an army carrying a siege machine and as many
+        is one that is not; two fewer is a plan out of step with the row, which
+        a `--plan-in` file replayed after two heroes went into upgrades gives —
+        their cards simply disappear. Neither reading of the leader is safe
+        then, so the run is told rather than left to find out from timings that
+        are quietly a slot out.
+        """
+        cards = [600, 700, 800, 900]
+        with self.assertLogs("ai_coc.ui.attack", level="WARNING") as caught:
+            self._abilities(cards, on_field=cards, kinds=["queen", "king"])
+        assert any("2 hero(es) against 4 one-off card(s)" in line for line in caught.output)
+
+    def test_a_plan_one_hero_short_is_not_flagged_because_it_cannot_be_seen(self) -> None:
+        """It is the same count as an army carrying a siege machine, and read as one.
+
+        That costs the leading hero its ability. The bar it replaced got this
+        one case right — and every battle this army fights wrong, since it does
+        carry a siege machine and the game draws a bar over it.
+        """
+        cards = [600, 700, 800, 900]
+        played = self._abilities(cards, on_field=cards, kinds=["queen", "king", "warden"])
+        assert [card for _, card in played] == [700, 800, 900]
 
     def test_a_hero_that_never_left_its_card_is_not_given_an_ability(self) -> None:
         """An ability tap on a hero still in its card deploys it with nothing around it."""

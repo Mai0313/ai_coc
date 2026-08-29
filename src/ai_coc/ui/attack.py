@@ -803,7 +803,7 @@ class AttackRunner(BaseModel):
     def _landed(
         self, before: bytes, after: bytes, cards: list[int]
     ) -> tuple[list[int], list[int]]:
-        """Which of these one-off cards landed, and which of those were heroes.
+        """Which of these one-off cards landed, and which of those drew a health bar.
 
         The card is the evidence and the screen is not. A hero keeps its card
         once it is down — the card becomes the ability button — so what says it
@@ -852,7 +852,7 @@ class AttackRunner(BaseModel):
         schedule tapping a card that has nothing left to give.
         """
         landed: list[int] = []
-        heroes: list[int] = []
+        onfield: list[int] = []
         pending = list(cards)
         # Where the last card actually went, which is not the spot the loop
         # happens to be holding when it stops: it breaks at the top of the next
@@ -870,7 +870,7 @@ class AttackRunner(BaseModel):
             time.sleep(HERO_SETTLE)
             down, bars = self._landed(before, self._frame("dropped"), pending)
             landed += down
-            heroes += bars
+            onfield += bars
             pending = [card for card in pending if card not in down]
             if down:
                 worked = spot
@@ -879,7 +879,7 @@ class AttackRunner(BaseModel):
         for card in pending:
             logger.warning("The %s card at %d never landed; its unit stays put", what, card)
         logger.info("%d of %d %s card(s) landed at %s", len(landed), len(cards), what, worked)
-        return landed, heroes
+        return landed, onfield
 
     def _wait_for_battle(self) -> bytes | None:
         """Hold until the scout countdown ends, and hand back the first battle frame.
@@ -1212,10 +1212,32 @@ class AttackRunner(BaseModel):
         # hero: measured across all three rounds of a recorded run, the 攻城戰車
         # landed and `field_units` read its card as a hero on the very next
         # frame. That put a slot in front of every real hero, so the queen went
-        # out on the king's twenty seconds where her cloak wants one, and the
-        # duke took the five of `unknown`. The bar stays as the answer when
-        # there is no plan to count, where every card takes the same `unknown`
-        # delay anyway and a tap on a spent siege card costs nothing.
+        # out on the king's twenty seconds where her cloak wants one and the
+        # warden on the duke's, ten seconds before its tome is worth anything.
+        # The bar stays as the answer when there is no plan to count, where
+        # every card takes the same delay anyway and a tap on a spent siege
+        # card costs nothing.
+        #
+        # **The count is a better bet than the bar, not a sound one.** A plan
+        # naming one hero too few against an army carrying no siege machine is
+        # the same arithmetic as a plan naming them all against an army that
+        # does, so this reads it as the second and the leading hero loses its
+        # ability — which is what the bar happened to get right. It is still
+        # the better way round: the bar is wrong on every battle this army
+        # fights, since it carries a siege machine and the game draws a bar
+        # over it, while the count is wrong only when the planner miscounts.
+        #
+        # A count matching neither arithmetic is past being a bet: the plan
+        # cannot be trusted to name the cards in order either. It is said out
+        # loud rather than guessed at quietly, because whichever way it falls
+        # the abilities after it are a slot out and nothing downstream notices.
+        if kinds and len(kinds) not in (len(singles), len(singles) - 1):
+            logger.warning(
+                "The plan names %d hero(es) against %d one-off card(s); "
+                "the ability timings will not line up with the row",
+                len(kinds),
+                len(singles),
+            )
         leads = len(kinds) == len(singles) if kinds else bool(led)
         order = (vanguard if leads else []) + followers
         # Each hero's ability runs from its own hero landing, which for the

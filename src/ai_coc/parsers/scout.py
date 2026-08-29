@@ -784,10 +784,14 @@ def card_drained(before: bytes, after: bytes, slots: Sequence[int]) -> list[int]
 
 
 def field_units(png: bytes, slots: Sequence[int]) -> list[int]:
-    """Which of these cards have their hero alive on the field, by its health bar.
+    """Which of these cards have their unit alive on the field, by its health bar.
 
-    A hero card is the one that says nothing otherwise: it stays lit and stays
-    counted once the hero is down, because it has become the ability button.
+    This is the only thing such a card says. It stays lit and stays counted
+    once the unit is down — a hero's has become the ability button — so nothing
+    else on it moves.
+
+    A unit, not a hero: measured on a recorded run, the game draws the same bar
+    over a siege machine, so the caller cannot use this to tell the two apart.
     """
     image = Image.open(io.BytesIO(png)).convert("RGB")
     down: list[int] = []
