@@ -442,22 +442,40 @@ class StockLimits(BaseModel):
     stop_elixir: int = 0
     stop_dark: int = 0
 
-    def reached(self, stock: VillageStock) -> list[str]:
-        """Which watched resources are at or past their limit, named for the log.
+    def full(self, stock: VillageStock) -> list[str] | None:
+        """Every watched resource, named, once they have **all** reached their limit.
 
-        Any one of them is enough to stop on: loot past a full storage is thrown
-        away on collection, so farming for a second resource that is still short
-        means paying a search fee to overfill the first.
+        None while any of them is still short, which is what the caller keeps
+        farming on.
+
+        **All rather than any**, which is a change from how this started. The
+        first version stopped on the first storage to fill, reasoning that loot
+        past a full one is thrown away on collection — true, but it prices the
+        search fee against one resource when a battle brings home three. A
+        village whose elixir is at the ceiling still has room for gold, and one
+        more round costs the fee either way.
+
+        What made the difference in practice is that storages grow: measured on
+        a live village whose elixir cap had reached 21.5M against a configured
+        limit of 20M, the run stood down at every single check with five million
+        of gold room going unused, and no amount of farming could ever fill the
+        village.
+
+        A resource left at 0 is unwatched and never holds the run open, so a
+        limits object with nothing set never stops one — the same as before.
         """
-        return [
-            name
+        watched = [
+            (name, limit, held)
             for name, limit, held in (
                 ("金幣", self.stop_gold, stock.gold),
                 ("聖水", self.stop_elixir, stock.elixir),
                 ("黑水", self.stop_dark, stock.dark),
             )
-            if limit and held >= limit
+            if limit
         ]
+        if not watched or any(held < limit for _, limit, held in watched):
+            return None
+        return [name for name, _, _ in watched]
 
 
 class ProbeRay(BaseModel):
