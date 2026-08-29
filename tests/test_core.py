@@ -1055,6 +1055,61 @@ class AttackTests(unittest.TestCase):
         """
         assert DROPS_PER_PASS >= 16
 
+    def test_a_counted_card_is_tapped_as_many_times_as_it_holds(self) -> None:
+        """Plus one for slack, the way a spell card already is.
+
+        A fixed pass spends whatever is left of its circuits on ground with
+        nothing selected: measured on a live row of x9, x3 and x2 against a
+        24-tap pass, that is 55 taps of nothing — about 3.4 s of a ten-second
+        deployment.
+        """
+        line = deploy_line(LINE_POINTS)
+        assert len(drop_points(line, 0, 4)) == 4
+        # And an unreadable corner still gets the whole pass, which is what the
+        # fixed count was always for.
+        assert len(drop_points(line, 0)) == DROPS_PER_PASS
+
+    def _burst(self, counts: dict[int, int | None]) -> list[list[tuple[int, int]]]:
+        """The taps `_spread_troops` sends, given what each card's corner reads."""
+        runner = self._runner()
+        sent: list[list[tuple[int, int]]] = []
+
+        def tapped(
+            _self: object, points: list[tuple[int, int]], display: object, **_: object
+        ) -> None:
+            sent.append(points)
+
+        with (
+            patch.object(AttackRunner, "_frame", return_value=b""),
+            patch.object(attack, "card_count", side_effect=lambda _png, slot: counts[slot]),
+            patch.object(attack, "card_drained", return_value=True),
+            patch.object(attack, "live_cards", return_value=[]),
+            patch.object(AdbController, "tap_many", autospec=True, side_effect=tapped),
+            patch.object(attack.time, "sleep"),
+        ):
+            runner._spread_troops(list(counts), DEPLOY_LINES["top_left"], 0)
+        return sent
+
+    def test_a_card_that_reads_high_is_still_held_to_one_pass(self) -> None:
+        """This reader fails high, and a committed fixture proves it.
+
+        A four-pixel sliver of card art past the last digit matches a `1` inside
+        tolerance on some frames and not others: across three fixtures the same
+        x12 card reads 12, None and 121. Taken at face value the last is 122
+        drops in one burst, about 7.6 s — more than double what reading the
+        count saves, with every hero waiting behind it.
+        """
+        assert card_count((FRAMES / "cards_dark_hero.png").read_bytes(), 171) == 121
+        [burst] = self._burst({171: 121})
+        # One card-select tap, then no more drops than the pass would have sent.
+        assert len(burst) - 1 == DROPS_PER_PASS
+
+    def test_a_card_that_reads_gets_its_own_taps_and_one_spare(self) -> None:
+        """And a corner the artwork swallowed still gets the whole pass."""
+        counted, swallowed = self._burst({293: 3, 171: None})
+        assert len(counted) - 1 == 4
+        assert len(swallowed) - 1 == DROPS_PER_PASS
+
     def test_a_card_bigger_than_the_line_does_not_stack_its_tail_on_its_head(self) -> None:
         """The stride orders one circuit; the second walks the same points again.
 

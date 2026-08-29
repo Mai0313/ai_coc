@@ -95,10 +95,15 @@ RETURN_HOME = (798, 768)
 # every card, so the second is 0.74 s per card of tapping into nothing and the
 # deployment runs about 3 s longer.
 #
-# That is the trade until the count can be read. `card_count` answers None for
-# both cards on that row; the reason has not been run down, and with it the tap
-# count would be exact and neither direction would cost anything. `DEPLOY_PASSES`
-# stays behind this for a card bigger than two circuits.
+# **That trade is now only paid by a card whose corner will not read.** A
+# counted card says what it holds, so `_spread_troops` taps that many plus one,
+# and this figure is both what a card the artwork swallowed falls back to and
+# the ceiling on what a count is allowed to ask for. Measured on a row of x9,
+# x3 and x2, that is 34 taps rather than 75. Which corners read was measured
+# too: of those three, the two on blue plates came back 3 and 2, and the pale
+# one merged its `x` into the background — one 25 px span matching no
+# character — which is why the fallback has to stay. `DEPLOY_PASSES` is behind
+# all of it for a card bigger than two circuits.
 #
 # An over-tap on a card that has just emptied costs nothing beyond its own
 # 0.062 s: the selection clears with the card, so the taps that follow land on
@@ -502,11 +507,16 @@ def spaced(points: Iterable[tuple[int, int]]) -> list[tuple[int, int]]:
     return kept
 
 
-def drop_points(line: list[tuple[int, int]], seed: int) -> list[tuple[int, int]]:
-    """One pass worth of drops, spread over the whole line rather than bunched.
+def drop_points(
+    line: list[tuple[int, int]], seed: int, taps: int = DROPS_PER_PASS
+) -> list[tuple[int, int]]:
+    """One card's worth of drops, spread over the whole line rather than bunched.
 
     `seed` rotates the starting point per card and per pass, so a card holding
     a single troop does not put it on the same spot every other card started on.
+
+    `taps` is what the card actually holds where its corner can be read, and the
+    full pass where it cannot; see `_spread_troops`.
 
     A pass covers the whole line either way; what `DROP_STRIDE` decides is the
     order, and the order is what a card holding fewer troops than the pass has
@@ -522,7 +532,7 @@ def drop_points(line: list[tuple[int, int]], seed: int) -> list[tuple[int, int]]
     enough to come round again.
     """
     spots: list[tuple[int, int]] = []
-    for i in range(DROPS_PER_PASS):
+    for i in range(taps):
         at = (seed + i * DROP_STRIDE) % len(line)
         x, y = line[at]
         # How far between this point and its neighbour, by which circuit this
@@ -879,8 +889,37 @@ class AttackRunner(BaseModel):
         line = deploy_line(LINE_POINTS, *push_line(anchors, pushed, self._middle))
         shot = self._frame("before-pass")
         for index in range(DEPLOY_PASSES):
+            # **A counted card says how many taps it wants, in its own corner.**
+            # Tapping that many plus one empties it, where a fixed pass spends
+            # whatever is left of its circuits on ground with nothing selected:
+            # measured on a row of x9, x3 and x2 against a 24-tap pass, 58 of
+            # its 72 drops land on nothing, and reading the two that will read
+            # takes the row from 75 taps to 34 — about 2.5 s of a ten-second
+            # deployment.
+            #
+            # The reading comes off the newest frame there is, so a second pass
+            # asks what the first one left rather than what the card started
+            # with. `None` is a corner the artwork swallowed — measured, the
+            # pale card of those three merged its `x` into the background and
+            # came back with one 25 px span matching nothing — and that falls
+            # back to the full pass, which is what the fixed count was for.
+            #
+            # **The pass is still the ceiling, because this reader fails high.**
+            # A four-pixel sliver of card art past the last digit matches a `1`
+            # inside tolerance on some frames and not others: across three
+            # committed fixtures the same x12 card reads 12, None and 121. Taken
+            # at face value the last of those is 122 drops in one burst, about
+            # 7.6 s, more than double what reading the count saves and with
+            # every hero waiting behind it. Clamped, a genuinely larger card
+            # loses nothing — it takes another pass, exactly as it used to.
+            held = {x: card_count(shot, x) for x in remaining}
             for card, x in enumerate(remaining):
-                drops = drop_points(line, index * len(remaining) + card)
+                count = held[x]
+                drops = drop_points(
+                    line,
+                    index * len(remaining) + card,
+                    min(count + 1, DROPS_PER_PASS) if count else DROPS_PER_PASS,
+                )
                 self.adb.tap_many([(x, CARD_ROW_Y), *drops], self.display)
             time.sleep(DROP_SETTLE)
             before, shot = shot, self._frame("pass")
