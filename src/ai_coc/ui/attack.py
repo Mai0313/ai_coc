@@ -561,12 +561,20 @@ class AttackRunner(BaseModel):
 
         Left to right, one order per card, so a list shorter than the row simply
         leaves the cards past its end to the shared spot `_drop_singles` falls
-        back to. Every point goes through the same two corrections the drop line
-        does: the plan drew it against a village centred on the scout screen, and
-        by now the camera may have been dragged clear of the card row.
+        back to.
+
+        Every point goes through the same corrections the drop line does: the
+        camera may have been dragged clear of the card row since the plan drew
+        this against a centred village, and `push_out` at zero steps is what
+        pulls it onto the map without otherwise moving it. That last one matters
+        because the map is a diamond while the prompt hands the planner a
+        rectangle — `x_pct` 2 to 98 by `y_pct` 12 to 77 — whose corners are off
+        the board entirely. `clear_of_controls` alone holds a point inside that
+        rectangle and no further, which is how a hero refused four times ended
+        up at (30, 175) with the map spanning x 596 to 1004.
         """
         return {
-            card: clear_of_controls(point)
+            card: push_out(point, 0, self._middle)
             for card, point in zip(
                 cards, self._onscreen(tuple(order.drop.pixels() for order in orders)), strict=False
             )
@@ -890,9 +898,12 @@ class AttackRunner(BaseModel):
         all used to go on the same spot, which can only express "everyone
         follows the troops" — where a village usually wants one or two walking
         the outside to clear the stray buildings that pull an army off course
-        and the rest going in behind the push. It applies to the first attempt
-        only: a point the game refused once is not worth insisting on, and the
-        shared retries are already ordered best-first.
+        and the rest going in behind the push. It goes **ahead of** the shared
+        ladder rather than replacing its first rung: a point the game refused
+        once is not worth insisting on, but the rung it would have displaced is
+        the midpoint `_usable_line` has already probed and proved the game
+        accepts, which is the one spot with evidence behind it. Overwriting it
+        cost a named hero both that spot and one of its retries.
 
         Getting the verdict wrong is not free, which is what the settle is for: a
         second tap on a hero already on the field is its ability, so a drop
@@ -902,16 +913,19 @@ class AttackRunner(BaseModel):
         landed: list[int] = []
         onfield: list[int] = []
         pending = list(cards)
+        shared = single_spots(line, self._middle)
+        # Where every card goes on each attempt in turn. A card the plan did not
+        # name falls straight through to the shared spot of that round.
+        rounds = [dict.fromkeys(cards, spot) for spot in shared]
+        if wanted:
+            rounds.insert(0, {card: wanted.get(card, shared[0]) for card in cards})
         # Where the last card actually went, which is not the spot the loop
         # happens to be holding when it stops: it breaks at the top of the next
-        # iteration, so by then `spot` has already moved past the one that worked.
+        # iteration, so by then it has already moved past the one that worked.
         worked = line[len(line) // 2]
-        for attempt, spot in enumerate(single_spots(line, self._middle)):
+        for aim in rounds:
             if not pending:
                 break
-            aim = dict.fromkeys(pending, spot)
-            if attempt == 0 and wanted:
-                aim |= {card: point for card, point in wanted.items() if card in pending}
             before = self._frame("before-drop")
             self.adb.tap_many(
                 [tap for card in pending for tap in ((card, CARD_ROW_Y), aim[card])],
@@ -929,7 +943,16 @@ class AttackRunner(BaseModel):
                 # own. It is a sample for the log, not the whole answer.
                 worked = aim[down[0]]
             if pending:
-                logger.info("%d %s card(s) took nothing at %s", len(pending), what, spot)
+                # Each card's own spot rather than one shared name for them all:
+                # on the round the plan aimed, they went to different places, and
+                # a recorded run read afterwards would otherwise point at a
+                # coordinate the card was never sent to.
+                logger.info(
+                    "%d %s card(s) took nothing: %s",
+                    len(pending),
+                    what,
+                    ", ".join(f"{card} at {aim[card]}" for card in pending),
+                )
         for card in pending:
             logger.warning("The %s card at %d never landed; its unit stays put", what, card)
         logger.info("%d of %d %s card(s) landed at %s", len(landed), len(cards), what, worked)

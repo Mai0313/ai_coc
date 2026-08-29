@@ -493,8 +493,8 @@ def _write_plan(path: Path | None, plan: AttackPlan | None) -> None:
 def attack(options: AttackOptions) -> AttackSeries:
     """The attack loop, with no window in the way, for as many rounds as asked.
 
-    Thresholds, storage limits and ability timings all come from the shared
-    config file, so a run started here plays the same way as one started from
+    Thresholds, storage limits and the model to plan with all come from the
+    shared config file, so a run started here plays the same way as one from
     the window — the storage limits included, which means a full village stands
     this down before it searches. `minimums` overrides the thresholds alone,
     which is how a loop being studied gets the old behaviour back: all three at

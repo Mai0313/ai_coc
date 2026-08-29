@@ -177,8 +177,9 @@ The first line of every run says which directory it is, and the name is `<when>-
 ```
 
 - **thresholds**: who is worth attacking. Set them too high and a run skips dozens of opponents without ever starting a battle
-- **stock**: when to stand down. Any one resource reaching its limit ends the run, not all three. `0` means "never stop on this one"
-    No ability or spell timings any more. They were here as a table of per-hero constants, and editing them meant guessing how long an army takes to walk across a village nobody had looked at — which is the planner's job, done with the village on screen. They live on the plan now: see `plans/flat.json` for the shape and `--plan-in` for replaying one.
+- **stock**: when to stand down. Every watched resource has to reach its limit, not just one of them — a battle brings home three, so one storage at the ceiling is no reason to stop earning the other two. `0` means "never stop on this one", and leaves it out of the count
+
+There are no ability or spell timings here any more. They were a table of per-hero constants, and editing them meant guessing how long an army takes to walk across a village nobody had looked at — which is the planner's job, done with the village on screen. Every clock lives on the plan now: see `plans/flat.json` for the shape, and `--plan-in` to replay one.
 
 Everything else lives in `~/.ai_coc`: the SQLite database, captured frames, imported account JSON, the log, and the DPAPI-protected key file.
 

@@ -1554,6 +1554,36 @@ class AttackTests(unittest.TestCase):
             runner._deploy(b"")
         return sent
 
+    def test_a_refused_hero_still_gets_the_spot_the_probe_proved(self) -> None:
+        """The plan's point goes ahead of the shared ladder, not over its first rung.
+
+        `single_spots[0]` is the midpoint `_usable_line` already probed and the
+        game already accepted, so it is the one spot with evidence behind it.
+        Replacing it with the plan's point cost a named hero both that spot and
+        one of its retries.
+        """
+        runner = self._runner()
+        line = deploy_line(LINE_POINTS)
+        shared = single_spots(line, runner._middle)
+        aimed: list[tuple[int, int]] = []
+
+        def refuse(
+            _self: object, taps: list[tuple[int, int]], display: object, gap: float = 0
+        ) -> None:
+            # Taps alternate card, spot, card, spot; only the spots matter here.
+            aimed.extend(taps[1::2])
+
+        with (
+            patch.object(AttackRunner, "_frame", return_value=b""),
+            patch.object(AttackRunner, "_landed", return_value=([], [])),
+            patch.object(AdbController, "tap_many", autospec=True, side_effect=refuse),
+            patch.object(attack.time, "sleep"),
+        ):
+            runner._drop_singles([700], line, "hero", {700: (123, 456)})
+        assert aimed[0] == (123, 456)
+        # Every shared rung still follows, the probed midpoint included.
+        assert aimed[1:] == shared
+
     def test_each_hero_goes_where_its_own_order_says(self) -> None:
         """Heroes do different jobs in one attack, and one shared spot cannot say so.
 
