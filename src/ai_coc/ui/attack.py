@@ -28,6 +28,7 @@ from ai_coc.models import (
     LootThresholds,
 )
 from ai_coc.prompts import PROMPTS
+from ai_coc.constants import COC_PACKAGE
 from ai_coc.ui.runner import restart_game
 from ai_coc.adapters.ai import GeminiClient
 from ai_coc.adapters.adb import AdbController
@@ -952,7 +953,7 @@ class AttackRunner(BaseModel):
         run that produced it deployed nothing. Without this that stays an
         anecdote; with it, every occurrence is in the log with a round against it.
         """
-        self.adb.zoom("out", ZOOM_PINCHES)
+        self.adb.zoom("out", ZOOM_PINCHES, COC_PACKAGE)
         settled = self._frame("zoomed")
         # Byte length rather than a pixel walk: a PNG of the same scene at a
         # different zoom differs by a lot more than encoder noise, and this runs

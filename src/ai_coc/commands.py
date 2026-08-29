@@ -374,7 +374,7 @@ def _settle_game(
             waiting = "the game is not on a display yet"
         else:
             if read_stock(adb.screenshot(display)) is not None:
-                adb.zoom("out", RESTART_ZOOM_PINCHES)
+                adb.zoom("out", RESTART_ZOOM_PINCHES, COC_PACKAGE)
                 return display
             waiting = "the village has not painted yet"
         logger.debug("Still waiting for the game: %s", waiting)
@@ -936,7 +936,7 @@ def view(zoom: str = "out", times: int = 3) -> ViewReport:
     Measured live, one pinch covers the whole range: from fully zoomed in, a
     single gesture came back to the far limit and a second changed nothing.
     """
-    _controller().zoom(zoom, times)
+    _controller().zoom(zoom, times, COC_PACKAGE)
     report = ViewReport(message=f"鏡頭{'拉遠' if zoom == 'out' else '拉近'}了 {times} 次")
     logger.info("View: %s", report.message)
     return report
