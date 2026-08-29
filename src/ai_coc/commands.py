@@ -523,7 +523,6 @@ def attack(options: AttackOptions) -> AttackSeries:
         display=display,
         thresholds=options.minimums.over(config.thresholds),
         stock=config.stock,
-        abilities=config.timings,
         ai=None if plan else _planner(config),
         plan=plan,
         should_stop=stop_requested,

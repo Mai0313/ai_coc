@@ -55,7 +55,6 @@ from ai_coc.models import (
     ChatMessage,
     StockLimits,
     AttackReport,
-    AttackTimings,
     DisplayTarget,
     LocatedTarget,
     ThinkingLevel,
@@ -116,22 +115,6 @@ NEXT_CYCLE_DELAY = 3000
 # preview's own `screencap` does not compete with the loop taking the frames it
 # reads. A tick whose frame is still in flight is dropped rather than queued.
 LIVE_INTERVAL = 500
-# A queen wants her cloak almost at once; a warden's tome is worth holding until
-# the push is deep enough to be worth saving. A hero's delay runs from that hero
-# landing; the freeze's runs from the attack opening, which is why it is labelled
-# apart. It used to have no time of its own at all and simply followed the last
-# ability, which put it a minute and a half in whenever a champion was out. The
-# numbers themselves are `AttackTimings`' own defaults; only the labels are here.
-TIMING_FIELDS = (
-    ("king", "野蠻人之王（落地後）"),
-    ("queen", "弓箭女皇（落地後）"),
-    ("warden", "大守護者（落地後）"),
-    ("champion", "神盾勇者（落地後）"),
-    ("minion_prince", "亡靈王子（落地後）"),
-    ("duke", "飛龍公爵（落地後）"),
-    ("rage", "狂暴法術（開打後）"),
-    ("freeze", "冰凍法術（開打後）"),
-)
 # Taken from the model so the picker cannot drift from what Gemini accepts.
 THINKING_LEVELS = list(get_args(ThinkingLevel))
 # What the registry used to hold, read once so a machine that has been running
@@ -157,10 +140,6 @@ def _migrated_config(settings: QSettings) -> AppConfig | None:
             key: saved(key, getattr(defaults.thresholds, key)) for key in THRESHOLD_KEYS
         }),
         stock=StockLimits(**{key: saved(key, getattr(defaults.stock, key)) for key in STOCK_KEYS}),
-        timings=AttackTimings(**{
-            key: saved(f"hero_{key}", getattr(defaults.timings, key))
-            for key, _label in TIMING_FIELDS
-        }),
         gemini_model=str(settings.value("gemini_model", defaults.gemini_model)),
         # The OpenAI-compatible endpoint the previous release defaulted to is not
         # a google-genai base URL. This is the one moment it could be carried
@@ -340,27 +319,6 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.emulator_details)
         return group
 
-    def _timing_group(self) -> QGroupBox:
-        """One delay per hero, not per card slot: an upgrading hero cannot take
-        the field, so its card is absent and every slot after it shifts. Freeze
-        is the one spell held back, and the one timed from the attack opening
-        rather than from a landing, so its row says which.
-
-        The keys are `AttackTimings`' own field names. The `hero_` prefix they
-        carried in the registry survives in `_migrated_config` alone, which is
-        the only thing that still reads what was saved there.
-        """
-        group = QGroupBox("大招與法術時機（秒）")
-        form = QFormLayout(group)
-        self.timing_delays: dict[str, QSpinBox] = {}
-        for key, label in TIMING_FIELDS:
-            box = QSpinBox()
-            box.setRange(0, 180)
-            box.setValue(getattr(self.config.timings, key))
-            self.timing_delays[key] = box
-            form.addRow(label, box)
-        return group
-
     def _control_tab(self) -> QWidget:
         """Everything needed to start a run, on one page: pick the emulator, say
         what it should do, press the button bottom right.
@@ -373,7 +331,6 @@ class MainWindow(QMainWindow):
         left_layout.addWidget(self._emulator_group())
         left_layout.addWidget(self._automation_behavior_group())
         left_layout.addWidget(self._automation_battle_group())
-        left_layout.addWidget(self._timing_group())
         left_layout.addStretch()
         right = QWidget()
         right_layout = QVBoxLayout(right)
@@ -688,11 +645,7 @@ class MainWindow(QMainWindow):
         ):
             self.settings.setValue(key, widget.isChecked())
         self.settings.setValue("cycle_minutes", self.cycle_minutes.value())
-        self._save_config(
-            thresholds=self._thresholds(),
-            stock=self._limits(),
-            timings=AttackTimings(**{key: box.value() for key, box in self.timing_delays.items()}),
-        )
+        self._save_config(thresholds=self._thresholds(), stock=self._limits())
         self.automation_log.appendPlainText("自動化設定已保存。")
 
     def _save_config(self, **changes: object) -> None:
@@ -815,7 +768,6 @@ class MainWindow(QMainWindow):
         # The client is only used once an opponent has passed the thresholds, to
         # pick the flank and the spell targets; screen reading never needs it.
         planner = self.gemini_client() if self.api_key.text().strip() else None
-        abilities = AttackTimings(**{key: box.value() for key, box in self.timing_delays.items()})
         # Opened here rather than inside the worker: it makes a directory and
         # retargets the run-scoped log handler, and both belong on the thread
         # that owns the settings this reads.
@@ -830,7 +782,6 @@ class MainWindow(QMainWindow):
                 display=adb.display_for(COC_PACKAGE),
                 thresholds=thresholds,
                 stock=limits,
-                abilities=abilities,
                 ai=planner,
                 should_stop=lambda: not self.automation_active,
                 frame_dir=run.frames,

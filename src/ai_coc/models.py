@@ -615,51 +615,34 @@ ThinkingLevel = Literal["minimal", "low", "medium", "high"]
 DEFAULT_THINKING_LEVEL: ThinkingLevel = "low"
 
 
-class AttackTimings(BaseModel):
-    """How long after the army is down each thing that waits on a clock happens.
+class HeroOrder(BaseModel):
+    """One hero card: who holds it, where that hero goes, and when it fires.
 
-    The abilities are keyed by hero rather than by card position: a hero being
-    upgraded cannot take the field, so its card is simply absent and every
-    position shifts.
+    All three used to live somewhere else. Which hero was a bare name on the
+    plan, where they went was the middle of the drop line for every one of
+    them, and when to fire was a table of per-kind constants in the settings
+    file. That table was a guess made without seeing the village — the same
+    thing the planner does, minus the village — so it now answers all three at
+    once, per card, against the layout in front of it.
 
-    Both spells are here rather than left to fall out of the code's ordering,
-    which is what they used to do. Freeze was cast after the last ability, so it
-    waited out the slowest hero on the field and a champion's 45 seconds put it a
-    minute and a half into a three-minute battle. Rage was cast the moment the
-    troop cards emptied, which was fine while emptying them took half a minute
-    and is not now that it takes five seconds: a rage lasts 18 seconds, and cast
-    as the troops land it has expired before they reach anything worth raging.
-
-    They are also measured from a different moment than the abilities. An
-    ability's delay runs from its own hero landing; a spell's runs from the
-    attack opening, which is how both are judged on screen — rage as the push
-    reaches the outer wall, freeze as it reaches the first line of defences —
-    and hanging them off the heroes would move them by however long the army
-    happened to take to go down.
-
-    Read them as the earliest moment rather than the exact one: the loop is
-    single threaded and nothing on the clock runs until the last hero is down,
-    so a delay shorter than the deployment takes is served the moment it ends.
+    Grouping them is what makes the second one possible at all. Heroes do
+    different jobs in the same attack: one or two walk the outside clearing the
+    stray buildings that pull an army off course, the rest go in behind the
+    troops. A single point for the lot of them cannot express that, and a list
+    of points beside a list of names would have to be kept in step by hand.
     """
 
     model_config = ConfigDict(frozen=True)
 
-    king: int = 20
-    queen: int = 1
-    warden: int = 30
-    champion: int = 45
-    minion_prince: int = 20
-    # 飛龍公爵's own 皇家狂暴 is passive — the game says so on its upgrade sheet —
-    # so there is nothing here for a tap to fire and the number only decides when
-    # a card that answers nothing gets tapped. The neutral value keeps it out of
-    # the way of the abilities that do something.
-    duke: int = 20
-    unknown: int = 20
-    rage: int = 15
-    freeze: int = 30
-
-    def seconds(self, kind: HeroKind) -> int:
-        return int(getattr(self, kind, self.unknown))
+    kind: HeroKind
+    drop: ScreenPoint
+    # Seconds after **this hero lands**, not after the attack opens: that is what
+    # a queen's cloak is worth timing against, and the leading card lands a whole
+    # troop deployment before the rest. Read it as the earliest moment rather
+    # than the exact one — the loop is single threaded and nothing on the clock
+    # runs until the last hero is down, so anything shorter than the deployment
+    # is served the moment it ends.
+    ability_after: int = Field(ge=0, le=180)
 
 
 class AppConfig(BaseModel):
@@ -686,7 +669,11 @@ class AppConfig(BaseModel):
         min_gold=500_000, min_elixir=500_000, min_dark=5_000
     )
     stock: StockLimits = StockLimits(stop_gold=15_000_000, stop_elixir=15_000_000)
-    timings: AttackTimings = AttackTimings()
+    # No ability or spell timings here any more. They were a table of per-hero
+    # constants a user could edit, and editing them meant guessing how long an
+    # army takes to walk across a village nobody had looked at — which is the
+    # planner's job, done with the village on screen. They live on `AttackPlan`
+    # now, so a tactic is one document rather than points here and a clock there.
     # How many battles to fight before restarting the emulator and the game, 0
     # turning it off. MuMu drops frames after running for a while and nothing
     # short of a restart clears it — that is a property of the emulator rather
@@ -735,12 +722,25 @@ class AttackPlan(BaseModel):
     # ability delay, which is a queen's cloak thrown away on every attack.
     rage_points: list[ScreenPoint]
     freeze_points: list[ScreenPoint]
-    # Left to right, so each hero card can be matched to its own ability timing.
-    heroes: list[HeroKind]
-    # Carried on the plan so a written-out one is the whole tactic in one file,
-    # rather than a set of points whose timing lives somewhere else entirely.
-    # None leaves the runner on whatever the caller configured.
-    timings: AttackTimings | None = None
+    # Left to right, matching the hero cards on the row in that order.
+    heroes: list[HeroOrder]
+    # Both measured from the **attack opening** rather than from a hero landing,
+    # because that is how each is judged on screen — rage as the push reaches the
+    # outer wall, freeze as it reaches the first line of defences — and hanging
+    # them off the heroes would move them by however long the army took to go
+    # down. Required for the reason the points above are: a spell with a default
+    # is a spell the schema lets the planner leave out.
+    #
+    # These replace a table of constants in the settings file. Freeze used to be
+    # cast after the last ability, so it waited out the slowest hero on the field
+    # and a champion's 45 seconds put it a minute and a half into a three-minute
+    # battle; rage used to go the moment the troop cards emptied, which was right
+    # while that took half a minute and is not now that it takes five seconds,
+    # since a rage lasts 18 and expires on troops still walking. Both numbers
+    # depend on how far the army has to walk, which is a property of the village
+    # the planner is looking at and of nothing else.
+    rage_after: int = Field(ge=0, le=180)
+    freeze_after: int = Field(ge=0, le=180)
     reason: str = ""
 
 
