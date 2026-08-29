@@ -96,13 +96,14 @@ RETURN_HOME = (798, 768)
 # deployment runs about 3 s longer.
 #
 # **That trade is now only paid by a card whose corner will not read.** A
-# counted card says what it holds, so `_spread_troops` taps that many plus one
-# and this figure is what a card the artwork swallowed falls back to. Measured
-# on a row of x9, x3 and x2, that is 31 taps rather than 75. Which corners read
-# was measured too: of those three, the two on blue plates came back 3 and 2,
-# and the pale one merged its `x` into the background — one 25 px span matching
-# no character — which is why the fallback has to stay. `DEPLOY_PASSES` is
-# behind all of it for a card bigger than two circuits.
+# counted card says what it holds, so `_spread_troops` taps that many plus one,
+# and this figure is both what a card the artwork swallowed falls back to and
+# the ceiling on what a count is allowed to ask for. Measured on a row of x9,
+# x3 and x2, that is 34 taps rather than 75. Which corners read was measured
+# too: of those three, the two on blue plates came back 3 and 2, and the pale
+# one merged its `x` into the background — one 25 px span matching no
+# character — which is why the fallback has to stay. `DEPLOY_PASSES` is behind
+# all of it for a card bigger than two circuits.
 #
 # An over-tap on a card that has just emptied costs nothing beyond its own
 # 0.062 s: the selection clears with the card, so the taps that follow land on
@@ -891,8 +892,10 @@ class AttackRunner(BaseModel):
             # **A counted card says how many taps it wants, in its own corner.**
             # Tapping that many plus one empties it, where a fixed pass spends
             # whatever is left of its circuits on ground with nothing selected:
-            # measured on a row of x9, x3 and x2 against a 24-tap pass, that is
-            # 55 taps of nothing, about 3.4 s of a ten-second deployment.
+            # measured on a row of x9, x3 and x2 against a 24-tap pass, 58 of
+            # its 72 drops land on nothing, and reading the two that will read
+            # takes the row from 75 taps to 34 — about 2.5 s of a ten-second
+            # deployment.
             #
             # The reading comes off the newest frame there is, so a second pass
             # asks what the first one left rather than what the card started
@@ -900,11 +903,22 @@ class AttackRunner(BaseModel):
             # pale card of those three merged its `x` into the background and
             # came back with one 25 px span matching nothing — and that falls
             # back to the full pass, which is what the fixed count was for.
+            #
+            # **The pass is still the ceiling, because this reader fails high.**
+            # A four-pixel sliver of card art past the last digit matches a `1`
+            # inside tolerance on some frames and not others: across three
+            # committed fixtures the same x12 card reads 12, None and 121. Taken
+            # at face value the last of those is 122 drops in one burst, about
+            # 7.6 s, more than double what reading the count saves and with
+            # every hero waiting behind it. Clamped, a genuinely larger card
+            # loses nothing — it takes another pass, exactly as it used to.
             held = {x: card_count(shot, x) for x in remaining}
             for card, x in enumerate(remaining):
                 count = held[x]
                 drops = drop_points(
-                    line, index * len(remaining) + card, count + 1 if count else DROPS_PER_PASS
+                    line,
+                    index * len(remaining) + card,
+                    min(count + 1, DROPS_PER_PASS) if count else DROPS_PER_PASS,
                 )
                 self.adb.tap_many([(x, CARD_ROW_Y), *drops], self.display)
             time.sleep(DROP_SETTLE)
