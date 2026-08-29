@@ -1458,7 +1458,9 @@ class AttackTests(unittest.TestCase):
         and `field_units` read its card on the very next frame. Asked as the
         hero test it used to be, that put a slot in front of every real hero —
         the queen went out on the king's twenty seconds where her cloak wants
-        one, and the warden on the duke's, ten seconds early.
+        one. A warden stands in for that row's 亡靈王子 here: the row it was
+        measured on held three heroes that all want about twenty seconds, so a
+        shift among those three shows up in no timing at all.
         """
         cards = [436, 562, 683, 804, 928]
         played = self._abilities(cards, on_field=cards, kinds=["queen", "king", "warden", "duke"])
