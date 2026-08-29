@@ -1828,6 +1828,70 @@ class RestartEveryTests(unittest.TestCase):
             assert not commands._restart_emulator(MagicMock(), MagicMock())
 
 
+class OnlineTests(unittest.TestCase):
+    """Holding the session open, which is the one loop here with no natural end.
+
+    Clash of Clans will not let anyone raid a village whose owner is online, and
+    what keeps a session alive is input rather than a connection — so what is
+    worth testing is that something really gets sent, that it is harmless, and
+    that the only way out is the flag every other loop here answers.
+    """
+
+    def _run(self, stop_after: int, **kwargs: object) -> tuple[MagicMock, MagicMock]:
+        """Idle until the given number of nudges, then ask it to stand down."""
+        adb = MagicMock()
+
+        def nudged(*_: object, **__: object) -> None:
+            if adb.swipe.call_count >= stop_after:
+                self.flag.write_text("", encoding="utf-8")
+
+        adb.swipe.side_effect = nudged
+        with (
+            patch.object(commands, "STOP_FLAG", self.flag),
+            patch.object(commands, "_controller", return_value=adb),
+            patch.object(commands.ConfigStore, "load", return_value=AppConfig()),
+            patch.object(commands, "_rest", return_value=False) as rest,
+        ):
+            self.report = commands.online(**kwargs)
+        return adb, rest
+
+    def setUp(self) -> None:
+        self.folder = tempfile.TemporaryDirectory()
+        self.addCleanup(self.folder.cleanup)
+        self.flag = Path(self.folder.name) / "stop"
+
+    def test_it_idles_until_the_flag_says_otherwise(self) -> None:
+        """There is no round count and no storage ceiling to end this one, so a
+        run that could not be stopped would have to be killed — and killing it
+        leaves the game somewhere the next run cannot start from.
+        """
+        adb, _ = self._run(stop_after=3)
+        assert adb.swipe.call_count == 3
+        assert self.report.nudges == 3
+        # Cleared at both ends like every other loop that reads it, or the next
+        # run stands down before it has done anything.
+        assert not self.flag.exists()
+
+    def test_the_nudge_reverses_so_the_camera_does_not_walk(self) -> None:
+        """A drag pans the village. Several hours of them in one direction would
+        walk the view off the map, and every coordinate with it.
+        """
+        adb, _ = self._run(stop_after=2)
+        first, second = (call.args[:2] for call in adb.swipe.call_args_list)
+        assert first == (second[1], second[0])
+
+    def test_the_flag_overrides_the_configured_interval(self) -> None:
+        """Same shape as the loot thresholds: the file is the default and the
+        flag is for one run.
+        """
+        _, rest = self._run(stop_after=1, seconds=5.0)
+        rest.assert_called_once_with(5.0)
+
+    def test_the_interval_comes_from_the_config_file_when_no_flag_is_given(self) -> None:
+        _, rest = self._run(stop_after=1)
+        rest.assert_called_once_with(AppConfig().keepalive_seconds)
+
+
 class LaunchTests(unittest.TestCase):
     """Bringing the game up, tearing down only as much as was asked for.
 
@@ -1835,6 +1899,18 @@ class LaunchTests(unittest.TestCase):
     reach them, so what is worth testing is the wiring: each scope restarting
     exactly what it names and nothing else.
     """
+
+    def setUp(self) -> None:
+        """Stub the settle step, which wants a real frame.
+
+        `launch` now waits for a village and pinches the camera back out before
+        it answers. What these tests are about is the lifecycle wiring — which
+        scope tears down what — so feeding that step a fake screenshot would only
+        be testing the fake.
+        """
+        patcher = patch.object(commands, "_settle_game")
+        self.settled = patcher.start()
+        self.addCleanup(patcher.stop)
 
     @staticmethod
     def _mumu(*, running: bool = True) -> MagicMock:
@@ -1845,6 +1921,32 @@ class LaunchTests(unittest.TestCase):
         mumu.enumerate_instances.return_value = [instance]
         mumu.ensure_coc.return_value = instance
         return mumu
+
+    def test_the_game_is_left_at_a_village_and_the_far_zoom(self) -> None:
+        """A pid is not a screen anything can be aimed at.
+
+        Every command after this one uses coordinates measured against a village
+        at the far zoom limit, so `launch` is where the game is brought to that
+        state — and the report says whether it got there, because a game still
+        on its loading screen answers by silently missing whatever it aims at.
+        """
+        mumu = self._mumu()
+        with patch.object(commands, "MuMuAdapter", return_value=mumu):
+            report = commands.launch("none")
+        self.settled.assert_called_once()
+        mumu.controller.assert_called_once_with("127.0.0.1:16384")
+        assert report.at_village
+
+    def test_a_village_that_never_painted_is_reported_rather_than_raised(self) -> None:
+        """The process is up, so the caller may still have something to do with
+        it; the one thing it must not do is assume the screen is ready.
+        """
+        mumu = self._mumu()
+        self.settled.return_value = None
+        with patch.object(commands, "MuMuAdapter", return_value=mumu):
+            report = commands.launch("none")
+        assert not report.at_village
+        assert "村莊沒有出現" in report.message
 
     def test_the_ordinary_case_restarts_nothing(self) -> None:
         mumu = self._mumu()

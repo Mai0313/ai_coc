@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import math
 import time
-from typing import Self
+from typing import TYPE_CHECKING, Self
 import logging
 from pathlib import Path
 import threading
@@ -36,6 +36,7 @@ from ai_coc.models import (
     DonateReport,
     FrameReading,
     LaunchReport,
+    OnlineReport,
     RestartScope,
     AttackOptions,
     BuilderReport,
@@ -45,7 +46,7 @@ from ai_coc.models import (
     GeminiSettings,
     LootThresholds,
 )
-from ai_coc.constants import STOP_FLAG, COC_PACKAGE
+from ai_coc.constants import NUDGE_MS, NUDGE_TO, NUDGE_ROW, STOP_FLAG, NUDGE_FROM, COC_PACKAGE
 from ai_coc.adapters.ai import GeminiClient
 
 # A runtime import rather than a TYPE_CHECKING one: `FrameTicker` declares it as
@@ -81,6 +82,9 @@ from .ui.hero import HeroRunner
 from .ui.walls import WallRunner
 from .ui.attack import CARD_ROW_Y, DROP_SETTLE, SINGLE_DROP_DELAY, AttackRunner
 from .ui.upkeep import UpkeepRunner
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 logger = logging.getLogger(__name__)
 
@@ -146,6 +150,13 @@ def launch(restart: RestartScope) -> LaunchReport:
         # command: either way the caller asked to end up with a fresh game.
         mumu.restart_coc(mumu.ensure_coc(index))
     instance = mumu.ensure_coc(index)
+    # `ensure_coc` is satisfied by a pid, which says the game is running and
+    # nothing about whether it can be driven. Every command after this one aims
+    # screen coordinates at it, and those were all measured against a village at
+    # the far zoom — so this is where the game is brought to that state rather
+    # than in each of them. Zooming out is also what centres the village, since
+    # the map clamps the camera at its own edges.
+    settled = _settle_game(mumu.controller(instance.adb_serial), RESTART_POLLS)
     if restart == "none":
         # Which of these it was is the only thing this scope can report: it does
         # the same work either way, and on a cold machine that work is the whole
@@ -154,10 +165,16 @@ def launch(restart: RestartScope) -> LaunchReport:
     else:
         did = "已重開部落衝突" if restart == "game" else "已重開模擬器與部落衝突"
     logger.info("%s on instance %s (%s)", did, instance.index, instance.adb_serial)
+    # A game whose village never painted is reported rather than raised: the
+    # process is up, so the caller may still have something to do with it, and
+    # the one thing it must not do is assume the screen is ready.
+    if settled is None:
+        did = f"{did}，但村莊沒有出現，畫面可能還在載入"
     return LaunchReport(
         index=instance.index,
         serial=instance.adb_serial,
         was_running=was_running,
+        at_village=settled is not None,
         message=f"{did},模擬器 {instance.index} ({instance.adb_serial})",
     )
 
@@ -328,11 +345,61 @@ def _pinch_camera(adb: AdbController, zoom: str, times: int) -> None:
         time.sleep(PINCH_SETTLE)
 
 
-# How many pinches to spend putting the camera back after a restart. `view`'s
-# docstring measured one gesture as covering the whole range and a second as
-# changing nothing, so two is that plus a spare — the cost is a second and the
-# alternative is every battle of the rest of the run landing nothing.
+# How many pinches to spend putting the camera back. `view`'s docstring measured
+# one gesture as covering the whole range and a second as changing nothing, so
+# two is that plus a spare — the cost is a second and the alternative is every
+# battle of the rest of the run landing nothing.
 RESTART_ZOOM_PINCHES = 2
+
+
+def _settle_game(
+    adb: AdbController, polls: int, should_stop: Callable[[], bool] = lambda: False
+) -> DisplayTarget | None:
+    """Wait for a village that can be tapped, then put the camera where the coordinates are.
+
+    Two steps that always belong together, because every coordinate in this
+    project was measured against one particular view: a village on screen, at
+    the game's far zoom limit. A caller that has one without the other has a
+    game that answers and misses everything it aims at.
+
+    **Zooming out is also how the village gets centred.** The map clamps the
+    camera at its own edges, so at the far limit the village diamond fills the
+    frame on its own — measured, its middle lands within about 20 px of the
+    screen's. There is nothing else to do, and nothing here has to find the
+    village to do it, which is what makes this safe on a frame nobody has read.
+
+    None means the village never appeared. Whether that is worth giving up over
+    is the caller's decision, not this one's.
+    """
+    waiting = "nothing was tried"
+    for _ in range(polls):
+        # Checked inside the wait rather than only around it: this is the
+        # longest stretch of a run where nothing else looks at the flag, and a
+        # stop that takes two minutes to show reads as one that did nothing.
+        if should_stop():
+            logger.info("Stop requested while the game was coming up")
+            return None
+        # Which of the two it is waiting on gets logged, because the two mean
+        # different things and a run that gives up says neither: no display is a
+        # game with no window yet, while a display whose frame will not read is
+        # a game that is up and still on its loading screen. Silence here left
+        # one real failure — the second restart of a live run — with nothing to
+        # tell those apart afterwards.
+        try:
+            display = adb.display_for(COC_PACKAGE)
+        except AdbControlError:
+            waiting = "the game is not on a display yet"
+        else:
+            if read_stock(adb.screenshot(display)) is not None:
+                _pinch_camera(adb, "out", RESTART_ZOOM_PINCHES)
+                return display
+            waiting = "the village has not painted yet"
+        logger.debug("Still waiting for the game: %s", waiting)
+        time.sleep(RESTART_POLL_GAP)
+    logger.warning(
+        "Gave up after %.0fs waiting for the game: %s", polls * RESTART_POLL_GAP, waiting
+    )
+    return None
 
 
 def _restart_emulator(runner: AttackRunner, ticker: FrameTicker) -> bool:
@@ -365,64 +432,29 @@ def _restart_emulator(runner: AttackRunner, ticker: FrameTicker) -> bool:
         logger.exception("The emulator did not come back up")
         return False
     adb = MuMuAdapter().controller(launched.serial)
-    waiting = "nothing was tried"
-    for _ in range(RESTART_POLLS):
-        # Checked inside the wait rather than only around it: this is the
-        # longest stretch of a run where nothing else looks at the flag, and a
-        # stop that takes two minutes to show reads as one that did nothing.
-        if stop_requested():
-            logger.info("Stop requested while the emulator was coming back up")
-            return False
-        time.sleep(RESTART_POLL_GAP)
-        # Which of the two it is waiting on gets logged, because the two mean
-        # different things and a run that gives up says neither: no display is a
-        # game with no window yet, while a display whose frame will not read is
-        # a game that is up and still on its loading screen. Silence here left
-        # one real failure — the second restart of a live run — with nothing to
-        # tell those apart afterwards.
-        try:
-            display = adb.display_for(COC_PACKAGE)
-        except AdbControlError:
-            waiting = "the game is not on a display yet"
-            display = None
-        else:
-            village = read_stock(adb.screenshot(display))
-            waiting = "" if village is not None else "the village has not painted yet"
-        if display is None or waiting:
-            logger.debug("Still waiting for the emulator: %s", waiting)
-            continue
-        # Both of them. The ticker captures from its own thread and would
-        # otherwise spend the rest of the night timing out against a display
-        # that no longer exists, logged as warnings nobody is reading.
-        runner.adb = adb
-        runner.display = display
-        ticker.adb = adb
-        ticker.display = display
-        # **A restarted game does not come back at the zoom everything was
-        # measured at.** Observed live: the restart succeeded, the village read,
-        # and every battle afterwards deployed nothing at all — the drop line,
-        # the card row and the spell grid are all screen coordinates taken at
-        # the far zoom limit, and the game had come back zoomed in. Two rounds
-        # were spent reporting `0 of 4 hero card(s) landed` before a recorded
-        # frame showed why. Zooming out past the limit does nothing, which is
-        # what makes this safe to do blind on every restart.
-        _pinch_camera(adb, "out", RESTART_ZOOM_PINCHES)
-        # That the village reads at all is the signal; what it reads is not, and
-        # logging the number would present it as one. Measured on a live restart,
-        # the storage bars animate up from zero while the game loads and the
-        # first frame that resolved came back at 12.4M gold against a real
-        # 19.7M — printed here, that reads as a village raided overnight.
-        logger.info("The emulator is back and the village is on display %s", display.logical_id)
-        return True
-    # What it was still waiting on when the patience ran out, because the caller
-    # can only say that the village never came back and that is the same
-    # sentence for a game with no window and a game stuck on its loading screen.
-    logger.warning(
-        "Gave up after %.0fs waiting for the emulator: %s",
-        RESTART_POLLS * RESTART_POLL_GAP,
-        waiting,
-    )
-    return False
+    # The camera comes back out in here too, and that is not a courtesy. A
+    # restarted game does not return at the zoom everything was measured at:
+    # observed live, the restart succeeded, the village read, and every battle
+    # afterwards deployed nothing at all — two rounds of `0 of 4 hero card(s)
+    # landed` before a recorded frame showed a battlefield zoomed most of the
+    # way in.
+    display = _settle_game(adb, RESTART_POLLS, stop_requested)
+    if display is None:
+        return False
+    # Both objects. The ticker captures from its own thread and would otherwise
+    # spend the rest of the night timing out against a display that no longer
+    # exists, logged as warnings nobody is reading.
+    runner.adb = adb
+    runner.display = display
+    ticker.adb = adb
+    ticker.display = display
+    # That the village reads at all is the signal; what it reads is not, and
+    # logging the number would present it as one. Measured on a live restart,
+    # the storage bars animate up from zero while the game loads and the first
+    # frame that resolved came back at 12.4M gold against a real 19.7M —
+    # printed here, that reads as a village raided overnight.
+    logger.info("The emulator is back and the village is on display %s", display.logical_id)
+    return True
 
 
 def _prepare_frames(options: AttackOptions) -> None:
@@ -931,6 +963,45 @@ def view(zoom: str = "out", times: int = 3) -> ViewReport:
     _pinch_camera(_controller(), zoom, times)
     report = ViewReport(message=f"鏡頭{'拉遠' if zoom == 'out' else '拉近'}了 {times} 次")
     logger.info("View: %s", report.message)
+    return report
+
+
+def online(seconds: float | None = None) -> OnlineReport:
+    """Hold the session open so nobody can attack the village, until stopped.
+
+    Clash of Clans will not let anyone raid a village whose owner is online, so
+    a run that has finished farming is safer sitting in the game than leaving
+    it. **What keeps a session alive is input rather than a connection** — the
+    game drops an idle session whatever the socket is doing — so this sends the
+    smallest gesture that counts as one: a short drag over the middle of the
+    screen, which on a village pans the camera and does nothing else, reversed
+    each time so it does not walk the view anywhere over several hours.
+
+    It ends only on `ai_coc stop`, which is the same flag every other long loop
+    here reads: this one has no natural end, so a run that could not be stopped
+    would have to be killed, and killing it is what leaves the game somewhere
+    the next run cannot start from.
+    """
+    _clear_stop()
+    adb = _controller()
+    display = adb.display_for(COC_PACKAGE)
+    gap = ConfigStore().load().keepalive_seconds if seconds is None else seconds
+    report = OnlineReport()
+    started = time.monotonic()
+    logger.info("Holding the session open, nudging every %.0fs", gap)
+    while not stop_requested():
+        near, far = (NUDGE_FROM, NUDGE_TO) if report.nudges % 2 == 0 else (NUDGE_TO, NUDGE_FROM)
+        adb.swipe((near, NUDGE_ROW), (far, NUDGE_ROW), NUDGE_MS, display)
+        report.nudges += 1
+        # Through `_rest` rather than a plain sleep, so a stop asked for two
+        # minutes into a wait is answered in two seconds rather than at the end
+        # of it — the same reason the barracks wait goes through it.
+        if _rest(gap):
+            break
+    _clear_stop()
+    report.seconds = time.monotonic() - started
+    report.message = f"保持上線 {report.seconds / 60:.0f} 分鐘,動了 {report.nudges} 次畫面"
+    logger.info("Online: %s", report.message)
     return report
 
 

@@ -15,6 +15,19 @@ COC_PACKAGE = "com.supercell.clashofclans"
 DEFAULT_GEMINI_MODEL = "gemini-3.5-flash"
 DEFAULT_ADB_HOST = "127.0.0.1"
 
+# The keepalive nudge: a short drag across the middle of the screen, which on a
+# village pans the camera and nothing else. A tap would select whatever it
+# landed on and a key press could open a panel, so a drag is the smallest
+# gesture that is an input without being an action — and input is what the game
+# counts, since it drops an idle session whatever the socket is doing.
+#
+# Here rather than beside either caller, because both `commands.online` and the
+# window's own timer send it and `commands` already imports the window's layer.
+NUDGE_ROW = 450
+NUDGE_FROM = 760
+NUDGE_TO = 840
+NUDGE_MS = 250
+
 
 def data_root() -> Path:
     root = Path.home() / ".ai_coc"

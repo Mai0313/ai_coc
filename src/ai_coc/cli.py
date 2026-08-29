@@ -81,6 +81,12 @@ def _parser() -> argparse.ArgumentParser:
     # stopped is a different process: whatever put that one in the background
     # cannot send it a Ctrl-C, and killing it leaves the game mid-battle.
     sub.add_parser("stop", help="請正在跑的進攻迴圈打完這一場就收工")
+    # No rounds and no limit: this one runs until it is stopped by design, since
+    # what it is for is the stretch between one night's farming and the next.
+    alive = sub.add_parser("online", help="留在遊戲裡保持上線,別人就打不了這個村莊")
+    alive.add_argument(
+        "--every", type=float, metavar="秒", help="每隔這麼多秒動一次畫面,蓋過設定檔"
+    )
     upgrade = sub.add_parser("walls", help="把儲量拿去升級城牆")
     upgrade.add_argument("--keep-gold", type=int, default=0, help="留下這麼多金幣不要花")
     upgrade.add_argument("--keep-elixir", type=int, default=0, help="留下這麼多聖水不要花")
@@ -167,6 +173,7 @@ def _run_command(arguments: argparse.Namespace, run: RunLog) -> int:
     scalar = {
         "view": lambda: commands.view(arguments.zoom, arguments.times),
         "launch": lambda: commands.launch(arguments.restart),
+        "online": lambda: commands.online(arguments.every),
     }
     if arguments.command in plain:
         result = plain[arguments.command](run.frames).model_dump_json(indent=2)
