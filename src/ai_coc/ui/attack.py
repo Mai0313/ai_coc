@@ -85,20 +85,24 @@ RETURN_HOME = (798, 768)
 # decode after the rest of the army. Four balloons arriving on ground the push
 # has already left are four balloons on their own, and balloons are slow.
 #
-# The exchange is deliberately not a saving. An over-tap costs `TAP_GAP`, 0.05 s,
-# where another pass costs that 1.4 s whatever it carries, so the second circuit
-# is bought at about a third of a second per card and this army spends 0.55 s
-# more in total than it used to. What it buys is that every troop on the row goes
-# down inside one uninterrupted burst. An over-tap on a card that has just
-# emptied costs nothing else: the selection clears with the card, so the taps
-# that follow land on ground with nothing selected.
+# **Which way this cuts depends on the army, so both directions are measured.**
+# A tap costs `TAP_GAP` plus its own `input` exec, about 0.062 s, and a pass
+# boundary costs 1.4 s whatever it carries. On that dragon-and-balloon row the
+# old shape spent 1.66 s + 1.4 s + 0.85 s = 3.91 s reaching the last troop and
+# the new one spends 3.15 s, so it is **0.76 s faster** as well as unbroken. On
+# an army of four cards none holding more than twelve — the hog-rider and giant
+# rows this file's other comments describe — the first circuit already emptied
+# every card, so the second is 0.74 s per card of tapping into nothing and the
+# deployment runs about 3 s longer.
 #
-# Two circuits rather than some larger number because the count is what would
-# make an exact figure possible and it cannot be read: measured on this row,
-# `card_count` answers None for both cards, its two-digit readings running
-# together into one span too wide for any single template. Sixteen is the
-# largest card this village has fielded, and `DEPLOY_PASSES` is still behind
-# this for anything bigger.
+# That is the trade until the count can be read. `card_count` answers None for
+# both cards on that row; the reason has not been run down, and with it the tap
+# count would be exact and neither direction would cost anything. `DEPLOY_PASSES`
+# stays behind this for a card bigger than two circuits.
+#
+# An over-tap on a card that has just emptied costs nothing beyond its own
+# 0.062 s: the selection clears with the card, so the taps that follow land on
+# ground with nothing selected.
 CARD_ROW_Y = 800
 DROPS_PER_PASS = 24
 DEPLOY_PASSES = 6
@@ -508,8 +512,34 @@ def drop_points(line: list[tuple[int, int]], seed: int) -> list[tuple[int, int]]
     order, and the order is what a card holding fewer troops than the pass has
     taps gets judged on — it runs out partway through, so the ones it did put
     down are wherever the first few taps went.
+
+    **A pass is longer than the line, so its later circuits land between the
+    points of the first rather than back on them.** The stride cannot help with
+    that: it decides the order within a circuit, and circuit two walks the same
+    twelve points in the same order as circuit one. Without the offset a card of
+    sixteen would stack its last four on the exact pixels its first four went
+    to — which is what the stride exists to prevent, applied to a card big
+    enough to come round again.
     """
-    return [line[(seed + i * DROP_STRIDE) % len(line)] for i in range(DROPS_PER_PASS)]
+    spots: list[tuple[int, int]] = []
+    for i in range(DROPS_PER_PASS):
+        at = (seed + i * DROP_STRIDE) % len(line)
+        x, y = line[at]
+        # How far between this point and its neighbour, by which circuit this
+        # is: the second lands halfway along, a third a third of the way.
+        #
+        # The neighbour is the previous point at the far end, because the line
+        # is a segment and not a ring: wrapping to `line[0]` there aims the
+        # offset at the other end of the flank, which put one drop 229 px away
+        # from the point it was meant to sit beside — five gaps, and outside the
+        # boundary the line was fitted to.
+        laps = i // len(line)
+        if laps:
+            nx, ny = line[at + 1] if at + 1 < len(line) else line[at - 1]
+            x += round((nx - x) / (laps + 1))
+            y += round((ny - y) / (laps + 1))
+        spots.append((x, y))
+    return spots
 
 
 PLAN_PROMPT = PROMPTS["attack_plan"]

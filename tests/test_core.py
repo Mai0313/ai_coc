@@ -1041,10 +1041,9 @@ class AttackTests(unittest.TestCase):
         """A card holding one troop must not drop it where every other card started."""
         line = deploy_line(LINE_POINTS)
         first, second = drop_points(line, 0), drop_points(line, 1)
-        # Every point on the line, and no point the pass never reaches: the pass
-        # is longer than the line so that one of them empties the card, and the
-        # stride is what keeps those circuits from bunching.
-        assert set(first) == set(line)
+        # The first circuit is every point on the line and nothing else; the
+        # ones after it land between those, which the next test covers.
+        assert set(first[:LINE_POINTS]) == set(line)
         assert first[0] != second[0]
 
     def test_a_pass_outlasts_the_biggest_card_this_village_fields(self) -> None:
@@ -1055,6 +1054,23 @@ class AttackTests(unittest.TestCase):
         behind the push, and balloons are slow.
         """
         assert DROPS_PER_PASS >= 16
+
+    def test_a_card_bigger_than_the_line_does_not_stack_its_tail_on_its_head(self) -> None:
+        """The stride orders one circuit; the second walks the same points again.
+
+        So a card of sixteen would put its last four on the exact pixels its
+        first four went to — the thing `DROP_STRIDE` exists to prevent, applied
+        to a card big enough to come round. The later circuits land between the
+        first one's points instead.
+        """
+        line = deploy_line(LINE_POINTS, *DEPLOY_LINES["top_left"])
+        spots = drop_points(line, 0)
+        head, tail = spots[:LINE_POINTS], spots[LINE_POINTS:]
+        assert not set(head) & set(tail)
+        # Between, not merely elsewhere: each one sits inside the gap it came from.
+        gap = math.dist(line[0], line[1])
+        for index, spot in enumerate(tail):
+            assert 0 < math.dist(spot, head[index]) < gap
 
     def test_the_stride_still_covers_the_whole_line(self) -> None:
         """Coprime with the line, or a pass walks a few points over and over."""
