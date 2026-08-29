@@ -28,6 +28,7 @@ from ai_coc.models import (
     WallBatch,
     AttackPlan,
     HeroReport,
+    PlayedPlan,
     AdbEndpoint,
     ScreenPoint,
     StockLimits,
@@ -1951,42 +1952,37 @@ class RestartEveryTests(unittest.TestCase):
             self.series = commands.attack(options)
         return restart
 
-    def test_every_round_leaves_its_own_plan_behind(self) -> None:
+    def test_every_round_leaves_its_own_line_in_the_plan_log(self) -> None:
         """`--plan-out` keeps whichever round went last and overwrites the rest.
 
         Which line a given round drew is otherwise unanswerable: `run.log` has a
         one-line summary of it, and the frames cannot stand in, since a drop is
-        over inside the gap between two captures.
+        over inside the gap between two captures. One file rather than one per
+        round, because `--repeat 0` runs all night.
         """
         with tempfile.TemporaryDirectory() as td:
-            kept = Path(td) / "plans"
-            kept.mkdir()
+            log = Path(td) / "plans.jsonl"
             self._play(
                 [self._fought()] * 3,
-                AttackOptions(rounds=3, plan_dir=kept),
+                AttackOptions(rounds=3, plan_log=log),
                 every=0,
                 played=plans.flat(),
             )
-            # Three digits, not two: `--repeat 0` runs until it is stopped, and
-            # an overnight series at a few minutes a round passes a hundred —
-            # where `round-100` sorts between `round-10` and `round-11` in the
-            # plain listing this directory is meant to be read as.
-            assert sorted(path.name for path in kept.iterdir()) == [
-                "round-001.json",
-                "round-002.json",
-                "round-003.json",
+            lines = [
+                PlayedPlan.model_validate_json(line)
+                for line in log.read_text(encoding="utf-8").splitlines()
             ]
-            assert plans.load(kept / "round-002.json") == plans.flat()
+            assert [entry.round for entry in lines] == [1, 2, 3]
+            assert lines[1].plan == plans.flat()
 
-    def test_a_round_that_never_got_a_plan_leaves_no_file(self) -> None:
+    def test_a_round_that_never_got_a_plan_writes_no_line(self) -> None:
         """A round can end before there is a tactic to write down, and that is not
-        an error: an empty file would read as a plan that drew nothing.
+        an error: an empty line would read as a plan that drew nothing.
         """
         with tempfile.TemporaryDirectory() as td:
-            kept = Path(td) / "plans"
-            kept.mkdir()
-            self._play([self._fought()], AttackOptions(rounds=1, plan_dir=kept), every=0)
-            assert list(kept.iterdir()) == []
+            log = Path(td) / "plans.jsonl"
+            self._play([self._fought()], AttackOptions(rounds=1, plan_log=log), every=0)
+            assert not log.exists()
 
     def test_a_round_does_not_inherit_the_last_one_s_plan(self) -> None:
         """One runner plays every round, so `played` has to be cleared with the rest.

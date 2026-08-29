@@ -28,6 +28,7 @@ from ai_coc.models import (
     MapSurvey,
     AttackPlan,
     HeroReport,
+    PlayedPlan,
     ViewReport,
     WallReport,
     BuildReport,
@@ -490,6 +491,25 @@ def _write_plan(path: Path | None, plan: AttackPlan | None) -> None:
     logger.info("Wrote the plan that ran to %s", path)
 
 
+def _log_plan(path: Path | None, played: int, plan: AttackPlan | None) -> None:
+    """Append one round's tactic to the run's plan log.
+
+    Appended rather than rewritten, and one file rather than one per round:
+    `--repeat 0` runs until it is stopped, so a night of farming is a hundred
+    rounds or more and a hundred small files is a directory nobody opens.
+
+    A round that ended before there was a plan writes nothing, which is not an
+    error — no opponent above the thresholds, an army under `MIN_ARMY_RATIO`,
+    the attack menu not opening. Its round number is simply missing from the
+    log, and `result.json` is where what happened instead is recorded.
+    """
+    if path is None or plan is None:
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as log:
+        log.write(PlayedPlan(round=played, plan=plan).model_dump_json() + "\n")
+
+
 def attack(options: AttackOptions) -> AttackSeries:
     """The attack loop, with no window in the way, for as many rounds as asked.
 
@@ -573,8 +593,7 @@ def attack(options: AttackOptions) -> AttackSeries:
                 fought += 1
             logger.info("Attack finished: %s", report.message)
             _write_plan(options.plan_out, runner.played)
-            if options.plan_dir is not None:
-                _write_plan(options.plan_dir / f"round-{len(series.root):03d}.json", runner.played)
+            _log_plan(options.plan_log, len(series.root), runner.played)
             if report.stock_full:
                 logger.info("The storages are full; there is nothing left to farm for")
                 break

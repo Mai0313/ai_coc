@@ -744,6 +744,21 @@ class AttackPlan(BaseModel):
     reason: str = ""
 
 
+class PlayedPlan(BaseModel):
+    """One round's tactic, as one line of a run's `plans.jsonl`.
+
+    The round number is what makes the line worth having: `run.log` and
+    `result.json` both count rounds the same way, so a line here pins the
+    coordinates the planner drew to the round whose outcome is recorded there.
+    Without it a series of identical flat plans says nothing at all.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    round: int
+    plan: AttackPlan
+
+
 class AttackReport(BaseModel):
     """What one run of the attack loop did, for the automation log."""
 
@@ -772,10 +787,10 @@ class AttackOptions(BaseModel):
     frame_dir: Path | None = None
     plan_in: Path | None = None
     plan_out: Path | None = None
-    # Where to keep a copy of every round's plan, one file each. `plan_out` is
-    # the caller's own path and holds whichever round went last; this is the
-    # series. None only for a caller that has no run directory to write into.
-    plan_dir: Path | None = None
+    # The run's own plan log, one line per round. `plan_out` is the caller's
+    # path and holds whichever round went last; this is the whole series.
+    # None only for a caller with no run directory to write into.
+    plan_log: Path | None = None
     minimums: LootOverrides = LootOverrides()
     # 0 keeps going until it is interrupted, which is what watching the loop play
     # needs: a tactic is judged over a run of battles rather than one.
@@ -965,8 +980,8 @@ class RunLog(BaseModel):
         return path
 
     @property
-    def plans(self) -> Path:
-        """Where each round keeps the tactic it played.
+    def plan_log(self) -> Path:
+        """One line per round, holding the tactic that round played.
 
         Unconditional where `frames` is not, because the two cost nothing alike:
         a plan is a few hundred bytes of JSON written once a battle, against a
@@ -977,10 +992,15 @@ class RunLog(BaseModel):
         overwriting every earlier one, so a series had no way to say which round
         drew which line — and the loop's own frames cannot answer it either,
         since a drop is over in a fraction of the gap between two captures.
+
+        **One file rather than one per round.** `--repeat 0` runs until it is
+        stopped, so a night of farming is a hundred rounds or more, and a
+        hundred small files is a directory nobody opens. A line carries its own
+        round number, so it lines up with `run.log` and `result.json`, and the
+        whole series greps and diffs as one document. Pulling a single round
+        back out for `--plan-in` is a line of `jq`.
         """
-        path = self.directory / "plans"
-        path.mkdir(parents=True, exist_ok=True)
-        return path
+        return self.directory / "plans.jsonl"
 
     def answer(self, text: str) -> None:
         """Keep a run's result beside the log that explains how it got there."""
