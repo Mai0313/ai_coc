@@ -60,8 +60,9 @@ uv run python .agents/skills/upgrade-by-eye/scripts/eye.py zoom <in.png> <l,t,r,
 把唯一能帶回去的資訊也丟掉了.
 
 **工人.** `uv run ai_coc builders` 說閒著幾個, 以及最快的一個還要多久. 城牆以外的
-每一種升級都要一個工人. 城牆不佔工人, 但遊戲一樣會在工人全忙的時候把整批退掉 ——
-一片牆跟八片牆一樣退, 所以那不是批次大小的問題, 詳見 `CLAUDE.md` 的 wall loop 那段.
+每一種升級都要一個工人, 城牆也不例外. 差別只在城牆付錢的當下就升好, 工人立刻還
+回來, 所以有一個閒著就能連續買一整排, 而工人 `0/N` 的時候一片都買不了. 詳見
+`CLAUDE.md` 的 wall loop 那段.
 
 **錢.** 截一張主村畫面, 右上角三條就是金幣 / 聖水 / 黑水. 或者 `uv run ai_coc read <png>` 讀 `stock`.
 

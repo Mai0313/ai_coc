@@ -112,7 +112,7 @@ ai_coc hero                           # what raising each hero next would cost
 ai_coc hero --upgrade duke            # put a builder on that one
 ```
 
-Walls need one builder standing idle even though they never use one, so `walls` stops and says so when every builder is busy. `hero` reads by default and only spends when told which hero, because which one is worth a builder is a judgement about how the village plays.
+A wall upgrade needs a free builder and hands it straight back, so `walls` stops and says so when every builder is busy. `hero` reads by default and only spends when told which hero, because which one is worth a builder is a judgement about how the village plays.
 
 ### Keeping the village going
 
