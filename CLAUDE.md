@@ -22,7 +22,7 @@ make gen-docs                        # rebuild docs/ from the READMEs and the so
 
 Run the app with `uv run ai_coc`. Two CLI hooks exist for smoke tests: `--live-test` captures a frame and asks Gemini to describe it, and `--agent-command=<text>` types a command into the AI tab and executes it. Both save a proof screenshot of the window when `COC_LIVE_TEST_SCREENSHOT` / `COC_AGENT_SCREENSHOT` point at a path.
 
-Fourteen sub-commands run headless instead, and they are how the game is worked on:
+Fifteen sub-commands run headless instead, and they are how the game is worked on:
 
 ```bash
 uv run ai_coc attack --record            # one attack pass, every frame it reads kept
