@@ -2,7 +2,7 @@
 
 ## 一段可以互動的探索腳本
 
-`commands._controller()` 已經把找 MuMi instance, 確認遊戲開著, 解析 display 這些事做完了, 所以探索不需要自己接 ADB:
+`commands._controller()` 已經把找 MuMu instance 跟確認遊戲開著這兩件事做完了, 所以探索不需要自己接 ADB; display 是唯一還要自己解析的一步:
 
 ```bash
 uv run python - <<'PY'
@@ -12,6 +12,7 @@ from ai_coc.constants import COC_PACKAGE
 
 adb = _controller()
 display = adb.display_for(COC_PACKAGE)
+adb.zoom("out", 2, COC_PACKAGE, display)                # 先把鏡頭拉回最遠
 
 Path("shot.png").write_bytes(adb.screenshot(display))   # 現在畫面
 adb.tap(800, 450, display)                              # 點一下
@@ -20,15 +21,19 @@ adb.back(display)                                       # BACK 鍵
 PY
 ```
 
+**量任何東西之前先把鏡頭拉回最遠.** 這個專案的每一個座標都是在遊戲最遠的 zoom 量出來的, 所以鏡頭停在別的地方的時候, 你量出來的常數全部是錯的 —— 而底下「把一個新畫面量成常數」那一整節的前提就是它. 拉回去不需要先知道現在在哪, 因為到了最遠處再往外縮什麼都不會發生, 所以這一行直接送出去就好, 遊戲自己也報不出目前的 zoom 給你檢查. 程式那邊 `commands.py` 的 `_settle_game` 跟 `ui/runner.py` 的 `GameRunner._settle_zoom` 每次開工都在做這件事, 手寫的探索腳本反而是唯一沒人幫你做的入口.
+
 方法的完整清單在 `src/ai_coc/adapters/adb.py` 的 `AdbController`, 每個方法上面的 docstring 都值得讀一次, 尤其是 `tap_many`, 那裡面兩條規則各自是一場沒下出任何兵的戰鬥換來的.
 
 **每個呼叫都要帶 `display`.** MuMu 跑好幾個 Android display, 遊戲在它自己那個上面, display 0 是模擬器的 launcher. 少帶這個參數的結果是截圖解碼失敗, 或者點擊安靜地落在 launcher 上, 兩種都不會報錯.
 
-## 兩件不能亂做的事
+## 三件不能亂做的事
 
 **BACK 鍵在乾淨的主村上會叫出「確定退出遊戲嗎」**, 開著建築選單的時候一樣會. 而那個對話框跟付錢升級的對話框是**同一個面板, 同樣的綠色, 同樣的像素**, 所以只有問問題的人知道現在該按哪一個. 探索的時候按了要記得處理掉, 不要留給後面的迴圈. `ui/runner.py` 的 `_home` 是既有的正確作法.
 
 **不要點按鈕列上圖示看起來像資源的那兩個**: 加速所有同類項目花的是魔法物品, 城牆戒指花的是戒指. 它們坐在藍色底板上, `CLAUDE.md` 搜 `blue plate`.
+
+**pinch 一定要帶 `display`.** MuMu 在它其他的 display 上留著一個 launcher, 而兩根手指落在那上面的意思是「切換前景 app」. 實測過一次: 縮放本身成功了, 而模擬器顯示的是 launcher, 遊戲被壓在後面, 於是那之後每一個指令都在對著桌布點. `AdbController.zoom` 拿到 `display` 就只送給那個 display 的觸控節點, 拿不到就送給每一個多點觸控節點, 而後者不會報錯.
 
 ## 把一個新畫面量成常數
 
