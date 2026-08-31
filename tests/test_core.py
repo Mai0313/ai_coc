@@ -862,6 +862,46 @@ class CrossingTests(unittest.TestCase):
         assert adb.swipe.call_count == 0
         assert adb.back.call_count == world_ui.UNCOVER_TRIES
 
+    def test_the_cart_is_judged_on_the_builder_bases_own_two_rows(self) -> None:
+        """`read_stock` wants a third row that village does not have.
+
+        What sits at that y is its gems bar, which comes back as `dark=410005`
+        with the green `+` read as a leading 4 — and it has to resolve at all
+        for `read_stock` to answer anything, so a gems row that will not read
+        would lose the whole trip. The numbers are one real trip's own.
+        """
+        adb = MagicMock()
+        with (
+            patch.object(world_ui.time, "sleep"),
+            patch.object(world_ui, "current_world", return_value="night"),
+            patch.object(world_ui, "loot_cart_open", return_value=True),
+            patch.object(
+                world_ui,
+                "read_builder_stock",
+                side_effect=[
+                    VillageStock(gold=1584654, elixir=726429, dark=0),
+                    VillageStock(gold=1584654, elixir=842429, dark=0),
+                ],
+            ) as read,
+        ):
+            gained = world_ui.collect_cart(adb, DisplayTarget(logical_id="1", physical_id="2"))
+        assert gained == 116_000
+        assert read.call_count == 2
+
+    def test_a_cart_that_never_opened_pays_nothing(self) -> None:
+        """A tap the game swallowed leaves the cart looking exactly like an emptied one."""
+        adb = MagicMock()
+        with (
+            patch.object(world_ui.time, "sleep"),
+            patch.object(world_ui, "current_world", return_value="night"),
+            patch.object(world_ui, "loot_cart_open", return_value=False),
+            patch.object(world_ui, "read_builder_stock", return_value=None) as read,
+        ):
+            gained = world_ui.collect_cart(adb, DisplayTarget(logical_id="1", physical_id="2"))
+        assert gained == 0
+        # The one before the taps, and none after: it gave up before collecting.
+        assert read.call_count == 1
+
     def test_a_battle_on_screen_is_never_pressed_at(self) -> None:
         """`back` there is aimed at 放棄, and a killed run leaves exactly this state.
 
