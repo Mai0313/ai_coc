@@ -53,6 +53,7 @@ from ai_coc.parsers.scout import (
     attack_menu_open,
     idle_disconnected,
     night_attack_menu,
+    read_builder_stock,
     searching_opponent,
 )
 from ai_coc.parsers.world import current_world
@@ -1798,8 +1799,20 @@ class AttackRunner(BaseModel):
             return None
         slots = [slot for group in groups for slot in group]
         troops = counted_cards(frame, slots)
-        machines = [slot for slot in slots if slot not in troops]
-        logger.info("%d troop card(s), %d machine card(s)", len(troops), len(machines))
+        # **A machine that died in the stage before cannot be sent out again**,
+        # and that is a real state rather than a corner case: the second stage
+        # opens with whatever survived, so a machine that tanked the first one
+        # is usually gone. Its card stays on the row, greyed, and `_drop_singles`
+        # would spend its whole ladder of spots on it — five taps, each with a
+        # settle and a capture — before reporting that it took nothing.
+        #
+        # `live_cards` is what says so, and this is the one thing it measures
+        # *well* in this village: a card there greys when the unit it put out
+        # dies, which is exactly the question here. It is the same reading that
+        # makes it useless for "is this card empty", where what is wanted is
+        # whether anything is left to deploy rather than whether it is dead.
+        machines = live_cards(frame, [slot for slot in slots if slot not in troops])
+        logger.info("%d troop card(s), %d machine card(s) still alive", len(troops), len(machines))
         if not troops:
             logger.warning("Every card on the row reads as a machine; nothing to spread")
             return None
@@ -1820,10 +1833,16 @@ class AttackRunner(BaseModel):
         # for: it reads the card afterwards and offers another spot to whatever
         # the game refused.
         line = deploy_line(LINE_POINTS, *push_line(anchors, pushed, self._middle))
-        landed, _ = self._drop_singles(
-            machines, line, "machine", self._spots(plan.hero_points, machines)
-        )
-        self._hold(plan.troops_after, landed)
+        # Skipped outright rather than called with an empty row: `_drop_singles`
+        # pays a settle and a capture before it reads what landed, and a stage
+        # with no machine to send has nothing for either of them to say. The head
+        # start goes with it, because that is the machine's and nobody else's.
+        landed: list[int] = []
+        if machines:
+            landed, _ = self._drop_singles(
+                machines, line, "machine", self._spots(plan.hero_points, machines)
+            )
+            self._hold(plan.troops_after, landed)
         spread = self._spread_night(troops, anchors, pushed)
         # A machine that went down is an attack even if the troops behind it
         # were refused, so only a round with neither on the field answers None.
@@ -1968,11 +1987,16 @@ class AttackRunner(BaseModel):
 
         No thresholds and no skipping: the matchmaker picks the opponent and
         there is nothing to weigh, because the attack is free and both outcomes
-        pay — a win brings home more gold and a loss more elixir. The storage
-        limits are not asked either, and deliberately: the ones in the config
-        file are the home village's numbers, and the builder base's storages are
-        a different size entirely, so applying them here would stand a run down
-        against a ceiling that belongs to another village.
+        pay — a win brings home more gold and a loss more elixir.
+
+        **The storage limits are this village's own**, which is why they took a
+        second field on the config rather than reusing the home village's: its
+        storages are a different size, so those numbers would stand a run down
+        against a ceiling belonging somewhere else. They are asked before the
+        search rather than after it for the reason the home village asks before
+        its fee — the search costs nothing in game and waits on a live player,
+        and one has run to five and a half minutes, which is the real price of a
+        round that had nowhere to put what it won.
         """
         self._panned = (0, 0)
         self._played = None
@@ -1981,6 +2005,30 @@ class AttackRunner(BaseModel):
             logger.warning("The builder base's attack dialog never opened")
             return AttackReport(
                 world="night", message="畫面不在建築大師基地，沒有開啟攻擊選單就停手"
+            )
+        stock = read_builder_stock(home)
+        # **Dark elixir is forced out of the comparison rather than trusted to be
+        # zero.** `StockLimits` reads a limit of 0 as "nobody is watching this",
+        # and `read_builder_stock` answers 0 for a row that village does not
+        # have — so a `night_stock.stop_dark` somebody filled in would be a
+        # ceiling of N against a held 0, never reached, holding the run open for
+        # ever and taking the gold and elixir ceilings down with it. The config
+        # file writes that key out in plain sight, so this is a hand waiting to
+        # be shot.
+        watched = self.stock.model_copy(update={"stop_dark": 0})
+        if stock and (full := watched.full(stock)):
+            logger.info(
+                "Storage limit reached (%s); the builder base stops with gold=%d elixir=%d",
+                "/".join(full),
+                stock.gold,
+                stock.elixir,
+            )
+            self.adb.back(self.display)
+            return AttackReport(
+                world="night",
+                stock_full=True,
+                message=f"{'、'.join(full)}已達停止門檻"
+                f"（金幣 {stock.gold}／聖水 {stock.elixir}），停止刷資源",
             )
         battle = self._find_opponent()
         if battle is None:

@@ -669,6 +669,23 @@ class AppConfig(BaseModel):
         min_gold=500_000, min_elixir=500_000, min_dark=5_000
     )
     stock: StockLimits = StockLimits(stop_gold=15_000_000, stop_elixir=15_000_000)
+    # The builder base's own ceilings. Its storages are a different size from the
+    # home village's, so the limits above would stand a run down against a
+    # ceiling belonging to another village — which is why the night path went
+    # without any at all for a while, and why this is a second field rather than
+    # a reuse.
+    #
+    # **The capacity is written on the bar, if you tap it.** The game answers
+    # with 最大儲存量 and 每小時產量 in a tooltip — measured on this builder
+    # base, gold reads 2 050 000. Two million is 97.6% of that, which is a limit
+    # that actually fires rather than one the village can never reach: the home
+    # village's own ceiling grew past its configured 20M once, and every check
+    # after that stood the run down with millions of room going unused.
+    #
+    # Nothing reads that tooltip yet, so these are still a written-down number
+    # rather than a measurement the loop takes. Reading it would make the whole
+    # field unnecessary, which is the better shape and a bigger change.
+    night_stock: StockLimits = StockLimits(stop_gold=2_000_000, stop_elixir=2_000_000)
     # No ability or spell timings here any more. They were a table of per-hero
     # constants a user could edit, and editing them meant guessing how long an
     # army takes to walk across a village nobody had looked at — which is the
