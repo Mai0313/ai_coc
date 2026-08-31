@@ -47,6 +47,42 @@ BUTTON_ORANGE = 0.2
 NEXT_BUTTON_BOX = (1380, 595, 1525, 668)
 FIND_MATCH_BOX = (150, 635, 400, 695)
 
+# The builder base's own two screens, which have no orange on them at all: its
+# 開始進攻 dialog offers 立即尋找 in green, and the matchmaker that opens is a
+# near-empty pale field whose only feature is a red 取消.
+#
+# **The matchmaker is the one that has to be recognised**, because the builder
+# base is real-time — it waits for another live player, and measured here that
+# took five and a half minutes on one search. A loop that cannot tell that
+# screen from a battle spends the wait tapping at it.
+#
+# The matchmaker takes one box: the red reads 0.87 on it against at most 0.20
+# over 4320 recorded home village frames, and the closest of those is the 放棄
+# button, which is red and sits in the corner of every battle.
+SEARCHING_BOX = (720, 768, 880, 806)
+SEARCHING_RED = 0.5
+
+# **The dialog takes two**, and the reason is measured: its 立即尋找 reads 0.63
+# of button green, and a battlefield read through the same box reads up to 0.69.
+# A village is mostly grass, so one green button is not a screen. What no
+# battlefield has is the dialog's own cream panel behind it, which fills its box
+# outright — and what the matchmaker has instead is that pale field with no green
+# button on it at all. Either test alone has false positives across those 4320
+# frames; the two together have none.
+NIGHT_FIND_BOX = (1100, 570, 1280, 615)
+NIGHT_FIND_GREEN = 0.45
+NIGHT_PANEL_BOX = (300, 465, 900, 500)
+NIGHT_PANEL_PALE = 0.8
+
+# The 聖水車 panel, which is what tapping the builder base's loot cart opens —
+# it is not a collect-on-tap marker like the home village's collectors. The
+# elixir sits in it until its 收集 is pressed, and the bar beside that button
+# says how full it is; measured on the first one this loop opened, 300 000 of a
+# 1 000 000 ceiling. One box does it: that button reads 0.82 of button green,
+# against at most 0.07 over 4300 recorded frames of both villages.
+CART_COLLECT_BOX = (1110, 740, 1245, 782)
+CART_COLLECT_GREEN = 0.4
+
 # A troop card keeps its artwork in colour while it still has something to put on
 # the field and turns fully greyscale once it is spent. Measured across live
 # frames, a spent card reads 0 and a live one 44 or more, which brightness alone
@@ -627,6 +663,73 @@ def attack_menu_open(png: bytes) -> bool:
     return _orange_ratio(image, FIND_MATCH_BOX) >= BUTTON_ORANGE
 
 
+def _button_ratio(image: Image.Image, box: tuple[int, int, int, int], hue: str) -> float:
+    """How much of this box is the game's own button green or red."""
+    data = image.crop(box).tobytes()
+    lit = sum(
+        (data[i + 1] > 150 and data[i + 1] - max(data[i], data[i + 2]) > 45)
+        if hue == "green"
+        else (data[i] > 150 and data[i] - max(data[i + 1], data[i + 2]) > 80)
+        for i in range(0, len(data), 3)
+    )
+    return lit / (len(data) // 3)
+
+
+def _panel_ratio(image: Image.Image, box: tuple[int, int, int, int]) -> float:
+    """How much of this box is the cream a full-screen dialog is drawn on."""
+    data = image.crop(box).tobytes()
+    pale = sum(
+        data[i] > 215
+        and data[i + 1] > 205
+        and data[i + 2] > 185
+        and max(data[i], data[i + 1], data[i + 2]) - min(data[i], data[i + 1], data[i + 2]) < 45
+        for i in range(0, len(data), 3)
+    )
+    return pale / (len(data) // 3)
+
+
+def night_attack_menu(png: bytes) -> bool:
+    """Whether the builder base's 開始進攻 dialog is up with its 立即尋找 button.
+
+    The builder base's own attack button sits in the same corner as the home
+    village's, so the tap that opens this is the tap that opens the other; only
+    what comes up separates them, and `attack_menu_open` does not recognise this
+    one. Without this, a loop pointed at the builder base spends every attempt
+    tapping a dialog it cannot see and reports the game as stuck.
+
+    Two features rather than one, because a village is mostly grass and the
+    button is green; see the constants for the frames each half lets through.
+    """
+    image = Image.open(io.BytesIO(png)).convert("RGB")
+    return (
+        _button_ratio(image, NIGHT_FIND_BOX, "green") >= NIGHT_FIND_GREEN
+        and _panel_ratio(image, NIGHT_PANEL_BOX) >= NIGHT_PANEL_PALE
+    )
+
+
+def loot_cart_open(png: bytes) -> bool:
+    """Whether the builder base's 聖水車 panel is up with its 收集 button.
+
+    Tapping the cart opens this rather than collecting outright, so a caller
+    that stopped at the tap has collected nothing at all — which is what the
+    storage bars said the first time this was tried.
+    """
+    image = Image.open(io.BytesIO(png)).convert("RGB")
+    return _button_ratio(image, CART_COLLECT_BOX, "green") >= CART_COLLECT_GREEN
+
+
+def searching_opponent(png: bytes) -> bool:
+    """Whether the builder base matchmaker is still looking, by its 取消 button.
+
+    This screen has no timer on it and no other feature to read: it is a pale
+    field, the word 正在搜尋對手, and one red button. The button is what says the
+    search is still running, and therefore what a caller waits on — and what it
+    taps when the wait has gone on long enough to be worth restarting.
+    """
+    image = Image.open(io.BytesIO(png)).convert("RGB")
+    return _button_ratio(image, SEARCHING_BOX, "red") >= SEARCHING_RED
+
+
 def _badged(image: Image.Image, centre: int) -> bool:
     """Whether this slot carries a card's level badge, which the empty one does not."""
     data = image.crop((
@@ -735,6 +838,18 @@ def card_count(png: bytes, slot: int) -> int | None:
     of card art left standing became a digit. Measured, a four-pixel sliver off
     the `x` matched a 1 at 31 bits and turned a card of twelve into one of a
     hundred and twenty-one.
+
+    **This reads the home village only, and reports the builder base as
+    unreadable rather than wrongly.** The two write the count differently — `x4`
+    there against `4x` here — and the builder base draws it half as big again,
+    18 px against 9 to 15. Both of those were measured while trying to make one
+    reader serve both, and both say not to: finding the `x` by which end matches
+    no digit template breaks a home card whose own digit is as wide as its `x`
+    (`cards_full`'s third card reads 2 and would stop reading at all), and the
+    builder base's digits miss every template so far that its 4 comes back as a
+    9, 23 bits off — inside `COUNT_DIGIT_TOLERANCE`, so it would be believed. A
+    count nobody can read costs the fallback tap count; a count read as more than
+    twice what the card holds costs the burst that follows it.
     """
     image = Image.open(io.BytesIO(png)).convert("RGB")
     band = image.crop((slot + COUNT_LEFT, COUNT_TOP, slot + COUNT_RIGHT, COUNT_BOTTOM))

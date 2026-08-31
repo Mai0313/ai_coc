@@ -28,6 +28,7 @@ import logging
 
 from ai_coc.models import Crossing
 from ai_coc.constants import COC_PACKAGE
+from ai_coc.parsers.scout import read_stock, loot_cart_open
 from ai_coc.parsers.world import current_world
 
 if TYPE_CHECKING:
@@ -72,6 +73,67 @@ SAIL_GAP = 1.5
 # Zooming out is what puts it back, and it centres the village as a side effect,
 # so it goes in on both paths.
 CROSS_ZOOM_PINCHES = 2
+
+
+# The loot cart, moored on the grass beside the builder base's own boat and so
+# reached by the same clamped view. **It is where that village's elixir goes**:
+# measured over one attack, the gold landed in the storages directly while the
+# elixir went into the cart and stayed there, so a run nobody empties by hand
+# farms half of what it wins.
+#
+# **Tapping it opens a panel rather than collecting**, which is the opposite of
+# the home village's collector markers and cost the first attempt everything it
+# went for: the tap landed, the 聖水車 sheet came up, and the storage bars
+# afterwards said nothing had been paid. What has to be pressed is its own 收集,
+# and then the sheet closed again, because it covers the middle of the village.
+# The first one this opened was holding 300 000 of a 1 000 000 ceiling.
+CART_SPOTS = ((1240, 610), (1218, 596), (1262, 624))
+CART_COLLECT = (1176, 760)
+CART_CLOSE = (1338, 89)
+CART_SETTLE = 1.5
+
+
+def collect_cart(adb: AdbController, display: DisplayTarget) -> int:
+    """Empty the builder base's loot cart; answers the elixir it actually paid.
+
+    Judged on the storage bar rather than on the cart, for the reason `collect`
+    judges its markers that way: a full storage takes none of what it is handed,
+    and a tap the game swallowed leaves the cart looking exactly like one that
+    has just been emptied. Both readings are taken with the sheet down, since it
+    covers the bars while it is up.
+    """
+    if current_world(adb.screenshot(display)) != "night":
+        logger.info("The loot cart is the builder base's; there is none here")
+        return 0
+    crossing = CROSSINGS["day"]
+    landing = (crossing.start[0] + crossing.drift[0], crossing.start[1] + crossing.drift[1])
+    for _ in range(SWIPES):
+        adb.swipe(crossing.start, landing, SWIPE_MS, display)
+        time.sleep(SWIPE_SETTLE)
+    before = read_stock(adb.screenshot(display))
+    try:
+        for spot in CART_SPOTS:
+            adb.tap(spot[0], spot[1], display)
+            time.sleep(CART_SETTLE)
+            if loot_cart_open(adb.screenshot(display)):
+                adb.tap(*CART_COLLECT, display)
+                time.sleep(CART_SETTLE)
+                adb.tap(*CART_CLOSE, display)
+                time.sleep(CART_SETTLE)
+                break
+            logger.info("The tap at %s did not open the cart; trying the next spot", spot)
+        else:
+            logger.warning("None of the %d candidate spots found the cart", len(CART_SPOTS))
+            return 0
+        after = read_stock(adb.screenshot(display))
+    finally:
+        adb.zoom("out", CROSS_ZOOM_PINCHES, COC_PACKAGE, display)
+    if before is None or after is None:
+        logger.warning("The storage bars would not read either side of the cart")
+        return 0
+    gained = after.elixir - before.elixir
+    logger.info("The loot cart paid %d elixir", gained)
+    return gained
 
 
 def cross(adb: AdbController, display: DisplayTarget, want: World) -> World | None:

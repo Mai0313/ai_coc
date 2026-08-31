@@ -27,6 +27,7 @@ from ai_coc.models import (
     ProbeRay,
     AppConfig,
     MapSurvey,
+    NightPlan,
     AttackPlan,
     HeroReport,
     PlayedPlan,
@@ -35,6 +36,7 @@ from ai_coc.models import (
     BuildReport,
     WallOptions,
     WorldReport,
+    AttackReport,
     AttackSeries,
     DonateReport,
     FrameReading,
@@ -84,7 +86,7 @@ from ai_coc.parsers.building import wall_menu, upgrade_buttons
 from .ui.clan import ClanRunner
 from .ui.hero import HeroRunner
 from .ui.walls import WallRunner
-from .ui.world import cross
+from .ui.world import cross, collect_cart
 from .ui.attack import CARD_ROW_Y, DROP_SETTLE, SINGLE_DROP_DELAY, AttackRunner
 from .ui.upkeep import UpkeepRunner
 
@@ -258,6 +260,11 @@ class FrameTicker(BaseModel):
 # same menus to read the same half-full camp, so a round that did not attack
 # waits before the next one is started.
 IDLE_REST = 60
+
+# How many builder base battles go by between trips to the loot cart. Three is
+# the player's own pacing rather than a measurement: the cart accumulates, so
+# the only cost of waiting is the risk of it capping out.
+CART_EVERY = 3
 # How long the camera takes to settle after a pinch.
 PINCH_SETTLE = 1.5
 # How often the barracks wait looks up to see whether it has been stood down.
@@ -490,7 +497,7 @@ def _restarted(runner: AttackRunner, ticker: FrameTicker, fought: int, every: in
     return None
 
 
-def _write_plan(path: Path | None, plan: AttackPlan | None) -> None:
+def _write_plan(path: Path | None, plan: AttackPlan | NightPlan | None) -> None:
     """Write down the plan that actually ran, so the battle can be repeated.
 
     Both halves are optional and neither is an error: nobody asked for a copy,
@@ -506,7 +513,7 @@ def _write_plan(path: Path | None, plan: AttackPlan | None) -> None:
     logger.info("Wrote the plan that ran to %s", path)
 
 
-def _log_plan(path: Path | None, played: int, plan: AttackPlan | None) -> None:
+def _log_plan(path: Path | None, played: int, plan: AttackPlan | NightPlan | None) -> None:
     """Append one round's tactic to the run's plan log.
 
     Appended rather than rewritten, and one file rather than one per round:
@@ -523,6 +530,18 @@ def _log_plan(path: Path | None, played: int, plan: AttackPlan | None) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as log:
         log.write(PlayedPlan(round=played, plan=plan).model_dump_json() + "\n")
+
+
+def _empty_cart(world: World, battles: int, adb: AdbController, display: DisplayTarget) -> None:
+    """Fetch the builder base's elixir every few battles, since it is not paid in.
+
+    **That village pays its elixir into a cart rather than into the storages**,
+    so a series that never empties it farms half of what it wins. Every few
+    battles rather than every one: the cart accumulates — measured, it holds a
+    million — while emptying it costs a camera drag to the far corner and back.
+    """
+    if world == "night" and battles and battles % CART_EVERY == 0:
+        collect_cart(adb, display)
 
 
 def attack(options: AttackOptions) -> AttackSeries:
@@ -553,9 +572,27 @@ def attack(options: AttackOptions) -> AttackSeries:
     plan = plans.load(options.plan_in) if options.plan_in else None
     config = ConfigStore().load()
     display = adb.display_for(COC_PACKAGE)
+    # Which village to play, settled once for the whole series rather than per
+    # round. Naming one crosses to it; not naming one takes whichever is up,
+    # because the game reopens on the village it was closed on and refusing to
+    # play that one would stand half the runs down for no reason.
+    world = (
+        cross(adb, display, options.world)
+        if options.world
+        else current_world(adb.screenshot(display))
+    )
+    if world is None or (options.world and world != options.world):
+        logger.warning("Wanted the %s village and the game is on %s", options.world, world)
+        return AttackSeries(
+            root=[
+                AttackReport(message=f"沒辦法把遊戲帶到指定的世界,現在是{_WORLDS[world]},沒有開打")
+            ]
+        )
+    logger.info("Playing the %s village", world)
     runner = AttackRunner(
         adb=adb,
         display=display,
+        world=world,
         thresholds=options.minimums.over(config.thresholds),
         stock=config.stock,
         ai=None if plan else _planner(config),
@@ -574,6 +611,8 @@ def attack(options: AttackOptions) -> AttackSeries:
     # for the reason `AttackOptions.restart_every` gives: a round spent waiting
     # for barracks did not tire the emulator out.
     fought = 0
+    # Night battles since the run began, which is what the loot cart is emptied on.
+    battles = 0
     with FrameTicker(
         adb=adb, display=display, out_dir=options.frame_dir or Path(), seconds=options.shot_every
     ) as ticker:
@@ -604,8 +643,18 @@ def attack(options: AttackOptions) -> AttackSeries:
                 logger.info("Interrupted; stopping after %d round(s)", len(series.root))
                 break
             series.root.append(report)
-            if report.attacked is not None:
+            # A builder base round reports no `attacked` — there is no scout
+            # screen to have advertised any loot — so the two villages answer
+            # "did this round really fight" differently and the restart counter
+            # and the barracks wait both have to ask both ways.
+            fighting = report.attacked is not None or report.phases > 0
+            if fighting:
                 fought += 1
+                battles += 1
+                # Inside the branch that moved the counter, or a round that
+                # matched nobody would pay for the whole trip again against a
+                # cart emptied moments earlier.
+                _empty_cart(world, battles, adb, display)
             logger.info("Attack finished: %s", report.message)
             _write_plan(options.plan_out, runner.played)
             _log_plan(options.plan_log, len(series.root), runner.played)
@@ -618,7 +667,7 @@ def attack(options: AttackOptions) -> AttackSeries:
             # logs why the series ended, and `run.log` is the only thing a
             # background run leaves to read while it is still going.
             if (
-                report.attacked is None
+                not fighting
                 and not stop_requested()
                 and (rounds <= 0 or len(series.root) < rounds)
             ):
@@ -883,9 +932,19 @@ def collect(frame_dir: Path | None = None) -> CollectReport:
     adb = _controller()
     if frame_dir is not None:
         frame_dir.mkdir(parents=True, exist_ok=True)
-    report = UpkeepRunner(
-        adb=adb, display=adb.display_for(COC_PACKAGE), frame_dir=frame_dir
-    ).collect()
+    display = adb.display_for(COC_PACKAGE)
+    # **The builder base has no collectors to sweep and one cart instead.** Its
+    # elixir is paid into that cart rather than into the storages, so this is
+    # the same job on that village even though it shares none of the machinery:
+    # one tap at a known spot rather than a colour-and-size search over the map.
+    if current_world(adb.screenshot(display)) == "night":
+        gained = collect_cart(adb, display)
+        return CollectReport(
+            markers=1 if gained else 0,
+            elixir=gained,
+            message=f"建築大師基地的推車收到聖水 {gained}" if gained else "推車裡沒有東西可以收",
+        )
+    report = UpkeepRunner(adb=adb, display=display, frame_dir=frame_dir).collect()
     logger.info("Collect: %s", report.message)
     return report
 

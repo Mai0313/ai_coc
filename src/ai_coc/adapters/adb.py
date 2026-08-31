@@ -19,17 +19,29 @@ logger = logging.getLogger(__name__)
 
 PNG_MAGIC = b"\x89PNG"
 
-# How long `tap_many` leaves between one tap and the next. It exists because the
-# game samples touches once a display frame and keeps one of whatever arrived in
-# that frame, so the taps have to be more than a frame apart or troops go missing.
-# Measured against this emulator: the shell round trip is 47 ms and each `input`
-# inside it costs about 12 ms, so five taps chained with no sleep at all take
-# 109 ms in total — a spacing well under one frame, which is the bug. This adds
-# up to roughly 62 ms between taps, two frames at 30 fps and four at 60. It was
-# 0.12, which is safe and is also two thirds of the time a whole army takes to
-# deploy: 300 taps at that spacing is 36 seconds of a three-minute battle spent
-# sleeping.
-TAP_GAP = 0.05
+# How long `tap_many` leaves between one tap and the next, and it is now nothing
+# at all. **This was 0.05 and the reason given for it did not survive being
+# measured again.** The reasoning was that the game samples touches once a
+# display frame and keeps one of whatever arrived in it, so chained `input`
+# calls landing ~12 ms apart would lose all but the first; the evidence was a
+# battle that deployed nothing while reporting success, which is consistent with
+# that story and with several others.
+#
+# Measured directly instead, on the builder base where an attack costs nothing:
+# five troop cards holding four each, tapped **exactly four times with no gap**,
+# emptied five out of five. A whole attack run at this spacing then deployed all
+# twenty troops for 80% destruction, and took the troop half of the deployment
+# from about 19 seconds to about 8 — pass one from 10 s to 4 and pass two from
+# 9 to 4.
+#
+# What makes zero safe to keep is not the spacing on its own but that every
+# caller either has slack or checks: a deployment pass taps `DROPS_PER_PASS`
+# against a card holding about four, and `_drop_singles` and `_cast` read the
+# cards afterwards and offer another spot to whatever the game did not take.
+# The separator itself is left in place because that is the configuration that
+# was measured — `sleep 0` is still a process spawn between the taps, worth
+# about 10 ms, and taking it out would be a spacing nobody has tried.
+TAP_GAP = 0.0
 
 # The Linux input-event codes a pinch is written with. `input` has no two-finger
 # gesture of any kind, so the only way to zoom is to write the multi-touch
@@ -212,17 +224,19 @@ class AdbController(BaseModel):
     def tap_many(
         self, points: list[tuple[int, int]], display: DisplayTarget, gap: float = TAP_GAP
     ) -> None:
-        """A burst of taps in one shell round-trip, spaced far enough apart to land.
+        """A burst of taps in one shell round-trip, which is how an army goes down fast.
 
         Deploying an army one call at a time spends most of the battle timer on
         ADB latency. Two things here were each paid for in a battle that
         deployed nothing at all, both of them silent:
 
-        - it goes as a shell string, because adbutils escapes every argument of
-          a list, which turns the separators into literal text;
-        - the sleeps are load-bearing. Chained `input` calls land about 10 ms
-          apart, well inside one display frame, and the game keeps only the
-          first of them.
+        Going as a shell string is what was paid for in a battle that deployed
+        nothing at all, and silently: adbutils escapes every argument of a list,
+        which turns the separators into literal text and the whole burst into
+        one unknown command name.
+
+        The sleeps between them were the other half of that story and are gone;
+        see `TAP_GAP` for what replaced the reasoning behind them.
         """
         logger.info(
             "Tapping %d points on %s display %s", len(points), self.serial, display.logical_id

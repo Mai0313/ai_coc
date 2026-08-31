@@ -141,6 +141,7 @@ ai_coc read shot.png                  # what each reader makes of one frame
 ai_coc view --zoom out                # put the camera back where every coordinate was measured
 ai_coc world                          # which of the two villages the game is on
 ai_coc world --go day                 # sail there; already being there does nothing
+ai_coc attack --world night           # attack the builder base instead of the home village
 ```
 
 The game keeps two villages — the home village and the builder base — and reopens on whichever one it was closed on, so `world` is worth asking before anything that assumes one of them. Reading it is a single screenshot: no tap, no swipe, no camera move.

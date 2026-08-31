@@ -30,6 +30,8 @@ uv run ai_coc capture .runs/explore --count 20 --gap 1.5   # 從活著的遊戲�
 uv run ai_coc read <png>                                          # 現有 parser 對這張圖的說法
 ```
 
+**探索之前先確認自己在哪個村莊.** 這個遊戲有日世界 (主村) 跟夜世界 (建築大師基地) 兩張地圖, 而遊戲會開在上次離開的那一個, 所以 `uv run ai_coc world` 是探索腳本的第一行, 不然你會拿夜世界的畫面去量日世界的常數. 怎麼在腳本裡問跟怎麼切在 `references/exploring.md`.
+
 **不要下裸的 `adb shell screencap` 或 `adb shell input`.** MuMu 把遊戲開在它自己的 display 上, 不指定 display 的話截圖會因為前面多一段警告而解碼失敗, `input tap` 則會安靜地點到 launcher 上, 你會以為點了但什麼都沒發生. 正確的入口是 `AdbController`, 它會自己解析 display; 怎麼用在 `references/exploring.md`.
 
 `ai_coc read` 是判斷「這個畫面現有的判讀器懂不懂」的方法. 每個欄位都是 `None` 或空的, 就代表這是一片沒開發過的地方.
