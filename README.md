@@ -173,16 +173,12 @@ The first line of every run says which directory it is, and the name is `<when>-
     "min_elixir": 500000,
     "min_dark": 5000
   },
-  "stock": {
-    "stop_gold": 15000000,
-    "stop_elixir": 15000000,
-    "stop_dark": 0
-  }
+  "stop_at": 90
 }
 ```
 
 - **thresholds**: who is worth attacking. Set them too high and a run skips dozens of opponents without ever starting a battle
-- **stock**: when to stand down. Every watched resource has to reach its limit, not just one of them — a battle brings home three, so one storage at the ceiling is no reason to stop earning the other two. `0` means "never stop on this one", and leaves it out of the count
+- **stop_at**: how full every storage has to be before a run stands down, as a percentage. **One number for both villages**, because the loop reads each storage's real ceiling off the game — tap a storage bar and it writes 最大儲存量 on the spot. Every storage has to reach it, not just one of them: a battle brings home three, so one at the ceiling is no reason to stop earning the other two. `0` never stands a run down, and a storage whose ceiling would not read is left out of the count
 
 There are no ability or spell timings here any more. They were a table of per-hero constants, and editing them meant guessing how long an army takes to walk across a village nobody had looked at — which is the planner's job, done with the village on screen. Every clock lives on the plan now: see `plans/flat.json` for the shape, and `--plan-in` to replay one.
 

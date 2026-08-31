@@ -25,10 +25,10 @@ from ai_coc.models import (
     ScoutView,
     AttackPlan,
     ScreenPoint,
-    StockLimits,
     AttackReport,
     DisplayTarget,
     LootThresholds,
+    StorageCapacity,
 )
 from ai_coc.prompts import PROMPTS
 from ai_coc.ui.world import cross
@@ -51,6 +51,7 @@ from ai_coc.parsers.scout import (
     army_strength,
     counted_cards,
     attack_menu_open,
+    storage_capacity,
     idle_disconnected,
     night_attack_menu,
     read_builder_stock,
@@ -73,6 +74,21 @@ ARMY_ATTACK = (1411, 803)
 NEXT_TARGET = (1450, 630)
 END_BATTLE = (118, 670)
 RETURN_HOME = (798, 768)
+
+# Where to tap to drop a storage bar's 最大儲存量 tooltip open, one per bar down
+# the corner. The x sits inside the bar and well right of the builder base's
+# gems row, whose green + spans 1345 to 1385 and opens the shop — the one thing
+# on any of these rows that a stray tap must not reach. The y is each bar's own
+# middle, the same rows `read_stock` reads its digits from.
+#
+# The tooltip takes a moment to animate in and is a toggle rather than a popup,
+# so a capture taken too early reads the frame before it opened and costs the
+# whole row: `CAPACITY_TRIES` is what pays for that, and for a tooltip somebody
+# left open before the run started.
+STOCK_BAR_X = 1400
+STOCK_BAR_Y = (52, 136, 219)
+TOOLTIP_SETTLE = 1.0
+CAPACITY_TRIES = 2
 
 # The builder base's own way into a battle, which is two buttons where the home
 # village's is three: its 攻擊 sits in the same corner and opens 開始進攻, whose
@@ -624,8 +640,10 @@ class AttackRunner(BaseModel):
     # card row — which is why this is a field rather than a second runner.
     world: World = "day"
     thresholds: LootThresholds
-    # Read once per run off the home village, before the search fee is charged.
-    stock: StockLimits = StockLimits()
+    # How full every storage has to be before the run stands itself down, as a
+    # share of what that storage holds; 0 never stands one down. One number for
+    # both villages, because the ceilings themselves are read off the game.
+    stop_at: int = 0
     max_skips: int = 20
     ai: GeminiClient | None = None
     # A plan settled before the run, which skips the Gemini call entirely. This is
@@ -658,11 +676,26 @@ class AttackRunner(BaseModel):
     # drawn for a village in the middle of the screen, so once the camera moves
     # they are all read through this.
     _panned: tuple[int, int] = PrivateAttr(default=(0, 0))
+    # What this village's storages hold when full, read off their own tooltips
+    # the first time a round reaches the village and kept for the rest of the
+    # run. A storage only grows when a builder finishes upgrading one, which is
+    # days apart, against six taps and three captures to ask again every round.
+    _capacity: StorageCapacity | None = PrivateAttr(default=None)
 
     @property
     def played(self) -> AttackPlan | NightPlan | None:
         """The plan this run actually used, once one has been settled on."""
         return self._played
+
+    @property
+    def _ceiling(self) -> StorageCapacity:
+        """The ceilings this run read, or none at all before it has read them.
+
+        An empty one watches nothing, so a round that never reached the village
+        to read its bars never stands the run down either — which is the same way
+        an unreadable storage row is already treated.
+        """
+        return self._capacity or StorageCapacity()
 
     @property
     def _middle(self) -> tuple[int, int]:
@@ -715,6 +748,77 @@ class AttackRunner(BaseModel):
             self._captures += 1
             (self.frame_dir / f"{self._captures:04d}_{label}.png").write_bytes(png)
         return png
+
+    def _settle_ceilings(self) -> None:
+        """Read what this village's storages hold when full, once a run, off their tooltips.
+
+        Kept for the rest of the run once it has read, because a storage only
+        grows when a builder spends days upgrading one, while asking costs six
+        taps and three captures.
+
+        **A partial read is thrown away rather than kept**, which is the whole
+        reason this is a method and not an assignment. Every one of these taps
+        can be swallowed — a tooltip still animating in, a panel over the bars,
+        a village the game had not finished painting — and a `StorageCapacity`
+        holding some of its rows is worse than none in both directions. Empty, it
+        watches nothing, so an overnight run farms straight past full storages
+        and throws the loot away, which is the failure this setting exists to
+        prevent. Partial is worse still: gold and elixir failing while dark reads
+        its 370 000 leaves the run standing down the moment dark passes 90% with
+        the two big storages nearly empty. Left unset, the next round simply
+        asks again, and a round costs minutes anyway.
+
+        **The builder base's third row is never tapped.** That village has no
+        dark elixir; what sits at that y is its gems bar, and the green + beside
+        the number opens the shop. Two rows there is not a limitation — a
+        resource with no ceiling is left out of the comparison, which is exactly
+        right for one that does not exist.
+
+        The tooltip is a toggle, so a row that reads nothing is left alone rather
+        than tapped shut: the one way to read nothing on a village that has the
+        bar is to have closed a tooltip that was already open, and the next
+        attempt then opens it.
+
+        **A row that fails both tries can leave its own tooltip up, and that is
+        measured to be harmless.** The panel hangs *under* the bar that opened
+        it, so it covers the rows below rather than its own — and only the last
+        row read has nothing after it to close it, since the next row's first tap
+        closes whatever is open. Measured on the fixtures: with the dark tooltip
+        up `read_stock` still reads all three rows, and with the builder base's
+        elixir tooltip up `read_builder_stock` still reads both, which is exactly
+        the last row in each village. Closing on failure instead was tried and is
+        worse — with the tooltip starting closed, which is the ordinary case, a
+        row that fails twice would then end on an opening tap and leave the
+        **gold** panel up, and that one does cover the rows under it.
+        """
+        # Nothing to measure against, so nothing worth six taps: `probe` and
+        # `bounds` run at the default 0, and so does a window whose spinbox is
+        # at 不監控.
+        if self._capacity is not None or not self.stop_at:
+            return
+        rows = ("gold", "elixir", "dark") if self.world == "day" else ("gold", "elixir")
+        found: dict[str, int] = {}
+        for row, name in enumerate(rows):
+            for _ in range(CAPACITY_TRIES):
+                self._tap((STOCK_BAR_X, STOCK_BAR_Y[row]))
+                time.sleep(TOOLTIP_SETTLE)
+                held = storage_capacity(self._frame(f"capacity-{name}"), row)
+                if held is None:
+                    continue
+                found[name] = held
+                self._tap((STOCK_BAR_X, STOCK_BAR_Y[row]))
+                time.sleep(TOOLTIP_SETTLE)
+                break
+        if len(found) < len(rows):
+            logger.warning(
+                "Only %d of %d storage ceilings read (%s); leaving them for the next round",
+                len(found),
+                len(rows),
+                found or "none",
+            )
+            return
+        self._capacity = StorageCapacity(**found)
+        logger.info("Storage ceilings read as %s", found)
 
     def _battle_ended(self, label: str) -> bool:
         """Whether the result screen is up, and the loot on the way past.
@@ -776,6 +880,12 @@ class AttackRunner(BaseModel):
                     logger.warning("The crossing never landed; this round has no village to open")
                     return None
                 continue
+            # The one moment the run is known to be standing on the right
+            # village with nothing over it, which is what tapping the storage
+            # bars needs. Past here the attack menu is up and the bars are behind
+            # it; before here the frame might be a result screen or the other
+            # village. It reads once and every round after this costs nothing.
+            self._settle_ceilings()
             self._tap(HOME_ATTACK)
             time.sleep(2)
             if attack_menu_open(self._frame("attack-menu")):
@@ -1695,6 +1805,9 @@ class AttackRunner(BaseModel):
                     logger.warning("The crossing never landed; this round has no base to open")
                     return None
                 continue
+            # Same as `_open_attack_menu`: the bars can only be tapped from the
+            # village itself, and this is where the run knows it is on one.
+            self._settle_ceilings()
             self._tap(HOME_ATTACK)
             time.sleep(2)
             if night_attack_menu(self._frame("night-menu")):
@@ -1989,11 +2102,12 @@ class AttackRunner(BaseModel):
         there is nothing to weigh, because the attack is free and both outcomes
         pay — a win brings home more gold and a loss more elixir.
 
-        **The storage limits are this village's own**, which is why they took a
-        second field on the config rather than reusing the home village's: its
-        storages are a different size, so those numbers would stand a run down
-        against a ceiling belonging somewhere else. They are asked before the
-        search rather than after it for the reason the home village asks before
+        **The storage limits are this village's own** without being configured
+        per village: its storages are a different size from the home village's,
+        and what the run is given is a share rather than an amount, so the
+        ceilings it is measured against are the ones read off these bars. They
+        are asked before the search rather than after it for the reason the home
+        village asks before
         its fee — the search costs nothing in game and waits on a live player,
         and one has run to five and a half minutes, which is the real price of a
         round that had nowhere to put what it won.
@@ -2007,16 +2121,7 @@ class AttackRunner(BaseModel):
                 world="night", message="畫面不在建築大師基地，沒有開啟攻擊選單就停手"
             )
         stock = read_builder_stock(home)
-        # **Dark elixir is forced out of the comparison rather than trusted to be
-        # zero.** `StockLimits` reads a limit of 0 as "nobody is watching this",
-        # and `read_builder_stock` answers 0 for a row that village does not
-        # have — so a `night_stock.stop_dark` somebody filled in would be a
-        # ceiling of N against a held 0, never reached, holding the run open for
-        # ever and taking the gold and elixir ceilings down with it. The config
-        # file writes that key out in plain sight, so this is a hand waiting to
-        # be shot.
-        watched = self.stock.model_copy(update={"stop_dark": 0})
-        if stock and (full := watched.full(stock)):
+        if stock and (full := self._ceiling.full(stock, self.stop_at)):
             logger.info(
                 "Storage limit reached (%s); the builder base stops with gold=%d elixir=%d",
                 "/".join(full),
@@ -2027,7 +2132,7 @@ class AttackRunner(BaseModel):
             return AttackReport(
                 world="night",
                 stock_full=True,
-                message=f"{'、'.join(full)}已達停止門檻"
+                message=f"{'、'.join(full)}都滿過 {self.stop_at}%"
                 f"（金幣 {stock.gold}／聖水 {stock.elixir}），停止刷資源",
             )
         battle = self._find_opponent()
@@ -2091,7 +2196,7 @@ class AttackRunner(BaseModel):
         # An unreadable frame stops nothing, because a village that cannot be
         # read is not evidence of a full one.
         stock = read_stock(home)
-        if stock and (full := self.stock.full(stock)):
+        if stock and (full := self._ceiling.full(stock, self.stop_at)):
             logger.info(
                 "Storage limit reached (%s); farming stops with gold=%d elixir=%d dark=%d",
                 "/".join(full),
@@ -2102,7 +2207,7 @@ class AttackRunner(BaseModel):
             self.adb.back(self.display)
             return AttackReport(
                 stock_full=True,
-                message=f"{'、'.join(full)}已達停止門檻"
+                message=f"{'、'.join(full)}都滿過 {self.stop_at}%"
                 f"（金幣 {stock.gold}／聖水 {stock.elixir}／黑水 {stock.dark}），停止刷資源",
             )
         self._tap(FIND_MATCH)

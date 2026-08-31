@@ -53,7 +53,6 @@ from ai_coc.models import (
     AppConfig,
     AgentAction,
     ChatMessage,
-    StockLimits,
     AttackReport,
     DisplayTarget,
     LocatedTarget,
@@ -121,13 +120,21 @@ THINKING_LEVELS = list(get_args(ThinkingLevel))
 # this for months keeps its settings when they move into the config file. Saving
 # through the window is what writes the file, so without this step the first
 # terminal run after the upgrade would use the defaults and say nothing.
+#
+# **The registry's own stop_gold/stop_elixir/stop_dark are deliberately not
+# carried over.** Those were amounts and the setting is now a share of what the
+# storage holds, and there is no conversion between them without a ceiling —
+# which only the running game can answer. Reading one here would mean driving
+# the emulator from a migration step, and the number those keys hold is the one
+# this change exists to stop trusting: both sets measured stale, the home
+# village's against a cap that had grown past it and the builder base's against
+# a real elixir ceiling 22% higher. The default is the better value.
 THRESHOLD_KEYS = ("min_gold", "min_elixir", "min_dark")
-STOCK_KEYS = ("stop_gold", "stop_elixir", "stop_dark")
 
 
 def _migrated_config(settings: QSettings) -> AppConfig | None:
     """The registry's own values as an `AppConfig`, or None if it holds none."""
-    if not any(settings.contains(key) for key in (*THRESHOLD_KEYS, *STOCK_KEYS, "gemini_model")):
+    if not any(settings.contains(key) for key in (*THRESHOLD_KEYS, "gemini_model")):
         return None
     defaults = AppConfig()
     endpoint = str(settings.value("gemini_endpoint", ""))
@@ -139,7 +146,6 @@ def _migrated_config(settings: QSettings) -> AppConfig | None:
         thresholds=LootThresholds(**{
             key: saved(key, getattr(defaults.thresholds, key)) for key in THRESHOLD_KEYS
         }),
-        stock=StockLimits(**{key: saved(key, getattr(defaults.stock, key)) for key in STOCK_KEYS}),
         gemini_model=str(settings.value("gemini_model", defaults.gemini_model)),
         # The OpenAI-compatible endpoint the previous release defaulted to is not
         # a google-genai base URL. This is the one moment it could be carried
@@ -606,31 +612,24 @@ class MainWindow(QMainWindow):
         self.min_dark = QSpinBox()
         self.min_dark.setRange(0, 50000)
         self.min_dark.setSingleStep(500)
-        self.stop_gold = QSpinBox()
-        self.stop_gold.setRange(0, 20000000)
-        self.stop_gold.setSingleStep(100000)
-        self.stop_elixir = QSpinBox()
-        self.stop_elixir.setRange(0, 20000000)
-        self.stop_elixir.setSingleStep(100000)
-        self.stop_dark = QSpinBox()
-        self.stop_dark.setRange(0, 500000)
-        self.stop_dark.setSingleStep(10000)
+        # One row for both villages: it is a share of what each storage actually
+        # holds, and the loop reads those ceilings off the bars themselves.
+        self.stop_at = QSpinBox()
+        self.stop_at.setRange(0, 100)
+        self.stop_at.setSuffix(" %")
         # The row text only names the resource, so what the number means lives here.
         for box in (self.min_gold, self.min_elixir, self.min_dark):
             box.setToolTip("對手身上至少要有這麼多，才值得出手")
         # 0 is the minimum, so this labels it in place rather than in the row text.
-        for box in (self.stop_gold, self.stop_elixir, self.stop_dark):
-            box.setSpecialValueText("不監控")
-            box.setToolTip("自己的儲量到這個數字就停止刷資源")
+        self.stop_at.setSpecialValueText("不監控")
+        self.stop_at.setToolTip("每一種資源都滿到這個比例就停止刷資源，主村跟夜世界共用")
         self.cycle_minutes = QSpinBox()
         self.cycle_minutes.setRange(1, 120)
         for widget, value in (
             (self.min_gold, self.config.thresholds.min_gold),
             (self.min_elixir, self.config.thresholds.min_elixir),
             (self.min_dark, self.config.thresholds.min_dark),
-            (self.stop_gold, self.config.stock.stop_gold),
-            (self.stop_elixir, self.config.stock.stop_elixir),
-            (self.stop_dark, self.config.stock.stop_dark),
+            (self.stop_at, self.config.stop_at),
             # Only the window ever waits, so this one stays in the registry.
             (self.cycle_minutes, int(self.settings.value("cycle_minutes", 10))),
         ):
@@ -638,9 +637,7 @@ class MainWindow(QMainWindow):
         battle_form.addRow("對手金幣", self.min_gold)
         battle_form.addRow("對手聖水", self.min_elixir)
         battle_form.addRow("對手黑水", self.min_dark)
-        battle_form.addRow("金幣存量", self.stop_gold)
-        battle_form.addRow("聖水存量", self.stop_elixir)
-        battle_form.addRow("黑水存量", self.stop_dark)
+        battle_form.addRow("儲量停手", self.stop_at)
         battle_form.addRow("閒置重試（分鐘）", self.cycle_minutes)
         return battle
 
@@ -654,7 +651,7 @@ class MainWindow(QMainWindow):
         ):
             self.settings.setValue(key, widget.isChecked())
         self.settings.setValue("cycle_minutes", self.cycle_minutes.value())
-        self._save_config(thresholds=self._thresholds(), stock=self._limits())
+        self._save_config(thresholds=self._thresholds(), stop_at=self.stop_at.value())
         self.automation_log.appendPlainText("自動化設定已保存。")
 
     def _save_config(self, **changes: object) -> None:
@@ -762,17 +759,10 @@ class MainWindow(QMainWindow):
             min_dark=self.min_dark.value(),
         )
 
-    def _limits(self) -> StockLimits:
-        return StockLimits(
-            stop_gold=self.stop_gold.value(),
-            stop_elixir=self.stop_elixir.value(),
-            stop_dark=self.stop_dark.value(),
-        )
-
     def run_attack(self) -> None:
         m, a = self._require()
         thresholds = self._thresholds()
-        limits = self._limits()
+        stop_at = self.stop_at.value()
 
         # The client is only used once an opponent has passed the thresholds, to
         # pick the flank and the spell targets; screen reading never needs it.
@@ -790,7 +780,7 @@ class MainWindow(QMainWindow):
                 adb=adb,
                 display=adb.display_for(COC_PACKAGE),
                 thresholds=thresholds,
-                stock=limits,
+                stop_at=stop_at,
                 ai=planner,
                 should_stop=lambda: not self.automation_active,
                 frame_dir=run.frames,

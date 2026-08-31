@@ -50,6 +50,7 @@ from ai_coc.models import (
     BoundarySurvey,
     GeminiSettings,
     LootThresholds,
+    StorageCapacity,
 )
 from ai_coc.constants import NUDGE_MS, NUDGE_TO, NUDGE_ROW, STOP_FLAG, NUDGE_FROM, COC_PACKAGE
 from ai_coc.adapters.ai import GeminiClient
@@ -75,6 +76,7 @@ from ai_coc.parsers.scout import (
     army_strength,
     counted_cards,
     attack_menu_open,
+    storage_capacity,
     idle_disconnected,
 )
 from ai_coc.parsers.world import current_world
@@ -618,10 +620,11 @@ def attack(options: AttackOptions) -> AttackSeries:
         display=display,
         world=world,
         thresholds=options.minimums.over(config.thresholds),
-        # Each village's own ceilings. One field on the runner rather than two,
-        # because a round only ever plays one of them and the pair would have to
-        # be kept in step by hand.
-        stock=config.night_stock if world == "night" else config.stock,
+        # One setting for both villages, because it is a share of whatever the
+        # storages hold rather than an amount: the runner reads each village's
+        # own ceilings off its bars, so the same 90% means one thing here and
+        # another on the builder base without anybody typing either number.
+        stop_at=config.stop_at,
         ai=None if plan else _planner(config),
         plan=plan,
         should_stop=stop_requested,
@@ -1176,6 +1179,11 @@ def read(png: bytes) -> FrameReading:
         world=current_world(png),
         scout=read_scout(png),
         stock=read_stock(png),
+        capacity=StorageCapacity(
+            gold=storage_capacity(png, 0),
+            elixir=storage_capacity(png, 1),
+            dark=storage_capacity(png, 2),
+        ),
         army=army_strength(png),
         wall_menu=wall_menu(png),
         bubbles=collect_bubbles(png),

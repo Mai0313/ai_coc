@@ -268,6 +268,27 @@ STOCK_ROW_BOUNDS = ((33, 72), (117, 156), (200, 239))
 STOCK_DIGIT_TOLERANCE = 30
 STOCK_INK_SATURATION = 45
 
+# 最大儲存量 on the tooltip a tapped storage bar drops open, which is the one
+# place the game writes down how much that storage holds. The panel hangs under
+# the bar that opened it, so its first line moves with the row by the same pitch
+# the bars themselves are spaced at.
+#
+# The line reads 最大儲存量 ： 24 000 000, and what makes it readable is that
+# the label is not a number: swept over both villages, every real digit lands
+# within 3 bits of its template while the Chinese and the colon read 52 and up,
+# so `split_numbers` cuts the line at the label and the capacity is the last
+# number left. `CAPACITY_TOLERANCE` goes well under that gap rather than beside
+# it, because a value read too generously is worse than none — at 40 the colon
+# came back as a 2 and the builder base's 2 450 000 read as 24 500 000, a
+# ceiling ten times the real one that no farming run could ever fill.
+#
+# The box starts left of where any of these numbers do. It reaches past the
+# label on the dark row, whose panel sits further right, and that costs nothing:
+# label glyphs are cut away by the same tolerance.
+CAPACITY_BOX = (1340, 103, 1585, 132)
+CAPACITY_PITCH = 84
+CAPACITY_TOLERANCE = 15
+
 # The 回營 button on the battle result screen. It is the one screen a farming
 # loop reliably ends on and the one it could not get off: the button only comes
 # alive once the stars have finished flying in, so the single tap fired the
@@ -1048,8 +1069,8 @@ def read_builder_stock(png: bytes) -> VillageStock | None:
     builder base holding 10 152 gems reports `dark=410152`, the green `+` beside
     the number reading as a leading 4. A number that wrong travelling as a
     resource is how a limit ends up checked against a bar belonging to something
-    else, so it is not read at all: `dark` comes back 0, which `StockLimits`
-    already treats as a resource nobody is watching.
+    else, so it is not read at all: `dark` comes back 0, and that village's
+    `StorageCapacity` carries no dark ceiling either, so nothing compares them.
     """
     image = Image.open(io.BytesIO(png)).convert("RGB")
     if image.size != SCREEN_SIZE:
@@ -1062,6 +1083,34 @@ def read_builder_stock(png: bytes) -> VillageStock | None:
         return None
     logger.info("Builder base holds gold=%d elixir=%d", gold, elixir)
     return VillageStock(gold=gold, elixir=elixir, dark=0)
+
+
+def storage_capacity(png: bytes, row: int) -> int | None:
+    """What this row's tooltip says the storage holds, or None where none is open.
+
+    `row` is the storage bar's own index down the corner, the same 0/1/2 the
+    stock rows are read at. Tapping a bar drops the tooltip open under it and
+    tapping again puts it away, so the caller owns that toggle; this only reads
+    whatever is on the frame it is handed.
+
+    None is the answer for a frame with no tooltip on it, which the caller wants
+    rather than a guess: the village showing through where the panel would be is
+    not a number, and a resource without a ceiling is simply left out of the
+    comparison.
+    """
+    image = Image.open(io.BytesIO(png)).convert("RGB")
+    if image.size != SCREEN_SIZE:
+        raise ValueError(f"儲量提示座標只適用 1600x900，收到 {image.size[0]}x{image.size[1]}")
+    left, top, right, bottom = CAPACITY_BOX
+    shift = CAPACITY_PITCH * row
+    mask = _ink_mask(
+        image.crop((left, top + shift, right, bottom + shift)), saturation=STOCK_INK_SATURATION
+    )
+    # The last number on the line, because everything before it is the label:
+    # 最大儲存量 and its colon are cut away by the tolerance, and anything they
+    # leave behind lands to the left of the capacity itself.
+    found = split_numbers(mask, CAPACITY_TOLERANCE)
+    return found[-1] if found else None
 
 
 def read_stock(png: bytes) -> VillageStock | None:
