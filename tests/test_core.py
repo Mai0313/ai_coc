@@ -66,6 +66,7 @@ from ai_coc.ui.attack import (
     AttackRunner,
     spaced,
     push_out,
+    push_line,
     deploy_line,
     drop_points,
     planned_line,
@@ -409,9 +410,7 @@ class NightAttackTests(unittest.TestCase):
             patch.object(attack, "card_groups", return_value=[[164], [307]]),
             patch.object(attack, "counted_cards", return_value=[307]),
             patch.object(AttackRunner, "_night_plan", return_value=plans.night_flat()),
-            patch.object(AttackRunner, "_clear_flank", return_value=b""),
-            patch.object(attack, "fitted_line", return_value=None),
-            patch.object(AttackRunner, "_probe_night", return_value=0),
+            patch.object(AttackRunner, "_flank", return_value=DEPLOY_LINES["top_left"]),
             patch.object(
                 AttackRunner,
                 "_drop_singles",
@@ -422,7 +421,7 @@ class NightAttackTests(unittest.TestCase):
                 AttackRunner, "_spread_night", side_effect=lambda *a: order.append("troops") or []
             ),
         ):
-            assert runner._deploy_night(b"") == [164]
+            assert runner._deploy_night(b"") == ([164], [307])
         assert order == ["machine", "hold", "troops"]
 
     def test_the_flat_plan_loads_and_carries_no_spells(self) -> None:
@@ -438,7 +437,7 @@ class NightAttackTests(unittest.TestCase):
         with (
             patch.object(AttackRunner, "_open_night_attack", return_value=b""),
             patch.object(AttackRunner, "_find_opponent", return_value=b""),
-            patch.object(AttackRunner, "_deploy_night", return_value=[164]) as deployed,
+            patch.object(AttackRunner, "_deploy_night", return_value=([164], [307])) as deployed,
             patch.object(AttackRunner, "_wait_out_night"),
             patch.object(AttackRunner, "_next_stage", return_value=None),
         ):
@@ -458,7 +457,7 @@ class NightAttackTests(unittest.TestCase):
         with (
             patch.object(AttackRunner, "_open_night_attack", return_value=b""),
             patch.object(AttackRunner, "_find_opponent", return_value=b""),
-            patch.object(AttackRunner, "_deploy_night", return_value=[164]) as deployed,
+            patch.object(AttackRunner, "_deploy_night", return_value=([164], [307])) as deployed,
             patch.object(AttackRunner, "_wait_out_night"),
             patch.object(AttackRunner, "_next_stage", side_effect=[b"", None]),
         ):
@@ -471,7 +470,7 @@ class NightAttackTests(unittest.TestCase):
         with (
             patch.object(AttackRunner, "_open_night_attack", return_value=b""),
             patch.object(AttackRunner, "_find_opponent", return_value=b""),
-            patch.object(AttackRunner, "_deploy_night", return_value=[]),
+            patch.object(AttackRunner, "_deploy_night", return_value=([], [307])),
             patch.object(AttackRunner, "_wait_out_night"),
             patch.object(AttackRunner, "_next_stage", return_value=b""),
         ):
@@ -530,22 +529,92 @@ class NightAttackTests(unittest.TestCase):
         assert (report.phases, waited.call_count) == (0, 0)
         assert report.message == "沒有成功部署任何部隊"
 
-    def test_the_probe_rotates_cards_so_a_spent_one_poisons_only_its_own_attempt(self) -> None:
-        """`_usable_line` picks its probe out of `live_cards`, the one reader this village inverts.
+    def test_an_opening_pass_that_landed_nothing_pushes_the_flank_out(self) -> None:
+        """Nothing probes the line any more, so the first pass is what tests it.
 
-        Every builder base card reads live, spent ones included, so handed a
-        card a second stage already emptied it would push the flank out on every
-        attempt and never say why.
+        A later pass draining nothing is an empty row — one pass taps
+        `DROPS_PER_PASS` against a card holding about four. The first one is a
+        line the base has grown over, and pushing it out is what the three probe
+        troops used to buy.
         """
         runner = self._runner()
         with (
             patch.object(attack.time, "sleep"),
             patch.object(runner, "_frame", return_value=b""),
-            patch.object(attack, "card_drained", side_effect=[[], [], [433]]),
+            patch.object(attack, "card_drained", side_effect=[[], [307], []]),
+            patch.object(AdbController, "tap_many"),
+            patch.object(attack, "deploy_line", return_value=[(600, 110)]) as drawn,
+        ):
+            runner._spread_night([307], ((600, 110), (230, 380)), 0)
+        # Once for the opening line and once for the pushed one, and no third:
+        # the pass after the one that landed is an empty row, not a bad flank.
+        assert [call.args[1:] for call in drawn.call_args_list] == [
+            tuple(push_line(((600, 110), (230, 380)), step, attack.SCREEN_CENTRE))
+            for step in (0, 1)
+        ]
+
+    def test_a_repainted_card_row_ends_the_stage(self) -> None:
+        """A stage can end without a result screen, and waiting for one cost a whole second stage.
+
+        The game opened it with a fresh timer and the surviving troops back in
+        their cards; `battle_over` stayed False because a live battle is not a
+        result, and the loop spent four minutes tapping a dead machine's card.
+        """
+        runner = self._runner()
+        with (
+            patch.object(attack.time, "sleep"),
+            patch.object(runner, "_frame", return_value=b""),
+            patch.object(attack, "battle_over", return_value=False),
+            patch.object(attack, "card_drained", side_effect=[[], [307]]),
             patch.object(AdbController, "tap_many") as tapped,
         ):
-            assert runner._probe_night([307, 433, 560], ((600, 110), (230, 380))) == 2
-        assert [call.args[0][0][0] for call in tapped.call_args_list] == [307, 433, 560]
+            runner._wait_out_night([164], [307])
+        # Two passes: the quiet one, then the repaint that ends it.
+        assert tapped.call_count == 1
+
+    def test_a_stage_with_no_troop_cards_still_ends_on_the_result(self) -> None:
+        runner = self._runner()
+        with (
+            patch.object(attack.time, "sleep"),
+            patch.object(runner, "_frame", return_value=b""),
+            patch.object(attack, "battle_over", side_effect=[False, True]),
+            patch.object(AdbController, "tap_many"),
+        ):
+            runner._wait_out_night([164], [])
+
+    def test_the_flank_keeps_moving_until_something_lands(self) -> None:
+        """Reading the pass index instead gave it exactly one push.
+
+        The pass after the pushed one has an index of 1, so it read as an empty
+        row and returned with the whole army still in its cards — against the
+        four-step ladder the probing used to walk.
+        """
+        runner = self._runner()
+        with (
+            patch.object(attack.time, "sleep"),
+            patch.object(runner, "_frame", return_value=b""),
+            patch.object(attack, "card_drained", side_effect=[[], [], [307], []]),
+            patch.object(AdbController, "tap_many"),
+            patch.object(attack, "deploy_line", return_value=[(600, 110)]) as drawn,
+        ):
+            assert runner._spread_night([307], ((600, 110), (230, 380)), 0) is not None
+        # Pushed twice before anything landed, and not again once it had.
+        assert [call.args[1:] for call in drawn.call_args_list] == [
+            tuple(push_line(((600, 110), (230, 380)), step, attack.SCREEN_CENTRE))
+            for step in (0, 1, 2)
+        ]
+
+    def test_a_flank_that_never_takes_a_troop_is_not_a_deployment(self) -> None:
+        """`commands.attack` reads `phases` as "did this round really fight"."""
+        runner = self._runner()
+        with (
+            patch.object(attack.time, "sleep"),
+            patch.object(runner, "_frame", return_value=b""),
+            patch.object(attack, "card_drained", return_value=[]),
+            patch.object(AdbController, "tap_many"),
+            patch.object(attack, "deploy_line", return_value=[(600, 110)]),
+        ):
+            assert runner._spread_night([307], ((600, 110), (230, 380)), 0) is None
 
     def test_nobody_matched_is_reported_rather_than_deployed_into(self) -> None:
         runner = self._runner()
@@ -1819,7 +1888,7 @@ class AttackTests(unittest.TestCase):
             patch.object(AttackRunner, "_plan", return_value=plan),
             patch.object(AttackRunner, "_wait_for_battle", return_value=None),
             patch.object(AttackRunner, "_clear_flank", side_effect=lambda frame, preset: frame),
-            patch.object(AttackRunner, "_usable_line", return_value=0),
+            patch.object(AttackRunner, "_flank", return_value=DEPLOY_LINES["top_left"]),
             patch.object(AttackRunner, "_drop_singles", side_effect=dropped),
             patch.object(AttackRunner, "_spread_troops", return_value=[(0, 0)]),
             patch.object(AttackRunner, "_run_schedule", side_effect=schedule),
@@ -1948,7 +2017,7 @@ class AttackTests(unittest.TestCase):
             patch.object(AttackRunner, "_plan", return_value=plan),
             patch.object(AttackRunner, "_wait_for_battle", return_value=None),
             patch.object(AttackRunner, "_clear_flank", side_effect=lambda frame, preset: frame),
-            patch.object(AttackRunner, "_usable_line", return_value=0),
+            patch.object(AttackRunner, "_flank", return_value=DEPLOY_LINES["top_left"]),
             patch.object(AttackRunner, "_drop_singles", side_effect=dropped),
             patch.object(AttackRunner, "_spread_troops", return_value=[(0, 0)]),
             patch.object(AttackRunner, "_run_schedule"),

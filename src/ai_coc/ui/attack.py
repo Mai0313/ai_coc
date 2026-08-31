@@ -895,49 +895,31 @@ class AttackRunner(BaseModel):
             time.sleep(1)
         return None
 
-    def _usable_line(self, troops: list[int], anchors: tuple[tuple[int, int], ...]) -> int | None:
-        """How far out the flank has to be pushed before the game accepts drops on it.
+    def _flank(
+        self, battle: bytes | None, plan: AttackPlan | NightPlan | None
+    ) -> tuple[tuple[int, int], ...]:
+        """The line to deploy along: what the plan drew, bent onto the boundary.
 
-        Troops are dropped as probes, because a village whose boundary reaches
-        past the line swallows them. Both ends go in as well as the middle: a
-        flank can sit outside the boundary at its centre and inside it at the
-        tips, which would silently lose every troop aimed there. A probe that
-        takes nothing pushes the line further out; None means even the playfield
-        edge was inside the boundary.
+        **Nothing is probed first, and that is deliberate.** This used to drop
+        three troops at the ends and middle of a candidate line and ask whether
+        a card drained, walking through all four preset flanks until one took
+        them. Three troops is three troops sent to die alone in front of the
+        defences, before the army that was meant to cover them exists — and it
+        was paid on every battle, whether or not the line was ever in doubt.
 
-        The card is what says whether the probe landed, and which card is picked
-        fresh each time: three troops a probe over five pushes and four flanks is
-        more than a small army holds, and a card that has run dry reads exactly
-        like a flank the village has grown over. Reading the game's red warning
-        instead never worked either — the tap is as often swallowed without one,
-        so this returned 0 on the first try every time and the flank was never
-        actually tested.
-
-        The step count is what comes back rather than the line, because everyone
-        downstream keeps pushing from it and a line cannot say how far out it
-        already is.
+        What is left is the two things that cost nothing: the camera is dragged
+        clear of the card row when the flank needs the room, and the line is bent
+        onto the deployment boundary the game itself draws. Where that boundary
+        cannot be read the preset stands as it is. A line the village has grown
+        over is then answered by `_spread_troops`, which pushes it out when a
+        whole pass drains nothing — the same backstop that was always underneath
+        the probing, now carrying it alone.
         """
-        # Nothing happens between attempts, so the frame that judged the last one
-        # is the one to judge the next against. A whole capture per attempt is
-        # worth saving here: a village that refuses every flank spends twenty of
-        # them, and the battle only runs three minutes.
-        shot = self._frame("before-probe")
-        for attempt in range(DEPLOY_ATTEMPTS):
-            card = next(iter(live_cards(shot, troops)), None)
-            if card is None:
-                logger.warning("Every troop card is spent before a flank was settled")
-                return None
-            line = deploy_line(LINE_POINTS, *push_line(anchors, attempt, self._middle))
-            probes = [line[0], line[len(line) // 2], line[-1]]
-            self.adb.tap_many([(card, CARD_ROW_Y), *probes], self.display)
-            time.sleep(DROP_SETTLE)
-            before, shot = shot, self._frame("probe")
-            if card_drained(before, shot, [card]):
-                logger.info("Deploying along %s, pushed out %d step(s)", anchors, attempt)
-                return attempt
-            logger.info("Nothing landed along %s; pushing the flank out", anchors)
-        logger.info("The %s line takes nothing at any push; trying the next flank", anchors)
-        return None
+        preset = deploy_candidates(plan)[0]
+        battle = self._clear_flank(battle, preset)
+        flank = self._onscreen(preset)
+        fitted = fitted_line(battle, flank[0], flank[1], centre=self._middle) if battle else None
+        return fitted or flank
 
     def _spread_troops(
         self, troops: list[int], anchors: tuple[tuple[int, int], ...], pushed: int
@@ -956,7 +938,7 @@ class AttackRunner(BaseModel):
         over-taps a card that has just emptied and the game answers 請選擇其他
         兵種 in the same red as the boundary warning.
 
-        `pushed` carries on from where `_usable_line` left off. Restarting it at
+        `pushed` carries on from where the caller left off. Restarting it at
         zero made the first push land back on the line already in use, so a real
         refusal was answered by moving nothing at all.
         """
@@ -1065,7 +1047,7 @@ class AttackRunner(BaseModel):
         and the rest going in behind the push. It goes **ahead of** the shared
         ladder rather than replacing its first rung: a point the game refused
         once is not worth insisting on, but the rung it would have displaced is
-        the midpoint `_usable_line` has already probed and proved the game
+        the midpoint the troops have already been spread along, which the game
         accepts, which is the one spot with evidence behind it. Overwriting it
         cost a named hero both that spot and one of its retries.
 
@@ -1344,24 +1326,8 @@ class AttackRunner(BaseModel):
         # countdown, which is what has been hiding this; without a key `_plan`
         # returns at once and the run would probe into the countdown every time.
         battle = self._wait_for_battle()
-        for preset in deploy_candidates(plan):
-            # The camera moves first, because a lower flank on a village that
-            # fills the playfield has nothing to drop on until it does, and
-            # everything after this reads its coordinates through where it ended.
-            battle = self._clear_flank(battle, preset)
-            flank = self._onscreen(preset)
-            # The boundary the game draws beats a flank drawn for a village that
-            # does not exist, and fitting to it is what saves probing outwards one
-            # refused troop at a time. It is still probed once before it is used.
-            anchors = (
-                fitted_line(battle, flank[0], flank[1], centre=self._middle) if battle else None
-            ) or flank
-            pushed = self._usable_line(troops, anchors)
-            if pushed is not None:
-                break
-        else:
-            logger.warning("Every flank was refused; the boundary reaches past the playfield")
-            return
+        anchors = self._flank(battle, plan)
+        pushed = 0
         line = deploy_line(LINE_POINTS, *push_line(anchors, pushed, self._middle))
         planned = self._onscreen(
             tuple(point.pixels() for point in plan.rage_points) if plan else ()
@@ -1799,20 +1765,22 @@ class AttackRunner(BaseModel):
         )
         return plan
 
-    def _deploy_night(self, frame: bytes) -> list[int] | None:
+    def _deploy_night(self, frame: bytes) -> tuple[list[int], list[int]] | None:
         """Put the whole army down one flank, or None if nothing went down at all.
 
         The machine cards that landed come back on success, and that list is
         empty as readily as it is full — a machine the boundary refused is
         still an attack, because the troops went in. **None is the different
-        answer**: no card row, no troops on it, or every flank refused, none
-        of which put anything on the field. Counted as a deployment those
+        answer**: no card row, no troops on it, or a flank that took neither the
+        machine nor a single troop, none
+        of which put anything on the field, and a flank that took neither the
+        machine nor a single troop. Counted as a deployment those
         rounds reported 已進攻並回營 for a battle nothing was played in, and
         `commands.attack` took them for real battles too — toward the
         emulator restart, toward the loot cart, and past the barracks wait.
 
         Everything here is the home village's own machinery — the camera, the
-        boundary fit, the probing, the passes — with the two things the builder
+        boundary fit, the passes — with the two things the builder
         base does not have taken out. There are no spells to hold back and no
         ability moment to schedule, so what is left after the drops is the
         clock-free part of an attack: the army goes down and the machine is
@@ -1836,19 +1804,8 @@ class AttackRunner(BaseModel):
             logger.warning("Every card on the row reads as a machine; nothing to spread")
             return None
         plan = self._night_plan(frame)
-        battle: bytes | None = frame
-        for preset in deploy_candidates(plan):
-            battle = self._clear_flank(battle, preset)
-            flank = self._onscreen(preset)
-            anchors = (
-                fitted_line(battle, flank[0], flank[1], centre=self._middle) if battle else None
-            ) or flank
-            pushed = self._probe_night(troops, anchors)
-            if pushed is not None:
-                break
-        else:
-            logger.warning("Every flank was refused; the boundary reaches past the playfield")
-            return None
+        anchors = self._flank(frame, plan)
+        pushed = 0
         # **The machine goes in ahead of the troops, which is the other way
         # round from the home village.** There the siege machine opens the path
         # and the heroes follow the army in; here the machine *is* the army's
@@ -1858,17 +1815,21 @@ class AttackRunner(BaseModel):
         # this project moved onto one: it is a question about the base in the
         # frame, and only something looking at the base can answer it.
         #
-        # The probing above already put three troops down, which is the price of
-        # knowing the flank is usable at all — the same three the home village
-        # spends, and a cheaper mistake than a machine refused on an untested
-        # line.
+        # Nothing has been dropped before this, so the machine is the first
+        # thing the line is tested by — which is what `_drop_singles` is already
+        # for: it reads the card afterwards and offers another spot to whatever
+        # the game refused.
         line = deploy_line(LINE_POINTS, *push_line(anchors, pushed, self._middle))
         landed, _ = self._drop_singles(
             machines, line, "machine", self._spots(plan.hero_points, machines)
         )
         self._hold(plan.troops_after, landed)
-        self._spread_night(troops, anchors, pushed)
-        return landed
+        spread = self._spread_night(troops, anchors, pushed)
+        # A machine that went down is an attack even if the troops behind it
+        # were refused, so only a round with neither on the field answers None.
+        if spread is None and not landed:
+            return None
+        return landed, troops
 
     def _offer_ability(self, machines: list[int]) -> None:
         """One tap on each machine card, which the game takes if the ability is ready."""
@@ -1891,39 +1852,9 @@ class AttackRunner(BaseModel):
             self._offer_ability(machines)
             time.sleep(min(ABILITY_POLL, remaining))
 
-    def _probe_night(self, troops: list[int], anchors: tuple[tuple[int, int], ...]) -> int | None:
-        """How far out this flank has to be pushed, probed with a different card each time.
-
-        `_usable_line` is the home village's version and cannot be used here,
-        because it picks its probe card out of `live_cards` — the one reader
-        this village inverts. A builder base card greys when the troops it put
-        out die rather than when it empties, so every card reads live, including
-        the spent ones a second stage arrives holding. Handed one of those,
-        every probe drains nothing and the flank is pushed out `DEPLOY_ATTEMPTS`
-        times on each of four presets before the battle is given up on — and its
-        own "every troop card is spent" guard can never fire to say why.
-
-        Rotating is what answers that without needing a spent-card reader at
-        all: an empty card poisons one attempt instead of every one.
-        """
-        shot = self._frame("before-probe")
-        for attempt in range(DEPLOY_ATTEMPTS):
-            card = troops[attempt % len(troops)]
-            line = deploy_line(LINE_POINTS, *push_line(anchors, attempt, self._middle))
-            probes = [line[0], line[len(line) // 2], line[-1]]
-            self.adb.tap_many([(card, CARD_ROW_Y), *probes], self.display)
-            time.sleep(DROP_SETTLE)
-            before, shot = shot, self._frame("probe")
-            if card_drained(before, shot, [card]):
-                logger.info("Deploying along %s, pushed out %d step(s)", anchors, attempt)
-                return attempt
-            logger.info("Card %d put nothing on %s; pushing the flank out", card, anchors)
-        logger.info("The %s line takes nothing at any push; trying the next flank", anchors)
-        return None
-
     def _spread_night(
         self, troops: list[int], anchors: tuple[tuple[int, int], ...], pushed: int
-    ) -> list[tuple[int, int]]:
+    ) -> list[tuple[int, int]] | None:
         """Empty the troop cards along the flank; returns the line they went down on.
 
         **`live_cards` does not hold in the builder base, and that is what this
@@ -1940,14 +1871,24 @@ class AttackRunner(BaseModel):
         flank further out. So the flank walked 280 px away from a village the
         army had already reached.
 
-        What is used instead is the pass itself. A pass taps `DROPS_PER_PASS`
-        per card against a builder base card that holds about four, so a pass
-        that drained nothing is an empty row rather than a refused flank — and
-        the flank was probed before any of this started. A card holding more
-        than one pass simply takes another.
+        What is used instead is the pass itself, and **whether anything has
+        landed yet is what says which of two things a barren pass means.** A
+        pass taps `DROPS_PER_PASS` per card against a card holding about four,
+        so once one has drained the row empties in that pass and a barren one
+        after it is an empty row. Before anything has drained, a barren pass is
+        a line the base has grown over, and pushing it out is what the probing
+        used to buy without spending three troops to do it.
+
+        Reading the pass *index* instead of that is what an earlier version did,
+        and it gave the flank exactly one push: the pass after the pushed one
+        has an index of 1, so it read as an empty row and returned with the
+        whole army still in its cards. None comes back where nothing ever
+        landed, because a round that deployed no troops is not a round that
+        fought and `commands.attack` counts it.
         """
         line = deploy_line(LINE_POINTS, *push_line(anchors, pushed, self._middle))
         shot = self._frame("before-pass")
+        landed = False
         for index in range(DEPLOY_PASSES):
             for card, slot in enumerate(troops):
                 drops = drop_points(line, index * len(troops) + card, DROPS_PER_PASS)
@@ -1956,12 +1897,19 @@ class AttackRunner(BaseModel):
             before, shot = shot, self._frame("pass")
             drained = card_drained(before, shot, troops)
             logger.info("Pass %d drained %d of %d card(s)", index + 1, len(drained), len(troops))
-            if not drained:
-                return line
-        logger.info("The row still had something after %d passes", DEPLOY_PASSES)
-        return line
+            if drained:
+                landed = True
+                continue
+            if landed or pushed + 1 >= DEPLOY_ATTEMPTS:
+                break
+            pushed += 1
+            logger.info("Nothing has landed yet; flank pushed out to %d", pushed)
+            line = deploy_line(LINE_POINTS, *push_line(anchors, pushed, self._middle))
+        if not landed:
+            logger.warning("The flank took nothing at any push; the troops stay in their cards")
+        return line if landed else None
 
-    def _wait_out_night(self, machines: list[int]) -> None:
+    def _wait_out_night(self, machines: list[int], troops: list[int]) -> None:
         """Sit through the battle, offering every machine its ability on each pass.
 
         Blind rather than read, and that is the mode's own shape rather than a
@@ -1971,9 +1919,27 @@ class AttackRunner(BaseModel):
         the same tap by selecting itself, which does nothing at all.
         """
         deadline = time.monotonic() + BATTLE_TIMEOUT
+        shot = self._frame("night-battle")
         while time.monotonic() < deadline:
-            if self._battle_ended("night-battle"):
+            if battle_over(shot):
                 return
+            # **A stage can end without a result screen**, and waiting for one
+            # cost a whole second stage: the game opened it with a fresh timer
+            # and the surviving troops back in their cards, `battle_over` stayed
+            # False because a live battle is not a result, and the loop spent
+            # four minutes tapping a dead machine's card before timing out.
+            #
+            # What marks the boundary is the row being repainted — the counts go
+            # from the `0x` a spent row shows back to what survived. Measured
+            # over the recorded stage-two battle, the corners moved on exactly
+            # two frames, once into the second stage and once into the result,
+            # against none at all in between; the run without a second stage
+            # moved them once. `_next_stage` is what tells the two apart.
+            following = self._frame("night-battle")
+            if troops and card_drained(shot, following, troops):
+                logger.info("The card row was repainted; this stage is over")
+                return
+            shot = following
             self._offer_ability(machines)
             time.sleep(ABILITY_POLL)
         logger.warning("The battle never ended; leaving it to the result screen")
@@ -2021,11 +1987,11 @@ class AttackRunner(BaseModel):
             return AttackReport(world="night", message="等不到對手，已放棄這一輪搜尋")
         played = 0
         for _ in range(NIGHT_PHASES):
-            machines = self._deploy_night(battle)
-            if machines is None:
+            deployed = self._deploy_night(battle)
+            if deployed is None:
                 break
             played += 1
-            self._wait_out_night(machines)
+            self._wait_out_night(*deployed)
             following = self._next_stage()
             if following is None:
                 break
