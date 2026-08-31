@@ -538,6 +538,29 @@ def _log_plan(path: Path | None, played: int, plan: AttackPlan | NightPlan | Non
         log.write(PlayedPlan(round=played, plan=plan).model_dump_json() + "\n")
 
 
+def _pick_world(adb: AdbController, display: DisplayTarget, wanted: World | None) -> World | None:
+    """Which village the series will play, or None when a named one is out of reach.
+
+    Settled once for the whole series rather than per round. Naming one crosses
+    to it; not naming one takes whichever is up, because the game reopens on the
+    village it was closed on and refusing to play that one would stand half the
+    runs down for no reason.
+
+    **An unreadable frame is only fatal when a village was named.** Without one
+    this falls through to the home village and lets the runner sort it out:
+    `_open_attack_menu` waits, restarts the game, leaves a result screen and
+    sails home, and every one of those is a state `current_world` answers None
+    for. Bailing on them ended a whole series before round one.
+    """
+    if wanted is None:
+        return current_world(adb.screenshot(display)) or "day"
+    landed = cross(adb, display, wanted)
+    if landed == wanted:
+        return wanted
+    logger.warning("Wanted the %s village and the game is on %s", wanted, landed)
+    return None
+
+
 def _empty_cart(world: World, battles: int, adb: AdbController, display: DisplayTarget) -> None:
     """Fetch the builder base's elixir every few battles, since it is not paid in.
 
@@ -594,19 +617,10 @@ def attack(options: AttackOptions) -> AttackSeries:
     # it out: `_open_attack_menu` waits, restarts the game, leaves a result
     # screen and sails home, and every one of those is a state `current_world`
     # answers None for.
-    world = (
-        cross(adb, display, options.world)
-        if options.world
-        else current_world(adb.screenshot(display)) or "day"
-    )
-    if options.world and world != options.world:
-        logger.warning("Wanted the %s village and the game is on %s", options.world, world)
+    world = _pick_world(adb, display, options.world)
+    if world is None:
         return AttackSeries(
-            root=[
-                AttackReport(
-                    message=f"沒辦法切到{_WORLDS[options.world]},現在是{_WORLDS[world]},沒有開打"
-                )
-            ]
+            root=[AttackReport(message=f"沒辦法切到{_WORLDS[options.world]},沒有開打")]
         )
     logger.info("Playing the %s village", world)
     runner = AttackRunner(
