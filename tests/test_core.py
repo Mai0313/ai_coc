@@ -409,8 +409,9 @@ class WorldChoiceTests(unittest.TestCase):
         Measured live: a run asked for `--world night` while a battle was still
         on screen — an ordinary state, a round abandoned by a stop — ended
         immediately with 沒辦法切到夜世界, having done nothing and waited for
-        nothing. That battle was over two minutes later, and the runner's own
-        first attempt would have found the village.
+        nothing. What it gets back is the rounds rather than that round: a
+        battle is the one state neither this nor the runner can shorten, so the
+        first round still comes back empty and `IDLE_REST` is what outlasts it.
         """
         _, runner = self._series("night", None, crossed=None)
         assert runner.call_args.kwargs["world"] == "night"
