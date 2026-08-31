@@ -1644,9 +1644,9 @@ class AttackRunner(BaseModel):
         than a stale one, since the plan at least aimed at the village.
 
         **The earlier frame is taken by the schedule rather than here, and that
-        is worth three to four seconds of every attack.** Both frames used to be
-        captured at cast time with `MOTION_GAP` between them — all of it *after*
-        the moment the plan asked for the bottle. Measured over four recorded
+        is worth a second of every attack, and less than it looks.** Both frames
+        used to be captured at cast time with `MOTION_GAP` between them — all of
+        it *after* the moment the plan asked for the bottle. Measured over four recorded
         battles, plans asking for rage at 12, 15, 12 and 12 seconds had it land
         at 18, 22, 20 and 19, and this call was three to four of the gap every
         time. The frame the deployment ended on is already the "before" the
