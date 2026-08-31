@@ -788,11 +788,15 @@ class NightAttackTests(unittest.TestCase):
 class CrossingTests(unittest.TestCase):
     """Sailing between the two villages, which is a tap the boat may or may not take."""
 
-    def _cross(self, seen: list[str | None], want: str = "day") -> tuple[MagicMock, str | None]:
+    def _cross(
+        self, seen: list[str | None], want: str = "day", battle: bool = False
+    ) -> tuple[MagicMock, str | None]:
         adb = MagicMock()
         with (
             patch.object(world_ui.time, "sleep"),
             patch.object(world_ui, "current_world", side_effect=seen),
+            patch.object(world_ui, "card_groups", return_value=[[1]] if battle else []),
+            patch.object(world_ui, "battle_over", return_value=False),
         ):
             landed = world_ui.cross(adb, DisplayTarget(logical_id="1", physical_id="2"), want)
         return adb, landed
@@ -812,21 +816,70 @@ class CrossingTests(unittest.TestCase):
 
     def test_a_tap_that_missed_the_boat_tries_the_next_spot(self) -> None:
         """Nothing recognises the boat, so a miss looks exactly like a world that did not change."""
-        adb, landed = self._cross(["night", *["night"] * world_ui.SAIL_POLLS, "day"])
+        # The village still reading between the two spots is the miss that hit
+        # water rather than a building; nothing has to be cleared.
+        adb, landed = self._cross(["night", *["night"] * world_ui.SAIL_POLLS, "night", "day"])
         assert landed == "day"
+        assert adb.back.call_count == 0
         assert [call.args[:2] for call in adb.tap.call_args_list] == list(
             world_ui.CROSSINGS["day"].spots[:2]
         )
 
+    def test_a_spot_that_opened_a_building_is_cleared_before_the_next_one(self) -> None:
+        """A panel swallows every tap after it, so one missed spot used to cost the rest.
+
+        Measured live: a `collect` run left an 8級聖水收集器 panel up and two
+        `world --go night` runs in a row reported 畫面還停在不明的畫面 without
+        moving anything.
+        """
+        adb, landed = self._cross([
+            "night",
+            *["night"] * world_ui.SAIL_POLLS,
+            None,  # the first spot opened a building rather than the boat
+            "night",  # and `back` got the village back
+            "day",  # so the second spot could be tried at all
+        ])
+        assert landed == "day"
+        assert adb.back.call_count == 1
+        assert [call.args[:2] for call in adb.tap.call_args_list] == list(
+            world_ui.CROSSINGS["day"].spots[:2]
+        )
+
+    def test_a_covered_village_is_uncovered_rather_than_given_up_on(self) -> None:
+        adb, landed = self._cross([None, "night", "day"])
+        assert landed == "day"
+        assert adb.back.call_count == 1
+        assert adb.swipe.call_count == world_ui.SWIPES
+
     def test_no_village_is_not_a_failed_crossing(self) -> None:
-        """A loading screen has no boat on it and nothing to sail from; the caller waits."""
-        adb, landed = self._cross([None])
+        """A loading screen has no boat on it and nothing to sail from; the caller waits.
+
+        `back` cannot hurry a game that is loading, which is what bounds the
+        pressing rather than any risk in it.
+        """
+        adb, landed = self._cross([None] * (world_ui.UNCOVER_TRIES + 1))
         assert landed is None
+        assert adb.swipe.call_count == 0
+        assert adb.back.call_count == world_ui.UNCOVER_TRIES
+
+    def test_a_battle_on_screen_is_never_pressed_at(self) -> None:
+        """`back` there is aimed at 放棄, and a killed run leaves exactly this state.
+
+        The callers hand this whatever is on screen — `world --go` and a run that
+        named a village both go straight into the crossing on a frame nothing
+        could read — so the filter lives here rather than in a docstring asking
+        them not to.
+        """
+        adb, landed = self._cross([None], battle=True)
+        assert landed is None
+        assert adb.back.call_count == 0
         assert adb.swipe.call_count == 0
 
     def test_the_camera_goes_back_to_the_far_zoom_either_way(self) -> None:
         """The swiping above parks it at a map corner, and every coordinate here wants it centred."""
-        for seen in (["night", "day"], ["night"] + ["night"] * (world_ui.SAIL_POLLS * 3 + 1)):
+        # The long one is every spot missing: one read to start, then each spot's
+        # polls plus the read that checks it opened nothing, then the final one.
+        for seen in (["night", "day"], ["night"] * (world_ui.SAIL_POLLS * 3 + 5)):
             adb, _ = self._cross(seen)
             assert adb.zoom.call_count == 1
 
