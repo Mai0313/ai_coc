@@ -68,6 +68,12 @@ SWIPE_SETTLE = 1.2
 SAIL_POLLS = 8
 SAIL_GAP = 1.5
 
+# How many times to press `back` at whatever is covering the village. A building
+# panel goes in one, and the ceiling is there because a game still loading takes
+# none: `back` cannot hurry that, so more presses would only be more waiting.
+UNCOVER_TRIES = 3
+UNCOVER_SETTLE = 1.5
+
 # Every coordinate in this project was measured at the game's far zoom, and the
 # swiping above leaves the camera at a corner whether or not the boat was found.
 # Zooming out is what puts it back, and it centres the village as a side effect,
@@ -136,16 +142,41 @@ def collect_cart(adb: AdbController, display: DisplayTarget) -> int:
     return gained
 
 
+def uncovered(adb: AdbController, display: DisplayTarget) -> World | None:
+    """The village under whatever is over it, pressed away; None if none appeared.
+
+    **A tap that misses the boat does not miss the ground.** Every spot this
+    module aims at is a place on the map, so a tap that was a pixel out opens
+    whatever building is standing there — and a building panel swallows the
+    swipes and taps that come after it, which is how one missed spot used to
+    cost the whole crossing and the two remaining candidates with it. Measured
+    live: a `collect` run left an 8級聖水收集器 panel up, and `ai_coc world
+    --go night` then reported 畫面還停在不明的畫面 twice in a row without
+    moving anything.
+
+    `back` is safe on exactly the frame this is called for, and that is the rule
+    `GameRunner._home` already follows: on a clear village it raises
+    確定退出遊戲嗎, so it is only ever pressed on a frame that is **not** one.
+    A village that reads is handed straight back untouched.
+    """
+    for _ in range(UNCOVER_TRIES):
+        if (here := current_world(adb.screenshot(display))) is not None:
+            return here
+        logger.info("Something is over the village; pressing back to get at it")
+        adb.back(display)
+        time.sleep(UNCOVER_SETTLE)
+    return current_world(adb.screenshot(display))
+
+
 def cross(adb: AdbController, display: DisplayTarget, want: World) -> World | None:
     """Sail to `want`, and answer which village the game was left on.
 
     Already being there is the ordinary case and costs one capture: no swipe, no
-    tap, nothing moved. None means no village could be read at all, which is not
-    the same as being in the wrong one — a loading screen and a panel over the
-    bars both land there — so the caller is meant to get to a village first
-    rather than treat it as a failed crossing.
+    tap, nothing moved. None means no village could be read even after whatever
+    was over it was pressed away, which is a game that is loading or lost rather
+    than one in the wrong village.
     """
-    here = current_world(adb.screenshot(display))
+    here = uncovered(adb, display)
     if here == want:
         return here
     if here is None:
@@ -166,6 +197,13 @@ def cross(adb: AdbController, display: DisplayTarget, want: World) -> World | No
                     logger.info("Landed on the %s village from the boat at %s", want, spot)
                     return arrived
             logger.info("The tap at %s did not sail; trying the next spot", spot)
+            # A tap that opened a building instead of the boat leaves its panel
+            # over the map, and every candidate after it lands on that panel
+            # rather than on the ground. Clearing it is what makes the remaining
+            # spots worth trying at all.
+            if uncovered(adb, display) is None:
+                logger.warning("The village never came back; giving up on the crossing")
+                return None
         logger.warning("None of the %d candidate spots found the boat", len(crossing.spots))
         return current_world(adb.screenshot(display))
     finally:
