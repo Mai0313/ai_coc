@@ -1040,6 +1040,30 @@ def read_scout(png: bytes) -> ScoutView | None:
     return view
 
 
+def read_builder_stock(png: bytes) -> VillageStock | None:
+    """The builder base's storages, which are its first two rows and nothing else.
+
+    **`read_stock` cannot be used there.** That village has no dark elixir, and
+    its gems bar sits at exactly the y the dark row is read from — measured, a
+    builder base holding 10 152 gems reports `dark=410152`, the green `+` beside
+    the number reading as a leading 4. A number that wrong travelling as a
+    resource is how a limit ends up checked against a bar belonging to something
+    else, so it is not read at all: `dark` comes back 0, which `StockLimits`
+    already treats as a resource nobody is watching.
+    """
+    image = Image.open(io.BytesIO(png)).convert("RGB")
+    if image.size != SCREEN_SIZE:
+        raise ValueError(f"儲量條座標只適用 1600x900，收到 {image.size[0]}x{image.size[1]}")
+    gold, elixir = (
+        _read_row(image, (STOCK_LEFT, top, STOCK_RIGHT, bottom), STOCK_DIGIT_TOLERANCE)
+        for top, bottom in STOCK_ROW_BOUNDS[:2]
+    )
+    if gold is None or elixir is None:
+        return None
+    logger.info("Builder base holds gold=%d elixir=%d", gold, elixir)
+    return VillageStock(gold=gold, elixir=elixir, dark=0)
+
+
 def read_stock(png: bytes) -> VillageStock | None:
     """The village's own storages, or None when this screenshot is not showing them.
 

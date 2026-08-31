@@ -594,7 +594,10 @@ def attack(options: AttackOptions) -> AttackSeries:
         display=display,
         world=world,
         thresholds=options.minimums.over(config.thresholds),
-        stock=config.stock,
+        # Each village's own ceilings. One field on the runner rather than two,
+        # because a round only ever plays one of them and the pair would have to
+        # be kept in step by hand.
+        stock=config.night_stock if world == "night" else config.stock,
         ai=None if plan else _planner(config),
         plan=plan,
         should_stop=stop_requested,

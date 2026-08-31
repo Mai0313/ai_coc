@@ -409,6 +409,7 @@ class NightAttackTests(unittest.TestCase):
             patch.object(AttackRunner, "_settle_zoom", return_value=b""),
             patch.object(attack, "card_groups", return_value=[[164], [307]]),
             patch.object(attack, "counted_cards", return_value=[307]),
+            patch.object(attack, "live_cards", return_value=[164]),
             patch.object(AttackRunner, "_night_plan", return_value=plans.night_flat()),
             patch.object(AttackRunner, "_flank", return_value=DEPLOY_LINES["top_left"]),
             patch.object(
@@ -436,6 +437,7 @@ class NightAttackTests(unittest.TestCase):
         runner = self._runner()
         with (
             patch.object(AttackRunner, "_open_night_attack", return_value=b""),
+            patch.object(attack, "read_builder_stock", return_value=None),
             patch.object(AttackRunner, "_find_opponent", return_value=b""),
             patch.object(AttackRunner, "_deploy_night", return_value=([164], [307])) as deployed,
             patch.object(AttackRunner, "_wait_out_night"),
@@ -456,6 +458,7 @@ class NightAttackTests(unittest.TestCase):
         runner = self._runner()
         with (
             patch.object(AttackRunner, "_open_night_attack", return_value=b""),
+            patch.object(attack, "read_builder_stock", return_value=None),
             patch.object(AttackRunner, "_find_opponent", return_value=b""),
             patch.object(AttackRunner, "_deploy_night", return_value=([164], [307])) as deployed,
             patch.object(AttackRunner, "_wait_out_night"),
@@ -469,6 +472,7 @@ class NightAttackTests(unittest.TestCase):
         runner = self._runner()
         with (
             patch.object(AttackRunner, "_open_night_attack", return_value=b""),
+            patch.object(attack, "read_builder_stock", return_value=None),
             patch.object(AttackRunner, "_find_opponent", return_value=b""),
             patch.object(AttackRunner, "_deploy_night", return_value=([], [307])),
             patch.object(AttackRunner, "_wait_out_night"),
@@ -521,6 +525,7 @@ class NightAttackTests(unittest.TestCase):
         runner = self._runner()
         with (
             patch.object(AttackRunner, "_open_night_attack", return_value=b""),
+            patch.object(attack, "read_builder_stock", return_value=None),
             patch.object(AttackRunner, "_find_opponent", return_value=b""),
             patch.object(AttackRunner, "_deploy_night", return_value=None),
             patch.object(AttackRunner, "_wait_out_night") as waited,
@@ -616,10 +621,94 @@ class NightAttackTests(unittest.TestCase):
         ):
             assert runner._spread_night([307], ((600, 110), (230, 380)), 0) is None
 
+    def test_a_machine_that_died_in_the_stage_before_is_not_sent_out_again(self) -> None:
+        """The second stage opens with whatever survived, so a dead machine is the norm.
+
+        Its card stays on the row greyed out, and `_drop_singles` would spend its
+        whole ladder of spots on it — five taps, each with a settle and a
+        capture — before reporting that it took nothing. Skipping it also skips
+        the head start, which is the machine's and nobody else's.
+        """
+        runner = self._runner()
+        order: list[str] = []
+        with (
+            patch.object(AttackRunner, "_settle_camera", return_value=b""),
+            patch.object(AttackRunner, "_settle_zoom", return_value=b""),
+            patch.object(attack, "card_groups", return_value=[[164], [307]]),
+            patch.object(attack, "counted_cards", return_value=[307]),
+            # The machine card is grey: its unit died in the stage before.
+            patch.object(attack, "live_cards", return_value=[]),
+            patch.object(AttackRunner, "_night_plan", return_value=plans.night_flat()),
+            patch.object(AttackRunner, "_flank", return_value=DEPLOY_LINES["top_left"]),
+            patch.object(attack, "deploy_line", return_value=[(600, 110)]),
+            patch.object(
+                AttackRunner,
+                "_drop_singles",
+                side_effect=lambda *a, **k: (order.append("machine"), ([], []))[1],
+            ),
+            patch.object(AttackRunner, "_hold", side_effect=lambda *a: order.append("hold")),
+            patch.object(
+                AttackRunner, "_spread_night", side_effect=lambda *a: order.append("troops") or []
+            ),
+        ):
+            assert runner._deploy_night(b"") == ([], [307])
+        assert order == ["troops"]
+
+    def test_a_full_builder_base_stands_down_before_the_search(self) -> None:
+        """Its own ceilings, and asked before the search rather than after it.
+
+        The search costs nothing in game but waits on a live player — measured,
+        one ran to five and a half minutes — which is the real price of a round
+        that had nowhere to put what it won.
+        """
+        runner = AttackRunner(
+            adb=AdbController(endpoint=AdbEndpoint(port=16384)),
+            display=DisplayTarget(logical_id="1", physical_id="2"),
+            world="night",
+            thresholds=LootThresholds(),
+            stock=StockLimits(stop_gold=1_000_000, stop_elixir=500_000),
+        )
+        with (
+            patch.object(AttackRunner, "_open_night_attack", return_value=b""),
+            patch.object(
+                attack,
+                "read_builder_stock",
+                return_value=VillageStock(gold=1_200_000, elixir=600_000, dark=0),
+            ),
+            patch.object(AttackRunner, "_find_opponent") as searched,
+            patch.object(AdbController, "back"),
+        ):
+            report = runner.run()
+        assert report.stock_full
+        assert searched.call_count == 0
+
+    def test_a_builder_base_short_of_its_limits_keeps_farming(self) -> None:
+        """**All** the watched resources, not any one of them, the same as the home village."""
+        runner = AttackRunner(
+            adb=AdbController(endpoint=AdbEndpoint(port=16384)),
+            display=DisplayTarget(logical_id="1", physical_id="2"),
+            world="night",
+            thresholds=LootThresholds(),
+            stock=StockLimits(stop_gold=1_000_000, stop_elixir=500_000),
+        )
+        with (
+            patch.object(AttackRunner, "_open_night_attack", return_value=b""),
+            patch.object(
+                attack,
+                "read_builder_stock",
+                return_value=VillageStock(gold=1_200_000, elixir=400_000, dark=0),
+            ),
+            patch.object(AttackRunner, "_find_opponent", return_value=None) as searched,
+        ):
+            report = runner.run()
+        assert not report.stock_full
+        assert searched.call_count == 1
+
     def test_nobody_matched_is_reported_rather_than_deployed_into(self) -> None:
         runner = self._runner()
         with (
             patch.object(AttackRunner, "_open_night_attack", return_value=b""),
+            patch.object(attack, "read_builder_stock", return_value=None),
             patch.object(AttackRunner, "_find_opponent", return_value=None),
             patch.object(AttackRunner, "_deploy_night") as deployed,
         ):

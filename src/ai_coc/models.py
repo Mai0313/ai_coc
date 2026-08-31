@@ -669,6 +669,17 @@ class AppConfig(BaseModel):
         min_gold=500_000, min_elixir=500_000, min_dark=5_000
     )
     stock: StockLimits = StockLimits(stop_gold=15_000_000, stop_elixir=15_000_000)
+    # The builder base's own ceilings, and **the numbers are deliberately left
+    # unset**. Its storages are a different size from the home village's, so the
+    # limits above would stand a run down against a ceiling belonging to another
+    # village — which is why the night path went without any for a while. What
+    # nothing here has is the caps themselves: the bars show a level, not a
+    # maximum, and a default guessed under the current level would stop every run
+    # at once, which is worse than not stopping. So this is the one place in the
+    # file where "never stop" is the honest default and the player fills it in,
+    # the same way `restart_every` is somebody's observation rather than a
+    # measurement.
+    night_stock: StockLimits = StockLimits()
     # No ability or spell timings here any more. They were a table of per-hero
     # constants a user could edit, and editing them meant guessing how long an
     # army takes to walk across a village nobody had looked at — which is the
