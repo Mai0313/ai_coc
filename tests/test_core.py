@@ -93,7 +93,7 @@ from ai_coc.parsers.clan import panel_top, donatable_cards, reinforce_button
 from ai_coc.parsers.hero import SCROLL_LEFT, SCROLL_RIGHT, can_scroll, hero_cards, hall_buttons
 from ai_coc.parsers.home import builder_jobs, free_builders, collect_bubbles
 from ai_coc.logging_setup import _attach_run, configure_logging
-from ai_coc.parsers.field import view_shift, army_centre
+from ai_coc.parsers.field import view_shift
 from ai_coc.parsers.scout import (
     PANEL_LEFT,
     ROW_BOUNDS,
@@ -1201,55 +1201,7 @@ class BoundaryTests(unittest.TestCase):
 
 
 class FieldTests(unittest.TestCase):
-    """Locating the fighting from what changed between two captures."""
-
-    def _frame(self, *blobs: tuple[int, int, int, int]) -> bytes:
-        image = Image.new("RGB", (1600, 900), (60, 120, 40))
-        painter = ImageDraw.Draw(image)
-        for box in blobs:
-            painter.rectangle(box, fill=(230, 230, 230))
-        buffer = io.BytesIO()
-        image.save(buffer, format="PNG")
-        return buffer.getvalue()
-
-    def test_the_reading_lands_on_what_moved(self) -> None:
-        centre = army_centre(self._frame(), self._frame((560, 290, 800, 410)))
-        assert centre is not None
-        assert 560 <= centre[0] <= 800
-        assert 290 <= centre[1] <= 410
-
-    def test_the_busiest_patch_beats_the_average(self) -> None:
-        """A base fires back across its whole width; the army works at one edge of it."""
-        centre = army_centre(
-            self._frame(), self._frame((400, 300, 560, 420), (1100, 250, 1400, 550))
-        )
-        assert centre is not None
-        assert centre[0] > 1000
-
-    def test_a_village_nobody_is_attacking_reads_as_nothing(self) -> None:
-        assert army_centre(self._frame(), self._frame()) is None
-
-    def test_a_shimmer_spread_over_the_whole_map_is_not_an_army(self) -> None:
-        """Thin enough and every cell rounds away, which used to answer with a map corner."""
-        # One pixel per mark, three to a cell, which averages to under half a
-        # level and comes back from the grid as a zero.
-        speckle = [(x, y, x, y) for x in range(50, 1540, 40) for y in range(115, 690, 14)]
-        assert army_centre(self._frame(), self._frame(*speckle)) is None
-
-    def test_leaving_the_battle_is_not_an_army(self) -> None:
-        """Measured, a screen change moves 338k pixels where the busiest battle moved 162k."""
-        assert army_centre(self._frame(), self._frame((60, 120, 1560, 690))) is None
-
-    def test_the_panels_that_change_on_their_own_are_not_the_fighting(self) -> None:
-        """The loot counts down, our storages climb and the clock ticks every second."""
-        moved = self._frame((40, 120, 300, 260), (620, 20, 980, 100), (1310, 30, 1580, 180))
-        assert army_centre(self._frame(), moved) is None
-
-    def test_a_frame_of_another_resolution_is_rejected(self) -> None:
-        buffer = io.BytesIO()
-        Image.new("RGB", (1280, 720)).save(buffer, format="PNG")
-        with pytest.raises(ValueError, match="1600x900"):
-            army_centre(buffer.getvalue(), buffer.getvalue())
+    """Reading how far the camera moved by sliding one frame over the other."""
 
     def _village(self, drop: int) -> bytes:
         """Something with enough texture to line up, drawn `drop` px further down."""
@@ -1741,37 +1693,30 @@ class AttackTests(unittest.TestCase):
         _, runner = self._cleared(DEPLOY_LINES["top_right"], self.FULL_VILLAGE, taken=0.6)
         assert runner._panned == (0, 60)
 
-    def _aimed(
-        self, targets: tuple[tuple[int, int], ...], centre: tuple[int, int] | None
-    ) -> tuple[tuple[int, int], ...]:
+    def test_the_rage_goes_where_the_plan_drew_it(self) -> None:
+        """It used to be slid onto the fighting, and that reading arrived too late to use.
+
+        `_onto_army` took two frames a moment apart and found the busiest patch
+        of what changed between them — three to four seconds of capturing and
+        decoding, all of it after the moment the plan asked for the bottle, on a
+        spell that lasts eighteen. What replaces it is the property that made
+        the prediction possible in the first place: troops walk toward
+        defences, so the planner is asked for the heaviest defences on the side
+        it chose and the bottles go there.
+        """
         runner = self._runner()
+        targets = ((500, 300), (700, 420))
         with (
-            patch.object(AttackRunner, "_frame", return_value=b""),
-            patch.object(attack, "army_centre", return_value=centre),
             patch.object(attack.time, "sleep"),
+            patch.object(AttackRunner, "_frame", return_value=b""),
+            patch.object(attack, "card_count", return_value=1),
+            patch.object(attack, "live_cards", return_value=()),
+            patch.object(AdbController, "tap") as tapped,
+            patch.object(AdbController, "tap_many") as placed,
         ):
-            return runner._onto_army(targets, [b""])
-
-    def test_the_rage_pattern_slides_onto_the_fighting(self) -> None:
-        """The plan draws the shape; the screen says where the army has got to."""
-        targets = ((500, 300), (700, 300), (500, 420), (700, 420))
-        moved = self._aimed(targets, (700, 400))
-        # The spacing is what keeps two bottles from overlapping, so it survives.
-        assert [b[0] - a[0] for a, b in zip(targets, moved, strict=True)] == [100] * 4
-        assert [b[1] - a[1] for a, b in zip(targets, moved, strict=True)] == [40] * 4
-
-    def test_an_unreadable_field_leaves_the_planned_rage_where_it_was(self) -> None:
-        """A bad shift is worse than a stale one: the plan at least aimed at the village."""
-        targets = ((500, 300), (700, 420))
-        assert self._aimed(targets, None) == targets
-
-    def test_a_sighting_the_schedule_never_took_leaves_them_too(self) -> None:
-        """The earlier frame is one more timed move, so a battle that ended first skips it."""
-        runner = self._runner()
-        targets = ((500, 300), (700, 420))
-        with patch.object(AttackRunner, "_frame", return_value=b"") as framed:
-            assert runner._onto_army(targets, []) == targets
-        assert framed.call_count == 0
+            runner._cast([939], targets, b"")
+        assert tapped.call_args.args[:2] == (939, attack.CARD_ROW_Y)
+        assert placed.call_args.args[0] == [targets[0], targets[1]]
 
     def test_a_planned_bottle_landing_inside_another_is_dropped(self) -> None:
         """The planner is given the footprint and overlaps its points regardless.

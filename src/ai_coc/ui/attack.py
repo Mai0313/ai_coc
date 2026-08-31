@@ -36,7 +36,7 @@ from ai_coc.constants import COC_PACKAGE
 from ai_coc.ui.runner import restart_game
 from ai_coc.adapters.ai import GeminiClient
 from ai_coc.adapters.adb import AdbController
-from ai_coc.parsers.field import view_shift, army_centre
+from ai_coc.parsers.field import view_shift
 from ai_coc.parsers.scout import (
     card_count,
     live_cards,
@@ -215,11 +215,6 @@ RAGE_SPAN = (240, 120)
 FALLBACK_ABILITY = 20
 FALLBACK_RAGE = 15
 FALLBACK_FREEZE = 30
-
-# How far apart the two captures that locate the army are taken. It is the one
-# number `parsers.field`'s own thresholds are tied to, since both the moving
-# pixels and the ambient shimmer scale with it.
-MOTION_GAP = 1.5
 
 # Between selecting a one-off card and placing what it holds, and it is now
 # nothing. It was 0.6, then 0.15 on a live burst that put the siege machine and
@@ -1479,6 +1474,23 @@ class AttackRunner(BaseModel):
         reaches the outer wall, freeze as it reaches the first line of defences
         — and hanging them off the heroes would move them by however long the
         army happened to take to go down.
+
+        **Both spells go where the plan drew them, and rage used to be moved.**
+        `_onto_army` took two frames a moment apart, found the busiest patch of
+        what had changed, and slid the whole rage pattern onto it — the
+        reasoning being that a measurement of where the fighting is beats a
+        prediction of where it will be. What that reasoning left out is that the
+        measurement arrives late: the frames, the gap between them and the
+        decode were three to four seconds, all of it after the moment the plan
+        asked for the bottle, and a rage lasts eighteen. Cutting it to one frame
+        still left a second of it. A reading that late is not a better answer
+        than a prediction, it is the same answer applied to a battle that has
+        moved on.
+
+        What replaces it is the property the prediction rests on: troops walk
+        toward defences. So the planner is asked for the heaviest defences on
+        the side it chose, which is where the army will be, and the bottles go
+        there with nothing between the schedule and the tap.
         """
         rages, rage_path = rage
         freezes, freeze_targets = freeze
@@ -1486,25 +1498,10 @@ class AttackRunner(BaseModel):
         freeze_after = plan.freeze_after if plan else FALLBACK_FREEZE
         pending: Moves = []
         if rages:
-            # **Two entries, and the first one is why the bottle lands on time.**
-            # `_onto_army` needs two frames a moment apart to see where the
-            # fighting has got to, and taking both of them at cast time put all
-            # of that after the moment the plan asked for: measured over four
-            # recorded battles, plans asking for rage at 12, 15, 12 and 12
-            # seconds had it land at 18, 22, 20 and 19, of which three to four
-            # were this. The schedule is already a list of timed callables, so
-            # the earlier frame is simply one more of them, due `MOTION_GAP`
-            # ahead — no new mechanism, and the cast keeps one capture.
-            sighting: list[bytes] = []
-            pending.append((
-                opened + rage_after - MOTION_GAP,
-                "rage sighting",
-                lambda: sighting.append(self._frame("before-front")),
-            ))
             pending.append((
                 opened + rage_after,
                 f"{len(rages)} rage card(s)",
-                partial(self._rage, rages, rage_path, frame, sighting),
+                partial(self._cast, rages, rage_path, frame),
             ))
         if freezes:
             pending.append((
@@ -1614,62 +1611,6 @@ class AttackRunner(BaseModel):
         act()
         logger.info("Played the %s, %.0fs into the attack", what, time.monotonic() - opened)
         return True
-
-    def _rage(
-        self,
-        cards: list[int],
-        targets: tuple[tuple[int, int], ...],
-        frame: bytes,
-        sighting: list[bytes],
-    ) -> None:
-        """Cast rage over the army rather than over the ground it started from.
-
-        The plan draws its rage points while the scout screen is still up, which
-        is a good half minute before the bottles land, and the army does not
-        wait there. Measured over a recorded battle, the fighting moved from
-        (610, 305) five seconds in to (934, 456) a minute later, so the points
-        are a whole footprint behind by the time they are used — which is what a
-        run of frames showed: rage rings sitting on empty grass with the troops
-        already at the next wall.
-
-        The plan still decides the *shape*, because the spacing is what keeps two
-        bottles from overlapping and the spread is what covers a group that
-        arrived along a line. Only where that shape sits comes off the screen.
-        """
-        self._cast(cards, self._onto_army(targets, sighting), frame)
-
-    def _onto_army(
-        self, targets: tuple[tuple[int, int], ...], sighting: list[bytes]
-    ) -> tuple[tuple[int, int], ...]:
-        """The same points slid across so their middle sits on the fighting.
-
-        Unreadable leaves them where the plan put them: a bad shift is worse
-        than a stale one, since the plan at least aimed at the village.
-
-        **The earlier frame is taken by the schedule rather than here, and that
-        is worth a second of every attack, and less than it looks.** Both frames
-        used to be captured at cast time with `MOTION_GAP` between them — all of
-        it *after* the moment the plan asked for the bottle. Measured over four recorded
-        battles, plans asking for rage at 12, 15, 12 and 12 seconds had it land
-        at 18, 22, 20 and 19, and this call was three to four of the gap every
-        time. The frame the deployment ended on is already the "before" the
-        motion needs, and the wait between it and the cast is the schedule's own.
-        A sighting the schedule never got to take — the battle ended first —
-        leaves the points where the plan put them, which is the same answer an
-        unreadable field gets.
-        """
-        if not sighting:
-            logger.info("No sighting was taken; the rage stays where the plan drew it")
-            return targets
-        centre = army_centre(sighting[-1], self._frame("front"))
-        if centre is None:
-            return targets
-        drift = (
-            round(centre[0] - sum(x for x, _ in targets) / len(targets)),
-            round(centre[1] - sum(y for _, y in targets) / len(targets)),
-        )
-        logger.info("The fighting is at %s, %s from the planned rage; moving them", centre, drift)
-        return tuple(clear_of_controls((x + drift[0], y + drift[1])) for x, y in targets)
 
     def _cast(self, cards: list[int], targets: tuple[tuple[int, int], ...], frame: bytes) -> None:
         """Empty every spell card over `targets`, and say so when one would not go.
