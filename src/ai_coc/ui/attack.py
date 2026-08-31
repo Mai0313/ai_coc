@@ -1771,14 +1771,16 @@ class AttackRunner(BaseModel):
         The machine cards that landed come back on success, and that list is
         empty as readily as it is full — a machine the boundary refused is
         still an attack, because the troops went in. **None is the different
-        answer**: no card row, no troops on it, or every flank refused, none
-        of which put anything on the field. Counted as a deployment those
+        answer**: no card row, no troops on it, or a flank that took neither the
+        machine nor a single troop, none
+        of which put anything on the field, and a flank that took neither the
+        machine nor a single troop. Counted as a deployment those
         rounds reported 已進攻並回營 for a battle nothing was played in, and
         `commands.attack` took them for real battles too — toward the
         emulator restart, toward the loot cart, and past the barracks wait.
 
         Everything here is the home village's own machinery — the camera, the
-        boundary fit, the probing, the passes — with the two things the builder
+        boundary fit, the passes — with the two things the builder
         base does not have taken out. There are no spells to hold back and no
         ability moment to schedule, so what is left after the drops is the
         clock-free part of an attack: the army goes down and the machine is
@@ -1813,16 +1815,20 @@ class AttackRunner(BaseModel):
         # this project moved onto one: it is a question about the base in the
         # frame, and only something looking at the base can answer it.
         #
-        # The probing above already put three troops down, which is the price of
-        # knowing the flank is usable at all — the same three the home village
-        # spends, and a cheaper mistake than a machine refused on an untested
-        # line.
+        # Nothing has been dropped before this, so the machine is the first
+        # thing the line is tested by — which is what `_drop_singles` is already
+        # for: it reads the card afterwards and offers another spot to whatever
+        # the game refused.
         line = deploy_line(LINE_POINTS, *push_line(anchors, pushed, self._middle))
         landed, _ = self._drop_singles(
             machines, line, "machine", self._spots(plan.hero_points, machines)
         )
         self._hold(plan.troops_after, landed)
-        self._spread_night(troops, anchors, pushed)
+        spread = self._spread_night(troops, anchors, pushed)
+        # A machine that went down is an attack even if the troops behind it
+        # were refused, so only a round with neither on the field answers None.
+        if spread is None and not landed:
+            return None
         return landed, troops
 
     def _offer_ability(self, machines: list[int]) -> None:
@@ -1848,7 +1854,7 @@ class AttackRunner(BaseModel):
 
     def _spread_night(
         self, troops: list[int], anchors: tuple[tuple[int, int], ...], pushed: int
-    ) -> list[tuple[int, int]]:
+    ) -> list[tuple[int, int]] | None:
         """Empty the troop cards along the flank; returns the line they went down on.
 
         **`live_cards` does not hold in the builder base, and that is what this
@@ -1865,14 +1871,24 @@ class AttackRunner(BaseModel):
         flank further out. So the flank walked 280 px away from a village the
         army had already reached.
 
-        What is used instead is the pass itself. A pass taps `DROPS_PER_PASS`
-        per card against a builder base card that holds about four, so a pass
-        that drained nothing is an empty row rather than a refused flank — and
-        the flank was probed before any of this started. A card holding more
-        than one pass simply takes another.
+        What is used instead is the pass itself, and **whether anything has
+        landed yet is what says which of two things a barren pass means.** A
+        pass taps `DROPS_PER_PASS` per card against a card holding about four,
+        so once one has drained the row empties in that pass and a barren one
+        after it is an empty row. Before anything has drained, a barren pass is
+        a line the base has grown over, and pushing it out is what the probing
+        used to buy without spending three troops to do it.
+
+        Reading the pass *index* instead of that is what an earlier version did,
+        and it gave the flank exactly one push: the pass after the pushed one
+        has an index of 1, so it read as an empty row and returned with the
+        whole army still in its cards. None comes back where nothing ever
+        landed, because a round that deployed no troops is not a round that
+        fought and `commands.attack` counts it.
         """
         line = deploy_line(LINE_POINTS, *push_line(anchors, pushed, self._middle))
         shot = self._frame("before-pass")
+        landed = False
         for index in range(DEPLOY_PASSES):
             for card, slot in enumerate(troops):
                 drops = drop_points(line, index * len(troops) + card, DROPS_PER_PASS)
@@ -1882,21 +1898,16 @@ class AttackRunner(BaseModel):
             drained = card_drained(before, shot, troops)
             logger.info("Pass %d drained %d of %d card(s)", index + 1, len(drained), len(troops))
             if drained:
+                landed = True
                 continue
-            # **The first pass is the one that can mean two things**, now that
-            # nothing probes the line before the army goes down it. A later pass
-            # draining nothing is an empty row — a pass taps `DROPS_PER_PASS`
-            # against a card holding about four, so one pass empties the lot. The
-            # first one draining nothing is instead a line the base has grown
-            # over, and pushing it out is what the probing used to buy without
-            # spending three troops to do it.
-            if index or pushed + 1 >= DEPLOY_ATTEMPTS:
-                return line
+            if landed or pushed + 1 >= DEPLOY_ATTEMPTS:
+                break
             pushed += 1
-            logger.info("The opening pass landed nothing; flank pushed out to %d", pushed)
+            logger.info("Nothing has landed yet; flank pushed out to %d", pushed)
             line = deploy_line(LINE_POINTS, *push_line(anchors, pushed, self._middle))
-        logger.info("The row still had something after %d passes", DEPLOY_PASSES)
-        return line
+        if not landed:
+            logger.warning("The flank took nothing at any push; the troops stay in their cards")
+        return line if landed else None
 
     def _wait_out_night(self, machines: list[int], troops: list[int]) -> None:
         """Sit through the battle, offering every machine its ability on each pass.
