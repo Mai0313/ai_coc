@@ -788,11 +788,15 @@ class NightAttackTests(unittest.TestCase):
 class CrossingTests(unittest.TestCase):
     """Sailing between the two villages, which is a tap the boat may or may not take."""
 
-    def _cross(self, seen: list[str | None], want: str = "day") -> tuple[MagicMock, str | None]:
+    def _cross(
+        self, seen: list[str | None], want: str = "day", battle: bool = False
+    ) -> tuple[MagicMock, str | None]:
         adb = MagicMock()
         with (
             patch.object(world_ui.time, "sleep"),
             patch.object(world_ui, "current_world", side_effect=seen),
+            patch.object(world_ui, "card_groups", return_value=[[1]] if battle else []),
+            patch.object(world_ui, "battle_over", return_value=False),
         ):
             landed = world_ui.cross(adb, DisplayTarget(logical_id="1", physical_id="2"), want)
         return adb, landed
@@ -857,6 +861,19 @@ class CrossingTests(unittest.TestCase):
         assert landed is None
         assert adb.swipe.call_count == 0
         assert adb.back.call_count == world_ui.UNCOVER_TRIES
+
+    def test_a_battle_on_screen_is_never_pressed_at(self) -> None:
+        """`back` there is aimed at 放棄, and a killed run leaves exactly this state.
+
+        The callers hand this whatever is on screen — `world --go` and a run that
+        named a village both go straight into the crossing on a frame nothing
+        could read — so the filter lives here rather than in a docstring asking
+        them not to.
+        """
+        adb, landed = self._cross([None], battle=True)
+        assert landed is None
+        assert adb.back.call_count == 0
+        assert adb.swipe.call_count == 0
 
     def test_the_camera_goes_back_to_the_far_zoom_either_way(self) -> None:
         """The swiping above parks it at a map corner, and every coordinate here wants it centred."""

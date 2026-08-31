@@ -28,7 +28,7 @@ import logging
 
 from ai_coc.models import Crossing
 from ai_coc.constants import COC_PACKAGE
-from ai_coc.parsers.scout import read_stock, loot_cart_open
+from ai_coc.parsers.scout import read_stock, battle_over, card_groups, loot_cart_open
 from ai_coc.parsers.world import current_world
 
 if TYPE_CHECKING:
@@ -154,14 +154,28 @@ def uncovered(adb: AdbController, display: DisplayTarget) -> World | None:
     --go night` then reported 畫面還停在不明的畫面 twice in a row without
     moving anything.
 
-    `back` is safe on exactly the frame this is called for, and that is the rule
-    `GameRunner._home` already follows: on a clear village it raises
-    確定退出遊戲嗎, so it is only ever pressed on a frame that is **not** one.
-    A village that reads is handed straight back untouched.
+    **A battle is never pressed at**, and that is the whole reason this filters
+    rather than pressing at anything `current_world` will not name. Its callers
+    hand it whatever is on screen: `commands.world` goes straight into `cross`
+    on an unreadable frame, and so does `_pick_world` when a run named a
+    village — so a game left mid-battle by a killed run, which is a state this
+    project has written down, would take three presses aimed at 放棄. Every
+    other place here that presses `back` filters first, `GameRunner._home` on
+    its dialogs and `AttackRunner._open_night_attack` by never pressing at all,
+    and this is not the one to make an exception of. A battle answers None,
+    which the caller already handles as "nothing to sail from".
+
+    Otherwise `back` is safe for the reason `_home` gives: on a clear village it
+    raises 確定退出遊戲嗎, so it is only ever pressed on a frame that is **not**
+    one. A village that reads is handed straight back untouched.
     """
     for _ in range(UNCOVER_TRIES):
-        if (here := current_world(adb.screenshot(display))) is not None:
+        png = adb.screenshot(display)
+        if (here := current_world(png)) is not None:
             return here
+        if card_groups(png) or battle_over(png):
+            logger.info("A battle is on screen; there is nothing here to press back at")
+            return None
         logger.info("Something is over the village; pressing back to get at it")
         adb.back(display)
         time.sleep(UNCOVER_SETTLE)
@@ -189,6 +203,9 @@ def cross(adb: AdbController, display: DisplayTarget, want: World) -> World | No
         adb.swipe(crossing.start, landing, SWIPE_MS, display)
         time.sleep(SWIPE_SETTLE)
     try:
+        # What the village last read as, so a crossing with nothing to try
+        # answers where it started rather than nothing at all.
+        cleared = here
         for spot in crossing.spots:
             adb.tap(spot[0], spot[1], display)
             for _ in range(SAIL_POLLS):
@@ -201,10 +218,12 @@ def cross(adb: AdbController, display: DisplayTarget, want: World) -> World | No
             # over the map, and every candidate after it lands on that panel
             # rather than on the ground. Clearing it is what makes the remaining
             # spots worth trying at all.
-            if uncovered(adb, display) is None:
+            if (cleared := uncovered(adb, display)) is None:
                 logger.warning("The village never came back; giving up on the crossing")
                 return None
         logger.warning("None of the %d candidate spots found the boat", len(crossing.spots))
-        return current_world(adb.screenshot(display))
+        # What the last spot's own check already read, rather than a capture
+        # asking the same question again: one of those is 0.6-0.8 s here.
+        return cleared
     finally:
         adb.zoom("out", CROSS_ZOOM_PINCHES, COC_PACKAGE, display)
