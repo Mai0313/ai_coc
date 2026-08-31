@@ -649,6 +649,49 @@ class NightAttackTests(unittest.TestCase):
             runner._leave_result()
         assert pressed.call_count == 0
 
+    def test_the_last_tap_landing_is_not_answered_with_back(self) -> None:
+        """That tap is unchecked and is the one most likely to have worked.
+
+        The button only comes alive once the stars have flown in, which is what
+        the retries are for — so the village can be back by then, and `back`
+        there is 確定退出遊戲嗎.
+        """
+        runner = self._runner()
+        with (
+            patch.object(attack.time, "sleep"),
+            patch.object(runner, "_frame", return_value=b""),
+            # True for every check inside the loop, then False for the read that
+            # guards the press: the final tap worked.
+            patch.object(
+                attack, "battle_over", side_effect=[True] * attack.RESULT_ATTEMPTS + [False]
+            ),
+            patch.object(AdbController, "tap"),
+            patch.object(AdbController, "back") as pressed,
+        ):
+            runner._leave_result()
+        assert pressed.call_count == 0
+
+    def test_a_popup_over_the_base_is_pressed_away_rather_than_tapped_behind(self) -> None:
+        """The 攻擊 tap lands on the popup, so the round would spend every attempt on it.
+
+        Measured live on an event reward page: five attempts a round, then
+        畫面不在建築大師基地, then the same again — 18 rounds of it, with nothing
+        between rounds to clear the screen.
+        """
+        runner = self._runner()
+        with (
+            patch.object(attack.time, "sleep"),
+            patch.object(
+                runner, "_frame", return_value=(FRAMES / "event_reward.png").read_bytes()
+            ),
+            patch.object(attack, "uncovered", return_value=None) as cleared,
+            patch.object(AdbController, "tap") as tapped,
+        ):
+            assert runner._open_night_attack() is None
+        assert cleared.call_count == attack.HOME_ATTEMPTS
+        # And never at 攻擊, which is what was being spent behind the popup.
+        assert tapped.call_count == 0
+
     def test_a_repainted_card_row_ends_the_stage(self) -> None:
         """A stage can end without a result screen, and waiting for one cost a whole second stage.
 

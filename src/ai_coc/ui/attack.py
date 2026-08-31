@@ -31,7 +31,7 @@ from ai_coc.models import (
     StorageCapacity,
 )
 from ai_coc.prompts import PROMPTS
-from ai_coc.ui.world import cross
+from ai_coc.ui.world import cross, uncovered
 from ai_coc.constants import COC_PACKAGE
 from ai_coc.ui.runner import restart_game
 from ai_coc.adapters.ai import GeminiClient
@@ -874,11 +874,24 @@ class AttackRunner(BaseModel):
             # `cross` already spends about a minute trying three spots, and
             # retrying it per attempt would turn a boat nobody can reach into
             # five minutes of silence rather than the one round this costs.
-            if current_world(home) == "night":
+            here = current_world(home)
+            if here == "night":
                 logger.warning("The game is on the builder base; sailing home before attacking")
                 if cross(self.adb, self.display, "day") != "day":
                     logger.warning("The crossing never landed; this round has no village to open")
                     return None
+                continue
+            # **Something is over the village, and the 攻擊 tap below would land
+            # on it.** The game puts full-screen popups up on its own — event
+            # rewards, season passes, whatever is running that week — and the one
+            # measured here held a run for 40 minutes: five attempts a round
+            # tapping behind it, then 畫面不在主村, then the same again. Nothing
+            # between rounds clears it either, since the world is picked once per
+            # series. `uncovered` is the same step the crossing takes, and it is
+            # safe for the same reason — it presses `back` only on a frame that
+            # is not a village, and never on a battle.
+            if here is None:
+                uncovered(self.adb, self.display)
                 continue
             # The one moment the run is known to be standing on the right
             # village with nothing over it, which is what tapping the storage
@@ -923,6 +936,12 @@ class AttackRunner(BaseModel):
                 return
             self._tap(RETURN_HOME)
             time.sleep(RESULT_RETRY_DELAY)
+        # Read again before pressing. The last tap of that loop is unchecked, and
+        # it is the one most likely to have worked — the button only comes alive
+        # once the stars have flown in, which is what the retries are for. On a
+        # village that has just come back, `back` is 確定退出遊戲嗎.
+        if not battle_over(self._frame("result")):
+            return
         logger.warning("回營 will not close this screen; pressing back at whatever is over it")
         self.adb.back(self.display)
         time.sleep(RESULT_RETRY_DELAY)
@@ -1813,11 +1832,17 @@ class AttackRunner(BaseModel):
                 logger.info("The last battle's result screen is still up; leaving it")
                 self._leave_result()
                 continue
-            if current_world(home) == "day":
+            here = current_world(home)
+            if here == "day":
                 logger.warning("The game is on the home village; sailing over before attacking")
                 if cross(self.adb, self.display, "night") != "night":
                     logger.warning("The crossing never landed; this round has no base to open")
                     return None
+                continue
+            # Same as `_open_attack_menu`: something is over the base and the
+            # 攻擊 tap below would land on it.
+            if here is None:
+                uncovered(self.adb, self.display)
                 continue
             # Same as `_open_attack_menu`: the bars can only be tapped from the
             # village itself, and this is where the run knows it is on one.

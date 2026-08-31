@@ -297,7 +297,7 @@ CAPACITY_TOLERANCE = 15
 # button fills 0.33 of this box in green against at most 0.05 of any other
 # screen, the attack menu's own buttons included.
 #
-# **Except one, and it cost a farming run 40 minutes of空轉.** The game's event
+# **Except one, and it cost a farming run 40 minutes.** The game's event
 # reward screens — 周期挑戰獎勵之路已完成 and its like — are pages of green
 # tick marks, and one of them lands squarely in this box: measured, 0.2009,
 # comfortably over the old 0.15 threshold. That screen closes on a red X in its
