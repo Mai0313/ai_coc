@@ -21,6 +21,7 @@ from pydantic import BaseModel, PrivateAttr
 
 from ai_coc import plans
 from ai_coc.models import (
+    World,
     MapEdge,
     HeroKind,
     ProbeRay,
@@ -33,6 +34,7 @@ from ai_coc.models import (
     WallReport,
     BuildReport,
     WallOptions,
+    WorldReport,
     AttackSeries,
     DonateReport,
     FrameReading,
@@ -73,6 +75,7 @@ from ai_coc.parsers.scout import (
     attack_menu_open,
     idle_disconnected,
 )
+from ai_coc.parsers.world import current_world
 from ai_coc.adapters.config import ConfigStore
 from ai_coc.adapters.secrets import SecretStore
 from ai_coc.parsers.boundary import PLAYFIELD, VILLAGE_CENTRE, boundary_reach
@@ -81,6 +84,7 @@ from ai_coc.parsers.building import wall_menu, upgrade_buttons
 from .ui.clan import ClanRunner
 from .ui.hero import HeroRunner
 from .ui.walls import WallRunner
+from .ui.world import cross
 from .ui.attack import CARD_ROW_Y, DROP_SETTLE, SINGLE_DROP_DELAY, AttackRunner
 from .ui.upkeep import UpkeepRunner
 
@@ -312,8 +316,8 @@ def _rest(seconds: float) -> bool:
 # `launch("emulator")` returns as soon as `ensure_coc` has seen the game's
 # process, and that check is a `pidof` — the process exists a couple of seconds
 # after the `monkey` while the village is not on screen for much longer than
-# that. `read_stock` is what settles it, because reading the storage bars is how
-# every loop in this project tests for the home village.
+# that. `current_world` is what settles it, because counting the plate row is
+# how everything here tests for a village being up at all.
 #
 # Much longer than `restart_game`'s flat 15 seconds, which only reopens the
 # package on an emulator that never went down; this sits through a cold boot.
@@ -374,7 +378,18 @@ def _settle_game(
         except AdbControlError:
             waiting = "the game is not on a display yet"
         else:
-            if read_stock(adb.screenshot(display)) is not None:
+            # `current_world` rather than `read_stock`, and **either village
+            # counts** — what this is waiting for is a game that has finished
+            # painting, not a particular one of the two. Which village a restart
+            # landed on is settled by whoever asked for it: every loop's own
+            # way home crosses if it has to, and `launch` reports `at_village`
+            # rather than promising the home one.
+            #
+            # It is the better test of the two on its own terms as well: a home
+            # village with the camera at a map corner can leave the dark elixir
+            # row unreadable, which had `read_stock` call an ordinary village no
+            # village at all.
+            if current_world(adb.screenshot(display)) is not None:
                 adb.zoom("out", RESTART_ZOOM_PINCHES, COC_PACKAGE, display)
                 return display
             waiting = "the village has not painted yet"
@@ -943,6 +958,50 @@ def donate(frame_dir: Path | None = None, dry_run: bool = False, rounds: int = 0
     return report
 
 
+def world(go: World | None = None) -> WorldReport:
+    """Which village the game is on, and sail to the other one when asked for it.
+
+    Reading is the default and crossing is the exception, for the same reason
+    `hero` reads unless told to spend a builder: this is the question every
+    other command has to ask itself now that the game reopens on whichever
+    village it was closed on, and the answer alone is worth having.
+
+    **Reading really is one capture and nothing else** — no swipe, no tap, and
+    no pinch, which is what lets a session ask it at any moment without first
+    working out what it would disturb. It went through `_settle_game` for a
+    while, and that zooms the camera back out on its way past: harmless by this
+    project's own measurement, and still enough to make the claim false. The
+    patience that call also brings is not this command's to spend: a game still
+    on its loading screen honestly has no village on it, and `ai_coc launch` is
+    the one that waits a cold start out.
+    """
+    adb = _controller()
+    try:
+        display = adb.display_for(COC_PACKAGE)
+    except AdbControlError:
+        logger.warning("The game is not on a display yet; neither village can be confirmed")
+        return WorldReport(found=None, world=None, message="遊戲還沒有畫面,無法判斷世界")
+    found = current_world(adb.screenshot(display))
+    if go is None or go == found:
+        report = WorldReport(found=found, world=found, message=f"目前在{_WORLDS[found]}")
+    else:
+        report = WorldReport(
+            found=found,
+            world=(landed := cross(adb, display, go)),
+            crossed=landed == go,
+            message=f"從{_WORLDS[found]}切到{_WORLDS[landed]}"
+            if landed == go
+            else f"想切到{_WORLDS[go]},但畫面還停在{_WORLDS[landed]}",
+        )
+    logger.info("World: %s", report.message)
+    return report
+
+
+# Only ever used to build a message, which is why it is here rather than beside
+# the type: nothing in the loops cares what these are called in Chinese.
+_WORLDS: dict[World | None, str] = {"day": "日世界", "night": "夜世界", None: "不明的畫面"}
+
+
 def view(zoom: str = "out", times: int = 3) -> ViewReport:
     """Zoom the village camera, with no window in the way.
 
@@ -1028,6 +1087,7 @@ def read(png: bytes) -> FrameReading:
     groups = card_groups(png)
     slots = [slot for group in groups for slot in group]
     return FrameReading(
+        world=current_world(png),
         scout=read_scout(png),
         stock=read_stock(png),
         army=army_strength(png),

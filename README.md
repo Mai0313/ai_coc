@@ -139,7 +139,11 @@ ai_coc launch --restart emulator      # restart the emulator, then bring the gam
 ai_coc capture ./shots --count 30     # a burst off the live game
 ai_coc read shot.png                  # what each reader makes of one frame
 ai_coc view --zoom out                # put the camera back where every coordinate was measured
+ai_coc world                          # which of the two villages the game is on
+ai_coc world --go day                 # sail there; already being there does nothing
 ```
+
+The game keeps two villages — the home village and the builder base — and reopens on whichever one it was closed on, so `world` is worth asking before anything that assumes one of them. Reading it is a single screenshot: no tap, no swipe, no camera move.
 
 `read` is the quickest way to answer "did it misread the screen, or did the tap miss?" It prints what every reader got from one frame: the loot panel, the storages, the card row and the builder panel.
 

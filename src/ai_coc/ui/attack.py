@@ -28,6 +28,7 @@ from ai_coc.models import (
     LootThresholds,
 )
 from ai_coc.prompts import PROMPTS
+from ai_coc.ui.world import cross
 from ai_coc.constants import COC_PACKAGE
 from ai_coc.ui.runner import restart_game
 from ai_coc.adapters.ai import GeminiClient
@@ -49,6 +50,7 @@ from ai_coc.parsers.scout import (
     attack_menu_open,
     idle_disconnected,
 )
+from ai_coc.parsers.world import current_world
 from ai_coc.parsers.boundary import DEPLOY_BOUND, fitted_line, village_box
 
 logger = logging.getLogger(__name__)
@@ -699,6 +701,23 @@ class AttackRunner(BaseModel):
             if battle_over(home):
                 logger.info("The last battle's result screen is still up; leaving it")
                 self._leave_result()
+                continue
+            # The game reopens on whichever village it was closed on, and this
+            # loop is the home village's. Without this it fails safe but
+            # expensively and says the wrong thing: 攻擊 in the corner opens the
+            # builder base's own dialog, `attack_menu_open` does not recognise
+            # it, and the run spends every attempt here before reporting
+            # 畫面不在主村 — which reads as a game that is stuck rather than one
+            # that is simply in the other village.
+            # One crossing and then out, for the reason `GameRunner._home` gives:
+            # `cross` already spends about a minute trying three spots, and
+            # retrying it per attempt would turn a boat nobody can reach into
+            # five minutes of silence rather than the one round this costs.
+            if current_world(home) == "night":
+                logger.warning("The game is on the builder base; sailing home before attacking")
+                if cross(self.adb, self.display, "day") != "day":
+                    logger.warning("The crossing never landed; this round has no village to open")
+                    return None
                 continue
             self._tap(HOME_ATTACK)
             time.sleep(2)

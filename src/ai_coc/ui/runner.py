@@ -24,7 +24,10 @@ from ai_coc.models import VillageStock, DisplayTarget
 from ai_coc.constants import COC_PACKAGE
 from ai_coc.adapters.adb import AdbController, AdbControlError
 from ai_coc.parsers.scout import read_stock, idle_disconnected
+from ai_coc.parsers.world import current_world
 from ai_coc.parsers.building import game_dialog
+
+from .world import cross
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -214,6 +217,28 @@ class GameRunner(BaseModel):
                 self._tap(dialog.cancel)
                 time.sleep(BACK_SETTLE)
                 continue
+            # **The game reopens on whichever village it was closed on**, and
+            # every loop that reaches this method is the home village's own —
+            # its sweep grid, its building menus, its storages. Nothing below
+            # could tell the difference: `read_stock` answers on the builder
+            # base as readily, reading its gems bar as dark elixir, so a run
+            # that arrived there would sweep the wrong map and report it as an
+            # ordinary empty one. A night loop will want its own answer here;
+            # until there is one, this method means the home village.
+            #
+            # **One crossing and then out**, because `cross` is already the
+            # patient one: it swipes to the corner and tries three candidate
+            # spots, about a minute in all. Left to `continue` on a failure this
+            # loop would spend every one of its `HOME_TRIES` on another whole
+            # crossing — twenty minutes against about fifty seconds for the
+            # worst path here before this, and none of it interruptible, since
+            # `_home` reads no stop flag.
+            if current_world(png) == "night":
+                logger.warning("The game came up on the builder base; sailing home first")
+                if cross(self.adb, self.display, "day") == "day":
+                    continue
+                logger.warning("The crossing never landed; there is no home village to work on")
+                return None
             stock = read_stock(png)
             if stock is not None:
                 if not self._seen_village:

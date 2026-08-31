@@ -25,6 +25,16 @@ PY
 
 方法的完整清單在 `src/ai_coc/adapters/adb.py` 的 `AdbController`, 每個方法上面的 docstring 都值得讀一次, 尤其是 `tap_many`, 那裡面兩條規則各自是一場沒下出任何兵的戰鬥換來的.
 
+**先確認自己在哪個村莊.** 這個遊戲有兩張地圖, 日世界 (主村) 跟夜世界 (建築大師基地), 而遊戲會開在上次離開的那一個 —— 所以探索腳本的第一行不是截圖而是 `current_world(png)`, 不然你會拿夜世界的畫面去量日世界的常數. 它讀畫面最上面那排面板的藍色 `i` 徽章, 主村三個, 夜世界兩個 (夜世界沒有護盾那一格), 不點任何東西也不動鏡頭. 要換過去用 `ui.world.cross(adb, display, "night")`, 它會把鏡頭滑到地圖角落再點船.
+
+```python
+from ai_coc.parsers.world import current_world
+from ai_coc.ui.world import cross
+
+print(current_world(adb.screenshot(display)))  # "day" / "night" / None
+cross(adb, display, "night")  # 已經在那邊就什麼都不做
+```
+
 **每個呼叫都要帶 `display`.** MuMu 跑好幾個 Android display, 遊戲在它自己那個上面, display 0 是模擬器的 launcher. 少帶這個參數的結果是截圖解碼失敗, 或者點擊安靜地落在 launcher 上, 兩種都不會報錯.
 
 ## 三件不能亂做的事

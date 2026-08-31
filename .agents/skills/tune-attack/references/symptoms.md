@@ -14,6 +14,8 @@
 
 掉線的話 `idle_disconnected` 會認出來, `restart_game` 會重開遊戲並**重新解析 display**.
 
+**第五種擋路的是站錯村莊**, 而它以前就是報這一句. 遊戲會開在上次離開的那一張地圖, 而夜世界 (建築大師基地) 的攻擊按鈕在同一個角落, 開出來的卻是另一個對話框 —— `attack_menu_open` 認不得它, 於是整輪的重試都花在那裡, 最後報「畫面不在主村」, 讀起來像遊戲卡住而不是像走錯地方. 現在 `_open_attack_menu` 會先問 `current_world`, 是夜世界就坐船回來再打, log 裡是 `sailing home before attacking`. 所以現在還看到這一句的話, 原因就不是這個.
+
 ## 每一輪都說兵力不足
 
 看 `army_strength` 跟 `MIN_ARMY_RATIO`. 這個檢查在付搜尋費**之前**, 所以擋下來是不用錢的, 它本身通常不是 bug.

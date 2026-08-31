@@ -12,7 +12,15 @@ from PyQt5.QtWidgets import QApplication
 # PyInstaller runs this file as `__main__`, which has no package context, so these
 # stay absolute even for same-layer modules.
 from ai_coc import commands, __version__
-from ai_coc.models import RunLog, HeroKind, WallOptions, RestartScope, AttackOptions, LootOverrides
+from ai_coc.models import (
+    World,
+    RunLog,
+    HeroKind,
+    WallOptions,
+    RestartScope,
+    AttackOptions,
+    LootOverrides,
+)
 from ai_coc.constants import APP_NAME
 from ai_coc.logging_setup import configure_logging
 from ai_coc.ui.main_window import MainWindow, migrate_settings
@@ -110,6 +118,13 @@ def _parser() -> argparse.ArgumentParser:
         help="真的把這個英雄送去升級,不給就只讀不動",
     )
     champions.add_argument("--at", metavar="X,Y", help="直接點這個座標上的建築,跳過整個村莊的掃描")
+    # The game reopens on whichever village it was closed on, so no other
+    # command can assume which one it is looking at. Reading is the default and
+    # crossing is what `--go` asks for.
+    where = sub.add_parser("world", help="現在在日世界還是夜世界,也可以切過去")
+    where.add_argument(
+        "--go", choices=get_args(World), help="切到這個世界,已經在那邊就什麼都不做;不給就只讀不切"
+    )
     camera = sub.add_parser("view", help="拉遠或拉近村莊鏡頭")
     camera.add_argument(
         "--zoom",
@@ -172,6 +187,7 @@ def _run_command(arguments: argparse.Namespace, run: RunLog) -> int:
     # is what tipped this function past the complexity limit.
     scalar = {
         "view": lambda: commands.view(arguments.zoom, arguments.times),
+        "world": lambda: commands.world(arguments.go),
         "launch": lambda: commands.launch(arguments.restart),
         "online": lambda: commands.online(arguments.every),
     }
