@@ -1855,8 +1855,17 @@ class AttackRunner(BaseModel):
         )
         return plan
 
-    def _deploy_night(self, frame: bytes) -> list[int]:
-        """Put the whole army down one flank; answers which machine cards landed.
+    def _deploy_night(self, frame: bytes) -> list[int] | None:
+        """Put the whole army down one flank, or None if nothing went down at all.
+
+        The machine cards that landed come back on success, and that list is
+        empty as readily as it is full — a machine the boundary refused is
+        still an attack, because the troops went in. **None is the different
+        answer**: no card row, no troops on it, or every flank refused, none
+        of which put anything on the field. Counted as a deployment those
+        rounds reported 已進攻並回營 for a battle nothing was played in, and
+        `commands.attack` took them for real battles too — toward the
+        emulator restart, toward the loot cart, and past the barracks wait.
 
         Everything here is the home village's own machinery — the camera, the
         boundary fit, the probing, the passes — with the two things the builder
@@ -1874,14 +1883,14 @@ class AttackRunner(BaseModel):
         groups = card_groups(frame)
         if not groups:
             logger.warning("No cards found on the battle row; nothing to deploy")
-            return []
+            return None
         slots = [slot for group in groups for slot in group]
         troops = counted_cards(frame, slots)
         machines = [slot for slot in slots if slot not in troops]
         logger.info("%d troop card(s), %d machine card(s)", len(troops), len(machines))
         if not troops:
             logger.warning("Every card on the row reads as a machine; nothing to spread")
-            return []
+            return None
         plan = self._night_plan(frame)
         battle: bytes | None = frame
         for preset in deploy_candidates(plan):
@@ -1890,12 +1899,12 @@ class AttackRunner(BaseModel):
             anchors = (
                 fitted_line(battle, flank[0], flank[1], centre=self._middle) if battle else None
             ) or flank
-            pushed = self._usable_line(troops, anchors)
+            pushed = self._probe_night(troops, anchors)
             if pushed is not None:
                 break
         else:
             logger.warning("Every flank was refused; the boundary reaches past the playfield")
-            return []
+            return None
         # **The machine goes in ahead of the troops, which is the other way
         # round from the home village.** There the siege machine opens the path
         # and the heroes follow the army in; here the machine *is* the army's
@@ -1937,6 +1946,36 @@ class AttackRunner(BaseModel):
         while (remaining := until - time.monotonic()) > 0:
             self._offer_ability(machines)
             time.sleep(min(ABILITY_POLL, remaining))
+
+    def _probe_night(self, troops: list[int], anchors: tuple[tuple[int, int], ...]) -> int | None:
+        """How far out this flank has to be pushed, probed with a different card each time.
+
+        `_usable_line` is the home village's version and cannot be used here,
+        because it picks its probe card out of `live_cards` — the one reader
+        this village inverts. A builder base card greys when the troops it put
+        out die rather than when it empties, so every card reads live, including
+        the spent ones a second stage arrives holding. Handed one of those,
+        every probe drains nothing and the flank is pushed out `DEPLOY_ATTEMPTS`
+        times on each of four presets before the battle is given up on — and its
+        own "every troop card is spent" guard can never fire to say why.
+
+        Rotating is what answers that without needing a spent-card reader at
+        all: an empty card poisons one attempt instead of every one.
+        """
+        shot = self._frame("before-probe")
+        for attempt in range(DEPLOY_ATTEMPTS):
+            card = troops[attempt % len(troops)]
+            line = deploy_line(LINE_POINTS, *push_line(anchors, attempt, self._middle))
+            probes = [line[0], line[len(line) // 2], line[-1]]
+            self.adb.tap_many([(card, CARD_ROW_Y), *probes], self.display)
+            time.sleep(DROP_SETTLE)
+            before, shot = shot, self._frame("probe")
+            if card_drained(before, shot, [card]):
+                logger.info("Deploying along %s, pushed out %d step(s)", anchors, attempt)
+                return attempt
+            logger.info("Card %d put nothing on %s; pushing the flank out", card, anchors)
+        logger.info("The %s line takes nothing at any push; trying the next flank", anchors)
+        return None
 
     def _spread_night(
         self, troops: list[int], anchors: tuple[tuple[int, int], ...], pushed: int
@@ -2039,6 +2078,8 @@ class AttackRunner(BaseModel):
         played = 0
         for _ in range(NIGHT_PHASES):
             machines = self._deploy_night(battle)
+            if machines is None:
+                break
             played += 1
             self._wait_out_night(machines)
             following = self._next_stage()

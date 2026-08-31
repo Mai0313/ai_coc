@@ -411,7 +411,7 @@ class NightAttackTests(unittest.TestCase):
             patch.object(AttackRunner, "_night_plan", return_value=plans.night_flat()),
             patch.object(AttackRunner, "_clear_flank", return_value=b""),
             patch.object(attack, "fitted_line", return_value=None),
-            patch.object(AttackRunner, "_usable_line", return_value=0),
+            patch.object(AttackRunner, "_probe_night", return_value=0),
             patch.object(
                 AttackRunner,
                 "_drop_singles",
@@ -510,6 +510,42 @@ class NightAttackTests(unittest.TestCase):
         ):
             runner._spread_night([307], ((600, 110), (230, 380)), 0)
         assert tapped.call_count == attack.DEPLOY_PASSES
+
+    def test_a_round_that_put_nothing_down_reports_no_phase(self) -> None:
+        """Counted, such a round says 已進攻並回營 for a battle nothing was played in.
+
+        It is load-bearing rather than cosmetic: `commands.attack` reads
+        `phases` to decide whether a round really fought, so a phantom one is
+        counted toward the emulator restart and the loot cart, and skips the
+        wait the loop would otherwise take.
+        """
+        runner = self._runner()
+        with (
+            patch.object(AttackRunner, "_open_night_attack", return_value=b""),
+            patch.object(AttackRunner, "_find_opponent", return_value=b""),
+            patch.object(AttackRunner, "_deploy_night", return_value=None),
+            patch.object(AttackRunner, "_wait_out_night") as waited,
+        ):
+            report = runner.run()
+        assert (report.phases, waited.call_count) == (0, 0)
+        assert report.message == "沒有成功部署任何部隊"
+
+    def test_the_probe_rotates_cards_so_a_spent_one_poisons_only_its_own_attempt(self) -> None:
+        """`_usable_line` picks its probe out of `live_cards`, the one reader this village inverts.
+
+        Every builder base card reads live, spent ones included, so handed a
+        card a second stage already emptied it would push the flank out on every
+        attempt and never say why.
+        """
+        runner = self._runner()
+        with (
+            patch.object(attack.time, "sleep"),
+            patch.object(runner, "_frame", return_value=b""),
+            patch.object(attack, "card_drained", side_effect=[[], [], [433]]),
+            patch.object(AdbController, "tap_many") as tapped,
+        ):
+            assert runner._probe_night([307, 433, 560], ((600, 110), (230, 380))) == 2
+        assert [call.args[0][0][0] for call in tapped.call_args_list] == [307, 433, 560]
 
     def test_nobody_matched_is_reported_rather_than_deployed_into(self) -> None:
         runner = self._runner()

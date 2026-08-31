@@ -9,8 +9,10 @@
 ## 開跑
 
 ```bash
-uv run ai_coc attack --repeat 0 --record
+uv run ai_coc attack --world day --repeat 0 --record
 ```
+
+**`--world` 要寫出來.** 不給的話打的是遊戲當下停在的那個村莊, 而遊戲會開在上次離開的那一個, 所以少了它就有可能整晚在打夜世界而你以為在打主村. 夜世界是 `--world night`.
 
 用 Bash 工具的 `run_in_background` 送出去. **不必自己重導向**, log 跟結果都是程式自己寫的, 一次執行一個目錄:
 

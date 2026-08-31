@@ -651,7 +651,10 @@ def attack(options: AttackOptions) -> AttackSeries:
             if fighting:
                 fought += 1
                 battles += 1
-            _empty_cart(world, battles, adb, display)
+                # Inside the branch that moved the counter, or a round that
+                # matched nobody would pay for the whole trip again against a
+                # cart emptied moments earlier.
+                _empty_cart(world, battles, adb, display)
             logger.info("Attack finished: %s", report.message)
             _write_plan(options.plan_out, runner.played)
             _log_plan(options.plan_log, len(series.root), runner.played)
