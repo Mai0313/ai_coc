@@ -1,0 +1,14 @@
+{
+  "deploy_from": "top_left",
+  "deploy_start": {
+    "x_pct": 37.5,
+    "y_pct": 12.22
+  },
+  "deploy_end": {
+    "x_pct": 14.38,
+    "y_pct": 42.22
+  },
+  "hero_points": [],
+  "reason": "平鋪：沿著左上外緣把整支軍隊撒開。機器人先下去開路，部隊隔幾秒才跟上；四秒是這份保底方案自己寫死的起步值，看得到基地的計畫應該給一個更好的數字。",
+  "troops_after": 4
+}

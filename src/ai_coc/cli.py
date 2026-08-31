@@ -61,7 +61,15 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--agent-command", default="", help="開視窗後把這句話送進 AI 助手執行")
     sub = parser.add_subparsers(dest="command")
     run = sub.add_parser("attack", help="跑進攻迴圈")
-    run.add_argument("--plan-in", type=Path, help="照這份 JSON 打，完全不呼叫 AI")
+    # Omitted means "whichever village the game is on", which is the honest
+    # default: the game reopens on the one it was closed on. Naming one sails
+    # there first, which is what farming both in one script wants.
+    run.add_argument(
+        "--world",
+        choices=get_args(World),
+        help="打哪個世界,不給就打當下所在的那個;指定的話會先坐船過去",
+    )
+    run.add_argument("--plan-in", type=Path, help="照這份 JSON 打，完全不呼叫 AI，只適用日世界")
     run.add_argument("--plan-out", type=Path, help="把這一場實際用的計畫寫成 JSON")
     run.add_argument("--repeat", type=int, default=1, help="連打幾輪,0 代表打到手動中止為止")
     run.add_argument(
@@ -207,6 +215,7 @@ def _run_command(arguments: argparse.Namespace, run: RunLog) -> int:
                     min_elixir=arguments.min_elixir,
                     min_dark=arguments.min_dark,
                 ),
+                world=arguments.world,
                 rounds=arguments.repeat,
                 shot_every=arguments.shot_every,
                 restart_every=arguments.restart_every,

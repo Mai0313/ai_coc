@@ -12,16 +12,19 @@ import time
 import logging
 from pathlib import Path
 from functools import partial
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Sequence
 
 from pydantic import BaseModel, PrivateAttr
 
 from ai_coc import plans
 from ai_coc.models import (
+    World,
     HeroOrder,
     LootOffer,
+    NightPlan,
     ScoutView,
     AttackPlan,
+    ScreenPoint,
     StockLimits,
     AttackReport,
     DisplayTarget,
@@ -49,6 +52,8 @@ from ai_coc.parsers.scout import (
     counted_cards,
     attack_menu_open,
     idle_disconnected,
+    night_attack_menu,
+    searching_opponent,
 )
 from ai_coc.parsers.world import current_world
 from ai_coc.parsers.boundary import DEPLOY_BOUND, fitted_line, village_box
@@ -67,6 +72,40 @@ ARMY_ATTACK = (1411, 803)
 NEXT_TARGET = (1450, 630)
 END_BATTLE = (118, 670)
 RETURN_HOME = (798, 768)
+
+# The builder base's own way into a battle, which is two buttons where the home
+# village's is three: its 攻擊 sits in the same corner and opens 開始進攻, whose
+# 立即尋找 goes straight to the matchmaker. There is no scout screen at all —
+# no loot to read, nothing to skip, and no search fee to weigh, because the
+# opponent is whoever the matchmaker pairs you with.
+NIGHT_FIND = (1187, 592)
+SEARCH_CANCEL = (798, 786)
+
+# **The builder base matches you against a live player**, so the wait is for
+# somebody else to be looking too rather than for a server to answer. Measured
+# here, one search took five and a half minutes; the player says that is rare.
+# So a search that drags is cancelled and started again rather than sat out —
+# a fresh one gets a fresh pass over whoever is queueing now — and the flag is
+# read throughout, because a stop that takes minutes to show reads as one that
+# did nothing.
+SEARCH_PATIENCE = 150
+SEARCH_ATTEMPTS = 4
+SEARCH_POLL = 3.0
+
+# How often the machine is offered its ability. **The builder base's machine
+# recharges instead of firing once**, so there is no moment to schedule and no
+# per-hero clock to plan: the card is simply tapped for the whole battle and the
+# game takes the taps that are ready. A tap on a card whose unit is not out
+# selects the card and does nothing else, so this is safe on a hero the boundary
+# refused as well.
+ABILITY_POLL = 3.0
+
+# How many times one attack can put an army down. The second is the stage the
+# game opens after a first attack takes the whole base, sending what survived
+# against the opponent's other, smaller one. Nothing here predicts it — the loop
+# asks whether it is back on a village after each stage, so it plays whatever it
+# is offered rather than modelling when the offer comes.
+NIGHT_PHASES = 2
 
 # Card positions come from the frame rather than a constant, because the row
 # depends on the army. Cards are then emptied in passes: `live_cards` reports
@@ -418,7 +457,9 @@ def push_line(
     return [push_out(anchor, steps, centre) for anchor in anchors]
 
 
-def planned_line(plan: AttackPlan | None) -> tuple[tuple[int, int], tuple[int, int]] | None:
+def planned_line(
+    plan: AttackPlan | NightPlan | None,
+) -> tuple[tuple[int, int], tuple[int, int]] | None:
     """The line a plan drew, or None when it is not one the loop can work with.
 
     A line whose midpoint sits on the village is the failure case: every probe
@@ -442,7 +483,9 @@ def planned_line(plan: AttackPlan | None) -> tuple[tuple[int, int], tuple[int, i
     return start, end
 
 
-def deploy_candidates(plan: AttackPlan | None) -> list[tuple[tuple[int, int], tuple[int, int]]]:
+def deploy_candidates(
+    plan: AttackPlan | NightPlan | None,
+) -> list[tuple[tuple[int, int], tuple[int, int]]]:
     """Every line worth trying, best first: what the plan drew, its flank, then the rest.
 
     One flank is not enough. `push_out` runs out of room on a village whose
@@ -555,6 +598,12 @@ def drop_points(
 
 
 PLAN_PROMPT = PROMPTS["attack_plan"]
+# The builder base gets its own, because most of the home village's prompt is
+# about things that do not exist there: spells, their two clocks, and each
+# hero's own ability moment. What is left is the drop line and where the
+# machine goes, and a prompt that spends four paragraphs on absent mechanics is
+# a prompt that invites answers about them.
+NIGHT_PROMPT = PROMPTS["night_plan"]
 
 
 class AttackRunner(BaseModel):
@@ -568,6 +617,13 @@ class AttackRunner(BaseModel):
 
     adb: AdbController
     display: DisplayTarget
+    # Which village to play. The two are different games under one loop: the
+    # home village scouts opponents, weighs their loot against thresholds and
+    # pays a search fee, while the builder base is matched against a live player
+    # with nothing to skip and nothing to weigh. What they share is everything
+    # after the battle opens — the boundary, the drop line, the probing, the
+    # card row — which is why this is a field rather than a second runner.
+    world: World = "day"
     thresholds: LootThresholds
     # Read once per run off the home village, before the search fee is charged.
     stock: StockLimits = StockLimits()
@@ -596,7 +652,7 @@ class AttackRunner(BaseModel):
     # rather than only in the log, which is the number a run is judged on.
     _swapped: int = PrivateAttr(default=0)
     # Whatever `_plan` settled on, kept so a run can be written down and replayed.
-    _played: AttackPlan | None = PrivateAttr(default=None)
+    _played: AttackPlan | NightPlan | None = PrivateAttr(default=None)
     # How far the village has moved on screen since the attack opened, which is
     # only ever the deliberate drag that frees up a flank. Every coordinate the
     # loop holds — the preset flanks, the plan's line and its spell points — is
@@ -605,7 +661,7 @@ class AttackRunner(BaseModel):
     _panned: tuple[int, int] = PrivateAttr(default=(0, 0))
 
     @property
-    def played(self) -> AttackPlan | None:
+    def played(self) -> AttackPlan | NightPlan | None:
         """The plan this run actually used, once one has been settled on."""
         return self._played
 
@@ -618,7 +674,9 @@ class AttackRunner(BaseModel):
         """Points drawn for a centred village, read against wherever the camera is now."""
         return tuple((x + self._panned[0], y + self._panned[1]) for x, y in points)
 
-    def _spots(self, orders: list[HeroOrder], cards: list[int]) -> dict[int, tuple[int, int]]:
+    def _spots(
+        self, points: Sequence[ScreenPoint], cards: list[int]
+    ) -> dict[int, tuple[int, int]]:
         """Where the plan wants each of these cards dropped, keyed by card.
 
         Left to right, one order per card, so a list shorter than the row simply
@@ -636,9 +694,9 @@ class AttackRunner(BaseModel):
         up at (30, 175) with the map spanning x 596 to 1004.
         """
         return {
-            card: push_out(point, 0, self._middle)
-            for card, point in zip(
-                cards, self._onscreen(tuple(order.drop.pixels() for order in orders)), strict=False
+            card: push_out(spot, 0, self._middle)
+            for card, spot in zip(
+                cards, self._onscreen(tuple(point.pixels() for point in points)), strict=False
             )
         }
 
@@ -1343,37 +1401,18 @@ class AttackRunner(BaseModel):
         #
         # Two clocks, because the two kinds of number mean different things. A
         # hero's ability is timed from that hero landing, which is what a queen's
-        # cloak is worth. A spell is timed from the attack opening, because that
-        # is how both are judged on screen and hanging them off the heroes would
-        # move them by however long the army happened to take to go down.
-        rage_after = plan.rage_after if plan else FALLBACK_RAGE
-        freeze_after = plan.freeze_after if plan else FALLBACK_FREEZE
+        # cloak is worth; a spell is timed from the attack opening, and
+        # `_spell_moves` is where that half lives.
         opened = time.monotonic()
-        pending: Moves = []
-        if rages:
-            pending.append((
-                opened + rage_after,
-                f"{len(rages)} rage card(s)",
-                partial(self._rage, rages, rage_path, frame),
-            ))
-        if freezes:
-            pending.append((
-                opened + freeze_after,
-                f"{len(freezes)} freeze card(s)",
-                partial(self._cast, freezes, freeze_targets, frame),
-            ))
-        # Nothing on the clock is allowed to interrupt this. The schedule used to
-        # be offered a turn between one card and the next, because putting the
-        # army down took about as long as the freeze was meant to wait; now that
-        # it takes ten seconds the only battles where a spell comes due mid-
-        # deployment are the ones where the deployment is going badly, and those
-        # are exactly the battles that need finishing rather than interrupting.
-        # Measured live on a flank half inside the boundary: rage fired 21 s in
-        # while a troop card was still draining and the heroes landed at 41 s,
-        # where finishing first would have had them down at about 31 s.
+        pending = self._spell_moves(
+            opened, frame, plan, (rages, rage_path), (freezes, freeze_targets)
+        )
         named, aimed = self._named_heroes(plan, singles)
         lead_down, led = self._drop_singles(
-            vanguard, line, "leading", self._spots(named[:1] if aimed else [], vanguard)
+            vanguard,
+            line,
+            "leading",
+            self._spots([order.drop for order in (named[:1] if aimed else [])], vanguard),
         )
         opener = time.monotonic()
         line = self._spread_troops(troops, anchors, pushed)
@@ -1383,7 +1422,10 @@ class AttackRunner(BaseModel):
         # on rather than the one they started on: the flank moves while they go
         # down, and a hero sent to the old midpoint is sent somewhere refused.
         down, _ = self._drop_singles(
-            followers, line, "hero", self._spots(named[1:] if aimed else named, followers)
+            followers,
+            line,
+            "hero",
+            self._spots([order.drop for order in (named[1:] if aimed else named)], followers),
         )
         landed = time.monotonic()
         # The same answer the drops above were aimed with, and the health bar
@@ -1418,6 +1460,65 @@ class AttackRunner(BaseModel):
                 ),
             ],
         )
+
+    def _spell_moves(
+        self,
+        opened: float,
+        frame: bytes,
+        plan: AttackPlan | None,
+        rage: tuple[list[int], tuple[tuple[int, int], ...]],
+        freeze: tuple[list[int], tuple[tuple[int, int], ...]],
+    ) -> Moves:
+        """Everything the spells wait on, as timed callables for `_run_schedule`.
+
+        Both clocks run from the **attack opening** rather than from a hero
+        landing, because that is how each is judged on screen — rage as the push
+        reaches the outer wall, freeze as it reaches the first line of defences
+        — and hanging them off the heroes would move them by however long the
+        army happened to take to go down.
+        """
+        rages, rage_path = rage
+        freezes, freeze_targets = freeze
+        rage_after = plan.rage_after if plan else FALLBACK_RAGE
+        freeze_after = plan.freeze_after if plan else FALLBACK_FREEZE
+        pending: Moves = []
+        if rages:
+            # **Two entries, and the first one is why the bottle lands on time.**
+            # `_onto_army` needs two frames a moment apart to see where the
+            # fighting has got to, and taking both of them at cast time put all
+            # of that after the moment the plan asked for: measured over four
+            # recorded battles, plans asking for rage at 12, 15, 12 and 12
+            # seconds had it land at 18, 22, 20 and 19, of which three to four
+            # were this. The schedule is already a list of timed callables, so
+            # the earlier frame is simply one more of them, due `MOTION_GAP`
+            # ahead — no new mechanism, and the cast keeps one capture.
+            sighting: list[bytes] = []
+            pending.append((
+                opened + rage_after - MOTION_GAP,
+                "rage sighting",
+                lambda: sighting.append(self._frame("before-front")),
+            ))
+            pending.append((
+                opened + rage_after,
+                f"{len(rages)} rage card(s)",
+                partial(self._rage, rages, rage_path, frame, sighting),
+            ))
+        if freezes:
+            pending.append((
+                opened + freeze_after,
+                f"{len(freezes)} freeze card(s)",
+                partial(self._cast, freezes, freeze_targets, frame),
+            ))
+        # Nothing on the clock is allowed to interrupt this. The schedule used to
+        # be offered a turn between one card and the next, because putting the
+        # army down took about as long as the freeze was meant to wait; now that
+        # it takes ten seconds the only battles where a spell comes due mid-
+        # deployment are the ones where the deployment is going badly, and those
+        # are exactly the battles that need finishing rather than interrupting.
+        # Measured live on a flank half inside the boundary: rage fired 21 s in
+        # while a troop card was still draining and the heroes landed at 41 s,
+        # where finishing first would have had them down at about 31 s.
+        return pending
 
     def _named_heroes(
         self, plan: AttackPlan | None, singles: list[int]
@@ -1511,7 +1612,13 @@ class AttackRunner(BaseModel):
         logger.info("Played the %s, %.0fs into the attack", what, time.monotonic() - opened)
         return True
 
-    def _rage(self, cards: list[int], targets: tuple[tuple[int, int], ...], frame: bytes) -> None:
+    def _rage(
+        self,
+        cards: list[int],
+        targets: tuple[tuple[int, int], ...],
+        frame: bytes,
+        sighting: list[bytes],
+    ) -> None:
         """Cast rage over the army rather than over the ground it started from.
 
         The plan draws its rage points while the scout screen is still up, which
@@ -1526,17 +1633,32 @@ class AttackRunner(BaseModel):
         bottles from overlapping and the spread is what covers a group that
         arrived along a line. Only where that shape sits comes off the screen.
         """
-        self._cast(cards, self._onto_army(targets), frame)
+        self._cast(cards, self._onto_army(targets, sighting), frame)
 
-    def _onto_army(self, targets: tuple[tuple[int, int], ...]) -> tuple[tuple[int, int], ...]:
+    def _onto_army(
+        self, targets: tuple[tuple[int, int], ...], sighting: list[bytes]
+    ) -> tuple[tuple[int, int], ...]:
         """The same points slid across so their middle sits on the fighting.
 
         Unreadable leaves them where the plan put them: a bad shift is worse
         than a stale one, since the plan at least aimed at the village.
+
+        **The earlier frame is taken by the schedule rather than here, and that
+        is worth three to four seconds of every attack.** Both frames used to be
+        captured at cast time with `MOTION_GAP` between them — all of it *after*
+        the moment the plan asked for the bottle. Measured over four recorded
+        battles, plans asking for rage at 12, 15, 12 and 12 seconds had it land
+        at 18, 22, 20 and 19, and this call was three to four of the gap every
+        time. The frame the deployment ended on is already the "before" the
+        motion needs, and the wait between it and the cast is the schedule's own.
+        A sighting the schedule never got to take — the battle ended first —
+        leaves the points where the plan put them, which is the same answer an
+        unreadable field gets.
         """
-        before = self._frame("before-front")
-        time.sleep(MOTION_GAP)
-        centre = army_centre(before, self._frame("front"))
+        if not sighting:
+            logger.info("No sighting was taken; the rage stays where the plan drew it")
+            return targets
+        centre = army_centre(sighting[-1], self._frame("front"))
         if centre is None:
             return targets
         drift = (
@@ -1637,8 +1759,308 @@ class AttackRunner(BaseModel):
         logger.warning("The whole battle passed without any loot moving")
         return f"{reason}，但整場戰利品沒有變化，部隊可能沒有成功部署"
 
+    def _open_night_attack(self) -> bytes | None:
+        """Get to the builder base's 開始進攻 dialog, and hand back the village frame.
+
+        The same shape as `_open_attack_menu` and for the same reasons, with one
+        addition: the game reopens on whichever village it was closed on, so a
+        run asked for this one can find the other. `back` is never pressed here
+        either — on a village it raises 確定退出遊戲嗎, and the 攻擊 button in the
+        corner is not covered by anything a stray tap can open.
+        """
+        for _ in range(HOME_ATTEMPTS):
+            home = self._frame("home")
+            if idle_disconnected(home):
+                logger.info("Idle-disconnect dialog is up; restarting the game")
+                self.display = restart_game(self.adb, self.display)
+                continue
+            if battle_over(home):
+                logger.info("The last battle's result screen is still up; leaving it")
+                self._leave_result()
+                continue
+            if current_world(home) == "day":
+                logger.warning("The game is on the home village; sailing over before attacking")
+                if cross(self.adb, self.display, "night") != "night":
+                    logger.warning("The crossing never landed; this round has no base to open")
+                    return None
+                continue
+            self._tap(HOME_ATTACK)
+            time.sleep(2)
+            if night_attack_menu(self._frame("night-menu")):
+                return home
+            time.sleep(HOME_RETRY_DELAY)
+        return None
+
+    def _find_opponent(self) -> bytes | None:
+        """Hold the matchmaker open until a battle opens, restarting it if it drags.
+
+        **The wait is for another live player**, not for a server, which is why
+        it can run to minutes and why cancelling is worth doing: a fresh search
+        gets a fresh pass over whoever is queueing now. Nothing is lost by it
+        either — the builder base charges no search fee, so a cancelled search
+        costs only the seconds it ran for.
+
+        The battle is recognised by the card row rather than by the matchmaker
+        going away, because the two are not the same moment: the screen fades
+        out over the battle it is opening, and a frame caught mid-fade has
+        neither on it.
+        """
+        for attempt in range(SEARCH_ATTEMPTS):
+            self._tap(NIGHT_FIND)
+            opened = time.monotonic()
+            deadline = opened + SEARCH_PATIENCE
+            while time.monotonic() < deadline:
+                time.sleep(SEARCH_POLL)
+                if self.should_stop():
+                    logger.info("Stop pressed while the matchmaker was still looking")
+                    self._tap(SEARCH_CANCEL)
+                    return None
+                png = self._frame("searching")
+                if not searching_opponent(png) and card_groups(png):
+                    logger.info(
+                        "Matched after %.0fs on search %d", time.monotonic() - opened, attempt + 1
+                    )
+                    return png
+            logger.info("No opponent in %.0fs; cancelling and searching again", SEARCH_PATIENCE)
+            self._tap(SEARCH_CANCEL)
+            time.sleep(2)
+        logger.warning("Nobody was matched in %d searches", SEARCH_ATTEMPTS)
+        return None
+
+    def _night_plan(self, frame: bytes) -> NightPlan:
+        """The tactic for this opponent: the AI's, or the flat one written down.
+
+        There is no "plan handed in" branch the way the home village has one:
+        the builder base has no scout screen to decide on, so a run that wants a
+        fixed tactic is a run that wants the flat plan, and that is a file.
+        """
+        if self.ai is None:
+            self._played = plans.night_flat()
+            return self._played
+        try:
+            plan = self.ai.generate_structured(NIGHT_PROMPT, NightPlan, frame, PLAN_TIMEOUT)
+        except Exception:
+            logger.warning("Night planning failed; falling back to the flat plan", exc_info=True)
+            self._played = plans.night_flat()
+            return self._played
+        self._played = plan
+        logger.info(
+            "Night plan: from %s, line %s to %s, %d machine point(s), troops %ds behind (%s)",
+            plan.deploy_from,
+            plan.deploy_start,
+            plan.deploy_end,
+            len(plan.hero_points),
+            plan.troops_after,
+            plan.reason,
+        )
+        return plan
+
+    def _deploy_night(self, frame: bytes) -> list[int]:
+        """Put the whole army down one flank; answers which machine cards landed.
+
+        Everything here is the home village's own machinery — the camera, the
+        boundary fit, the probing, the passes — with the two things the builder
+        base does not have taken out. There are no spells to hold back and no
+        ability moment to schedule, so what is left after the drops is the
+        clock-free part of an attack: the army goes down and the machine is
+        offered its ability until the battle ends.
+
+        Which cards are troops is read rather than positional. The home village
+        puts its heroes after the troops and the builder base puts its machine
+        first, so a group index would be wrong in one of the two — but the `xN`
+        corner means the same thing in both, and only troops carry one.
+        """
+        frame = self._settle_camera(self._settle_zoom(frame))
+        groups = card_groups(frame)
+        if not groups:
+            logger.warning("No cards found on the battle row; nothing to deploy")
+            return []
+        slots = [slot for group in groups for slot in group]
+        troops = counted_cards(frame, slots)
+        machines = [slot for slot in slots if slot not in troops]
+        logger.info("%d troop card(s), %d machine card(s)", len(troops), len(machines))
+        if not troops:
+            logger.warning("Every card on the row reads as a machine; nothing to spread")
+            return []
+        plan = self._night_plan(frame)
+        battle: bytes | None = frame
+        for preset in deploy_candidates(plan):
+            battle = self._clear_flank(battle, preset)
+            flank = self._onscreen(preset)
+            anchors = (
+                fitted_line(battle, flank[0], flank[1], centre=self._middle) if battle else None
+            ) or flank
+            pushed = self._usable_line(troops, anchors)
+            if pushed is not None:
+                break
+        else:
+            logger.warning("Every flank was refused; the boundary reaches past the playfield")
+            return []
+        # **The machine goes in ahead of the troops, which is the other way
+        # round from the home village.** There the siege machine opens the path
+        # and the heroes follow the army in; here the machine *is* the army's
+        # cover, so it lands first and the troops follow once it has walked far
+        # enough to be taking the fire. How long that is comes off the plan
+        # rather than out of a constant, for the reason every other clock in
+        # this project moved onto one: it is a question about the base in the
+        # frame, and only something looking at the base can answer it.
+        #
+        # The probing above already put three troops down, which is the price of
+        # knowing the flank is usable at all — the same three the home village
+        # spends, and a cheaper mistake than a machine refused on an untested
+        # line.
+        line = deploy_line(LINE_POINTS, *push_line(anchors, pushed, self._middle))
+        landed, _ = self._drop_singles(
+            machines, line, "machine", self._spots(plan.hero_points, machines)
+        )
+        self._hold(plan.troops_after, landed)
+        self._spread_night(troops, anchors, pushed)
+        return landed
+
+    def _offer_ability(self, machines: list[int]) -> None:
+        """One tap on each machine card, which the game takes if the ability is ready."""
+        if machines:
+            self.adb.tap_many([(slot, CARD_ROW_Y) for slot in machines], self.display)
+
+    def _hold(self, seconds: int, machines: list[int]) -> None:
+        """Wait out the head start the plan gave the machine, using it rather than sleeping.
+
+        The seconds are the plan's; what happens inside them is not a delay of
+        this loop's own invention but the same offer `_wait_out_night` makes for
+        the rest of the battle. A machine that lands with its ability charged
+        should be spending it while it walks.
+        """
+        if seconds <= 0:
+            return
+        logger.info("Holding the troops %ds while the machine goes in", seconds)
+        until = time.monotonic() + seconds
+        while (remaining := until - time.monotonic()) > 0:
+            self._offer_ability(machines)
+            time.sleep(min(ABILITY_POLL, remaining))
+
+    def _spread_night(
+        self, troops: list[int], anchors: tuple[tuple[int, int], ...], pushed: int
+    ) -> list[tuple[int, int]]:
+        """Empty the troop cards along the flank; returns the line they went down on.
+
+        **`live_cards` does not hold in the builder base, and that is what this
+        exists for.** In the home village a card goes greyscale the moment it is
+        empty, which is how `_spread_troops` knows to stop. Here it greys when
+        the troops it put out *die*: measured over one recorded attack, all five
+        cards read `0x` on the frame after the first pass while every one of
+        them was still in colour, and they went grey one at a time over the next
+        thirty seconds as the fighting killed them.
+
+        Taken for "still holding something" that cost four more passes tapping
+        into empty cards, and worse — each of those passes drained nothing, and
+        `_spread_troops` answers a pass that drained nothing by pushing the
+        flank further out. So the flank walked 280 px away from a village the
+        army had already reached.
+
+        What is used instead is the pass itself. A pass taps `DROPS_PER_PASS`
+        per card against a builder base card that holds about four, so a pass
+        that drained nothing is an empty row rather than a refused flank — and
+        the flank was probed before any of this started. A card holding more
+        than one pass simply takes another.
+        """
+        line = deploy_line(LINE_POINTS, *push_line(anchors, pushed, self._middle))
+        shot = self._frame("before-pass")
+        for index in range(DEPLOY_PASSES):
+            for card, slot in enumerate(troops):
+                drops = drop_points(line, index * len(troops) + card, DROPS_PER_PASS)
+                self.adb.tap_many([(slot, CARD_ROW_Y), *drops], self.display)
+            time.sleep(DROP_SETTLE)
+            before, shot = shot, self._frame("pass")
+            drained = card_drained(before, shot, troops)
+            logger.info("Pass %d drained %d of %d card(s)", index + 1, len(drained), len(troops))
+            if not drained:
+                return line
+        logger.info("The row still had something after %d passes", DEPLOY_PASSES)
+        return line
+
+    def _wait_out_night(self, machines: list[int]) -> None:
+        """Sit through the battle, offering every machine its ability on each pass.
+
+        Blind rather than read, and that is the mode's own shape rather than a
+        shortcut: the ability recharges for the whole battle, so there is no
+        single moment worth finding and a tap the game is not ready for costs
+        one `input` call. A card whose unit never made it onto the field answers
+        the same tap by selecting itself, which does nothing at all.
+        """
+        deadline = time.monotonic() + BATTLE_TIMEOUT
+        while time.monotonic() < deadline:
+            if self._battle_ended("night-battle"):
+                return
+            self._offer_ability(machines)
+            time.sleep(ABILITY_POLL)
+        logger.warning("The battle never ended; leaving it to the result screen")
+
+    def _next_stage(self) -> bytes | None:
+        """Leave the stage that just ended, and say whether the game opened another.
+
+        **Nothing here predicts the second stage.** The game offers it after a
+        first attack takes the whole base, sending what survived against the
+        opponent's other one, and the condition for that is the sort of rule
+        that changes between releases. So this asks the only question that
+        cannot go stale: are we back on a village. Anything else with a card row
+        on it is another stage to play.
+        """
+        self._leave_result()
+        png = self._frame("after-stage")
+        if current_world(png) is not None:
+            return None
+        if card_groups(png):
+            logger.info("A second stage opened; the army goes down again")
+            return png
+        return None
+
+    def _run_night(self) -> AttackReport:
+        """One builder base attack, start to finish.
+
+        No thresholds and no skipping: the matchmaker picks the opponent and
+        there is nothing to weigh, because the attack is free and both outcomes
+        pay — a win brings home more gold and a loss more elixir. The storage
+        limits are not asked either, and deliberately: the ones in the config
+        file are the home village's numbers, and the builder base's storages are
+        a different size entirely, so applying them here would stand a run down
+        against a ceiling that belongs to another village.
+        """
+        self._panned = (0, 0)
+        self._played = None
+        home = self._open_night_attack()
+        if home is None:
+            logger.warning("The builder base's attack dialog never opened")
+            return AttackReport(
+                world="night", message="畫面不在建築大師基地，沒有開啟攻擊選單就停手"
+            )
+        battle = self._find_opponent()
+        if battle is None:
+            return AttackReport(world="night", message="等不到對手，已放棄這一輪搜尋")
+        played = 0
+        for _ in range(NIGHT_PHASES):
+            machines = self._deploy_night(battle)
+            played += 1
+            self._wait_out_night(machines)
+            following = self._next_stage()
+            if following is None:
+                break
+            battle = following
+        return AttackReport(
+            world="night",
+            phases=played,
+            message=f"已進攻並回營，共出兵 {played} 次" if played else "沒有成功部署任何部隊",
+        )
+
     def run(self) -> AttackReport:
+        """One attack on whichever village this runner was pointed at."""
+        if self.world == "night":
+            logger.info("Builder base attack run starts")
+            return self._run_night()
         logger.info("Attack run starts, thresholds=%s", self.thresholds.model_dump())
+        return self._run_day()
+
+    def _run_day(self) -> AttackReport:
+        """One home village attack: scout opponents, weigh their loot, fight one."""
         # The same runner plays round after round, and the loot it last saw is
         # what `_wait_out_battle` judges the battle on. Carried over, a battle
         # short enough that nothing ever read its panel would be judged against

@@ -112,6 +112,8 @@ from ai_coc.parsers.scout import (
     army_strength,
     counted_cards,
     attack_menu_open,
+    night_attack_menu,
+    searching_opponent,
 )
 from ai_coc.parsers.world import info_badges, current_world
 from ai_coc.ui.main_window import LIVE_INTERVAL, MainWindow
@@ -338,6 +340,186 @@ class WorldTests(unittest.TestCase):
         Image.new("RGB", (800, 450)).save(small, format="PNG")
         with pytest.raises(ValueError, match="1600x900"):
             current_world(small.getvalue())
+
+
+class NightAttackTests(unittest.TestCase):
+    """The builder base half of the attack loop, and the two screens only it has."""
+
+    def _runner(self) -> AttackRunner:
+        return AttackRunner(
+            adb=AdbController(endpoint=AdbEndpoint(port=16384)),
+            display=DisplayTarget(logical_id="1", physical_id="2"),
+            world="night",
+            thresholds=LootThresholds(),
+        )
+
+    def test_the_attack_dialog_needs_its_panel_as_well_as_its_button(self) -> None:
+        """A village is mostly grass, and the button it offers is green.
+
+        Measured through the button's own box, a home village battlefield reads
+        up to 0.69 of button green against the dialog's own 0.63 — so the green
+        alone is not a screen. What no battlefield has behind it is the dialog's
+        cream panel.
+        """
+        assert night_attack_menu((FRAMES / "night_menu.png").read_bytes())
+        for other in ("night_searching", "night_cards", "world_day", "attack_menu"):
+            assert not night_attack_menu((FRAMES / f"{other}.png").read_bytes()), other
+
+    def test_the_matchmaker_is_read_off_its_cancel_button(self) -> None:
+        """It has no timer and no other feature; the red button is the whole screen."""
+        assert searching_opponent((FRAMES / "night_searching.png").read_bytes())
+        for other in ("night_menu", "night_cards", "world_day", "battle_result"):
+            assert not searching_opponent((FRAMES / f"{other}.png").read_bytes()), other
+
+    def test_the_card_row_puts_the_machine_first_where_the_home_village_puts_it_last(self) -> None:
+        """Which is why the split is read off the `xN` corner rather than off a group index.
+
+        The home village orders its row troops-then-heroes and the builder base
+        leads with the machine, so a positional split is wrong in one of the
+        two. Only troops carry a count in either.
+        """
+        png = (FRAMES / "night_cards.png").read_bytes()
+        groups = card_groups(png)
+        assert groups == [[164], [307, 433, 560, 686, 813]]
+        slots = [slot for group in groups for slot in group]
+        assert counted_cards(png, slots) == [307, 433, 560, 686, 813]
+
+    def test_the_builder_base_count_fails_rather_than_reading_wrongly(self) -> None:
+        """It writes `4x` where the home village writes `x4`, half as big again.
+
+        Its digits miss every template far enough that the 4 comes back as a 9,
+        which `COUNT_DIGIT_TOLERANCE` would accept. None costs the fallback tap
+        count; a 9 costs the burst that follows it.
+        """
+        png = (FRAMES / "night_cards.png").read_bytes()
+        assert all(card_count(png, slot) is None for slot in (307, 433, 560, 686, 813))
+
+    def test_the_machine_goes_in_ahead_of_the_troops(self) -> None:
+        """The other way round from the home village, where the heroes follow the army.
+
+        Here the machine is the army's cover, so it lands first and the troops
+        follow once it has walked into the fire. How long that is comes off the
+        plan, which is why `troops_after` is required on it.
+        """
+        runner = self._runner()
+        order: list[str] = []
+        with (
+            patch.object(AttackRunner, "_settle_camera", return_value=b""),
+            patch.object(AttackRunner, "_settle_zoom", return_value=b""),
+            patch.object(attack, "card_groups", return_value=[[164], [307]]),
+            patch.object(attack, "counted_cards", return_value=[307]),
+            patch.object(AttackRunner, "_night_plan", return_value=plans.night_flat()),
+            patch.object(AttackRunner, "_clear_flank", return_value=b""),
+            patch.object(attack, "fitted_line", return_value=None),
+            patch.object(AttackRunner, "_usable_line", return_value=0),
+            patch.object(
+                AttackRunner,
+                "_drop_singles",
+                side_effect=lambda *a, **k: (order.append("machine"), ([164], [164]))[1],
+            ),
+            patch.object(AttackRunner, "_hold", side_effect=lambda *a: order.append("hold")),
+            patch.object(
+                AttackRunner, "_spread_night", side_effect=lambda *a: order.append("troops") or []
+            ),
+        ):
+            assert runner._deploy_night(b"") == [164]
+        assert order == ["machine", "hold", "troops"]
+
+    def test_the_flat_plan_loads_and_carries_no_spells(self) -> None:
+        plan = plans.night_flat()
+        assert plan.deploy_from == "top_left"
+        assert plan.troops_after > 0
+        assert not plan.hero_points
+        assert deploy_candidates(plan)[0] == (plan.deploy_start.pixels(), plan.deploy_end.pixels())
+
+    def test_a_stage_that_ends_on_a_village_ends_the_round(self) -> None:
+        """The ordinary attack: one deployment, and the game goes home afterwards."""
+        runner = self._runner()
+        with (
+            patch.object(AttackRunner, "_open_night_attack", return_value=b""),
+            patch.object(AttackRunner, "_find_opponent", return_value=b""),
+            patch.object(AttackRunner, "_deploy_night", return_value=[164]) as deployed,
+            patch.object(AttackRunner, "_wait_out_night"),
+            patch.object(AttackRunner, "_next_stage", return_value=None),
+        ):
+            report = runner.run()
+        assert (report.world, report.phases) == ("night", 1)
+        assert deployed.call_count == 1
+
+    def test_a_second_stage_puts_the_army_down_again(self) -> None:
+        """**Nothing predicts it.** The game offers a second base after a first attack
+
+        takes the whole of one, and the condition for that is the sort of rule
+        that changes between releases — so the loop asks the question that
+        cannot go stale, which is whether it is back on a village, and plays
+        whatever else it is shown.
+        """
+        runner = self._runner()
+        with (
+            patch.object(AttackRunner, "_open_night_attack", return_value=b""),
+            patch.object(AttackRunner, "_find_opponent", return_value=b""),
+            patch.object(AttackRunner, "_deploy_night", return_value=[164]) as deployed,
+            patch.object(AttackRunner, "_wait_out_night"),
+            patch.object(AttackRunner, "_next_stage", side_effect=[b"", None]),
+        ):
+            report = runner.run()
+        assert report.phases == 2
+        assert deployed.call_count == 2
+
+    def test_the_stages_are_capped_even_if_the_game_keeps_offering(self) -> None:
+        runner = self._runner()
+        with (
+            patch.object(AttackRunner, "_open_night_attack", return_value=b""),
+            patch.object(AttackRunner, "_find_opponent", return_value=b""),
+            patch.object(AttackRunner, "_deploy_night", return_value=[]),
+            patch.object(AttackRunner, "_wait_out_night"),
+            patch.object(AttackRunner, "_next_stage", return_value=b""),
+        ):
+            report = runner.run()
+        assert report.phases == attack.NIGHT_PHASES
+
+    def test_a_pass_that_drained_nothing_ends_the_row_rather_than_moving_the_flank(self) -> None:
+        """`live_cards` is the home village's spent-card test and does not hold here.
+
+        A builder base card greys when the troops it put out die, not when it
+        empties: measured over one recorded attack, all five read `0x` on the
+        frame after the first pass while every one was still in colour, and they
+        greyed one at a time over the next thirty seconds. Believed, that cost
+        four more passes into empty cards — and since each drained nothing, the
+        flank was pushed 280 px away from a village the army had already reached.
+        """
+        runner = self._runner()
+        with (
+            patch.object(attack.time, "sleep"),
+            patch.object(runner, "_frame", return_value=b""),
+            patch.object(attack, "card_drained", side_effect=[[307], []]),
+            patch.object(AdbController, "tap_many") as tapped,
+        ):
+            runner._spread_night([307, 433], ((600, 110), (230, 380)), 0)
+        # Two cards over two passes: the one that drained, and the one that
+        # proved the row empty. No third, and no pushed-out line.
+        assert tapped.call_count == 4
+
+    def test_a_row_that_keeps_draining_keeps_getting_passes(self) -> None:
+        runner = self._runner()
+        with (
+            patch.object(attack.time, "sleep"),
+            patch.object(runner, "_frame", return_value=b""),
+            patch.object(attack, "card_drained", return_value=[307]),
+            patch.object(AdbController, "tap_many") as tapped,
+        ):
+            runner._spread_night([307], ((600, 110), (230, 380)), 0)
+        assert tapped.call_count == attack.DEPLOY_PASSES
+
+    def test_nobody_matched_is_reported_rather_than_deployed_into(self) -> None:
+        runner = self._runner()
+        with (
+            patch.object(AttackRunner, "_open_night_attack", return_value=b""),
+            patch.object(AttackRunner, "_find_opponent", return_value=None),
+            patch.object(AttackRunner, "_deploy_night") as deployed,
+        ):
+            report = runner.run()
+        assert (report.phases, deployed.call_count) == (0, 0)
 
 
 class CrossingTests(unittest.TestCase):
@@ -1532,7 +1714,7 @@ class AttackTests(unittest.TestCase):
             patch.object(attack, "army_centre", return_value=centre),
             patch.object(attack.time, "sleep"),
         ):
-            return runner._onto_army(targets)
+            return runner._onto_army(targets, [b""])
 
     def test_the_rage_pattern_slides_onto_the_fighting(self) -> None:
         """The plan draws the shape; the screen says where the army has got to."""
@@ -1546,6 +1728,14 @@ class AttackTests(unittest.TestCase):
         """A bad shift is worse than a stale one: the plan at least aimed at the village."""
         targets = ((500, 300), (700, 420))
         assert self._aimed(targets, None) == targets
+
+    def test_a_sighting_the_schedule_never_took_leaves_them_too(self) -> None:
+        """The earlier frame is one more timed move, so a battle that ended first skips it."""
+        runner = self._runner()
+        targets = ((500, 300), (700, 420))
+        with patch.object(AttackRunner, "_frame", return_value=b"") as framed:
+            assert runner._onto_army(targets, []) == targets
+        assert framed.call_count == 0
 
     def test_a_planned_bottle_landing_inside_another_is_dropped(self) -> None:
         """The planner is given the footprint and overlaps its points regardless.
@@ -2046,6 +2236,7 @@ class StopFlagTests(unittest.TestCase):
             with (
                 patch.object(commands, "STOP_FLAG", flag),
                 patch.object(commands, "_controller", side_effect=RuntimeError),
+                patch.object(commands, "current_world", return_value="day"),
                 pytest.raises(RuntimeError),
             ):
                 commands.attack(AttackOptions())
@@ -2076,6 +2267,7 @@ class StopFlagTests(unittest.TestCase):
             with (
                 patch.object(commands, "STOP_FLAG", flag),
                 patch.object(commands, "_controller"),
+                patch.object(commands, "current_world", return_value="day"),
                 patch.object(commands, "_planner", return_value=None),
                 patch.object(commands.ConfigStore, "load", return_value=AppConfig()),
                 patch.object(commands, "FrameTicker"),
@@ -2094,6 +2286,7 @@ class StopFlagTests(unittest.TestCase):
             with (
                 patch.object(commands, "STOP_FLAG", flag),
                 patch.object(commands, "_controller"),
+                patch.object(commands, "current_world", return_value="day"),
                 patch.object(commands, "WallRunner") as runner,
             ):
                 runner.return_value.run.return_value = report
@@ -2116,6 +2309,7 @@ class StopFlagTests(unittest.TestCase):
             with (
                 patch.object(commands, "STOP_FLAG", flag),
                 patch.object(commands, "_controller"),
+                patch.object(commands, "current_world", return_value="day"),
                 patch.object(commands, "WallRunner") as runner,
             ):
                 runner.return_value.run.side_effect = asked_mid_run
@@ -2134,6 +2328,7 @@ class StopFlagTests(unittest.TestCase):
             with (
                 patch.object(commands, "STOP_FLAG", flag),
                 patch.object(commands, "_controller"),
+                patch.object(commands, "current_world", return_value="day"),
                 patch.object(commands, "_planner", return_value=None),
                 patch.object(commands.ConfigStore, "load", return_value=AppConfig()),
                 patch.object(commands, "FrameTicker"),
@@ -2153,11 +2348,11 @@ class RestartEveryTests(unittest.TestCase):
 
     @staticmethod
     def _fought() -> MagicMock:
-        return MagicMock(stock_full=False, attacked=MagicMock())
+        return MagicMock(stock_full=False, attacked=MagicMock(), phases=0)
 
     @staticmethod
     def _idle() -> MagicMock:
-        return MagicMock(stock_full=False, attacked=None)
+        return MagicMock(stock_full=False, attacked=None, phases=0)
 
     def _play(
         self,
@@ -2169,6 +2364,7 @@ class RestartEveryTests(unittest.TestCase):
         """Run the loop over a fixed list of rounds and hand back the restart mock."""
         with (
             patch.object(commands, "_controller"),
+            patch.object(commands, "current_world", return_value="day"),
             patch.object(commands, "_planner", return_value=None),
             patch.object(
                 commands.ConfigStore, "load", return_value=AppConfig(restart_every=every)
@@ -2264,6 +2460,7 @@ class RestartEveryTests(unittest.TestCase):
         """
         with (
             patch.object(commands, "_controller"),
+            patch.object(commands, "current_world", return_value="day"),
             patch.object(commands, "_planner", return_value=None),
             patch.object(commands.ConfigStore, "load", return_value=AppConfig(restart_every=1)),
             patch.object(commands, "FrameTicker"),
@@ -2378,6 +2575,7 @@ class OnlineTests(unittest.TestCase):
         with (
             patch.object(commands, "STOP_FLAG", self.flag),
             patch.object(commands, "_controller", return_value=adb),
+            patch.object(commands, "current_world", return_value="day"),
             patch.object(commands.ConfigStore, "load", return_value=AppConfig()),
             patch.object(commands, "_rest", return_value=False) as rest,
         ):

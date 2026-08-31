@@ -756,12 +756,60 @@ class PlayedPlan(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     round: int
-    plan: AttackPlan
+    # Either village's tactic. They are different documents — the builder base
+    # has no spells and no ability clock — and the round number beside them is
+    # what says which one a line belongs to, since `result.json` records the
+    # village per round.
+    plan: AttackPlan | NightPlan
+
+
+class NightPlan(BaseModel):
+    """How to attack one builder base opponent: a drop line and where each hero goes.
+
+    Deliberately not an `AttackPlan` with the spell fields left empty. The
+    builder base has no spells at all, so `rage_points`, `freeze_points` and
+    both of their clocks would be fields nothing could ever fill — and a
+    required field a planner cannot answer is how a call gets thrown away.
+
+    It carries no ability timing either, and that is the mode's own rule rather
+    than an omission: the builder base's machine recharges its ability for the
+    whole battle instead of firing once, so there is no moment to name. The loop
+    offers it the tap on every pass and the game takes the ones that are ready.
+    """
+
+    deploy_from: Literal["top_left", "top_right", "bottom_left", "bottom_right"] = "top_left"
+    # Required for the reason `AttackPlan`'s are: with a default they are
+    # optional in the JSON schema, and a planner that leaves one out has drawn
+    # half a line, which is no line.
+    deploy_start: ScreenPoint
+    deploy_end: ScreenPoint
+    # Left to right, matching the cards on the row that carry no `xN` — the
+    # machine, and the copter beside it once the base is high enough for one.
+    hero_points: list[ScreenPoint]
+    # How long after the machine lands the troops follow it, in seconds.
+    #
+    # **The machine goes first here, where the home village's heroes go last**,
+    # and this is the number that says how much of a head start it gets. It is
+    # the one clock on this plan, and it is on the plan rather than in the code
+    # for the reason every other clock moved out of the settings file: what it
+    # is really asking is how far the machine has to walk before the troops are
+    # worth committing, which is a property of the base in the frame and of
+    # nothing else. Required, so a planner cannot quietly leave it out and have
+    # the loop fall back to a number nobody chose.
+    troops_after: int = Field(ge=0, le=60)
+    reason: str = ""
 
 
 class AttackReport(BaseModel):
     """What one run of the attack loop did, for the automation log."""
 
+    # Which village it played, because the two are different games under one
+    # command and a report that does not say is a report nobody can place.
+    world: World = "day"
+    # How many times the army went down. More than one is the builder base's
+    # second stage, which the game only offers after a first attack takes the
+    # whole base; 0 is a round that never deployed.
+    phases: int = 0
     skipped: int = 0
     # The opponent that was fought, as its scout screen advertised it — what was
     # **on offer**, not what came home. None means no battle was fought at all,
@@ -791,6 +839,13 @@ class AttackOptions(BaseModel):
     # path and holds whichever round went last; this is the whole series.
     # None only for a caller with no run directory to write into.
     plan_log: Path | None = None
+    # Which village to play. **None means whichever one is up**, which is the
+    # default because it is the honest one: the game reopens on the village it
+    # was closed on, so a run that insisted on a village would refuse half the
+    # time for no reason. Naming one crosses to it first, and that is what a
+    # scripted night of farming both wants — otherwise a game left on the
+    # builder base has the whole series quietly playing the wrong one.
+    world: World | None = None
     minimums: LootOverrides = LootOverrides()
     # 0 keeps going until it is interrupted, which is what watching the loop play
     # needs: a tactic is judged over a run of battles rather than one.
