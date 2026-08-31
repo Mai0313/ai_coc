@@ -221,12 +221,15 @@ FALLBACK_FREEZE = 30
 # pixels and the ambient shimmer scale with it.
 MOTION_GAP = 1.5
 
-# Between selecting a one-off card and placing what it holds. It was 0.6 on the
-# reasoning that a hero gets one attempt where a troop card is tapped repeatedly,
-# so a swallowed tap costs the whole hero. Measured against a live battle, a
-# single burst that selected and placed the siege machine and all four heroes at
-# 0.15 put every one of the five on the field.
-SINGLE_DROP_DELAY = 0.15
+# Between selecting a one-off card and placing what it holds, and it is now
+# nothing. It was 0.6, then 0.15 on a live burst that put the siege machine and
+# all four heroes on the field, and now 0 for the reason `TAP_GAP` is: the
+# spacing the sleeps were guarding against turned out not to matter, measured on
+# the builder base where five cards emptied on exactly four taps with no gap at
+# all. What makes it safe here in particular is that `_drop_singles` reads the
+# cards afterwards and offers another spot to whatever the game did not take, so
+# a swallowed tap costs a retry rather than a hero.
+SINGLE_DROP_DELAY = 0.0
 # Selecting a spell opens a radius indicator that has to be up before a
 # placement lands: measured live, 0.6 s goes through where the 0.1 a troop is
 # happy with does not. Only the selection is slow, though — the card stays
