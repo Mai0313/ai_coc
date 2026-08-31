@@ -115,6 +115,7 @@ from ai_coc.parsers.scout import (
     counted_cards,
     attack_menu_open,
     night_attack_menu,
+    read_builder_stock,
     searching_opponent,
 )
 from ai_coc.parsers.world import info_badges, current_world
@@ -293,6 +294,17 @@ class WorldTests(unittest.TestCase):
 
     def test_the_home_village_carries_three_plates(self) -> None:
         assert current_world((FRAMES / "world_day.png").read_bytes()) == "day"
+
+    def test_the_builder_base_storages_are_read_two_rows_deep(self) -> None:
+        """Three would read the gems bar, which sits at exactly the dark row's y.
+
+        Measured, a builder base holding 10 152 gems reports `dark=410152`
+        through `read_stock`, the green `+` beside the number reading as a
+        leading 4. Here `dark` is 0, which `StockLimits` treats as unwatched.
+        """
+        assert read_builder_stock((FRAMES / "world_night.png").read_bytes()) == VillageStock(
+            gold=574030, elixir=589419, dark=0
+        )
 
     def test_the_builder_base_carries_two(self) -> None:
         """It has no 護盾 plate, and a real-time mode structurally cannot grow one."""

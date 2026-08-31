@@ -607,16 +607,6 @@ def attack(options: AttackOptions) -> AttackSeries:
     # one. This is the same wait a restart already does, and it leaves the camera
     # at the far zoom on the way past, which every coordinate below wants anyway.
     display = _settle_game(adb, WORLD_SETTLE_POLLS) or adb.display_for(COC_PACKAGE)
-    # Settled once for the whole series rather than per round. Naming a village
-    # crosses to it; not naming one takes whichever is up, because the game
-    # reopens on the village it was closed on and refusing to play that one would
-    # stand half the runs down for no reason.
-    #
-    # **An unreadable frame is only fatal when a village was named.** Without
-    # `--world` this falls through to the home village and lets the runner sort
-    # it out: `_open_attack_menu` waits, restarts the game, leaves a result
-    # screen and sails home, and every one of those is a state `current_world`
-    # answers None for.
     world = _pick_world(adb, display, options.world)
     if world is None:
         return AttackSeries(

@@ -2007,7 +2007,16 @@ class AttackRunner(BaseModel):
                 world="night", message="畫面不在建築大師基地，沒有開啟攻擊選單就停手"
             )
         stock = read_builder_stock(home)
-        if stock and (full := self.stock.full(stock)):
+        # **Dark elixir is forced out of the comparison rather than trusted to be
+        # zero.** `StockLimits` reads a limit of 0 as "nobody is watching this",
+        # and `read_builder_stock` answers 0 for a row that village does not
+        # have — so a `night_stock.stop_dark` somebody filled in would be a
+        # ceiling of N against a held 0, never reached, holding the run open for
+        # ever and taking the gold and elixir ceilings down with it. The config
+        # file writes that key out in plain sight, so this is a hand waiting to
+        # be shot.
+        watched = self.stock.model_copy(update={"stop_dark": 0})
+        if stock and (full := watched.full(stock)):
             logger.info(
                 "Storage limit reached (%s); the builder base stops with gold=%d elixir=%d",
                 "/".join(full),
