@@ -433,20 +433,29 @@ class VillageStock(BaseModel):
     dark: int
 
 
-class StockLimits(BaseModel):
-    """The storage levels the automation stops farming at; 0 leaves one unwatched."""
+class StorageCapacity(BaseModel):
+    """How much each storage holds when it is full, read off the bar's own tooltip.
+
+    None for a resource whose ceiling nobody could read, which is the honest
+    answer in two different situations and wants the same treatment in both: the
+    builder base has no dark elixir bar to tap at all, and a tooltip the game did
+    not open reads as nothing rather than as a number. Either way that resource
+    is left out of the comparison, because a ceiling nobody knows is one nothing
+    can be judged against.
+    """
 
     model_config = ConfigDict(frozen=True)
 
-    stop_gold: int = 0
-    stop_elixir: int = 0
-    stop_dark: int = 0
+    gold: int | None = None
+    elixir: int | None = None
+    dark: int | None = None
 
-    def full(self, stock: VillageStock) -> list[str] | None:
-        """Every watched resource, named, once they have **all** reached their limit.
+    def full(self, stock: VillageStock, percent: int) -> list[str] | None:
+        """Every storage that has a ceiling, named, once they have **all** filled past it.
 
         None while any of them is still short, which is what the caller keeps
-        farming on.
+        farming on, and None for a `percent` of 0, which is how a run is told to
+        farm without ever standing itself down.
 
         **All rather than any**, which is a change from how this started. The
         first version stopped on the first storage to fill, reasoning that loot
@@ -455,25 +464,27 @@ class StockLimits(BaseModel):
         village whose elixir is at the ceiling still has room for gold, and one
         more round costs the fee either way.
 
-        What made the difference in practice is that storages grow: measured on
-        a live village whose elixir cap had reached 21.5M against a configured
-        limit of 20M, the run stood down at every single check with five million
-        of gold room going unused, and no amount of farming could ever fill the
-        village.
-
-        A resource left at 0 is unwatched and never holds the run open, so a
-        limits object with nothing set never stops one — the same as before.
+        **A share of the real ceiling rather than a written-down number**, which
+        is what the two villages can now share one setting for. The numbers used
+        to be typed in per village and went stale on their own: measured on a
+        live village whose elixir cap had grown to 21.5M against a configured
+        limit of 20M, the run stood down at every check with five million of gold
+        room unused, and no amount of farming could ever fill it. The same day
+        the builder base was configured at 2M against a real 2 450 000 elixir
+        ceiling, standing its runs down 18% early.
         """
         watched = [
-            (name, limit, held)
-            for name, limit, held in (
-                ("金幣", self.stop_gold, stock.gold),
-                ("聖水", self.stop_elixir, stock.elixir),
-                ("黑水", self.stop_dark, stock.dark),
+            (name, ceiling, held)
+            for name, ceiling, held in (
+                ("金幣", self.gold, stock.gold),
+                ("聖水", self.elixir, stock.elixir),
+                ("黑水", self.dark, stock.dark),
             )
-            if limit
+            if ceiling
         ]
-        if not watched or any(held < limit for _, limit, held in watched):
+        if not percent or not watched:
+            return None
+        if any(held * 100 < ceiling * percent for _, ceiling, held in watched):
             return None
         return [name for name, _, _ in watched]
 
@@ -661,31 +672,27 @@ class AppConfig(BaseModel):
     """
 
     # The defaults are the ones the window has always shown, not the field
-    # defaults underneath them. `LootThresholds()` means "take anything" and
-    # `StockLimits()` means "never stop", which are the right neutral values for
-    # a model and the wrong ones to farm with — and they were only ever reached
-    # by a caller that had no way of asking the user.
+    # defaults underneath them. `LootThresholds()` means "take anything", which
+    # is the right neutral value for a model and the wrong one to farm with — and
+    # it was only ever reached by a caller that had no way of asking the user.
     thresholds: LootThresholds = LootThresholds(
         min_gold=500_000, min_elixir=500_000, min_dark=5_000
     )
-    stock: StockLimits = StockLimits(stop_gold=15_000_000, stop_elixir=15_000_000)
-    # The builder base's own ceilings. Its storages are a different size from the
-    # home village's, so the limits above would stand a run down against a
-    # ceiling belonging to another village — which is why the night path went
-    # without any at all for a while, and why this is a second field rather than
-    # a reuse.
+    # How full every storage has to be before a run stands itself down, as a
+    # share of what that storage actually holds; 0 never stands one down.
     #
-    # **The capacity is written on the bar, if you tap it.** The game answers
-    # with 最大儲存量 and 每小時產量 in a tooltip — measured on this builder
-    # base, gold reads 2 050 000. Two million is 97.6% of that, which is a limit
-    # that actually fires rather than one the village can never reach: the home
-    # village's own ceiling grew past its configured 20M once, and every check
-    # after that stood the run down with millions of room going unused.
+    # **One number for both villages, because it is a share rather than an
+    # amount.** This used to be six: three ceilings for the home village and
+    # three for the builder base, whose storages are a different size. Both sets
+    # were somebody's typed-in guess and both went stale on their own — the home
+    # village's cap grew past its configured 20M, and the builder base's real
+    # elixir ceiling turned out to be 2 450 000 against the 2M written here.
     #
-    # Nothing reads that tooltip yet, so these are still a written-down number
-    # rather than a measurement the loop takes. Reading it would make the whole
-    # field unnecessary, which is the better shape and a bigger change.
-    night_stock: StockLimits = StockLimits(stop_gold=2_000_000, stop_elixir=2_000_000)
+    # **The capacity is written on the bar, if you tap it**, which is what makes
+    # the share enough: the game answers with 最大儲存量 in a tooltip, and
+    # `storage_capacity` reads it. A percentage is also the only form of this
+    # setting that means the same thing in a village at town hall 8 and at 15.
+    stop_at: int = 90
     # No ability or spell timings here any more. They were a table of per-hero
     # constants a user could edit, and editing them meant guessing how long an
     # army takes to walk across a village nobody had looked at — which is the
@@ -1372,6 +1379,10 @@ class FrameReading(BaseModel):
     world: World | None = None
     scout: ScoutView | None = None
     stock: VillageStock | None = None
+    # What each bar's tooltip says it holds when full, which is empty on a frame
+    # with no tooltip open — meaning every frame but the ones taken during a
+    # ceiling read, since opening one takes a tap.
+    capacity: StorageCapacity = StorageCapacity()
     army: tuple[int, int] | None = None
     wall_menu: WallMenu | None = None
     bubbles: list[ResourceBubble] = Field(default_factory=list)

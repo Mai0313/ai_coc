@@ -32,7 +32,6 @@ from ai_coc.models import (
     PlayedPlan,
     AdbEndpoint,
     ScreenPoint,
-    StockLimits,
     WallOptions,
     WallUpgrade,
     AttackSeries,
@@ -44,6 +43,7 @@ from ai_coc.models import (
     BoundarySurvey,
     GeminiSettings,
     LootThresholds,
+    StorageCapacity,
 )
 from ai_coc.prompts import PROMPTS, PROMPT_DIR, render
 from ai_coc.ui.hero import HeroRunner
@@ -114,6 +114,7 @@ from ai_coc.parsers.scout import (
     army_strength,
     counted_cards,
     attack_menu_open,
+    storage_capacity,
     night_attack_menu,
     read_builder_stock,
     searching_opponent,
@@ -300,7 +301,8 @@ class WorldTests(unittest.TestCase):
 
         Measured, a builder base holding 10 152 gems reports `dark=410152`
         through `read_stock`, the green `+` beside the number reading as a
-        leading 4. Here `dark` is 0, which `StockLimits` treats as unwatched.
+        leading 4. Here `dark` is 0, and that village's `StorageCapacity` has no
+        dark ceiling either, so nothing ever compares the two.
         """
         assert read_builder_stock((FRAMES / "world_night.png").read_bytes()) == VillageStock(
             gold=574030, elixir=589419, dark=0
@@ -719,20 +721,25 @@ class NightAttackTests(unittest.TestCase):
         The search costs nothing in game but waits on a live player — measured,
         one ran to five and a half minutes — which is the real price of a round
         that had nowhere to put what it won.
+
+        The ceilings are this builder base's real ones, and dark carries none at
+        all: that village has no dark elixir bar to tap, so nothing compares the
+        0 `read_builder_stock` reports against anything.
         """
         runner = AttackRunner(
             adb=AdbController(endpoint=AdbEndpoint(port=16384)),
             display=DisplayTarget(logical_id="1", physical_id="2"),
             world="night",
             thresholds=LootThresholds(),
-            stock=StockLimits(stop_gold=1_000_000, stop_elixir=500_000),
+            stop_at=90,
         )
+        runner._capacity = StorageCapacity(gold=2_050_000, elixir=2_450_000)
         with (
             patch.object(AttackRunner, "_open_night_attack", return_value=b""),
             patch.object(
                 attack,
                 "read_builder_stock",
-                return_value=VillageStock(gold=1_200_000, elixir=600_000, dark=0),
+                return_value=VillageStock(gold=1_900_000, elixir=2_300_000, dark=0),
             ),
             patch.object(AttackRunner, "_find_opponent") as searched,
             patch.object(AdbController, "back"),
@@ -748,14 +755,17 @@ class NightAttackTests(unittest.TestCase):
             display=DisplayTarget(logical_id="1", physical_id="2"),
             world="night",
             thresholds=LootThresholds(),
-            stock=StockLimits(stop_gold=1_000_000, stop_elixir=500_000),
+            stop_at=90,
         )
+        runner._capacity = StorageCapacity(gold=2_050_000, elixir=2_450_000)
         with (
             patch.object(AttackRunner, "_open_night_attack", return_value=b""),
             patch.object(
                 attack,
                 "read_builder_stock",
-                return_value=VillageStock(gold=1_200_000, elixir=400_000, dark=0),
+                # Gold is past 90% of its 2 050 000 and elixir is not, which is
+                # one round more rather than a run standing down.
+                return_value=VillageStock(gold=1_900_000, elixir=2_000_000, dark=0),
             ),
             patch.object(AttackRunner, "_find_opponent", return_value=None) as searched,
         ):
@@ -1049,6 +1059,54 @@ class ScoutTests(unittest.TestCase):
             read_scout(buffer.getvalue())
 
 
+class StorageTipTests(unittest.TestCase):
+    """最大儲存量, off the tooltip a tapped storage bar drops open.
+
+    This is the one place the game writes down how much a storage holds, and
+    reading it is what lets both villages share one 90% rather than six typed-in
+    amounts that go stale as the storages grow.
+    """
+
+    def test_every_row_of_both_villages_reads_its_own_ceiling(self) -> None:
+        """Each row of each village, because the panel is not the same in any two.
+
+        The tooltip hangs under the bar that opened it, so the line moves by the
+        84 px row pitch; the home village writes three lines to the builder
+        base's two; and the dark row's panel sits further right, its label
+        reaching inside the box the other rows only show the colon in. What
+        makes one box serve all five is that 最大儲存量 is not a number: it
+        misses every digit template by 52 bits and up, so the label is cut away
+        wherever it falls and the capacity is what is left.
+        """
+        assert [
+            storage_capacity((FRAMES / f"stock_tip_{name}.png").read_bytes(), row)
+            for name, row in (
+                ("day_gold", 0),
+                ("day_elixir", 1),
+                ("day_dark", 2),
+                ("night_gold", 0),
+                ("night_elixir", 1),
+            )
+        ] == [24_000_000, 24_000_000, 370_000, 2_050_000, 2_450_000]
+
+    def test_the_builder_base_elixir_is_not_read_ten_times_over(self) -> None:
+        """2 450 000, not 24 500 000, which is what a loose tolerance reads here.
+
+        The colon comes back as a `2` at 40 bits, and that ceiling is ten times
+        the real one — a village that could never fill it and a run that would
+        never stand down. This is `CAPACITY_TOLERANCE`'s own test: the digits it
+        has to accept sit at 3 bits and the character it has to reject at 40.
+        """
+        capacity = storage_capacity((FRAMES / "stock_tip_night_elixir.png").read_bytes(), 1)
+        assert capacity == 2_450_000
+
+    def test_a_frame_with_no_tooltip_open_reads_nothing(self) -> None:
+        """Which is what leaves that resource out rather than guessing at one."""
+        for world in ("world_day", "world_night"):
+            png = (FRAMES / f"{world}.png").read_bytes()
+            assert [storage_capacity(png, row) for row in range(3)] == [None, None, None]
+
+
 class SurveyTests(unittest.TestCase):
     """The survey exists to catch the boundary reader disagreeing with the game."""
 
@@ -1136,7 +1194,9 @@ class ConfigTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             config = ConfigStore(path=Path(td) / "config.json").load()
         assert config.thresholds != LootThresholds()
-        assert config.stock != StockLimits()
+        # 0 is "never stand down", which is the wrong thing to farm with — the
+        # same trap as thresholds of zero, one field further along.
+        assert config.stop_at
 
     def test_settings_survive_being_written_out_and_read_back(self) -> None:
         with tempfile.TemporaryDirectory() as td:
@@ -1463,17 +1523,28 @@ class AttackTests(unittest.TestCase):
         every check stood the run down with five million of gold room unused,
         and no amount of farming could ever fill it.
         """
-        limits = StockLimits(stop_gold=15_000_000, stop_elixir=15_000_000)
-        assert limits.full(VillageStock(gold=15_000_000, elixir=400_000, dark=1000)) is None
+        capacity = StorageCapacity(gold=24_000_000, elixir=24_000_000)
+        assert capacity.full(VillageStock(gold=24_000_000, elixir=400_000, dark=1000), 90) is None
 
     def test_farming_stops_once_every_watched_storage_is_full(self) -> None:
-        limits = StockLimits(stop_gold=15_000_000, stop_elixir=15_000_000)
-        full = limits.full(VillageStock(gold=15_000_000, elixir=15_400_000, dark=1000))
-        # Dark is left unwatched at 0, so it neither stops the run nor holds it open.
+        capacity = StorageCapacity(gold=24_000_000, elixir=24_000_000)
+        full = capacity.full(VillageStock(gold=22_000_000, elixir=23_400_000, dark=1000), 90)
+        # Dark has no ceiling here, so it neither stops the run nor holds it open —
+        # which is what the builder base's gems row relies on.
         assert full == ["金幣", "聖水"]
 
-    def test_a_stop_limit_left_at_zero_watches_nothing(self) -> None:
-        assert StockLimits().full(VillageStock(gold=99999999, elixir=1, dark=1)) is None
+    def test_a_storage_short_of_the_share_holds_the_run_open(self) -> None:
+        """21 599 999 of 24 000 000 is 89.99%, and the run keeps farming on it."""
+        capacity = StorageCapacity(gold=24_000_000)
+        assert capacity.full(VillageStock(gold=21_599_999, elixir=0, dark=0), 90) is None
+        assert capacity.full(VillageStock(gold=21_600_000, elixir=0, dark=0), 90) == ["金幣"]
+
+    def test_a_share_of_zero_watches_nothing(self) -> None:
+        capacity = StorageCapacity(gold=24_000_000, elixir=24_000_000, dark=370_000)
+        assert capacity.full(VillageStock(gold=99999999, elixir=99999999, dark=99999), 0) is None
+
+    def test_a_village_whose_ceilings_never_read_never_stands_a_run_down(self) -> None:
+        assert StorageCapacity().full(VillageStock(gold=99999999, elixir=1, dark=1), 90) is None
 
     def test_deploy_line_runs_the_whole_flank(self) -> None:
         points = deploy_line(8)
