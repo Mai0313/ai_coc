@@ -380,9 +380,16 @@ BATTLE_TIMEOUT = 240
 # one of them — and the 攻擊 tap lands on the popup instead of the corner. Three
 # attempts ran out a beat before the button arrived, so the whole round stood
 # down with 畫面不在主村 and waited a minute for the next one to walk the same
-# path. Five covers the animation with room for the card that follows it; once
-# the button is up `_leave_result` already knows what to do with it, because a
-# reward dismisses from where the result screen's 回營 sits.
+# path. Five covers the animation with room for the card that follows it.
+#
+# **Which of the two ways out that card takes is no longer certain, and both
+# work.** It used to be `_leave_result`, because a reward dismisses from where
+# 回營 sits and `battle_over` answered True for it under the old 0.15 by
+# construction. Nothing here re-measured its 繼續 button against the 0.25 that
+# replaced it, and there is no fixture of one to measure — so it either still
+# reads as a result screen and leaves that way, or it reads as nothing and
+# `uncovered` presses `back` at it like any other popup. Worth settling with one
+# capture of a payout if a run is ever seen stuck on one.
 HOME_ATTEMPTS = 5
 HOME_RETRY_DELAY = 3
 # The result screen animates its stars in before its button answers, so leaving
@@ -1818,9 +1825,17 @@ class AttackRunner(BaseModel):
 
         The same shape as `_open_attack_menu` and for the same reasons, with one
         addition: the game reopens on whichever village it was closed on, so a
-        run asked for this one can find the other. `back` is never pressed here
-        either — on a village it raises 確定退出遊戲嗎, and the 攻擊 button in the
-        corner is not covered by anything a stray tap can open.
+        run asked for this one can find the other.
+
+        **`back` is pressed here, but only through `uncovered` and only at a
+        frame that is no village.** This used to say it was never pressed at
+        all, on the grounds that the 攻擊 button in the corner is not covered by
+        anything a stray tap can open. That is true of stray taps and false of
+        the game itself, which puts full-screen popups up on its own: measured
+        live, an event reward page held a run for 40 minutes with every attempt
+        tapping behind it. On a clear village `back` is still 確定退出遊戲嗎,
+        which is exactly why the branch is gated on `current_world` answering
+        nothing at all, and why `uncovered` refuses a battle as well.
         """
         for _ in range(HOME_ATTEMPTS):
             home = self._frame("home")

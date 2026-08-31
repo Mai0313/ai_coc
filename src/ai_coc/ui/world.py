@@ -170,10 +170,10 @@ def uncovered(adb: AdbController, display: DisplayTarget) -> World | None:
     on an unreadable frame, and so does `_pick_world` when a run named a
     village — so a game left mid-battle by a killed run, which is a state this
     project has written down, would take three presses aimed at 放棄. Every
-    other place here that presses `back` filters first, `GameRunner._home` on
-    its dialogs and `AttackRunner._open_night_attack` by never pressing at all,
-    and this is not the one to make an exception of. A battle answers None,
-    which the caller already handles as "nothing to sail from".
+    other place that presses `back` filters first — `GameRunner._home` on its
+    dialogs, and the attack loop by routing through here rather than pressing
+    itself — and this is not the one to make an exception of. A battle answers
+    None, which every caller already handles as "nothing to work from".
 
     Otherwise `back` is safe for the reason `_home` gives: on a clear village it
     raises 確定退出遊戲嗎, so it is only ever pressed on a frame that is **not**
