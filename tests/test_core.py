@@ -35,6 +35,7 @@ from ai_coc.models import (
     StockLimits,
     WallOptions,
     WallUpgrade,
+    AttackSeries,
     VillageStock,
     AttackOptions,
     DisplayTarget,
@@ -346,7 +347,9 @@ class WorldTests(unittest.TestCase):
 class WorldChoiceTests(unittest.TestCase):
     """Which village a series decides to play, and when that decision is fatal."""
 
-    def _series(self, world: str | None, seen: str | None, crossed: str | None = None):
+    def _series(
+        self, world: str | None, seen: str | None, crossed: str | None = None
+    ) -> tuple[AttackSeries, MagicMock]:
         with (
             patch.object(commands, "_controller"),
             patch.object(commands, "_settle_game", return_value=None),
