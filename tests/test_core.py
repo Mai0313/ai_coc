@@ -343,6 +343,50 @@ class WorldTests(unittest.TestCase):
             current_world(small.getvalue())
 
 
+class WorldChoiceTests(unittest.TestCase):
+    """Which village a series decides to play, and when that decision is fatal."""
+
+    def _series(self, world: str | None, seen: str | None, crossed: str | None = None):
+        with (
+            patch.object(commands, "_controller"),
+            patch.object(commands, "_settle_game", return_value=None),
+            patch.object(commands, "current_world", return_value=seen),
+            patch.object(commands, "cross", return_value=crossed),
+            patch.object(commands, "_planner", return_value=None),
+            patch.object(commands.ConfigStore, "load", return_value=AppConfig()),
+            patch.object(commands, "FrameTicker"),
+            patch.object(commands, "_rest", return_value=False),
+            patch.object(commands, "AttackRunner") as runner,
+            patch.object(commands, "_restart_emulator", return_value=True),
+        ):
+            runner.return_value.run.return_value = MagicMock(
+                stock_full=True, attacked=None, phases=0, message=""
+            )
+            runner.return_value.played = None
+            series = commands.attack(AttackOptions(world=world, rounds=1))
+            return series, runner
+
+    def test_an_unreadable_frame_falls_through_to_the_home_village(self) -> None:
+        """A loading screen, a dialog and a dropped session all read as no village.
+
+        Bailing on those ended the whole series before round one, where
+        `_open_attack_menu` recovers from every one of them — it waits, restarts
+        the game, leaves a result screen, and sails home from the wrong village.
+        """
+        _, runner = self._series(None, None)
+        assert runner.call_args.kwargs["world"] == "day"
+
+    def test_a_named_village_the_crossing_could_not_reach_stops_the_series(self) -> None:
+        """Here the caller said which one, so playing the other is not a fallback."""
+        series, runner = self._series("night", None, crossed="day")
+        assert runner.return_value.run.call_count == 0
+        assert "沒辦法切到夜世界" in series.root[0].message
+
+    def test_a_named_village_the_game_is_already_on_costs_no_crossing(self) -> None:
+        _, runner = self._series("night", "night", crossed="night")
+        assert runner.call_args.kwargs["world"] == "night"
+
+
 class NightAttackTests(unittest.TestCase):
     """The builder base half of the attack loop, and the two screens only it has."""
 

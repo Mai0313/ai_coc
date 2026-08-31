@@ -261,6 +261,12 @@ class FrameTicker(BaseModel):
 # waits before the next one is started.
 IDLE_REST = 60
 
+# How long to give the game to paint a village before the world is decided.
+# Sized for a launch rather than for a game already up: `ensure_coc` returns on
+# a pid and the village follows about twenty seconds later, so a run started
+# right after one used to read no village and end before round one.
+WORLD_SETTLE_POLLS = 8
+
 # How many builder base battles go by between trips to the loot cart. Three is
 # the player's own pacing rather than a measurement: the cart accumulates, so
 # the only cost of waiting is the risk of it capping out.
@@ -571,21 +577,35 @@ def attack(options: AttackOptions) -> AttackSeries:
     _prepare_frames(options)
     plan = plans.load(options.plan_in) if options.plan_in else None
     config = ConfigStore().load()
-    display = adb.display_for(COC_PACKAGE)
-    # Which village to play, settled once for the whole series rather than per
-    # round. Naming one crosses to it; not naming one takes whichever is up,
-    # because the game reopens on the village it was closed on and refusing to
-    # play that one would stand half the runs down for no reason.
+    # **Which village to play cannot be asked until one has painted.**
+    # `_controller` is satisfied by a pid, so a run started right after a launch
+    # reaches here with the loading screen still up — measured, one did so three
+    # seconds in, read no village at all, and ended the whole series before round
+    # one. This is the same wait a restart already does, and it leaves the camera
+    # at the far zoom on the way past, which every coordinate below wants anyway.
+    display = _settle_game(adb, WORLD_SETTLE_POLLS) or adb.display_for(COC_PACKAGE)
+    # Settled once for the whole series rather than per round. Naming a village
+    # crosses to it; not naming one takes whichever is up, because the game
+    # reopens on the village it was closed on and refusing to play that one would
+    # stand half the runs down for no reason.
+    #
+    # **An unreadable frame is only fatal when a village was named.** Without
+    # `--world` this falls through to the home village and lets the runner sort
+    # it out: `_open_attack_menu` waits, restarts the game, leaves a result
+    # screen and sails home, and every one of those is a state `current_world`
+    # answers None for.
     world = (
         cross(adb, display, options.world)
         if options.world
-        else current_world(adb.screenshot(display))
+        else current_world(adb.screenshot(display)) or "day"
     )
-    if world is None or (options.world and world != options.world):
+    if options.world and world != options.world:
         logger.warning("Wanted the %s village and the game is on %s", options.world, world)
         return AttackSeries(
             root=[
-                AttackReport(message=f"沒辦法把遊戲帶到指定的世界,現在是{_WORLDS[world]},沒有開打")
+                AttackReport(
+                    message=f"沒辦法切到{_WORLDS[options.world]},現在是{_WORLDS[world]},沒有開打"
+                )
             ]
         )
     logger.info("Playing the %s village", world)
