@@ -1025,6 +1025,23 @@ RestartScope = Literal["none", "game", "emulator"]
 World = Literal["day", "night"]
 
 
+class Crossing(BaseModel):
+    """How to reach one village's boat, and where it sits once the camera stops.
+
+    `start` and `drift` are one drag of the map, repeated until the camera is
+    clamped at the corner the boat is moored in; `spots` are the places to tap
+    for it from that view, tried in turn. There is more than one because nothing
+    recognises the boat — it is a sprite the game dresses up for events — so a
+    miss and a hit look the same until the world is read again.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    start: tuple[int, int]
+    drift: tuple[int, int]
+    spots: tuple[tuple[int, int], ...]
+
+
 class WorldReport(BaseModel):
     """Which village one `world` command found, and which one it left the game on.
 

@@ -5,9 +5,9 @@ each map, so the crossing is a tap at a place on the ground — and a place on t
 ground is exactly what this project refuses to remember, because the camera
 moves and what is under a coordinate changes with it.
 
-**What makes a remembered spot safe here is that the camera clamps.** The game will not pan
-past the edge of its own map, so swiping hard at one corner ends at the same view
-every time whatever the camera was doing before; measured with `view_shift`, the
+**What makes a remembered spot safe here is that the camera clamps.** The game
+will not pan past the edge of its own map, so swiping hard at one corner ends at
+the same view whatever the camera was doing before; measured with `view_shift`, the
 home village stops moving after the second swipe and the builder base after the
 fourth, and every swipe after that reports (0, 0). From that view each boat sits
 at one fixed pixel.
@@ -26,6 +26,7 @@ import time
 from typing import TYPE_CHECKING
 import logging
 
+from ai_coc.models import Crossing
 from ai_coc.constants import COC_PACKAGE
 from ai_coc.parsers.world import current_world
 
@@ -35,25 +36,27 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# How to reach the corner each boat is moored at, and where it sits once the
-# camera has stopped there. The drag is the world moving under a fixed finger,
-# so it points away from the corner being revealed.
-#
-# The counts are the measured clamp plus slack, because over-swiping a clamped
-# camera costs a second and does nothing at all, while under-swiping leaves the
-# boat off screen and the whole crossing fails. `SWIPE_FROM` starts each drag
-# mid-screen so neither end lands on the game's own button columns.
-CROSSINGS: dict[World, tuple[tuple[int, int], tuple[int, int], tuple[tuple[int, int], ...]]] = {
+# Keyed by the village being sailed **to**. Each drag starts mid-screen so
+# neither end of it lands on the game's own button columns, and points away from
+# the corner being revealed, because it is the map moving under a fixed finger.
+CROSSINGS: dict[World, Crossing] = {
     # Leaving the home village: the boat is on the water off the bottom-left
     # shore. The candidates stay up and left of the measured spot on purpose —
     # the clan capital's own vessel is moored below and to the right of it, and
     # tapping that one opens a village this project has no business in.
-    "night": ((500, 600), (700, -350), ((400, 625), (382, 610), (416, 634))),
+    "night": Crossing(
+        start=(500, 600), drift=(700, -350), spots=((400, 625), (382, 610), (416, 634))
+    ),
     # Leaving the builder base: the boat is at the pier off the top-right. The
     # candidates stay left of the measured spot, because the game's right-hand
     # button column starts at x 1490 and overlaps the boat's stern.
-    "day": ((1100, 300), (-700, 350), ((1440, 545), (1415, 555), (1432, 522))),
+    "day": Crossing(
+        start=(1100, 300), drift=(-700, 350), spots=((1440, 545), (1415, 555), (1432, 522))
+    ),
 }
+# The measured clamp plus slack: over-swiping a clamped camera costs a second and
+# does nothing at all, while under-swiping leaves the boat off screen and the
+# whole crossing fails.
 SWIPES = 5
 SWIPE_MS = 500
 SWIPE_SETTLE = 1.2
@@ -87,12 +90,13 @@ def cross(adb: AdbController, display: DisplayTarget, want: World) -> World | No
         logger.warning("No village is on screen; there is nothing to sail from")
         return None
     logger.info("On the %s village and the %s one was asked for; sailing", here, want)
-    start, drift, spots = CROSSINGS[want]
+    crossing = CROSSINGS[want]
+    landing = (crossing.start[0] + crossing.drift[0], crossing.start[1] + crossing.drift[1])
     for _ in range(SWIPES):
-        adb.swipe(start, (start[0] + drift[0], start[1] + drift[1]), SWIPE_MS, display)
+        adb.swipe(crossing.start, landing, SWIPE_MS, display)
         time.sleep(SWIPE_SETTLE)
     try:
-        for spot in spots:
+        for spot in crossing.spots:
             adb.tap(spot[0], spot[1], display)
             for _ in range(SAIL_POLLS):
                 time.sleep(SAIL_GAP)
@@ -100,7 +104,7 @@ def cross(adb: AdbController, display: DisplayTarget, want: World) -> World | No
                     logger.info("Landed on the %s village from the boat at %s", want, spot)
                     return arrived
             logger.info("The tap at %s did not sail; trying the next spot", spot)
-        logger.warning("None of the %d candidate spots found the boat", len(spots))
+        logger.warning("None of the %d candidate spots found the boat", len(crossing.spots))
         return current_world(adb.screenshot(display))
     finally:
         adb.zoom("out", CROSS_ZOOM_PINCHES, COC_PACKAGE, display)

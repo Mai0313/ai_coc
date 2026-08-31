@@ -316,8 +316,8 @@ def _rest(seconds: float) -> bool:
 # `launch("emulator")` returns as soon as `ensure_coc` has seen the game's
 # process, and that check is a `pidof` — the process exists a couple of seconds
 # after the `monkey` while the village is not on screen for much longer than
-# that. `read_stock` is what settles it, because reading the storage bars is how
-# every loop in this project tests for the home village.
+# that. `current_world` is what settles it, because counting the plate row is
+# how everything here tests for a village being up at all.
 #
 # Much longer than `restart_game`'s flat 15 seconds, which only reopens the
 # package on an emulator that never went down; this sits through a cold boot.
@@ -378,13 +378,17 @@ def _settle_game(
         except AdbControlError:
             waiting = "the game is not on a display yet"
         else:
-            # `current_world` rather than `read_stock`, which is what used to be
-            # asked here: the game reopens on whichever village it was closed
-            # on, and `read_stock` answers on both — so a restart that landed on
-            # the builder base reported a village and handed it back as the home
-            # one. It is also the better test of the two on its own terms, since
-            # a home village with the camera at a map corner can leave the dark
-            # row unreadable while the plate row is perfectly clear.
+            # `current_world` rather than `read_stock`, and **either village
+            # counts** — what this is waiting for is a game that has finished
+            # painting, not a particular one of the two. Which village a restart
+            # landed on is settled by whoever asked for it: every loop's own
+            # way home crosses if it has to, and `launch` reports `at_village`
+            # rather than promising the home one.
+            #
+            # It is the better test of the two on its own terms as well: a home
+            # village with the camera at a map corner can leave the dark elixir
+            # row unreadable, which had `read_stock` call an ordinary village no
+            # village at all.
             if current_world(adb.screenshot(display)) is not None:
                 adb.zoom("out", RESTART_ZOOM_PINCHES, COC_PACKAGE, display)
                 return display
@@ -954,13 +958,6 @@ def donate(frame_dir: Path | None = None, dry_run: bool = False, rounds: int = 0
     return report
 
 
-# How long to give a village to paint before answering "there isn't one". Short
-# on purpose: `launch` is the command that waits out a cold start, and this one
-# is asked between other commands where a game that is up answers on the first
-# poll.
-WORLD_POLLS = 4
-
-
 def world(go: World | None = None) -> WorldReport:
     """Which village the game is on, and sail to the other one when asked for it.
 
@@ -969,15 +966,21 @@ def world(go: World | None = None) -> WorldReport:
     other command has to ask itself now that the game reopens on whichever
     village it was closed on, and the answer alone is worth having.
 
-    Being asked for the village already up costs nothing at all — no swipe, no
-    tap, one capture — so a caller that wants to be sure can say so on every run
-    rather than working out whether it needs to.
+    **Reading really is one capture and nothing else** — no swipe, no tap, and
+    no pinch, which is what lets a session ask it at any moment without first
+    working out what it would disturb. It went through `_settle_game` for a
+    while, and that zooms the camera back out on its way past: harmless by this
+    project's own measurement, and still enough to make the claim false. The
+    patience that call also brings is not this command's to spend: a game still
+    on its loading screen honestly has no village on it, and `ai_coc launch` is
+    the one that waits a cold start out.
     """
     adb = _controller()
-    display = _settle_game(adb, WORLD_POLLS)
-    if display is None:
-        logger.warning("No village came up; neither village can be confirmed")
-        return WorldReport(found=None, world=None, message="畫面上沒有村莊,無法判斷世界")
+    try:
+        display = adb.display_for(COC_PACKAGE)
+    except AdbControlError:
+        logger.warning("The game is not on a display yet; neither village can be confirmed")
+        return WorldReport(found=None, world=None, message="遊戲還沒有畫面,無法判斷世界")
     found = current_world(adb.screenshot(display))
     if go is None or go == found:
         report = WorldReport(found=found, world=found, message=f"目前在{_WORLDS[found]}")

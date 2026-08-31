@@ -363,16 +363,15 @@ class CrossingTests(unittest.TestCase):
         adb, landed = self._cross(["night", "day"])
         assert landed == "day"
         assert adb.swipe.call_count == world_ui.SWIPES
-        adb.tap.assert_called_once_with(*world_ui.CROSSINGS["day"][2][0], ANY)
+        adb.tap.assert_called_once_with(*world_ui.CROSSINGS["day"].spots[0], ANY)
 
     def test_a_tap_that_missed_the_boat_tries_the_next_spot(self) -> None:
         """Nothing recognises the boat, so a miss looks exactly like a world that did not change."""
         adb, landed = self._cross(["night", *["night"] * world_ui.SAIL_POLLS, "day"])
         assert landed == "day"
-        assert [call.args[:2] for call in adb.tap.call_args_list] == [
-            world_ui.CROSSINGS["day"][2][0],
-            world_ui.CROSSINGS["day"][2][1],
-        ]
+        assert [call.args[:2] for call in adb.tap.call_args_list] == list(
+            world_ui.CROSSINGS["day"].spots[:2]
+        )
 
     def test_no_village_is_not_a_failed_crossing(self) -> None:
         """A loading screen has no boat on it and nothing to sail from; the caller waits."""
@@ -2777,6 +2776,36 @@ class HomeTests(unittest.TestCase):
         run = self._runner()
         assert self._backs(run, [held]) == 0
         assert self._backs(run, [None, None, None, held]) == 3
+
+    def _sailing(self, run: shared.GameRunner, seen: list[str], landed: str) -> MagicMock:
+        """Walk `_home` over these worlds with the crossing answering `landed`."""
+        with (
+            patch.object(shared.time, "sleep"),
+            patch.object(run, "_frame", return_value=b""),
+            patch.object(shared, "idle_disconnected", return_value=False),
+            patch.object(shared, "game_dialog", return_value=None),
+            patch.object(shared, "current_world", side_effect=seen * shared.HOME_TRIES),
+            patch.object(
+                shared, "read_stock", return_value=VillageStock(gold=1, elixir=1, dark=1)
+            ),
+            patch.object(shared.GameRunner, "_settle_zoom"),
+            patch.object(shared, "cross", return_value=landed) as sailed,
+        ):
+            run._home()
+        return sailed
+
+    def test_a_crossing_that_never_lands_is_not_tried_again(self) -> None:
+        """`cross` is already the patient one: it swipes to the corner and tries three spots.
+
+        Retried once per attempt this method would spend `HOME_TRIES` whole
+        crossings on a boat nobody can reach — about twenty minutes, against
+        fifty seconds for the worst path here before it, and none of it
+        interruptible since `_home` reads no stop flag.
+        """
+        assert self._sailing(self._runner(), ["night"], "night").call_count == 1
+
+    def test_a_crossing_that_lands_carries_on_into_the_village(self) -> None:
+        assert self._sailing(self._runner(), ["night", "day"], "day").call_count == 1
 
     def test_a_restart_puts_the_launch_patience_back(self) -> None:
         """The one branch that stops `back` being pressed at a game that is cold again.

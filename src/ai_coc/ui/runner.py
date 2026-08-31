@@ -225,10 +225,20 @@ class GameRunner(BaseModel):
             # that arrived there would sweep the wrong map and report it as an
             # ordinary empty one. A night loop will want its own answer here;
             # until there is one, this method means the home village.
+            #
+            # **One crossing and then out**, because `cross` is already the
+            # patient one: it swipes to the corner and tries three candidate
+            # spots, about a minute in all. Left to `continue` on a failure this
+            # loop would spend every one of its `HOME_TRIES` on another whole
+            # crossing — twenty minutes against about fifty seconds for the
+            # worst path here before this, and none of it interruptible, since
+            # `_home` reads no stop flag.
             if current_world(png) == "night":
                 logger.warning("The game came up on the builder base; sailing home first")
-                cross(self.adb, self.display, "day")
-                continue
+                if cross(self.adb, self.display, "day") == "day":
+                    continue
+                logger.warning("The crossing never landed; there is no home village to work on")
+                return None
             stock = read_stock(png)
             if stock is not None:
                 if not self._seen_village:

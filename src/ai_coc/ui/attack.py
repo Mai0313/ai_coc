@@ -709,9 +709,15 @@ class AttackRunner(BaseModel):
             # it, and the run spends every attempt here before reporting
             # 畫面不在主村 — which reads as a game that is stuck rather than one
             # that is simply in the other village.
+            # One crossing and then out, for the reason `GameRunner._home` gives:
+            # `cross` already spends about a minute trying three spots, and
+            # retrying it per attempt would turn a boat nobody can reach into
+            # five minutes of silence rather than the one round this costs.
             if current_world(home) == "night":
                 logger.warning("The game is on the builder base; sailing home before attacking")
-                cross(self.adb, self.display, "day")
+                if cross(self.adb, self.display, "day") != "day":
+                    logger.warning("The crossing never landed; this round has no village to open")
+                    return None
                 continue
             self._tap(HOME_ATTACK)
             time.sleep(2)
