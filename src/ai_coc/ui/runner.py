@@ -24,7 +24,10 @@ from ai_coc.models import VillageStock, DisplayTarget
 from ai_coc.constants import COC_PACKAGE
 from ai_coc.adapters.adb import AdbController, AdbControlError
 from ai_coc.parsers.scout import read_stock, idle_disconnected
+from ai_coc.parsers.world import current_world
 from ai_coc.parsers.building import game_dialog
+
+from .world import cross
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -213,6 +216,18 @@ class GameRunner(BaseModel):
                 logger.info("A dialog is covering the village; answering 取消")
                 self._tap(dialog.cancel)
                 time.sleep(BACK_SETTLE)
+                continue
+            # **The game reopens on whichever village it was closed on**, and
+            # every loop that reaches this method is the home village's own —
+            # its sweep grid, its building menus, its storages. Nothing below
+            # could tell the difference: `read_stock` answers on the builder
+            # base as readily, reading its gems bar as dark elixir, so a run
+            # that arrived there would sweep the wrong map and report it as an
+            # ordinary empty one. A night loop will want its own answer here;
+            # until there is one, this method means the home village.
+            if current_world(png) == "night":
+                logger.warning("The game came up on the builder base; sailing home first")
+                cross(self.adb, self.display, "day")
                 continue
             stock = read_stock(png)
             if stock is not None:

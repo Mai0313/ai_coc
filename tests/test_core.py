@@ -6,7 +6,7 @@ import logging
 from pathlib import Path
 import tempfile
 import unittest
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import ANY, MagicMock, call, patch
 from collections.abc import Callable, Sequence
 
 from PIL import Image, ImageDraw
@@ -15,6 +15,7 @@ from pydantic import ValidationError
 
 from ai_coc import plans, models, commands, logging_setup
 from ai_coc.ui import hero, walls, attack
+from ai_coc.ui import world as world_ui
 from ai_coc.ui import runner as shared
 from ai_coc.models import (
     RunLog,
@@ -112,6 +113,7 @@ from ai_coc.parsers.scout import (
     counted_cards,
     attack_menu_open,
 )
+from ai_coc.parsers.world import info_badges, current_world
 from ai_coc.ui.main_window import LIVE_INTERVAL, MainWindow
 from ai_coc.adapters.config import ConfigStore
 from ai_coc.parsers.village import parse_village
@@ -280,6 +282,109 @@ class CoreTests(unittest.TestCase):
     def test_display_lookup_is_empty_when_the_package_has_no_window(self) -> None:
         assert focused_display(WINDOW_DISPLAYS, "com.example.absent") == ""
         assert physical_display(DISPLAY_DEVICES, "9") == ""
+
+
+class WorldTests(unittest.TestCase):
+    """Live frames of both villages, masked to the plate row and the storage column."""
+
+    def test_the_home_village_carries_three_plates(self) -> None:
+        assert current_world((FRAMES / "world_day.png").read_bytes()) == "day"
+
+    def test_the_builder_base_carries_two(self) -> None:
+        """It has no 護盾 plate, and a real-time mode structurally cannot grow one."""
+        assert current_world((FRAMES / "world_night.png").read_bytes()) == "night"
+
+    def test_the_plates_are_found_where_the_camera_left_them(self) -> None:
+        """The row is laid out from the middle, so both villages move it as they please.
+
+        These two are the same villages with the camera dragged to a map corner
+        to reach the boat, which is where every crossing reads the world from.
+        """
+        assert current_world((FRAMES / "world_day_corner.png").read_bytes()) == "day"
+        assert current_world((FRAMES / "world_night_corner.png").read_bytes()) == "night"
+
+    def test_a_village_reads_where_its_storage_bars_do_not(self) -> None:
+        """Which is the whole reason this replaced `read_stock` as the village test.
+
+        The camera at a map corner leaves the home village's dark elixir row
+        unreadable, so `read_stock` calls a perfectly ordinary village no village
+        at all. The plate row is untouched by where the camera is.
+        """
+        frame = (FRAMES / "world_day_corner.png").read_bytes()
+        assert read_stock(frame) is None
+        assert current_world(frame) == "day"
+
+    def test_a_battle_is_neither_village(self) -> None:
+        """None is a third answer: nothing about a battle says which village is under it."""
+        assert current_world((FRAMES / "world_night_battle.png").read_bytes()) is None
+
+    def test_a_dialog_over_the_village_is_neither(self) -> None:
+        """The builder base's own attack dialog covers the plate row it would be read from."""
+        assert current_world((FRAMES / "world_night_menu.png").read_bytes()) is None
+
+    def test_each_badge_is_rejoined_across_its_own_glyph(self) -> None:
+        """The white `i` splits every badge into two runs of about 8 px.
+
+        Left unjoined, each half is under the width floor and every village reads
+        as no village; joined too eagerly, two badges 175 px apart would become
+        one and the home village would read as the builder base.
+        """
+        badges = info_badges((FRAMES / "world_day.png").read_bytes())
+        assert len(badges) == 3
+        assert all(20 <= right - left + 1 <= 40 for left, right in badges)
+
+    def test_the_screen_size_is_checked(self) -> None:
+        small = io.BytesIO()
+        Image.new("RGB", (800, 450)).save(small, format="PNG")
+        with pytest.raises(ValueError, match="1600x900"):
+            current_world(small.getvalue())
+
+
+class CrossingTests(unittest.TestCase):
+    """Sailing between the two villages, which is a tap the boat may or may not take."""
+
+    def _cross(self, seen: list[str | None], want: str = "day") -> tuple[MagicMock, str | None]:
+        adb = MagicMock()
+        with (
+            patch.object(world_ui.time, "sleep"),
+            patch.object(world_ui, "current_world", side_effect=seen),
+        ):
+            landed = world_ui.cross(adb, DisplayTarget(logical_id="1", physical_id="2"), want)
+        return adb, landed
+
+    def test_being_there_already_costs_one_capture_and_nothing_else(self) -> None:
+        """Which is what lets a caller ask on every run instead of working out whether to."""
+        adb, landed = self._cross(["day"])
+        assert landed == "day"
+        assert adb.swipe.call_count == 0
+        assert adb.tap.call_count == 0
+
+    def test_the_first_spot_that_sails_ends_it(self) -> None:
+        adb, landed = self._cross(["night", "day"])
+        assert landed == "day"
+        assert adb.swipe.call_count == world_ui.SWIPES
+        adb.tap.assert_called_once_with(*world_ui.CROSSINGS["day"][2][0], ANY)
+
+    def test_a_tap_that_missed_the_boat_tries_the_next_spot(self) -> None:
+        """Nothing recognises the boat, so a miss looks exactly like a world that did not change."""
+        adb, landed = self._cross(["night", *["night"] * world_ui.SAIL_POLLS, "day"])
+        assert landed == "day"
+        assert [call.args[:2] for call in adb.tap.call_args_list] == [
+            world_ui.CROSSINGS["day"][2][0],
+            world_ui.CROSSINGS["day"][2][1],
+        ]
+
+    def test_no_village_is_not_a_failed_crossing(self) -> None:
+        """A loading screen has no boat on it and nothing to sail from; the caller waits."""
+        adb, landed = self._cross([None])
+        assert landed is None
+        assert adb.swipe.call_count == 0
+
+    def test_the_camera_goes_back_to_the_far_zoom_either_way(self) -> None:
+        """The swiping above parks it at a map corner, and every coordinate here wants it centred."""
+        for seen in (["night", "day"], ["night"] + ["night"] * (world_ui.SAIL_POLLS * 3 + 1)):
+            adb, _ = self._cross(seen)
+            assert adb.zoom.call_count == 1
 
 
 class ScoutTests(unittest.TestCase):
@@ -2182,7 +2287,10 @@ class RestartEveryTests(unittest.TestCase):
             patch.object(commands, "MuMuAdapter") as mumu,
             patch.object(commands.time, "sleep"),
             patch.object(commands, "stop_requested", return_value=False),
-            patch.object(commands, "read_stock", side_effect=[None, None, MagicMock(gold=1)]),
+            # The village test rather than the storages: the game reopens on
+            # whichever village it was closed on, and `read_stock` answers on
+            # both, so it can say a village is up but never which one.
+            patch.object(commands, "current_world", side_effect=[None, None, "day"]),
         ):
             mumu.return_value.controller.return_value = adb
             assert commands._restart_emulator(runner, ticker)
@@ -2212,7 +2320,7 @@ class RestartEveryTests(unittest.TestCase):
             patch.object(commands, "MuMuAdapter") as mumu,
             patch.object(commands.time, "sleep"),
             patch.object(commands, "stop_requested", return_value=False),
-            patch.object(commands, "read_stock", return_value=MagicMock(gold=1)),
+            patch.object(commands, "current_world", return_value="day"),
         ):
             mumu.return_value.controller.return_value = adb
             assert commands._restart_emulator(MagicMock(), MagicMock())
@@ -2232,7 +2340,7 @@ class RestartEveryTests(unittest.TestCase):
             patch.object(commands, "MuMuAdapter") as mumu,
             patch.object(commands.time, "sleep"),
             patch.object(commands, "stop_requested", return_value=False),
-            patch.object(commands, "read_stock", return_value=None),
+            patch.object(commands, "current_world", return_value=None),
         ):
             mumu.return_value.controller.return_value = adb
             assert not commands._restart_emulator(MagicMock(), MagicMock())
@@ -2632,6 +2740,12 @@ class HomeTests(unittest.TestCase):
             patch.object(shared, "idle_disconnected", return_value=False),
             patch.object(shared, "game_dialog", return_value=None),
             patch.object(shared, "read_stock", side_effect=reads),
+            # Asked one frame earlier than the storages and about a different
+            # thing: which of the two villages this is. Kept in step with the
+            # answers above, since a frame whose storages read is a village.
+            patch.object(
+                shared, "current_world", side_effect=["day" if seen else None for seen in reads]
+            ),
             # The first village that reads pinches the camera back out, which
             # wants a real emulator. What these cases are about is `back`.
             patch.object(shared.GameRunner, "_settle_zoom"),
@@ -2681,6 +2795,7 @@ class HomeTests(unittest.TestCase):
             patch.object(shared, "idle_disconnected", side_effect=[True, False, False, False]),
             patch.object(shared, "game_dialog", return_value=None),
             patch.object(shared, "read_stock", side_effect=[None, None, held]),
+            patch.object(shared, "current_world", side_effect=[None, None, "day"]),
             patch.object(shared, "restart_game", return_value=run.display),
             patch.object(shared.GameRunner, "_settle_zoom"),
             patch.object(AdbController, "back") as back,

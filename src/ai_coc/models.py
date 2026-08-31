@@ -1017,6 +1017,33 @@ class RunLog(BaseModel):
 RestartScope = Literal["none", "game", "emulator"]
 
 
+# The game's two villages. Supercell calls them the Home Village and the Builder
+# Base; this project calls them day and night because that is what the player
+# calls them, and because `builder` already means the workman here — `ai_coc
+# builders` reads the panel saying which of the five are free, and a
+# `--world builder` standing next to it would be read as belonging to that.
+World = Literal["day", "night"]
+
+
+class WorldReport(BaseModel):
+    """Which village one `world` command found, and which one it left the game on.
+
+    `found` and `world` differ only when the command was asked to cross, which is
+    the whole answer to "did anything happen": a command that was already where
+    it was asked for taps nothing at all.
+
+    Both are optional because "no village is on screen" is a real answer here
+    rather than an error, and it is a different one from either village.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    found: World | None
+    world: World | None
+    crossed: bool = False
+    message: str = ""
+
+
 class LaunchReport(BaseModel):
     """Which instance one `launch` command left the game running on.
 
@@ -1250,6 +1277,10 @@ class FrameReading(BaseModel):
     rather than a printout so a recorded run can be replayed through it.
     """
 
+    # Which village the frame was taken on, and the reason it leads: every other
+    # field below is read against one of the two, and `stock` in particular
+    # answers on both while meaning something different on each.
+    world: World | None = None
     scout: ScoutView | None = None
     stock: VillageStock | None = None
     army: tuple[int, int] | None = None
