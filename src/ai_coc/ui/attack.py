@@ -31,7 +31,7 @@ from ai_coc.models import (
     StorageCapacity,
 )
 from ai_coc.prompts import PROMPTS
-from ai_coc.ui.world import cross
+from ai_coc.ui.world import cross, uncovered
 from ai_coc.constants import COC_PACKAGE
 from ai_coc.ui.runner import restart_game
 from ai_coc.adapters.ai import GeminiClient
@@ -380,9 +380,16 @@ BATTLE_TIMEOUT = 240
 # one of them — and the 攻擊 tap lands on the popup instead of the corner. Three
 # attempts ran out a beat before the button arrived, so the whole round stood
 # down with 畫面不在主村 and waited a minute for the next one to walk the same
-# path. Five covers the animation with room for the card that follows it; once
-# the button is up `_leave_result` already knows what to do with it, because a
-# reward dismisses from where the result screen's 回營 sits.
+# path. Five covers the animation with room for the card that follows it.
+#
+# **Which of the two ways out that card takes is no longer certain, and both
+# work.** It used to be `_leave_result`, because a reward dismisses from where
+# 回營 sits and `battle_over` answered True for it under the old 0.15 by
+# construction. Nothing here re-measured its 繼續 button against the 0.25 that
+# replaced it, and there is no fixture of one to measure — so it either still
+# reads as a result screen and leaves that way, or it reads as nothing and
+# `uncovered` presses `back` at it like any other popup. Worth settling with one
+# capture of a payout if a run is ever seen stuck on one.
 HOME_ATTEMPTS = 5
 HOME_RETRY_DELAY = 3
 # The result screen animates its stars in before its button answers, so leaving
@@ -874,11 +881,24 @@ class AttackRunner(BaseModel):
             # `cross` already spends about a minute trying three spots, and
             # retrying it per attempt would turn a boat nobody can reach into
             # five minutes of silence rather than the one round this costs.
-            if current_world(home) == "night":
+            here = current_world(home)
+            if here == "night":
                 logger.warning("The game is on the builder base; sailing home before attacking")
                 if cross(self.adb, self.display, "day") != "day":
                     logger.warning("The crossing never landed; this round has no village to open")
                     return None
+                continue
+            # **Something is over the village, and the 攻擊 tap below would land
+            # on it.** The game puts full-screen popups up on its own — event
+            # rewards, season passes, whatever is running that week — and the one
+            # measured here held a run for 40 minutes: five attempts a round
+            # tapping behind it, then 畫面不在主村, then the same again. Nothing
+            # between rounds clears it either, since the world is picked once per
+            # series. `uncovered` is the same step the crossing takes, and it is
+            # safe for the same reason — it presses `back` only on a frame that
+            # is not a village, and never on a battle.
+            if here is None:
+                uncovered(self.adb, self.display)
                 continue
             # The one moment the run is known to be standing on the right
             # village with nothing over it, which is what tapping the storage
@@ -905,13 +925,33 @@ class AttackRunner(BaseModel):
         moment `_battle_view` reads nothing lands before the button is alive; the
         village then stayed covered and every following run stood down with
         畫面不在主村 without ever attacking.
+
+        **A screen that will not answer 回營 gets `back` rather than another
+        round of the same tap.** The game puts its own popups over the result —
+        an event reward page, a season pass, whatever it is running that week —
+        and those close on a red X in their own corner, so tapping where 回營
+        would be does nothing at all however many times it is tried. Measured
+        live, one of them held a run for 40 minutes: `battle_over` read its green
+        tick marks as the button, every attempt tapped an empty patch of screen,
+        and 18 rounds went by reporting 畫面不在建築大師基地 while a battle it
+        had already matched into ran out underneath. `back` is safe here for the
+        reason it is safe in `uncovered`: this is only reached on a frame that
+        read as a result screen, which is never a clear village.
         """
         for _ in range(RESULT_ATTEMPTS):
             if not battle_over(self._frame("result")):
                 return
             self._tap(RETURN_HOME)
             time.sleep(RESULT_RETRY_DELAY)
-        logger.warning("The result screen will not close; the next run has nowhere to start")
+        # Read again before pressing. The last tap of that loop is unchecked, and
+        # it is the one most likely to have worked — the button only comes alive
+        # once the stars have flown in, which is what the retries are for. On a
+        # village that has just come back, `back` is 確定退出遊戲嗎.
+        if not battle_over(self._frame("result")):
+            return
+        logger.warning("回營 will not close this screen; pressing back at whatever is over it")
+        self.adb.back(self.display)
+        time.sleep(RESULT_RETRY_DELAY)
 
     def _plan(self, frame: bytes, rage_count: int, freeze_count: int) -> AttackPlan | None:
         """The plan for this opponent: the one handed in, the AI's, or the flat default.
@@ -1785,9 +1825,17 @@ class AttackRunner(BaseModel):
 
         The same shape as `_open_attack_menu` and for the same reasons, with one
         addition: the game reopens on whichever village it was closed on, so a
-        run asked for this one can find the other. `back` is never pressed here
-        either — on a village it raises 確定退出遊戲嗎, and the 攻擊 button in the
-        corner is not covered by anything a stray tap can open.
+        run asked for this one can find the other.
+
+        **`back` is pressed here, but only through `uncovered` and only at a
+        frame that is no village.** This used to say it was never pressed at
+        all, on the grounds that the 攻擊 button in the corner is not covered by
+        anything a stray tap can open. That is true of stray taps and false of
+        the game itself, which puts full-screen popups up on its own: measured
+        live, an event reward page held a run for 40 minutes with every attempt
+        tapping behind it. On a clear village `back` is still 確定退出遊戲嗎,
+        which is exactly why the branch is gated on `current_world` answering
+        nothing at all, and why `uncovered` refuses a battle as well.
         """
         for _ in range(HOME_ATTEMPTS):
             home = self._frame("home")
@@ -1799,11 +1847,17 @@ class AttackRunner(BaseModel):
                 logger.info("The last battle's result screen is still up; leaving it")
                 self._leave_result()
                 continue
-            if current_world(home) == "day":
+            here = current_world(home)
+            if here == "day":
                 logger.warning("The game is on the home village; sailing over before attacking")
                 if cross(self.adb, self.display, "night") != "night":
                     logger.warning("The crossing never landed; this round has no base to open")
                     return None
+                continue
+            # Same as `_open_attack_menu`: something is over the base and the
+            # 攻擊 tap below would land on it.
+            if here is None:
+                uncovered(self.adb, self.display)
                 continue
             # Same as `_open_attack_menu`: the bars can only be tapped from the
             # village itself, and this is where the run knows it is on one.

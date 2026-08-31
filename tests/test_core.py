@@ -619,6 +619,79 @@ class NightAttackTests(unittest.TestCase):
             for step in (0, 1)
         ]
 
+    def test_a_result_screen_that_will_not_close_gets_back_pressed_at_it(self) -> None:
+        """The game's own popups sit over the result and answer nothing at 回營.
+
+        They close on a red X in their own corner, so tapping where the button
+        would be does nothing however often it is repeated — measured live, one
+        held a run for 40 minutes.
+        """
+        runner = self._runner()
+        with (
+            patch.object(attack.time, "sleep"),
+            patch.object(runner, "_frame", return_value=b""),
+            patch.object(attack, "battle_over", return_value=True),
+            patch.object(AdbController, "tap"),
+            patch.object(AdbController, "back") as pressed,
+        ):
+            runner._leave_result()
+        assert pressed.call_count == 1
+
+    def test_a_result_screen_that_closes_is_never_pressed_at(self) -> None:
+        runner = self._runner()
+        with (
+            patch.object(attack.time, "sleep"),
+            patch.object(runner, "_frame", return_value=b""),
+            patch.object(attack, "battle_over", side_effect=[True, False]),
+            patch.object(AdbController, "tap"),
+            patch.object(AdbController, "back") as pressed,
+        ):
+            runner._leave_result()
+        assert pressed.call_count == 0
+
+    def test_the_last_tap_landing_is_not_answered_with_back(self) -> None:
+        """That tap is unchecked and is the one most likely to have worked.
+
+        The button only comes alive once the stars have flown in, which is what
+        the retries are for — so the village can be back by then, and `back`
+        there is 確定退出遊戲嗎.
+        """
+        runner = self._runner()
+        with (
+            patch.object(attack.time, "sleep"),
+            patch.object(runner, "_frame", return_value=b""),
+            # True for every check inside the loop, then False for the read that
+            # guards the press: the final tap worked.
+            patch.object(
+                attack, "battle_over", side_effect=[True] * attack.RESULT_ATTEMPTS + [False]
+            ),
+            patch.object(AdbController, "tap"),
+            patch.object(AdbController, "back") as pressed,
+        ):
+            runner._leave_result()
+        assert pressed.call_count == 0
+
+    def test_a_popup_over_the_base_is_pressed_away_rather_than_tapped_behind(self) -> None:
+        """The 攻擊 tap lands on the popup, so the round would spend every attempt on it.
+
+        Measured live on an event reward page: five attempts a round, then
+        畫面不在建築大師基地, then the same again — 18 rounds of it, with nothing
+        between rounds to clear the screen.
+        """
+        runner = self._runner()
+        with (
+            patch.object(attack.time, "sleep"),
+            patch.object(
+                runner, "_frame", return_value=(FRAMES / "event_reward.png").read_bytes()
+            ),
+            patch.object(attack, "uncovered", return_value=None) as cleared,
+            patch.object(AdbController, "tap") as tapped,
+        ):
+            assert runner._open_night_attack() is None
+        assert cleared.call_count == attack.HOME_ATTEMPTS
+        # And never at 攻擊, which is what was being spent behind the popup.
+        assert tapped.call_count == 0
+
     def test_a_repainted_card_row_ends_the_stage(self) -> None:
         """A stage can end without a result screen, and waiting for one cost a whole second stage.
 
@@ -1073,6 +1146,22 @@ class ScoutTests(unittest.TestCase):
         assert battle_over((FRAMES / "battle_result.png").read_bytes())
         assert not battle_over((FRAMES / "attack_menu.png").read_bytes())
         assert not battle_over((FRAMES / "scout_in_battle.png").read_bytes())
+
+    def test_an_event_reward_page_is_not_a_result_screen(self) -> None:
+        """A page of green tick marks, one of which lands in the 回營 box.
+
+        Measured 0.2009 of that box against the real button's 0.3283, which is
+        what put the threshold between them rather than at the old 0.15. What it
+        cost first: the screen closes on a red X in its own corner and answers
+        nothing where 回營 sits, so a run read it as a result screen and tapped
+        an empty patch for 40 minutes — 18 rounds, each reporting
+        畫面不在建築大師基地, while a battle it had already matched into ran out
+        underneath it.
+        """
+        png = (FRAMES / "event_reward.png").read_bytes()
+        assert not battle_over(png)
+        # And not a village either, so nothing downstream mistakes it for one.
+        assert current_world(png) is None
 
     def test_only_the_card_that_lost_one_shows_it(self) -> None:
         """A drop is judged on the card's own corner, which repaints when it loses one.

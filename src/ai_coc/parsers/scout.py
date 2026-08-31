@@ -296,8 +296,20 @@ CAPACITY_TOLERANCE = 15
 # then found the village covered and stood down without attacking. Measured, the
 # button fills 0.33 of this box in green against at most 0.05 of any other
 # screen, the attack menu's own buttons included.
+#
+# **Except one, and it cost a farming run 40 minutes.** The game's event
+# reward screens — 周期挑戰獎勵之路已完成 and its like — are pages of green
+# tick marks, and one of them lands squarely in this box: measured, 0.2009,
+# comfortably over the old 0.15 threshold. That screen closes on a red X in its
+# own corner and answers nothing at all at 回營's position, so a loop reading it
+# as a result screen taps a spot with no button on it for as long as it is
+# allowed to. Measured live, 18 rounds of it, every one reporting
+# 畫面不在建築大師基地 while a battle it had already matched into ran out
+# underneath. The line now goes between that 0.2009 and the real button's
+# 0.3283, and `_leave_result` presses `back` when the tapping does not work,
+# which is what gets out of the ones this reader has never seen.
 RETURN_HOME_BOX = (690, 738, 910, 796)
-RETURN_HOME_GREEN = 0.15
+RETURN_HOME_GREEN = 0.25
 
 # 還在嗎 / 你因閒置過久而中斷連線. A loop that spends minutes waiting for barracks
 # will meet this, and nothing else clears it: the game stops responding to taps
