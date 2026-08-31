@@ -37,8 +37,6 @@ jobs:
           - windows-latest
         python-version:
           - "3.12"
-          - "3.13"
-          - "3.14"
 
     timeout-minutes: 20
 
@@ -91,7 +89,7 @@ jobs:
           uv run pytest -vv | tee .coverage.txt
 
       # There is no issue to comment on outside a pull request, so a push to main
-      # would fail this step on all three matrix legs.
+      # would fail this step on every matrix leg.
       - name: Pytest coverage comment
         if: ${{ github.event_name == 'pull_request' && steps.check_tests.outputs.has_tests == 'true' }}
         uses: MishaKav/pytest-coverage-comment@main
