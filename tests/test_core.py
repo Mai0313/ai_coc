@@ -1059,6 +1059,67 @@ class ScoutTests(unittest.TestCase):
             read_scout(buffer.getvalue())
 
 
+class CeilingReadTests(unittest.TestCase):
+    """Turning the tooltips into this village's ceilings, once a run."""
+
+    def _runner(self, world: str = "day", stop_at: int = 90) -> AttackRunner:
+        return AttackRunner(
+            adb=AdbController(endpoint=AdbEndpoint(port=16384)),
+            display=DisplayTarget(logical_id="1", physical_id="2"),
+            world=world,
+            thresholds=LootThresholds(),
+            stop_at=stop_at,
+        )
+
+    def _read(self, runner: AttackRunner, answers: list[int | None]) -> list[tuple[int, int]]:
+        """Run one `_settle_ceilings` against canned tooltip readings, keeping the taps."""
+        taps: list[tuple[int, int]] = []
+        with (
+            patch.object(AttackRunner, "_tap", lambda _, point: taps.append(point)),
+            patch.object(AttackRunner, "_frame", return_value=b""),
+            patch.object(attack, "storage_capacity", side_effect=answers),
+            patch.object(attack.time, "sleep"),
+        ):
+            runner._settle_ceilings()
+        return taps
+
+    def test_a_village_that_reads_every_row_is_asked_once_for_the_whole_run(self) -> None:
+        runner = self._runner()
+        self._read(runner, [24_000_000, 24_000_000, 370_000])
+        assert runner._ceiling == StorageCapacity(gold=24_000_000, elixir=24_000_000, dark=370_000)
+        # Nothing left to ask, so a second round spends no taps at all.
+        assert self._read(runner, []) == []
+
+    def test_a_partial_read_is_thrown_away_rather_than_kept(self) -> None:
+        """Kept, it would stand the run down on dark alone with the big storages empty.
+
+        And an empty one is the other half of the same bug: it watches nothing,
+        so an overnight run farms straight past full storages. Either way the
+        next round simply asks again.
+        """
+        runner = self._runner()
+        # Gold and elixir fail both tries; dark answers.
+        self._read(runner, [None, None, None, None, 370_000])
+        assert runner._capacity is None
+        assert runner._ceiling.full(VillageStock(gold=0, elixir=0, dark=370_000), 90) is None
+
+    def test_a_run_that_can_never_stand_down_does_not_tap_the_bars(self) -> None:
+        """`probe` and `bounds` take the default 0, and so does 不監控 in the window."""
+        assert self._read(self._runner(stop_at=0), []) == []
+
+    def test_the_builder_base_leaves_its_gems_row_alone(self) -> None:
+        """Tapping it opens the shop, and there is no dark elixir there to read."""
+        runner = self._runner(world="night")
+        taps = self._read(runner, [2_050_000, 2_550_000])
+        assert runner._ceiling == StorageCapacity(gold=2_050_000, elixir=2_550_000)
+        assert {y for _, y in taps} == {attack.STOCK_BAR_Y[0], attack.STOCK_BAR_Y[1]}
+
+    def test_a_row_that_reads_is_tapped_shut_behind_itself(self) -> None:
+        """An open tooltip covers the rows under it, so it does not outlive the read."""
+        taps = self._read(self._runner(), [24_000_000, 24_000_000, 370_000])
+        assert taps == [(attack.STOCK_BAR_X, y) for y in attack.STOCK_BAR_Y for _ in range(2)]
+
+
 class StorageTipTests(unittest.TestCase):
     """最大儲存量, off the tooltip a tapped storage bar drops open.
 

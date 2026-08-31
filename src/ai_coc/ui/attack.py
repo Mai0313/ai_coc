@@ -749,11 +749,24 @@ class AttackRunner(BaseModel):
             (self.frame_dir / f"{self._captures:04d}_{label}.png").write_bytes(png)
         return png
 
-    def _read_ceilings(self) -> StorageCapacity:
-        """What this village's storages hold when full, off each bar's own tooltip.
+    def _settle_ceilings(self) -> None:
+        """Read what this village's storages hold when full, once a run, off their tooltips.
 
-        Read once and kept, because a storage only grows when a builder spends
-        days upgrading one, while asking costs six taps and three captures.
+        Kept for the rest of the run once it has read, because a storage only
+        grows when a builder spends days upgrading one, while asking costs six
+        taps and three captures.
+
+        **A partial read is thrown away rather than kept**, which is the whole
+        reason this is a method and not an assignment. Every one of these taps
+        can be swallowed — a tooltip still animating in, a panel over the bars,
+        a village the game had not finished painting — and a `StorageCapacity`
+        holding some of its rows is worse than none in both directions. Empty, it
+        watches nothing, so an overnight run farms straight past full storages
+        and throws the loot away, which is the failure this setting exists to
+        prevent. Partial is worse still: gold and elixir failing while dark reads
+        its 370 000 leaves the run standing down the moment dark passes 90% with
+        the two big storages nearly empty. Left unset, the next round simply
+        asks again, and a round costs minutes anyway.
 
         **The builder base's third row is never tapped.** That village has no
         dark elixir; what sits at that y is its gems bar, and the green + beside
@@ -764,9 +777,25 @@ class AttackRunner(BaseModel):
         The tooltip is a toggle, so a row that reads nothing is left alone rather
         than tapped shut: the one way to read nothing on a village that has the
         bar is to have closed a tooltip that was already open, and the next
-        attempt then opens it. A row that genuinely has none costs the extra tap
-        and answers None, which is what the caller wants anyway.
+        attempt then opens it.
+
+        **A row that fails both tries can leave its own tooltip up, and that is
+        measured to be harmless.** The panel hangs *under* the bar that opened
+        it, so it covers the rows below rather than its own — and only the last
+        row read has nothing after it to close it, since the next row's first tap
+        closes whatever is open. Measured on the fixtures: with the dark tooltip
+        up `read_stock` still reads all three rows, and with the builder base's
+        elixir tooltip up `read_builder_stock` still reads both, which is exactly
+        the last row in each village. Closing on failure instead was tried and is
+        worse — with the tooltip starting closed, which is the ordinary case, a
+        row that fails twice would then end on an opening tap and leave the
+        **gold** panel up, and that one does cover the rows under it.
         """
+        # Nothing to measure against, so nothing worth six taps: `probe` and
+        # `bounds` run at the default 0, and so does a window whose spinbox is
+        # at 不監控.
+        if self._capacity is not None or not self.stop_at:
+            return
         rows = ("gold", "elixir", "dark") if self.world == "day" else ("gold", "elixir")
         found: dict[str, int] = {}
         for row, name in enumerate(rows):
@@ -780,9 +809,16 @@ class AttackRunner(BaseModel):
                 self._tap((STOCK_BAR_X, STOCK_BAR_Y[row]))
                 time.sleep(TOOLTIP_SETTLE)
                 break
-        capacity = StorageCapacity(**found)
-        logger.info("Storage ceilings read as %s", capacity.model_dump(exclude_none=True))
-        return capacity
+        if len(found) < len(rows):
+            logger.warning(
+                "Only %d of %d storage ceilings read (%s); leaving them for the next round",
+                len(found),
+                len(rows),
+                found or "none",
+            )
+            return
+        self._capacity = StorageCapacity(**found)
+        logger.info("Storage ceilings read as %s", found)
 
     def _battle_ended(self, label: str) -> bool:
         """Whether the result screen is up, and the loot on the way past.
@@ -849,8 +885,7 @@ class AttackRunner(BaseModel):
             # bars needs. Past here the attack menu is up and the bars are behind
             # it; before here the frame might be a result screen or the other
             # village. It reads once and every round after this costs nothing.
-            if self._capacity is None:
-                self._capacity = self._read_ceilings()
+            self._settle_ceilings()
             self._tap(HOME_ATTACK)
             time.sleep(2)
             if attack_menu_open(self._frame("attack-menu")):
@@ -1772,8 +1807,7 @@ class AttackRunner(BaseModel):
                 continue
             # Same as `_open_attack_menu`: the bars can only be tapped from the
             # village itself, and this is where the run knows it is on one.
-            if self._capacity is None:
-                self._capacity = self._read_ceilings()
+            self._settle_ceilings()
             self._tap(HOME_ATTACK)
             time.sleep(2)
             if night_attack_menu(self._frame("night-menu")):
