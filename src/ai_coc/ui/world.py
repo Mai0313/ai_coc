@@ -28,7 +28,7 @@ import logging
 
 from ai_coc.models import Crossing
 from ai_coc.constants import COC_PACKAGE
-from ai_coc.parsers.scout import read_stock, battle_over, card_groups, loot_cart_open
+from ai_coc.parsers.scout import battle_over, card_groups, loot_cart_open, read_builder_stock
 from ai_coc.parsers.world import current_world
 
 if TYPE_CHECKING:
@@ -107,6 +107,16 @@ def collect_cart(adb: AdbController, display: DisplayTarget) -> int:
     and a tap the game swallowed leaves the cart looking exactly like one that
     has just been emptied. Both readings are taken with the sheet down, since it
     covers the bars while it is up.
+
+    **`read_builder_stock`, because this only ever runs on the builder base.**
+    `read_stock` reads a third row that village does not have: what sits at that
+    y is its gems bar, and 10 152 gems come back as `dark=410152` with the green
+    `+` read as a leading 4. Two costs, both real. It has to resolve at all for
+    `read_stock` to answer anything, so a gems row that will not read loses the
+    whole trip to the cart — the taps are spent, the elixir is collected, and
+    this reports 0. And it logged `Village holds … dark=410005` in the middle of
+    a builder base run, which is the one line a reader uses to tell the two
+    villages apart in a log.
     """
     if current_world(adb.screenshot(display)) != "night":
         logger.info("The loot cart is the builder base's; there is none here")
@@ -116,7 +126,7 @@ def collect_cart(adb: AdbController, display: DisplayTarget) -> int:
     for _ in range(SWIPES):
         adb.swipe(crossing.start, landing, SWIPE_MS, display)
         time.sleep(SWIPE_SETTLE)
-    before = read_stock(adb.screenshot(display))
+    before = read_builder_stock(adb.screenshot(display))
     try:
         for spot in CART_SPOTS:
             adb.tap(spot[0], spot[1], display)
@@ -131,7 +141,7 @@ def collect_cart(adb: AdbController, display: DisplayTarget) -> int:
         else:
             logger.warning("None of the %d candidate spots found the cart", len(CART_SPOTS))
             return 0
-        after = read_stock(adb.screenshot(display))
+        after = read_builder_stock(adb.screenshot(display))
     finally:
         adb.zoom("out", CROSS_ZOOM_PINCHES, COC_PACKAGE, display)
     if before is None or after is None:
