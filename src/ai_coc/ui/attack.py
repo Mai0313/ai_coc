@@ -905,13 +905,27 @@ class AttackRunner(BaseModel):
         moment `_battle_view` reads nothing lands before the button is alive; the
         village then stayed covered and every following run stood down with
         畫面不在主村 without ever attacking.
+
+        **A screen that will not answer 回營 gets `back` rather than another
+        round of the same tap.** The game puts its own popups over the result —
+        an event reward page, a season pass, whatever it is running that week —
+        and those close on a red X in their own corner, so tapping where 回營
+        would be does nothing at all however many times it is tried. Measured
+        live, one of them held a run for 40 minutes: `battle_over` read its green
+        tick marks as the button, every attempt tapped an empty patch of screen,
+        and 18 rounds went by reporting 畫面不在建築大師基地 while a battle it
+        had already matched into ran out underneath. `back` is safe here for the
+        reason it is safe in `uncovered`: this is only reached on a frame that
+        read as a result screen, which is never a clear village.
         """
         for _ in range(RESULT_ATTEMPTS):
             if not battle_over(self._frame("result")):
                 return
             self._tap(RETURN_HOME)
             time.sleep(RESULT_RETRY_DELAY)
-        logger.warning("The result screen will not close; the next run has nowhere to start")
+        logger.warning("回營 will not close this screen; pressing back at whatever is over it")
+        self.adb.back(self.display)
+        time.sleep(RESULT_RETRY_DELAY)
 
     def _plan(self, frame: bytes, rage_count: int, freeze_count: int) -> AttackPlan | None:
         """The plan for this opponent: the one handed in, the AI's, or the flat default.
