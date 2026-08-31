@@ -403,6 +403,19 @@ class WorldChoiceTests(unittest.TestCase):
         _, runner = self._series("night", "night", crossed="night")
         assert runner.call_args.kwargs["world"] == "night"
 
+    def test_a_frame_that_reads_as_nothing_is_left_to_the_runner(self) -> None:
+        """Unreadable is not "the other village", and the runner waits one out.
+
+        Measured live: a run asked for `--world night` while a battle was still
+        on screen — an ordinary state, a round abandoned by a stop — ended
+        immediately with 沒辦法切到夜世界, having done nothing and waited for
+        nothing. That battle was over two minutes later, and the runner's own
+        first attempt would have found the village.
+        """
+        _, runner = self._series("night", None, crossed=None)
+        assert runner.call_args.kwargs["world"] == "night"
+        assert runner.return_value.run.call_count == 1
+
 
 class NightAttackTests(unittest.TestCase):
     """The builder base half of the attack loop, and the two screens only it has."""

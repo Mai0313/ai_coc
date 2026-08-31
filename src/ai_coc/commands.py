@@ -548,16 +548,31 @@ def _pick_world(adb: AdbController, display: DisplayTarget, wanted: World | None
     village it was closed on and refusing to play that one would stand half the
     runs down for no reason.
 
-    **An unreadable frame is only fatal when a village was named.** Without one
-    this falls through to the home village and lets the runner sort it out:
-    `_open_attack_menu` waits, restarts the game, leaves a result screen and
-    sails home, and every one of those is a state `current_world` answers None
-    for. Bailing on them ended a whole series before round one.
+    **An unreadable frame is never fatal**, whether or not a village was named,
+    because it is not the same answer as "the other village". The runner already
+    knows how to wait one out: `_open_attack_menu` and `_open_night_attack` both
+    wait, restart the game, leave a result screen, press a popup away and sail
+    across, and every one of those is a state `current_world` says nothing for.
+    Bailing on them ends a whole series before round one.
+
+    Measured twice, and the second one is why this covers a named village too.
+    Without a name it already fell through here. With one it did not, so a run
+    asked for `--world night` while a battle was still on screen — an ordinary
+    state, a round abandoned by a stop — ended immediately with
+    沒辦法切到夜世界,沒有開打, having done nothing and waited for nothing. The
+    battle was over two minutes later, and the runner's own first attempt would
+    have found the village.
+
+    What is still fatal is a crossing that landed somewhere real and wrong:
+    that is a boat this run cannot find, and the runner has no better answer.
     """
     if wanted is None:
         return current_world(adb.screenshot(display)) or "day"
     landed = cross(adb, display, wanted)
     if landed == wanted:
+        return wanted
+    if landed is None:
+        logger.info("No village readable yet; leaving %s to the runner to reach", wanted)
         return wanted
     logger.warning("Wanted the %s village and the game is on %s", wanted, landed)
     return None
