@@ -264,6 +264,28 @@ HERO_BAR_MAX_BLUE = 30
 # rows because it is these bars the text is painted over; the loot panel and the
 # army screen are painted over other things and keep the shared ceiling.
 STOCK_LEFT, STOCK_RIGHT = 1300, 1512
+# **The dark row gets its own left edge, because its number is shorter.** Gold
+# and elixir cap at 24M and their eight figures reach back to about x 1338; dark
+# caps at 370 000, so six figures put its leftmost digit at 1356 across every
+# one of 107 recorded readings. That difference is the only room there is, and
+# it is needed: measured live, a collector's own full marker floated behind this
+# row and laid ink from 1300 to 1338, which failed the row — and `read_stock`
+# failing is how `_home` decides it is not on the home village, so `walls`,
+# `collect` and the attack loop all stood down together on a village plainly on
+# screen, each reporting it could not get back to one.
+#
+# 1348 sits ten pixels clear of that marker and eight clear of the digits. The
+# same edge **cannot** be given to the other two rows: tried, and a village
+# holding 14 000 000 gold read back 4 000 000, the leading digit cut off.
+#
+# Two other answers were measured and neither works. Dropping a poor match off
+# the left end, the way `_read_loot_row` drops one off the right, turns a
+# genuinely unreadable row into a truncated number — on a map-corner frame the
+# dark row's leading two glyphs read 31 and 66 off their templates, and dropping
+# those divides the reading by a hundred. And a gap threshold does not separate
+# either, because a real number carries gaps of up to 85 px between its digit
+# groups, wider than the 41 px that separated this marker from its row.
+STOCK_DARK_LEFT = 1348
 STOCK_ROW_BOUNDS = ((33, 72), (117, 156), (200, 239))
 STOCK_DIGIT_TOLERANCE = 30
 STOCK_INK_SATURATION = 45
@@ -1154,8 +1176,10 @@ def read_stock(png: bytes) -> VillageStock | None:
     if image.size != SCREEN_SIZE:
         raise ValueError(f"儲量條座標只適用 1600x900，收到 {image.size[0]}x{image.size[1]}")
     gold, elixir, dark = (
-        _read_row(image, (STOCK_LEFT, top, STOCK_RIGHT, bottom), STOCK_DIGIT_TOLERANCE)
-        for top, bottom in STOCK_ROW_BOUNDS
+        _read_row(image, (left, top, STOCK_RIGHT, bottom), STOCK_DIGIT_TOLERANCE)
+        for left, (top, bottom) in zip(
+            (STOCK_LEFT, STOCK_LEFT, STOCK_DARK_LEFT), STOCK_ROW_BOUNDS, strict=True
+        )
     )
     if gold is None or elixir is None or dark is None:
         return None
