@@ -31,6 +31,8 @@ import time
 from typing import TYPE_CHECKING
 import logging
 
+from pydantic import Field
+
 from ai_coc.models import WallMenu, WallBatch, WallReport, WallUpgrade, VillageStock, WallCandidate
 from ai_coc.ui.runner import MENU_SETTLE, GameRunner
 from ai_coc.parsers.home import free_builders
@@ -92,10 +94,9 @@ class WallRunner(GameRunner):
     keep_elixir: int = 0
     # 0 keeps buying until neither resource will pay for another batch.
     rounds: int = 0
-    # A wall to start from instead of scanning for one. The scan is the part most
-    # likely to disagree with a village this was not written against, so naming a
-    # wall is how to exercise everything downstream of it.
-    at: tuple[int, int] | None = None
+    # The walls this run was pointed at instead of scanning for them; see
+    # `WallOptions.at` for why it is a list and not one wall.
+    at: list[tuple[int, int]] = Field(default_factory=list)
 
     def _neighbours(self, point: tuple[int, int]) -> Iterator[WallCandidate]:
         """The walls immediately around this one, and what each of them asks.
@@ -129,6 +130,44 @@ class WallRunner(GameRunner):
             if menu is not None:
                 logger.info("Wall beside it at (%d, %d), asking %d", spot[0], spot[1], menu.price)
                 yield WallCandidate(point=spot, price=menu.price)
+
+    def _candidates(self) -> list[WallCandidate]:
+        """The walls to choose between: the ones named, or the ones a sweep finds.
+
+        The stop flag is read before either, because looking costs taps either
+        way — the sweep's whole grid, or one apiece for the spots a caller
+        named. `_scan` reads it inside its own loop as well, since that is the
+        long one, but neither should start on a run already asked to stand down.
+        """
+        if self.should_stop():
+            return []
+        return self._named() if self.at else self._scan()
+
+    def _named(self) -> list[WallCandidate]:
+        """What each wall the run was pointed at is asking, read off its own menu.
+
+        The price comes off the game rather than being assumed, because it is
+        what `_pick` compares and what the affordability check stands the run
+        down on. Naming one wall used to hand `_pick` a price of zero, which it
+        then dutifully chose: measured live, that paid 9 000 000 for a wall
+        while 4 000 000 ones stood in the same village.
+
+        A point that opens no wall menu is dropped with a line saying so rather
+        than tried again. It was found by eye on a frame the game has since
+        moved — the camera shifts whenever anything brings the game to the
+        front — and buying whatever is there instead is worse than saying
+        nothing is.
+        """
+        found: list[WallCandidate] = []
+        for point in self.at:
+            png = self._after_tap(point, f"named_{point[0]:04d}_{point[1]:04d}")
+            menu = wall_menu(png)
+            if menu is None:
+                logger.info("Nothing at (%d, %d) opens a wall menu", *point)
+                continue
+            logger.info("Wall at (%d, %d), asking %d", point[0], point[1], menu.price)
+            found.append(WallCandidate(point=point, price=menu.price))
+        return found
 
     def _scan(self) -> list[WallCandidate]:
         """Every wall this run could spend on, and what each of them asks for.
@@ -296,11 +335,13 @@ class WallRunner(GameRunner):
         if self._home() is None:
             report.message = "畫面沒辦法回到村莊，城牆升級沒有開始"
             return report
-        # A named wall starts at nothing, so the affordability check below cannot
-        # stand the run down before the price has been read off the game.
-        walls = [WallCandidate(point=self.at, price=0)] if self.at is not None else self._scan()
+        walls = self._candidates()
         if not walls:
-            report.message = "掃過村莊都沒有找到城牆"
+            report.message = (
+                "收到停止要求，城牆升級沒有開始"
+                if self.should_stop()
+                else "掃過村莊都沒有找到城牆"
+            )
             return report
         logger.info("%d wall(s) to choose from", len(walls))
         # Every wall the run may still spend on, against what its menu last

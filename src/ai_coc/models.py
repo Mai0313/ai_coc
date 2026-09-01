@@ -1436,10 +1436,20 @@ class WallOptions(BaseModel):
     keep_elixir: int = 0
     # 0 keeps buying until neither storage will pay for another wall.
     rounds: int = 0
-    # A wall to start from, for a run that would rather not spend the scan. The
-    # scan is the part most likely to go wrong on a village this was not written
-    # against, so naming a wall is how to work on everything downstream of it.
-    at: tuple[int, int] | None = None
+    # The walls this run was pointed at, instead of scanning for them. Empty
+    # means scan.
+    #
+    # **A list rather than one, because one is not a choice.** `_pick` exists to
+    # take the cheapest wall found, which is the lowest level and so the one
+    # worth the loot; naming a single wall collapses that to whatever was named.
+    # Measured live, a run given one coordinate paid 9 000 000 for a wall while
+    # 4 000 000 ones stood in the same village.
+    #
+    # Which is also the division of labour worth keeping: finding walls is what
+    # the sweep is worst at — it taps a grid and hopes — and what a pair of eyes
+    # on a screenshot does in one look. Reading prices, batching and buying
+    # without ever reaching a gem button is the other way round.
+    at: list[tuple[int, int]] = Field(default_factory=list)
 
 
 class FrameReading(BaseModel):

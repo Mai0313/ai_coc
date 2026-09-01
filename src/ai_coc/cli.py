@@ -108,7 +108,10 @@ def _parser() -> argparse.ArgumentParser:
     upgrade.add_argument("--keep-elixir", type=int, default=0, help="留下這麼多聖水不要花")
     upgrade.add_argument("--rounds", type=int, default=0, help="最多買幾批,0 代表買到資源不夠為止")
     upgrade.add_argument(
-        "--at", metavar="X,Y", help="直接從這個座標上的城牆開始,跳過整個村莊的掃描"
+        "--at",
+        metavar="X,Y",
+        action="append",
+        help="這個座標上的城牆是候選之一,跳過整個村莊的掃描;可以給很多次,最便宜的那片先買",
     )
     sub.add_parser("collect", help="把採集器裡的資源全部收起來")
     sub.add_parser("builders", help="每個工人在蓋什麼、還要多久")
@@ -224,14 +227,13 @@ def _run_command(arguments: argparse.Namespace, run: RunLog) -> int:
     elif arguments.command == "stop":
         result = commands.stop()
     elif arguments.command == "walls":
-        spot = arguments.at.split(",") if arguments.at else None
         result = commands.walls(
             WallOptions(
                 frame_dir=run.frames,
                 keep_gold=arguments.keep_gold,
                 keep_elixir=arguments.keep_elixir,
                 rounds=arguments.rounds,
-                at=(int(spot[0]), int(spot[1])) if spot else None,
+                at=[_spot(one) for one in arguments.at or ()],
             )
         ).model_dump_json(indent=2)
     elif arguments.command == "upgrade":
@@ -239,9 +241,8 @@ def _run_command(arguments: argparse.Namespace, run: RunLog) -> int:
             run.frames, arguments.keep_gold, arguments.keep_elixir
         ).model_dump_json(indent=2)
     elif arguments.command == "hero":
-        spot = arguments.at.split(",") if arguments.at else None
         result = commands.hero(
-            run.frames, arguments.upgrade, (int(spot[0]), int(spot[1])) if spot else None
+            run.frames, arguments.upgrade, _spot(arguments.at) if arguments.at else None
         ).model_dump_json(indent=2)
     elif arguments.command == "donate":
         result = commands.donate(run.frames, arguments.dry_run, arguments.rounds).model_dump_json(
@@ -255,6 +256,12 @@ def _run_command(arguments: argparse.Namespace, run: RunLog) -> int:
     run.answer(result)
     sys.stdout.write(f"{result}\n")
     return 0
+
+
+def _spot(text: str) -> tuple[int, int]:
+    """One `X,Y` argument as a point on the screen."""
+    x, _, y = text.partition(",")
+    return int(x), int(y)
 
 
 def main() -> int:
