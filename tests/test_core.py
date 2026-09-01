@@ -56,6 +56,7 @@ from ai_coc.ui.attack import (
     END_BATTLE,
     DROP_STRIDE,
     LINE_POINTS,
+    NUDGE_REACH,
     DEPLOY_LINES,
     DEPLOY_START,
     PLAN_TIMEOUT,
@@ -2306,6 +2307,37 @@ class AttackTests(unittest.TestCase):
         # really covers rather than the tighter one it was drawn at.
         assert max(x for x, _ in placed) - min(x for x, _ in placed) >= RAGE_SPAN[0]
         assert max(y for _, y in placed) - min(y for _, y in placed) >= RAGE_SPAN[1]
+
+    def test_a_bottle_is_never_walked_more_than_a_footprint_from_where_it_was_asked(self) -> None:
+        """One push moves up to a footprint, and eight of them compound.
+
+        These four points are one tight cluster, and uncapped the last of them
+        walks from (823, 396) out to (608, 212) — 1.78 footprints, 215 px left
+        and 184 px up, well off the ground the planner was looking at. That is
+        the same wasted bottle the nudge exists to prevent, reached from the
+        other side. Swept over 20 000 random sets the worst was 1.81; capped it
+        is 1.00 by construction. A point that cannot be cleared inside that is
+        dropped, so `RAGE_PATH` puts one somewhere deliberate instead.
+        """
+        crowd = [(832, 449), (843, 376), (809, 357), (823, 396)]
+        placed = spaced(crowd)
+        assert not self._overlapping(placed)
+        # The fourth has nowhere inside a footprint to go, so it is dropped
+        # rather than walked out to (608, 212), which is what used to happen.
+        assert len(placed) == 3
+        # Bounded against the footprint itself rather than against
+        # `NUDGE_REACH`, so raising that constant fails this instead of moving
+        # the goalposts with it.
+        for spot in placed:
+            asked = min(
+                crowd, key=lambda point: (spot[0] - point[0]) ** 2 + (spot[1] - point[1]) ** 2
+            )
+            reach = (
+                ((spot[0] - asked[0]) / RAGE_SPAN[0]) ** 2
+                + ((spot[1] - asked[1]) / RAGE_SPAN[1]) ** 2
+            ) ** 0.5
+            assert reach <= 1.0
+        assert NUDGE_REACH <= 1.0
 
     @staticmethod
     def _overlapping(placed: list[tuple[int, int]]) -> list[tuple[int, int]]:

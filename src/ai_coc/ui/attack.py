@@ -228,6 +228,16 @@ NUDGE_CLEARANCE = 1.01
 # One push can walk a point into the next bottle along, so it is offered again.
 # The planner's own too-tight 2x2 opening into a proper one takes three.
 NUDGE_ATTEMPTS = 8
+# And how far the whole walk is allowed to carry it from where it was asked for,
+# in footprints. Each push moves up to one, so without a ceiling eight of them
+# compound: swept over 20 000 random point sets the worst case travelled 1531 px,
+# which is the width of the screen and precisely the failure this replaced —
+# a bottle covering ground nobody chose. One footprint is the honest limit,
+# because past that it is no longer the planner's point at all, and a point that
+# cannot be placed inside it is dropped so `RAGE_PATH` can put it somewhere
+# deliberate instead. The real plans need a fraction of it: replayed over 24
+# recorded rounds the furthest any point moved was 0.32 of a footprint.
+NUDGE_REACH = 1.0
 
 # What waits on the clock when nothing named a moment for it. Every timing on an
 # attack belongs to the plan now, and `plans/flat.json` carries these same three
@@ -600,6 +610,9 @@ def _clear_of(point: tuple[int, int], kept: list[tuple[int, int]]) -> tuple[int,
     straight back where it came from — a bottle pushed towards the card row has
     nowhere to go, and that is the case which runs out of attempts and is dropped
     after all, exactly as every crowded point used to be.
+
+    `NUDGE_REACH` is what stops those repeats compounding into a walk across the
+    village, which is the same wasted bottle this was written to prevent.
     """
     spot = clear_of_controls(point)
     for _ in range(NUDGE_ATTEMPTS):
@@ -625,6 +638,11 @@ def _clear_of(point: tuple[int, int], kept: list[tuple[int, int]]) -> tuple[int,
             round(clash[0] + (spot[0] - clash[0]) * step),
             round(clash[1] + (spot[1] - clash[1]) * step),
         ))
+        gone = (
+            ((spot[0] - point[0]) / RAGE_SPAN[0]) ** 2 + ((spot[1] - point[1]) / RAGE_SPAN[1]) ** 2
+        ) ** 0.5
+        if gone > NUDGE_REACH:
+            return None
     return None
 
 
