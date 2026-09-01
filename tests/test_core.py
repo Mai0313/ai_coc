@@ -4069,10 +4069,10 @@ class HomeHudTests(unittest.TestCase):
     def test_a_wide_leading_digit_still_fits_the_builder_box(self) -> None:
         """0/6, where the box was cut from a 1/5 and a 1 is the narrowest digit.
 
-        The number is centred, so a leading 0 hangs four columns off the left of
-        the old box and lands 23 bits from its template against 5 with them
-        restored — either side of the tolerance, so this village read as no
-        village at all while every builder on it was busy.
+        The number is centred, so the leading 0 inks from x 792 and the old edge
+        at 795 took three columns off it: 23 bits from its template against 5
+        with them restored, either side of the tolerance. So this village read as
+        having no counter at all while every builder on it was busy.
         """
         assert free_builders((FRAMES / "home_builders_busy.png").read_bytes()) == (0, 6)
 

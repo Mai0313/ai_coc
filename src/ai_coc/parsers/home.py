@@ -59,28 +59,28 @@ MARKERS = (
 )
 
 # 1/5 beside the builder's head, in the same white the storage bars use. The
-# slash between the two numbers is not a digit and that is how it is found: swept
-# over live frames every real digit matches within 14 while the slash reads 40,
-# so anything over the line separates one number from the other.
+# slash between the two numbers is not a digit and that is how it is found:
+# swept over every recorded frame carrying this counter, a digit lands within 14
+# of its template and the slash between 38 and 41, so anything over the line
+# separates one number from the other.
 #
-# **The box was cut from a `1/5` and a `1` is the one digit narrow enough to fit
-# it.** The number is centred, so a wide leading digit hangs off the left: swept
-# over the recorded frames the box's own edge fell four columns inside a leading
-# `0`, which put it 22 to 23 bits off its template against 5 to 11 with the
-# columns restored. That is either side of the tolerance, so a village at `0/6`
-# read as nothing at all — and `free_builders` is what `upgrade` asks before it
-# spends a builder and what the wall loop asks after a batch is refused, so both
-# stood down on a village they could read perfectly well. The left edge sits at
-# the near end of a plateau that runs from 792 down to 780 before the plate
-# itself starts bleeding in.
-BUILDER_BOX = (790, 33, 860, 66)
-# Left where it was, now that it has been measured against a leading `0` too:
-# every digit that resolves confidently lands within 14, the slash at 38, and
-# between them sit two frames whose `5` is a coin flip (24 against a `9` at 25,
-# and the same pair the other way round on the next frame of the same counter).
-# The line goes under that pair rather than over it, because a wrong builder
-# count is spent against while an unread one only stops the run.
-BUILDER_TOLERANCE = 22
+# **The box was cut from a `1/5`, and `1` is the one digit narrow enough to fit
+# it.** The number is centred, so a wide leading digit hangs off the left: a
+# leading `0` inks from x 792 and the old edge at 795 took three columns off it,
+# putting it 23 bits from its template against 5 with them restored. That is
+# either side of the tolerance, so a village at `0/6` read as no counter at all.
+# The leading digit is at its floor for any edge from 792 down to 774, and at
+# 772 the counter plate's own frame (inked at 771 to 773) arrives as a fourth
+# glyph; 783 is the middle of that range and leaves the 9 px of margin the right
+# edge already had.
+BUILDER_BOX = (783, 33, 860, 66)
+# Midway between the worst digit that resolves confidently and the first reading
+# that must not be believed. Two frames of one `0/5` counter read their `5` at 24
+# against a `9` at 25, once each way round, so that pair is a coin flip: 24 is
+# where a wrong answer starts, not where a right one ends. Nothing between 14 and
+# 23 changes any recorded frame, so the line goes in the middle of that gap
+# rather than at either edge of it.
+BUILDER_TOLERANCE = 19
 
 # Tapping that counter opens the panel listing every upgrade the village has
 # running, and tapping it again closes it — the button toggles rather than
@@ -350,6 +350,15 @@ def free_builders(png: bytes) -> tuple[int, int] | None:
 
     The game counts the ones standing around, not the ones at work, so zero here
     means every builder is busy and nothing new can be started.
+
+    **None costs each caller something different, and the cheap-looking one is
+    the expensive one.** `UpkeepRunner.upgrade` and `HeroRunner` both stand the
+    run down on it, which is loud and harmless. `WallRunner` does the opposite:
+    its check is `counted is not None and counted[0] == 0`, so an unread counter
+    silently never fires the "every builder is busy" branch and the run walks the
+    rest of the village at forty seconds a wall, buying nothing. That is why the
+    box above is sized to the widest number the counter can hold rather than to
+    the one it happened to be showing when it was cut.
     """
     image = Image.open(io.BytesIO(png)).convert("RGB")
     if image.size != SCREEN_SIZE:
