@@ -305,11 +305,28 @@ CAPACITY_TOLERANCE = 15
 # as a result screen taps a spot with no button on it for as long as it is
 # allowed to. Measured live, 18 rounds of it, every one reporting
 # 畫面不在建築大師基地 while a battle it had already matched into ran out
-# underneath. The line now goes between that 0.2009 and the real button's
-# 0.3283, and `_leave_result` presses `back` when the tapping does not work,
-# which is what gets out of the ones this reader has never seen.
+# underneath. So the line goes above that 0.2009, and `_leave_result` presses
+# `back` when the tapping does not work, which is what gets out of the ones this
+# reader has never seen.
+#
+# **The game draws this button two ways, and only one of them was ever
+# measured.** The 0.3283 that set the old 0.25 is `battle_result.png`, a plain
+# green plate. The live game also draws it lit — a white border and a washed-out
+# fill, which is the same button offered as the primary action — and that reads
+# **0.2488**, just under the line. Swept over every recorded frame of a day of
+# farming, 20 of 21 result screens were the lit kind and not one cleared 0.25,
+# so `battle_over` was answering False on the real thing: `_wait_out_battle`
+# spent its whole `BATTLE_TIMEOUT` on every round, and `_leave_result` returned
+# without ever tapping 回營. Four minutes a round, and the loop limped home on
+# `_home`'s `back` instead. The tests passed throughout, because the only
+# fixture was the plain kind — which is why `battle_result_lit.png` is committed
+# beside it now.
+#
+# The same sweep is what sizes the new line: every frame that is not a result
+# screen reads at most 0.2057 (a mid-deployment capture), so 0.23 sits between
+# that and the lit button's 0.2488 with the plain one far above both.
 RETURN_HOME_BOX = (690, 738, 910, 796)
-RETURN_HOME_GREEN = 0.25
+RETURN_HOME_GREEN = 0.23
 
 # 還在嗎 / 你因閒置過久而中斷連線. A loop that spends minutes waiting for barracks
 # will meet this, and nothing else clears it: the game stops responding to taps
