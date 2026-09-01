@@ -4228,6 +4228,65 @@ class PinchTests(unittest.TestCase):
         assert self._events().count((EV_SYN, SYN_REPORT, 0)) == 4
 
 
+class HeroGemButtonTests(unittest.TestCase):
+    """The one button in the hall that spends gems, and why it read as a price."""
+
+    def test_a_hero_already_upgrading_offers_gems_rather_than_a_price(self) -> None:
+        """立即完成 sits where 升級 was, on the same green plate, with a number
+        beside it — and that number is a gem count.
+
+        Read as a price it is a cheap one, so it cleared the affordability check
+        and its plate was live, which left `hero --upgrade warden` one tap from
+        finishing an upgrade with gems. Measured live it came back as
+        `warden 268 dark upgradable=True` against a village holding 11 359 gems.
+        The card still appears, because the hero is on the screen and the hall
+        has to keep reading as the hall.
+        """
+        cards = {
+            card.hero: card
+            for card in hero_cards((FRAMES / "hero_hall_finishing.png").read_bytes())
+        }
+        warden = cards["warden"]
+        assert (warden.price, warden.resource, warden.upgradable) == (None, None, False)
+        # And the four beside it are untouched: same plate, same place, a real
+        # price in dark elixir.
+        assert [(c.price, c.resource) for c in cards.values() if c.hero != "warden"] == [
+            (4500, "dark"),
+            (5850, "dark"),
+            (11700, "dark"),
+            (9000, "dark"),
+        ]
+
+    def test_the_elixir_hero_is_not_mistaken_for_a_gem_button(self) -> None:
+        """Both are drawn on the same green plate, so the icon is what separates
+        them: swept over both committed halls the elixir drop reads -120 of
+        `green - max(red, blue)` and every dark one -7 to -9, against +48 for the
+        gem. Widening what a gem looks like would take 大守護者 with it.
+        """
+        for name in ("hero_hall", "hero_hall_scrolled"):
+            cards = {card.hero: card for card in hero_cards((FRAMES / f"{name}.png").read_bytes())}
+            assert (cards["warden"].price, cards["warden"].resource) == (1_360_000, "elixir"), name
+            assert cards["warden"].upgradable, name
+
+    def test_a_gem_button_is_reported_as_a_hero_already_being_raised(self) -> None:
+        """Which is what it is, and it is the message the loop already had: a
+        card with no price stops before the affordability check and before
+        anything is tapped.
+        """
+        runner = HeroRunner(
+            adb=AdbController(endpoint=AdbEndpoint(port=16384)),
+            display=DisplayTarget(logical_id="1", physical_id="2"),
+            hero="warden",
+        )
+        cards = {
+            card.hero: card
+            for card in hero_cards((FRAMES / "hero_hall_finishing.png").read_bytes())
+        }
+        blocked = runner._blocked(cards["warden"], VillageStock(gold=0, elixir=0, dark=999_999))
+        assert blocked is not None
+        assert "升級中" in blocked
+
+
 class HeroHallTests(unittest.TestCase):
     """The 英雄殿堂 screen, and the button on the village that opens it."""
 

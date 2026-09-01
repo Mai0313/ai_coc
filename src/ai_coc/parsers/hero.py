@@ -108,12 +108,28 @@ PLATE_SPAN = 60
 MIN_PRICE = 100
 
 # Where the button carries its resource icon, measured from the card's middle.
-# Only two resources ever appear here — 大守護者 takes elixir and every other
+# Two resources are what a hero can cost — 大守護者 takes elixir and every other
 # hero takes dark — so the elixir test settles it and dark is what is left. Dark
 # is not tested for directly because its drop is nearly black, and so is half a
 # village; inside a located button, though, the question is only which of two.
 ICON_SPAN = (92, 111)
 ICON_BAND = (638, 668)
+
+# **A third icon appears in exactly that box, and it spends gems.** A hero
+# already being upgraded has 立即完成 where its 升級 was — same green plate, same
+# place, a number beside it — and that number is a gem count. Read as a price it
+# is a cheap one, so it passed the affordability check and the button was live,
+# which left `hero --upgrade` one tap away from finishing an upgrade with gems.
+# Measured live it read `warden 268 dark upgradable=True` against a village
+# holding 11 359 gems.
+#
+# What separates them is that the gem is the only green one: swept over both
+# committed halls and the live frame, `green - max(red, blue)` runs -120 for the
+# elixir drop and -7 to -9 for every dark one, against +48 for the gem. The line
+# goes between rather than beside either, and this is the same shape as the
+# building menu's own gem guard — the one button in that row that must never be
+# tapped is found and excluded rather than avoided by luck.
+GEM_GREEN = 20
 
 # Where the row's own scroll arrows sit. They are the only way to reach the
 # sixth card, and they stay in the same place because they are the panel's
@@ -297,18 +313,29 @@ def _live_button(image: Image.Image, centre: int) -> bool:
     return green - max(red, blue) > BUTTON_LIVE
 
 
-def _resource(image: Image.Image, centre: int) -> Literal["elixir", "dark"]:
-    """Which of the two resources this button's icon is, elixir or dark."""
+def _resource(image: Image.Image, centre: int) -> Literal["elixir", "dark"] | None:
+    """What this button spends, or None where it is not a resource at all.
+
+    None is 立即完成's gem, and it is the answer that matters: see `GEM_GREEN`
+    for the live reading where that button came back as 268 dark on a live plate.
+    A hero cannot be raised with gems, so a button asking for them is not an
+    upgrade button and the caller is meant to treat the card as having no price.
+    """
     left, right = ICON_SPAN
     top, bottom = ICON_BAND
     icon = image.crop((centre + left, top, centre + right, bottom))
     data = icon.tobytes()
+    pixels = len(data) // 3
+    channels = (sum(data[offset + c] for offset in range(0, len(data), 3)) for c in range(3))
+    red, green, blue = (total / pixels for total in channels)
+    if green - max(red, blue) > GEM_GREEN:
+        return None
     lit = sum(
         _is_elixir(data[offset], data[offset + 1], data[offset + 2])
         for offset in range(0, len(data), 3)
     )
     # Measured, an elixir drop lights 0.42 of this box and a dark one 0.00.
-    return "elixir" if lit / (len(data) // 3) > 0.2 else "dark"
+    return "elixir" if lit / pixels > 0.2 else "dark"
 
 
 def hero_cards(png: bytes) -> list[HeroCard]:
@@ -335,13 +362,17 @@ def hero_cards(png: bytes) -> list[HeroCard]:
         hero = _hero(tint)
         if hero is None:
             continue
-        price = _price(image, centre)
+        # The resource decides whether there is a price at all: a gem button is
+        # not an upgrade button, so the card reads as a hero already being
+        # raised — which is what it is — rather than as a cheap one on offer.
+        resource = _resource(image, centre)
+        price = None if resource is None else _price(image, centre)
         cards.append(
             HeroCard(
                 hero=hero,
                 point=(centre, BUTTON_Y),
                 price=price,
-                resource=None if price is None else _resource(image, centre),
+                resource=None if price is None else resource,
                 upgradable=price is not None and _live_button(image, centre),
             )
         )
