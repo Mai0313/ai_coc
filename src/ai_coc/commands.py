@@ -690,6 +690,24 @@ def attack(options: AttackOptions) -> AttackSeries:
             except KeyboardInterrupt:
                 logger.info("Interrupted; stopping after %d round(s)", len(series.root))
                 break
+            # **A restart inside the round moves the game to a new display, and
+            # only the runner is told.** `AttackRunner` reassigns its own
+            # `self.display` when the idle-disconnect dialog sends it through
+            # `restart_game`, while this function's local and the ticker's copy
+            # keep pointing at a display that no longer exists. `_restart_emulator`
+            # already does exactly this for the scheduled restart; the in-round
+            # one had nobody doing it.
+            #
+            # Measured twice in one night, both times a few battles after an
+            # idle-disconnect restart had moved the game from display 3 to 4:
+            # `_empty_cart` below asked the old display for a frame, `screencap`
+            # answered `Failed to take screenshot. Status: -2`, and the whole
+            # series died with `result.json` never written and the battles it
+            # had played countable only out of `run.log`. The ticker survives
+            # the same staleness because its own capture is wrapped, so it spends
+            # the rest of the night logging warnings nobody reads instead.
+            adb, display = runner.adb, runner.display
+            ticker.adb, ticker.display = adb, display
             series.root.append(report)
             # A builder base round reports no `attacked` — there is no scout
             # screen to have advertised any loot — so the two villages answer
