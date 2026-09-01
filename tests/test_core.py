@@ -3755,13 +3755,53 @@ class WallRunnerTests(unittest.TestCase):
         ):
             return runner._sized(opening, purse), tapped
 
+    def test_several_named_walls_are_compared_rather_than_the_first_one_taken(self) -> None:
+        """One named wall is not a choice, and `_pick` exists to make one.
+
+        `--at` used to take a single spot and hand `_pick` a price of zero for
+        it, which it then dutifully chose. Measured live, that paid 9 000 000
+        for a wall while 4 000 000 ones stood in the same village — the sweep
+        was skipped, and so was the comparison that gives the loot its value.
+
+        Finding walls is the half a pair of eyes does in one look and the sweep
+        does by tapping a grid and hoping; comparing what they ask is the half
+        the loop does better.
+        """
+        runner = self._runner(at=[(200, 300), (400, 300), (600, 300)])
+        menus = {
+            (200, 300): WallMenu(price=9000000, gold=(0, 0), elixir=(0, 0), add=(0, 0)),
+            (400, 300): WallMenu(price=4000000, gold=(0, 0), elixir=(0, 0), add=(0, 0)),
+            (600, 300): None,
+        }
+        tapped: list[tuple[int, int]] = []
+
+        def after(point: tuple[int, int], label: str) -> bytes:
+            tapped.append(point)
+            return b""
+
+        with (
+            patch.object(WallRunner, "_after_tap", side_effect=after),
+            patch.object(walls, "wall_menu", side_effect=lambda _png: menus[tapped[-1]]),
+        ):
+            found = runner._named()
+        # Every named spot is read, and the one that opens nothing is dropped
+        # rather than guessed at: it was found by eye on a frame the game has
+        # since moved.
+        assert tapped == [(200, 300), (400, 300), (600, 300)]
+        assert [(w.point, w.price) for w in found] == [
+            ((200, 300), 9000000),
+            ((400, 300), 4000000),
+        ]
+        # And the cheapest is what gets bought, which is the lowest-level wall.
+        assert runner._pick({w.point: w.price for w in found}) == (400, 300)
+
     def test_a_stopped_run_starts_no_further_batch(self) -> None:
         """Between batches is the only safe place: a batch is a menu, a
         confirmation and a storage read, and leaving mid-way strands a dialog
         over the village. Whatever it already bought stays bought, because a
         wall upgrades the moment it is paid for and there is nothing to undo.
         """
-        runner = self._runner(at=(500, 300), should_stop=lambda: True)
+        runner = self._runner(at=[(500, 300)], should_stop=lambda: True)
         with patch.object(
             runner, "_home", return_value=VillageStock(gold=99999999, elixir=99999999, dark=1)
         ):
