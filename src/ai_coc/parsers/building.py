@@ -46,6 +46,20 @@ SCREEN_SIZE = (1600, 900)
 # does not move, so one located button locates the rest.
 BUTTON_PITCH = 176
 BUTTON_ROW_Y = 700
+
+# Where the game writes what is selected, as 城牆(15級) or 英雄殿堂(9級).
+#
+# **It is the one thing on this screen that says which building this is**, and
+# nothing here can read it: it is Chinese, it differs in every village, and a
+# reader taught the names would need re-teaching whenever the game adds one. So
+# this is a crop rather than a parse — the strip goes to a model that reads it.
+#
+# Fixed, and centred on the screen middle rather than floating over the building
+# it names: measured across nine live menus and both committed ones, every label
+# sat inside this band whatever was selected and wherever it stood on the map.
+# The band is 4% of the frame's area, which is the whole reason a per-candidate
+# call is affordable at all.
+NAME_BAND = (350, 570, 1250, 635)
 # The row is centred here, which is what puts every possible button middle on
 # a half-pitch grid: an odd number of buttons puts one on the middle itself and
 # an even number straddles it. Measured, a real button lands within a pixel of
@@ -389,3 +403,18 @@ def upgrade_sheet(png: bytes) -> tuple[int, int] | None:
     if biggest is None:
         return None
     return biggest.middle[0] + left, biggest.middle[1] + top
+
+
+def name_strip(png: bytes) -> bytes:
+    """Just the band the selected building's name is written in, as a PNG.
+
+    Cropped rather than read: see `NAME_BAND`. A frame with nothing selected
+    still answers, because whether a name is there is the reader's question and
+    not this one's.
+    """
+    image = Image.open(io.BytesIO(png)).convert("RGB")
+    if image.size != SCREEN_SIZE:
+        raise ValueError(f"建築名稱座標只適用 1600x900，收到 {image.size[0]}x{image.size[1]}")
+    out = io.BytesIO()
+    image.crop(NAME_BAND).save(out, format="PNG")
+    return out.getvalue()

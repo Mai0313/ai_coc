@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import math
 import time
-from typing import TYPE_CHECKING, Self
+from typing import TYPE_CHECKING, Self, Literal
 import logging
 from pathlib import Path
 import threading
@@ -48,7 +48,6 @@ from ai_coc.models import (
     CollectReport,
     DisplayTarget,
     BoundarySurvey,
-    GeminiSettings,
     LootThresholds,
     StorageCapacity,
 )
@@ -188,24 +187,22 @@ def launch(restart: RestartScope) -> LaunchReport:
     )
 
 
-def _planner(config: AppConfig) -> GeminiClient | None:
-    """The saved key, or None so the attack falls back to its fixed flank."""
+def _planner(config: AppConfig, tier: Literal["main", "lite"] = "main") -> GeminiClient | None:
+    """A client for one tier, or None so every caller falls back to its own way.
+
+    None is not an error anywhere: the attack uses its fixed flank, the finders
+    sweep, and the building namer leaves the name unread. That is what keeps a
+    run with no key working exactly as it did before any of this existed.
+    """
     try:
         key = SecretStore().load()
     except Exception:
         logger.warning("No saved API key could be read", exc_info=True)
         return None
     if not key:
-        logger.info("No API key is saved; the attack will use the fixed flank and spell grid")
+        logger.info("No API key is saved; the loops will fall back to reading the screen alone")
         return None
-    return GeminiClient(
-        settings=GeminiSettings(
-            api_key=key,
-            model=config.gemini_model,
-            base_url=config.gemini_endpoint,
-            thinking_level=config.gemini_thinking,
-        )
-    )
+    return GeminiClient(api_key=key, settings=getattr(config.gemini, tier))
 
 
 class FrameTicker(BaseModel):
@@ -1009,6 +1006,7 @@ def upgrade(
     keep_gold: int = 0,
     keep_elixir: int = 0,
     at: list[tuple[int, int]] | None = None,
+    only: str = "",
 ) -> BuildReport:
     """Put the village's idle builders to work, with no window in the way.
 
@@ -1017,6 +1015,7 @@ def upgrade(
     `walls`, which needs no builder at all.
     """
     adb = _controller()
+    config = ConfigStore().load()
     if frame_dir is not None:
         frame_dir.mkdir(parents=True, exist_ok=True)
     report = UpkeepRunner(
@@ -1028,7 +1027,12 @@ def upgrade(
         at=at or [],
         # Skipped when the run was told where to look, for the reason the wall
         # loop skips it: the whole point of asking is to find them.
-        ai=None if at else _planner(ConfigStore().load()),
+        ai=None if at else _planner(config),
+        # Always, because it answers the one question the parsers cannot: which
+        # building this is. `--only` needs it, and without it the report is a
+        # coordinate.
+        namer=_planner(config, "lite"),
+        only=only,
     ).upgrade()
     logger.info("Upgrade: %s", report.message)
     return report

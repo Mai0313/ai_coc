@@ -55,6 +55,7 @@ from ai_coc.models import (
     ChatMessage,
     AttackReport,
     DisplayTarget,
+    GeminiSetting,
     LocatedTarget,
     ThinkingLevel,
     UiElementList,
@@ -146,12 +147,16 @@ def _migrated_config(settings: QSettings) -> AppConfig | None:
         thresholds=LootThresholds(**{
             key: saved(key, getattr(defaults.thresholds, key)) for key in THRESHOLD_KEYS
         }),
-        gemini_model=str(settings.value("gemini_model", defaults.gemini_model)),
-        # The OpenAI-compatible endpoint the previous release defaulted to is not
-        # a google-genai base URL. This is the one moment it could be carried
-        # forward, so it is the moment to drop it: past here the terminal reads
-        # the file directly and has no window to filter it on the way through.
-        gemini_endpoint="" if "openai" in endpoint.lower() else endpoint,
+        gemini=GeminiSettings(
+            main=GeminiSetting(
+                model=str(settings.value("gemini_model", defaults.gemini.main.model)),
+                # The OpenAI-compatible endpoint the previous release defaulted to is not
+                # a google-genai base URL. This is the one moment it could be carried
+                # forward, so it is the moment to drop it: past here the terminal reads
+                # the file directly and has no window to filter it on the way through.
+                base_url="" if "openai" in endpoint.lower() else endpoint,
+            )
+        ),
     )
 
 
@@ -828,9 +833,9 @@ class MainWindow(QMainWindow):
         self.api_key.setEchoMode(QLineEdit.Password)
         self.api_key.setPlaceholderText("Stored with Windows DPAPI")
         self.model_combo = QComboBox()
-        self.model_combo.addItem(self.config.gemini_model or DEFAULT_GEMINI_MODEL)
+        self.model_combo.addItem(self.config.gemini.main.model or DEFAULT_GEMINI_MODEL)
         self.model_combo.setToolTip("按「測試連線並載入模型」後會列出這把金鑰可用的文字模型")
-        self.endpoint = QLineEdit(self.config.gemini_endpoint)
+        self.endpoint = QLineEdit(self.config.gemini.main.base_url)
         self.endpoint.setPlaceholderText("留空即使用 Google 官方端點")
         # Every call this app makes is a screen read against a fixed prompt, so
         # the thinking budget mostly buys latency. It is a picker rather than a
@@ -838,7 +843,7 @@ class MainWindow(QMainWindow):
         # out to want the reasoning, should be one choice away from working.
         self.thinking_combo = QComboBox()
         self.thinking_combo.addItems(THINKING_LEVELS)
-        self.thinking_combo.setCurrentText(self.config.gemini_thinking)
+        self.thinking_combo.setCurrentText(self.config.gemini.main.thinking_level)
         self.thinking_combo.setToolTip(
             "模型回答前思考多久。進攻計畫是看圖判讀,low 已經夠用而且快得多"
         )
@@ -1222,21 +1227,29 @@ class MainWindow(QMainWindow):
 
     def gemini_client(self) -> GeminiClient:
         return GeminiClient(
-            settings=GeminiSettings(
-                api_key=self.api_key.text(),
+            api_key=self.api_key.text(),
+            settings=GeminiSetting(
                 model=self.model_combo.currentText().strip() or DEFAULT_GEMINI_MODEL,
                 base_url=self.endpoint.text().strip(),
                 thinking_level=self.thinking_combo.currentText(),
-            )
+            ),
         )
 
     def save_api(self) -> None:
         try:
             self.secrets.save(self.api_key.text())
+            # Only the main tier is on this tab; the lite one has no picker
+            # because nothing about it is a judgement call the user makes.
             self._save_config(
-                gemini_model=self.model_combo.currentText(),
-                gemini_endpoint=self.endpoint.text(),
-                gemini_thinking=self.thinking_combo.currentText(),
+                gemini=self.config.gemini.model_copy(
+                    update={
+                        "main": GeminiSetting(
+                            model=self.model_combo.currentText(),
+                            base_url=self.endpoint.text(),
+                            thinking_level=self.thinking_combo.currentText(),
+                        )
+                    }
+                )
             )
             logger.info("Saved API settings, model=%s", self.model_combo.currentText())
             QMessageBox.information(self, "Saved", "API Key 已使用 Windows DPAPI 儲存。")

@@ -11,7 +11,7 @@ from google.genai import types, errors, interactions
 
 from ai_coc.models import (
     GeminiRequest,
-    GeminiSettings,
+    GeminiSetting,
     GeminiTextPart,
     GeminiImagePart,
     GeminiResponseFormat,
@@ -44,7 +44,11 @@ NON_TEXT_MODEL_TAGS = (
 class GeminiClient(BaseModel):
     """The single place the application talks to Gemini, through google-genai."""
 
-    settings: GeminiSettings
+    # Its own field rather than part of `settings`, because the two come from
+    # different places and only one of them may be written down: the settings are
+    # the plaintext config file and the key is the DPAPI store.
+    api_key: str = ""
+    settings: GeminiSetting
 
     _client: genai.Client | None = PrivateAttr(default=None)
 
@@ -52,10 +56,10 @@ class GeminiClient(BaseModel):
     def client(self) -> genai.Client:
         """Built lazily so a missing key surfaces on the worker thread, not in a slot."""
         if self._client is None:
-            if not self.settings.api_key.strip():
+            if not self.api_key.strip():
                 raise ValueError("尚未設定 Gemini API Key")
             self._client = genai.Client(
-                api_key=self.settings.api_key.strip(),
+                api_key=self.api_key.strip(),
                 http_options=types.HttpOptions(base_url=self.settings.base_url)
                 if self.settings.base_url.strip()
                 else None,

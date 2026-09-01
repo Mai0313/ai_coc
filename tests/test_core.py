@@ -37,20 +37,23 @@ from ai_coc.models import (
     WallOptions,
     WallUpgrade,
     AttackSeries,
+    BuildingName,
     VillageStock,
     AttackOptions,
     DisplayTarget,
+    GeminiSetting,
     LootOverrides,
     UpgradeButton,
     WallCandidate,
     BoundarySurvey,
-    GeminiSettings,
+    BuildCandidate,
     LootThresholds,
     StorageCapacity,
 )
 from ai_coc.prompts import PROMPTS, PROMPT_DIR, render
 from ai_coc.ui.hero import HeroRunner
 from ai_coc.ui.walls import WallRunner
+from ai_coc.constants import DEFAULT_LITE_MODEL
 from ai_coc.ui.attack import (
     PLAYFIELD,
     RAGE_PATH,
@@ -142,6 +145,7 @@ from ai_coc.parsers.boundary import (
 from ai_coc.parsers.building import (
     PRICE_TOLERANCE,
     wall_menu,
+    name_strip,
     game_dialog,
     upgrade_sheet,
     upgrade_buttons,
@@ -1454,7 +1458,7 @@ class PlanTests(unittest.TestCase):
             adb=AdbController(endpoint=AdbEndpoint(port=16384)),
             display=DisplayTarget(logical_id="1", physical_id="2"),
             thresholds=LootThresholds(),
-            ai=GeminiClient(settings=GeminiSettings(api_key="not-a-real-key")),
+            ai=GeminiClient(api_key="not-a-real-key", settings=GeminiSetting()),
         )
         with patch.object(
             GeminiClient, "generate_structured", side_effect=TimeoutError("Request timed out")
@@ -3831,7 +3835,7 @@ class WallRunnerTests(unittest.TestCase):
         imperfect finder is usable: a wrong point costs one tap and one capture,
         so asking for more spots than the run needs is the right shape.
         """
-        runner = self._runner(ai=GeminiClient(settings=GeminiSettings(api_key="not-a-real-key")))
+        runner = self._runner(ai=GeminiClient(api_key="not-a-real-key", settings=GeminiSetting()))
         answer = ScreenSpots(
             spots=[ScreenPoint(x_pct=25, y_pct=30), ScreenPoint(x_pct=50, y_pct=40)]
         )
@@ -3856,7 +3860,7 @@ class WallRunnerTests(unittest.TestCase):
         alternative to two and a half minutes of grid taps is a run that buys
         nothing at all.
         """
-        runner = self._runner(ai=GeminiClient(settings=GeminiSettings(api_key="not-a-real-key")))
+        runner = self._runner(ai=GeminiClient(api_key="not-a-real-key", settings=GeminiSetting()))
         with (
             patch.object(GeminiClient, "generate_structured", side_effect=RuntimeError("no key")),
             patch.object(WallRunner, "_frame", return_value=b""),
@@ -4399,7 +4403,7 @@ class TargetFinderTests(unittest.TestCase):
         floor works — 0 of 14 on the next run — but the prompt is the
         optimisation and this is the guarantee.
         """
-        runner = self._runner(ai=GeminiClient(settings=GeminiSettings(api_key="not-a-real-key")))
+        runner = self._runner(ai=GeminiClient(api_key="not-a-real-key", settings=GeminiSetting()))
         # 47% of 900 is 423, which is on the map; 78% is 702, which is not.
         answer = self._answer((50, 47), (47, 78), (60, 30))
         with (
@@ -4414,6 +4418,92 @@ class TargetFinderTests(unittest.TestCase):
         existed, which is what keeps the sweep underneath rather than beside it.
         """
         assert self._runner()._spotted("城牆", "散開", 12) == []
+
+
+class GeminiTierTests(unittest.TestCase):
+    """Two model tiers in the settings file, and a file written before they existed."""
+
+    def test_a_file_from_before_the_tiers_keeps_the_model_it_was_configured_with(self) -> None:
+        """An alias cannot carry this: the old keys were flat and the new ones
+        live a level down, so there is nowhere for `AliasChoices` to point. Only
+        `main` is filled in, because the old file had one model for one kind of
+        call and that was the one.
+        """
+        config = AppConfig.model_validate({
+            "stop_at": 90,
+            "gemini_model": "gemini-3.6-flash",
+            "gemini_endpoint": "https://example.invalid",
+            "gemini_thinking": "medium",
+        })
+        assert config.gemini.main.model == "gemini-3.6-flash"
+        assert config.gemini.main.base_url == "https://example.invalid"
+        assert config.gemini.main.thinking_level == "medium"
+        # And the tier that file never had comes in at its default rather than
+        # inheriting the one beside it: the whole point of a second tier is that
+        # it is a different model.
+        assert config.gemini.lite.model == DEFAULT_LITE_MODEL
+
+    def test_the_key_has_nowhere_to_live_in_the_settings_file(self) -> None:
+        """`ConfigStore.save` writes every field of every nested model, so a key
+        field here would put an empty slot in a plaintext file — beside the DPAPI
+        store built to keep it out of one. The client carries it instead.
+        """
+        assert "api_key" not in AppConfig().model_dump_json()
+        assert "api_key" not in GeminiSetting.model_fields
+
+
+class BuildingNameTests(unittest.TestCase):
+    """Reading which building a menu belongs to, which no parser here can do."""
+
+    def test_the_name_strip_is_a_slice_of_the_frame_rather_than_the_frame(self) -> None:
+        """A per-candidate call is only affordable because of what it sends: the
+        band is 4% of the frame's area, and it is a fixed one — measured across
+        nine live menus, every label sat inside it whatever was selected.
+        """
+        frame = (FRAMES / "hero_hall_menu.png").read_bytes()
+        strip = Image.open(io.BytesIO(name_strip(frame)))
+        assert strip.size == (900, 65)
+        assert len(strip.tobytes()) / len(Image.open(io.BytesIO(frame)).tobytes()) < 0.05
+
+    def test_no_model_leaves_the_name_unread_rather_than_guessed(self) -> None:
+        """Which is what a run with no API key gets, and every caller treats it
+        as ordinary: the report falls back to the coordinate it always used.
+        """
+        runner = UpkeepRunner(
+            adb=AdbController(endpoint=AdbEndpoint(port=16384)),
+            display=DisplayTarget(logical_id="1", physical_id="2"),
+        )
+        assert runner._name(b"") == BuildingName()
+
+    def test_only_skips_a_dearer_building_with_the_wrong_name(self) -> None:
+        """The opposite of what this loop does unasked, and deliberately: without
+        a name the dearest affordable upgrade is the best use of a scarce
+        builder, and with one the caller knows better than the price does.
+        """
+        runner = UpkeepRunner(
+            adb=AdbController(endpoint=AdbEndpoint(port=16384)),
+            display=DisplayTarget(logical_id="1", physical_id="2"),
+            only="金礦",
+        )
+        offers = [
+            BuildCandidate(
+                point=(100, 100),
+                resource="gold",
+                price=9_900_000,
+                building=BuildingName(name="箭塔", level=15),
+            ),
+            BuildCandidate(
+                point=(200, 200),
+                resource="gold",
+                price=720_000,
+                building=BuildingName(name="金礦", level=12),
+            ),
+        ]
+        assert runner._pick(offers, 20_000_000, 0).point == (200, 200)
+        # An unread name matches nothing, which is the safe direction for a
+        # filter that decides where a builder goes.
+        blank = [offer.model_copy(update={"building": BuildingName()}) for offer in offers]
+        assert runner._pick(blank, 20_000_000, 0) is None
 
 
 class UpkeepRunnerTests(unittest.TestCase):
@@ -4433,7 +4523,7 @@ class UpkeepRunnerTests(unittest.TestCase):
         nine buildings it found sat within 45 px of a grid point, against a grid
         that stops at x 1220 and y 500 on a 1600x900 screen.
         """
-        runner = self._runner(ai=GeminiClient(settings=GeminiSettings(api_key="not-a-real-key")))
+        runner = self._runner(ai=GeminiClient(api_key="not-a-real-key", settings=GeminiSetting()))
         answer = ScreenSpots(
             spots=[ScreenPoint(x_pct=50, y_pct=40), ScreenPoint(x_pct=80, y_pct=50)]
         )
@@ -4502,7 +4592,7 @@ class HeroRunnerTests(unittest.TestCase):
         passes, each with a settle and a capture. Measured live, the first guess
         opened it.
         """
-        runner = self._runner(ai=GeminiClient(settings=GeminiSettings(api_key="not-a-real-key")))
+        runner = self._runner(ai=GeminiClient(api_key="not-a-real-key", settings=GeminiSetting()))
         answer = ScreenSpots(spots=[ScreenPoint(x_pct=62, y_pct=48)])
         with (
             patch.object(GeminiClient, "generate_structured", return_value=answer),
@@ -4519,7 +4609,7 @@ class HeroRunnerTests(unittest.TestCase):
         """The sweep stays underneath, because a hall nobody can place is still
         standing somewhere on the map.
         """
-        runner = self._runner(ai=GeminiClient(settings=GeminiSettings(api_key="not-a-real-key")))
+        runner = self._runner(ai=GeminiClient(api_key="not-a-real-key", settings=GeminiSetting()))
         answer = ScreenSpots(spots=[ScreenPoint(x_pct=10, y_pct=10)])
         with (
             patch.object(GeminiClient, "generate_structured", return_value=answer),
