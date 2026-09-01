@@ -1556,7 +1556,13 @@ class AttackRunner(BaseModel):
         return self._pan(frame, (0, wanted))
 
     def _deploy(self, frame: bytes) -> None:
-        """Spread the main troops along one flank; everything else drops once, mid-line."""
+        """Play the plan's steps along one flank, and read once what the game refused."""
+        # The runner outlives the round, so last round's line has to go before
+        # this one can fail to draw a new one: `_dump_leftovers` reads it during
+        # the battle wait, which is reached even by a round that deployed
+        # nothing at all, and pouring along a line drawn for the village before
+        # is worse than pouring nowhere.
+        self._line = []
         # Zoom before centring, and not the other way round: centring measures
         # the village against the screen, so it has to be looking at the view
         # every one of those numbers was taken at.
