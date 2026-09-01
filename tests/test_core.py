@@ -2299,7 +2299,12 @@ class AttackTests(unittest.TestCase):
         left, a bottle went to (1000, 300) behind it. Opening the block out
         keeps all four over the ground the planner picked.
         """
-        placed = spaced([(560, 252), (768, 252), (560, 342), (768, 342)])
+        block = [(560, 252), (768, 252), (560, 342), (768, 342)]
+        # The grid goes in behind the block exactly as `_deploy` appends it, so
+        # the assertion below is about the top-up path really not being reached.
+        # Called on the block alone it could not fail: no grid coordinate would
+        # be in the input to come out of it.
+        placed = spaced(block + list(RAGE_PATH))[: len(block)]
         assert len(placed) == 4
         assert not [spot for spot in placed if spot in RAGE_PATH]
         assert not self._overlapping(placed)
@@ -2339,8 +2344,27 @@ class AttackTests(unittest.TestCase):
             assert reach <= 1.0
         assert NUDGE_REACH <= 1.0
 
+    def test_pulling_a_bottle_onto_the_playfield_is_not_charged_to_its_nudge(self) -> None:
+        """The camera pan can hand `spaced` a point that is already off the map.
+
+        `_clear_flank` moves the record by up to `FLANK_ROOM`, and `_deploy` runs
+        `_onscreen` over the plan's points before this sees them, so one drawn
+        near the bottom of the village arrives under the card row and is clamped
+        back up. That clamp is not a push this made, and charging it to
+        `NUDGE_REACH` spent almost the whole budget before the first one: the
+        point below was dropped with a clash beside it while the identical point
+        with no clash was returned untouched.
+        """
+        crowded = attack._clear_of((900, 810), [(1000, 690)])
+        alone = attack._clear_of((900, 810), [])
+        assert alone == (900, 700)
+        assert crowded is not None
+        assert not self._overlapping([crowded, (1000, 690)])
+
     @staticmethod
-    def _overlapping(placed: list[tuple[int, int]]) -> list[tuple[int, int]]:
+    def _overlapping(
+        placed: list[tuple[int, int]],
+    ) -> list[tuple[tuple[int, int], tuple[int, int]]]:
         """Every pair of bottles close enough that the second one buys nothing."""
         return [
             (one, two)

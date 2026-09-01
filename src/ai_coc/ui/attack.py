@@ -614,7 +614,14 @@ def _clear_of(point: tuple[int, int], kept: list[tuple[int, int]]) -> tuple[int,
     `NUDGE_REACH` is what stops those repeats compounding into a walk across the
     village, which is the same wasted bottle this was written to prevent.
     """
-    spot = clear_of_controls(point)
+    # The walk is measured from here rather than from `point`, because pulling a
+    # point onto the playfield is not something this did to it: a plan point the
+    # camera pan has carried under the card row arrives already 110 px out, and
+    # charging that to the budget would drop it for a push it never took — while
+    # the same clamped point with no neighbour beside it is returned unchecked.
+    # Identical displacement, opposite verdicts, decided by whether a clash
+    # happened to be nearby.
+    spot = start = clear_of_controls(point)
     for _ in range(NUDGE_ATTEMPTS):
         clash = next(
             (
@@ -639,7 +646,7 @@ def _clear_of(point: tuple[int, int], kept: list[tuple[int, int]]) -> tuple[int,
             round(clash[1] + (spot[1] - clash[1]) * step),
         ))
         gone = (
-            ((spot[0] - point[0]) / RAGE_SPAN[0]) ** 2 + ((spot[1] - point[1]) / RAGE_SPAN[1]) ** 2
+            ((spot[0] - start[0]) / RAGE_SPAN[0]) ** 2 + ((spot[1] - start[1]) / RAGE_SPAN[1]) ** 2
         ) ** 0.5
         if gone > NUDGE_REACH:
             return None
