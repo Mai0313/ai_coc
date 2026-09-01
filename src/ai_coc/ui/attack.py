@@ -803,6 +803,15 @@ class AttackRunner(BaseModel):
     # reading, and an `ability` step after one still has to know which heroes
     # are out there to fire.
     _onfield: list[int] = PrivateAttr(default_factory=list)
+    # Which card each named hero was sent to, so its own `ability` step can find
+    # it again. The row itself says nothing about who is on which card.
+    _named: dict[str, int] = PrivateAttr(default_factory=dict)
+    # The last frame `_battle_ended` looked at, and the line the tactic is being
+    # played along. Both are here so the battle poll can spend the frame it was
+    # taking anyway on a second question: is anything still sitting in a card.
+    _last: bytes = PrivateAttr(default=b"")
+    _line: list[tuple[int, int]] = PrivateAttr(default_factory=list)
+    _spells: list[int] = PrivateAttr(default_factory=list)
     # What this village's storages hold when full, read off their own tooltips
     # the first time a round reaches the village and kept for the rest of the
     # run. A storage only grows when a builder finishes upgrading one, which is
@@ -971,6 +980,7 @@ class AttackRunner(BaseModel):
         view = read_scout(png)
         if view is not None:
             self._seen = view.loot
+        self._last = png
         return battle_over(png)
 
     def _open_attack_menu(self) -> bytes | None:
@@ -1648,8 +1658,10 @@ class AttackRunner(BaseModel):
         that fits inside it is free.
         """
         line = deploy_line(LINE_POINTS, *push_line(anchors, 0, self._middle))
+        self._line, self._spells = line, row.rages + row.freezes
         steps = merged(plan.steps)
         self._sending, self._unsent, self._onfield = {}, list(row.heroes), []
+        self._named = {}
         opened = done = time.monotonic()
         for step in steps:
             if step.act == "wait":
@@ -1700,17 +1712,31 @@ class AttackRunner(BaseModel):
             # never landed` where the army carried four.
             wanted = list(self._unsent) if step.who == "unknown" else self._unsent[:1]
             self._drop_at(wanted, points[0] if points else middle)
+            # Which card each named hero went to, so its own `ability` step can
+            # find it again. Nothing on the row says who is on which card, so
+            # this record is the only link between the two.
+            if step.who != "unknown" and wanted:
+                self._named[step.who] = wanted[0]
             del self._unsent[: len(wanted)]
         elif step.act == "ability":
-            # Every hero the tactic has out: confirmed on the field by a reading
-            # that has already happened, or sent and not yet read. A tap on a
-            # card whose hero never landed deploys it instead, with nothing
-            # around it — but never firing the ability at all is worse, and the
-            # two lists together are the closest thing to an answer there is.
+            # **The named hero's card, and only that one.** This used to tap
+            # every hero the tactic had out, which fires abilities the plan
+            # meant to hold: on `hero queen → hero king → ability queen → wait
+            # 20s → ability king`, the king's went at 2 s instead of 22. Live it
+            # showed up as 你已經用過這項英雄技能了 on the second step, the
+            # game refusing a hero already spent by the first.
+            #
+            # `unknown` still means all of them, the same rule `hero` follows,
+            # because a tactic written before any army was seen cannot name one.
+            wanted = [self._named[step.who]] if step.who in self._named else []
+            if step.who == "unknown":
+                wanted = list(row.heroes)
+            # A tap on a card whose hero never landed deploys it instead, with
+            # nothing around it, so only what is out gets offered one.
             self.adb.tap_many(
                 [
                     (card, CARD_ROW_Y)
-                    for card in row.heroes
+                    for card in wanted
                     if card in self._onfield or card in self._sending
                 ],
                 self.display,
@@ -1863,8 +1889,44 @@ class AttackRunner(BaseModel):
             # The result screen is the first one with no loot panel on it.
             if self._battle_ended("battle"):
                 break
+            self._dump_leftovers()
         self._leave_result()
         return self._seen is not None and self._seen != opening
+
+    def _dump_leftovers(self) -> None:
+        """Anything still sitting in a card mid-battle, poured along the line.
+
+        **A card can appear after the army is down.** Measured live: a row of
+        eight at the opening had a ninth in colour at 62% destruction, holding
+        23, where every original card had greyed out — an event handing out
+        troops, and the tactic had no step for it because the planner never saw
+        it. Twenty-three troops carried home is worse than any of them landing
+        somewhere imperfect.
+
+        So this asks the one question that does not care why: is anything still
+        deployable. It costs nothing, because the battle poll was already taking
+        this frame to ask whether the result screen is up, and it needs no
+        knowledge of whatever event put the card there.
+
+        It is also the honest guard against a plan that simply left something
+        out — a `troops` step the planner forgot, or a card the row grew that no
+        step names. That was the one part of a free-form tactic worth worrying
+        about, and this covers it without validating anything.
+
+        Spells are left alone: a spell wants its own selection delay, and one
+        still holding bottles is `_cast`'s business.
+        """
+        if not self._line:
+            return
+        live = [card for group in card_groups(self._last) for card in group]
+        # An `xN` corner is what says a card still holds something to place;
+        # heroes and the siege machine carry none, so a hero standing on the
+        # field in full colour is not mistaken for a card to empty.
+        extra = [c for c in counted_cards(self._last, live) if c not in self._spells]
+        if not extra:
+            return
+        logger.info("%d card(s) still hold troops with the tactic done; pouring them", len(extra))
+        self._pour(extra, self._line, self._last)
 
     def _outcome(self, reason: str, took: bool) -> str:
         """How a battle that was actually fought is reported.

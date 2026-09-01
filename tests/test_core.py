@@ -2202,6 +2202,60 @@ class AttackTests(unittest.TestCase):
         after_reading = [sent, _step("wait", seconds=4), _step("ability")]
         assert self._fired(after_reading) == [(500, CARD_ROW_Y)]
 
+    def test_an_ability_fires_the_hero_it_names_and_not_the_others(self) -> None:
+        """Firing them all spends abilities the plan meant to hold.
+
+        On `hero queen → hero king → ability queen → wait 20s → ability king`
+        the king's went at 2 s instead of 22. Live it showed as
+        你已經用過這項英雄技能了 on the later step — the game refusing a hero
+        the earlier one had already spent.
+        """
+        early = [
+            _step("hero", (20, 20), who="queen"),
+            _step("hero", (30, 30), who="king"),
+            _step("ability", who="queen"),
+        ]
+        assert self._fired(early) == [(500, CARD_ROW_Y)]
+        # And the other one when its own step comes round.
+        assert self._fired([*early, _step("ability", who="king")]) == [(600, CARD_ROW_Y)]
+
+    def test_a_card_the_row_grew_mid_battle_is_poured_rather_than_carried_home(self) -> None:
+        """Measured live: a ninth card in colour at 62%, holding 23, that the plan never saw.
+
+        An event handed out troops after the army was down, so no step named
+        them. Whatever put it there does not matter — the question is only
+        whether anything is still deployable, and the battle poll was taking
+        that frame anyway. It is the same guard against a plan that simply left
+        a card out.
+        """
+        runner = self._runner()
+        runner._line = deploy_line(LINE_POINTS, *DEPLOY_LINES["top_left"])
+        runner._spells = [939, 1060]
+        poured: list[list[int]] = []
+        with (
+            patch.object(attack, "card_groups", return_value=[[171], [900], [939]]),
+            # The `xN` corner: the newcomer and the spell carry one, the hero does not.
+            patch.object(attack, "counted_cards", return_value=[171, 939]),
+            patch.object(
+                AttackRunner, "_pour", side_effect=lambda cards, *a: poured.append(cards)
+            ),
+        ):
+            runner._dump_leftovers()
+        # The newcomer, and neither the hero standing on the field nor the spell.
+        assert poured == [[171]]
+
+    def test_nothing_left_in_a_card_is_left_alone(self) -> None:
+        """The ordinary case, and it must not tap anything at all."""
+        runner = self._runner()
+        runner._line = deploy_line(LINE_POINTS, *DEPLOY_LINES["top_left"])
+        with (
+            patch.object(attack, "card_groups", return_value=[[900]]),
+            patch.object(attack, "counted_cards", return_value=[]),
+            patch.object(AttackRunner, "_pour") as poured,
+        ):
+            runner._dump_leftovers()
+        poured.assert_not_called()
+
     def _fired(self, steps: list[AttackStep]) -> list[tuple[int, int]]:
         """Which cards the tactic's last tap went to."""
         runner = self._runner()
