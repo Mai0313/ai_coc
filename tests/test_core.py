@@ -1145,8 +1145,18 @@ class ScoutTests(unittest.TestCase):
         assert not attack_menu_open((FRAMES / "scout_grass.png").read_bytes())
 
     def test_the_result_screen_is_recognised_so_the_next_run_can_start(self) -> None:
-        """One 回營 tap was not enough, and four runs in a row then stood down."""
+        """One 回營 tap was not enough, and four runs in a row then stood down.
+
+        **The game draws this button two ways and only one of them was here.**
+        `battle_result.png` is the plain green plate that measured 0.3283 and
+        set the old 0.25 line; the live game also draws it lit, with a white
+        border and a washed-out fill, and that reads 0.2488. Swept over a day of
+        recorded farming, 20 of 21 result screens were the lit kind and not one
+        of them cleared the line — so `battle_over` was False on the real
+        thing every round while this test went on passing.
+        """
         assert battle_over((FRAMES / "battle_result.png").read_bytes())
+        assert battle_over((FRAMES / "battle_result_lit.png").read_bytes())
         assert not battle_over((FRAMES / "attack_menu.png").read_bytes())
         assert not battle_over((FRAMES / "scout_in_battle.png").read_bytes())
 
