@@ -4,7 +4,7 @@ import unittest
 
 import pytest
 
-from ai_coc.models import AgentAction, GeminiSettings
+from ai_coc.models import AgentAction, GeminiSetting
 from ai_coc.adapters.ai import GeminiClient
 
 
@@ -47,7 +47,7 @@ class FakeGenaiClient:
 
 
 def _client(interactions: FakeInteractions) -> GeminiClient:
-    client = GeminiClient(settings=GeminiSettings(api_key="key", model="gemini-test"))
+    client = GeminiClient(api_key="k", settings=GeminiSetting(model="gemini-test"))
     client._client = FakeGenaiClient(interactions)
     return client
 

@@ -5,9 +5,23 @@ from typing import Any, Literal
 from pathlib import Path
 from datetime import UTC, datetime
 
-from pydantic import Field, BaseModel, RootModel, ConfigDict, AliasChoices, field_validator
+from pydantic import (
+    Field,
+    BaseModel,
+    RootModel,
+    ConfigDict,
+    AliasChoices,
+    field_validator,
+    model_validator,
+)
 
-from .constants import LOG_DIR, DEFAULT_ADB_HOST, ENTITY_CATEGORIES, DEFAULT_GEMINI_MODEL
+from .constants import (
+    LOG_DIR,
+    DEFAULT_ADB_HOST,
+    ENTITY_CATEGORIES,
+    DEFAULT_LITE_MODEL,
+    DEFAULT_GEMINI_MODEL,
+)
 
 # Village JSON, Battle Scripts and the MuMu CLI all gain fields between game and
 # emulator releases. Models that mirror them allow extras so an unknown field is
@@ -736,6 +750,40 @@ class HeroOrder(BaseModel):
     ability_after: int = Field(ge=0, le=180)
 
 
+class GeminiSetting(BaseModel):
+    """Which model to send one kind of call to, and how to reach it.
+
+    **No `api_key`, deliberately.** This is what the plaintext config file holds,
+    and the key lives in the DPAPI store precisely so it is not in a file anyone
+    can read. A field here would serialise as an empty string on every save — a
+    slot that looks like the place to put your key, sitting beside the store
+    built to keep it out. `GeminiClient` takes the key as its own field instead.
+    """
+
+    model: str = DEFAULT_GEMINI_MODEL
+    base_url: str = ""
+    thinking_level: ThinkingLevel = DEFAULT_THINKING_LEVEL
+
+
+class GeminiSettings(BaseModel):
+    """The tiers this application sends work to, by what the work is.
+
+    Two rather than one because the two call patterns are different, which is
+    the only thing that justifies a second model at all. `main` answers once per
+    run against a whole screenshot — the attack plan, the target finder — so
+    nothing there is racing anything and the better model is simply the right
+    one. `lite` answers **once per candidate** on a cropped strip, which is where
+    a cheaper model earns its place.
+
+    Named for the role rather than for the product: a key called `flash` holding
+    `gemini-4-pro` is a lie the file keeps telling, and this project already has
+    a scar from a settings key that outlived what it configured.
+    """
+
+    main: GeminiSetting = GeminiSetting()
+    lite: GeminiSetting = GeminiSetting(model=DEFAULT_LITE_MODEL)
+
+
 class AppConfig(BaseModel):
     """Everything a run needs that the window and the terminal both read.
 
@@ -794,9 +842,38 @@ class AppConfig(BaseModel):
     # spending an input every few seconds all night; it lives here because the
     # timeout is the game's and can move under us.
     keepalive_seconds: float = 120.0
-    gemini_model: str = DEFAULT_GEMINI_MODEL
-    gemini_endpoint: str = ""
-    gemini_thinking: ThinkingLevel = DEFAULT_THINKING_LEVEL
+    # Nested rather than three more flat keys, and it earns that twice over. At
+    # the top level `model` would sit beside `restart_every` with nothing saying
+    # which subsystem it belongs to, and that only gets worse as tiers are added.
+    # More usefully, a tier *is* a `GeminiSetting`, so building a client stopped
+    # being four lines of copying one field name onto another.
+    gemini: GeminiSettings = GeminiSettings()
+
+    @model_validator(mode="before")
+    @classmethod
+    def _lift_flat_keys(cls, value: Any) -> Any:  # noqa: ANN401 - arbitrary saved JSON
+        """Carry a file written before the tiers existed into the nested shape.
+
+        An alias cannot do this: the old keys were flat and the new ones live a
+        level down, so there is nowhere for `AliasChoices` to point. It only ever
+        fills in what the file has not already said, and `ConfigStore.load()`
+        writes the result back on the next run, so a file upgrades itself once
+        and this stops firing.
+        """
+        if not isinstance(value, dict) or "gemini" in value:
+            return value
+        moved = {
+            field: value[key]
+            for key, field in (
+                ("gemini_model", "model"),
+                ("gemini_endpoint", "base_url"),
+                ("gemini_thinking", "thinking_level"),
+            )
+            if key in value
+        }
+        # Only `main` is carried over. The old file had one model because there
+        # was one kind of call, and it was that one.
+        return {**value, "gemini": {"main": moved}} if moved else value
 
 
 class AttackPlan(BaseModel):
@@ -1031,13 +1108,35 @@ class BuilderReport(BaseModel):
     message: str = ""
 
 
-class BuildCandidate(BaseModel):
-    """A building the sweep found with an upgrade on offer, and what it asks for.
+class BuildingName(BaseModel):
+    """What the game says is selected, read off the label rather than the artwork.
 
-    Only where it is and what it costs. Nothing here names the building, because
-    nothing on its menu does — and nothing downstream needs it named: what an
-    idle builder is worth putting on is a judgement about price and time, and
-    only one of those is on screen.
+    The one question the parsers provably cannot answer: 金礦 and 箭塔 open menus
+    that are identical to every reader here, and what separates them is a line of
+    Chinese. So it goes to a model — a cheap one, because reading a label is a
+    classification rather than a judgement.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    # Empty when the strip carried no label, which is an ordinary answer: a frame
+    # can be caught between the tap and the game drawing it.
+    name: str = ""
+    level: int | None = None
+
+    def __str__(self) -> str:
+        """How the game writes it, which is what a log line should say."""
+        return f"{self.name}({self.level}級)" if self.level is not None else self.name or "?"
+
+
+class BuildCandidate(BaseModel):
+    """A building found with an upgrade on offer, and what it asks for.
+
+    Where it is, what it costs, and — when there is a model to ask — what it is.
+    The name buys two things nothing here had before: a report that says 金礦
+    rather than a coordinate, and `--only`, which is the difference between
+    spending a scarce builder on the dearest thing going and spending it on the
+    thing that was actually holding the village back.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -1045,6 +1144,7 @@ class BuildCandidate(BaseModel):
     point: tuple[int, int]
     resource: Literal["gold", "elixir"]
     price: int
+    building: BuildingName = BuildingName()
 
 
 class BuildReport(BaseModel):
@@ -1523,13 +1623,6 @@ class UiElement(BaseModel):
 
 class UiElementList(RootModel[list[UiElement]]):
     """Accessibility nodes on their way into a prompt."""
-
-
-class GeminiSettings(BaseModel):
-    api_key: str = ""
-    model: str = DEFAULT_GEMINI_MODEL
-    base_url: str = ""
-    thinking_level: ThinkingLevel = DEFAULT_THINKING_LEVEL
 
 
 class GeminiTextPart(BaseModel):

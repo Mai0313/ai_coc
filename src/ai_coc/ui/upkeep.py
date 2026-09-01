@@ -23,11 +23,26 @@ import logging
 
 from pydantic import Field
 
-from ai_coc.models import BuildReport, VillageStock, BuilderReport, CollectReport, BuildCandidate
-from ai_coc.ui.runner import MENU_SETTLE, GameRunner
+from ai_coc.models import (
+    BuildReport,
+    BuildingName,
+    VillageStock,
+    BuilderReport,
+    CollectReport,
+    BuildCandidate,
+)
+from ai_coc.prompts import render
+from ai_coc.ui.runner import MENU_SETTLE, SPOT_TIMEOUT, GameRunner
+from ai_coc.adapters.ai import GeminiClient
 from ai_coc.parsers.home import BUILDER_BUTTON, builder_jobs, free_builders, collect_bubbles
 from ai_coc.parsers.scout import read_stock
-from ai_coc.parsers.building import wall_menu, game_dialog, upgrade_sheet, upgrade_buttons
+from ai_coc.parsers.building import (
+    wall_menu,
+    name_strip,
+    game_dialog,
+    upgrade_sheet,
+    upgrade_buttons,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -84,6 +99,13 @@ class UpkeepRunner(GameRunner):
     # The buildings this run was pointed at instead of looking for them. Empty
     # means ask, and then sweep if that answers nothing.
     at: list[tuple[int, int]] = Field(default_factory=list)
+    # Who to ask what a menu is showing. A different tier from `ai`, because it
+    # is a different kind of call: `ai` answers once per run against a whole
+    # screenshot, this one once per candidate against a strip.
+    namer: GeminiClient | None = None
+    # Only upgrade a building whose name contains this. Empty takes the dearest
+    # affordable one, which is what this loop did before names existed.
+    only: str = ""
 
     def collect(self) -> CollectReport:
         """Tap every collector marker on screen, and report what the storages gained.
@@ -171,14 +193,36 @@ class UpkeepRunner(GameRunner):
         offers = upgrade_buttons(png)
         if not offers:
             return None
+        building = self._name(png)
         logger.info(
-            "Upgrade at (%d, %d): %d in %s",
+            "Upgrade at (%d, %d): %s asking %d in %s",
             point[0],
             point[1],
+            building,
             offers[0].price,
             offers[0].resource,
         )
-        return BuildCandidate(point=point, resource=offers[0].resource, price=offers[0].price)
+        return BuildCandidate(
+            point=point, resource=offers[0].resource, price=offers[0].price, building=building
+        )
+
+    def _name(self, png: bytes) -> BuildingName:
+        """What the game says this menu belongs to, or nothing without a model.
+
+        Nothing is an ordinary answer and every caller treats it as one: the
+        report falls back to the coordinate it always used, and `--only` matches
+        nothing, which is the safe direction for a filter that decides where a
+        scarce builder goes.
+        """
+        if self.namer is None:
+            return BuildingName()
+        try:
+            return self.namer.generate_structured(
+                render("name_building"), BuildingName, name_strip(png), SPOT_TIMEOUT
+            )
+        except Exception:
+            logger.warning("The building's name could not be read", exc_info=True)
+            return BuildingName()
 
     def _priced(self, points: list[tuple[int, int]]) -> list[BuildCandidate]:
         """What each of these points is really offering, read off its own menu.
@@ -228,6 +272,12 @@ class UpkeepRunner(GameRunner):
         """
         purse = {"gold": gold, "elixir": elixir}
         affordable = [offer for offer in offers if offer.price <= purse[offer.resource]]
+        if self.only:
+            # A substring rather than an exact match, because the label carries a
+            # level and a caller types a name. An unread name matches nothing,
+            # which is the safe direction: a builder is scarce and the whole
+            # point of naming one is not to spend it on a guess.
+            affordable = [offer for offer in affordable if self.only in offer.building.name]
         if not affordable:
             return None
         return max(affordable, key=lambda offer: offer.price)
@@ -356,7 +406,9 @@ class UpkeepRunner(GameRunner):
             )
             if offer is None:
                 report.message = (
-                    f"剩下的資源買不起任何升級，最便宜的要 {min(o.price for o in offers)}"
+                    f"沒有找到名字含「{self.only}」而且買得起的建築"
+                    if self.only
+                    else f"剩下的資源買不起任何升級，最便宜的要 {min(o.price for o in offers)}"
                 )
                 break
             if self._start(offer, stock):
@@ -370,5 +422,12 @@ class UpkeepRunner(GameRunner):
                 break
             stock = after
 
-        report.message = report.message or f"開始了 {len(report.started)} 個升級"
+        # Named where a name was read, because "開始了 1 個升級" says nothing
+        # about which builder went where — and that is the whole point of asking.
+        started = "、".join(str(job.building) for job in report.started if job.building.name)
+        report.message = report.message or (
+            f"開始了 {len(report.started)} 個升級：{started}"
+            if started
+            else f"開始了 {len(report.started)} 個升級"
+        )
         return report
