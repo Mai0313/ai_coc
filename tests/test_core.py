@@ -56,6 +56,7 @@ from ai_coc.ui.attack import (
     END_BATTLE,
     DROP_STRIDE,
     LINE_POINTS,
+    NUDGE_REACH,
     DEPLOY_LINES,
     DEPLOY_START,
     PLAN_TIMEOUT,
@@ -2263,7 +2264,7 @@ class AttackTests(unittest.TestCase):
         assert tapped.call_args.args[:2] == (939, attack.CARD_ROW_Y)
         assert placed.call_args.args[0] == [targets[0], targets[1]]
 
-    def test_a_planned_bottle_landing_inside_another_is_dropped(self) -> None:
+    def test_a_planned_bottle_landing_inside_another_is_moved_off_it(self) -> None:
         """The planner is given the footprint and overlaps its points regardless.
 
         These five are one live reply, and four of their ten pairs sit inside one
@@ -2273,9 +2274,105 @@ class AttackTests(unittest.TestCase):
         and sits just inside its 120 px one — the sort of call a model reading a
         screenshot cannot make, which is why the prompt saying "do not overlap"
         does not settle it and this does.
+
+        All five still get a bottle, each within a quarter of a footprint of
+        where it was asked for. Three of them used to be dropped instead, and
+        the caller topped the cargo back up off `RAGE_PATH` — which buys ground
+        wherever that grid happens to run rather than where the planner looked.
         """
         planned = [(448, 522), (608, 450), (560, 585), (768, 495), (800, 378)]
-        assert spaced(planned) == [(448, 522), (768, 495)]
+        placed = spaced(planned)
+        assert len(placed) == len(planned)
+        for spot, asked in zip(placed, planned, strict=True):
+            assert abs(spot[0] - asked[0]) <= RAGE_SPAN[0] // 4
+            assert abs(spot[1] - asked[1]) <= RAGE_SPAN[1] // 4
+        assert not self._overlapping(placed)
+
+    def test_the_planners_own_block_opens_out_rather_than_collapsing(self) -> None:
+        """Measured on 24 live rounds out of 24, and it cost half the cargo every one.
+
+        `prompts/attack_plan.md` asks for 15% by 13% of the screen between
+        bottles and the planner draws 13% by 10%, which puts the horizontal
+        neighbour at 0.75 of a footprint and the vertical one at 0.56. Dropping
+        those left the diagonal pair and nothing else, and the caller filled the
+        two empty slots off `RAGE_PATH`: on one village attacked from the top
+        left, a bottle went to (1000, 300) behind it. Opening the block out
+        keeps all four over the ground the planner picked.
+        """
+        block = [(560, 252), (768, 252), (560, 342), (768, 342)]
+        # The grid goes in behind the block exactly as `_deploy` appends it, so
+        # the assertion below is about the top-up path really not being reached.
+        # Called on the block alone it could not fail: no grid coordinate would
+        # be in the input to come out of it.
+        placed = spaced(block + list(RAGE_PATH))[: len(block)]
+        assert len(placed) == 4
+        assert not [spot for spot in placed if spot in RAGE_PATH]
+        assert not self._overlapping(placed)
+        # Still one block on the same ground, opened out to the pitch a bottle
+        # really covers rather than the tighter one it was drawn at.
+        assert max(x for x, _ in placed) - min(x for x, _ in placed) >= RAGE_SPAN[0]
+        assert max(y for _, y in placed) - min(y for _, y in placed) >= RAGE_SPAN[1]
+
+    def test_a_bottle_is_never_walked_more_than_a_footprint_from_where_it_was_asked(self) -> None:
+        """One push moves up to a footprint, and eight of them compound.
+
+        These four points are one tight cluster, and uncapped the last of them
+        walks from (823, 396) out to (608, 212) — 1.78 footprints, 215 px left
+        and 184 px up, well off the ground the planner was looking at. That is
+        the same wasted bottle the nudge exists to prevent, reached from the
+        other side. Swept over 20 000 random sets the worst was 1.81; capped it
+        is 1.00 by construction. A point that cannot be cleared inside that is
+        dropped, so `RAGE_PATH` puts one somewhere deliberate instead.
+        """
+        crowd = [(832, 449), (843, 376), (809, 357), (823, 396)]
+        placed = spaced(crowd)
+        assert not self._overlapping(placed)
+        # The fourth has nowhere inside a footprint to go, so it is dropped
+        # rather than walked out to (608, 212), which is what used to happen.
+        assert len(placed) == 3
+        # Bounded against the footprint itself rather than against
+        # `NUDGE_REACH`, so raising that constant fails this instead of moving
+        # the goalposts with it.
+        for spot in placed:
+            asked = min(
+                crowd, key=lambda point: (spot[0] - point[0]) ** 2 + (spot[1] - point[1]) ** 2
+            )
+            reach = (
+                ((spot[0] - asked[0]) / RAGE_SPAN[0]) ** 2
+                + ((spot[1] - asked[1]) / RAGE_SPAN[1]) ** 2
+            ) ** 0.5
+            assert reach <= 1.0
+        assert NUDGE_REACH <= 1.0
+
+    def test_pulling_a_bottle_onto_the_playfield_is_not_charged_to_its_nudge(self) -> None:
+        """The camera pan can hand `spaced` a point that is already off the map.
+
+        `_clear_flank` moves the record by up to `FLANK_ROOM`, and `_deploy` runs
+        `_onscreen` over the plan's points before this sees them, so one drawn
+        near the bottom of the village arrives under the card row and is clamped
+        back up. That clamp is not a push this made, and charging it to
+        `NUDGE_REACH` spent almost the whole budget before the first one: the
+        point below was dropped with a clash beside it while the identical point
+        with no clash was returned untouched.
+        """
+        crowded = attack._clear_of((900, 810), [(1000, 690)])
+        alone = attack._clear_of((900, 810), [])
+        assert alone == (900, 700)
+        assert crowded is not None
+        assert not self._overlapping([crowded, (1000, 690)])
+
+    @staticmethod
+    def _overlapping(
+        placed: list[tuple[int, int]],
+    ) -> list[tuple[tuple[int, int], tuple[int, int]]]:
+        """Every pair of bottles close enough that the second one buys nothing."""
+        return [
+            (one, two)
+            for index, one in enumerate(placed)
+            for two in placed[index + 1 :]
+            if ((one[0] - two[0]) / RAGE_SPAN[0]) ** 2 + ((one[1] - two[1]) / RAGE_SPAN[1]) ** 2
+            < 1
+        ]
 
     def test_the_fixed_grid_is_already_spaced(self) -> None:
         """Which is what makes it usable to top up whatever the planner's points lose."""
@@ -2328,6 +2425,54 @@ class AttackTests(unittest.TestCase):
         # And no two of them are the same drop.
         for index, (x, y) in enumerate(spots):
             assert all(math.hypot(x - a, y - b) >= 20 for a, b in spots[index + 1 :])
+
+    def test_the_spell_clock_starts_at_the_battle_not_after_the_flank(self) -> None:
+        """`_flank` reads the boundary and drags the camera while the game counts.
+
+        Measured over 23 live rounds it spent 3.0 to 3.7 seconds doing exactly
+        that, all of it after the frame reading 3分00秒 that `_wait_for_battle`
+        hands back. The planner answers 「開打之後第幾秒」 against the game's
+        own clock, so a loop stamping its own after that work had every bottle
+        three seconds late before the cast itself had cost anything — a sixth of
+        an 18-second rage, gone.
+        """
+        runner = self._runner()
+        plan = plans.flat()
+        clock = [0.0]
+        opening: list[float] = []
+        moves: list[tuple[float, str, object]] = []
+
+        def flank(battle: object, drawn: object) -> tuple[tuple[int, int], ...]:
+            clock[0] += 3.3
+            return DEPLOY_LINES["top_left"]
+
+        with (
+            patch.object(AttackRunner, "_settle_camera", side_effect=lambda frame: frame),
+            patch.object(AttackRunner, "_settle_zoom", side_effect=lambda frame: frame),
+            patch.object(attack, "card_groups", return_value=[[100], [600, 900]]),
+            patch.object(attack, "counted_cards", return_value=[900]),
+            patch.object(attack, "freeze_cards", return_value=[]),
+            patch.object(attack, "card_count", return_value=4),
+            patch.object(AttackRunner, "_plan", return_value=plan),
+            patch.object(AttackRunner, "_wait_for_battle", return_value=None),
+            patch.object(AttackRunner, "_flank", side_effect=flank),
+            patch.object(AttackRunner, "_drop_singles", return_value=([], [])),
+            patch.object(AttackRunner, "_spread_troops", return_value=[(0, 0)]),
+            patch.object(
+                AttackRunner,
+                "_run_schedule",
+                side_effect=lambda opened, scheduled: (
+                    opening.append(opened),
+                    moves.extend(scheduled),
+                )[0],
+            ),
+            patch.object(attack.time, "monotonic", side_effect=lambda: clock[0]),
+            patch.object(attack.time, "sleep"),
+        ):
+            runner._deploy(b"")
+        # Stamped where the battle opened, not 3.3 seconds of boundary-reading later.
+        assert opening == [0.0]
+        assert [round(when) for when, _, _ in moves] == [plan.rage_after]
 
     def _abilities(
         self, singles: list[int], on_field: list[int], kinds: list[str], spent: Sequence[int] = ()
