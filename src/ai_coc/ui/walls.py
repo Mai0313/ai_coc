@@ -5,7 +5,8 @@ for: no builder is tied up and no timer runs, and one run buys as many batches a
 the storages will stretch to. So a village whose builders are all on multi-day
 jobs and whose storages are filling up has nowhere else to put the loot a farming
 run brings home, which is what this is for — and why it runs to the same shape as
-`attack.py`, driven from screen reads with no Gemini call anywhere in it.
+`attack.py`: one Gemini call, for the one question a screen read is worst at, and
+every screen read after it verifying the answer.
 
 **It still wants one builder standing idle, though it never uses them.** Measured
 live on a village at 0/5, every batch was confirmed and then not charged for, the
@@ -33,8 +34,18 @@ import logging
 
 from pydantic import Field
 
-from ai_coc.models import WallMenu, WallBatch, WallReport, WallUpgrade, VillageStock, WallCandidate
+from ai_coc.models import (
+    WallMenu,
+    WallBatch,
+    WallSpots,
+    WallReport,
+    WallUpgrade,
+    VillageStock,
+    WallCandidate,
+)
+from ai_coc.prompts import render
 from ai_coc.ui.runner import MENU_SETTLE, GameRunner
+from ai_coc.adapters.ai import GeminiClient
 from ai_coc.parsers.home import free_builders
 from ai_coc.parsers.scout import read_stock
 from ai_coc.parsers.building import wall_menu, game_dialog
@@ -84,6 +95,22 @@ MAX_BATCH = 25
 # overshoots by a tile lands on another wall of the same section.
 WALL_PITCH = 45
 
+# How many walls to ask Gemini for, and how long to wait for the answer.
+#
+# **More than the run needs, because a wrong point is nearly free and a missing
+# one is not.** Every spot is opened and priced off its own menu before it can be
+# spent on, so a miss costs one tap and one capture — about 1.7 s — while a run
+# left with too few candidates has nothing for `_pick` to compare and buys the
+# first thing it sees. Measured over one recorded village, six points came back
+# with four opening a wall menu; twelve is that hit rate with room to spare.
+#
+# Nothing here is racing anything, so the model is the one in the settings file
+# rather than a cheaper one picked for speed: this and the attack planner are the
+# same kind of work — one fixed prompt against one frame — and a second setting
+# would exist only to hold a smaller model.
+WALL_SPOTS = 12
+SPOT_TIMEOUT = 60
+
 
 class WallRunner(GameRunner):
     """Buys wall upgrades until the storages will not pay for another one."""
@@ -97,6 +124,8 @@ class WallRunner(GameRunner):
     # The walls this run was pointed at instead of scanning for them; see
     # `WallOptions.at` for why it is a list and not one wall.
     at: list[tuple[int, int]] = Field(default_factory=list)
+    # Who to ask where the walls are. None falls back to the sweep.
+    ai: GeminiClient | None = None
 
     def _neighbours(self, point: tuple[int, int]) -> Iterator[WallCandidate]:
         """The walls immediately around this one, and what each of them asks.
@@ -132,19 +161,59 @@ class WallRunner(GameRunner):
                 yield WallCandidate(point=spot, price=menu.price)
 
     def _candidates(self) -> list[WallCandidate]:
-        """The walls to choose between: the ones named, or the ones a sweep finds.
+        """The walls to choose between, from whichever of three finders answers.
 
-        The stop flag is read before either, because looking costs taps either
-        way — the sweep's whole grid, or one apiece for the spots a caller
-        named. `_scan` reads it inside its own loop as well, since that is the
-        long one, but neither should start on a run already asked to stand down.
+        Named spots first, because a caller that went to the trouble of naming
+        them has already looked at the screen. Then Gemini, which looks at the
+        same frame and answers in seconds. The sweep is last and is the fallback
+        rather than the default: it taps a blind grid for two and a half minutes
+        and what it lands on is *a* wall rather than a cheap one — see
+        `WALL_PITCH` for the run where every sample it took was a wall the town
+        hall had capped.
+
+        The stop flag is read before any of them, because looking costs taps
+        whichever one answers. `_scan` reads it inside its own loop as well,
+        since that is the long one, but none of them should start on a run
+        already asked to stand down.
         """
         if self.should_stop():
             return []
-        return self._named() if self.at else self._scan()
+        if self.at:
+            return self._verify(self.at)
+        # Falling through to the sweep rather than giving up: a village whose
+        # walls Gemini could not place still has walls, and the alternative to
+        # two and a half minutes of grid taps is a run that buys nothing.
+        if (spotted := self._spotted()) and (found := self._verify(spotted)):
+            return found
+        return self._scan()
 
-    def _named(self) -> list[WallCandidate]:
-        """What each wall the run was pointed at is asking, read off its own menu.
+    def _spotted(self) -> list[tuple[int, int]]:
+        """Ask Gemini where the walls are. Empty means nobody could say.
+
+        Walls are the easiest thing on the map to name — the most repeated shape
+        on it, and the only one whose look does not have to be recognised, since
+        every answer is verified by opening its menu. That verification is what
+        makes an imperfect finder usable at all, and it is why this asks for more
+        spots than the run needs.
+        """
+        if self.ai is None:
+            return []
+        try:
+            answer = self.ai.generate_structured(
+                render("find_walls", count=WALL_SPOTS),
+                WallSpots,
+                self._frame("village"),
+                SPOT_TIMEOUT,
+            )
+        except Exception:
+            logger.warning("Gemini could not be asked where the walls are", exc_info=True)
+            return []
+        spots = [spot.pixels() for spot in answer.spots]
+        logger.info("Gemini put %d wall(s) at %s", len(spots), spots)
+        return spots
+
+    def _verify(self, points: list[tuple[int, int]]) -> list[WallCandidate]:
+        """What each of these spots is really asking, read off its own menu.
 
         The price comes off the game rather than being assumed, because it is
         what `_pick` compares and what the affordability check stands the run
@@ -152,15 +221,25 @@ class WallRunner(GameRunner):
         then dutifully chose: measured live, that paid 9 000 000 for a wall
         while 4 000 000 ones stood in the same village.
 
+        **Each tap goes in on a confirmed village frame**, the same rule
+        `_neighbours` follows and for the same reason: these are raw village
+        coordinates, so one that misses a wall opens whatever building is
+        standing there, and a full-screen panel would swallow every tap after
+        it. A hand-named spot misses because the camera has moved since somebody
+        looked; a spotted one misses because it was a guess. Neither is rare.
+
         A point that opens no wall menu is dropped with a line saying so rather
-        than tried again. It was found by eye on a frame the game has since
-        moved — the camera shifts whenever anything brings the game to the
-        front — and buying whatever is there instead is worse than saying
+        than tried again — buying whatever is there instead is worse than saying
         nothing is.
         """
         found: list[WallCandidate] = []
-        for point in self.at:
+        for point in points:
             png = self._after_tap(point, f"named_{point[0]:04d}_{point[1]:04d}")
+            if read_stock(png) is None:
+                logger.info("The tap at (%d, %d) covered the village; backing out", *point)
+                if self._home() is None:
+                    return found
+                continue
             menu = wall_menu(png)
             if menu is None:
                 logger.info("Nothing at (%d, %d) opens a wall menu", *point)

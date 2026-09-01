@@ -27,6 +27,7 @@ from ai_coc.models import (
     LootOffer,
     ScoutView,
     WallBatch,
+    WallSpots,
     AttackPlan,
     AttackStep,
     HeroReport,
@@ -3565,6 +3566,11 @@ def _menu(price: int, gold: int = 887) -> WallMenu:
     return WallMenu(gold=(gold, 700), elixir=(gold + 176, 700), add=(gold - 176, 700), price=price)
 
 
+def _stock() -> VillageStock:
+    """Storage bars that read, which is how every loop here tests for the village."""
+    return VillageStock(gold=9_000_000, elixir=9_000_000, dark=100_000)
+
+
 class WallMenuTests(unittest.TestCase):
     """Live building menus, masked down to the button row the parser reads.
 
@@ -3781,9 +3787,10 @@ class WallRunnerTests(unittest.TestCase):
 
         with (
             patch.object(WallRunner, "_after_tap", side_effect=after),
+            patch.object(walls, "read_stock", return_value=_stock()),
             patch.object(walls, "wall_menu", side_effect=lambda _png: menus[tapped[-1]]),
         ):
-            found = runner._named()
+            found = runner._candidates()
         # Every named spot is read, and the one that opens nothing is dropped
         # rather than guessed at: it was found by eye on a frame the game has
         # since moved.
@@ -3794,6 +3801,67 @@ class WallRunnerTests(unittest.TestCase):
         ]
         # And the cheapest is what gets bought, which is the lowest-level wall.
         assert runner._pick({w.point: w.price for w in found}) == (400, 300)
+
+    def test_a_spot_that_opened_a_building_is_backed_out_of_before_the_next_tap(self) -> None:
+        """Every spot here is a raw village coordinate, so one that misses a wall
+        opens whatever building is standing there — and a full-screen panel
+        swallows every tap after it. That guard was `_neighbours`'s alone while
+        the only other caller was a hand-named spot; a finder that answers in
+        guesses makes the miss the ordinary case rather than the corner.
+        """
+        runner = self._runner(at=[(200, 300), (400, 300)])
+        # The first tap opened a barracks: no storage bars, so no village.
+        stocks = iter([None, _stock()])
+        with (
+            patch.object(WallRunner, "_after_tap", return_value=b""),
+            patch.object(walls, "read_stock", side_effect=lambda _png: next(stocks)),
+            patch.object(walls, "wall_menu", return_value=_menu(1_600_000)),
+            patch.object(runner, "_home", return_value=_stock()) as home,
+        ):
+            found = runner._candidates()
+        # Backed out once, and the wall behind the panel still gets read.
+        assert home.call_count == 1
+        assert [w.point for w in found] == [(400, 300)]
+
+    def test_gemini_spots_are_priced_off_their_own_menus(self) -> None:
+        """The finder answers in guesses, and every guess is opened and priced
+        before it can be spent on. That verification is the whole reason an
+        imperfect finder is usable: a wrong point costs one tap and one capture,
+        so asking for more spots than the run needs is the right shape.
+        """
+        runner = self._runner(ai=GeminiClient(settings=GeminiSettings(api_key="not-a-real-key")))
+        answer = WallSpots(
+            spots=[ScreenPoint(x_pct=25, y_pct=30), ScreenPoint(x_pct=50, y_pct=40)]
+        )
+        menus = iter([None, _menu(1_600_000)])
+        with (
+            patch.object(GeminiClient, "generate_structured", return_value=answer),
+            patch.object(WallRunner, "_after_tap", return_value=b""),
+            patch.object(WallRunner, "_frame", return_value=b""),
+            patch.object(walls, "read_stock", return_value=_stock()),
+            patch.object(walls, "wall_menu", side_effect=lambda _png: next(menus)),
+            patch.object(runner, "_scan") as scan,
+        ):
+            found = runner._candidates()
+        # The percentages become pixels the same way every other Gemini answer
+        # does, the miss is dropped, and the sweep is never reached because one
+        # spot did open a wall.
+        assert [w.point for w in found] == [(800, 360)]
+        scan.assert_not_called()
+
+    def test_a_village_gemini_could_not_place_falls_through_to_the_sweep(self) -> None:
+        """A village whose walls nobody could name still has walls, and the
+        alternative to two and a half minutes of grid taps is a run that buys
+        nothing at all.
+        """
+        runner = self._runner(ai=GeminiClient(settings=GeminiSettings(api_key="not-a-real-key")))
+        with (
+            patch.object(GeminiClient, "generate_structured", side_effect=RuntimeError("no key")),
+            patch.object(WallRunner, "_frame", return_value=b""),
+            patch.object(runner, "_scan", return_value=[]) as scan,
+        ):
+            assert runner._candidates() == []
+        scan.assert_called_once()
 
     def test_a_stopped_run_starts_no_further_batch(self) -> None:
         """Between batches is the only safe place: a batch is a menu, a
