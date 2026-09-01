@@ -68,6 +68,7 @@ from ai_coc.ui.attack import (
     RESULT_ATTEMPTS,
     UNREADABLE_SKIPS,
     AttackRunner,
+    merged,
     spaced,
     push_out,
     push_line,
@@ -1980,6 +1981,12 @@ class AttackTests(unittest.TestCase):
         pauses: list[float] = []
         plan = AttackPlan(steps=steps)
 
+        def settle(*_: object) -> None:
+            # The real one empties what it just read, which is what lets a later
+            # drop get a reading of its own.
+            acts.append("settle")
+            runner._sending = {}
+
         def act(step: AttackStep, _row: BattleRow, _line: list[tuple[int, int]]) -> None:
             acts.append(step.act)
             if step.act in ("siege", "hero"):
@@ -1989,9 +1996,7 @@ class AttackTests(unittest.TestCase):
 
         with (
             patch.object(AttackRunner, "_act", side_effect=act),
-            patch.object(
-                AttackRunner, "_settle_drops", side_effect=lambda *a: acts.append("settle")
-            ),
+            patch.object(AttackRunner, "_settle_drops", side_effect=settle),
             patch.object(AttackRunner, "_battle_ended", return_value=False),
             patch.object(attack.time, "sleep", side_effect=pauses.append),
         ):
@@ -2030,7 +2035,9 @@ class AttackTests(unittest.TestCase):
             ],
             self._row(),
         )
-        assert acts == ["siege", "troops", "hero", "settle", "rage", "hero"]
+        # The trailing settle is the last hero getting read too: a tactic that
+        # drops after its first pause used to go unchecked from there on.
+        assert acts == ["siege", "troops", "hero", "settle", "rage", "hero", "settle"]
 
     def test_a_pause_is_counted_from_the_move_before_it_finishing(self) -> None:
         """Which is what makes the whole tactic immune to how slowly it got here.
@@ -2132,6 +2139,28 @@ class AttackTests(unittest.TestCase):
         """
         assert self._sent([_step("hero", (20, 20), who="queen")] * 3) == [[500], [600], []]
         assert self._sent([_step("hero", (20, 20))]) == [[500, 600]]
+
+    def test_spell_steps_with_nothing_between_them_become_one_cast(self) -> None:
+        """The prompt asks for one step per spell and the planner writes one per bottle.
+
+        Measured on its first live reply: `rage → rage → rage → rage`, and each
+        step selects the card again and reads it back, about 3.4 s apiece. Those
+        four spread from 11 s to 21 s into the battle against a rage that lasts
+        18, so the first had nearly expired before the last went down.
+        """
+        four = [_step("rage", (10 * n + 10, 20)) for n in range(4)]
+        played = merged([*four, _step("wait", seconds=5), _step("freeze", (50, 50))])
+        assert [step.act for step in played] == ["rage", "wait", "freeze"]
+        assert len(played[0].at) == 4
+
+    def test_two_casts_a_pause_apart_are_left_apart(self) -> None:
+        """Rage now and rage again when the push reaches the next ring is a real tactic.
+
+        Only neighbours with nothing between them are folded, because nothing
+        separates those but the loop's own cost.
+        """
+        spread = [_step("rage", (20, 20)), _step("wait", seconds=6), _step("rage", (60, 40))]
+        assert merged(spread) == spread
 
     def _sent(self, steps: list[AttackStep]) -> list[list[int]]:
         """Which cards each `hero` step put on the field, in order."""

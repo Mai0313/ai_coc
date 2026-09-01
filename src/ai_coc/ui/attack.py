@@ -494,6 +494,31 @@ def push_line(
     return [push_out(anchor, steps, centre) for anchor in anchors]
 
 
+def merged(steps: list[AttackStep]) -> list[AttackStep]:
+    """Neighbouring spell steps of one kind, folded into the single cast they mean.
+
+    The prompt asks for one step carrying every bottle's point and the planner
+    does not comply: measured on its first live reply it wrote `rage → rage →
+    rage → rage`, one step per bottle. That is not free the way a list is.
+    Every step selects the card again and reads it back afterwards, about 3.4 s
+    apiece, so those four spread from 11 s to 21 s into the battle — and a rage
+    lasts 18, meaning the first had nearly expired before the last went down.
+
+    Only *neighbours* are folded, because two casts with a `wait` between them
+    are a tactic asking for exactly that: rage now, rage again when the push
+    reaches the next ring. It is the ones with nothing in between that cannot
+    have meant to be spread out, since nothing separates them but the loop's own
+    cost.
+    """
+    out: list[AttackStep] = []
+    for step in steps:
+        if out and step.act == out[-1].act and step.act in ("rage", "freeze"):
+            out[-1] = out[-1].model_copy(update={"at": [*out[-1].at, *step.at]})
+            continue
+        out.append(step)
+    return out
+
+
 def _reads(step: AttackStep) -> str:
     """One step as a few words, for the line the log prints a whole tactic on."""
     if step.act == "wait":
@@ -773,6 +798,11 @@ class AttackRunner(BaseModel):
     # signature carrying its own bookkeeping is one nobody can read.
     _sending: dict[int, tuple[int, int]] = PrivateAttr(default_factory=dict)
     _unsent: list[int] = PrivateAttr(default_factory=list)
+    # Cards the game really put something on the field for, which is a different
+    # question from `_sending` and outlives it: that one is emptied by every
+    # reading, and an `ability` step after one still has to know which heroes
+    # are out there to fire.
+    _landed: list[int] = PrivateAttr(default_factory=list)
     # What this village's storages hold when full, read off their own tooltips
     # the first time a round reaches the village and kept for the rest of the
     # run. A storage only grows when a builder finishes upgrading one, which is
@@ -1618,10 +1648,10 @@ class AttackRunner(BaseModel):
         that fits inside it is free.
         """
         line = deploy_line(LINE_POINTS, *push_line(anchors, 0, self._middle))
-        self._sending, self._unsent = {}, list(row.heroes)
-        settled = False
+        steps = merged(plan.steps)
+        self._sending, self._unsent, self._landed = {}, list(row.heroes), []
         opened = done = time.monotonic()
-        for step in plan.steps:
+        for step in steps:
             if step.act == "wait":
                 # A pause is the only idle time in a battle, so everything that
                 # needs a frame is spent inside one: the single reading of what
@@ -1629,13 +1659,10 @@ class AttackRunner(BaseModel):
                 # to play into. Both are free here and neither is free anywhere
                 # else, which is why nothing between two taps looks at anything.
                 if step.seconds >= CHECK_BUDGET:
-                    if self._sending and not settled:
+                    if self._sending:
                         self._settle_drops(row.troops, line, anchors)
-                        settled = True
                     elif self._battle_ended("playing"):
-                        logger.info(
-                            "The battle ended with %d step(s) still to play", len(plan.steps)
-                        )
+                        logger.info("The battle ended with %d step(s) still to play", len(steps))
                         return
                 if (remaining := done + step.seconds - time.monotonic()) > 0:
                     time.sleep(remaining)
@@ -1643,8 +1670,9 @@ class AttackRunner(BaseModel):
             self._act(step, row, line)
             logger.info("Played %s, %.0fs in", step.act, time.monotonic() - opened)
             done = time.monotonic()
-        # A tactic with no pause long enough to hide the reading still gets it.
-        if self._sending and not settled:
+        # Whatever the last pause was too short to cover, or a tactic that ended
+        # on a drop, still gets its reading.
+        if self._sending:
             self._settle_drops(row.troops, line, anchors)
 
     def _act(self, step: AttackStep, row: BattleRow, line: list[tuple[int, int]]) -> None:
@@ -1731,7 +1759,17 @@ class AttackRunner(BaseModel):
         """
         after = self._frame("settled")
         sent = list(self._sending)
-        missing = [card for card in sent if card not in field_units(after, sent)]
+        # Emptied here rather than by the caller, because that is what makes a
+        # tactic dropping heroes *after* its first pause work: the check fires
+        # whenever anything is waiting on one, so a later drop gets read too. It
+        # used to be a one-shot flag, and measured live on a plan reading
+        # `hero queen → ability queen → wait 2s → hero king → hero duke`, that
+        # check ran while only the machine and the queen had been sent — so the
+        # king and the duke went down afterwards and nothing ever looked at them.
+        self._sending = {}
+        on_field = field_units(after, sent)
+        self._landed += on_field
+        missing = [card for card in sent if card not in on_field]
         holding = list(live_cards(after, troops))
         logger.info(
             "After the burst: %d of %d one-off card(s) never landed, %d troop card(s) still hold",
@@ -1742,7 +1780,8 @@ class AttackRunner(BaseModel):
         if holding:
             self._spread_troops(holding, anchors, 0)
         if missing:
-            self._drop_singles(missing, line, "retry")
+            again, _ = self._drop_singles(missing, line, "retry")
+            self._landed += again
 
     def _cast(self, cards: list[int], targets: tuple[tuple[int, int], ...], frame: bytes) -> None:
         """Empty every spell card over `targets`, and say so when one would not go.
