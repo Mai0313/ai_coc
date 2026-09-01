@@ -811,7 +811,6 @@ class AttackRunner(BaseModel):
     # taking anyway on a second question: is anything still sitting in a card.
     _last: bytes = PrivateAttr(default=b"")
     _line: list[tuple[int, int]] = PrivateAttr(default_factory=list)
-    _spells: list[int] = PrivateAttr(default_factory=list)
     # What this village's storages hold when full, read off their own tooltips
     # the first time a round reaches the village and kept for the rest of the
     # run. A storage only grows when a builder finishes upgrading one, which is
@@ -1664,7 +1663,7 @@ class AttackRunner(BaseModel):
         that fits inside it is free.
         """
         line = deploy_line(LINE_POINTS, *push_line(anchors, 0, self._middle))
-        self._line, self._spells = line, row.rages + row.freezes
+        self._line = line
         steps = merged(plan.steps)
         self._sending, self._unsent, self._onfield = {}, list(row.heroes), []
         self._named = {}
@@ -1919,20 +1918,28 @@ class AttackRunner(BaseModel):
         step names. That was the one part of a free-form tactic worth worrying
         about, and this covers it without validating anything.
 
-        Spells are left alone: a spell wants its own selection delay, and one
-        still holding bottles is `_cast`'s business.
+        **Spells go out the same way, and are not told apart.** The first
+        version skipped the cards it knew were spells, by the x they sat at when
+        the row was read — and a card appearing at the front shifts every card
+        after it, so those x's point at the wrong ones. Measured live, that let
+        a freeze card still holding three bottles read as a leftover. Which is
+        the right outcome anyway: a spell nobody cast is a spell carried home,
+        so the honest rule is that anything still holding gets emptied, and the
+        only thing the distinction ever bought was the selection delay — which
+        `_cast` pays for troops too, at 0.6 s once per card.
         """
         if not self._line:
             return
         live = [card for group in card_groups(self._last) for card in group]
         # An `xN` corner is what says a card still holds something to place;
         # heroes and the siege machine carry none, so a hero standing on the
-        # field in full colour is not mistaken for a card to empty.
-        extra = [c for c in counted_cards(self._last, live) if c not in self._spells]
+        # field in full colour is not mistaken for a card to empty. These are
+        # read off *this* frame, so a shifted row costs nothing here.
+        extra = counted_cards(self._last, live)
         if not extra:
             return
-        logger.info("%d card(s) still hold troops with the tactic done; pouring them", len(extra))
-        self._pour(extra, self._line, self._last)
+        logger.info("%d card(s) still hold something; emptying them", len(extra))
+        self._cast(extra, tuple(self._line), self._last)
 
     def _outcome(self, reason: str, took: bool) -> str:
         """How a battle that was actually fought is reported.

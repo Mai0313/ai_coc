@@ -2219,7 +2219,7 @@ class AttackTests(unittest.TestCase):
         # And the other one when its own step comes round.
         assert self._fired([*early, _step("ability", who="king")]) == [(600, CARD_ROW_Y)]
 
-    def test_a_card_the_row_grew_mid_battle_is_poured_rather_than_carried_home(self) -> None:
+    def test_a_card_the_row_grew_mid_battle_is_emptied_rather_than_carried_home(self) -> None:
         """Measured live: a ninth card in colour at 62%, holding 23, that the plan never saw.
 
         An event handed out troops after the army was down, so no step named
@@ -2230,19 +2230,21 @@ class AttackTests(unittest.TestCase):
         """
         runner = self._runner()
         runner._line = deploy_line(LINE_POINTS, *DEPLOY_LINES["top_left"])
-        runner._spells = [939, 1060]
         poured: list[list[int]] = []
         with (
             patch.object(attack, "card_groups", return_value=[[171], [900], [939]]),
             # The `xN` corner: the newcomer and the spell carry one, the hero does not.
             patch.object(attack, "counted_cards", return_value=[171, 939]),
             patch.object(
-                AttackRunner, "_pour", side_effect=lambda cards, *a: poured.append(cards)
+                AttackRunner, "_cast", side_effect=lambda cards, *a: poured.append(cards)
             ),
         ):
             runner._dump_leftovers()
-        # The newcomer, and neither the hero standing on the field nor the spell.
-        assert poured == [[171]]
+        # Both cards carrying an `xN`, and not the hero standing on the field.
+        # The spell goes out too: one nobody cast is one carried home, and
+        # excluding it by the x it sat at when the row was read is exactly what
+        # a row that has since grown a card makes wrong.
+        assert poured == [[171, 939]]
 
     def test_nothing_left_in_a_card_is_left_alone(self) -> None:
         """The ordinary case, and it must not tap anything at all."""
@@ -2251,7 +2253,7 @@ class AttackTests(unittest.TestCase):
         with (
             patch.object(attack, "card_groups", return_value=[[900]]),
             patch.object(attack, "counted_cards", return_value=[]),
-            patch.object(AttackRunner, "_pour") as poured,
+            patch.object(AttackRunner, "_cast") as poured,
         ):
             runner._dump_leftovers()
         poured.assert_not_called()
