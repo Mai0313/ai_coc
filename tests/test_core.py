@@ -2178,14 +2178,32 @@ class AttackTests(unittest.TestCase):
             )
         return sent
 
-    def test_an_ability_only_reaches_the_heroes_the_tactic_already_sent(self) -> None:
-        """A tap on a card whose hero never landed deploys it instead, with nothing around it."""
+    def test_an_ability_reaches_the_heroes_the_tactic_sent_and_no_others(self) -> None:
+        """A tap on a card whose hero never landed deploys it instead of firing.
+
+        And it has to survive a reading: those empty what they just checked, so
+        an `ability` step after one used to reach nobody at all. Which heroes are
+        out is remembered separately from which drops are still waiting to be
+        read, because the two questions have different lifetimes.
+        """
+        sent = _step("hero", (20, 20), who="queen")
+        assert self._fired([sent, _step("ability")]) == [(500, CARD_ROW_Y)]
+        # The same thing with a reading in between, which is where it broke.
+        after_reading = [sent, _step("wait", seconds=4), _step("ability")]
+        assert self._fired(after_reading) == [(500, CARD_ROW_Y)]
+
+    def _fired(self, steps: list[AttackStep]) -> list[tuple[int, int]]:
+        """Which cards the tactic's last tap went to."""
         runner = self._runner()
         tapped: list[list[tuple[int, int]]] = []
-        row = self._row(heroes=[500, 600])
-        plan = AttackPlan(steps=[_step("hero", (20, 20), who="queen"), _step("ability")])
+
+        def settle(*_: object) -> None:
+            runner._onfield += list(runner._sending)
+            runner._sending = {}
+
         with (
-            patch.object(AttackRunner, "_settle_drops"),
+            patch.object(AttackRunner, "_settle_drops", side_effect=settle),
+            patch.object(AttackRunner, "_battle_ended", return_value=False),
             patch.object(
                 type(runner.adb),
                 "tap_many",
@@ -2193,9 +2211,10 @@ class AttackTests(unittest.TestCase):
             ),
             patch.object(attack.time, "sleep"),
         ):
-            runner._play_tactic(plan, DEPLOY_LINES["top_left"], row)
-        # Only the card the `hero` step actually sent is offered its ability.
-        assert tapped[-1] == [(500, CARD_ROW_Y)]
+            runner._play_tactic(
+                AttackPlan(steps=steps), DEPLOY_LINES["top_left"], self._row(heroes=[500, 600])
+            )
+        return tapped[-1]
 
     def _scouted(self, readings: list[ScoutView | None], offered: list[bool]) -> int:
         """Poll the scout screen over canned readings; how many times 下一個 was tapped."""

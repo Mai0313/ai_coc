@@ -802,7 +802,7 @@ class AttackRunner(BaseModel):
     # question from `_sending` and outlives it: that one is emptied by every
     # reading, and an `ability` step after one still has to know which heroes
     # are out there to fire.
-    _landed: list[int] = PrivateAttr(default_factory=list)
+    _onfield: list[int] = PrivateAttr(default_factory=list)
     # What this village's storages hold when full, read off their own tooltips
     # the first time a round reaches the village and kept for the rest of the
     # run. A storage only grows when a builder finishes upgrading one, which is
@@ -1649,7 +1649,7 @@ class AttackRunner(BaseModel):
         """
         line = deploy_line(LINE_POINTS, *push_line(anchors, 0, self._middle))
         steps = merged(plan.steps)
-        self._sending, self._unsent, self._landed = {}, list(row.heroes), []
+        self._sending, self._unsent, self._onfield = {}, list(row.heroes), []
         opened = done = time.monotonic()
         for step in steps:
             if step.act == "wait":
@@ -1702,11 +1702,18 @@ class AttackRunner(BaseModel):
             self._drop_at(wanted, points[0] if points else middle)
             del self._unsent[: len(wanted)]
         elif step.act == "ability":
-            # Whatever hero cards the tactic has already sent. A tap on a card
-            # whose hero never landed deploys it instead, which is why only what
-            # `aimed` holds is offered one.
+            # Every hero the tactic has out: confirmed on the field by a reading
+            # that has already happened, or sent and not yet read. A tap on a
+            # card whose hero never landed deploys it instead, with nothing
+            # around it — but never firing the ability at all is worse, and the
+            # two lists together are the closest thing to an answer there is.
             self.adb.tap_many(
-                [(card, CARD_ROW_Y) for card in row.heroes if card in self._sending], self.display
+                [
+                    (card, CARD_ROW_Y)
+                    for card in row.heroes
+                    if card in self._onfield or card in self._sending
+                ],
+                self.display,
             )
         elif step.act == "troops":
             self._pour(row.troops, line, row.frame)
@@ -1768,7 +1775,7 @@ class AttackRunner(BaseModel):
         # king and the duke went down afterwards and nothing ever looked at them.
         self._sending = {}
         on_field = field_units(after, sent)
-        self._landed += on_field
+        self._onfield += on_field
         missing = [card for card in sent if card not in on_field]
         holding = list(live_cards(after, troops))
         logger.info(
@@ -1781,7 +1788,7 @@ class AttackRunner(BaseModel):
             self._spread_troops(holding, anchors, 0)
         if missing:
             again, _ = self._drop_singles(missing, line, "retry")
-            self._landed += again
+            self._onfield += again
 
     def _cast(self, cards: list[int], targets: tuple[tuple[int, int], ...], frame: bytes) -> None:
         """Empty every spell card over `targets`, and say so when one would not go.
