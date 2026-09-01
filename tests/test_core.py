@@ -3060,26 +3060,38 @@ class InRoundRestartTests(unittest.TestCase):
         and the whole series died with `result.json` never written.
         """
         fresh = MagicMock(name="the display the game came back on")
-        with (
-            patch.object(commands, "_controller"),
-            patch.object(commands, "_settle_game", return_value=MagicMock(name="at the start")),
-            patch.object(commands, "_pick_world", return_value="night"),
-            patch.object(commands, "_planner", return_value=None),
-            patch.object(commands.ConfigStore, "load", return_value=AppConfig()),
-            patch.object(commands, "FrameTicker") as ticker,
-            patch.object(commands, "_rest", return_value=False),
-            patch.object(commands, "AttackRunner") as runner,
-            patch.object(commands, "_empty_cart") as cart,
-        ):
-            runner.return_value.run.return_value = MagicMock(
-                stock_full=False, attacked=None, phases=1
-            )
-            runner.return_value.played = None
-            runner.return_value.display = fresh
-            commands.attack(AttackOptions(world="night", rounds=1))
+        controller = MagicMock(name="the controller that came back")
+        with tempfile.TemporaryDirectory() as folder:
+            with (
+                # `attack` clears the flag at both ends, and unpatched that is
+                # the real `~/.ai_coc/stop`: a suite run would silently take a
+                # stop somebody had asked of a loop still playing out its battle.
+                patch.object(commands, "STOP_FLAG", Path(folder) / "stop"),
+                patch.object(commands, "_controller"),
+                patch.object(
+                    commands, "_settle_game", return_value=MagicMock(name="at the start")
+                ),
+                patch.object(commands, "_pick_world", return_value="night"),
+                patch.object(commands, "_planner", return_value=None),
+                patch.object(commands.ConfigStore, "load", return_value=AppConfig()),
+                patch.object(commands, "FrameTicker") as ticker,
+                patch.object(commands, "AttackRunner") as runner,
+                patch.object(commands, "_empty_cart") as cart,
+            ):
+                runner.return_value.run.return_value = MagicMock(
+                    stock_full=False, attacked=None, phases=1
+                )
+                runner.return_value.played = None
+                runner.return_value.adb = controller
+                runner.return_value.display = fresh
+                commands.attack(AttackOptions(world="night", rounds=1))
+        # Both halves: a scheduled restart builds a fresh controller as well as a
+        # fresh display, so dropping either from the handover puts one of them
+        # back on the emulator that went away.
+        assert cart.call_args.args[2] is controller
         assert cart.call_args.args[3] is fresh
         # The ticker captures from its own thread and swallows what it cannot
-        # reach, so a stale one is a night of warnings rather than a crash.
+        # reach, so a stale one costs warnings nobody reads rather than the run.
         assert ticker.return_value.__enter__.return_value.display is fresh
 
 

@@ -690,22 +690,31 @@ def attack(options: AttackOptions) -> AttackSeries:
             except KeyboardInterrupt:
                 logger.info("Interrupted; stopping after %d round(s)", len(series.root))
                 break
-            # **A restart inside the round moves the game to a new display, and
-            # only the runner is told.** `AttackRunner` reassigns its own
-            # `self.display` when the idle-disconnect dialog sends it through
-            # `restart_game`, while this function's local and the ticker's copy
-            # keep pointing at a display that no longer exists. `_restart_emulator`
-            # already does exactly this for the scheduled restart; the in-round
-            # one had nobody doing it.
+            # **A restart moves the game to a display of MuMu's choosing, and
+            # this function is the last to hear about it.** `AttackRunner`
+            # reassigns its own `self.display` when the idle-disconnect dialog
+            # sends it through `restart_game`, so it keeps playing; the local
+            # below and the ticker's copy go on naming a display the game has
+            # left, and `screencap -d` against one answers `Failed to take
+            # screenshot. Status: -2`.
             #
-            # Measured twice in one night, both times a few battles after an
-            # idle-disconnect restart had moved the game from display 3 to 4:
-            # `_empty_cart` below asked the old display for a frame, `screencap`
-            # answered `Failed to take screenshot. Status: -2`, and the whole
-            # series died with `result.json` never written and the battles it
-            # had played countable only out of `run.log`. The ticker survives
-            # the same staleness because its own capture is wrapped, so it spends
-            # the rest of the night logging warnings nobody reads instead.
+            # Measured on two consecutive night series, both a few battles after
+            # an idle-disconnect restart — display 2 to 3 on one and 3 to 4 on
+            # the next. Both died in `_empty_cart` below with `result.json`
+            # never written, so the 17 and 14 battles they had played were
+            # countable only out of `run.log`.
+            #
+            # **`_restart_emulator` does not already cover this.** It re-points
+            # `runner` and `ticker` and says why, but it never touches this
+            # function's own pair either — so the scheduled restart has the same
+            # `_empty_cart` crash waiting behind it, unreached only because no
+            # night series had yet run long enough to hit one. Syncing here
+            # rather than at the call covers both restarts and whatever consumer
+            # is added to this loop next.
+            #
+            # Not every `Status: -2` is this: one recorded series lost a display
+            # with no restart at all and died in `uncovered`, where the runner's
+            # own copy is the stale one. That one is still open.
             adb, display = runner.adb, runner.display
             ticker.adb, ticker.display = adb, display
             series.root.append(report)
