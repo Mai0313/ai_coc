@@ -101,8 +101,9 @@ WALL_PITCH = 45
 # one is not.** Every spot is opened and priced off its own menu before it can be
 # spent on, so a miss costs one tap and one capture — about 1.7 s — while a run
 # left with too few candidates has nothing for `_pick` to compare and buys the
-# first thing it sees. Measured over one recorded village, six points came back
-# with four opening a wall menu; twelve is that hit rate with room to spare.
+# first thing it sees. Measured live at twelve, nine opened a wall menu and the
+# nine were priced 3 600 000, 4 900 000 and 6 300 000 — so the comparison `_pick`
+# exists for survived three misses. The whole find took 23 s including the call.
 #
 # Nothing here is racing anything, so the model is the one in the settings file
 # rather than a cheaper one picked for speed: this and the attack planner are the
