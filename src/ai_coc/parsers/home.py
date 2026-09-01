@@ -62,7 +62,24 @@ MARKERS = (
 # slash between the two numbers is not a digit and that is how it is found: swept
 # over live frames every real digit matches within 14 while the slash reads 40,
 # so anything over the line separates one number from the other.
-BUILDER_BOX = (795, 33, 860, 66)
+#
+# **The box was cut from a `1/5` and a `1` is the one digit narrow enough to fit
+# it.** The number is centred, so a wide leading digit hangs off the left: swept
+# over the recorded frames the box's own edge fell four columns inside a leading
+# `0`, which put it 22 to 23 bits off its template against 5 to 11 with the
+# columns restored. That is either side of the tolerance, so a village at `0/6`
+# read as nothing at all — and `free_builders` is what `upgrade` asks before it
+# spends a builder and what the wall loop asks after a batch is refused, so both
+# stood down on a village they could read perfectly well. The left edge sits at
+# the near end of a plateau that runs from 792 down to 780 before the plate
+# itself starts bleeding in.
+BUILDER_BOX = (790, 33, 860, 66)
+# Left where it was, now that it has been measured against a leading `0` too:
+# every digit that resolves confidently lands within 14, the slash at 38, and
+# between them sit two frames whose `5` is a coin flip (24 against a `9` at 25,
+# and the same pair the other way round on the next frame of the same counter).
+# The line goes under that pair rather than over it, because a wrong builder
+# count is spent against while an unread one only stops the run.
 BUILDER_TOLERANCE = 22
 
 # Tapping that counter opens the panel listing every upgrade the village has

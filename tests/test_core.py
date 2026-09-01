@@ -4066,6 +4066,16 @@ class HomeHudTests(unittest.TestCase):
         """Idle over total. The slash is not a digit and is found by matching badly."""
         assert free_builders((FRAMES / "home_markers.png").read_bytes()) == (1, 5)
 
+    def test_a_wide_leading_digit_still_fits_the_builder_box(self) -> None:
+        """0/6, where the box was cut from a 1/5 and a 1 is the narrowest digit.
+
+        The number is centred, so a leading 0 hangs four columns off the left of
+        the old box and lands 23 bits from its template against 5 with them
+        restored — either side of the tolerance, so this village read as no
+        village at all while every builder on it was busy.
+        """
+        assert free_builders((FRAMES / "home_builders_busy.png").read_bytes()) == (0, 6)
+
     def test_a_frame_with_no_village_on_it_has_no_builders(self) -> None:
         assert free_builders((FRAMES / "wall_spend_dialog.png").read_bytes()) is None
 
