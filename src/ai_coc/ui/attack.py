@@ -1477,6 +1477,19 @@ class AttackRunner(BaseModel):
         # countdown, which is what has been hiding this; without a key `_plan`
         # returns at once and the run would probe into the countdown every time.
         battle = self._wait_for_battle()
+        # **The battle's clock starts here, not once the work below is done.**
+        # Every spell on the plan is timed from this stamp, and the planner is
+        # asked for 「開打之後第幾秒」 — the game's own count, which the frame
+        # `_wait_for_battle` just handed back reads as 3分00秒. Stamping it
+        # after `_flank` instead put that zero a measured 3.0 to 3.7 seconds
+        # late on all 23 rounds of one recorded run, because reading the
+        # boundary and dragging the camera clear of the card row both happen
+        # while the game is already counting. On top of the cast's own second
+        # and a half that had a rage asked for at 12s landing at 17.5s: a third
+        # of an 18-second spell spent before it was poured. The work still has
+        # to happen and still costs those seconds; what changes is that the
+        # plan's numbers now mean what the planner was told they mean.
+        opened = time.monotonic()
         anchors = self._flank(battle, plan)
         pushed = 0
         line = deploy_line(LINE_POINTS, *push_line(anchors, pushed, self._middle))
@@ -1518,7 +1531,6 @@ class AttackRunner(BaseModel):
         # hero's ability is timed from that hero landing, which is what a queen's
         # cloak is worth; a spell is timed from the attack opening, and
         # `_spell_moves` is where that half lives.
-        opened = time.monotonic()
         pending = self._spell_moves(
             opened, frame, plan, (rages, rage_path), (freezes, freeze_targets)
         )

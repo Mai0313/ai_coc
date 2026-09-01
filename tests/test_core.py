@@ -2329,6 +2329,54 @@ class AttackTests(unittest.TestCase):
         for index, (x, y) in enumerate(spots):
             assert all(math.hypot(x - a, y - b) >= 20 for a, b in spots[index + 1 :])
 
+    def test_the_spell_clock_starts_at_the_battle_not_after_the_flank(self) -> None:
+        """`_flank` reads the boundary and drags the camera while the game counts.
+
+        Measured over 23 live rounds it spent 3.0 to 3.7 seconds doing exactly
+        that, all of it after the frame reading 3分00秒 that `_wait_for_battle`
+        hands back. The planner answers 「開打之後第幾秒」 against the game's
+        own clock, so a loop stamping its own after that work had every bottle
+        three seconds late before the cast itself had cost anything — a sixth of
+        an 18-second rage, gone.
+        """
+        runner = self._runner()
+        plan = plans.flat()
+        clock = [0.0]
+        opening: list[float] = []
+        moves: list[tuple[float, str, object]] = []
+
+        def flank(battle: object, drawn: object) -> tuple[tuple[int, int], ...]:
+            clock[0] += 3.3
+            return DEPLOY_LINES["top_left"]
+
+        with (
+            patch.object(AttackRunner, "_settle_camera", side_effect=lambda frame: frame),
+            patch.object(AttackRunner, "_settle_zoom", side_effect=lambda frame: frame),
+            patch.object(attack, "card_groups", return_value=[[100], [600, 900]]),
+            patch.object(attack, "counted_cards", return_value=[900]),
+            patch.object(attack, "freeze_cards", return_value=[]),
+            patch.object(attack, "card_count", return_value=4),
+            patch.object(AttackRunner, "_plan", return_value=plan),
+            patch.object(AttackRunner, "_wait_for_battle", return_value=None),
+            patch.object(AttackRunner, "_flank", side_effect=flank),
+            patch.object(AttackRunner, "_drop_singles", return_value=([], [])),
+            patch.object(AttackRunner, "_spread_troops", return_value=[(0, 0)]),
+            patch.object(
+                AttackRunner,
+                "_run_schedule",
+                side_effect=lambda opened, scheduled: (
+                    opening.append(opened),
+                    moves.extend(scheduled),
+                )[0],
+            ),
+            patch.object(attack.time, "monotonic", side_effect=lambda: clock[0]),
+            patch.object(attack.time, "sleep"),
+        ):
+            runner._deploy(b"")
+        # Stamped where the battle opened, not 3.3 seconds of boundary-reading later.
+        assert opening == [0.0]
+        assert [round(when) for when, _, _ in moves] == [plan.rage_after]
+
     def _abilities(
         self, singles: list[int], on_field: list[int], kinds: list[str], spent: Sequence[int] = ()
     ) -> list[tuple[int, int]]:
