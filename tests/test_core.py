@@ -3061,30 +3061,28 @@ class InRoundRestartTests(unittest.TestCase):
         """
         fresh = MagicMock(name="the display the game came back on")
         controller = MagicMock(name="the controller that came back")
-        with tempfile.TemporaryDirectory() as folder:
-            with (
-                # `attack` clears the flag at both ends, and unpatched that is
-                # the real `~/.ai_coc/stop`: a suite run would silently take a
-                # stop somebody had asked of a loop still playing out its battle.
-                patch.object(commands, "STOP_FLAG", Path(folder) / "stop"),
-                patch.object(commands, "_controller"),
-                patch.object(
-                    commands, "_settle_game", return_value=MagicMock(name="at the start")
-                ),
-                patch.object(commands, "_pick_world", return_value="night"),
-                patch.object(commands, "_planner", return_value=None),
-                patch.object(commands.ConfigStore, "load", return_value=AppConfig()),
-                patch.object(commands, "FrameTicker") as ticker,
-                patch.object(commands, "AttackRunner") as runner,
-                patch.object(commands, "_empty_cart") as cart,
-            ):
-                runner.return_value.run.return_value = MagicMock(
-                    stock_full=False, attacked=None, phases=1
-                )
-                runner.return_value.played = None
-                runner.return_value.adb = controller
-                runner.return_value.display = fresh
-                commands.attack(AttackOptions(world="night", rounds=1))
+        with (
+            tempfile.TemporaryDirectory() as folder,
+            # `attack` clears the flag at both ends, and unpatched that is the
+            # real `~/.ai_coc/stop`: a suite run would silently take a stop
+            # somebody had asked of a loop still playing out its battle.
+            patch.object(commands, "STOP_FLAG", Path(folder) / "stop"),
+            patch.object(commands, "_controller"),
+            patch.object(commands, "_settle_game", return_value=MagicMock(name="at the start")),
+            patch.object(commands, "_pick_world", return_value="night"),
+            patch.object(commands, "_planner", return_value=None),
+            patch.object(commands.ConfigStore, "load", return_value=AppConfig()),
+            patch.object(commands, "FrameTicker") as ticker,
+            patch.object(commands, "AttackRunner") as runner,
+            patch.object(commands, "_empty_cart") as cart,
+        ):
+            runner.return_value.run.return_value = MagicMock(
+                stock_full=False, attacked=None, phases=1
+            )
+            runner.return_value.played = None
+            runner.return_value.adb = controller
+            runner.return_value.display = fresh
+            commands.attack(AttackOptions(world="night", rounds=1))
         # Both halves: a scheduled restart builds a fresh controller as well as a
         # fresh display, so dropping either from the handover puts one of them
         # back on the emulator that went away.
