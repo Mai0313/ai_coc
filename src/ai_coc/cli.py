@@ -118,6 +118,12 @@ def _parser() -> argparse.ArgumentParser:
     build = sub.add_parser("upgrade", help="把閒著的工人派去升級建築")
     build.add_argument("--keep-gold", type=int, default=0, help="留下這麼多金幣不要花")
     build.add_argument("--keep-elixir", type=int, default=0, help="留下這麼多聖水不要花")
+    build.add_argument(
+        "--at",
+        metavar="X,Y",
+        action="append",
+        help="這個座標上的建築是候選之一,跳過尋找;可以給很多次,最貴而且買得起的先升",
+    )
     champions = sub.add_parser("hero", help="讀英雄殿堂,把閒著的工人派去升級指定的英雄")
     # Reading is the default and starting an upgrade is the exception, because
     # only one of the two spends anything. Which hero is worth a builder is a
@@ -238,7 +244,10 @@ def _run_command(arguments: argparse.Namespace, run: RunLog) -> int:
         ).model_dump_json(indent=2)
     elif arguments.command == "upgrade":
         result = commands.upgrade(
-            run.frames, arguments.keep_gold, arguments.keep_elixir
+            run.frames,
+            arguments.keep_gold,
+            arguments.keep_elixir,
+            [_spot(text) for text in arguments.at or []],
         ).model_dump_json(indent=2)
     elif arguments.command == "hero":
         result = commands.hero(

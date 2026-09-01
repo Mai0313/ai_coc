@@ -21,9 +21,12 @@ from __future__ import annotations
 import time
 import logging
 
+from pydantic import Field
+
 from ai_coc.models import BuildReport, VillageStock, BuilderReport, CollectReport, BuildCandidate
 from ai_coc.ui.runner import MENU_SETTLE, GameRunner
 from ai_coc.parsers.home import BUILDER_BUTTON, builder_jobs, free_builders, collect_bubbles
+from ai_coc.parsers.scout import read_stock
 from ai_coc.parsers.building import wall_menu, game_dialog, upgrade_sheet, upgrade_buttons
 
 logger = logging.getLogger(__name__)
@@ -55,6 +58,21 @@ COLLECT_PASSES = 3
 # figure the wall loop measured for the same thing.
 BUY_SETTLE = 1.5
 
+# How many buildings to ask Gemini for, and how to describe one.
+#
+# **More than the run can use, because a builder is what is scarce here.** Only
+# the free builders get spent, so a village at 1/5 uses one of these — but
+# `_pick` takes the dearest it can afford, and that comparison is only as good as
+# the list it is given. Measured live, 9 of 14 answers had a priced upgrade on
+# them, and **only two of those nine sat within 45 px of a sweep grid point**
+# against buildings 70 to 120 px across: the grid stops at x 1220 and y 500,
+# which leaves most of a village outside it.
+BUILD_SPOTS = 14
+BUILD_TARGET = (
+    "**可以升級的建築**（防禦塔、資源採集器、儲存罐、兵營、實驗室這一類，有實體屋頂的建築）"
+)
+BUILD_NOTES = "不要回答城牆、樹木石頭這種裝飾物、或地上的軍隊。這些點要散開在村莊的不同區塊。"
+
 
 class UpkeepRunner(GameRunner):
     """Runs the jobs a village needs doing that have nothing to do with fighting."""
@@ -63,6 +81,9 @@ class UpkeepRunner(GameRunner):
     # leaves nothing to train an army with, which is the other half of farming.
     keep_gold: int = 0
     keep_elixir: int = 0
+    # The buildings this run was pointed at instead of looking for them. Empty
+    # means ask, and then sweep if that answers nothing.
+    at: list[tuple[int, int]] = Field(default_factory=list)
 
     def collect(self) -> CollectReport:
         """Tap every collector marker on screen, and report what the storages gained.
@@ -122,28 +143,74 @@ class UpkeepRunner(GameRunner):
         return report
 
     def _buildings(self) -> list[BuildCandidate]:
-        """Every point on the sweep whose menu offers an upgrade, and what it costs.
+        """The upgrades to choose between, from whichever of three finders answers.
+
+        Named points first, then Gemini, then the sweep — the same order the wall
+        loop runs, and for the same reason: the sweep is a blind grid that takes
+        two and a half minutes and lands where it lands, so it is the fallback
+        rather than the default. It stays underneath because a village whose
+        buildings nobody can place still has buildings.
+        """
+        if self.at:
+            return self._priced(self.at)
+        if (spotted := self._spotted(BUILD_TARGET, BUILD_NOTES, BUILD_SPOTS)) and (
+            found := self._priced(spotted)
+        ):
+            return found
+        return self._scan()
+
+    def _offer(self, point: tuple[int, int], png: bytes) -> BuildCandidate | None:
+        """What this menu is offering, if it is an upgrade this loop may take.
 
         Walls are skipped. They upgrade instantly and tie up no builder, so
         putting one on a wall would be the single mistake this loop exists to
         avoid, and `ai_coc walls` is where they belong.
         """
+        if wall_menu(png) is not None:
+            return None
+        offers = upgrade_buttons(png)
+        if not offers:
+            return None
+        logger.info(
+            "Upgrade at (%d, %d): %d in %s",
+            point[0],
+            point[1],
+            offers[0].price,
+            offers[0].resource,
+        )
+        return BuildCandidate(point=point, resource=offers[0].resource, price=offers[0].price)
+
+    def _priced(self, points: list[tuple[int, int]]) -> list[BuildCandidate]:
+        """What each of these points is really offering, read off its own menu.
+
+        **Each tap goes in on a confirmed village frame**, the rule the sweep is
+        built around: these are raw village coordinates, so one that misses opens
+        whatever is standing there, and a full-screen panel swallows every tap
+        after it. A named point misses because the camera moved since somebody
+        looked; a spotted one misses because it was a guess.
+        """
+        found: list[BuildCandidate] = []
+        for point in points:
+            png = self._after_tap(point, f"named_{point[0]:04d}_{point[1]:04d}")
+            if read_stock(png) is None:
+                logger.info("The tap at (%d, %d) covered the village; backing out", *point)
+                if self._home() is None:
+                    return found
+                continue
+            offer = self._offer(point, png)
+            if offer is None:
+                logger.info("Nothing upgradeable at (%d, %d)", *point)
+                continue
+            found.append(offer)
+        return found
+
+    def _scan(self) -> list[BuildCandidate]:
+        """Every point on the sweep whose menu offers an upgrade, and what it costs."""
         found: list[BuildCandidate] = []
         for point, png in self._sweep("build"):
-            if wall_menu(png) is not None:
-                continue
-            offers = upgrade_buttons(png)
-            if offers:
-                logger.info(
-                    "Upgrade at (%d, %d): %d in %s",
-                    point[0],
-                    point[1],
-                    offers[0].price,
-                    offers[0].resource,
-                )
-                found.append(
-                    BuildCandidate(point=point, resource=offers[0].resource, price=offers[0].price)
-                )
+            offer = self._offer(point, png)
+            if offer is not None:
+                found.append(offer)
         return found
 
     def _pick(self, offers: list[BuildCandidate], gold: int, elixir: int) -> BuildCandidate | None:

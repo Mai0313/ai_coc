@@ -1367,14 +1367,18 @@ class WallCandidate(BaseModel):
     price: int
 
 
-class WallSpots(BaseModel):
-    """Where Gemini thinks the walls are, before anything has been tapped.
+class ScreenSpots(BaseModel):
+    """Where Gemini thinks the things a loop is looking for are.
 
-    These are guesses and are treated as such: every one of them is opened and
-    priced off its own menu before it can be spent on, which is the same check a
-    hand-named wall goes through. So a wrong point costs one tap and one capture
-    and is dropped with a line saying so, and asking for more points than the run
-    needs is the right shape rather than a waste.
+    These are guesses and are treated as such: every one of them is tapped and
+    the screen that comes up is checked by whatever the caller was looking for —
+    a wall menu, a priced upgrade button, hero cards. So a wrong point costs one
+    tap and one capture and is dropped with a line saying so, and asking for more
+    points than the run needs is the right shape rather than a waste.
+
+    One model for all three because the answer is the same shape whatever was
+    asked for; what differs is the question and the check, and both of those
+    belong to the caller.
     """
 
     spots: list[ScreenPoint] = Field(default_factory=list)
