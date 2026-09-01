@@ -310,6 +310,24 @@ class WorldTests(unittest.TestCase):
         assert current_world((FRAMES / "world_day_corner.png").read_bytes()) == "day"
         assert current_world((FRAMES / "world_night_corner.png").read_bytes()) == "night"
 
+    def test_a_collector_marker_behind_the_dark_row_does_not_hide_the_village(self) -> None:
+        """The dark row has its own left edge because its number is the shortest.
+
+        Measured live: a collector's own full marker floated behind that row and
+        laid ink from x 1300 to 1338, which failed the row — and `read_stock`
+        failing is how `_home` decides it is not on the home village, so
+        `walls`, `collect` and the attack loop all stood down together on a
+        village plainly on screen.
+
+        Gold is what stops the other two rows moving with it. This frame holds
+        14 000 000, whose leading digit reaches back past the marker: given the
+        dark row's edge it reads back 4 000 000, which is the truncation this
+        project treats as the dangerous kind of wrong.
+        """
+        stock = read_stock((FRAMES / "home_marker_over_bars.png").read_bytes())
+        assert stock is not None
+        assert (stock.gold, stock.elixir, stock.dark) == (14000000, 17254813, 460500)
+
     def test_a_village_reads_where_its_storage_bars_do_not(self) -> None:
         """Which is the whole reason this replaced `read_stock` as the village test.
 
