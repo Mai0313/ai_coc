@@ -1367,6 +1367,19 @@ class WallCandidate(BaseModel):
     price: int
 
 
+class WallSpots(BaseModel):
+    """Where Gemini thinks the walls are, before anything has been tapped.
+
+    These are guesses and are treated as such: every one of them is opened and
+    priced off its own menu before it can be spent on, which is the same check a
+    hand-named wall goes through. So a wrong point costs one tap and one capture
+    and is dropped with a line saying so, and asking for more points than the run
+    needs is the right shape rather than a waste.
+    """
+
+    spots: list[ScreenPoint] = Field(default_factory=list)
+
+
 class GameDialog(BaseModel):
     """The game's own yes/no panel, which very different questions all share.
 

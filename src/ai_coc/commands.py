@@ -935,6 +935,10 @@ def walls(options: WallOptions) -> WallReport:
         keep_elixir=options.keep_elixir,
         rounds=options.rounds,
         at=options.at,
+        # Skipped when the run was told where the walls are: the whole point of
+        # asking is to find them, and a caller that named them has already
+        # looked at the screen.
+        ai=None if options.at else _planner(ConfigStore().load()),
         should_stop=stop_requested,
         frame_dir=options.frame_dir,
     )
