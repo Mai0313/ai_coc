@@ -218,6 +218,16 @@ FREEZE_TARGET = (800, 420)
 # pitch RAGE_PATH is already laid out on; naming it is what lets a planned point
 # be measured against the same ellipse.
 RAGE_SPAN = (240, 120)
+# How far past the edge of a footprint a crowded bottle gets pushed. Exactly to
+# the edge is what the geometry asks for, but the answer is rounded back to a
+# whole pixel, and half a pixel of that is enough to leave the point a hair
+# inside — which pushes it again, to the same place, until the attempts run out
+# and it is dropped after all. A hundredth of a footprint is 2 px across and 1 px
+# down: far too little to matter on the ground, and more than rounding can undo.
+NUDGE_CLEARANCE = 1.01
+# One push can walk a point into the next bottle along, so it is offered again.
+# The planner's own too-tight 2x2 opening into a proper one takes three.
+NUDGE_ATTEMPTS = 8
 
 # What waits on the clock when nothing named a moment for it. Every timing on an
 # attack belongs to the plan now, and `plans/flat.json` carries these same three
@@ -547,31 +557,75 @@ def single_spots(
 
 
 def spaced(points: Iterable[tuple[int, int]]) -> list[tuple[int, int]]:
-    """The points, minus every one landing inside a bottle already placed.
+    """The points, each moved off whatever bottle is already standing on it.
 
     `prompts/attack_plan.md` gives the planner the footprint and tells it two
-    rages must not overlap, and the planner does not comply: measured on one
-    five-point reply, four of its ten pairs sat inside one another and only two
-    points came through here. The board is isometric, which is what makes the
-    spacing impossible to eyeball — the closest of those four, (768, 495) against
-    (800, 378), is 121 px apart, clear of the ellipse's 240 px axis and just
-    inside its 120 px one. That is not a wording problem, since a model reading a
-    screenshot cannot measure the distance between two points it has itself just
-    invented, so the geometry is settled here instead of asked for.
+    rages must not overlap, and the planner does not comply. The board is
+    isometric, which is what makes the spacing impossible to eyeball: on one
+    five-point reply four of the ten pairs sat inside one another, the closest
+    being (768, 495) against (800, 378) — 121 px apart, clear of the ellipse's
+    240 px axis and just inside its 120 px one. That is not a wording problem,
+    since a model reading a screenshot cannot measure the distance between two
+    points it has itself just invented, so the geometry is settled here instead
+    of asked for.
 
-    It is worth settling because an overlapping bottle is a whole spell's worth
-    of nothing: rage does not stack, so the second one over the same ground buys
-    the cargo one footprint of effect rather than two. Whatever this drops is
-    made back up from RAGE_PATH by the caller, which is spaced on this same
-    pitch by construction.
+    **It is settled by moving the point, not by dropping it.** Dropping was the
+    first answer, and the caller made the loss back up from `RAGE_PATH` — a grid
+    laid across the whole village. Measured over 24 live rounds the planner drew
+    its 2x2 at 13% by 10% of the screen where the prompt asks for 15% by 13%,
+    which puts the horizontal neighbour at 0.75 of a footprint and the vertical
+    one at 0.56: the block collapsed to its own diagonal on **24 rounds out of
+    24**, losing 48 of the 96 points asked for, and the grid filled the gap with
+    bottles at (1000, 300) behind a village being attacked from the top left.
+    An overlapping bottle wastes itself; one on the far side of the map wastes
+    itself *and* leaves the ground the planner chose uncovered. Pushed out to
+    the edge of the footprint it is standing on, that same tight block opens
+    into the one the prompt asked for, over the ground the planner picked.
     """
     kept: list[tuple[int, int]] = []
-    for x, y in points:
-        if all(
-            ((x - px) / RAGE_SPAN[0]) ** 2 + ((y - py) / RAGE_SPAN[1]) ** 2 >= 1 for px, py in kept
-        ):
-            kept.append((x, y))
+    for point in points:
+        clear = _clear_of(point, kept)
+        if clear is not None:
+            kept.append(clear)
     return kept
+
+
+def _clear_of(point: tuple[int, int], kept: list[tuple[int, int]]) -> tuple[int, int] | None:
+    """`point` moved out of every footprint already placed, or None if it will not go.
+
+    The push is measured in footprints rather than pixels, where the ellipse is
+    the unit circle and "clear" is simply a distance of 1, so leaving one is a
+    single step along the line away from it. It repeats because a step can walk
+    into the next bottle along, and because `clear_of_controls` can put the point
+    straight back where it came from — a bottle pushed towards the card row has
+    nowhere to go, and that is the case which runs out of attempts and is dropped
+    after all, exactly as every crowded point used to be.
+    """
+    spot = clear_of_controls(point)
+    for _ in range(NUDGE_ATTEMPTS):
+        clash = next(
+            (
+                (px, py)
+                for px, py in kept
+                if ((spot[0] - px) / RAGE_SPAN[0]) ** 2 + ((spot[1] - py) / RAGE_SPAN[1]) ** 2 < 1
+            ),
+            None,
+        )
+        if clash is None:
+            return spot
+        reach = (
+            ((spot[0] - clash[0]) / RAGE_SPAN[0]) ** 2 + ((spot[1] - clash[1]) / RAGE_SPAN[1]) ** 2
+        ) ** 0.5
+        # Exactly on top of one already placed: there is no direction to push in,
+        # and picking one would be inventing ground the planner never named.
+        if not reach:
+            return None
+        step = NUDGE_CLEARANCE / reach
+        spot = clear_of_controls((
+            round(clash[0] + (spot[0] - clash[0]) * step),
+            round(clash[1] + (spot[1] - clash[1]) * step),
+        ))
+    return None
 
 
 def drop_points(

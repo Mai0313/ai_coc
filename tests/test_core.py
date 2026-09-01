@@ -2263,7 +2263,7 @@ class AttackTests(unittest.TestCase):
         assert tapped.call_args.args[:2] == (939, attack.CARD_ROW_Y)
         assert placed.call_args.args[0] == [targets[0], targets[1]]
 
-    def test_a_planned_bottle_landing_inside_another_is_dropped(self) -> None:
+    def test_a_planned_bottle_landing_inside_another_is_moved_off_it(self) -> None:
         """The planner is given the footprint and overlaps its points regardless.
 
         These five are one live reply, and four of their ten pairs sit inside one
@@ -2273,9 +2273,50 @@ class AttackTests(unittest.TestCase):
         and sits just inside its 120 px one — the sort of call a model reading a
         screenshot cannot make, which is why the prompt saying "do not overlap"
         does not settle it and this does.
+
+        All five still get a bottle, each within a quarter of a footprint of
+        where it was asked for. Three of them used to be dropped instead, and
+        the caller topped the cargo back up off `RAGE_PATH` — which buys ground
+        wherever that grid happens to run rather than where the planner looked.
         """
         planned = [(448, 522), (608, 450), (560, 585), (768, 495), (800, 378)]
-        assert spaced(planned) == [(448, 522), (768, 495)]
+        placed = spaced(planned)
+        assert len(placed) == len(planned)
+        for spot, asked in zip(placed, planned, strict=True):
+            assert abs(spot[0] - asked[0]) <= RAGE_SPAN[0] // 4
+            assert abs(spot[1] - asked[1]) <= RAGE_SPAN[1] // 4
+        assert not self._overlapping(placed)
+
+    def test_the_planners_own_block_opens_out_rather_than_collapsing(self) -> None:
+        """Measured on 24 live rounds out of 24, and it cost half the cargo every one.
+
+        `prompts/attack_plan.md` asks for 15% by 13% of the screen between
+        bottles and the planner draws 13% by 10%, which puts the horizontal
+        neighbour at 0.75 of a footprint and the vertical one at 0.56. Dropping
+        those left the diagonal pair and nothing else, and the caller filled the
+        two empty slots off `RAGE_PATH`: on one village attacked from the top
+        left, a bottle went to (1000, 300) behind it. Opening the block out
+        keeps all four over the ground the planner picked.
+        """
+        placed = spaced([(560, 252), (768, 252), (560, 342), (768, 342)])
+        assert len(placed) == 4
+        assert not [spot for spot in placed if spot in RAGE_PATH]
+        assert not self._overlapping(placed)
+        # Still one block on the same ground, opened out to the pitch a bottle
+        # really covers rather than the tighter one it was drawn at.
+        assert max(x for x, _ in placed) - min(x for x, _ in placed) >= RAGE_SPAN[0]
+        assert max(y for _, y in placed) - min(y for _, y in placed) >= RAGE_SPAN[1]
+
+    @staticmethod
+    def _overlapping(placed: list[tuple[int, int]]) -> list[tuple[int, int]]:
+        """Every pair of bottles close enough that the second one buys nothing."""
+        return [
+            (one, two)
+            for index, one in enumerate(placed)
+            for two in placed[index + 1 :]
+            if ((one[0] - two[0]) / RAGE_SPAN[0]) ** 2 + ((one[1] - two[1]) / RAGE_SPAN[1]) ** 2
+            < 1
+        ]
 
     def test_the_fixed_grid_is_already_spaced(self) -> None:
         """Which is what makes it usable to top up whatever the planner's points lose."""
