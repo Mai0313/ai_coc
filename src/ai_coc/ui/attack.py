@@ -1662,8 +1662,17 @@ class AttackRunner(BaseModel):
             # `who` names the hero for the log and for the prompt to reason
             # with; which card it is comes from the row order, because nothing
             # on the row itself says who is on which card.
-            self._drop_at(self._unsent[:1], points[0] if points else middle)
-            del self._unsent[:1]
+            #
+            # **`unknown` means every hero still in hand, not the next one.** A
+            # tactic that does not know the row — `plans.flat()` cannot, since
+            # it is written before any army is seen — has no way to name them
+            # one at a time, and taking the next card for each such step sent
+            # one hero and left the other two in their cards for the whole
+            # battle. Measured live on a row of three: `1 of 2 one-off card(s)
+            # never landed` where the army carried four.
+            wanted = list(self._unsent) if step.who == "unknown" else self._unsent[:1]
+            self._drop_at(wanted, points[0] if points else middle)
+            del self._unsent[: len(wanted)]
         elif step.act == "ability":
             # Whatever hero cards the tactic has already sent. A tap on a card
             # whose hero never landed deploys it instead, which is why only what

@@ -2116,35 +2116,38 @@ class AttackTests(unittest.TestCase):
             runner._play_tactic(plan, DEPLOY_LINES["top_left"], self._row())
         assert acts == ["troops"]
 
-    def test_a_hero_step_takes_the_next_card_along_the_row(self) -> None:
+    def test_a_hero_step_takes_the_next_card_unless_it_names_nobody(self) -> None:
         """Nothing on the row says who is on which card, so order is the only handle.
 
-        A step naming a hero the row does not carry — one upgrading, so its card
-        is simply gone — runs out of cards and stops rather than shifting the
-        rest, which is what an index into a shorter row would have done.
+        **`unknown` means every hero still in hand, not the next one.** A tactic
+        written before any army was seen — `plans.flat()` cannot know the row —
+        has no way to name them one at a time, and taking a single card for each
+        such step sent one hero and left the rest in their cards for the whole
+        battle: measured live, `1 of 2 one-off card(s) never landed` on an army
+        carrying a machine and three heroes.
+
+        A step naming a hero the row does not carry, one upgrading so its card
+        is simply gone, runs out of cards and sends nothing rather than shifting
+        the rest along.
         """
+        assert self._sent([_step("hero", (20, 20), who="queen")] * 3) == [[500], [600], []]
+        assert self._sent([_step("hero", (20, 20))]) == [[500, 600]]
+
+    def _sent(self, steps: list[AttackStep]) -> list[list[int]]:
+        """Which cards each `hero` step put on the field, in order."""
         runner = self._runner()
-        sent: list[tuple[list[int], tuple[int, int]]] = []
-        plan = AttackPlan(
-            steps=[
-                _step("hero", (20, 20), who="queen"),
-                _step("hero", (30, 30), who="king"),
-                _step("hero", (40, 40), who="warden"),
-            ]
-        )
+        sent: list[list[int]] = []
         with (
             patch.object(
-                AttackRunner,
-                "_drop_at",
-                side_effect=lambda cards, spot: sent.append((list(cards), spot)),
+                AttackRunner, "_drop_at", side_effect=lambda cards, spot: sent.append(list(cards))
             ),
             patch.object(AttackRunner, "_settle_drops"),
             patch.object(attack.time, "sleep"),
         ):
-            runner._play_tactic(plan, DEPLOY_LINES["top_left"], self._row(heroes=[500, 600]))
-        # Two cards, three steps: the first two get one each and the third has
-        # nothing left to send.
-        assert [cards for cards, _ in sent] == [[500], [600], []]
+            runner._play_tactic(
+                AttackPlan(steps=steps), DEPLOY_LINES["top_left"], self._row(heroes=[500, 600])
+            )
+        return sent
 
     def test_an_ability_only_reaches_the_heroes_the_tactic_already_sent(self) -> None:
         """A tap on a card whose hero never landed deploys it instead, with nothing around it."""
