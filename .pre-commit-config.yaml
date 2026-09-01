@@ -27,7 +27,15 @@ repos:
     hooks:
       # list of supported hooks: https://pre-commit.com/hooks.html
       - id: check-added-large-files
-        exclude: poetry.lock|uv.lock
+        # `tests/frames/` is screenshots of a 1600x900 game, and every reading
+        # this project makes is measured off exact pixel values — quantising one
+        # to fit under 500 KB loses the readings it was committed to prove, so
+        # they are 1 to 3 MB and there is no lossless way around it. Nine were
+        # already over the limit before this line existed: the hook only sees
+        # files that are staged when it runs, so anyone running it before
+        # `git add` slipped one through without noticing. An exclusion that says
+        # so beats a rule everyone quietly steps over.
+        exclude: poetry.lock|uv.lock|^tests/frames/
       - id: check-ast
       - id: check-yaml
         exclude: mkdocs.yml
