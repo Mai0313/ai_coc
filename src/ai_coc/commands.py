@@ -1005,7 +1005,10 @@ def collect(frame_dir: Path | None = None) -> CollectReport:
 
 
 def upgrade(
-    frame_dir: Path | None = None, keep_gold: int = 0, keep_elixir: int = 0
+    frame_dir: Path | None = None,
+    keep_gold: int = 0,
+    keep_elixir: int = 0,
+    at: list[tuple[int, int]] | None = None,
 ) -> BuildReport:
     """Put the village's idle builders to work, with no window in the way.
 
@@ -1022,6 +1025,10 @@ def upgrade(
         frame_dir=frame_dir,
         keep_gold=keep_gold,
         keep_elixir=keep_elixir,
+        at=at or [],
+        # Skipped when the run was told where to look, for the reason the wall
+        # loop skips it: the whole point of asking is to find them.
+        ai=None if at else _planner(ConfigStore().load()),
     ).upgrade()
     logger.info("Upgrade: %s", report.message)
     return report
@@ -1045,7 +1052,12 @@ def hero(
     if frame_dir is not None:
         frame_dir.mkdir(parents=True, exist_ok=True)
     report = HeroRunner(
-        adb=adb, display=adb.display_for(COC_PACKAGE), frame_dir=frame_dir, hero=which, at=at
+        ai=_planner(ConfigStore().load()),
+        adb=adb,
+        display=adb.display_for(COC_PACKAGE),
+        frame_dir=frame_dir,
+        hero=which,
+        at=at,
     ).run()
     logger.info("Hero: %s", report.message)
     return report

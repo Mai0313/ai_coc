@@ -52,6 +52,19 @@ MAX_PAGES = 8
 AT_TRIES = 4
 
 
+# How many guesses to take at the hall, and how to describe it.
+#
+# **Three rather than twelve, because there is only one of it.** The other loops
+# ask for many because they are collecting candidates to compare; here the first
+# answer that opens the hall ends the search, and the rest are only there for
+# when it does not. Measured live the first one opened it — against a sweep that
+# steps over this building entirely on its first pass and needs a staggered
+# second one, which is minutes of tapping.
+HALL_SPOTS = 3
+HALL_TARGET = "**英雄殿堂**（一棟深色的大建築，屋頂上有一個金色皇冠標誌，通常在村莊中央附近）"
+HALL_NOTES = "全村只有一棟，所以這幾個點是同一棟建築的不同猜測，最有把握的放第一個。"
+
+
 class HeroRunner(GameRunner):
     """Opens the 英雄殿堂, reads every card in it, and raises the one asked for."""
 
@@ -133,8 +146,25 @@ class HeroRunner(GameRunner):
                 return None
         return None
 
+    def _spotted_hall(self) -> bytes | None:
+        """The hall behind whichever of Gemini's guesses opens it, if any does.
+
+        One building rather than a list, so the first guess that works ends the
+        search. A guess that missed opened whatever was standing there, so the
+        village is confirmed before the next one goes in — the same step `--at`
+        takes, and for the same reason.
+        """
+        for point in self._spotted(HALL_TARGET, HALL_NOTES, HALL_SPOTS):
+            found = self._try_menu(self._after_tap(point, "spotted"))
+            if found is not None:
+                logger.info("The 英雄殿堂 is at (%d, %d)", *point)
+                return found
+            if self._home() is None:
+                return None
+        return None
+
     def _open(self) -> bytes | None:
-        """Get the 英雄殿堂 on screen, by the remembered spot or by sweeping."""
+        """Get the 英雄殿堂 on screen: the remembered spot, then Gemini, then a sweep."""
         if self.at is not None:
             # Buildings overlap, and a tap that lands on two of them cycles:
             # measured live at (990, 430), three taps in a row selected the hall,
@@ -148,6 +178,8 @@ class HeroRunner(GameRunner):
             logger.info("Nothing at (%d, %d) opened the hall; sweeping for it", *self.at)
             if self._home() is None:
                 return None
+        if (spotted := self._spotted_hall()) is not None:
+            return spotted
         # Two passes, the second landing between the first one's points. The
         # hall is smaller than the grid steps, so one pass can step over it
         # entirely — measured on this village it sits 86 px from the nearest

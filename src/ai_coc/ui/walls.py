@@ -34,18 +34,8 @@ import logging
 
 from pydantic import Field
 
-from ai_coc.models import (
-    WallMenu,
-    WallBatch,
-    WallSpots,
-    WallReport,
-    WallUpgrade,
-    VillageStock,
-    WallCandidate,
-)
-from ai_coc.prompts import render
+from ai_coc.models import WallMenu, WallBatch, WallReport, WallUpgrade, VillageStock, WallCandidate
 from ai_coc.ui.runner import MENU_SETTLE, GameRunner
-from ai_coc.adapters.ai import GeminiClient
 from ai_coc.parsers.home import free_builders
 from ai_coc.parsers.scout import read_stock
 from ai_coc.parsers.building import wall_menu, game_dialog
@@ -95,7 +85,7 @@ MAX_BATCH = 25
 # overshoots by a tile lands on another wall of the same section.
 WALL_PITCH = 45
 
-# How many walls to ask Gemini for, and how long to wait for the answer.
+# How many walls to ask Gemini for, and how to describe one.
 #
 # **More than the run needs, because a wrong point is nearly free and a missing
 # one is not.** Every spot is opened and priced off its own menu before it can be
@@ -110,7 +100,13 @@ WALL_PITCH = 45
 # same kind of work — one fixed prompt against one frame — and a second setting
 # would exist only to hold a smaller model.
 WALL_SPOTS = 12
-SPOT_TIMEOUT = 60
+WALL_TARGET = "**城牆**（連成長線或圍成方框的灰色方塊，村莊裡數量最多的東西）"
+# Spread out because a section is usually one level and so one price, and what
+# `_pick` is for is the comparison. Measured live the model draws a line along
+# one wall run whatever this says, which worked because that run crossed three
+# levels — but the instruction costs nothing and a compartmented village would
+# need it.
+WALL_NOTES = "不要回答防禦塔、資源建築、兵營或裝飾物。這些點要散開在村莊的不同區塊，不要全部落在同一段牆上。"
 
 
 class WallRunner(GameRunner):
@@ -125,8 +121,6 @@ class WallRunner(GameRunner):
     # The walls this run was pointed at instead of scanning for them; see
     # `WallOptions.at` for why it is a list and not one wall.
     at: list[tuple[int, int]] = Field(default_factory=list)
-    # Who to ask where the walls are. None falls back to the sweep.
-    ai: GeminiClient | None = None
 
     def _neighbours(self, point: tuple[int, int]) -> Iterator[WallCandidate]:
         """The walls immediately around this one, and what each of them asks.
@@ -184,34 +178,11 @@ class WallRunner(GameRunner):
         # Falling through to the sweep rather than giving up: a village whose
         # walls Gemini could not place still has walls, and the alternative to
         # two and a half minutes of grid taps is a run that buys nothing.
-        if (spotted := self._spotted()) and (found := self._verify(spotted)):
+        if (spotted := self._spotted(WALL_TARGET, WALL_NOTES, WALL_SPOTS)) and (
+            found := self._verify(spotted)
+        ):
             return found
         return self._scan()
-
-    def _spotted(self) -> list[tuple[int, int]]:
-        """Ask Gemini where the walls are. Empty means nobody could say.
-
-        Walls are the easiest thing on the map to name — the most repeated shape
-        on it, and the only one whose look does not have to be recognised, since
-        every answer is verified by opening its menu. That verification is what
-        makes an imperfect finder usable at all, and it is why this asks for more
-        spots than the run needs.
-        """
-        if self.ai is None:
-            return []
-        try:
-            answer = self.ai.generate_structured(
-                render("find_walls", count=WALL_SPOTS),
-                WallSpots,
-                self._frame("village"),
-                SPOT_TIMEOUT,
-            )
-        except Exception:
-            logger.warning("Gemini could not be asked where the walls are", exc_info=True)
-            return []
-        spots = [spot.pixels() for spot in answer.spots]
-        logger.info("Gemini put %d wall(s) at %s", len(spots), spots)
-        return spots
 
     def _verify(self, points: list[tuple[int, int]]) -> list[WallCandidate]:
         """What each of these spots is really asking, read off its own menu.

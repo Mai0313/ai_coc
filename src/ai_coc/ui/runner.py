@@ -20,8 +20,10 @@ from collections.abc import Callable
 
 from pydantic import BaseModel, PrivateAttr
 
-from ai_coc.models import VillageStock, DisplayTarget
+from ai_coc.models import ScreenSpots, VillageStock, DisplayTarget
+from ai_coc.prompts import render
 from ai_coc.constants import COC_PACKAGE
+from ai_coc.adapters.ai import GeminiClient
 from ai_coc.adapters.adb import AdbController, AdbControlError
 from ai_coc.parsers.scout import read_stock, idle_disconnected
 from ai_coc.parsers.world import current_world
@@ -58,6 +60,16 @@ SWEEP_STAGGER = (SWEEP_X[1] - SWEEP_X[0]) // 2, (SWEEP_Y[1] - SWEEP_Y[0]) // 2
 # last column would otherwise land on the storage bars — which start at x 1260,
 # with the dark elixir reading beginning at exactly (1300, 200).
 SWEEP_LIMIT = (SWEEP_X[-1], 620)
+# The same floor as a percentage, which is what a finder answers in. Below it is
+# the row of buttons the previous selection left on screen, so a point there taps
+# that row rather than the map — measured, four of twelve answers landed in it
+# and each one opened whatever the last menu's buttons happened to be. Telling
+# the model about it works (0 of 14 on the next run), and the filter below is
+# what makes that a guarantee rather than an improvement.
+SPOT_FLOOR = SWEEP_LIMIT[1] * 100 // 900
+# One call against one still frame. Long enough for a slow answer, short enough
+# that a hung one falls through to the sweep rather than holding the run.
+SPOT_TIMEOUT = 60
 
 # Getting back to the village, which four different things can be in the way of,
 # and they do not want the same treatment.
@@ -128,6 +140,10 @@ class GameRunner(BaseModel):
     should_stop: Callable[[], bool] = lambda: False
     # Where to keep every frame the loop reads, for a run being studied afterwards.
     frame_dir: Path | None = None
+    # Who to ask where things are. None falls back to the sweep, which is what
+    # every loop here did before this existed and still does when it answers
+    # nothing usable.
+    ai: GeminiClient | None = None
 
     _captures: int = PrivateAttr(default=0)
     # Whether a village has ever read on this runner, which is what says the game
@@ -291,3 +307,53 @@ class GameRunner(BaseModel):
                         return
                     continue
                 yield spot, png
+
+    def _spotted(self, what: str, notes: str, count: int) -> list[tuple[int, int]]:
+        """Ask Gemini where these are on the village. Empty means nobody could say.
+
+        **One finder for every loop here, because the answer is the same shape
+        whatever was asked for.** What differs is the question and the check, and
+        both stay with the caller: this returns points, and the caller taps each
+        one and decides from what opened whether it was right. That division is
+        what makes an imperfect finder usable at all — a wrong point costs one
+        tap and one capture, about 1.7 s, so asking for more points than the run
+        needs is the right shape rather than a waste.
+
+        What it replaces is `_sweep`, which is the worst part of every loop that
+        uses it: a blind grid, two and a half minutes, and a sample rather than a
+        search. Measured against one live village, 12 of 12 answers opened a wall
+        menu, the first of three answers for 英雄殿堂 opened the hall, and 9 of
+        14 buildings had a priced upgrade on them — the whole call taking about
+        10 s. **And it reaches ground the grid cannot**: of those nine, only two
+        sat within 45 px of a grid point, while four were more than 75 px from
+        one against buildings 70 to 120 px across.
+
+        The sweep stays underneath all of it. A village whose walls nobody can
+        place still has walls, and two and a half minutes of grid taps beats a
+        run that buys nothing.
+        """
+        if self.ai is None:
+            return []
+        try:
+            answer = self.ai.generate_structured(
+                render("find_targets", what=what, notes=notes, count=count, floor=SPOT_FLOOR),
+                ScreenSpots,
+                self._frame("village"),
+                SPOT_TIMEOUT,
+            )
+        except Exception:
+            logger.warning("Gemini could not be asked where the targets are", exc_info=True)
+            return []
+        spots: list[tuple[int, int]] = []
+        for spot in answer.spots:
+            point = spot.pixels()
+            # The prompt asks for this and the model obeys it, but a point in the
+            # button row taps the previous selection's own buttons rather than
+            # the map, and one that opens a shop is not something to find out by
+            # trying. The instruction is the optimisation; this is the guarantee.
+            if point[1] > SWEEP_LIMIT[1]:
+                logger.info("Dropping (%d, %d): that is the button row, not the map", *point)
+                continue
+            spots.append(point)
+        logger.info("Gemini put %d of %s at %s", len(spots), what, spots)
+        return spots

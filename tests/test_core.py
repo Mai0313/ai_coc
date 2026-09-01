@@ -14,7 +14,7 @@ import pytest
 from pydantic import ValidationError
 
 from ai_coc import plans, models, commands, logging_setup
-from ai_coc.ui import hero, walls, attack
+from ai_coc.ui import hero, walls, attack, upkeep
 from ai_coc.ui import world as world_ui
 from ai_coc.ui import runner as shared
 from ai_coc.models import (
@@ -27,13 +27,13 @@ from ai_coc.models import (
     LootOffer,
     ScoutView,
     WallBatch,
-    WallSpots,
     AttackPlan,
     AttackStep,
     HeroReport,
     PlayedPlan,
     AdbEndpoint,
     ScreenPoint,
+    ScreenSpots,
     WallOptions,
     WallUpgrade,
     AttackSeries,
@@ -41,6 +41,7 @@ from ai_coc.models import (
     AttackOptions,
     DisplayTarget,
     LootOverrides,
+    UpgradeButton,
     WallCandidate,
     BoundarySurvey,
     GeminiSettings,
@@ -80,6 +81,7 @@ from ai_coc.ui.attack import (
     deploy_candidates,
 )
 from ai_coc.ui.runner import SWEEP_X, SWEEP_Y, SWEEP_LIMIT, SWEEP_STAGGER
+from ai_coc.ui.upkeep import UpkeepRunner
 from ai_coc.adapters.ai import GeminiClient
 from ai_coc.adapters.adb import (
     EV_ABS,
@@ -3830,7 +3832,7 @@ class WallRunnerTests(unittest.TestCase):
         so asking for more spots than the run needs is the right shape.
         """
         runner = self._runner(ai=GeminiClient(settings=GeminiSettings(api_key="not-a-real-key")))
-        answer = WallSpots(
+        answer = ScreenSpots(
             spots=[ScreenPoint(x_pct=25, y_pct=30), ScreenPoint(x_pct=50, y_pct=40)]
         )
         menus = iter([None, _menu(1_600_000)])
@@ -4315,6 +4317,103 @@ class HeroHallTests(unittest.TestCase):
         assert upgrade_sheet(sheet) == (1121, 783)
 
 
+class TargetFinderTests(unittest.TestCase):
+    """The one finder all three loops share, with Gemini and the emulator taken out."""
+
+    def _runner(self, **fields: object) -> WallRunner:
+        return WallRunner(
+            adb=AdbController(endpoint=AdbEndpoint(port=16384)),
+            display=DisplayTarget(logical_id="1", physical_id="2"),
+            **fields,
+        )
+
+    def _answer(self, *points: tuple[float, float]) -> ScreenSpots:
+        return ScreenSpots(spots=[ScreenPoint(x_pct=x, y_pct=y) for x, y in points])
+
+    def test_a_point_in_the_button_row_is_dropped_rather_than_tapped(self) -> None:
+        """Below `SWEEP_LIMIT` is the row of buttons the last selection left on
+        screen, so a tap there presses one of them instead of choosing something
+        on the map.
+
+        Measured live, four of twelve answers landed in it and each opened
+        whatever that row happened to be offering. Telling the model about the
+        floor works — 0 of 14 on the next run — but the prompt is the
+        optimisation and this is the guarantee.
+        """
+        runner = self._runner(ai=GeminiClient(settings=GeminiSettings(api_key="not-a-real-key")))
+        # 47% of 900 is 423, which is on the map; 78% is 702, which is not.
+        answer = self._answer((50, 47), (47, 78), (60, 30))
+        with (
+            patch.object(GeminiClient, "generate_structured", return_value=answer),
+            patch.object(WallRunner, "_frame", return_value=b""),
+        ):
+            spots = runner._spotted("城牆", "散開", 3)
+        assert spots == [(800, 423), (960, 270)]
+
+    def test_no_client_answers_nothing_so_the_sweep_still_runs(self) -> None:
+        """Without a key every loop here works exactly as it did before this
+        existed, which is what keeps the sweep underneath rather than beside it.
+        """
+        assert self._runner()._spotted("城牆", "散開", 12) == []
+
+
+class UpkeepRunnerTests(unittest.TestCase):
+    """`upgrade` runs the same three finders in the same order as the wall loop."""
+
+    def _runner(self, **fields: object) -> UpkeepRunner:
+        return UpkeepRunner(
+            adb=AdbController(endpoint=AdbEndpoint(port=16384)),
+            display=DisplayTarget(logical_id="1", physical_id="2"),
+            **fields,
+        )
+
+    def test_spotted_buildings_are_priced_off_their_own_menus(self) -> None:
+        """The finder answers in guesses and each one is opened before it counts.
+
+        It also reaches ground the sweep cannot: measured live, only two of the
+        nine buildings it found sat within 45 px of a grid point, against a grid
+        that stops at x 1220 and y 500 on a 1600x900 screen.
+        """
+        runner = self._runner(ai=GeminiClient(settings=GeminiSettings(api_key="not-a-real-key")))
+        answer = ScreenSpots(
+            spots=[ScreenPoint(x_pct=50, y_pct=40), ScreenPoint(x_pct=80, y_pct=50)]
+        )
+        offers = iter([[], [UpgradeButton(resource="gold", point=(700, 700), price=9_900_000)]])
+        with (
+            patch.object(GeminiClient, "generate_structured", return_value=answer),
+            patch.object(UpkeepRunner, "_after_tap", return_value=b""),
+            patch.object(UpkeepRunner, "_frame", return_value=b""),
+            patch.object(upkeep, "read_stock", return_value=_stock()),
+            patch.object(upkeep, "wall_menu", return_value=None),
+            patch.object(upkeep, "upgrade_buttons", side_effect=lambda _png: next(offers)),
+            patch.object(runner, "_scan") as scan,
+        ):
+            found = runner._buildings()
+        assert [(o.point, o.price) for o in found] == [((1280, 450), 9_900_000)]
+        scan.assert_not_called()
+
+    def test_a_wall_the_finder_answered_is_never_offered_to_a_builder(self) -> None:
+        """A wall upgrades instantly and ties up no builder, so putting one on a
+        wall is the single mistake this loop exists to avoid. That check used to
+        sit inside the sweep; every finder has to pass it now.
+        """
+        runner = self._runner(at=[(500, 300)])
+        with (
+            patch.object(UpkeepRunner, "_after_tap", return_value=b""),
+            patch.object(upkeep, "read_stock", return_value=_stock()),
+            patch.object(upkeep, "wall_menu", return_value=_menu(1_600_000)),
+            patch.object(upkeep, "upgrade_buttons", return_value=[]),
+        ):
+            assert runner._buildings() == []
+
+    def test_a_village_the_finder_could_not_place_falls_through_to_the_sweep(self) -> None:
+        """A village whose buildings nobody can name still has buildings."""
+        runner = self._runner()
+        with patch.object(runner, "_scan", return_value=[]) as scan:
+            assert runner._buildings() == []
+        scan.assert_called_once()
+
+
 class HeroRunnerTests(unittest.TestCase):
     """The arithmetic between the taps, with the emulator taken out."""
 
@@ -4334,6 +4433,45 @@ class HeroRunnerTests(unittest.TestCase):
         """
         fields.setdefault("upgradable", True)
         return HeroCard(hero="duke", point=(1407, 648), price=56_000, resource="dark", **fields)
+
+    def test_the_hall_is_asked_for_before_the_village_is_swept(self) -> None:
+        """One building, so the first guess that opens it ends the search.
+
+        This is where the finder is worth the most: the sweep's grid steps over
+        this building entirely on its first pass — measured, it sits 86 px from
+        the nearest grid point — so finding it costs up to 52 taps across two
+        passes, each with a settle and a capture. Measured live, the first guess
+        opened it.
+        """
+        runner = self._runner(ai=GeminiClient(settings=GeminiSettings(api_key="not-a-real-key")))
+        answer = ScreenSpots(spots=[ScreenPoint(x_pct=62, y_pct=48)])
+        with (
+            patch.object(GeminiClient, "generate_structured", return_value=answer),
+            patch.object(HeroRunner, "_frame", return_value=b""),
+            patch.object(HeroRunner, "_after_tap", return_value=b"hall") as tapped,
+            patch.object(runner, "_try_menu", return_value=b"cards"),
+            patch.object(runner, "_sweep") as swept,
+        ):
+            assert runner._open() == b"cards"
+        assert tapped.call_args.args[0] == (992, 432)
+        swept.assert_not_called()
+
+    def test_a_hall_the_finder_missed_still_gets_swept_for(self) -> None:
+        """The sweep stays underneath, because a hall nobody can place is still
+        standing somewhere on the map.
+        """
+        runner = self._runner(ai=GeminiClient(settings=GeminiSettings(api_key="not-a-real-key")))
+        answer = ScreenSpots(spots=[ScreenPoint(x_pct=10, y_pct=10)])
+        with (
+            patch.object(GeminiClient, "generate_structured", return_value=answer),
+            patch.object(HeroRunner, "_frame", return_value=b""),
+            patch.object(HeroRunner, "_after_tap", return_value=b""),
+            patch.object(runner, "_try_menu", return_value=None),
+            patch.object(runner, "_home", return_value=_stock()),
+            patch.object(runner, "_sweep", return_value=iter(())) as swept,
+        ):
+            assert runner._open() is None
+        assert swept.call_count == 2
 
     def test_a_button_the_hall_has_greyed_is_not_an_upgrade_that_can_be_started(self) -> None:
         """A capped hero keeps its price and loses its button, so the price says
