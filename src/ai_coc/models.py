@@ -626,6 +626,86 @@ ThinkingLevel = Literal["minimal", "low", "medium", "high"]
 DEFAULT_THINKING_LEVEL: ThinkingLevel = "low"
 
 
+class BattleRow(BaseModel):
+    """Which card on the army row is which, once the row has been read.
+
+    The classification costs a decode of the frame and every step of a tactic
+    needs it, so it is done once and carried rather than asked for again per
+    step. Cards are the x of their own centre, which is how everything else in
+    the loop addresses them.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    troops: list[int]
+    # Empty on an army carrying no siege machine, which is what the plan having
+    # no `siege` step says. Nothing on the row can tell a machine from a hero —
+    # neither carries an `xN` and both sit in the same group — and the health
+    # bar cannot either, because the game draws one over a machine as readily.
+    machine: list[int]
+    heroes: list[int]
+    rages: list[int]
+    freezes: list[int]
+    # How many bottles the rage cards hold between them, which is what caps the
+    # points a tactic may name: `_cast` cycles back over its targets, so asking
+    # for more spots than there are bottles stacks two on one patch of ground.
+    rage_count: int
+    # The frame the row was read off. It travels with the classification
+    # because everything downstream that reads a card — `card_count` for how
+    # many taps it takes, `_cast` for the same — has to read the *opening*
+    # frame rather than one taken mid-battle, where the counts have moved.
+    frame: bytes
+
+
+class AttackStep(BaseModel):
+    """One move of a tactic, played in the order it is written.
+
+    **A tactic is a sequence, not a set of lists with clocks beside them.** It
+    used to be the second: a drop line, a bag of rage points with one delay, a
+    bag of freeze points with another, and a hero list with a delay each — while
+    the loop imposed a fixed order on top, siege then troops then heroes then
+    everything on a clock. Two costs came out of that shape and neither could be
+    fixed inside it.
+
+    The delays were measured from the attack opening, but nothing the planner
+    can see says when that was: the loop's own idea of it moves with how long
+    Gemini took to answer and how long the boundary took to read. Measured over
+    23 recorded rounds, the gap the numbers were really about — troops down to
+    rage cast — ran from 3.0 to 10.8 seconds while the planner asked for the
+    same 14 every time. And the fixed order made a spell wait out the heroes,
+    which a rage has no reason to: it covers the troops, and they are already
+    walking.
+
+    Written as steps, both go away. `wait` is a step like any other, counted
+    from the previous move actually finishing, so nothing upstream of the first
+    tap can move it. Anything can be interleaved with anything: troops, a rage,
+    then the rest of the heroes is just three lines in a list.
+
+    **Every field is required**, which is the same lesson `HeroOrder` and the
+    old plan carry: a field with a default is optional in the JSON schema and
+    Gemini leaves those out. So a step that does not need one says so rather
+    than omitting it — `who` is `unknown` outside `hero` and `ability`, `at` is
+    empty for `ability` and `wait`, and `seconds` is 0 for everything but
+    `wait`.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    act: Literal["siege", "troops", "hero", "ability", "rage", "freeze", "wait"]
+    # Which hero this is about, for `hero` and `ability`. The loop matches it
+    # against the row left to right, so a kind naming no card on the row is a
+    # step that gets skipped rather than one that shifts everything after it.
+    who: HeroKind
+    # Whatever points the act needs: one for `siege` and `hero`, the two ends of
+    # the drop line for `troops`, one per bottle for `rage` and `freeze`, none
+    # for `ability` and `wait`.
+    at: list[ScreenPoint]
+    # How long `wait` holds, from the previous move finishing rather than from
+    # any absolute moment. What the loop spent getting here is already spent, so
+    # counting from the opening would hand the difference to the battle.
+    seconds: int = Field(ge=0, le=180)
+
+
 class HeroOrder(BaseModel):
     """One hero card: who holds it, where that hero goes, and when it fires.
 
@@ -730,42 +810,39 @@ class AttackPlan(BaseModel):
     """
 
     deploy_from: Literal["top_left", "top_right", "bottom_left", "bottom_right"] = "top_left"
-    # Required, and that is the whole point: with defaults they are optional in
-    # the JSON schema, and Gemini answered three runs running with a start and no
-    # end. Half a line is no line, so the call was paid for and its most
-    # important output thrown away every time. A reply that still omits one now
-    # fails validation, which `_plan` already answers by falling back — the same
-    # place it ended up before, but without pretending it had a plan.
-    deploy_start: ScreenPoint
-    deploy_end: ScreenPoint
-    # Required for the same reason as the two endpoints, and measured the same
-    # way: with defaults these were optional in the JSON schema, and a live run
-    # came back naming five rage points, no freeze point and no hero at all,
-    # against a screen holding a freeze bottle and four hero cards. The loop then
-    # stacked the freeze on its fallback spot and gave every hero the unknown
-    # ability delay, which is a queen's cloak thrown away on every attack.
-    rage_points: list[ScreenPoint]
-    freeze_points: list[ScreenPoint]
-    # Left to right, matching the hero cards on the row in that order.
-    heroes: list[HeroOrder]
-    # Both measured from the **attack opening** rather than from a hero landing,
-    # because that is how each is judged on screen — rage as the push reaches the
-    # outer wall, freeze as it reaches the first line of defences — and hanging
-    # them off the heroes would move them by however long the army took to go
-    # down. Required for the reason the points above are: a spell with a default
-    # is a spell the schema lets the planner leave out.
-    #
-    # These replace a table of constants in the settings file. Freeze used to be
-    # cast after the last ability, so it waited out the slowest hero on the field
-    # and a champion's 45 seconds put it a minute and a half into a three-minute
-    # battle; rage used to go the moment the troop cards emptied, which was right
-    # while that took half a minute and is not now that it takes five seconds,
-    # since a rage lasts 18 and expires on troops still walking. Both numbers
-    # depend on how far the army has to walk, which is a property of the village
-    # the planner is looking at and of nothing else.
-    rage_after: int = Field(ge=0, le=180)
-    freeze_after: int = Field(ge=0, le=180)
+    # The tactic itself, in the order it is played. Required, and that is the
+    # whole point: with a default it is optional in the JSON schema, and Gemini
+    # leaves those out — three runs running once came back with a drop line's
+    # start and no end, so the call was paid for and its most important output
+    # thrown away every time. A reply that omits this now fails validation,
+    # which `_plan` answers by falling back to the flat plan rather than by
+    # pretending it had one.
+    steps: list[AttackStep]
     reason: str = ""
+
+    def acts(self, act: str) -> list[AttackStep]:
+        """Every step of one kind, in order, which is how the loop reads the row."""
+        return [step for step in self.steps if step.act == act]
+
+    # The drop line, under the names the rest of the loop already reads it by.
+    # `planned_line`, `deploy_candidates` and `_flank` all take a plan and ask
+    # for these two, and they work the same whether the line was a field of its
+    # own or the first `troops` step's own pair of ends — which is the whole
+    # reason to spell it this way rather than rewrite three call sites that were
+    # not what changed. A tactic that never deploys troops has no line, and None
+    # is what those callers already answer by falling back to a named flank.
+    @property
+    def deploy_start(self) -> ScreenPoint | None:
+        return self._line[0] if self._line else None
+
+    @property
+    def deploy_end(self) -> ScreenPoint | None:
+        return self._line[1] if self._line else None
+
+    @property
+    def _line(self) -> list[ScreenPoint] | None:
+        drops = self.acts("troops")
+        return drops[0].at if drops and len(drops[0].at) >= 2 else None
 
 
 class PlayedPlan(BaseModel):

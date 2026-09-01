@@ -7,7 +7,7 @@ from pathlib import Path
 import tempfile
 import unittest
 from unittest.mock import ANY, MagicMock, call, patch
-from collections.abc import Callable, Sequence
+from collections.abc import Callable
 
 from PIL import Image, ImageDraw
 import pytest
@@ -23,11 +23,12 @@ from ai_coc.models import (
     ProbeRay,
     WallMenu,
     AppConfig,
-    HeroOrder,
+    BattleRow,
     LootOffer,
     ScoutView,
     WallBatch,
     AttackPlan,
+    AttackStep,
     HeroReport,
     PlayedPlan,
     AdbEndpoint,
@@ -52,6 +53,7 @@ from ai_coc.ui.attack import (
     PLAYFIELD,
     RAGE_PATH,
     RAGE_SPAN,
+    CARD_ROW_Y,
     DEPLOY_END,
     END_BATTLE,
     DROP_STRIDE,
@@ -144,47 +146,32 @@ from ai_coc.adapters.database import Database
 
 FRAMES = Path(__file__).parent / "frames"
 
+
 # A plan has to carry both ends of its line and each of the three lists the
 # planner is asked to fill, so tests that do not care about any of them still
 # have to supply them. They are required on purpose: a field with a default is
 # optional in the JSON schema, and that is how a live run came back naming
 # neither a hero nor a freeze point against a screen holding four hero cards.
-_ANSWERED = {
-    "rage_points": [],
-    "freeze_points": [],
-    "heroes": [],
-    "rage_after": 15,
-    "freeze_after": 30,
-}
-# What each hero's ability is worth waiting for, which used to be a table of
-# constants in the settings file and is now the planner's answer per battle.
-# Tests name a hero and mean its delay, so this is what keeps them readable.
-_ABILITY_SECONDS = {
-    "queen": 1,
-    "king": 20,
-    "warden": 30,
-    "champion": 45,
-    "minion_prince": 20,
-    "duke": 20,
-    "unknown": 20,
-}
+def _step(
+    act: str, *points: tuple[float, float], who: str = "unknown", seconds: int = 0
+) -> AttackStep:
+    """One step of a tactic, with the fields it does not use filled in anyway.
+
+    All four are required on purpose: a field with a default is optional in the
+    JSON schema, and that is how a live run came back naming neither a hero nor
+    a freeze point against a screen holding four hero cards. So a step that
+    needs no points still says so.
+    """
+    return AttackStep(
+        act=act, who=who, at=[ScreenPoint(x_pct=x, y_pct=y) for x, y in points], seconds=seconds
+    )
 
 
-def _orders(*kinds: str) -> list[HeroOrder]:
-    """Hero orders on those delays, all dropped on the same nominal spot."""
-    return [
-        HeroOrder(
-            kind=kind, drop=ScreenPoint(x_pct=30, y_pct=30), ability_after=_ABILITY_SECONDS[kind]
-        )
-        for kind in kinds
-    ]
-
-
-_LINE = {
-    "deploy_start": ScreenPoint(x_pct=37.5, y_pct=12.2),
-    "deploy_end": ScreenPoint(x_pct=14.4, y_pct=42.2),
-    **_ANSWERED,
-}
+# The drop line lives on the plan's first `troops` step, so a plan that has to
+# carry a line at all carries one of these.
+_LINE_ENDS = ((37.5, 12.2), (14.4, 42.2))
+_ANSWERED = {"steps": [_step("troops", *_LINE_ENDS)]}
+_LINE = _ANSWERED
 
 # Trimmed from a live MuMu instance: the launcher holds display 0 and the game
 # sits on its own, with the logical and physical ids numbered apart.
@@ -1390,13 +1377,19 @@ class PlanTests(unittest.TestCase):
     """A tactic written down, so it can be replayed, edited, or swapped for the AI's."""
 
     def test_the_flat_plan_loads_and_carries_a_full_tactic(self) -> None:
+        """Every act the loop can play, in an order that reads as an attack."""
         plan = plans.flat()
         assert plan.deploy_start is not None
         assert plan.deploy_end is not None
-        assert len(plan.rage_points) == len(RAGE_PATH)
-        assert plan.freeze_points
-        assert plan.rage_after
-        assert plan.freeze_after
+        played = [step.act for step in plan.steps]
+        assert set(played) == {"siege", "troops", "hero", "ability", "rage", "freeze", "wait"}
+        # The machine opens the path, the troops follow it, and no spell goes
+        # down before there are troops for it to cover.
+        assert played.index("siege") < played.index("troops") < played.index("rage")
+        assert played.index("rage") < played.index("freeze")
+        assert len(plan.acts("rage")[0].at) == len(RAGE_PATH)
+        # A tactic with no pause in it is one where every clock is zero.
+        assert [step.seconds for step in plan.acts("wait")] == [4, 15, 1]
 
     def test_the_flat_plan_draws_the_line_the_loop_used_to_hold_in_constants(self) -> None:
         """It has to reproduce the old fallback, or the default quietly changed."""
@@ -1409,21 +1402,15 @@ class PlanTests(unittest.TestCase):
             assert plans.load(path) == plans.flat()
 
     def test_every_timing_on_an_attack_is_asked_for(self) -> None:
-        """The planner has to answer all of them, and there is nowhere else to look.
+        """The planner answers all of them, and there is nowhere else to look.
 
         They used to be a table of constants in the settings file, chosen without
         a village on screen — which is the same guess the planner makes, minus
         the village. A field with a default is optional in the JSON schema, so
-        anything the schedule cannot run without carries none.
+        anything a tactic cannot be played without carries none.
         """
-        required = set(AttackPlan.model_json_schema()["required"])
-        assert {"rage_after", "freeze_after", "heroes"} <= required
-        assert "ability_after" in set(HeroOrder.model_json_schema()["required"])
-
-    def test_a_hero_carries_where_it_goes_as_well_as_when_it_fires(self) -> None:
-        """One order per card, so a queen sent to clear the edge is expressible."""
-        order = HeroOrder(kind="queen", drop=ScreenPoint(x_pct=20, y_pct=40), ability_after=2)
-        assert order.drop.pixels() == (320, 360)
+        assert set(AttackPlan.model_json_schema()["required"]) == {"steps"}
+        assert set(AttackStep.model_json_schema()["required"]) == {"act", "who", "at", "seconds"}
 
     def test_the_planner_is_asked_with_a_deadline_and_falls_back_without_one(self) -> None:
         """One call took 180.7 s and the three-minute battle it planned was over.
@@ -1810,16 +1797,17 @@ class AttackTests(unittest.TestCase):
         assert points[0] == DEPLOY_START
         assert points[-1] == DEPLOY_END
 
-    def test_a_hero_order_names_the_hero_rather_than_the_slot(self) -> None:
+    def test_a_hero_step_names_the_hero_rather_than_the_slot(self) -> None:
         """An upgrading hero has no card at all, so every slot after it shifts.
 
-        Naming the hero on each order is what survives that: the loop matches
-        orders to cards left to right and reads the delay off the order, so a
-        row one card shorter costs the missing hero and nothing else.
+        Naming the hero on its own step is what survives that: the loop matches
+        `hero` steps to cards left to right, so a row one card shorter costs the
+        missing hero and nothing else. The name is what makes a bad battle
+        legible afterwards — `plans.jsonl` says which hero went where.
         """
-        orders = _orders("queen", "warden")
-        assert [order.kind for order in orders] == ["queen", "warden"]
-        assert [order.ability_after for order in orders] == [1, 30]
+        steps = [_step("hero", (20, 40), who="queen"), _step("hero", (45, 35), who="warden")]
+        assert [step.who for step in steps] == ["queen", "warden"]
+        assert steps[0].at[0].pixels() == (320, 360)
 
     def test_pushing_a_drop_out_moves_it_off_the_middle_and_stays_on_screen(self) -> None:
         point = DEPLOY_START
@@ -1960,20 +1948,12 @@ class AttackTests(unittest.TestCase):
 
     def test_a_planned_line_along_the_village_edge_is_used(self) -> None:
         """The percentages of the top-left flank, which is a line the loop can push out."""
-        plan = AttackPlan(
-            deploy_start=ScreenPoint(x_pct=37.5, y_pct=12.2),
-            deploy_end=ScreenPoint(x_pct=14.4, y_pct=42.2),
-            **_ANSWERED,
-        )
+        plan = AttackPlan(steps=[_step("troops", *_LINE_ENDS)])
         assert planned_line(plan) == DEPLOY_LINES["top_left"]
 
     def test_a_planned_line_across_the_village_falls_back_to_a_flank(self) -> None:
         """Its midpoint sits on the middle, where push_out has no direction to move it."""
-        plan = AttackPlan(
-            deploy_start=ScreenPoint(x_pct=25, y_pct=30),
-            deploy_end=ScreenPoint(x_pct=75, y_pct=70),
-            **_ANSWERED,
-        )
+        plan = AttackPlan(steps=[_step("troops", (25, 30), (75, 70))])
         assert planned_line(plan) is None
 
     def test_a_line_only_half_drawn_falls_back_too(self) -> None:
@@ -1986,6 +1966,204 @@ class AttackTests(unittest.TestCase):
             display=DisplayTarget(logical_id="1", physical_id="2"),
             thresholds=LootThresholds(),
         )
+
+    def _played(
+        self, steps: list[AttackStep], row: BattleRow, landed: list[int] | None = None
+    ) -> tuple[list[str], list[float]]:
+        """Run a tactic; what it did in order, and how long each pause really held.
+
+        Everything that would touch the emulator is stubbed, so what comes back
+        is the sequence of decisions rather than any taps.
+        """
+        runner = self._runner()
+        acts: list[str] = []
+        pauses: list[float] = []
+        plan = AttackPlan(steps=steps)
+
+        def act(step: AttackStep, _row: BattleRow, _line: list[tuple[int, int]]) -> None:
+            acts.append(step.act)
+            if step.act in ("siege", "hero"):
+                runner._sending.update(
+                    dict.fromkeys(_row.machine if step.act == "siege" else _row.heroes[:1], (0, 0))
+                )
+
+        with (
+            patch.object(AttackRunner, "_act", side_effect=act),
+            patch.object(
+                AttackRunner, "_settle_drops", side_effect=lambda *a: acts.append("settle")
+            ),
+            patch.object(AttackRunner, "_battle_ended", return_value=False),
+            patch.object(attack.time, "sleep", side_effect=pauses.append),
+        ):
+            runner._play_tactic(plan, DEPLOY_LINES["top_left"], row)
+        return acts, pauses
+
+    def _row(self, **kw: object) -> BattleRow:
+        fields: dict[str, object] = {
+            "troops": [100, 200],
+            "machine": [400],
+            "heroes": [500, 600],
+            "rages": [900],
+            "freezes": [1000],
+            "rage_count": 4,
+            "frame": b"",
+        }
+        fields.update(kw)
+        return BattleRow(**fields)  # type: ignore[arg-type]
+
+    def test_a_tactic_is_played_in_the_order_it_was_written(self) -> None:
+        """The loop imposes none of its own, which is the whole of the change.
+
+        It used to be siege, then troops, then heroes, and only once all of them
+        were down did anything on a clock get a turn — so a rage waited out the
+        heroes for no reason a rage recognises, since it covers the troops and
+        they are already walking.
+        """
+        acts, _ = self._played(
+            [
+                _step("siege", (30, 30)),
+                _step("troops", *_LINE_ENDS),
+                _step("hero", (25, 25), who="queen"),
+                _step("wait", seconds=3),
+                _step("rage", (40, 40)),
+                _step("hero", (28, 28), who="king"),
+            ],
+            self._row(),
+        )
+        assert acts == ["siege", "troops", "hero", "settle", "rage", "hero"]
+
+    def test_a_pause_is_counted_from_the_move_before_it_finishing(self) -> None:
+        """Which is what makes the whole tactic immune to how slowly it got here.
+
+        The clocks used to run from the loop's own idea of when the battle
+        opened, and that moves with how long Gemini took to answer: measured
+        over 23 recorded rounds the gap those numbers were really about, troops
+        down to rage cast, ran from 3.0 to 10.8 seconds while the planner asked
+        for the same 14 every time.
+        """
+        runner = self._runner()
+        clock = [0.0]
+        pauses: list[float] = []
+        plan = AttackPlan(
+            steps=[_step("troops", *_LINE_ENDS), _step("wait", seconds=6), _step("rage", (40, 40))]
+        )
+
+        def act(step: AttackStep, *_: object) -> None:
+            # Putting the army down is not free, and the pause after it is not
+            # what should be paying for that.
+            clock[0] += 5
+
+        with (
+            patch.object(AttackRunner, "_act", side_effect=act),
+            patch.object(AttackRunner, "_settle_drops"),
+            patch.object(AttackRunner, "_battle_ended", return_value=False),
+            patch.object(attack.time, "monotonic", side_effect=lambda: clock[0]),
+            patch.object(attack.time, "sleep", side_effect=pauses.append),
+        ):
+            runner._play_tactic(plan, DEPLOY_LINES["top_left"], self._row())
+        # The whole six seconds, not six minus the five the deployment took.
+        assert pauses == [6]
+
+    def test_the_one_reading_of_the_burst_happens_inside_the_first_pause(self) -> None:
+        """A pause is the only idle time in a battle, so the check is free there.
+
+        Measured on one recorded round, putting the army down took 9.15 seconds
+        of which about 1.5 was tapping: six captures at roughly 0.7 s each plus
+        the settles that exist only so those captures have something to see.
+        A refused drop costs nothing to find late, because the game does not
+        consume the card it refused.
+        """
+        acts, _ = self._played(
+            [
+                _step("siege", (30, 30)),
+                _step("wait", seconds=4),
+                _step("rage", (40, 40)),
+                _step("wait", seconds=4),
+            ],
+            self._row(),
+        )
+        # Once, in the first pause long enough to hide it, and never again.
+        assert acts.count("settle") == 1
+        assert acts == ["siege", "settle", "rage"]
+
+    def test_a_pause_too_short_to_hide_a_capture_is_left_alone(self) -> None:
+        """A check that overruns the pause it sits in is the lateness steps exist to remove."""
+        acts, _ = self._played(
+            [_step("siege", (30, 30)), _step("wait", seconds=1), _step("rage", (40, 40))],
+            self._row(),
+        )
+        # Nothing is read during the short pause; the reading falls to the end.
+        assert acts == ["siege", "rage", "settle"]
+
+    def test_a_tactic_stops_once_the_battle_has_ended_under_it(self) -> None:
+        """Some card slots sit exactly where the result screen draws 回營.
+
+        The old schedule checked before every move it played, at a capture
+        apiece. This checks inside the pauses instead, where the capture is free
+        — but it still has to check, or a tactic outliving its battle taps its
+        way out of the village.
+        """
+        runner = self._runner()
+        acts: list[str] = []
+        plan = AttackPlan(
+            steps=[_step("troops", *_LINE_ENDS), _step("wait", seconds=4), _step("rage", (40, 40))]
+        )
+        with (
+            patch.object(AttackRunner, "_act", side_effect=lambda step, *a: acts.append(step.act)),
+            patch.object(AttackRunner, "_battle_ended", return_value=True),
+            patch.object(attack.time, "sleep"),
+        ):
+            runner._play_tactic(plan, DEPLOY_LINES["top_left"], self._row())
+        assert acts == ["troops"]
+
+    def test_a_hero_step_takes_the_next_card_along_the_row(self) -> None:
+        """Nothing on the row says who is on which card, so order is the only handle.
+
+        A step naming a hero the row does not carry — one upgrading, so its card
+        is simply gone — runs out of cards and stops rather than shifting the
+        rest, which is what an index into a shorter row would have done.
+        """
+        runner = self._runner()
+        sent: list[tuple[list[int], tuple[int, int]]] = []
+        plan = AttackPlan(
+            steps=[
+                _step("hero", (20, 20), who="queen"),
+                _step("hero", (30, 30), who="king"),
+                _step("hero", (40, 40), who="warden"),
+            ]
+        )
+        with (
+            patch.object(
+                AttackRunner,
+                "_drop_at",
+                side_effect=lambda cards, spot: sent.append((list(cards), spot)),
+            ),
+            patch.object(AttackRunner, "_settle_drops"),
+            patch.object(attack.time, "sleep"),
+        ):
+            runner._play_tactic(plan, DEPLOY_LINES["top_left"], self._row(heroes=[500, 600]))
+        # Two cards, three steps: the first two get one each and the third has
+        # nothing left to send.
+        assert [cards for cards, _ in sent] == [[500], [600], []]
+
+    def test_an_ability_only_reaches_the_heroes_the_tactic_already_sent(self) -> None:
+        """A tap on a card whose hero never landed deploys it instead, with nothing around it."""
+        runner = self._runner()
+        tapped: list[list[tuple[int, int]]] = []
+        row = self._row(heroes=[500, 600])
+        plan = AttackPlan(steps=[_step("hero", (20, 20), who="queen"), _step("ability")])
+        with (
+            patch.object(AttackRunner, "_settle_drops"),
+            patch.object(
+                type(runner.adb),
+                "tap_many",
+                side_effect=lambda points, *a, **k: tapped.append(list(points)),
+            ),
+            patch.object(attack.time, "sleep"),
+        ):
+            runner._play_tactic(plan, DEPLOY_LINES["top_left"], row)
+        # Only the card the `hero` step actually sent is offered its ability.
+        assert tapped[-1] == [(500, CARD_ROW_Y)]
 
     def _scouted(self, readings: list[ScoutView | None], offered: list[bool]) -> int:
         """Poll the scout screen over canned readings; how many times 下一個 was tapped."""
@@ -2426,227 +2604,6 @@ class AttackTests(unittest.TestCase):
         for index, (x, y) in enumerate(spots):
             assert all(math.hypot(x - a, y - b) >= 20 for a, b in spots[index + 1 :])
 
-    def test_the_spell_clock_starts_at_the_battle_not_after_the_flank(self) -> None:
-        """`_flank` reads the boundary and drags the camera while the game counts.
-
-        Measured over 23 live rounds it spent 3.0 to 3.7 seconds doing exactly
-        that, all of it after the frame reading 3分00秒 that `_wait_for_battle`
-        hands back. The planner answers 「開打之後第幾秒」 against the game's
-        own clock, so a loop stamping its own after that work had every bottle
-        three seconds late before the cast itself had cost anything — a sixth of
-        an 18-second rage, gone.
-        """
-        runner = self._runner()
-        plan = plans.flat()
-        clock = [0.0]
-        opening: list[float] = []
-        moves: list[tuple[float, str, object]] = []
-
-        def flank(battle: object, drawn: object) -> tuple[tuple[int, int], ...]:
-            clock[0] += 3.3
-            return DEPLOY_LINES["top_left"]
-
-        with (
-            patch.object(AttackRunner, "_settle_camera", side_effect=lambda frame: frame),
-            patch.object(AttackRunner, "_settle_zoom", side_effect=lambda frame: frame),
-            patch.object(attack, "card_groups", return_value=[[100], [600, 900]]),
-            patch.object(attack, "counted_cards", return_value=[900]),
-            patch.object(attack, "freeze_cards", return_value=[]),
-            patch.object(attack, "card_count", return_value=4),
-            patch.object(AttackRunner, "_plan", return_value=plan),
-            patch.object(AttackRunner, "_wait_for_battle", return_value=None),
-            patch.object(AttackRunner, "_flank", side_effect=flank),
-            patch.object(AttackRunner, "_drop_singles", return_value=([], [])),
-            patch.object(AttackRunner, "_spread_troops", return_value=[(0, 0)]),
-            patch.object(
-                AttackRunner,
-                "_run_schedule",
-                side_effect=lambda opened, scheduled: (
-                    opening.append(opened),
-                    moves.extend(scheduled),
-                )[0],
-            ),
-            patch.object(attack.time, "monotonic", side_effect=lambda: clock[0]),
-            patch.object(attack.time, "sleep"),
-        ):
-            runner._deploy(b"")
-        # Stamped where the battle opened, not 3.3 seconds of boundary-reading later.
-        assert opening == [0.0]
-        assert [round(when) for when, _, _ in moves] == [plan.rage_after]
-
-    def _abilities(
-        self, singles: list[int], on_field: list[int], kinds: list[str], spent: Sequence[int] = ()
-    ) -> list[tuple[int, int]]:
-        """What `_deploy` schedules an ability for, and how long after the opening.
-
-        `singles` is the row's one-off cards left to right, `on_field` the ones
-        the game drew a health bar over — which says a unit is out, not that it
-        is a hero — and `spent` the ones that landed by going grey instead. A
-        card in neither never left its card.
-        """
-        runner = self._runner()
-        plan = plans.flat().model_copy(update={"heroes": _orders(*kinds)})
-        moves: list[tuple[float, str, object]] = []
-        opening: list[float] = []
-
-        def dropped(
-            cards: list[int], line: object, what: str, wanted: object = None
-        ) -> tuple[list[int], list[int]]:
-            bars = [card for card in cards if card in on_field]
-            return [card for card in cards if card in on_field or card in spent], bars
-
-        def schedule(opened: float, scheduled: list[tuple[float, str, object]]) -> None:
-            opening.append(opened)
-            moves.extend(scheduled)
-
-        with (
-            patch.object(AttackRunner, "_settle_camera", side_effect=lambda frame: frame),
-            # The zoom that runs before it wants a real emulator to pinch.
-            patch.object(AttackRunner, "_settle_zoom", side_effect=lambda frame: frame),
-            patch.object(attack, "card_groups", return_value=[[100], singles]),
-            patch.object(attack, "counted_cards", return_value=[]),
-            patch.object(attack, "freeze_cards", return_value=[]),
-            patch.object(AttackRunner, "_plan", return_value=plan),
-            patch.object(AttackRunner, "_wait_for_battle", return_value=None),
-            patch.object(AttackRunner, "_clear_flank", side_effect=lambda frame, preset: frame),
-            patch.object(AttackRunner, "_flank", return_value=DEPLOY_LINES["top_left"]),
-            patch.object(AttackRunner, "_drop_singles", side_effect=dropped),
-            patch.object(AttackRunner, "_spread_troops", return_value=[(0, 0)]),
-            patch.object(AttackRunner, "_run_schedule", side_effect=schedule),
-            patch.object(attack.time, "sleep"),
-        ):
-            runner._deploy(b"")
-        return [(round(when - opening[0]), int(what.rsplit(" ", 1)[1])) for when, what, _ in moves]
-
-    def test_a_leading_card_is_a_hero_when_the_plan_names_one_per_card(self) -> None:
-        """An army carrying no siege machine puts a hero in the leader's slot.
-
-        Nothing on the row separates the two: neither carries an `xN` and both
-        sit in the same group, so the leader is picked off the game's own
-        ordering — siege machine first — and the plan's own count is what
-        corrects it. Without that correction the leading hero got no ability at
-        all and every kind in the plan's list was read a slot off the card it
-        names, so a queen's cloak went to whoever stood next to her.
-        """
-        cards = [600, 700, 800]
-        played = self._abilities(cards, on_field=cards, kinds=["queen", "king", "champion"])
-        assert [card for _, card in played] == cards
-        assert [delay for delay, _ in played] == [1, 20, 45]
-
-    def test_a_leading_siege_machine_is_not_given_a_hero_ability(self) -> None:
-        """Two heroes named against three one-off cards is an army carrying one."""
-        played = self._abilities(
-            [600, 700, 800], on_field=[700, 800], kinds=["queen", "king"], spent=[600]
-        )
-        assert [card for _, card in played] == [700, 800]
-        assert [delay for delay, _ in played] == [1, 20]
-
-    def test_a_health_bar_over_the_siege_machine_does_not_make_it_a_hero(self) -> None:
-        """The game draws one over a siege machine as readily as over a hero.
-
-        Measured across all three rounds of a recorded run: the 攻城戰車 landed
-        and `field_units` read its card on the very next frame. Asked as the
-        hero test it used to be, that put a slot in front of every real hero —
-        the queen went out on the king's twenty seconds where her cloak wants
-        one. A warden stands in for that row's 亡靈王子 here: the row it was
-        measured on held three heroes that all want about twenty seconds, so a
-        shift among those three shows up in no timing at all.
-        """
-        cards = [436, 562, 683, 804, 928]
-        played = self._abilities(cards, on_field=cards, kinds=["queen", "king", "warden", "duke"])
-        assert [card for _, card in played] == cards[1:]
-        assert [delay for delay, _ in played] == [1, 20, 30, 20]
-
-    def test_a_leading_hero_the_game_refused_still_holds_its_slot(self) -> None:
-        """The bar cannot speak for a card that never went down anywhere.
-
-        A leader refused at all five spots draws no health bar, so the plan's
-        own count answers instead: three heroes named against three one-off
-        cards is an army with no siege machine, whether or not the leader made
-        it onto the field. Without that the two behind it take the queen's and
-        the king's timings while they hold the king and the champion.
-        """
-        played = self._abilities(
-            [600, 700, 800], on_field=[700, 800], kinds=["queen", "king", "champion"]
-        )
-        assert [card for _, card in played] == [700, 800]
-        assert [delay for delay, _ in played] == [20, 45]
-
-    def test_with_no_plan_to_count_the_health_bar_is_still_what_answers(self) -> None:
-        """There is nothing else to ask, and being wrong costs nothing there.
-
-        Every card takes the same `unknown` delay without a plan, so a leader
-        read the wrong way shifts no timing; the only cost is a tap on a card
-        that has already been spent.
-        """
-        cards = [600, 700, 800]
-        played = self._abilities(cards, on_field=cards, kinds=[])
-        assert [card for _, card in played] == cards
-        assert [delay for delay, _ in played] == [20, 20, 20]
-
-    def test_a_plan_naming_a_count_that_fits_neither_row_says_so(self) -> None:
-        """Two heroes against four one-off cards fits neither arithmetic.
-
-        One fewer than the cards is an army carrying a siege machine and as many
-        is one that is not; two fewer is a plan out of step with the row, which
-        a `--plan-in` file replayed after two heroes went into upgrades gives —
-        their cards simply disappear. Neither reading of the leader is safe
-        then, so the run is told rather than left to find out from timings that
-        are quietly a slot out.
-        """
-        cards = [600, 700, 800, 900]
-        with self.assertLogs("ai_coc.ui.attack", level="WARNING") as caught:
-            self._abilities(cards, on_field=cards, kinds=["queen", "king"])
-        assert any("2 hero(es) against 4 one-off card(s)" in line for line in caught.output)
-
-    def test_a_plan_one_hero_short_is_not_flagged_because_it_cannot_be_seen(self) -> None:
-        """It is the same count as an army carrying a siege machine, and read as one.
-
-        That costs the leading hero its ability. The bar it replaced got this
-        one case right — and every battle this army fights wrong, since it does
-        carry a siege machine and the game draws a bar over it.
-        """
-        cards = [600, 700, 800, 900]
-        played = self._abilities(cards, on_field=cards, kinds=["queen", "king", "warden"])
-        assert [card for _, card in played] == [700, 800, 900]
-
-    def test_a_hero_that_never_left_its_card_is_not_given_an_ability(self) -> None:
-        """An ability tap on a hero still in its card deploys it with nothing around it."""
-        played = self._abilities(
-            [600, 700, 800], on_field=[700], kinds=["queen", "king"], spent=[600]
-        )
-        assert [card for _, card in played] == [700]
-
-    def _aimed_at(self, singles: list[int], orders: list[HeroOrder]) -> dict[int, object]:
-        """Where `_deploy` sends each one-off card, given a plan naming these heroes."""
-        runner = self._runner()
-        plan = plans.flat().model_copy(update={"heroes": orders})
-        sent: dict[int, object] = {}
-
-        def dropped(
-            cards: list[int], line: object, what: str, wanted: dict | None = None
-        ) -> tuple[list[int], list[int]]:
-            sent.update(wanted or {})
-            return list(cards), list(cards)
-
-        with (
-            patch.object(AttackRunner, "_settle_camera", side_effect=lambda frame: frame),
-            patch.object(AttackRunner, "_settle_zoom", side_effect=lambda frame: frame),
-            patch.object(attack, "card_groups", return_value=[[100], singles]),
-            patch.object(attack, "counted_cards", return_value=[]),
-            patch.object(attack, "freeze_cards", return_value=[]),
-            patch.object(AttackRunner, "_plan", return_value=plan),
-            patch.object(AttackRunner, "_wait_for_battle", return_value=None),
-            patch.object(AttackRunner, "_clear_flank", side_effect=lambda frame, preset: frame),
-            patch.object(AttackRunner, "_flank", return_value=DEPLOY_LINES["top_left"]),
-            patch.object(AttackRunner, "_drop_singles", side_effect=dropped),
-            patch.object(AttackRunner, "_spread_troops", return_value=[(0, 0)]),
-            patch.object(AttackRunner, "_run_schedule"),
-            patch.object(attack.time, "sleep"),
-        ):
-            runner._deploy(b"")
-        return sent
-
     def test_a_refused_hero_still_gets_the_spot_the_probe_proved(self) -> None:
         """The plan's point goes ahead of the shared ladder, not over its first rung.
 
@@ -2677,47 +2634,6 @@ class AttackTests(unittest.TestCase):
         # Every shared rung still follows, the probed midpoint included.
         assert aimed[1:] == shared
 
-    def test_each_hero_goes_where_its_own_order_says(self) -> None:
-        """Heroes do different jobs in one attack, and one shared spot cannot say so.
-
-        A village usually wants one or two walking the outside to clear the
-        stray buildings that pull an army off course, and the rest going in
-        behind the push. The leading card is skipped here because the plan names
-        one hero fewer than there are one-off cards, which is an army carrying a
-        siege machine — and nothing plans where that goes.
-        """
-        edge = HeroOrder(kind="queen", drop=ScreenPoint(x_pct=25, y_pct=20), ability_after=2)
-        middle = HeroOrder(kind="warden", drop=ScreenPoint(x_pct=45, y_pct=35), ability_after=30)
-        sent = self._aimed_at([436, 562, 683], [edge, middle])
-        assert sent == {562: (400, 180), 683: (720, 315)}
-
-    def test_a_plan_that_names_every_card_aims_the_leader_too(self) -> None:
-        """Then the leading card is a hero rather than a siege machine, so it has an order."""
-        orders = [
-            HeroOrder(kind="king", drop=ScreenPoint(x_pct=25, y_pct=20), ability_after=20),
-            HeroOrder(kind="queen", drop=ScreenPoint(x_pct=45, y_pct=35), ability_after=2),
-        ]
-        assert self._aimed_at([436, 562], orders) == {436: (400, 180), 562: (720, 315)}
-
-    def test_the_freeze_no_longer_queues_behind_the_slowest_hero(self) -> None:
-        """Cast after the last ability it sat out a champion's 45 seconds first."""
-        played: list[str] = []
-        # The heroes land twenty seconds into the attack; their abilities run
-        # from there, the freeze from the opening.
-        opened, landed = 0.0, 20.0
-        champion, queen = _orders("champion", "queen")
-        moves = [
-            (landed + champion.ability_after, "champion", lambda: played.append("champion")),
-            (landed + queen.ability_after, "queen", lambda: played.append("queen")),
-            (opened + plans.flat().freeze_after, "freeze", lambda: played.append("freeze")),
-        ]
-        with (
-            patch.object(AttackRunner, "_battle_ended", return_value=False),
-            patch.object(attack.time, "sleep"),
-        ):
-            self._runner()._run_schedule(opened, moves)
-        assert played == ["queen", "freeze", "champion"]
-
     def _schedule_over(self, reads: bool, result_screen: bool) -> list[str]:
         """One scheduled move played against a canned frame."""
         played: list[str] = []
@@ -2731,50 +2647,30 @@ class AttackTests(unittest.TestCase):
             self._runner()._run_schedule(0.0, [(0.0, "freeze", lambda: played.append("freeze"))])
         return played
 
-    def test_an_unreadable_panel_is_not_a_battle_that_ended(self) -> None:
-        """The battlefield shows through the panel, and then no row of it resolves.
-
-        Measured on a live battle at 69% with two stars and every rage still in
-        its card, the gold row of 485 715 read on none of its frames. Taken for
-        the result screen, that abandons every spell and hero ability still to
-        come — and it did, for five rounds of one recorded run.
-        """
-        assert self._schedule_over(reads=False, result_screen=False) == ["freeze"]
-
-    def test_the_result_screen_stops_the_schedule(self) -> None:
-        """Some card slots sit under its 回營 button, so this is what must not be tapped."""
-        assert self._schedule_over(reads=False, result_screen=True) == []
-
     def test_a_refused_flank_leaves_the_other_three_to_try(self) -> None:
         """The plan's own side goes first behind its line, then the flanks it did not pick."""
-        plan = AttackPlan(
-            deploy_start=ScreenPoint(x_pct=25, y_pct=30),
-            deploy_end=ScreenPoint(x_pct=75, y_pct=70),
-            deploy_from="bottom_right",
-            **_ANSWERED,
-        )
+        plan = AttackPlan(steps=[_step("troops", (25, 30), (75, 70))], deploy_from="bottom_right")
         # That line runs across the village, so only the named flanks are left.
         assert planned_line(plan) is None
         candidates = deploy_candidates(plan)
         assert candidates[0] == DEPLOY_LINES["bottom_right"]
         assert sorted(candidates) == sorted(DEPLOY_LINES.values())
 
-    def test_everything_the_planner_is_asked_for_is_required_of_it(self) -> None:
+    def test_a_step_carries_every_field_even_where_it_does_not_use_them(self) -> None:
         """A field with a default is optional in the schema, and Gemini leaves those out.
 
-        Three runs running answered a start and no end; a fourth named five rage
-        points, no freeze point and no hero at all, against a screen holding a
-        freeze bottle and four hero cards.
+        Three runs running once answered a drop line's start and no end; a
+        fourth named five rage points, no freeze point and no hero at all,
+        against a screen holding a freeze bottle and four hero cards. So a step
+        that needs no points still says so rather than omitting the field, and a
+        `wait` still names a hero it has nothing to do with.
         """
-        required = set(AttackPlan.model_json_schema()["required"])
-        assert {"deploy_start", "deploy_end", "rage_points", "freeze_points", "heroes"} <= required
+        assert set(AttackStep.model_json_schema()["required"]) == {"act", "who", "at", "seconds"}
+        pause = _step("wait", seconds=4)
+        assert (pause.who, pause.at, pause.seconds) == ("unknown", [], 4)
 
     def test_a_usable_planned_line_is_tried_before_any_flank(self) -> None:
-        plan = AttackPlan(
-            deploy_start=ScreenPoint(x_pct=62.5, y_pct=12.2),
-            deploy_end=ScreenPoint(x_pct=85.6, y_pct=42.2),
-            **_ANSWERED,
-        )
+        plan = AttackPlan(steps=[_step("troops", (62.5, 12.2), (85.6, 42.2))])
         candidates = deploy_candidates(plan)
         assert candidates[0] == planned_line(plan)
         assert len(candidates) == len(DEPLOY_LINES) + 1

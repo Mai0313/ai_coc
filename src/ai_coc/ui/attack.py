@@ -11,7 +11,6 @@ from __future__ import annotations
 import time
 import logging
 from pathlib import Path
-from functools import partial
 from collections.abc import Callable, Iterable, Sequence
 
 from pydantic import BaseModel, PrivateAttr
@@ -19,11 +18,12 @@ from pydantic import BaseModel, PrivateAttr
 from ai_coc import plans
 from ai_coc.models import (
     World,
-    HeroOrder,
+    BattleRow,
     LootOffer,
     NightPlan,
     ScoutView,
     AttackPlan,
+    AttackStep,
     ScreenPoint,
     AttackReport,
     DisplayTarget,
@@ -65,7 +65,6 @@ logger = logging.getLogger(__name__)
 # Everything the loop does on a clock: when it is due, what to call it in the
 # log, and what to do. A tuple rather than a model because the payload is a bound
 # call rather than data, and it never leaves this module.
-Moves = list[tuple[float, str, Callable[[], None]]]
 
 # Every coordinate is the 1600x900 layout, the one `_apply_agent_action` assumes.
 HOME_ATTACK = (105, 830)
@@ -239,19 +238,15 @@ NUDGE_ATTEMPTS = 8
 # recorded rounds the furthest any point moved was 0.32 of a footprint.
 NUDGE_REACH = 1.0
 
-# What waits on the clock when nothing named a moment for it. Every timing on an
-# attack belongs to the plan now, and `plans/flat.json` carries these same three
-# — so these are reached only by a card the plan did not name, which is what a
-# flat plan leaves every hero, and by a `_deploy` running without a plan at all.
-#
-# They are neutral rather than good. A queen wants her cloak inside a second or
-# two, a warden's tome wants the push to be under fire first, and no single
-# number is right for both; a card given this one fires somewhere between the
-# two and gets in the way of neither. That being unsatisfying is the point of
-# asking the planner instead.
-FALLBACK_ABILITY = 20
-FALLBACK_RAGE = 15
-FALLBACK_FREEZE = 30
+# How long a pause has to be before the loop will spend a frame inside it. A
+# capture and its decode are about 0.9 s, so a shorter wait than this would be
+# overrun by the very check it was hiding — and a check that pushes the next
+# step late is the thing steps exist to avoid. Everything that needs a frame
+# waits for a pause this long: the one reading of what the burst landed, and
+# whether there is still a battle to play into. Some card slots sit exactly
+# where the result screen draws 回營, so a tactic still tapping after a battle
+# has ended is one walking itself out of the village.
+CHECK_BUDGET = 2
 
 # Between selecting a one-off card and placing what it holds, and it is now
 # nothing. It was 0.6, then 0.15 on a live burst that put the siege machine and
@@ -497,6 +492,15 @@ def push_line(
 ) -> list[tuple[int, int]]:
     """Every anchor of a flank moved the same distance further from the village."""
     return [push_out(anchor, steps, centre) for anchor in anchors]
+
+
+def _reads(step: AttackStep) -> str:
+    """One step as a few words, for the line the log prints a whole tactic on."""
+    if step.act == "wait":
+        return f"wait {step.seconds}s"
+    who = f" {step.who}" if step.act in ("hero", "ability") and step.who != "unknown" else ""
+    where = f" x{len(step.at)}" if len(step.at) > 1 else ""
+    return f"{step.act}{who}{where}"
 
 
 def planned_line(
@@ -762,6 +766,13 @@ class AttackRunner(BaseModel):
     # drawn for a village in the middle of the screen, so once the camera moves
     # they are all read through this.
     _panned: tuple[int, int] = PrivateAttr(default=(0, 0))
+    # Where each one-off card was sent by the tactic being played, and which
+    # hero cards it has not reached yet. Both belong to one run of
+    # `_play_tactic` and are reset by it: they are here rather than threaded
+    # through `_act` because they are what the steps accumulate, and a step
+    # signature carrying its own bookkeeping is one nobody can read.
+    _sending: dict[int, tuple[int, int]] = PrivateAttr(default_factory=dict)
+    _unsent: list[int] = PrivateAttr(default_factory=list)
     # What this village's storages hold when full, read off their own tooltips
     # the first time a round reaches the village and kept for the rest of the
     # run. A storage only grows when a builder finishes upgrading one, which is
@@ -1068,17 +1079,12 @@ class AttackRunner(BaseModel):
         # exchange was a guess made with the layout in hand for one made
         # without it.
         self._played = plan
+        # The whole tactic on one line, in the order it will be played, because
+        # that is the question a bad battle asks first: what did it mean to do.
         logger.info(
-            "Plan: from %s, line %s to %s, %d rage point(s) at %ds, %d freeze point(s) at %ds, "
-            "heroes=%s (%s)",
+            "Plan: from %s — %s (%s)",
             plan.deploy_from,
-            plan.deploy_start,
-            plan.deploy_end,
-            len(plan.rage_points),
-            plan.rage_after,
-            len(plan.freeze_points),
-            plan.freeze_after,
-            [(order.kind, order.ability_after) for order in plan.heroes],
+            " → ".join(_reads(step) for step in plan.steps),
             plan.reason,
         )
         return plan
@@ -1532,15 +1538,6 @@ class AttackRunner(BaseModel):
         rest = [x for group in groups[1:] for x in group]
         spells = counted_cards(frame, rest)
         singles = [x for x in rest if x not in spells]
-        vanguard = singles[:1]
-        followers = singles[1:]
-        logger.info(
-            "%d troop card(s), %d leading, %d following, %d spell(s)",
-            len(troops),
-            len(vanguard),
-            len(followers),
-            len(spells),
-        )
         freezes = freeze_cards(frame, spells)
         rages = [x for x in spells if x not in freezes]
         rage_count = sum(card_count(frame, x) or len(RAGE_PATH) for x in rages)
@@ -1548,7 +1545,33 @@ class AttackRunner(BaseModel):
         # to fall back on the way rage has RAGE_PATH, and asking for eight points
         # for a single bottle would only spend the battle tapping empty ground.
         freeze_count = sum(card_count(frame, x) or 1 for x in freezes)
-        plan = self._plan(frame, rage_count, freeze_count)
+        plan = self._plan(frame, rage_count, freeze_count) or plans.flat()
+        # **Which one-off card holds the siege machine is the plan's own answer,
+        # and it used to be arithmetic.** Nothing on the row separates a machine
+        # from a hero: neither carries an `xN`, both sit in the same group, and
+        # the game draws a health bar over both — measured across a whole
+        # recorded run, the 攻城戰車 landed and read as a hero on the next frame.
+        # So it used to be settled by counting the plan's heroes against the
+        # one-off cards, a bet that came apart whenever the planner miscounted
+        # and shifted every hero a slot along with it. A tactic written as steps
+        # simply says whether it is sending one.
+        row = BattleRow(
+            troops=troops,
+            machine=singles[:1] if plan.acts("siege") else [],
+            heroes=singles[1:] if plan.acts("siege") else singles,
+            rages=rages,
+            freezes=freezes,
+            rage_count=rage_count,
+            frame=frame,
+        )
+        logger.info(
+            "%d troop card(s), %d machine, %d hero(es), %d spell(s); %d step(s) to play",
+            len(row.troops),
+            len(row.machine),
+            len(row.heroes),
+            len(spells),
+            len(plan.steps),
+        )
         # Nothing can be placed while the scout countdown is still running, and a
         # tap the game ignores raises nothing at all, so probing then drains no
         # card and every flank in turn reads as one the village has grown over.
@@ -1556,269 +1579,161 @@ class AttackRunner(BaseModel):
         # countdown, which is what has been hiding this; without a key `_plan`
         # returns at once and the run would probe into the countdown every time.
         battle = self._wait_for_battle()
-        # **The battle's clock starts here, not once the work below is done.**
-        # Every spell on the plan is timed from this stamp, and the planner is
-        # asked for 「開打之後第幾秒」 — the game's own count, which the frame
-        # `_wait_for_battle` just handed back reads as 3分00秒. Stamping it
-        # after `_flank` instead put that zero a measured 3.0 to 3.7 seconds
-        # late on all 23 rounds of one recorded run, because reading the
-        # boundary and dragging the camera clear of the card row both happen
-        # while the game is already counting. On top of the cast's own second
-        # and a half that had a rage asked for at 12s landing at 17.5s: a third
-        # of an 18-second spell spent before it was poured. The work still has
-        # to happen and still costs those seconds; what changes is that the
-        # plan's numbers now mean what the planner was told they mean.
-        opened = time.monotonic()
+        # `_flank` bends the plan's own line onto the boundary the game draws,
+        # and the tactic is played against whatever comes back.
         anchors = self._flank(battle, plan)
-        pushed = 0
-        line = deploy_line(LINE_POINTS, *push_line(anchors, pushed, self._middle))
-        planned = self._onscreen(
-            tuple(point.pixels() for point in plan.rage_points) if plan else ()
-        )
-        # A plan can name fewer spots than the army carries rages, and `_cast`
-        # cycles back over its targets — which would stack two rages on one spot
-        # and waste one. The fixed grid fills the tail so each gets its own, and
-        # `spaced` is what makes "its own" true: the planner's points overlap
-        # each other as often as not, and two bottles on one footprint are one
-        # bottle's worth of effect.
-        #
-        # Cut to the bottles actually carried, because the tail is otherwise
-        # dead weight that the aiming below would average into its idea of where
-        # the plan was pointing. The one tap of slack `_cast` adds then wraps
-        # back onto the first spot rather than spending a real bottle on a
-        # fallback point nobody chose.
-        rage_path = tuple(spaced(planned + self._onscreen(RAGE_PATH)))[: max(rage_count, 1)]
-        # Every freeze used to stack on one spot, which is one spell's worth of
-        # effect for the whole cargo. A plan names one per bottle instead.
-        freeze_targets = self._onscreen(
-            tuple(point.pixels() for point in plan.freeze_points) if plan else ()
-        ) or self._onscreen((FREEZE_TARGET,))
-        # The army goes down as fast as the game will take it: siege machine
-        # first to open the path, then the troops along the flank, then the
-        # heroes straight behind them. Every second one of them spends in its
-        # card is a second the ones already out are taking fire alone, which is
-        # what a whole minute of arriving used to cost.
-        #
-        # Both spells wait on the clock instead. Rage used to be cast the moment
-        # the troop cards emptied, and that was right while emptying them took
-        # half a minute: the troops were at the wall by then. It stops being
-        # right once they are all down in five seconds, because a rage lasts 18
-        # and would expire on troops still walking. So it goes where the freeze
-        # already went, on a delay from the attack opening.
-        #
-        # Two clocks, because the two kinds of number mean different things. A
-        # hero's ability is timed from that hero landing, which is what a queen's
-        # cloak is worth; a spell is timed from the attack opening, and
-        # `_spell_moves` is where that half lives.
-        pending = self._spell_moves(
-            opened, frame, plan, (rages, rage_path), (freezes, freeze_targets)
-        )
-        named, aimed = self._named_heroes(plan, singles)
-        lead_down, led = self._drop_singles(
-            vanguard,
-            line,
-            "leading",
-            self._spots([order.drop for order in (named[:1] if aimed else [])], vanguard),
-        )
-        opener = time.monotonic()
-        line = self._spread_troops(troops, anchors, pushed)
-        # Only the heroes that actually went down get an ability. A hero still in
-        # its card answers an ability tap by deploying instead, with nothing
-        # around it and no ability fired. The line is the one the troops ended up
-        # on rather than the one they started on: the flank moves while they go
-        # down, and a hero sent to the old midpoint is sent somewhere refused.
-        down, _ = self._drop_singles(
-            followers,
-            line,
-            "hero",
-            self._spots([order.drop for order in (named[1:] if aimed else named)], followers),
-        )
-        landed = time.monotonic()
-        # The same answer the drops above were aimed with, and the health bar
-        # only where there was no plan to count.
-        leads = aimed if aimed is not None else bool(led)
-        row = (vanguard if leads else []) + followers
-        # Each hero's ability runs from its own hero landing, which for the
-        # leader is a whole troop deployment earlier than for the rest. Only
-        # what really went down is in here: an ability tap on a hero still in
-        # its card deploys it instead, with nothing around it. A leader refused
-        # at every spot still holds its slot above, because the plan named a
-        # hero for it either way and dropping it would shift all the rest.
-        arrived = dict.fromkeys(lead_down if leads else [], opener) | {
-            x: landed for x in followers if x in down
-        }
-        # A card the plan did not name still gets an ability, on the neutral
-        # delay rather than none: a hero that never fires is a hero half spent.
-        delays = [order.ability_after for order in named]
-        delays += [FALLBACK_ABILITY] * (len(row) - len(delays))
-        self._run_schedule(
-            opened,
-            [
-                *pending,
-                *(
-                    (
-                        arrived[x] + delays[i],
-                        f"ability on the card at {x}",
-                        partial(self._tap, (x, CARD_ROW_Y)),
-                    )
-                    for i, x in enumerate(row)
-                    if x in arrived
-                ),
-            ],
-        )
+        self._play_tactic(plan, anchors, row)
 
-    def _spell_moves(
-        self,
-        opened: float,
-        frame: bytes,
-        plan: AttackPlan | None,
-        rage: tuple[list[int], tuple[tuple[int, int], ...]],
-        freeze: tuple[list[int], tuple[tuple[int, int], ...]],
-    ) -> Moves:
-        """Everything the spells wait on, as timed callables for `_run_schedule`.
+    def _play_tactic(
+        self, plan: AttackPlan, anchors: tuple[tuple[int, int], ...], row: BattleRow
+    ) -> None:
+        """Run the tactic straight through, reading once what the game refused.
 
-        Both clocks run from the **attack opening** rather than from a hero
-        landing, because that is how each is judged on screen — rage as the push
-        reaches the outer wall, freeze as it reaches the first line of defences
-        — and hanging them off the heroes would move them by however long the
-        army happened to take to go down.
+        **The order is the plan's, and every pause in it is a step.** It used to
+        be the loop's: siege, then troops, then heroes, and only once all of
+        them were down did anything on a clock get a turn. Two things came out
+        of that and neither could be fixed inside it. A spell waited out the
+        heroes for no reason a rage recognises — it covers the troops, and they
+        are already walking. And the clocks were counted from the loop's own
+        idea of when the battle opened, which moves with how long Gemini took to
+        answer: measured over 23 recorded rounds the gap those numbers were
+        really about, troops down to rage cast, ran from 3.0 to 10.8 seconds
+        while the planner asked for the same 14 every time.
 
-        **Both spells go where the plan drew them, and rage used to be moved.**
-        `_onto_army` took two frames a moment apart, found the busiest patch of
-        what had changed, and slid the whole rage pattern onto it — the
-        reasoning being that a measurement of where the fighting is beats a
-        prediction of where it will be. What that reasoning left out is that the
-        measurement arrives late: the frames, the gap between them and the
-        decode were three to four seconds, all of it after the moment the plan
-        asked for the bottle, and a rage lasts eighteen. Cutting it to one frame
-        still left a second of it. A reading that late is not a better answer
-        than a prediction, it is the same answer applied to a battle that has
-        moved on.
+        A `wait` counted from the previous move finishing has neither problem,
+        and interleaving is then free: troops, a rage, then the rest of the
+        heroes is three lines in a list.
 
-        What replaces it is the property the prediction rests on: troops walk
-        toward defences. So the planner is asked for the heaviest defences on
-        the side it chose, which is where the army will be, and the bottles go
-        there with nothing between the schedule and the tap.
+        **Nothing is checked between steps, and that is where the time went.**
+        Measured on one recorded round, putting the army down took 9.15 seconds
+        of which about 1.5 was tapping: six captures at roughly 0.7 s each, plus
+        the settles that exist only so those captures have something to see —
+        84% of the deployment spent watching itself. A refused drop costs
+        nothing to discover late, because the game does not consume the card it
+        refused, so the whole tactic goes in blind and one reading afterwards
+        says what to send again.
+
+        That reading is taken **inside the tactic's first pause** rather than
+        added to it: the pause is the only idle time in a battle, and a check
+        that fits inside it is free.
         """
-        rages, rage_path = rage
-        freezes, freeze_targets = freeze
-        rage_after = plan.rage_after if plan else FALLBACK_RAGE
-        freeze_after = plan.freeze_after if plan else FALLBACK_FREEZE
-        pending: Moves = []
-        if rages:
-            pending.append((
-                opened + rage_after,
-                f"{len(rages)} rage card(s)",
-                partial(self._cast, rages, rage_path, frame),
-            ))
-        if freezes:
-            pending.append((
-                opened + freeze_after,
-                f"{len(freezes)} freeze card(s)",
-                partial(self._cast, freezes, freeze_targets, frame),
-            ))
-        # Nothing on the clock is allowed to interrupt this. The schedule used to
-        # be offered a turn between one card and the next, because putting the
-        # army down took about as long as the freeze was meant to wait; now that
-        # it takes ten seconds the only battles where a spell comes due mid-
-        # deployment are the ones where the deployment is going badly, and those
-        # are exactly the battles that need finishing rather than interrupting.
-        # Measured live on a flank half inside the boundary: rage fired 21 s in
-        # while a troop card was still draining and the heroes landed at 41 s,
-        # where finishing first would have had them down at about 31 s.
-        return pending
+        line = deploy_line(LINE_POINTS, *push_line(anchors, 0, self._middle))
+        self._sending, self._unsent = {}, list(row.heroes)
+        settled = False
+        opened = done = time.monotonic()
+        for step in plan.steps:
+            if step.act == "wait":
+                # A pause is the only idle time in a battle, so everything that
+                # needs a frame is spent inside one: the single reading of what
+                # the burst landed, and the check that there is still a battle
+                # to play into. Both are free here and neither is free anywhere
+                # else, which is why nothing between two taps looks at anything.
+                if step.seconds >= CHECK_BUDGET:
+                    if self._sending and not settled:
+                        self._settle_drops(row.troops, line, anchors)
+                        settled = True
+                    elif self._battle_ended("playing"):
+                        logger.info(
+                            "The battle ended with %d step(s) still to play", len(plan.steps)
+                        )
+                        return
+                if (remaining := done + step.seconds - time.monotonic()) > 0:
+                    time.sleep(remaining)
+                continue
+            self._act(step, row, line)
+            logger.info("Played %s, %.0fs in", step.act, time.monotonic() - opened)
+            done = time.monotonic()
+        # A tactic with no pause long enough to hide the reading still gets it.
+        if self._sending and not settled:
+            self._settle_drops(row.troops, line, anchors)
 
-    def _named_heroes(
-        self, plan: AttackPlan | None, singles: list[int]
-    ) -> tuple[list[HeroOrder], bool | None]:
-        """The plan's hero orders, and whether the first of them holds the leading card.
+    def _act(self, step: AttackStep, row: BattleRow, line: list[tuple[int, int]]) -> None:
+        """One step of a tactic, as taps, with nothing read back.
 
-        Settled **before** anything is dropped, because it is what says where
-        each hero goes as well as when it fires. It can be: the arithmetic needs
-        only the two counts. The one reading not available this early is the
-        health bar, and that is reached only when the plan named nobody — where
-        there are no points to place either, so None is the honest answer.
+        A step naming a card the row does not carry is skipped rather than
+        shifting everything after it: an upgrading hero has no card at all, so a
+        plan naming one is an ordinary thing to be handed rather than a fault.
         """
-        named = list(plan.heroes) if plan else []
-        # **The leading card is a hero on any army that carries no siege
-        # machine**, and it is the one card nothing on the row can tell apart:
-        # neither it nor a hero shows an `xN`, and the two sit in the same
-        # group. So the game's own ordering picks it — siege machine first —
-        # and the plan's own count corrects that ordering where it is wrong: as
-        # many heroes named as there are one-off cards is an army carrying no
-        # siege machine. Without it that hero got no ability at all and every
-        # hero after it was read a slot off the card it names, so a queen's
-        # cloak went to whoever stood next to her.
-        #
-        # **The health bar cannot answer this, though it used to be asked
-        # first.** The game draws one over a siege machine as readily as over a
-        # hero: measured across all three rounds of a recorded run, the 攻城戰車
-        # landed and `field_units` read its card as a hero on the very next
-        # frame. That put a slot in front of every real hero, so the queen went
-        # out on the king's twenty seconds where her cloak wants one. She was
-        # the whole cost on that army, whose other three all want about twenty
-        # anyway; one carrying a warden or a champion pays on every card.
-        # The bar stays as the answer when there is no plan to count, where
-        # every card takes the same delay anyway and a tap on a spent siege
-        # card costs nothing.
-        #
-        # **The count is a better bet than the bar, not a sound one.** A plan
-        # naming one hero too few against an army carrying no siege machine is
-        # the same arithmetic as a plan naming them all against an army that
-        # does, so this reads it as the second and the leading hero loses its
-        # ability — which is what the bar happened to get right. It is still
-        # the better way round: the bar is wrong on every battle this army
-        # fights, since it carries a siege machine and the game draws a bar
-        # over it, while the count is wrong only when the planner miscounts.
-        #
-        # A count matching neither arithmetic is past being a bet: the plan
-        # cannot be trusted to name the cards in order either. It is said out
-        # loud rather than guessed at quietly, because whichever way it falls
-        # both the drop points and the ability timings are a slot out from here
-        # on and nothing downstream notices.
-        if named and len(named) not in (len(singles), len(singles) - 1):
-            logger.warning(
-                "The plan names %d hero(es) against %d one-off card(s); neither their "
-                "drop points nor their ability timings will line up with the row",
-                len(named),
-                len(singles),
+        points = self._onscreen(tuple(point.pixels() for point in step.at))
+        middle = line[len(line) // 2]
+        if step.act == "siege":
+            self._drop_at(row.machine, points[0] if points else middle)
+        elif step.act == "hero":
+            # `who` names the hero for the log and for the prompt to reason
+            # with; which card it is comes from the row order, because nothing
+            # on the row itself says who is on which card.
+            self._drop_at(self._unsent[:1], points[0] if points else middle)
+            del self._unsent[:1]
+        elif step.act == "ability":
+            # Whatever hero cards the tactic has already sent. A tap on a card
+            # whose hero never landed deploys it instead, which is why only what
+            # `aimed` holds is offered one.
+            self.adb.tap_many(
+                [(card, CARD_ROW_Y) for card in row.heroes if card in self._sending], self.display
             )
-        return named, (len(named) == len(singles) if named else None)
+        elif step.act == "troops":
+            self._pour(row.troops, line, row.frame)
+        elif step.act in ("rage", "freeze"):
+            cards = row.rages if step.act == "rage" else row.freezes
+            wanted = max(row.rage_count, 1) if step.act == "rage" else max(len(cards), 1)
+            targets = tuple(spaced(list(points))) or (middle,)
+            self._cast(cards, targets[:wanted] or targets, row.frame)
 
-    def _run_schedule(self, opened: float, moves: Moves) -> None:
-        """Everything that waits on the clock, in time order, each at its own moment.
+    def _drop_at(self, cards: list[int], spot: tuple[int, int]) -> None:
+        """Send every card in one shell round trip, and write down where they went."""
+        spot = clear_of_controls(spot)
+        if not cards:
+            return
+        self.adb.tap_many(
+            [tap for card in cards for tap in ((card, CARD_ROW_Y), spot)],
+            self.display,
+            gap=SINGLE_DROP_DELAY,
+        )
+        self._sending.update(dict.fromkeys(cards, spot))
 
-        One list rather than the abilities and then the freeze, because ordering
-        by position in the code made the freeze wait out the slowest hero on the
-        field: with a champion at 45 seconds it landed a minute and a half into a
-        three-minute battle, long after the defences it was meant to stop had
-        done their work. Ability timing is per hero rather than per card slot for
-        the same reason it always was — an upgrading hero has no card, so every
-        slot after it shifts.
+    def _pour(self, troops: list[int], line: list[tuple[int, int]], frame: bytes) -> None:
+        """Empty every troop card along the line, one card at a time, reading nothing.
 
-        Some card slots overlap the result screen's 回營 button, so nothing here
-        runs unless the battle is genuinely still on.
+        How many taps a card takes is its own `xN` from the opening frame plus
+        one for slack, clamped to `DROPS_PER_PASS` — the same arithmetic the
+        checked version used, minus the capture between cards. A card the
+        artwork swallowed falls back to the ceiling, which is what that constant
+        has always been for.
         """
-        for move in sorted(moves, key=lambda move: move[0]):
-            remaining = move[0] - time.monotonic()
-            if remaining > 0:
-                time.sleep(remaining)
-            if not self._play(opened, move):
-                return
+        for seed, card in enumerate(troops):
+            count = card_count(frame, card)
+            taps = min(count + 1, DROPS_PER_PASS) if count else DROPS_PER_PASS
+            self._tap((card, CARD_ROW_Y))
+            self.adb.tap_many(drop_points(line, seed, taps), self.display)
 
-    def _play(self, opened: float, move: tuple[float, str, Callable[[], None]]) -> bool:
-        """One scheduled move, or False once the battle is over and there is no point.
+    def _settle_drops(
+        self, troops: list[int], line: list[tuple[int, int]], anchors: tuple[tuple[int, int], ...]
+    ) -> None:
+        """The one reading of the burst: what never left its card, sent again.
 
-        Some card slots overlap the result screen's 回營 button, so nothing is
-        tapped unless the battle is genuinely still on.
+        Two questions off one frame, because a decode is the expensive part. A
+        one-off card is judged by the health bar the game draws over it, and a
+        troop card by whether it has gone grey — the same two readings the
+        checked deployment took, once instead of six times.
+
+        A whole row of troops still holding something is the line rather than
+        the taps: `_spread_troops` answers that by pushing the flank further out,
+        which is the backstop that was always underneath the probing.
         """
-        _, what, act = move
-        if self._battle_ended("scheduled"):
-            logger.info("Battle ended with the %s still to come", what)
-            return False
-        act()
-        logger.info("Played the %s, %.0fs into the attack", what, time.monotonic() - opened)
-        return True
+        after = self._frame("settled")
+        sent = list(self._sending)
+        missing = [card for card in sent if card not in field_units(after, sent)]
+        holding = list(live_cards(after, troops))
+        logger.info(
+            "After the burst: %d of %d one-off card(s) never landed, %d troop card(s) still hold",
+            len(missing),
+            len(sent),
+            len(holding),
+        )
+        if holding:
+            self._spread_troops(holding, anchors, 0)
+        if missing:
+            self._drop_singles(missing, line, "retry")
 
     def _cast(self, cards: list[int], targets: tuple[tuple[int, int], ...], frame: bytes) -> None:
         """Empty every spell card over `targets`, and say so when one would not go.
