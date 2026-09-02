@@ -646,7 +646,8 @@ def attack(options: AttackOptions) -> AttackSeries:
         # storages hold rather than an amount: the runner reads each village's
         # own ceilings off its bars, so the same 90% means one thing here and
         # another on the builder base without anybody typing either number.
-        stop_at=config.stop_at,
+        # The flag overrides it for one run, like `restart_every` below.
+        stop_at=config.stop_at if options.stop_at is None else options.stop_at,
         ai=None if plan else _planner(config),
         plan=plan,
         should_stop=stop_requested,

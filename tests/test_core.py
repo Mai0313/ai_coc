@@ -3413,6 +3413,38 @@ class RestartEveryTests(unittest.TestCase):
             assert not commands._restart_emulator(MagicMock(), MagicMock())
 
 
+class StopAtOverrideTests(unittest.TestCase):
+    """`--stop-at` against the file's percentage, with the split every override here has."""
+
+    def _stop_at(self, options: AttackOptions) -> int:
+        """Run one round and hand back the percentage the runner was built with."""
+        with (
+            patch.object(commands, "_controller"),
+            patch.object(commands, "current_world", return_value="day"),
+            patch.object(commands, "_planner", return_value=None),
+            patch.object(commands.ConfigStore, "load", return_value=AppConfig(stop_at=85)),
+            patch.object(commands, "FrameTicker"),
+            patch.object(commands, "_rest", return_value=False),
+            patch.object(commands, "AttackRunner") as runner,
+        ):
+            runner.return_value.run.return_value = MagicMock(
+                stock_full=False, attacked=MagicMock(), phases=0
+            )
+            commands.attack(options)
+        return runner.call_args.kwargs["stop_at"]
+
+    def test_zero_on_the_flag_is_not_the_same_as_leaving_it_out(self) -> None:
+        """Omitting it keeps the file's percentage; zero never stands the run down.
+
+        Zero is what a test battle against a village the farming has just
+        filled needs: every storage is past the line, so the file's value would
+        end the series before the code under test ever ran.
+        """
+        assert self._stop_at(AttackOptions()) == 85
+        assert self._stop_at(AttackOptions(stop_at=0)) == 0
+        assert self._stop_at(AttackOptions(stop_at=100)) == 100
+
+
 class LaunchTests(unittest.TestCase):
     """Bringing the game up, tearing down only as much as was asked for.
 

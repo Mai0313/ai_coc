@@ -87,6 +87,14 @@ def _parser() -> argparse.ArgumentParser:
         metavar="場",
         help="每真的打完這麼多場就重開模擬器跟遊戲,蓋過設定檔,0 代表這次不重開",
     )
+    # The same shape again: 0 is how a test run attacks a village the farming
+    # has already filled, where the file's percentage would stand it down first.
+    run.add_argument(
+        "--stop-at",
+        type=int,
+        metavar="%",
+        help="每一種倉庫都滿到這個百分比就收工,蓋過設定檔,0 代表這次不管倉庫多滿都照打",
+    )
     # Omitted means "whatever the config file says". Three zeros is how a run
     # being studied gets back to attacking the first opponent it is shown.
     for flag, resource in (("gold", "金幣"), ("elixir", "聖水"), ("dark", "黑水")):
@@ -227,6 +235,7 @@ def _run_command(arguments: argparse.Namespace, run: RunLog) -> int:
                 rounds=arguments.repeat,
                 shot_every=arguments.shot_every,
                 restart_every=arguments.restart_every,
+                stop_at=arguments.stop_at,
             )
         ).model_dump_json(indent=2)
     elif arguments.command == "stop":
