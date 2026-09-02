@@ -1502,13 +1502,18 @@ class ConfigTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             path = Path(td) / "config.json"
             path.write_text(
-                json.dumps({"restart_every": 7, "timings": {"queen": 1, "warden": 30}}),
+                json.dumps({
+                    "restart_every": 7,
+                    "timings": {"queen": 1, "warden": 30},
+                    "keepalive_seconds": 120.0,
+                }),
                 encoding="utf-8",
             )
             config = ConfigStore(path=path).load()
             written = json.loads(path.read_text(encoding="utf-8"))
         assert config.restart_every == 7
         assert "timings" not in written
+        assert "keepalive_seconds" not in written
         # What it parsed is what it wrote. Rewriting `AppConfig()` instead would
         # pass every other assertion here while wiping the user's settings, and
         # this call is the first thing that runs after an upgrade.

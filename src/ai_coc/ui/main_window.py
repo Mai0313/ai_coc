@@ -536,7 +536,7 @@ class MainWindow(QMainWindow):
             self._error("圖片載入失敗", str(exc))
 
     def _preview_switches(self, layout: QVBoxLayout) -> None:
-        """The three switches over the preview, in their own method for length.
+        """The two switches over the preview, in their own method for length.
 
         What they have in common is that each one is a mode this window is in
         rather than a permission it grants, which is what separates them from
