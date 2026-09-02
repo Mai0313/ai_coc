@@ -30,7 +30,7 @@ uv run ai_coc attack --world day --repeat 0 --record
 
 **`--world` 要寫出來.** 不給的話打的是遊戲當下停在的那個村莊, 而遊戲會開在上次離開的那一個, 所以少了它就有可能整晚在打夜世界而你以為在打主村. 夜世界是 `--world night`.
 
-用 Bash 工具的 `run_in_background` 送出去. **不必自己重導向**, log 跟結果都是程式自己寫的, 一次執行一個目錄:
+用 Bash 工具自己的 `run_in_background` 送出去, **而且只能用它**. 它是唯一一種跑完會把你叫醒的開法: 指令結束的時候 harness 會把一個通知送進對話, 那個通知就是你接下一步的時刻. `Start-Process`, `nohup … &`, PowerShell 的 job, 任何 shell 層的 detach 都不行 —— 程序照樣會跑, 但 harness 不知道有這個程序, 它結束的時候什麼都不會發生, 而且它的輸出跟 exit code 也回不到你手上. 實測一次: 一個 session 用 `Start-Process` 開了 `attack --world night`, 夜世界打到 `stock_full` 自己收工之後, session 就停在原地什麼都沒做, 因為沒有任何東西叫醒它; 它自己另外寫的監看器又把 `result.json` 讀錯了 (形狀見下面), 於是連「已經打滿」這個訊號也漏掉. **不必自己重導向**, log 跟結果都是程式自己寫的, 一次執行一個目錄:
 
 ```
 ~/.ai_coc/logs/2026-08-29-011423-attack/
@@ -41,6 +41,14 @@ uv run ai_coc attack --world day --repeat 0 --record
 ```
 
 **目錄在哪不用猜, 開跑第一行 log 就會說** (`This run is being kept in ...`). 名字是「時間-指令」, 所以 `ls -t ~/.ai_coc/logs` 最上面那個就是最近的一次.
+
+**`result.json` 是一個陣列, 不是一個物件.** `attack` 寫的是 `AttackSeries`: 一輪一個 `AttackReport`, 照跑的順序排, 頂層沒有 `stock_full` 這種欄位. 「這個世界打完了沒」看的是**最後一個元素**:
+
+```bash
+jq '.[-1] | {world, stock_full, message}' ~/.ai_coc/logs/<run>/result.json
+```
+
+讀頂層的 `.stock_full` 拿到的是 `null`, 而 `null` 讀起來像「還沒滿」, 一個已經打滿的世界看起來就像還在跑. 其他指令 (`walls`, `collect`, `world` ...) 寫的是單一個物件, 只有 `attack` 是陣列, 因為只有它會跑很多輪.
 
 `--record` 決定要不要留畫面. 留了事後可以一張一張看它當時到底看到什麼, 代價是一張 PNG 一兩百 KB、一場加起來幾十 MB, 而且每一張都是模擬器的一次編碼. 這批會有東西要查就開著, 單純掛機就不用開.
 
@@ -55,6 +63,15 @@ uv run ai_coc attack --world day --repeat 0 --record
 - `WARNING` 跟 `ERROR` 是真的要看的
 
 **幾分鐘看一次就好.** 一輪四五分鐘, 每三十秒去 tail 一次只是在浪費 context, 而且中間本來就沒有新東西. 背景指令跑完的時候會通知你, 那才是必須處理的時刻.
+
+**通知進來, 先讀 `result.json` 的最後一個元素, 再決定下一步.** 一個 run 只會用四種方式結束, 每一種接的動作都不一樣:
+
+- `stock_full` 是 `true`: 這個世界打滿了. **那是接縫不是終點** —— 兩個世界都要打的話換另一個世界; 只剩日世界要花的話照 `farm` 的「倉庫滿了」那節. 不要回頭問使用者要不要繼續
+- `stock_full` 是 `false`, 而 `run.log` 說是停止旗標讓它收工的: 有人下了 `ai_coc stop`. 不是你下的就不要自己開回去, 見「中止」
+- `result.json` 是空的, 或者指令的 exit code 不是 0: 程序是被砍掉或者崩掉的. `run.log` 最後幾十行是唯一的線索, 遊戲多半停在回不了家的畫面, 先看畫面再決定
+- 使用者指定了 `--repeat N` 而輪數跑完: 照他的交辦接下去或收工
+
+沒有第五種. 一個 run 結束而你什麼都沒接, 就是上面那次實測的樣子: 模擬器閒著, 使用者以為還在打.
 
 `plans.jsonl` 在同一個目錄, 也是純文字, 一場一行, 內容是那一輪 AI 回答的整份戰術. `jq -c 'select(.round==3)' plans.jsonl` 拿一輪出來看, `jq -r '"\(.round) \(.plan.deploy_from)"' plans.jsonl` 一眼看完整批打了哪些側邊. **一輪打壞的時候先讀它**, 因為它直接說出「這輪打算怎麼打」, 而 `run.log` 說的是「實際做了什麼」, 兩份對照才知道問題在指揮還是在執行.
 
