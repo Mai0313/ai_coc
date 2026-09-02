@@ -3166,11 +3166,6 @@ class InRoundRestartTests(unittest.TestCase):
         fresh = MagicMock(name="the display the game came back on")
         controller = MagicMock(name="the controller that came back")
         with (
-            tempfile.TemporaryDirectory() as folder,
-            # `attack` clears the flag at both ends, and unpatched that is the
-            # real `~/.ai_coc/stop`: a suite run would silently take a stop
-            # somebody had asked of a loop still playing out its battle.
-            patch.object(commands, "STOP_FLAG", Path(folder) / "stop"),
             patch.object(commands, "_controller"),
             patch.object(commands, "_settle_game", return_value=MagicMock(name="at the start")),
             patch.object(commands, "_pick_world", return_value="night"),
@@ -3419,11 +3414,6 @@ class StopAtOverrideTests(unittest.TestCase):
     def _stop_at(self, options: AttackOptions) -> int:
         """Run one round and hand back the percentage the runner was built with."""
         with (
-            tempfile.TemporaryDirectory() as folder,
-            # `attack` clears the flag at both ends, and unpatched that is the
-            # real `~/.ai_coc/stop`: a suite run would silently take a stop
-            # somebody had asked of a loop still playing out its battle.
-            patch.object(commands, "STOP_FLAG", Path(folder) / "stop"),
             patch.object(commands, "_controller"),
             patch.object(commands, "current_world", return_value="day"),
             patch.object(commands, "_planner", return_value=None),
