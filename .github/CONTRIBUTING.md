@@ -103,9 +103,9 @@ Always run `make fmt` and `make test` before opening a pull request.
 
 The three layers are directories, so an import that crosses them is visible in the import line:
 
-- **UI and orchestration**: `ui/main_window.py` holds the window and every tab; `ui/workers.py` the thread-pool workers; `ui/render.py` the Markdown and log rendering. The loops themselves are kept Qt-free so they can be driven and tested without a window: `ui/attack.py` (the attack loop), and `ui/walls.py`, `ui/upkeep.py`, `ui/clan.py`, `ui/hero.py` on top of the shared `ui/runner.py`
+- **UI and orchestration**: `ui/main_window.py` holds the window and every tab; `ui/workers.py` the thread-pool workers; `ui/render.py` the Markdown and log rendering. The loops themselves are kept Qt-free so they can be driven and tested without a window: `ui/attack.py` (the attack loop), `ui/world.py` (crossing between the two villages), and `ui/walls.py`, `ui/upkeep.py`, `ui/clan.py`, `ui/hero.py` on top of the shared `ui/runner.py`
 - **Adapters**: `adapters/mumu.py` (emulator lifecycle), `adapters/adb.py` (every ADB call), `adapters/ai.py` (Gemini), `adapters/secrets.py` (DPAPI), `adapters/config.py` (the shared settings file), `adapters/database.py` (SQLite), `adapters/mapping.py` (the community `data_id` table)
-- **Pure parsers**: `parsers/scout.py` (loot panel, card row, storage bars), `parsers/building.py` (building menus and their prices), `parsers/home.py` (collector markers, builder panel), plus `parsers/village.py`, `parsers/boundary.py`, `parsers/field.py`, `parsers/clan.py` and `parsers/hero.py`
+- **Pure parsers**: `parsers/frame.py` (the 1600x900 frame every reader decodes through), `parsers/scout.py` (loot panel, card row, storage bars), `parsers/building.py` (building menus and their prices), `parsers/home.py` (collector markers, builder panel), `parsers/world.py` (which of the two villages is on screen), plus `parsers/village.py`, `parsers/boundary.py`, `parsers/field.py`, `parsers/clan.py` and `parsers/hero.py`
 
 `cli.py` is argument parsing and `main()`; `commands.py` is the headless side it dispatches to. New work belongs somewhere `commands.py` can call it.
 
@@ -269,7 +269,7 @@ uvx poe docs
 
 All workflows live in `.github/workflows/`.
 
-- **Tests** (`test.yml`): pushes and pull requests to `main` or `release/*`, ignoring md files. Runs pytest on Python 3.12/3.13/3.14 with coverage and comments a summary
+- **Tests** (`test.yml`): pushes and pull requests to `main` or `release/*`, ignoring md files. Runs pytest on Python 3.12 on a Windows runner with coverage and comments a summary
 - **Code Quality Check** (`code-quality-check.yml`): pull requests. Runs ruff and the rest of the pre-commit suite
 - **Docs Deploy** (`deploy.yml`): push to `main`. Builds the Zensical site and publishes to GitHub Pages. There is deliberately no `v*` tag trigger, because the `github-pages` environment only accepts deployments from `main` and a tag push fails before any step runs. Needs GitHub Pages enabled (Settings → Pages → Source: GitHub Actions)
 - **Build and Release** (`build_release.yml`): tags `v*` or manual dispatch. Builds a Windows x64 executable with PyInstaller plus the wheel and sdist, publishes to PyPI (needs the `UV_PUBLISH_TOKEN` secret) and uploads everything to the GitHub Release
