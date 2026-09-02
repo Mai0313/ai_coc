@@ -13,9 +13,11 @@ addopts = [
     "--cache-clear",
     "-n=auto",
     "--no-header",
-    # Deliberately low: almost everything here is the untested PyQt shell and the
-    # MuMu/Gemini adapters, which need a real emulator to exercise.
-    "--cov-fail-under=12",
+    # Below the template's 80 because `ui/main_window.py` is the untested PyQt
+    # shell, a seventh of the statements; everything under it sits around 90%.
+    # The suite measures 81% today, and the gap is what a change may cost before
+    # it is asked to bring tests with it.
+    "--cov-fail-under=75",
 ]
 filterwarnings = [
     "ignore::DeprecationWarning",
