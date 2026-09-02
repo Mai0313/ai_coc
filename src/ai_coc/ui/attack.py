@@ -2096,18 +2096,20 @@ class AttackRunner(BaseModel):
         and `commands.attack` took them for real battles too — toward the
         emulator restart, toward the loot cart, and past the barracks wait.
 
-        **The second stage opens with a surviving machine already on the
-        field**, so `stage` is what says whether to drop it. Measured on two
-        recorded second stages the game carried the machine over itself: the
-        opening frame shows it standing beside the second base with its ability
-        bar drawn over its card while the troops are back in theirs. Dropping
-        it again there was five taps on what is by then its ability button,
-        five spots the game answered with 請選擇其他兵種, and `field_units`
-        reading a damaged health bar — darker green, then yellow to red as the
-        health falls — as no bar at all: `never landed`, some fifteen seconds
-        of retries, the troops held behind a machine already fighting, and,
-        since only the cards read as landed were ever offered their ability,
-        none for the rest of the stage.
+        **The second stage opens on a countdown with the surviving machine's
+        card preselected**, so `stage` is what says whether to drop it the
+        usual way. Measured on four recorded second stages the card comes back
+        drawn at the selected width with a white border, and the machine is on
+        the field by the time the row is read — the loop's own camera drag
+        sends a selected card along the swipe. Dropping it again there was five
+        taps on what is by then its ability button, five spots the game
+        answered with 請選擇其他兵種, and `field_units` reading a damaged
+        health bar — darker green, then yellow to red as the health falls — as
+        no bar at all: `never landed`, some fifteen seconds of retries, the
+        troops held behind a machine already fighting. And until `card_groups`
+        could read a selected card at all, the card was missing from the row on
+        every one of those openings, so the machine was offered no ability for
+        the whole stage.
 
         Everything here is the home village's own machinery — the camera, the
         boundary fit, the passes — with the two things the builder
@@ -2167,17 +2169,21 @@ class AttackRunner(BaseModel):
         # with no machine to send has nothing for either of them to say. The head
         # start goes with it, because that is the machine's and nobody else's.
         out: list[int] = []
+        spots = self._spots(plan.hero_points, machines)
         if machines and stage == 0:
-            out, _ = self._drop_singles(
-                machines, line, "machine", self._spots(plan.hero_points, machines)
-            )
+            out, _ = self._drop_singles(machines, line, "machine", spots)
+        elif machines:
+            # The card comes back preselected, so one tap on the field is what
+            # sends it if the camera drag has not already; a tap on the card
+            # itself would only deselect it.
+            logger.info("The machine came through from the stage before, preselected; sending it")
+            self.adb.tap(*spots.get(machines[0], line[len(line) // 2]), self.display)
+            out = list(machines)
+        if machines:
             # Every live card, not only the ones read as landed: the offer is
             # harmless on a card still holding its unit, and the read misses a
             # machine that is out whenever its health bar is no longer green.
             self._hold(plan.troops_after, machines)
-        elif machines:
-            logger.info("The machine came through from the stage before; it is already out")
-            out = list(machines)
         spread = self._spread_night(troops, anchors, pushed)
         # A machine that went down is an attack even if the troops behind it
         # were refused, so only a round with neither on the field answers None.
