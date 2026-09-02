@@ -556,13 +556,9 @@ class SurveyRunnerTests(unittest.TestCase):
                 commands._MapSurvey,
                 "_edge",
                 side_effect=lambda degrees, shot: (
-                    (
-                        MapEdge(degrees=degrees, reached=readings.get(degrees), predicted=800)
-                        if degrees in readings
-                        else (None, shot)
-                    )
-                    if degrees not in readings
-                    else (MapEdge(degrees=degrees, reached=readings[degrees], predicted=800), shot)
+                    (MapEdge(degrees=degrees, reached=readings[degrees], predicted=800), shot)
+                    if degrees in readings
+                    else (None, shot)
                 ),
             ),
         ):
