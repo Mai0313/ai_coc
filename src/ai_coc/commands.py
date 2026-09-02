@@ -690,6 +690,33 @@ def attack(options: AttackOptions) -> AttackSeries:
             except KeyboardInterrupt:
                 logger.info("Interrupted; stopping after %d round(s)", len(series.root))
                 break
+            # **A restart moves the game to a display of MuMu's choosing, and
+            # this function is the last to hear about it.** `AttackRunner`
+            # reassigns its own `self.display` when the idle-disconnect dialog
+            # sends it through `restart_game`, so it keeps playing; the local
+            # below and the ticker's copy go on naming a display the game has
+            # left, and `screencap -d` against one answers `Failed to take
+            # screenshot. Status: -2`.
+            #
+            # Measured on two consecutive night series, both a few battles after
+            # an idle-disconnect restart — display 2 to 3 on one and 3 to 4 on
+            # the next. Both died in `_empty_cart` below with `result.json`
+            # never written, so the 17 and 14 battles they had played were
+            # countable only out of `run.log`.
+            #
+            # **`_restart_emulator` does not already cover this.** It re-points
+            # `runner` and `ticker` and says why, but it never touches this
+            # function's own pair either — so the scheduled restart has the same
+            # `_empty_cart` crash waiting behind it, unreached only because no
+            # night series had yet run long enough to hit one. Syncing here
+            # rather than at the call covers both restarts and whatever consumer
+            # is added to this loop next.
+            #
+            # Not every `Status: -2` is this: one recorded series lost a display
+            # with no restart at all and died in `uncovered`, where the runner's
+            # own copy is the stale one. That one is still open.
+            adb, display = runner.adb, runner.display
+            ticker.adb, ticker.display = adb, display
             series.root.append(report)
             # A builder base round reports no `attacked` — there is no scout
             # screen to have advertised any loot — so the two villages answer
