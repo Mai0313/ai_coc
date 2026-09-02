@@ -131,6 +131,26 @@ CARD_EDGE_GAP = 5
 # selected when `card_groups` runs — `_deploy` reads the row before it taps
 # anything — so the wider reading is out of its way.
 CARD_SPAN = (100, 116)
+# Except that the row is not always unselected when `card_groups` runs. The
+# builder base's second stage opens with the surviving machine's card
+# **preselected** — 118 px wide with a white border, so that the first tap or
+# swipe on the field sends it — and its seam then holds a 1 px sliver of that
+# border as well. Read at the resting ceiling the card came apart into 34 and
+# 72 px pieces the sliver kept from rejoining, both under CARD_MIN_WIDTH, and
+# the machine was gone from the row: `0 machine card(s) still alive` on every
+# recorded second stage, so it was offered no ability at all there.
+#
+# The wider ceiling is allowed only between two white columns, which a
+# fragment's own edges never are, and the sliver is only stepped over inside
+# such a card. Swept over 2 297 recorded frames that changes exactly the frames
+# holding a selected card — 124 with the machine, plus one home-village pass
+# whose selected card had been reading 12 px off-centre — and nothing else,
+# where the same ceiling for every span invented cards on the attack dialog and
+# moved a real one. The border reads 249 to 255 against at most 130 for a
+# resting card's edge, so the line sits well clear of both.
+CARD_SELECTED_SPAN = 120
+CARD_SELECTED_EDGE = 200
+CARD_SLIVER = 4
 CARD_LIT_BRIGHTNESS = 60
 # Every real card carries its level in a badge at the bottom-left corner. The
 # empty slot the row ends with does not: it is a dashed outline with the
@@ -816,15 +836,26 @@ def _badged(image: Image.Image, centre: int) -> bool:
     return lit / (len(data) // 3) >= BADGE_LIT
 
 
-def _rejoined(spans: list[tuple[int, int]]) -> list[tuple[int, int]]:
-    """Pieces a dark seam cut one card into, put back together; see `CARD_SPAN`."""
+def _rejoined(spans: list[tuple[int, int]], columns: bytes) -> list[tuple[int, int]]:
+    """Pieces a dark seam cut one card into, put back together; see `CARD_SPAN`.
+
+    `columns` is the strip's brightness per column, which is what says whether
+    the piece being joined onto starts on a selected card's white border; see
+    `CARD_SELECTED_SPAN` for what that changes.
+    """
     joined: list[tuple[int, int]] = []
     for left, right in spans:
+        fragment = bool(joined) and joined[-1][1] - joined[-1][0] < CARD_SPAN[0]
+        selected = fragment and columns[joined[-1][0]] >= CARD_SELECTED_EDGE
+        if selected and right - left < CARD_SLIVER:
+            continue
+        ceiling = CARD_SPAN[1]
+        if selected and columns[right - 1] >= CARD_SELECTED_EDGE:
+            ceiling = CARD_SELECTED_SPAN
         if (
-            joined
-            and joined[-1][1] - joined[-1][0] < CARD_SPAN[0]
+            fragment
             and right - left < CARD_SPAN[0]
-            and CARD_SPAN[0] <= right - joined[-1][0] <= CARD_SPAN[1]
+            and CARD_SPAN[0] <= right - joined[-1][0] <= ceiling
         ):
             joined[-1] = (joined[-1][0], right)
         else:
@@ -860,7 +891,7 @@ def card_groups(png: bytes) -> list[list[int]]:
         elif not lit and start is not None:
             pieces.append((start, x))
             start = None
-    spans = [span for span in _rejoined(pieces) if span[1] - span[0] >= CARD_MIN_WIDTH]
+    spans = [span for span in _rejoined(pieces, columns) if span[1] - span[0] >= CARD_MIN_WIDTH]
     if len(spans) > 1 and spans[1][0] - spans[0][1] < CARD_EDGE_GAP:
         spans = spans[1:]
     spans = [span for span in spans if _badged(image, (span[0] + span[1]) // 2)]

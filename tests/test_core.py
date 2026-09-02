@@ -828,13 +828,14 @@ class NightAttackTests(unittest.TestCase):
             assert runner._deploy_night(b"") == ([], [307])
         assert order == ["troops"]
 
-    def test_the_second_stage_does_not_drop_a_machine_that_is_already_out(self) -> None:
-        """The game carries a surviving machine onto the second stage itself.
+    def test_the_second_stage_sends_the_pre_selected_machine_with_one_tap(self) -> None:
+        """The surviving machine's card comes back selected, so the field is tapped, not the card.
 
-        Measured on two recorded second stages, the opening frame shows it
-        beside the second base with its ability bar over its card. Dropping it
-        again spent five retries on its ability button and held the troops
-        behind a machine already fighting.
+        Measured on four recorded second stages: the card is drawn at the
+        selected width with a white border, and the loop's camera drag has
+        usually sent it already. Dropping it the usual way spent five retries on
+        its ability button and held the troops behind a machine already
+        fighting; a tap on the card would only deselect it.
         """
         runner = self._runner()
         order: list[str] = []
@@ -847,6 +848,7 @@ class NightAttackTests(unittest.TestCase):
             patch.object(AttackRunner, "_night_plan", return_value=plans.night_flat()),
             patch.object(AttackRunner, "_flank", return_value=DEPLOY_LINES["top_left"]),
             patch.object(attack, "deploy_line", return_value=[(600, 110)]),
+            patch.object(AdbController, "tap", side_effect=lambda *a: order.append("field")),
             patch.object(
                 AttackRunner, "_drop_singles", side_effect=lambda *a, **k: order.append("machine")
             ),
@@ -856,7 +858,21 @@ class NightAttackTests(unittest.TestCase):
             ),
         ):
             assert runner._deploy_night(b"", 1) == ([164], [307])
-        assert order == ["troops"]
+        assert order == ["field", "hold", "troops"]
+
+    def test_a_selected_machine_card_is_still_a_card(self) -> None:
+        """The second stage opens with the machine's card preselected, 118 px wide.
+
+        At the resting ceiling it came apart into two pieces a 1 px sliver of
+        its own border kept from rejoining, and the row read as six troops and
+        no machine on every recorded second stage.
+        """
+        png = (FRAMES / "night_stage2_cards.png").read_bytes()
+        groups = card_groups(png)
+        assert groups == [[164], [307, 433, 560, 686, 813, 939]]
+        slots = [slot for group in groups for slot in group]
+        assert counted_cards(png, slots) == [307, 433, 560, 686, 813, 939]
+        assert live_cards(png, [164]) == [164]
 
     def test_every_live_machine_is_offered_its_ability_whatever_the_drop_read_said(self) -> None:
         """`field_units` misses a machine whose health bar is no longer green.
