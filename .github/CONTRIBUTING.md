@@ -118,7 +118,7 @@ Every structured value is a Pydantic model, collected in `models.py`: no `datacl
 ## Testing
 
 - Tests are written with **pytest** and live under `tests/`.
-- Coverage is gated at **75%**, against a suite that measures about 81%: `ui/main_window.py` is the untested PyQt shell and a seventh of the statements, and everything under it sits around 90%. The parsers read recorded frames, the loops and commands run against a patched emulator, and new logic in either is expected to come with tests of the same shape.
+- Coverage is gated at **75%**, against a suite that measures about 81%: `ui/main_window.py` is the untested PyQt shell and a seventh of the statements, and everything under it sits around 90%. The parsers read recorded frames, the loops and commands run against a patched emulator, and new logic in either is expected to come with tests of the same shape. The gate sits in `addopts`, so a partial run cannot meet it: pass `--no-cov` when running a single file or test.
 - Use `pytest-xdist` for parallel execution where helpful.
 - Recorded frames under `tests/frames/` are the fixtures for the readers. Reduce a real capture to the region being read and fill the rest with a flat colour rather than re-encoding it: these readers turn on exact pixels, and requantising a frame makes a bad one pass and a good one fail.
 - After writing a test, take the fix back out and check it actually fails. A parser test that passes either way is the easiest kind to write by accident.
@@ -126,10 +126,9 @@ Every structured value is a Pydantic model, collected in `models.py`: no `datacl
 Useful commands:
 
 ```bash
-uv run pytest                       # Run all tests
-uv run pytest tests/test_foo.py     # Run a single file
-uv run pytest -k "expression"       # Run tests matching an expression
-uv run pytest --cov                 # Run with coverage
+uv run pytest                                # Run all tests, with coverage and the gate
+uv run pytest --no-cov tests/test_foo.py     # Run a single file
+uv run pytest --no-cov -k "expression"       # Run tests matching an expression
 ```
 
 Add tests for every behavioral change. Bug fixes should include a regression test.

@@ -30,7 +30,7 @@ Read `gh-dev-flow` before starting; it owns the path from a task landing to the 
 ```bash
 uv sync --group test                 # the suite needs the `test` group
 uv run pytest                        # full suite (xdist, coverage gate, JUnit/XML into .github/reports)
-uv run pytest tests/test_core.py::ScoutTests::test_loot_is_read_over_grass      # single test
+uv run pytest --no-cov tests/test_core.py::ScoutTests::test_loot_is_read_over_grass   # single test; the gate is in addopts and a partial run cannot meet it
 make fmt                             # pre-commit: ruff, mdformat, codespell, ty, gitleaks, uv-sync/lock
 make gen-docs                        # rebuild docs/ from the READMEs and the source
 ```
