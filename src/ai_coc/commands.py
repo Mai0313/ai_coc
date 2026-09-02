@@ -23,7 +23,6 @@ from ai_coc import plans
 from ai_coc.models import (
     World,
     MapEdge,
-    HeroKind,
     ProbeRay,
     AppConfig,
     MapSurvey,
@@ -34,6 +33,7 @@ from ai_coc.models import (
     ViewReport,
     WallReport,
     BuildReport,
+    HeroOptions,
     WallOptions,
     WorldReport,
     AttackReport,
@@ -46,8 +46,10 @@ from ai_coc.models import (
     BuilderReport,
     CollectReport,
     DisplayTarget,
+    DonateOptions,
     BoundarySurvey,
     LootThresholds,
+    UpgradeOptions,
     StorageCapacity,
 )
 from ai_coc.constants import STOP_FLAG, COC_PACKAGE
@@ -56,7 +58,7 @@ from ai_coc.adapters.ai import GeminiClient
 # A runtime import rather than a TYPE_CHECKING one: `FrameTicker` declares it as
 # a field, and a model whose field type is only importable to a type checker
 # cannot be built at all.
-from ai_coc.adapters.adb import AdbController, AdbControlError
+from ai_coc.adapters.adb import ZOOM_PINCHES, AdbController, AdbControlError
 from ai_coc.parsers.clan import donatable_cards
 from ai_coc.parsers.hero import hero_cards
 from ai_coc.parsers.home import builder_jobs, free_builders, collect_bubbles
@@ -76,6 +78,7 @@ from ai_coc.parsers.scout import (
     attack_menu_open,
     storage_capacity,
     idle_disconnected,
+    read_builder_stock,
 )
 from ai_coc.parsers.world import current_world
 from ai_coc.adapters.config import ConfigStore
@@ -105,6 +108,19 @@ def _controller() -> AdbController:
     return mumu.controller(mumu.ensure_coc(instances[0].index).adb_serial)
 
 
+def _session(frame_dir: Path | None = None) -> tuple[AdbController, DisplayTarget]:
+    """What every headless loop starts from: the game's controller, its display, and a frame directory that exists.
+
+    The directory is made here rather than left to the loop because every loop
+    takes `frame_dir: Path | None` and reads None as "do not save"; one that
+    is not None is expected to be writable by the first capture.
+    """
+    adb = _controller()
+    if frame_dir is not None:
+        frame_dir.mkdir(parents=True, exist_ok=True)
+    return adb, adb.display_for(COC_PACKAGE)
+
+
 # How long to give MuMu to actually take an instance down. `control restart`
 # returns as soon as the request is sent, so the state read a moment later is
 # still the old one — and `ensure_coc` skips its whole boot wait for anything
@@ -124,7 +140,7 @@ def _await_shutdown(mumu: MuMuAdapter, index: int) -> None:
     """
     for _ in range(SHUTDOWN_POLLS):
         time.sleep(SHUTDOWN_GAP)
-        current = next((item for item in mumu.enumerate_instances() if item.index == index), None)
+        current = mumu.instance(index)
         if current is not None and not current.android_started:
             return
     logger.warning("MuMu instance %s never went down; bringing the game up anyway", index)
@@ -269,8 +285,6 @@ WORLD_SETTLE_POLLS = 8
 # the player's own pacing rather than a measurement: the cart accumulates, so
 # the only cost of waiting is the risk of it capping out.
 CART_EVERY = 3
-# How long the camera takes to settle after a pinch.
-PINCH_SETTLE = 1.5
 # How often the barracks wait looks up to see whether it has been stood down.
 # Sleeping through the whole minute in one go would leave a stop unnoticed for
 # most of it, which reads as a stop that did nothing.
@@ -349,13 +363,6 @@ RESTART_POLLS = 45
 RESTART_POLL_GAP = 4.0
 
 
-# How many pinches to spend putting the camera back. `view`'s docstring measured
-# one gesture as covering the whole range and a second as changing nothing, so
-# two is that plus a spare — the cost is a second and the alternative is every
-# battle of the rest of the run landing nothing.
-RESTART_ZOOM_PINCHES = 2
-
-
 def _settle_game(
     adb: AdbController, polls: int, should_stop: Callable[[], bool] = lambda: False
 ) -> DisplayTarget | None:
@@ -406,7 +413,7 @@ def _settle_game(
             # row unreadable, which had `read_stock` call an ordinary village no
             # village at all.
             if current_world(adb.screenshot(display)) is not None:
-                adb.zoom("out", RESTART_ZOOM_PINCHES, COC_PACKAGE, display)
+                adb.zoom("out", ZOOM_PINCHES, COC_PACKAGE, display)
                 return display
             waiting = "the village has not painted yet"
         logger.debug("Still waiting for the game: %s", waiting)
@@ -551,10 +558,10 @@ def _pick_world(adb: AdbController, display: DisplayTarget, wanted: World | None
 
     **An unreadable frame is never fatal**, whether or not a village was named,
     because it is not the same answer as "the other village". The runner has its
-    own answers for most of them: `_open_attack_menu` and `_open_night_attack`
-    restart a dropped game, leave a result screen, press a popup away and sail
-    across, and every one of those is a state `current_world` says nothing for.
-    Bailing here ends a whole series before round one.
+    own answers for most of them: `_open_attack_menu` restarts a dropped game,
+    leaves a result screen, presses a popup away and sails across, and every
+    one of those is a state `current_world` says nothing for. Bailing here ends
+    a whole series before round one.
 
     Measured twice, and the second one is why this covers a named village too.
     Without a name it already fell through here. With one it did not, so a run
@@ -564,7 +571,7 @@ def _pick_world(adb: AdbController, display: DisplayTarget, wanted: World | None
 
     **What this buys is the rounds, not the round.** A battle is the one state
     neither this nor the runner can shorten: `uncovered` refuses to press at one
-    and `_open_night_attack` spends its five attempts in about ten seconds, so
+    and `_open_attack_menu` spends its five attempts in about ten seconds, so
     that first round still reports 畫面不在建築大師基地. What follows it is the
     difference — `IDLE_REST` between rounds outlasts a battle comfortably, and
     the next round finds the village. A single-round run gets nothing out of
@@ -831,14 +838,9 @@ def probe(frame_dir: Path | None = None) -> BoundarySurvey:
     Spends a battle to answer one question the recorded frames cannot: whether
     the red line the parser found is the line the game is enforcing.
     """
-    adb = _controller()
-    if frame_dir is not None:
-        frame_dir.mkdir(parents=True, exist_ok=True)
+    adb, display = _session(frame_dir)
     runner = _BoundarySurvey(
-        adb=adb,
-        display=adb.display_for(COC_PACKAGE),
-        thresholds=LootThresholds(),
-        frame_dir=frame_dir,
+        adb=adb, display=display, thresholds=LootThresholds(), frame_dir=frame_dir
     )
     runner.run()
     logger.info("Boundary survey: %s", runner.survey.agreement)
@@ -859,7 +861,7 @@ MAP_PROBES = 8
 class _MapSurvey(AttackRunner):
     """An attack spent measuring how far out the game will still take a drop.
 
-    `VILLAGE_GRID` was calibrated by overlaying candidates on live frames until
+    `DEPLOY_BOUND` was calibrated by overlaying candidates on live frames until
     they sat on the ground's own edge, which is the sort of number a screenshot
     cannot argue with. This is the argument: walk inwards along a ray until a
     troop lands, and that is where the map really ends. It is worth re-running
@@ -926,15 +928,8 @@ class _MapSurvey(AttackRunner):
 
 def bounds(frame_dir: Path | None = None) -> MapSurvey:
     """Spend a battle finding where the map really ends, and fit a diamond to it."""
-    adb = _controller()
-    if frame_dir is not None:
-        frame_dir.mkdir(parents=True, exist_ok=True)
-    runner = _MapSurvey(
-        adb=adb,
-        display=adb.display_for(COC_PACKAGE),
-        thresholds=LootThresholds(),
-        frame_dir=frame_dir,
-    )
+    adb, display = _session(frame_dir)
+    runner = _MapSurvey(adb=adb, display=display, thresholds=LootThresholds(), frame_dir=frame_dir)
     runner.run()
     logger.info("Map survey: %s", runner.survey.summary)
     return runner.survey
@@ -954,12 +949,10 @@ def walls(options: WallOptions) -> WallReport:
     second mechanism of its own.
     """
     _clear_stop()
-    adb = _controller()
-    if options.frame_dir is not None:
-        options.frame_dir.mkdir(parents=True, exist_ok=True)
+    adb, display = _session(options.frame_dir)
     runner = WallRunner(
         adb=adb,
-        display=adb.display_for(COC_PACKAGE),
+        display=display,
         keep_gold=options.keep_gold,
         keep_elixir=options.keep_elixir,
         rounds=options.rounds,
@@ -996,12 +989,8 @@ def builders(frame_dir: Path | None = None) -> BuilderReport:
     read-only and costs three captures, so it is cheap enough to ask before
     deciding whether a run is worth starting at all.
     """
-    adb = _controller()
-    if frame_dir is not None:
-        frame_dir.mkdir(parents=True, exist_ok=True)
-    report = UpkeepRunner(
-        adb=adb, display=adb.display_for(COC_PACKAGE), frame_dir=frame_dir
-    ).builders()
+    adb, display = _session(frame_dir)
+    report = UpkeepRunner(adb=adb, display=display, frame_dir=frame_dir).builders()
     logger.info("Builders: %s", report.message)
     return report
 
@@ -1013,10 +1002,7 @@ def collect(frame_dir: Path | None = None) -> CollectReport:
     most of its time doing nothing. This is the cheapest thing in the project to
     run and the one worth running most often.
     """
-    adb = _controller()
-    if frame_dir is not None:
-        frame_dir.mkdir(parents=True, exist_ok=True)
-    display = adb.display_for(COC_PACKAGE)
+    adb, display = _session(frame_dir)
     # **The builder base has no collectors to sweep and one cart instead.** Its
     # elixir is paid into that cart rather than into the storages, so this is
     # the same job on that village even though it shares none of the machinery:
@@ -1033,46 +1019,36 @@ def collect(frame_dir: Path | None = None) -> CollectReport:
     return report
 
 
-def upgrade(
-    frame_dir: Path | None = None,
-    keep_gold: int = 0,
-    keep_elixir: int = 0,
-    at: list[tuple[int, int]] | None = None,
-    only: str = "",
-) -> BuildReport:
+def upgrade(options: UpgradeOptions) -> BuildReport:
     """Put the village's idle builders to work, with no window in the way.
 
     A builder standing around is the one thing a village cannot buy its way out
     of, so this is worth running whenever an upgrade finishes. Walls are left to
     `walls`, which needs no builder at all.
     """
-    adb = _controller()
+    adb, display = _session(options.frame_dir)
     config = ConfigStore().load()
-    if frame_dir is not None:
-        frame_dir.mkdir(parents=True, exist_ok=True)
     report = UpkeepRunner(
         adb=adb,
-        display=adb.display_for(COC_PACKAGE),
-        frame_dir=frame_dir,
-        keep_gold=keep_gold,
-        keep_elixir=keep_elixir,
-        at=at or [],
+        display=display,
+        frame_dir=options.frame_dir,
+        keep_gold=options.keep_gold,
+        keep_elixir=options.keep_elixir,
+        at=options.at,
         # Skipped when the run was told where to look, for the reason the wall
         # loop skips it: the whole point of asking is to find them.
-        ai=None if at else _planner(config),
+        ai=None if options.at else _planner(config),
         # Always, because it answers the one question the parsers cannot: which
         # building this is. `--only` needs it, and without it the report is a
         # coordinate.
         namer=_planner(config, "lite"),
-        only=only,
+        only=options.only,
     ).upgrade()
     logger.info("Upgrade: %s", report.message)
     return report
 
 
-def hero(
-    frame_dir: Path | None = None, which: HeroKind | None = None, at: tuple[int, int] | None = None
-) -> HeroReport:
+def hero(options: HeroOptions) -> HeroReport:
     """Read the 英雄殿堂, and raise the hero named, with no window in the way.
 
     Reading is the default and spends nothing: what each hero costs next is the
@@ -1080,41 +1056,37 @@ def hero(
     expensive kind of idle builder — a hero level runs for the better part of a
     day, so one not started this evening is one not finished tomorrow.
 
-    `which` is what turns it into a purchase, and only ever for the hero named:
-    which hero is worth raising is a judgement about how the village plays, not
-    something a price can settle.
+    `upgrade` is what turns it into a purchase, and only ever for the hero
+    named: which hero is worth raising is a judgement about how the village
+    plays, not something a price can settle.
     """
-    adb = _controller()
-    if frame_dir is not None:
-        frame_dir.mkdir(parents=True, exist_ok=True)
+    adb, display = _session(options.frame_dir)
     report = HeroRunner(
         ai=_planner(ConfigStore().load()),
         adb=adb,
-        display=adb.display_for(COC_PACKAGE),
-        frame_dir=frame_dir,
-        hero=which,
-        at=at,
+        display=display,
+        frame_dir=options.frame_dir,
+        hero=options.upgrade,
+        at=options.at,
     ).run()
     logger.info("Hero: %s", report.message)
     return report
 
 
-def donate(frame_dir: Path | None = None, dry_run: bool = False, rounds: int = 0) -> DonateReport:
+def donate(options: DonateOptions) -> DonateReport:
     """Give troops to whoever in the clan is asking, with no window in the way.
 
     Cheap to run and cheap to find nothing: a clan with no request open costs one
     tap on the chat tab and one capture. `dry_run` walks the whole path and stops
     before the tap that gives something away, because the panel does not confirm.
     """
-    adb = _controller()
-    if frame_dir is not None:
-        frame_dir.mkdir(parents=True, exist_ok=True)
+    adb, display = _session(options.frame_dir)
     report = ClanRunner(
         adb=adb,
-        display=adb.display_for(COC_PACKAGE),
-        frame_dir=frame_dir,
-        dry_run=dry_run,
-        rounds=rounds,
+        display=display,
+        frame_dir=options.frame_dir,
+        dry_run=options.dry_run,
+        rounds=options.rounds,
     ).donate()
     logger.info("Donate: %s", report.message)
     return report
@@ -1213,6 +1185,7 @@ def read(png: bytes) -> FrameReading:
         world=current_world(png),
         scout=read_scout(png),
         stock=read_stock(png),
+        builder_stock=read_builder_stock(png),
         capacity=StorageCapacity(
             gold=storage_capacity(png, 0),
             elixir=storage_capacity(png, 1),

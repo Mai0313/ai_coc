@@ -28,6 +28,7 @@ import logging
 
 from ai_coc.models import Crossing
 from ai_coc.constants import COC_PACKAGE
+from ai_coc.adapters.adb import ZOOM_PINCHES
 from ai_coc.parsers.scout import battle_over, card_groups, loot_cart_open, read_builder_stock
 from ai_coc.parsers.world import current_world
 
@@ -73,12 +74,6 @@ SAIL_GAP = 1.5
 # none: `back` cannot hurry that, so more presses would only be more waiting.
 UNCOVER_TRIES = 3
 UNCOVER_SETTLE = 1.5
-
-# Every coordinate in this project was measured at the game's far zoom, and the
-# swiping above leaves the camera at a corner whether or not the boat was found.
-# Zooming out is what puts it back, and it centres the village as a side effect,
-# so it goes in on both paths.
-CROSS_ZOOM_PINCHES = 2
 
 
 # The loot cart, moored on the grass beside the builder base's own boat and so
@@ -143,7 +138,10 @@ def collect_cart(adb: AdbController, display: DisplayTarget) -> int:
             return 0
         after = read_builder_stock(adb.screenshot(display))
     finally:
-        adb.zoom("out", CROSS_ZOOM_PINCHES, COC_PACKAGE, display)
+        # The swiping above leaves the camera at a map corner whether or not the
+        # cart was found, and every coordinate in this project was measured at
+        # the far zoom. Zooming out puts it back and centres the village with it.
+        adb.zoom("out", ZOOM_PINCHES, COC_PACKAGE, display)
     if before is None or after is None:
         logger.warning("The storage bars would not read either side of the cart")
         return 0
@@ -236,4 +234,6 @@ def cross(adb: AdbController, display: DisplayTarget, want: World) -> World | No
         # asking the same question again: one of those is 0.6-0.8 s here.
         return cleared
     finally:
-        adb.zoom("out", CROSS_ZOOM_PINCHES, COC_PACKAGE, display)
+        # On both paths, for the reason `collect_cart` gives: the swiping parks
+        # the camera at a corner whether or not the boat was found.
+        adb.zoom("out", ZOOM_PINCHES, COC_PACKAGE, display)

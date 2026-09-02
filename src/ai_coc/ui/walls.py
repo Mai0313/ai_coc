@@ -35,9 +35,8 @@ import logging
 from pydantic import Field
 
 from ai_coc.models import WallMenu, WallBatch, WallReport, WallUpgrade, VillageStock, WallCandidate
-from ai_coc.ui.runner import MENU_SETTLE, GameRunner
+from ai_coc.ui.runner import BUY_SETTLE, MENU_SETTLE, GameRunner
 from ai_coc.parsers.home import free_builders
-from ai_coc.parsers.scout import read_stock
 from ai_coc.parsers.building import wall_menu, game_dialog
 
 if TYPE_CHECKING:
@@ -45,9 +44,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# How long the game takes to charge for a batch and repaint the row, measured
-# against this emulator by walking the menus by hand.
-BUY_SETTLE = 1.5
 # The confirmation slides in, so the first capture after 升級 can miss it.
 DIALOG_TRIES = 4
 DIALOG_WAIT = 0.6
@@ -129,27 +125,19 @@ class WallRunner(GameRunner):
         says nothing about the cheapest one beside it — see `WALL_PITCH` for the
         run this cost. Four taps is what separates "a wall" from "the wall worth
         buying", and they are cheap: the sweep is already open on the village,
-        so each is a tap and a capture.
-
-        **Each tap goes in on a confirmed village frame**, which is the rule the
-        sweep is built around and the reason it reads the storages after every
-        one of its own. A neighbour can be a barracks as easily as a wall, and a
-        tap that opened a full screen would leave the next three landing
-        somewhere inside it.
+        so each is a tap and a capture. A neighbour can be a barracks as easily
+        as a wall, which is what `_opened` is for.
 
         Nothing needs bounds-checking, though. The sweep's own grid stops more
         than a pitch inside every edge these offsets could step over: its lowest
         row is y 500 against the button row at 622, and its columns run 260 to
         1220 on a 1600 px screen.
         """
-        for dx, dy in ((-WALL_PITCH, 0), (WALL_PITCH, 0), (0, -WALL_PITCH), (0, WALL_PITCH)):
-            spot = (point[0] + dx, point[1] + dy)
-            png = self._after_tap(spot, f"near_{spot[0]:04d}_{spot[1]:04d}")
-            if read_stock(png) is None:
-                logger.info("The tap at (%d, %d) covered the village; backing out", *spot)
-                if self._home() is None:
-                    return
-                continue
+        around = [
+            (point[0] + dx, point[1] + dy)
+            for dx, dy in ((-WALL_PITCH, 0), (WALL_PITCH, 0), (0, -WALL_PITCH), (0, WALL_PITCH))
+        ]
+        for spot, png in self._opened(around, "near"):
             menu = wall_menu(png)
             if menu is not None:
                 logger.info("Wall beside it at (%d, %d), asking %d", spot[0], spot[1], menu.price)
@@ -193,25 +181,12 @@ class WallRunner(GameRunner):
         then dutifully chose: measured live, that paid 9 000 000 for a wall
         while 4 000 000 ones stood in the same village.
 
-        **Each tap goes in on a confirmed village frame**, the same rule
-        `_neighbours` follows and for the same reason: these are raw village
-        coordinates, so one that misses a wall opens whatever building is
-        standing there, and a full-screen panel would swallow every tap after
-        it. A hand-named spot misses because the camera has moved since somebody
-        looked; a spotted one misses because it was a guess. Neither is rare.
-
         A point that opens no wall menu is dropped with a line saying so rather
         than tried again — buying whatever is there instead is worse than saying
         nothing is.
         """
         found: list[WallCandidate] = []
-        for point in points:
-            png = self._after_tap(point, f"named_{point[0]:04d}_{point[1]:04d}")
-            if read_stock(png) is None:
-                logger.info("The tap at (%d, %d) covered the village; backing out", *point)
-                if self._home() is None:
-                    return found
-                continue
+        for point, png in self._opened(points, "named"):
             menu = wall_menu(png)
             if menu is None:
                 logger.info("Nothing at (%d, %d) opens a wall menu", *point)

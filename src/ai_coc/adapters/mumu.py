@@ -26,6 +26,15 @@ logger = logging.getLogger(__name__)
 
 T = TypeVar("T", bound=BaseModel)
 
+# How long to give an instance to boot, and how often to look. MuMu reports
+# Android ready a while before its ADB port is listening, so both are waited on.
+BOOT_POLLS = 18
+POLL_GAP = 2.0
+# How long to give a `monkey` launch to produce a process before the instance is
+# restarted and the launch tried again, and how long the second launch gets.
+LAUNCH_POLLS = 5
+RELAUNCH_SETTLE = 3.0
+
 
 class MuMuError(RuntimeError):
     pass
@@ -185,45 +194,46 @@ class MuMuAdapter(BaseModel):
     def launch_coc(self, instance: EmulatorInstance) -> None:
         self.controller(instance.adb_serial).launch_app(COC_PACKAGE)
 
+    def instance(self, index: int) -> EmulatorInstance | None:
+        """One instance by index, or None while MuMu leaves it out of its listing.
+
+        None is a real state rather than an error: MuMu drops an instance from
+        the listing for a moment while it restarts, so a caller waiting on one
+        keeps whatever it last saw rather than giving up.
+        """
+        return next((item for item in self.enumerate_instances() if item.index == index), None)
+
+    def _booted(self, index: int, current: EmulatorInstance) -> EmulatorInstance:
+        """Wait for the instance to report Android up with its ADB port listening."""
+        for _ in range(BOOT_POLLS):
+            time.sleep(POLL_GAP)
+            current = self.instance(index) or current
+            if current.android_started and current.endpoint.ready:
+                break
+        return current
+
     def ensure_coc(self, index: int) -> EmulatorInstance:
         """Bring one MuMu instance to a running CoC screen, recovering stale launches."""
         logger.info("Ensuring Clash of Clans is running on MuMu instance %s", index)
-        items = self.enumerate_instances()
-        current = next((item for item in items if item.index == index), None)
+        current = self.instance(index)
         if current is None:
             raise MuMuError(f"找不到 MuMu instance {index}")
         if not current.android_started:
             self.launch_instance(index)
-            for _ in range(18):
-                time.sleep(2)
-                current = next(
-                    (item for item in self.enumerate_instances() if item.index == index), current
-                )
-                if current.android_started and current.endpoint.ready:
-                    break
+            current = self._booted(index, current)
         self.launch_coc(current)
-        for _ in range(5):
-            time.sleep(2)
-            current = next(
-                (item for item in self.enumerate_instances() if item.index == index), current
-            )
+        for _ in range(LAUNCH_POLLS):
+            time.sleep(POLL_GAP)
+            current = self.instance(index) or current
             if current.coc_running:
                 return current
         # MuMu can report Android ready while the first monkey launch is ignored.
         logger.warning("Clash of Clans did not come up on %s; restarting the instance", index)
         self.restart_instance(index)
-        for _ in range(18):
-            time.sleep(2)
-            current = next(
-                (item for item in self.enumerate_instances() if item.index == index), current
-            )
-            if current.android_started and current.endpoint.ready:
-                break
+        current = self._booted(index, current)
         self.launch_coc(current)
-        time.sleep(3)
-        refreshed = next(
-            (item for item in self.enumerate_instances() if item.index == index), current
-        )
+        time.sleep(RELAUNCH_SETTLE)
+        refreshed = self.instance(index) or current
         if not refreshed.coc_running:
             raise MuMuError("已重啟模擬器，但部落衝突仍未啟動")
         return refreshed

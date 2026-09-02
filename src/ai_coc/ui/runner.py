@@ -24,7 +24,7 @@ from ai_coc.models import ScreenSpots, VillageStock, DisplayTarget
 from ai_coc.prompts import render
 from ai_coc.constants import COC_PACKAGE
 from ai_coc.adapters.ai import GeminiClient
-from ai_coc.adapters.adb import AdbController, AdbControlError
+from ai_coc.adapters.adb import ZOOM_PINCHES, AdbController, AdbControlError
 from ai_coc.parsers.scout import read_stock, idle_disconnected
 from ai_coc.parsers.world import current_world
 from ai_coc.parsers.building import game_dialog
@@ -32,7 +32,7 @@ from ai_coc.parsers.building import game_dialog
 from .world import cross
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Iterable, Iterator
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +40,10 @@ logger = logging.getLogger(__name__)
 # menus by hand: a capture taken 0.8 s after the tap already had the new menu on
 # it, and this leaves room for the emulator being busy.
 MENU_SETTLE = 1.0
+# How long the game takes to charge for something and repaint what it charged
+# for, measured the same way. Walls, buildings and heroes each measured it for
+# themselves and all three came out the same.
+BUY_SETTLE = 1.5
 
 # Where a tap could land on something worth opening. Buildings move between
 # villages and the camera moves within one, so nothing can be remembered: what
@@ -96,11 +100,6 @@ BACK_SETTLE = 1.2
 # the reload to sit through before looking at the screen again.
 RESTART_SETTLE = 2.0
 RELOAD_WAIT = 15.0
-# How many pinches to spend putting the camera back at the far zoom. `view`
-# measured one as covering the whole range and a second as doing nothing, so
-# this is that plus a spare — three seconds against a run that spends minutes
-# sweeping the village.
-ZOOM_PINCHES = 2
 
 
 def restart_game(adb: AdbController, display: DisplayTarget) -> DisplayTarget:
@@ -269,21 +268,42 @@ class GameRunner(BaseModel):
         logger.warning("Never got back to a village that could be tapped")
         return None
 
+    def _opened(
+        self, points: Iterable[tuple[int, int]], label: str
+    ) -> Iterator[tuple[tuple[int, int], bytes]]:
+        """Tap each of these points on the village, handing back the frame each opened.
+
+        Every point here is a raw village coordinate, so one that misses what it
+        was aimed at opens whatever building is standing there — and a
+        full-screen panel would swallow every tap after it. A barracks and a
+        laboratory both do this. The storage bars are the test: a building menu
+        leaves them readable and a full-screen panel does not, so a tap that
+        covered the village is backed out of before the next one goes in, and
+        the walk ends if the village cannot be got back at all.
+
+        One walk for every caller, because every caller has the same problem: a
+        sweep's grid point is a sample of whatever it lands on, a hand-named
+        spot misses because the camera moved since somebody looked, and a
+        spotted one misses because it was a guess. None of those is rare.
+        """
+        for spot in points:
+            png = self._after_tap(spot, f"{label}_{spot[0]:04d}_{spot[1]:04d}")
+            if read_stock(png) is None:
+                logger.info("The tap at (%d, %d) covered the village; backing out", *spot)
+                if self._home() is None:
+                    return
+                continue
+            yield spot, png
+
     def _sweep(
         self, label: str, offset: tuple[int, int] = (0, 0)
     ) -> Iterator[tuple[tuple[int, int], bytes]]:
         """Tap across the village, handing back the frame each tap opened.
 
-        This is the only way to find anything on the map. Every building is its
-        own artwork and gets repainted at each level, layouts differ between
-        villages, and the camera moves — so what is there is discovered by
-        tapping and reading, never by recognising or by remembering.
-
-        A tap that opened a screen rather than a menu is backed out of before the
-        next one goes in, because everything after it would otherwise land
-        somewhere on that screen. A barracks and a laboratory both do this. The
-        storage bars are the test: a building menu leaves them readable and a
-        full-screen panel does not.
+        This is the only way to find anything on the map without asking. Every
+        building is its own artwork and gets repainted at each level, layouts
+        differ between villages, and the camera moves — so what is there is
+        discovered by tapping and reading, never by recognising or remembering.
 
         **The grid steps further than a small building is wide, so one pass is a
         sample rather than a search.** At `SWEEP_STAGGER` it lands between four
@@ -295,18 +315,15 @@ class GameRunner(BaseModel):
         dropped rather than clamped, because a clamped one lands on a point the
         other pass already covered.
         """
-        for y in SWEEP_Y:
-            for x in SWEEP_X:
-                spot = (x + offset[0], y + offset[1])
-                if spot[0] > SWEEP_LIMIT[0] or spot[1] > SWEEP_LIMIT[1]:
-                    continue
-                png = self._after_tap(spot, f"{label}_{spot[0]:04d}_{spot[1]:04d}")
-                if read_stock(png) is None:
-                    logger.info("The tap at (%d, %d) covered the village; backing out", *spot)
-                    if self._home() is None:
-                        return
-                    continue
-                yield spot, png
+        yield from self._opened(
+            (
+                (x + offset[0], y + offset[1])
+                for y in SWEEP_Y
+                for x in SWEEP_X
+                if x + offset[0] <= SWEEP_LIMIT[0] and y + offset[1] <= SWEEP_LIMIT[1]
+            ),
+            label,
+        )
 
     def _spotted(self, what: str, notes: str, count: int) -> list[tuple[int, int]]:
         """Ask Gemini where these are on the village. Empty means nobody could say.
