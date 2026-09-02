@@ -17,8 +17,6 @@ from PIL import Image, ImageChops
 
 logger = logging.getLogger(__name__)
 
-SCREEN_SIZE = (1600, 900)
-
 # Where `view_shift` looks and how far. The box is battlefield in the middle of
 # the screen with none of the UI in it, and the limit leaves room for the crop to
 # slide without running off the edges. Fifteen steps put a 110 px drag — the most

@@ -23,14 +23,12 @@ is off screen would read whatever the neighbour's button spelled.
 
 from __future__ import annotations
 
-import io
 from typing import TYPE_CHECKING, Literal
 import logging
 import itertools
 
-from PIL import Image
-
 from ai_coc.models import HeroCard, HeroKind
+from ai_coc.parsers.frame import open_frame
 from ai_coc.parsers.scout import digits_from
 from ai_coc.parsers.building import (
     ICON_OFFSET,
@@ -46,9 +44,9 @@ from ai_coc.parsers.building import (
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
-logger = logging.getLogger(__name__)
+    from PIL import Image
 
-SCREEN_SIZE = (1600, 900)
+logger = logging.getLogger(__name__)
 
 # The band across each card's banner that carries nothing but its theme colour.
 # The hero's weapon badge stops above it and the name is written below it, so
@@ -197,9 +195,7 @@ def hall_buttons(png: bytes) -> list[tuple[int, int]]:
     The one place that must never be tapped is a blue plate, which spends gems
     or a magic item, and those are dropped here rather than left to the caller.
     """
-    image = Image.open(io.BytesIO(png)).convert("RGB")
-    if image.size != SCREEN_SIZE:
-        raise ValueError(f"建築選單座標只適用 1600x900，收到 {image.size[0]}x{image.size[1]}")
+    image = open_frame(png)
     found: list[tuple[int, int]] = []
     for test in (_is_gold, _is_elixir):
         for icon in _icon_centres(image, test):
@@ -219,7 +215,7 @@ def hall_buttons(png: bytes) -> list[tuple[int, int]]:
 
 def can_scroll(png: bytes, arrow: tuple[int, int]) -> bool:
     """Whether the row still has an arrow at this end to be tapped."""
-    image = Image.open(io.BytesIO(png)).convert("RGB")
+    image = open_frame(png)
     across, down = ARROW_BOX
     box = image.crop((arrow[0] - across, arrow[1] - down, arrow[0] + across, arrow[1] + down))
     data = box.tobytes()
@@ -354,9 +350,7 @@ def hero_cards(png: bytes) -> list[HeroCard]:
     dropped rather than reported, so a screen that merely has coloured plates on
     it comes back with nothing.
     """
-    image = Image.open(io.BytesIO(png)).convert("RGB")
-    if image.size != SCREEN_SIZE:
-        raise ValueError(f"英雄殿堂座標只適用 1600x900，收到 {image.size[0]}x{image.size[1]}")
+    image = open_frame(png)
     cards: list[HeroCard] = []
     for centre, tint in _banners(image):
         hero = _hero(tint)

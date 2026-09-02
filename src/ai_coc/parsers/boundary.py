@@ -13,17 +13,16 @@ crossing in a given direction is exactly the point to drop just outside of.
 
 from __future__ import annotations
 
-import io
 import math
 import logging
 
 from PIL import Image, ImageDraw, ImageChops
 
 from ai_coc.models import DEFAULT_MAP_CENTRE, MapFrame
+from ai_coc.parsers.frame import SCREEN_SIZE, open_frame
 
 logger = logging.getLogger(__name__)
 
-SCREEN_SIZE = (1600, 900)
 # The middle of the battle map at the camera every battle opens on, and the one
 # origin every other measurement here is taken from. Cast twelve rays out of it
 # across an emptied village and the two clean opposite pairs came back 359/367
@@ -32,24 +31,22 @@ SCREEN_SIZE = (1600, 900)
 # one pair of rays is not enough to move a constant everything else is tuned to.
 VILLAGE_CENTRE = DEFAULT_MAP_CENTRE
 
-# Read off live frames by overlaying candidates until they sat on the ground's
-# own edge, across the two themes with the most contrast against their
-# surroundings. The camera does not move between battles, so this is a constant
-# rather than something to detect; see `MapFrame` for what it is good enough for.
-VILLAGE_GRID = MapFrame(centre=VILLAGE_CENTRE, half_width=675, half_height=337)
-# Troops go down outside the grid as well as on it, so the ground the game will
-# accept a drop on is wider than the grid the buildings sit in — and wider than
-# this used to say. `ai_coc bounds` walked six rays inwards from the screen edge
-# and the game took the very first probe on **every one of them**: (1570, 400),
-# (30, 400), (1100, 700), (500, 700), (505, 105) and (1095, 105) all landed. The
-# survey never found the map's edge, because the screen runs out first, so this
-# is a lower bound rather than a measurement of the diamond. Five tiles around
-# the grid would have clamped four of those six back inside.
+# The ground the game will accept a drop on, read off live frames rather than
+# detected in them: the camera does not move between battles, and a village
+# theme repaints the ground the edge runs along. It is wider than the 44x44 grid
+# the buildings sit in (measured at 675 by 337 px from the middle) — and wider
+# than this used to say. `ai_coc bounds` walked six rays inwards from the screen
+# edge and the game took the very first probe on **every one of them**:
+# (1570, 400), (30, 400), (1100, 700), (500, 700), (505, 105) and (1095, 105)
+# all landed. The survey never found the map's edge, because the screen runs
+# out first, so this is a lower bound rather than a measurement of the diamond.
+# The grid widened by five tiles a side, which is where this started, would
+# have clamped four of those six back inside.
 #
 # The diamond is kept rather than dropped for the screen corners, which no ray
 # reaches: (30, 175) is still outside it, which is where a hero pushed out four
 # times ended up and was lost.
-DEPLOY_BOUND = MapFrame(centre=VILLAGE_CENTRE, half_width=1000, half_height=450, tiles=64)
+DEPLOY_BOUND = MapFrame(centre=VILLAGE_CENTRE, half_width=1000, half_height=450)
 
 # Measured on the stroke across four village themes: red sits between 130 and
 # 215 while `red - max(green, blue)` runs 85 to 105, against -20 to -30 for the
@@ -130,7 +127,9 @@ def boundary_reach(
     Swept over 24 recorded battle frames, the two together take the flanks that
     fit from 11 of 96 to 40.
     """
-    image = png if isinstance(png, Image.Image) else Image.open(io.BytesIO(png)).convert("RGB")
+    image = png if isinstance(png, Image.Image) else open_frame(png)
+    # Checked here as well as in `open_frame`, because this is the one reader
+    # that also takes an image somebody else decoded.
     if image.size != SCREEN_SIZE:
         raise ValueError(f"邊界判讀只適用 1600x900，收到 {image.size[0]}x{image.size[1]}")
     # Raw bytes rather than a pixel accessor, the same way `parsers.scout` reads.
@@ -217,9 +216,7 @@ def village_box(png: bytes) -> tuple[int, int, int, int] | None:
     rather than an assumption, and a camera left anywhere else then shows up
     instead of quietly putting the whole army in the wrong place.
     """
-    image = Image.open(io.BytesIO(png)).convert("RGB")
-    if image.size != SCREEN_SIZE:
-        raise ValueError(f"村莊位置判讀只適用 1600x900，收到 {image.size[0]}x{image.size[1]}")
+    image = open_frame(png)
     red, green, blue = image.split()
     score = ImageChops.subtract(red, ImageChops.lighter(green, blue))
     mask = ImageChops.multiply(
@@ -274,7 +271,7 @@ def fitted_line(
     `centre` is where the village is sitting, which the attack loop moves when it
     drags a flank out from behind the card row.
     """
-    image = Image.open(io.BytesIO(png)).convert("RGB")
+    image = open_frame(png)
     middle = ((start[0] + end[0]) // 2, (start[1] + end[1]) // 2)
     moved: list[tuple[int, int]] = []
     radii: list[float] = []
@@ -299,37 +296,3 @@ def fitted_line(
         return None
     logger.info("Flank %s-%s fitted to the boundary as %s", start, end, moved)
     return tuple(moved)
-
-
-def boundary_line(png: bytes, degrees: list[float], margin: int = 24) -> list[tuple[int, int]]:
-    """Points just outside the boundary along each of these rays, worst readings dropped.
-
-    `margin` pushes each point clear of the stroke itself, since the boundary is
-    the last refused tile rather than the first allowed one.
-
-    This is a better opening guess than a fixed flank, not a guarantee: a ray
-    whose boundary lies past the playfield edge never meets it at all, and the
-    deploy loop keeps probing and pushing out behind this for exactly that case.
-    """
-    image = Image.open(io.BytesIO(png)).convert("RGB")
-    reaches = {angle: boundary_reach(image, angle) for angle in degrees}
-    radii = sorted(
-        math.hypot(point[0] - VILLAGE_CENTRE[0], point[1] - VILLAGE_CENTRE[1])
-        for point in reaches.values()
-        if point is not None
-    )
-    if not radii:
-        logger.info("No boundary found on any of %d ray(s)", len(degrees))
-        return []
-    floor = radii[len(radii) // 2] * OUTLIER_RATIO
-    points: list[tuple[int, int]] = []
-    for angle, reach in reaches.items():
-        if reach is None:
-            continue
-        if math.hypot(reach[0] - VILLAGE_CENTRE[0], reach[1] - VILLAGE_CENTRE[1]) < floor:
-            logger.debug("Ray %.0f found %s, too far in to be the boundary", angle, reach)
-            continue
-        dx, dy = math.cos(math.radians(angle)), math.sin(math.radians(angle))
-        points.append((round(reach[0] + dx * margin), round(reach[1] + dy * margin)))
-    logger.info("Boundary read on %d of %d ray(s)", len(points), len(degrees))
-    return points
