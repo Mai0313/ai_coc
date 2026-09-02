@@ -50,6 +50,7 @@ from ai_coc.parsers.scout import (
     skip_offered,
     army_strength,
     counted_cards,
+    selected_cards,
     attack_menu_open,
     storage_capacity,
     idle_disconnected,
@@ -108,13 +109,25 @@ SEARCH_PATIENCE = 150
 SEARCH_ATTEMPTS = 4
 SEARCH_POLL = 3.0
 
-# How often the machine is offered its ability. **The builder base's machine
-# recharges instead of firing once**, so there is no moment to schedule and no
-# per-hero clock to plan: the card is simply tapped for the whole battle and the
-# game takes the taps that are ready. A tap on a card whose unit is not out
-# selects the card and does nothing else, so this is safe on a hero the boundary
-# refused as well.
+# How often the machine is offered its ability, and how often the loop looks at
+# the battle while doing so. **The builder base's machine recharges instead of
+# firing once**, so there is no moment to schedule and no per-hero clock to
+# plan: the card is simply tapped for the whole battle and the game takes the
+# taps that are ready. A tap on a card whose unit is not out selects the card
+# and does nothing else, so this is safe on a machine the boundary refused as
+# well.
+#
+# Measured over three recorded nights, about thirty battles: the ability is
+# ready the moment the machine lands, one tap fires it, the bar the game draws
+# over the card then refills over about 14 s, and a tap during the refill
+# changes nothing — the bar grew monotonically through a tap every 3.5 s on
+# every battle. So the tap is cheap to repeat (one shell round trip, about
+# 50 ms) and only the capture is worth pacing: a frame every `ABILITY_POLL` to
+# see whether the stage is over, a tap every `ABILITY_TAP` in between, which
+# takes the gap between the ability being ready and being fired from up to a
+# whole poll to under a second.
 ABILITY_POLL = 3.0
+ABILITY_TAP = 1.0
 
 # How many times one attack can put an army down. The second is the stage the
 # game opens after a first attack takes the whole base, sending what survived
@@ -2069,19 +2082,35 @@ class AttackRunner(BaseModel):
         )
         return plan
 
-    def _deploy_night(self, frame: bytes) -> tuple[list[int], list[int]] | None:
+    def _deploy_night(self, frame: bytes, stage: int = 0) -> tuple[list[int], list[int]] | None:
         """Put the whole army down one flank, or None if nothing went down at all.
 
-        The machine cards that landed come back on success, and that list is
+        The machine cards still alive come back on success — every one of
+        them, whether or not the drop read said it landed, because the tap that
+        offers an ability is harmless on a card whose unit is not out and the
+        read has missed one that was (see the second stage below). That list is
         empty as readily as it is full — a machine the boundary refused is
         still an attack, because the troops went in. **None is the different
-        answer**: no card row, no troops on it, or a flank that took neither the
-        machine nor a single troop, none
-        of which put anything on the field, and a flank that took neither the
-        machine nor a single troop. Counted as a deployment those
-        rounds reported 已進攻並回營 for a battle nothing was played in, and
-        `commands.attack` took them for real battles too — toward the
+        answer**: no card row, no troops on it, or a first stage whose flank
+        took neither the machine nor a single troop. Counted as a deployment
+        those rounds reported 已進攻並回營 for a battle nothing was played in,
+        and `commands.attack` took them for real battles too — toward the
         emulator restart, toward the loot cart, and past the barracks wait.
+
+        **The second stage opens on a countdown with the surviving machine's
+        card preselected**, so `stage` is what says whether to drop it the
+        usual way. Measured on four recorded second stages the card comes back
+        drawn at the selected width with a white border, and the machine is on
+        the field by the time the row is read — the loop's own camera drag
+        sends a selected card along the swipe. Dropping it again there was five
+        taps on what is by then its ability button, five spots the game
+        answered with 請選擇其他兵種, and `field_units` reading a damaged
+        health bar — darker green, then yellow to red as the health falls — as
+        no bar at all: `never landed`, some fifteen seconds of retries, the
+        troops held behind a machine already fighting. And until `card_groups`
+        could read a selected card at all, the card was missing from the row on
+        every one of those openings, so the machine was offered no ability for
+        the whole stage.
 
         Everything here is the home village's own machinery — the camera, the
         boundary fit, the passes — with the two things the builder
@@ -2140,18 +2169,30 @@ class AttackRunner(BaseModel):
         # pays a settle and a capture before it reads what landed, and a stage
         # with no machine to send has nothing for either of them to say. The head
         # start goes with it, because that is the machine's and nobody else's.
-        landed: list[int] = []
-        if machines:
-            landed, _ = self._drop_singles(
-                machines, line, "machine", self._spots(plan.hero_points, machines)
+        out: list[int] = []
+        spots = self._spots(plan.hero_points, machines)
+        if machines and stage == 0:
+            out, _ = self._drop_singles(machines, line, "machine", spots)
+        elif machines:
+            # The card comes back preselected, so a tap on the field is what
+            # sends it; a tap on the card itself would only deselect it.
+            logger.info("The machine came through from the stage before, preselected; sending it")
+            self._send_selected(
+                machines[0],
+                [spots.get(machines[0], line[len(line) // 2]), *single_spots(line, self._middle)],
             )
-            self._hold(plan.troops_after, landed)
+            out = list(machines)
+        if machines:
+            # Every live card, not only the ones read as landed: the offer is
+            # harmless on a card still holding its unit, and the read misses a
+            # machine that is out whenever its health bar is no longer green.
+            self._hold(plan.troops_after, machines)
         spread = self._spread_night(troops, anchors, pushed)
         # A machine that went down is an attack even if the troops behind it
         # were refused, so only a round with neither on the field answers None.
-        if spread is None and not landed:
+        if spread is None and not out:
             return None
-        return landed, troops
+        return machines, troops
 
     def _offer_ability(self, machines: list[int]) -> None:
         """One tap on each machine card, which the game takes if the ability is ready."""
@@ -2169,10 +2210,33 @@ class AttackRunner(BaseModel):
         if seconds <= 0:
             return
         logger.info("Holding the troops %ds while the machine goes in", seconds)
-        until = time.monotonic() + seconds
-        while (remaining := until - time.monotonic()) > 0:
+        self._offer_for(seconds, machines)
+
+    def _offer_for(self, seconds: float, machines: list[int]) -> None:
+        """Offer every machine its ability once an `ABILITY_TAP` for this long, blind."""
+        for _ in range(max(1, round(seconds / ABILITY_TAP))):
             self._offer_ability(machines)
-            time.sleep(min(ABILITY_POLL, remaining))
+            time.sleep(ABILITY_TAP)
+
+    def _send_selected(self, card: int, spots: list[tuple[int, int]]) -> bool:
+        """Tap the field until a preselected card is no longer selected; True once it went.
+
+        The card's own white border is the verdict, not the health bar: a
+        machine carried into the second stage has whatever health it kept, and
+        `field_units` reads a bar that is no longer green as no bar at all.
+        One blind tap was what a live round paid for — the plan's spot fell
+        outside the smaller second base's ground, the game swallowed it, and
+        the machine sat selected in its card for the whole stage while every
+        ability offer only toggled the selection.
+        """
+        for spot in spots[:DEPLOY_ATTEMPTS]:
+            self.adb.tap(*spot, self.display)
+            time.sleep(DROP_SETTLE)
+            if card not in selected_cards(self._frame("sent"), [card]):
+                return True
+            logger.info("The preselected machine is still in its card after %s", spot)
+        logger.warning("The preselected machine never left its card")
+        return False
 
     def _spread_night(
         self, troops: list[int], anchors: tuple[tuple[int, int], ...], pushed: int
@@ -2232,13 +2296,14 @@ class AttackRunner(BaseModel):
         return line if landed else None
 
     def _wait_out_night(self, machines: list[int], troops: list[int]) -> None:
-        """Sit through the battle, offering every machine its ability on each pass.
+        """Sit through the battle, offering every machine its ability every second.
 
         Blind rather than read, and that is the mode's own shape rather than a
         shortcut: the ability recharges for the whole battle, so there is no
         single moment worth finding and a tap the game is not ready for costs
         one `input` call. A card whose unit never made it onto the field answers
-        the same tap by selecting itself, which does nothing at all.
+        the same tap by selecting itself, which does nothing at all. Only the
+        capture is paced, at `ABILITY_POLL`, because that is what costs.
         """
         deadline = time.monotonic() + BATTLE_TIMEOUT
         shot = self._frame("night-battle")
@@ -2262,8 +2327,7 @@ class AttackRunner(BaseModel):
                 logger.info("The card row was repainted; this stage is over")
                 return
             shot = following
-            self._offer_ability(machines)
-            time.sleep(ABILITY_POLL)
+            self._offer_for(ABILITY_POLL, machines)
         logger.warning("The battle never ended; leaving it to the result screen")
 
     def _next_stage(self) -> bytes | None:
@@ -2329,8 +2393,8 @@ class AttackRunner(BaseModel):
         if battle is None:
             return AttackReport(world="night", message="等不到對手，已放棄這一輪搜尋")
         played = 0
-        for _ in range(NIGHT_PHASES):
-            deployed = self._deploy_night(battle)
+        for stage in range(NIGHT_PHASES):
+            deployed = self._deploy_night(battle, stage)
             if deployed is None:
                 break
             played += 1

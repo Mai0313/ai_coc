@@ -123,6 +123,7 @@ from ai_coc.parsers.scout import (
     skip_offered,
     army_strength,
     counted_cards,
+    selected_cards,
     attack_menu_open,
     storage_capacity,
     night_attack_menu,
@@ -736,8 +737,20 @@ class NightAttackTests(unittest.TestCase):
             patch.object(AdbController, "tap_many") as tapped,
         ):
             runner._wait_out_night([164], [307])
-        # Two passes: the quiet one, then the repaint that ends it.
-        assert tapped.call_count == 1
+        # Two passes: the quiet one, then the repaint that ends it. The quiet
+        # one offers the ability once a second for the length of the poll.
+        assert tapped.call_count == round(attack.ABILITY_POLL / attack.ABILITY_TAP)
+
+    def test_the_head_start_offers_the_ability_every_second(self) -> None:
+        """The recharge is about 14 s and a tap costs 50 ms, so only the capture is paced."""
+        runner = self._runner()
+        with (
+            patch.object(attack.time, "sleep") as slept,
+            patch.object(AdbController, "tap_many") as tapped,
+        ):
+            runner._hold(4, [164])
+        assert tapped.call_count == 4
+        assert slept.call_count == 4
 
     def test_a_stage_with_no_troop_cards_still_ends_on_the_result(self) -> None:
         runner = self._runner()
@@ -815,6 +828,91 @@ class NightAttackTests(unittest.TestCase):
         ):
             assert runner._deploy_night(b"") == ([], [307])
         assert order == ["troops"]
+
+    def test_the_second_stage_sends_the_preselected_machine_from_the_field(self) -> None:
+        """The surviving machine's card comes back selected, so the field is tapped, not the card.
+
+        Measured on five recorded second stages: the card is drawn at the
+        selected width with a white border. Dropping it the usual way spent
+        five retries on its ability button and held the troops behind a machine
+        already fighting; a tap on the card would only deselect it, and one
+        blind tap on the field was swallowed on a live round.
+        """
+        runner = self._runner()
+        order: list[str] = []
+        with (
+            patch.object(AttackRunner, "_settle_camera", return_value=b""),
+            patch.object(AttackRunner, "_settle_zoom", return_value=b""),
+            patch.object(attack, "card_groups", return_value=[[164], [307]]),
+            patch.object(attack, "counted_cards", return_value=[307]),
+            patch.object(attack, "live_cards", return_value=[164]),
+            patch.object(AttackRunner, "_night_plan", return_value=plans.night_flat()),
+            patch.object(AttackRunner, "_flank", return_value=DEPLOY_LINES["top_left"]),
+            patch.object(attack, "deploy_line", return_value=[(600, 110)]),
+            patch.object(attack.time, "sleep"),
+            patch.object(runner, "_frame", return_value=b""),
+            # The first spot is swallowed; the second sends it.
+            patch.object(attack, "selected_cards", side_effect=[[164], []]),
+            patch.object(AdbController, "tap", side_effect=lambda *a: order.append("field")),
+            patch.object(
+                AttackRunner, "_drop_singles", side_effect=lambda *a, **k: order.append("machine")
+            ),
+            patch.object(AttackRunner, "_hold", side_effect=lambda *a: order.append("hold")),
+            patch.object(
+                AttackRunner, "_spread_night", side_effect=lambda *a: order.append("troops") or []
+            ),
+        ):
+            assert runner._deploy_night(b"", 1) == ([164], [307])
+        assert order == ["field", "field", "hold", "troops"]
+
+    def test_a_preselected_card_is_read_by_its_white_border(self) -> None:
+        """The border is what says the next tap on the field deploys this card."""
+        selected = (FRAMES / "night_stage2_cards.png").read_bytes()
+        assert selected_cards(selected, [164, 307]) == [164]
+        resting = (FRAMES / "night_cards.png").read_bytes()
+        assert selected_cards(resting, [164, 307]) == []
+
+    def test_a_selected_machine_card_is_still_a_card(self) -> None:
+        """The second stage opens with the machine's card preselected, 118 px wide.
+
+        At the resting ceiling it came apart into two pieces a 1 px sliver of
+        its own border kept from rejoining, and the row read as six troops and
+        no machine on every recorded second stage.
+        """
+        png = (FRAMES / "night_stage2_cards.png").read_bytes()
+        groups = card_groups(png)
+        assert groups == [[164], [307, 433, 560, 686, 813, 939]]
+        slots = [slot for group in groups for slot in group]
+        assert counted_cards(png, slots) == [307, 433, 560, 686, 813, 939]
+        assert live_cards(png, [164]) == [164]
+
+    def test_every_live_machine_is_offered_its_ability_whatever_the_drop_read_said(self) -> None:
+        """`field_units` misses a machine whose health bar is no longer green.
+
+        Offering the ability only to the cards read as landed left a machine on
+        the field with its ability ready and untouched for the rest of the
+        stage; the tap is harmless on a card still holding its unit.
+        """
+        runner = self._runner()
+        held: list[list[int]] = []
+        with (
+            patch.object(AttackRunner, "_settle_camera", return_value=b""),
+            patch.object(AttackRunner, "_settle_zoom", return_value=b""),
+            patch.object(attack, "card_groups", return_value=[[164], [307]]),
+            patch.object(attack, "counted_cards", return_value=[307]),
+            patch.object(attack, "live_cards", return_value=[164]),
+            patch.object(AttackRunner, "_night_plan", return_value=plans.night_flat()),
+            patch.object(AttackRunner, "_flank", return_value=DEPLOY_LINES["top_left"]),
+            patch.object(attack, "deploy_line", return_value=[(600, 110)]),
+            # The read says nothing landed.
+            patch.object(AttackRunner, "_drop_singles", return_value=([], [])),
+            patch.object(
+                AttackRunner, "_hold", side_effect=lambda seconds, cards: held.append(cards)
+            ),
+            patch.object(AttackRunner, "_spread_night", return_value=[(600, 110)]),
+        ):
+            assert runner._deploy_night(b"") == ([164], [307])
+        assert held == [[164]]
 
     def test_a_full_builder_base_stands_down_before_the_search(self) -> None:
         """Its own ceilings, and asked before the search rather than after it.
