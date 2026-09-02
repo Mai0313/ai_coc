@@ -310,10 +310,15 @@ def _clear_stop() -> None:
 
 
 def _rest(seconds: float) -> bool:
-    """Wait out the barracks, answering whether the wait was cut short."""
+    """Wait out the barracks, answering whether the wait was cut short.
+
+    A stop that lands here is said out loud, because the flag is cleared on
+    the way out and this line is then the only trace it leaves in `run.log`.
+    """
     try:
         for _ in range(int(seconds / STOP_POLL)):
             if stop_requested():
+                logger.info("Stop requested while waiting for the army; ending the series")
                 return True
             time.sleep(STOP_POLL)
     except KeyboardInterrupt:
