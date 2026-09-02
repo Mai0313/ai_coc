@@ -1033,6 +1033,12 @@ class AttackOptions(BaseModel):
     # been waiting for barracks, and worse, the rounds a restart itself costs
     # would feed back and make it restart more often still.
     restart_every: int | None = None
+    # Overrides `AppConfig.stop_at` for one run, with the same `None` against `0`
+    # split: omitted keeps the file's percentage, zero never stands the run
+    # down. Zero is what a test battle against a village the farming has just
+    # filled needs — every storage is past the line, so the file's value would
+    # end the series before it searched, and the code under test never runs.
+    stop_at: int | None = None
 
 
 class AttackSeries(RootModel[list[AttackReport]]):
