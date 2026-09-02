@@ -10,14 +10,13 @@ becomes once a card is selected.
 
 from __future__ import annotations
 
-import io
 import logging
 
-from PIL import Image, ImageChops
+from PIL import ImageChops
+
+from ai_coc.parsers.frame import open_frame
 
 logger = logging.getLogger(__name__)
-
-SCREEN_SIZE = (1600, 900)
 
 # Where `view_shift` looks and how far. The box is battlefield in the middle of
 # the screen with none of the UI in it, and the limit leaves room for the crop to
@@ -43,8 +42,8 @@ def view_shift(before: bytes, after: bytes, drift: tuple[int, int]) -> tuple[int
     and the one case where believing the drag would put every later coordinate
     somewhere the camera never went.
     """
-    first = Image.open(io.BytesIO(before)).convert("L").crop(ALIGN_BOX)
-    second = Image.open(io.BytesIO(after)).convert("L")
+    first = open_frame(before).convert("L").crop(ALIGN_BOX)
+    second = open_frame(after).convert("L")
     best: tuple[float, tuple[int, int]] = (float("inf"), (0, 0))
     for step in range(ALIGN_STEPS + 1):
         moved = (

@@ -5,15 +5,7 @@ from typing import Any, Literal
 from pathlib import Path
 from datetime import UTC, datetime
 
-from pydantic import (
-    Field,
-    BaseModel,
-    RootModel,
-    ConfigDict,
-    AliasChoices,
-    field_validator,
-    model_validator,
-)
+from pydantic import Field, BaseModel, RootModel, ConfigDict, AliasChoices, field_validator
 
 from .constants import (
     LOG_DIR,
@@ -23,8 +15,8 @@ from .constants import (
     DEFAULT_GEMINI_MODEL,
 )
 
-# Village JSON, Battle Scripts and the MuMu CLI all gain fields between game and
-# emulator releases. Models that mirror them allow extras so an unknown field is
+# Village JSON and the MuMu CLI both gain fields between game and emulator
+# releases. Models that mirror them allow extras so an unknown field is
 # preserved instead of failing the import.
 TOLERANT = ConfigDict(extra="allow")
 
@@ -83,8 +75,6 @@ class MapFrame(BaseModel):
     centre: tuple[int, int]
     half_width: int
     half_height: int
-    # The home village grid, which is what the map is drawn from.
-    tiles: int = 44
 
     def contains(self, point: tuple[int, int]) -> bool:
         return (
@@ -110,30 +100,6 @@ class MapFrame(BaseModel):
         return (
             self.centre[0] + int(dx / span * self.half_width),
             self.centre[1] + int(dy / span * self.half_height),
-        )
-
-    def grown(self, tiles: int) -> MapFrame:
-        """The same diamond widened by a number of tiles on every side."""
-        scale = (self.tiles + 2 * tiles) / self.tiles
-        return MapFrame(
-            centre=self.centre,
-            half_width=round(self.half_width * scale),
-            half_height=round(self.half_height * scale),
-            tiles=self.tiles + 2 * tiles,
-        )
-
-    def tile(self, point: tuple[int, int]) -> tuple[float, float]:
-        """Grid coordinates for a screen point, the axes running along the edges."""
-        across = (point[0] - self.centre[0]) / (self.half_width / self.tiles)
-        down = (point[1] - self.centre[1]) / (self.half_height / self.tiles)
-        return ((across + down) / 2 + self.tiles / 2, (down - across) / 2 + self.tiles / 2)
-
-    def pixel(self, tile: tuple[float, float]) -> tuple[int, int]:
-        """Where one grid cell's corner sits on screen; the inverse of `tile`."""
-        column, row = tile[0] - self.tiles / 2, tile[1] - self.tiles / 2
-        return (
-            round(self.centre[0] + (column - row) * self.half_width / self.tiles),
-            round(self.centre[1] + (column + row) * self.half_height / self.tiles),
         )
 
 
@@ -553,7 +519,7 @@ class MapEdge(BaseModel):
 class MapSurvey(BaseModel):
     """Where the game really stopped taking drops, and what a diamond fitted to it looks like.
 
-    `VILLAGE_GRID` was calibrated by eye against an assumed centre, which is
+    `DEPLOY_BOUND` was calibrated by eye against an assumed centre, which is
     exactly the sort of number that cannot be argued with from a screenshot. This
     is how to argue with it: drop troops inwards along each ray until one lands.
 
@@ -695,8 +661,8 @@ class AttackStep(BaseModel):
     tap can move it. Anything can be interleaved with anything: troops, a rage,
     then the rest of the heroes is just three lines in a list.
 
-    **Every field is required**, which is the same lesson `HeroOrder` and the
-    old plan carry: a field with a default is optional in the JSON schema and
+    **Every field is required**, which is the lesson the old plan's optional
+    fields taught: a field with a default is optional in the JSON schema and
     Gemini leaves those out. So a step that does not need one says so rather
     than omitting it — `who` is `unknown` outside `hero` and `ability`, `at` is
     empty for `ability` and `wait`, and `seconds` is 0 for everything but
@@ -718,36 +684,6 @@ class AttackStep(BaseModel):
     # any absolute moment. What the loop spent getting here is already spent, so
     # counting from the opening would hand the difference to the battle.
     seconds: int = Field(ge=0, le=180)
-
-
-class HeroOrder(BaseModel):
-    """One hero card: who holds it, where that hero goes, and when it fires.
-
-    All three used to live somewhere else. Which hero was a bare name on the
-    plan, where they went was the middle of the drop line for every one of
-    them, and when to fire was a table of per-kind constants in the settings
-    file. That table was a guess made without seeing the village — the same
-    thing the planner does, minus the village — so it now answers all three at
-    once, per card, against the layout in front of it.
-
-    Grouping them is what makes the second one possible at all. Heroes do
-    different jobs in the same attack: one or two walk the outside clearing the
-    stray buildings that pull an army off course, the rest go in behind the
-    troops. A single point for the lot of them cannot express that, and a list
-    of points beside a list of names would have to be kept in step by hand.
-    """
-
-    model_config = ConfigDict(frozen=True)
-
-    kind: HeroKind
-    drop: ScreenPoint
-    # Seconds after **this hero lands**, not after the attack opens: that is what
-    # a queen's cloak is worth timing against, and the leading card lands a whole
-    # troop deployment before the rest. Read it as the earliest moment rather
-    # than the exact one — the loop is single threaded and nothing on the clock
-    # runs until the last hero is down, so anything shorter than the deployment
-    # is served the moment it ends.
-    ability_after: int = Field(ge=0, le=180)
 
 
 class GeminiSetting(BaseModel):
@@ -840,32 +776,6 @@ class AppConfig(BaseModel):
     # More usefully, a tier *is* a `GeminiSetting`, so building a client stopped
     # being four lines of copying one field name onto another.
     gemini: GeminiSettings = GeminiSettings()
-
-    @model_validator(mode="before")
-    @classmethod
-    def _lift_flat_keys(cls, value: Any) -> Any:  # noqa: ANN401 - arbitrary saved JSON
-        """Carry a file written before the tiers existed into the nested shape.
-
-        An alias cannot do this: the old keys were flat and the new ones live a
-        level down, so there is nowhere for `AliasChoices` to point. It only ever
-        fills in what the file has not already said, and `ConfigStore.load()`
-        writes the result back on the next run, so a file upgrades itself once
-        and this stops firing.
-        """
-        if not isinstance(value, dict) or "gemini" in value:
-            return value
-        moved = {
-            field: value[key]
-            for key, field in (
-                ("gemini_model", "model"),
-                ("gemini_endpoint", "base_url"),
-                ("gemini_thinking", "thinking_level"),
-            )
-            if key in value
-        }
-        # Only `main` is carried over. The old file had one model because there
-        # was one kind of call, and it was that one.
-        return {**value, "gemini": {"main": moved}} if moved else value
 
 
 class AttackPlan(BaseModel):
@@ -1555,6 +1465,44 @@ class WallOptions(BaseModel):
     at: list[tuple[int, int]] = Field(default_factory=list)
 
 
+class UpgradeOptions(BaseModel):
+    """What one `upgrade` command was told to do."""
+
+    frame_dir: Path | None = None
+    # What to leave in the storages rather than spend, as for the walls.
+    keep_gold: int = 0
+    keep_elixir: int = 0
+    # The buildings this run was pointed at, instead of asking and then
+    # sweeping for them. Empty means find them.
+    at: list[tuple[int, int]] = Field(default_factory=list)
+    # Only a building whose name contains this; empty takes the dearest
+    # affordable one, which is what the loop did before names existed.
+    only: str = ""
+
+
+class HeroOptions(BaseModel):
+    """What one `hero` command was told to do."""
+
+    frame_dir: Path | None = None
+    # Which hero to raise. None reads the hall and starts nothing, which is the
+    # half of the command worth running on its own: what each hero costs next
+    # is the number the decision rests on, and reading it spends nothing.
+    upgrade: HeroKind | None = None
+    # Where the hall is, for a run that already knows.
+    at: tuple[int, int] | None = None
+
+
+class DonateOptions(BaseModel):
+    """What one `donate` command was told to do."""
+
+    frame_dir: Path | None = None
+    # Walk the whole path and stop before the tap that gives anything away,
+    # because the panel confirms nothing.
+    dry_run: bool = False
+    # 0 gives until the request is full or the village has nothing left.
+    rounds: int = 0
+
+
 class FrameReading(BaseModel):
     """Everything the parsers make of one frame, for the `read` command.
 
@@ -1569,6 +1517,11 @@ class FrameReading(BaseModel):
     world: World | None = None
     scout: ScoutView | None = None
     stock: VillageStock | None = None
+    # The builder base's own two rows, which `stock` misreads: its gems bar
+    # sits at the y the dark row is read from, so `stock` answers there with a
+    # third number that is not a resource. Which of the two to believe is what
+    # `world` says.
+    builder_stock: VillageStock | None = None
     # What each bar's tooltip says it holds when full, which is empty on a frame
     # with no tooltip open — meaning every frame but the ones taken during a
     # ceiling read, since opening one takes a tap.

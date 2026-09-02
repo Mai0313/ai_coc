@@ -31,10 +31,9 @@ class _Configured(logging.NullHandler):
 class _RunFileHandler(logging.FileHandler):
     """One run's own file, marked by its type so the next run can take it away.
 
-    A subclass rather than a flag on the instance, which is how the rotating
-    handler is already found below. The window opens a run per job, and without
-    the removal its tenth job would still be writing into the first job's
-    directory as well.
+    A subclass rather than a flag on the instance, which is what `_attach_run`
+    finds it by. The window opens a run per job, and without the removal its
+    tenth job would still be writing into the first job's directory as well.
     """
 
 

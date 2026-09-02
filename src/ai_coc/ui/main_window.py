@@ -50,7 +50,6 @@ from ai_coc.models import (
     Frame,
     RunLog,
     ChatRole,
-    AppConfig,
     AgentAction,
     ChatMessage,
     AttackReport,
@@ -61,7 +60,6 @@ from ai_coc.models import (
     UiElementList,
     AccountRowList,
     ChatTranscript,
-    GeminiSettings,
     LootThresholds,
     AccountSnapshot,
     EmulatorInstance,
@@ -80,7 +78,7 @@ from ai_coc.constants import (
     DEFAULT_GEMINI_MODEL,
     AGENT_PROFILE_VERSION,
 )
-from ai_coc.adapters.ai import AGENT_PROFILE, GeminiClient, vision_prompt
+from ai_coc.adapters.ai import AGENT_PROFILE, GeminiClient
 from ai_coc.adapters.mumu import MuMuAdapter
 from ai_coc.logging_setup import configure_logging
 from ai_coc.adapters.config import ConfigStore
@@ -113,64 +111,6 @@ NEXT_CYCLE_DELAY = 3000
 LIVE_INTERVAL = 500
 # Taken from the model so the picker cannot drift from what Gemini accepts.
 THINKING_LEVELS = list(get_args(ThinkingLevel))
-# What the registry used to hold, read once so a machine that has been running
-# this for months keeps its settings when they move into the config file. Saving
-# through the window is what writes the file, so without this step the first
-# terminal run after the upgrade would use the defaults and say nothing.
-#
-# **The registry's own stop_gold/stop_elixir/stop_dark are deliberately not
-# carried over.** Those were amounts and the setting is now a share of what the
-# storage holds, and there is no conversion between them without a ceiling —
-# which only the running game can answer. Reading one here would mean driving
-# the emulator from a migration step, and the number those keys hold is the one
-# this change exists to stop trusting: both sets measured stale, the home
-# village's against a cap that had grown past it and the builder base's against
-# a real elixir ceiling 22% higher. The default is the better value.
-THRESHOLD_KEYS = ("min_gold", "min_elixir", "min_dark")
-
-
-def _migrated_config(settings: QSettings) -> AppConfig | None:
-    """The registry's own values as an `AppConfig`, or None if it holds none."""
-    if not any(settings.contains(key) for key in (*THRESHOLD_KEYS, "gemini_model")):
-        return None
-    defaults = AppConfig()
-    endpoint = str(settings.value("gemini_endpoint", ""))
-
-    def saved(key: str, fallback: int) -> int:
-        return int(settings.value(key, fallback))
-
-    return AppConfig(
-        thresholds=LootThresholds(**{
-            key: saved(key, getattr(defaults.thresholds, key)) for key in THRESHOLD_KEYS
-        }),
-        gemini=GeminiSettings(
-            main=GeminiSetting(
-                model=str(settings.value("gemini_model", defaults.gemini.main.model)),
-                # The OpenAI-compatible endpoint the previous release defaulted to is not
-                # a google-genai base URL. This is the one moment it could be carried
-                # forward, so it is the moment to drop it: past here the terminal reads
-                # the file directly and has no window to filter it on the way through.
-                base_url="" if "openai" in endpoint.lower() else endpoint,
-            )
-        ),
-    )
-
-
-def migrate_settings() -> None:
-    """Move whatever the registry still holds into the config file, once.
-
-    Called from `main()` before anything else reads the file, rather than from
-    the window alone: a terminal run can easily be the first thing to look after
-    an upgrade, and it would otherwise find no file and use the defaults while
-    the user's own settings sat in the registry unread.
-    """
-    store = ConfigStore()
-    if store.path.is_file():
-        return
-    migrated = _migrated_config(QSettings(ORGANISATION, "CoCAIController"))
-    if migrated is not None:
-        store.save(migrated)
-        logger.info("Carried the saved settings over into %s", store.path)
 
 
 class MainWindow(QMainWindow):
@@ -852,7 +792,6 @@ class MainWindow(QMainWindow):
         text = QLabel(
             f"<h1>{APP_NAME}</h1><p>{VERSION_LABEL}</p>"
             f"<p>Master DB: {MASTER_DB_VERSION}<br>Schema: {SCHEMA_VERSION}<br>Agent Profile: {AGENT_PROFILE_VERSION}</p>"
-            "<p>AI General Operator platform. Live battle tactics are reserved for future RL.</p>"
         )
         text.setTextFormat(Qt.RichText)
         layout.addWidget(text)
@@ -954,22 +893,6 @@ class MainWindow(QMainWindow):
             raise RuntimeError("請先選擇 MuMu instance")
         return self.mumu, self.active
 
-    def launch_instance(self) -> None:
-        m, a = self._require()
-        self.run_async(
-            "Launching MuMu…",
-            lambda: m.launch_instance(a.index),
-            lambda _: self.refresh_instances(),
-        )
-
-    def restart_emulator(self) -> None:
-        m, a = self._require()
-        self.run_async(
-            "Restarting MuMu…",
-            lambda: m.restart_instance(a.index),
-            lambda _: self.refresh_instances(),
-        )
-
     def close_emulator(self) -> None:
         m, a = self._require()
         self.run_async(
@@ -983,18 +906,6 @@ class MainWindow(QMainWindow):
             lambda: m.ensure_coc(a.index),
             lambda _: self.refresh_instances(),
         )
-
-    def restart_coc(self) -> None:
-        m, a = self._require()
-        self.run_async(
-            "Restarting Clash of Clans…",
-            lambda: m.restart_coc(a),
-            lambda _: self.refresh_instances(),
-        )
-
-    def back(self) -> None:
-        m, a = self._require()
-        self.run_async("Sending Back…", lambda: m.back(a))
 
     def _paint_frame(self, png: bytes) -> None:
         pix = QPixmap()
@@ -1258,17 +1169,6 @@ class MainWindow(QMainWindow):
             "\n".join(f"- [{item.status}] {item.statement}" for item in items)
             or "尚無使用者教學。"
         )
-
-    def analyze_frame(self) -> None:
-        if not self.current_frame:
-            self.capture()
-            QMessageBox.information(self, "Screenshot", "已開始取得畫面；完成後請再按 Analyze。")
-            return
-        frame = self.current_frame
-        client = self.gemini_client()
-        prompt = vision_prompt(frame.emulator_id, frame.frame_id, self.account_context())
-        analysis = self._say("assistant", f"畫面分析 [{frame.frame_id}]")
-        self.run_stream("AI 正在分析目前畫面…", lambda: client.stream(prompt, frame.png), analysis)
 
     def live_ai_test(self) -> None:
         m, a = self._require()

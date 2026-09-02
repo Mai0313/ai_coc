@@ -29,8 +29,6 @@ def data_root() -> Path:
 
 
 DB_PATH = data_root() / "controller.sqlite3"
-FRAME_DIR = data_root() / "frames"
-FRAME_DIR.mkdir(parents=True, exist_ok=True)
 ACCOUNT_JSON_DIR = data_root() / "account_json"
 ACCOUNT_JSON_DIR.mkdir(parents=True, exist_ok=True)
 LOG_DIR = data_root() / "logs"

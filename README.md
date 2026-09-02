@@ -35,7 +35,7 @@ Other Languages: [English](README.md) | [繁體中文](README.zh-TW.md) | [简�
 
 **Keeps your key out of plain settings.** The Gemini API key is stored through Windows DPAPI, never in the registry or a config file.
 
-Imported village exports keep unknown fields and unknown `data_id`s instead of failing on them, and imported battle scripts are not played back: they are validated for army requirements and stop at a reserved handoff boundary.
+Imported village exports keep unknown fields and unknown `data_id`s instead of failing on them.
 
 ## 📋 Requirements
 
@@ -180,7 +180,7 @@ The first line of every run says which directory it is, and the name is `<when>-
 
 There are no ability or spell timings here any more. They were a table of per-hero constants, and editing them meant guessing how long an army takes to walk across a village nobody had looked at — which is the planner's job, done with the village on screen. Every clock lives on the plan now: see `plans/flat.json` for the shape, and `--plan-in` to replay one.
 
-Everything else lives in `~/.ai_coc`: the SQLite database, captured frames, imported account JSON, the log, and the DPAPI-protected key file.
+Everything else lives in `~/.ai_coc`: the SQLite database, imported account JSON, the run logs, and the DPAPI-protected key file.
 
 ## 🤝 Contributing
 

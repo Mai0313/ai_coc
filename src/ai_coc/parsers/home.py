@@ -15,20 +15,18 @@ bubble's own orange plate instead, which nothing else on the map matches either.
 
 from __future__ import annotations
 
-import io
 import logging
 
 from PIL import Image, ImageChops
 
 from ai_coc.models import BuildQueue, ResourceBubble
+from ai_coc.parsers.frame import open_frame
 
 # The digit reader and the mask it wants both live in `scout`, which owns the
 # templates. Nothing here is worth a second copy of either.
-from ai_coc.parsers.scout import TEMPLATES, _ink_mask, _signature, split_numbers, _glyph_columns
+from ai_coc.parsers.scout import _nearest, _ink_mask, _signature, split_numbers, _glyph_columns
 
 logger = logging.getLogger(__name__)
-
-SCREEN_SIZE = (1600, 900)
 
 # Where a marker can be. Outside this is the game's own furniture — the button
 # columns down either side and the row along the bottom — and a marker cannot be
@@ -240,9 +238,7 @@ def collect_bubbles(png: bytes) -> list[ResourceBubble]:
     and tapping one collects it — no menu, no confirmation. It disappears once
     collected, so a second read is what says whether a tap landed.
     """
-    image = Image.open(io.BytesIO(png)).convert("RGB")
-    if image.size != SCREEN_SIZE:
-        raise ValueError(f"採集標記座標只適用 1600x900，收到 {image.size[0]}x{image.size[1]}")
+    image = open_frame(png)
     left, top, right, bottom = VILLAGE_AREA
     village = image.crop(VILLAGE_AREA)
     width, height = right - left, bottom - top
@@ -300,8 +296,8 @@ def _remaining(image: Image.Image, bar_top: int) -> int | None:
         signature = _signature(mask, left, right)
         if signature is None:
             continue
-        digit = min(TEMPLATES, key=lambda d: (TEMPLATES[d] ^ signature).bit_count())
-        if (TEMPLATES[digit] ^ signature).bit_count() <= TIME_DIGIT_TOLERANCE:
+        digit, distance = _nearest(signature)
+        if distance <= TIME_DIGIT_TOLERANCE:
             digits += digit
             continue
         if digits:
@@ -335,9 +331,7 @@ def builder_jobs(png: bytes) -> BuildQueue | None:
     than guessed at, which is why both numbers are reported: the two disagreeing
     is worth seeing rather than hiding.
     """
-    image = Image.open(io.BytesIO(png)).convert("RGB")
-    if image.size != SCREEN_SIZE:
-        raise ValueError(f"工人面板座標只適用 1600x900，收到 {image.size[0]}x{image.size[1]}")
+    image = open_frame(png)
     tops = _bar_tops(image)
     if not tops:
         return None
@@ -360,10 +354,7 @@ def free_builders(png: bytes) -> tuple[int, int] | None:
     box above is sized to the widest number the counter can hold rather than to
     the one it happened to be showing when it was cut.
     """
-    image = Image.open(io.BytesIO(png)).convert("RGB")
-    if image.size != SCREEN_SIZE:
-        raise ValueError(f"工人計數座標只適用 1600x900，收到 {image.size[0]}x{image.size[1]}")
-    found = split_numbers(_ink_mask(image.crop(BUILDER_BOX)), BUILDER_TOLERANCE)
+    found = split_numbers(_ink_mask(open_frame(png).crop(BUILDER_BOX)), BUILDER_TOLERANCE)
     if len(found) != 2:
         return None
     return found[0], found[1]

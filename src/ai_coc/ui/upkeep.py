@@ -32,10 +32,9 @@ from ai_coc.models import (
     BuildCandidate,
 )
 from ai_coc.prompts import render
-from ai_coc.ui.runner import MENU_SETTLE, SPOT_TIMEOUT, GameRunner
+from ai_coc.ui.runner import BUY_SETTLE, MENU_SETTLE, SPOT_TIMEOUT, GameRunner
 from ai_coc.adapters.ai import GeminiClient
 from ai_coc.parsers.home import BUILDER_BUTTON, builder_jobs, free_builders, collect_bubbles
-from ai_coc.parsers.scout import read_stock
 from ai_coc.parsers.building import (
     wall_menu,
     name_strip,
@@ -68,10 +67,6 @@ COLLECT_SETTLE = 2.0
 # second read is what catches the taps the game did not take — and it stops as
 # soon as a read comes back empty, which is the normal way out after one pass.
 COLLECT_PASSES = 3
-
-# How long the game takes to charge for an upgrade and repaint the menu. The same
-# figure the wall loop measured for the same thing.
-BUY_SETTLE = 1.5
 
 # How many buildings to ask Gemini for, and how to describe one.
 #
@@ -225,22 +220,9 @@ class UpkeepRunner(GameRunner):
             return BuildingName()
 
     def _priced(self, points: list[tuple[int, int]]) -> list[BuildCandidate]:
-        """What each of these points is really offering, read off its own menu.
-
-        **Each tap goes in on a confirmed village frame**, the rule the sweep is
-        built around: these are raw village coordinates, so one that misses opens
-        whatever is standing there, and a full-screen panel swallows every tap
-        after it. A named point misses because the camera moved since somebody
-        looked; a spotted one misses because it was a guess.
-        """
+        """What each of these points is really offering, read off its own menu."""
         found: list[BuildCandidate] = []
-        for point in points:
-            png = self._after_tap(point, f"named_{point[0]:04d}_{point[1]:04d}")
-            if read_stock(png) is None:
-                logger.info("The tap at (%d, %d) covered the village; backing out", *point)
-                if self._home() is None:
-                    return found
-                continue
+        for point, png in self._opened(points, "named"):
             offer = self._offer(point, png)
             if offer is None:
                 logger.info("Nothing upgradeable at (%d, %d)", *point)

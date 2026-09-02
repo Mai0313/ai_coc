@@ -26,7 +26,7 @@ from typing import TYPE_CHECKING
 import logging
 
 from ai_coc.models import HeroCard, HeroKind, HeroReport, VillageStock
-from ai_coc.ui.runner import BACK_SETTLE, MENU_SETTLE, SWEEP_STAGGER, GameRunner
+from ai_coc.ui.runner import BUY_SETTLE, BACK_SETTLE, MENU_SETTLE, SWEEP_STAGGER, GameRunner
 from ai_coc.parsers.hero import SCROLL_LEFT, SCROLL_RIGHT, can_scroll, hero_cards, hall_buttons
 from ai_coc.parsers.home import free_builders
 from ai_coc.parsers.building import upgrade_sheet
@@ -36,9 +36,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# How long the game takes to charge for an upgrade and repaint. The same figure
-# the wall loop and the building loop both measured for the same thing.
-BUY_SETTLE = 1.5
 # How long the card row takes to slide one place along.
 SCROLL_SETTLE = 0.8
 # How many screenfuls to walk before giving up on a row that will not stop

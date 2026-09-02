@@ -17,7 +17,7 @@ from ai_coc.models import (
     GeminiResponseFormat,
     GeminiGenerationConfig,
 )
-from ai_coc.prompts import PROMPTS, render
+from ai_coc.prompts import PROMPTS
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -203,13 +203,3 @@ class GeminiClient(BaseModel):
 
 
 AGENT_PROFILE = PROMPTS["agent_profile"]
-
-
-def vision_prompt(emulator_id: str, frame_id: str, account_context: str = "") -> str:
-    return render(
-        "vision",
-        profile=AGENT_PROFILE,
-        emulator_id=emulator_id,
-        frame_id=frame_id,
-        account_context=account_context[:12000],
-    )

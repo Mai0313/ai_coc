@@ -8,16 +8,12 @@ panel is drawn on, and whether a card is in colour or in greyscale.
 
 from __future__ import annotations
 
-import io
 import logging
 
-from PIL import Image
-
 from ai_coc.parsers.home import _mask, _Patch, _patches
+from ai_coc.parsers.frame import SCREEN_SIZE, open_frame
 
 logger = logging.getLogger(__name__)
-
-SCREEN_SIZE = (1600, 900)
 
 # 增援 sits on a request card in the chat panel, which scrolls, so it is found
 # rather than remembered. Green picks it out on its own: measured over a live
@@ -75,16 +71,9 @@ CARD_ROWS = ((49, 179), (194, 324))
 CARD_SATURATION = 20
 
 
-def _open(png: bytes) -> Image.Image:
-    image = Image.open(io.BytesIO(png)).convert("RGB")
-    if image.size != SCREEN_SIZE:
-        raise ValueError(f"部落畫面座標只適用 1600x900，收到 {image.size[0]}x{image.size[1]}")
-    return image
-
-
 def chat_open(png: bytes) -> bool:
     """Whether the clan chat panel is drawn over the left of the screen."""
-    data = _open(png).crop(CHAT_PANEL).tobytes()
+    data = open_frame(png).crop(CHAT_PANEL).tobytes()
     floor, ceiling = CHAT_DIM
     sheet = sum(
         floor < max(data[i], data[i + 1], data[i + 2]) < ceiling
@@ -105,7 +94,7 @@ def reinforce_button(png: bytes) -> tuple[int, int] | None:
         return None
     left, top, right, bottom = CHAT_PANEL
     width, height = right - left, bottom - top
-    panel = _open(png).crop(CHAT_PANEL)
+    panel = open_frame(png).crop(CHAT_PANEL)
 
     def buttons(ranges: tuple[tuple[int, int], ...]) -> list[_Patch]:
         found = _patches(_mask(panel, ranges), width, height)
@@ -123,7 +112,7 @@ def reinforce_button(png: bytes) -> tuple[int, int] | None:
 def panel_top(png: bytes) -> int | None:
     """Where the 增援資源 panel starts down the screen, or None if none is up."""
     height = SCREEN_SIZE[1]
-    column = _open(png).crop((PANEL_COLUMN, 0, PANEL_COLUMN + 1, height)).tobytes()
+    column = open_frame(png).crop((PANEL_COLUMN, 0, PANEL_COLUMN + 1, height)).tobytes()
     found: int | None = None
     start: int | None = None
     for y in range(height + 1):
@@ -158,7 +147,7 @@ def donatable_cards(png: bytes) -> list[tuple[int, int]]:
     origin = panel_top(png)
     if origin is None:
         return []
-    image = _open(png)
+    image = open_frame(png)
     found: list[tuple[int, int]] = []
     for offset_top, offset_bottom in CARD_ROWS:
         top, bottom = origin + offset_top, origin + offset_bottom
@@ -192,6 +181,6 @@ def panel_difference(before: bytes, after: bytes) -> int:
     if origin is None:
         return 0
     box = (PANEL_SPAN[0], origin, PANEL_SPAN[1], origin + PANEL_TALL)
-    first = _open(before).crop(box).tobytes()
-    second = _open(after).crop(box).tobytes()
+    first = open_frame(before).crop(box).tobytes()
+    second = open_frame(after).crop(box).tobytes()
     return sum(one != two for one, two in zip(first, second, strict=True))

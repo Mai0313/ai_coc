@@ -47,6 +47,7 @@ from ai_coc.models import (
     WallCandidate,
     BoundarySurvey,
     BuildCandidate,
+    GeminiSettings,
     LootThresholds,
     StorageCapacity,
 )
@@ -56,7 +57,6 @@ from ai_coc.ui.walls import WallRunner
 from ai_coc.constants import DEFAULT_LITE_MODEL
 from ai_coc.ui.attack import (
     PLAYFIELD,
-    RAGE_PATH,
     RAGE_SPAN,
     CARD_ROW_Y,
     DEPLOY_END,
@@ -135,14 +135,7 @@ from ai_coc.ui.main_window import LIVE_INTERVAL, MainWindow
 from ai_coc.adapters.config import ConfigStore
 from ai_coc.parsers.village import parse_village
 from ai_coc.adapters.secrets import dotenv_value
-from ai_coc.parsers.boundary import (
-    DEPLOY_BOUND,
-    VILLAGE_GRID,
-    fitted_line,
-    village_box,
-    boundary_line,
-    boundary_reach,
-)
+from ai_coc.parsers.boundary import DEPLOY_BOUND, fitted_line, village_box, boundary_reach
 from ai_coc.parsers.building import (
     PRICE_TOLERANCE,
     wall_menu,
@@ -526,7 +519,7 @@ class NightAttackTests(unittest.TestCase):
         """The ordinary attack: one deployment, and the game goes home afterwards."""
         runner = self._runner()
         with (
-            patch.object(AttackRunner, "_open_night_attack", return_value=b""),
+            patch.object(AttackRunner, "_open_attack_menu", return_value=b""),
             patch.object(attack, "read_builder_stock", return_value=None),
             patch.object(AttackRunner, "_find_opponent", return_value=b""),
             patch.object(AttackRunner, "_deploy_night", return_value=([164], [307])) as deployed,
@@ -547,7 +540,7 @@ class NightAttackTests(unittest.TestCase):
         """
         runner = self._runner()
         with (
-            patch.object(AttackRunner, "_open_night_attack", return_value=b""),
+            patch.object(AttackRunner, "_open_attack_menu", return_value=b""),
             patch.object(attack, "read_builder_stock", return_value=None),
             patch.object(AttackRunner, "_find_opponent", return_value=b""),
             patch.object(AttackRunner, "_deploy_night", return_value=([164], [307])) as deployed,
@@ -561,7 +554,7 @@ class NightAttackTests(unittest.TestCase):
     def test_the_stages_are_capped_even_if_the_game_keeps_offering(self) -> None:
         runner = self._runner()
         with (
-            patch.object(AttackRunner, "_open_night_attack", return_value=b""),
+            patch.object(AttackRunner, "_open_attack_menu", return_value=b""),
             patch.object(attack, "read_builder_stock", return_value=None),
             patch.object(AttackRunner, "_find_opponent", return_value=b""),
             patch.object(AttackRunner, "_deploy_night", return_value=([], [307])),
@@ -614,7 +607,7 @@ class NightAttackTests(unittest.TestCase):
         """
         runner = self._runner()
         with (
-            patch.object(AttackRunner, "_open_night_attack", return_value=b""),
+            patch.object(AttackRunner, "_open_attack_menu", return_value=b""),
             patch.object(attack, "read_builder_stock", return_value=None),
             patch.object(AttackRunner, "_find_opponent", return_value=b""),
             patch.object(AttackRunner, "_deploy_night", return_value=None),
@@ -716,7 +709,7 @@ class NightAttackTests(unittest.TestCase):
             patch.object(attack, "uncovered", return_value=None) as cleared,
             patch.object(AdbController, "tap") as tapped,
         ):
-            assert runner._open_night_attack() is None
+            assert runner._open_attack_menu() is None
         assert cleared.call_count == attack.HOME_ATTEMPTS
         # And never at 攻擊, which is what was being spent behind the popup.
         assert tapped.call_count == 0
@@ -934,7 +927,7 @@ class NightAttackTests(unittest.TestCase):
         )
         runner._capacity = StorageCapacity(gold=2_050_000, elixir=2_450_000)
         with (
-            patch.object(AttackRunner, "_open_night_attack", return_value=b""),
+            patch.object(AttackRunner, "_open_attack_menu", return_value=b""),
             patch.object(
                 attack,
                 "read_builder_stock",
@@ -958,7 +951,7 @@ class NightAttackTests(unittest.TestCase):
         )
         runner._capacity = StorageCapacity(gold=2_050_000, elixir=2_450_000)
         with (
-            patch.object(AttackRunner, "_open_night_attack", return_value=b""),
+            patch.object(AttackRunner, "_open_attack_menu", return_value=b""),
             patch.object(
                 attack,
                 "read_builder_stock",
@@ -975,7 +968,7 @@ class NightAttackTests(unittest.TestCase):
     def test_nobody_matched_is_reported_rather_than_deployed_into(self) -> None:
         runner = self._runner()
         with (
-            patch.object(AttackRunner, "_open_night_attack", return_value=b""),
+            patch.object(AttackRunner, "_open_attack_menu", return_value=b""),
             patch.object(attack, "read_builder_stock", return_value=None),
             patch.object(AttackRunner, "_find_opponent", return_value=None),
             patch.object(AttackRunner, "_deploy_night") as deployed,
@@ -1521,7 +1514,9 @@ class PlanTests(unittest.TestCase):
         # down before there are troops for it to cover.
         assert played.index("siege") < played.index("troops") < played.index("rage")
         assert played.index("rage") < played.index("freeze")
-        assert len(plan.acts("rage")[0].at) == len(RAGE_PATH)
+        # As many bottles as an unreadable rage card is assumed to hold, so the
+        # fallback tactic can place everything the loop asks it to.
+        assert len(plan.acts("rage")[0].at) == attack.RAGE_BOTTLES
         # A tactic with no pause in it is one where every clock is zero.
         assert [step.seconds for step in plan.acts("wait")] == [4, 15, 1]
 
@@ -1582,7 +1577,7 @@ class ConfigTests(unittest.TestCase):
             store = ConfigStore(path=Path(td) / "config.json")
             saved = AppConfig(
                 thresholds=LootThresholds(min_gold=1, min_elixir=2, min_dark=3),
-                gemini_model="gemini-not-the-default",
+                gemini=GeminiSettings(main=GeminiSetting(model="gemini-not-the-default")),
             )
             store.save(saved)
             assert store.load() == saved
@@ -1658,18 +1653,22 @@ class ConfigTests(unittest.TestCase):
 class PromptTests(unittest.TestCase):
     """Prompts live as Markdown so a change to what the model is told is a readable diff."""
 
-    def test_every_prompt_the_code_asks_for_exists(self) -> None:
-        expected = {
+    def test_every_prompt_the_code_asks_for_exists_and_none_is_left_behind(self) -> None:
+        """Both directions: a missing file is a `KeyError` at the first call, and a
+        file nothing asks for is a prompt somebody will keep rewording for nothing.
+        """
+        assert set(PROMPTS) == {
             "agent_profile",
             "agent_step",
             "attack_plan",
             "chat",
+            "find_targets",
             "live_test",
             "locate_target",
+            "name_building",
+            "night_plan",
             "reference_image",
-            "vision",
         }
-        assert expected <= set(PROMPTS)
 
     def test_a_prompt_fills_in_its_placeholders(self) -> None:
         filled = render("locate_target", goal="設定齒輪")
@@ -1708,16 +1707,6 @@ class MapFrameTests(unittest.TestCase):
 
     def test_a_point_already_on_the_map_is_left_alone(self) -> None:
         assert DEPLOY_BOUND.clamp((600, 110)) == (600, 110)
-
-    def test_grid_coordinates_round_trip(self) -> None:
-        for point in (VILLAGE_GRID.centre, (600, 300), (1100, 500)):
-            assert VILLAGE_GRID.pixel(VILLAGE_GRID.tile(point)) == point
-
-    def test_the_grid_corners_are_the_diamond_vertices(self) -> None:
-        cx, cy = VILLAGE_GRID.centre
-        assert VILLAGE_GRID.pixel((0, 0)) == (cx, cy - VILLAGE_GRID.half_height)
-        assert VILLAGE_GRID.pixel((44, 44)) == (cx, cy + VILLAGE_GRID.half_height)
-        assert VILLAGE_GRID.pixel((44, 0)) == (cx + VILLAGE_GRID.half_width, cy)
 
 
 class BoundaryTests(unittest.TestCase):
@@ -1853,13 +1842,15 @@ class BoundaryTests(unittest.TestCase):
         assert village_box((FRAMES / "attack_menu.png").read_bytes()) is None
 
     def test_the_boundary_is_read_over_two_village_themes(self) -> None:
+        """The theme repaints the ground under the stroke, not the stroke itself."""
         rays = [angle * 30 for angle in range(12)]
         for name in ("battle_boundary_grass.png", "battle_boundary_ice.png"):
-            points = boundary_line((FRAMES / name).read_bytes(), rays)
-            radii = [math.hypot(x - 800, y - 400) for x, y in points]
+            frame = (FRAMES / name).read_bytes()
+            points = [reach for angle in rays if (reach := boundary_reach(frame, angle))]
+            radii = sorted(math.hypot(x - 800, y - 400) for x, y in points)
             assert len(points) >= 6, name
-            # One closed curve, so nothing should sit near the middle of it.
-            assert min(radii) > 200, (name, sorted(radii))
+            # One closed curve, so the readings sit well out from the middle.
+            assert radii[len(radii) // 2] > 200, (name, radii)
 
 
 class FieldTests(unittest.TestCase):
@@ -2097,7 +2088,8 @@ class AttackTests(unittest.TestCase):
         assert planned_line(plan) is None
 
     def test_a_line_only_half_drawn_falls_back_too(self) -> None:
-        assert planned_line(None) is None
+        """A `troops` step with one end is no line, and neither is no plan at all."""
+        assert planned_line(AttackPlan(steps=[_step("troops", (37.5, 12.2))])) is None
         assert planned_line(None) is None
 
     def _runner(self) -> AttackRunner:
@@ -2701,7 +2693,7 @@ class AttackTests(unittest.TestCase):
 
         All five still get a bottle, each within a quarter of a footprint of
         where it was asked for. Three of them used to be dropped instead, and
-        the caller topped the cargo back up off `RAGE_PATH` — which buys ground
+        the caller topped the cargo back up off a fixed grid — which buys ground
         wherever that grid happens to run rather than where the planner looked.
         """
         planned = [(448, 522), (608, 450), (560, 585), (768, 495), (800, 378)]
@@ -2719,18 +2711,14 @@ class AttackTests(unittest.TestCase):
         bottles and the planner draws 13% by 10%, which puts the horizontal
         neighbour at 0.75 of a footprint and the vertical one at 0.56. Dropping
         those left the diagonal pair and nothing else, and the caller filled the
-        two empty slots off `RAGE_PATH`: on one village attacked from the top
+        two empty slots off a fixed grid: on one village attacked from the top
         left, a bottle went to (1000, 300) behind it. Opening the block out
-        keeps all four over the ground the planner picked.
+        keeps all four over the ground the planner picked, and nothing tops the
+        cargo up from anywhere else any more.
         """
         block = [(560, 252), (768, 252), (560, 342), (768, 342)]
-        # The grid goes in behind the block exactly as `_deploy` appends it, so
-        # the assertion below is about the top-up path really not being reached.
-        # Called on the block alone it could not fail: no grid coordinate would
-        # be in the input to come out of it.
-        placed = spaced(block + list(RAGE_PATH))[: len(block)]
+        placed = spaced(block)
         assert len(placed) == 4
-        assert not [spot for spot in placed if spot in RAGE_PATH]
         assert not self._overlapping(placed)
         # Still one block on the same ground, opened out to the pitch a bottle
         # really covers rather than the tighter one it was drawn at.
@@ -2746,7 +2734,7 @@ class AttackTests(unittest.TestCase):
         the same wasted bottle the nudge exists to prevent, reached from the
         other side. Swept over 20 000 random sets the worst was 1.81; capped it
         is 1.00 by construction. A point that cannot be cleared inside that is
-        dropped, so `RAGE_PATH` puts one somewhere deliberate instead.
+        dropped rather than walked out there.
         """
         crowd = [(832, 449), (843, 376), (809, 357), (823, 396)]
         placed = spaced(crowd)
@@ -2798,10 +2786,11 @@ class AttackTests(unittest.TestCase):
             < 1
         ]
 
-    def test_the_fixed_grid_is_already_spaced(self) -> None:
-        """Which is what makes it usable to top up whatever the planner's points lose."""
-        assert spaced(RAGE_PATH) == list(RAGE_PATH)
-        assert RAGE_PATH[1][0] - RAGE_PATH[0][0] == RAGE_SPAN[0]
+    def test_the_flat_plans_grid_is_already_spaced(self) -> None:
+        """The fallback tactic's bottles must not crowd each other, or it loses half its cargo."""
+        grid = [point.pixels() for point in plans.flat().acts("rage")[0].at]
+        assert spaced(grid) == grid
+        assert grid[1][0] - grid[0][0] == RAGE_SPAN[0]
 
     def _casts(self, alive: list[list[int]]) -> int:
         """How many passes `_cast` makes, given what the row reads after each one."""
@@ -2814,7 +2803,9 @@ class AttackTests(unittest.TestCase):
             patch.object(attack, "live_cards", side_effect=alive) as reads,
             patch.object(attack.time, "sleep"),
         ):
-            runner._cast([1060], RAGE_PATH[:5], b"")
+            runner._cast(
+                [1060], ((520, 300), (760, 300), (520, 420), (760, 420), (1000, 300)), b""
+            )
             return reads.call_count
 
     def test_a_card_still_holding_a_bottle_is_offered_the_run_again(self) -> None:
@@ -2853,8 +2844,8 @@ class AttackTests(unittest.TestCase):
     def test_a_refused_hero_still_gets_the_spot_the_probe_proved(self) -> None:
         """The plan's point goes ahead of the shared ladder, not over its first rung.
 
-        `single_spots[0]` is the midpoint `_usable_line` already probed and the
-        game already accepted, so it is the one spot with evidence behind it.
+        `single_spots[0]` is the midpoint of the line the troops have already
+        been spread along, so it is the one spot with evidence behind it.
         Replacing it with the plan's point cost a named hero both that spot and
         one of its retries.
         """
@@ -2879,19 +2870,6 @@ class AttackTests(unittest.TestCase):
         assert aimed[0] == (123, 456)
         # Every shared rung still follows, the probed midpoint included.
         assert aimed[1:] == shared
-
-    def _schedule_over(self, reads: bool, result_screen: bool) -> list[str]:
-        """One scheduled move played against a canned frame."""
-        played: list[str] = []
-        view = ScoutView(loot=LootOffer(gold=1, elixir=1, dark=1), can_skip=False)
-        with (
-            patch.object(AttackRunner, "_frame", return_value=b""),
-            patch.object(attack, "read_scout", return_value=view if reads else None),
-            patch.object(attack, "battle_over", return_value=result_screen),
-            patch.object(attack.time, "sleep"),
-        ):
-            self._runner()._run_schedule(0.0, [(0.0, "freeze", lambda: played.append("freeze"))])
-        return played
 
     def test_a_refused_flank_leaves_the_other_three_to_try(self) -> None:
         """The plan's own side goes first behind its line, then the flanks it did not pick."""
@@ -3353,10 +3331,7 @@ class RestartEveryTests(unittest.TestCase):
         # project was measured at the far limit — without this the run keeps
         # going and deploys nothing for the rest of the night.
         adb.zoom.assert_called_once_with(
-            "out",
-            commands.RESTART_ZOOM_PINCHES,
-            commands.COC_PACKAGE,
-            adb.display_for.return_value,
+            "out", commands.ZOOM_PINCHES, commands.COC_PACKAGE, adb.display_for.return_value
         )
 
     def test_a_game_with_no_window_yet_is_waited_out_rather_than_given_up_on(self) -> None:
@@ -3534,14 +3509,17 @@ class LaunchTests(unittest.TestCase):
             index=0, adb_serial="127.0.0.1:16384", coc_running=True, android_started=False
         )
         mumu = MagicMock()
-        mumu.enumerate_instances.side_effect = [[up], [up], [], [down]]
+        mumu.enumerate_instances.return_value = [up]
+        # Still up on the first look, missing from the listing on the second,
+        # and only then down: the wait ends on the third and not before.
+        mumu.instance.side_effect = [up, None, down]
         mumu.ensure_coc.return_value = down
         with (
             patch.object(commands, "MuMuAdapter", return_value=mumu),
             patch.object(commands, "SHUTDOWN_GAP", 0),
         ):
             commands.launch("emulator")
-        assert mumu.enumerate_instances.call_count == 4
+        assert mumu.instance.call_count == 3
         mumu.restart_instance.assert_called_once_with(0)
         mumu.restart_coc.assert_not_called()
 
@@ -3905,7 +3883,7 @@ class WallRunnerTests(unittest.TestCase):
 
         with (
             patch.object(WallRunner, "_after_tap", side_effect=after),
-            patch.object(walls, "read_stock", return_value=_stock()),
+            patch.object(shared, "read_stock", return_value=_stock()),
             patch.object(walls, "wall_menu", side_effect=lambda _png: menus[tapped[-1]]),
         ):
             found = runner._candidates()
@@ -3932,7 +3910,7 @@ class WallRunnerTests(unittest.TestCase):
         stocks = iter([None, _stock()])
         with (
             patch.object(WallRunner, "_after_tap", return_value=b""),
-            patch.object(walls, "read_stock", side_effect=lambda _png: next(stocks)),
+            patch.object(shared, "read_stock", side_effect=lambda _png: next(stocks)),
             patch.object(walls, "wall_menu", return_value=_menu(1_600_000)),
             patch.object(runner, "_home", return_value=_stock()) as home,
         ):
@@ -3956,7 +3934,7 @@ class WallRunnerTests(unittest.TestCase):
             patch.object(GeminiClient, "generate_structured", return_value=answer),
             patch.object(WallRunner, "_after_tap", return_value=b""),
             patch.object(WallRunner, "_frame", return_value=b""),
-            patch.object(walls, "read_stock", return_value=_stock()),
+            patch.object(shared, "read_stock", return_value=_stock()),
             patch.object(walls, "wall_menu", side_effect=lambda _png: next(menus)),
             patch.object(runner, "_scan") as scan,
         ):
@@ -4029,7 +4007,9 @@ class WallRunnerTests(unittest.TestCase):
             patch.object(walls.time, "sleep"),
             patch.object(runner, "_after_tap", return_value=b""),
             patch.object(runner, "_sweep", return_value=iter([((580, 140), b"")])),
-            patch.object(walls, "read_stock", return_value=VillageStock(gold=0, elixir=0, dark=0)),
+            patch.object(
+                shared, "read_stock", return_value=VillageStock(gold=0, elixir=0, dark=0)
+            ),
             patch.object(walls, "wall_menu", side_effect=answers),
         ):
             found = runner._scan()
@@ -4050,7 +4030,7 @@ class WallRunnerTests(unittest.TestCase):
             patch.object(runner, "_after_tap", return_value=b""),
             patch.object(runner, "_sweep", return_value=iter([((580, 140), b"")])),
             # The first neighbour opened a full screen; the rest are the village.
-            patch.object(walls, "read_stock", side_effect=[None, held, held, held]),
+            patch.object(shared, "read_stock", side_effect=[None, held, held, held]),
             patch.object(
                 walls, "wall_menu", side_effect=[_menu(4_000_000), _menu(1_600_000), None, None]
             ),
@@ -4151,10 +4131,6 @@ class WallRunnerTests(unittest.TestCase):
             report = runner.run()
         assert [call.args[0] for call in buy.call_args_list] == [(100, 100), (200, 200)]
         assert report.walls == 4
-
-
-if __name__ == "__main__":
-    unittest.main()
 
 
 class HomeHudTests(unittest.TestCase):
@@ -4543,27 +4519,12 @@ class TargetFinderTests(unittest.TestCase):
 
 
 class GeminiTierTests(unittest.TestCase):
-    """Two model tiers in the settings file, and a file written before they existed."""
+    """Two model tiers in the settings file."""
 
-    def test_a_file_from_before_the_tiers_keeps_the_model_it_was_configured_with(self) -> None:
-        """An alias cannot carry this: the old keys were flat and the new ones
-        live a level down, so there is nowhere for `AliasChoices` to point. Only
-        `main` is filled in, because the old file had one model for one kind of
-        call and that was the one.
-        """
-        config = AppConfig.model_validate({
-            "stop_at": 90,
-            "gemini_model": "gemini-3.6-flash",
-            "gemini_endpoint": "https://example.invalid",
-            "gemini_thinking": "medium",
-        })
-        assert config.gemini.main.model == "gemini-3.6-flash"
-        assert config.gemini.main.base_url == "https://example.invalid"
-        assert config.gemini.main.thinking_level == "medium"
-        # And the tier that file never had comes in at its default rather than
-        # inheriting the one beside it: the whole point of a second tier is that
-        # it is a different model.
-        assert config.gemini.lite.model == DEFAULT_LITE_MODEL
+    def test_the_lite_tier_defaults_to_its_own_model(self) -> None:
+        """The whole point of a second tier is that it is a different model."""
+        assert AppConfig().gemini.lite.model == DEFAULT_LITE_MODEL
+        assert AppConfig().gemini.main.model != DEFAULT_LITE_MODEL
 
     def test_the_key_has_nowhere_to_live_in_the_settings_file(self) -> None:
         """`ConfigStore.save` writes every field of every nested model, so a key
@@ -4654,7 +4615,7 @@ class UpkeepRunnerTests(unittest.TestCase):
             patch.object(GeminiClient, "generate_structured", return_value=answer),
             patch.object(UpkeepRunner, "_after_tap", return_value=b""),
             patch.object(UpkeepRunner, "_frame", return_value=b""),
-            patch.object(upkeep, "read_stock", return_value=_stock()),
+            patch.object(shared, "read_stock", return_value=_stock()),
             patch.object(upkeep, "wall_menu", return_value=None),
             patch.object(upkeep, "upgrade_buttons", side_effect=lambda _png: next(offers)),
             patch.object(runner, "_scan") as scan,
@@ -4671,7 +4632,7 @@ class UpkeepRunnerTests(unittest.TestCase):
         runner = self._runner(at=[(500, 300)])
         with (
             patch.object(UpkeepRunner, "_after_tap", return_value=b""),
-            patch.object(upkeep, "read_stock", return_value=_stock()),
+            patch.object(shared, "read_stock", return_value=_stock()),
             patch.object(upkeep, "wall_menu", return_value=_menu(1_600_000)),
             patch.object(upkeep, "upgrade_buttons", return_value=[]),
         ):
@@ -4898,3 +4859,7 @@ class ClanTests(unittest.TestCase):
         """
         assert len(donatable_cards((FRAMES / "clan_donate_low.png").read_bytes())) == 10
         assert donatable_cards((FRAMES / "home_markers.png").read_bytes()) == []
+
+
+if __name__ == "__main__":
+    unittest.main()

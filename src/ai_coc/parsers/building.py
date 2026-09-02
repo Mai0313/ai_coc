@@ -26,18 +26,17 @@ from typing import TYPE_CHECKING
 import logging
 import itertools
 
-from PIL import Image
-
 from ai_coc.models import WallMenu, GameDialog, UpgradeButton
 from ai_coc.parsers.home import _mask, _patches
+from ai_coc.parsers.frame import open_frame
 from ai_coc.parsers.scout import read_stock, digits_from
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-logger = logging.getLogger(__name__)
+    from PIL import Image
 
-SCREEN_SIZE = (1600, 900)
+logger = logging.getLogger(__name__)
 
 # The button row the game opens under whatever is selected. Its buttons are laid
 # out from the middle of the screen outwards, so not one of them sits at a fixed
@@ -244,9 +243,7 @@ def upgrade_buttons(png: bytes) -> list[UpgradeButton]:
     are; what it would buy is heroes, which take days rather than the moments
     this is written around.
     """
-    image = Image.open(io.BytesIO(png)).convert("RGB")
-    if image.size != SCREEN_SIZE:
-        raise ValueError(f"建築選單座標只適用 1600x900，收到 {image.size[0]}x{image.size[1]}")
+    image = open_frame(png)
     found: list[UpgradeButton] = []
     for resource, test in (("gold", _is_gold), ("elixir", _is_elixir)):
         for icon in _icon_centres(image, test):
@@ -348,7 +345,7 @@ def game_dialog(png: bytes) -> GameDialog | None:
     same buttons in the same pixels. Only the caller knows what it just did, and
     so only the caller can know which button it means.
     """
-    image = Image.open(io.BytesIO(png)).convert("RGB")
+    image = open_frame(png)
     panel = image.crop(DIALOG_BOX).tobytes()
     flat = sum(
         min(panel[i], panel[i + 1], panel[i + 2]) > DIALOG_PANEL
@@ -387,7 +384,7 @@ def upgrade_sheet(png: bytes) -> tuple[int, int] | None:
     """Where 確認 sits on the full-screen upgrade sheet, or None if none is up."""
     if read_stock(png) is not None:
         return None
-    image = Image.open(io.BytesIO(png)).convert("RGB")
+    image = open_frame(png)
     left, top, right, bottom = SHEET_SPAN
     biggest = max(
         (
@@ -412,9 +409,7 @@ def name_strip(png: bytes) -> bytes:
     still answers, because whether a name is there is the reader's question and
     not this one's.
     """
-    image = Image.open(io.BytesIO(png)).convert("RGB")
-    if image.size != SCREEN_SIZE:
-        raise ValueError(f"建築名稱座標只適用 1600x900，收到 {image.size[0]}x{image.size[1]}")
+    image = open_frame(png)
     out = io.BytesIO()
     image.crop(NAME_BAND).save(out, format="PNG")
     return out.getvalue()

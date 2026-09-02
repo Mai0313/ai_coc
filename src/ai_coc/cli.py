@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import sys
-from typing import Any, get_args
+from typing import TYPE_CHECKING, Any, get_args
 import logging
 from pathlib import Path
 import argparse
@@ -16,14 +16,22 @@ from ai_coc.models import (
     World,
     RunLog,
     HeroKind,
+    HeroOptions,
     WallOptions,
     RestartScope,
     AttackOptions,
+    DonateOptions,
     LootOverrides,
+    UpgradeOptions,
 )
 from ai_coc.constants import APP_NAME
 from ai_coc.logging_setup import configure_logging
-from ai_coc.ui.main_window import MainWindow, migrate_settings
+from ai_coc.ui.main_window import MainWindow
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
 
@@ -189,6 +197,71 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _answer(arguments: argparse.Namespace, run: RunLog) -> BaseModel | str:
+    """What one sub-command answers, as the model it reports with or as plain text.
+
+    One table rather than a branch per command: every entry turns the parsed
+    flags into whatever `commands` takes, which for the loops is an options
+    model, and the caller prints whatever comes back.
+    """
+    a = arguments
+    handlers: dict[str, Callable[[], BaseModel | str]] = {
+        "attack": lambda: commands.attack(
+            AttackOptions(
+                frame_dir=run.frames,
+                plan_in=a.plan_in,
+                plan_out=a.plan_out,
+                plan_log=run.plan_log,
+                minimums=LootOverrides(
+                    min_gold=a.min_gold, min_elixir=a.min_elixir, min_dark=a.min_dark
+                ),
+                world=a.world,
+                rounds=a.repeat,
+                shot_every=a.shot_every,
+                restart_every=a.restart_every,
+                stop_at=a.stop_at,
+            )
+        ),
+        "stop": commands.stop,
+        "walls": lambda: commands.walls(
+            WallOptions(
+                frame_dir=run.frames,
+                keep_gold=a.keep_gold,
+                keep_elixir=a.keep_elixir,
+                rounds=a.rounds,
+                at=[_spot(one) for one in a.at or ()],
+            )
+        ),
+        "collect": lambda: commands.collect(run.frames),
+        "builders": lambda: commands.builders(run.frames),
+        "upgrade": lambda: commands.upgrade(
+            UpgradeOptions(
+                frame_dir=run.frames,
+                keep_gold=a.keep_gold,
+                keep_elixir=a.keep_elixir,
+                at=[_spot(one) for one in a.at or ()],
+                only=a.only,
+            )
+        ),
+        "hero": lambda: commands.hero(
+            HeroOptions(frame_dir=run.frames, upgrade=a.upgrade, at=_spot(a.at) if a.at else None)
+        ),
+        "world": lambda: commands.world(a.go),
+        "view": lambda: commands.view(a.zoom, a.times),
+        "launch": lambda: commands.launch(a.restart),
+        "donate": lambda: commands.donate(
+            DonateOptions(frame_dir=run.frames, dry_run=a.dry_run, rounds=a.rounds)
+        ),
+        "probe": lambda: commands.probe(run.frames),
+        "bounds": lambda: commands.bounds(run.frames),
+        "capture": lambda: "\n".join(
+            str(path) for path in commands.capture(a.out, a.count, a.gap)
+        ),
+        "read": lambda: commands.read(a.png.read_bytes()),
+    }
+    return handlers[a.command]()
+
+
 def _run_command(arguments: argparse.Namespace, run: RunLog) -> int:
     """Run one headless command; its result goes to stdout so it can be piped.
 
@@ -197,80 +270,8 @@ def _run_command(arguments: argparse.Namespace, run: RunLog) -> int:
     well, so the answer and the log explaining it are found together instead of
     that depending on whoever started the run having redirected stdout.
     """
-    # The commands whose whole argument list is a frame directory, dispatched
-    # through a table rather than a branch each. They are the same shape, and
-    # four copies of that shape is most of what this function's branching budget
-    # was being spent on.
-    plain = {
-        "collect": commands.collect,
-        "builders": commands.builders,
-        "probe": commands.probe,
-        "bounds": commands.bounds,
-    }
-    # The same again for the ones whose arguments are a couple of plain scalars
-    # instead of a frame directory. Two is already worth a table: a branch each
-    # is what tipped this function past the complexity limit.
-    scalar = {
-        "view": lambda: commands.view(arguments.zoom, arguments.times),
-        "world": lambda: commands.world(arguments.go),
-        "launch": lambda: commands.launch(arguments.restart),
-    }
-    if arguments.command in plain:
-        result = plain[arguments.command](run.frames).model_dump_json(indent=2)
-    elif arguments.command in scalar:
-        result = scalar[arguments.command]().model_dump_json(indent=2)
-    elif arguments.command == "attack":
-        result = commands.attack(
-            AttackOptions(
-                frame_dir=run.frames,
-                plan_in=arguments.plan_in,
-                plan_out=arguments.plan_out,
-                plan_log=run.plan_log,
-                minimums=LootOverrides(
-                    min_gold=arguments.min_gold,
-                    min_elixir=arguments.min_elixir,
-                    min_dark=arguments.min_dark,
-                ),
-                world=arguments.world,
-                rounds=arguments.repeat,
-                shot_every=arguments.shot_every,
-                restart_every=arguments.restart_every,
-                stop_at=arguments.stop_at,
-            )
-        ).model_dump_json(indent=2)
-    elif arguments.command == "stop":
-        result = commands.stop()
-    elif arguments.command == "walls":
-        result = commands.walls(
-            WallOptions(
-                frame_dir=run.frames,
-                keep_gold=arguments.keep_gold,
-                keep_elixir=arguments.keep_elixir,
-                rounds=arguments.rounds,
-                at=[_spot(one) for one in arguments.at or ()],
-            )
-        ).model_dump_json(indent=2)
-    elif arguments.command == "upgrade":
-        result = commands.upgrade(
-            run.frames,
-            arguments.keep_gold,
-            arguments.keep_elixir,
-            [_spot(text) for text in arguments.at or []],
-            arguments.only,
-        ).model_dump_json(indent=2)
-    elif arguments.command == "hero":
-        result = commands.hero(
-            run.frames, arguments.upgrade, _spot(arguments.at) if arguments.at else None
-        ).model_dump_json(indent=2)
-    elif arguments.command == "donate":
-        result = commands.donate(run.frames, arguments.dry_run, arguments.rounds).model_dump_json(
-            indent=2
-        )
-    elif arguments.command == "capture":
-        saved = commands.capture(arguments.out, arguments.count, arguments.gap)
-        result = "\n".join(str(path) for path in saved)
-    else:
-        result = commands.read(arguments.png.read_bytes()).model_dump_json(indent=2)
+    answer = _answer(arguments, run)
+    result = answer if isinstance(answer, str) else answer.model_dump_json(indent=2)
     run.answer(result)
     sys.stdout.write(f"{result}\n")
     return 0
@@ -292,7 +293,6 @@ def main() -> int:
     # First line of every run, because a directory nobody can name is one nobody
     # goes back to: this is what a session reads to find the frames afterwards.
     logger.info("This run is being kept in %s", run.directory)
-    migrate_settings()
     if arguments.command:
         return _run_command(arguments, run)
     app = QApplication(sys.argv)

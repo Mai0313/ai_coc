@@ -66,6 +66,13 @@ PINCH_NEAR, PINCH_FAR = 150, 500
 PINCH_ROW = 450
 # How long the camera takes to settle after one.
 PINCH_SETTLE = 1.5
+# How many pinches to spend putting the camera back at the far zoom. `view`
+# measured one gesture as covering the whole range and a second as changing
+# nothing, so this is that plus a spare: about three seconds, against a battle
+# of three minutes or a run that spends them sweeping the village. Every loop
+# that puts the camera back — before a battle, on the first village a runner
+# reads, after a crossing, after a restart — spends the same two.
+ZOOM_PINCHES = 2
 
 
 class AdbControlError(RuntimeError):

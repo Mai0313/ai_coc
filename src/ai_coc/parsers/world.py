@@ -46,18 +46,15 @@ events; `ui.world` taps at it and asks this module whether the tap worked.
 
 from __future__ import annotations
 
-import io
 from typing import TYPE_CHECKING
 import logging
 
-from PIL import Image
+from ai_coc.parsers.frame import open_frame
 
 if TYPE_CHECKING:
     from ai_coc.models import World
 
 logger = logging.getLogger(__name__)
-
-SCREEN_SIZE = (1600, 900)
 
 # The badge is a rounded blue plate with a white `i` on it. Measured down a
 # column through one, its plate runs (61, 149, 205) to (44, 101, 180) while the
@@ -87,12 +84,9 @@ BADGES_PER_WORLD: dict[int, World] = {3: "day", 2: "night"}
 
 def info_badges(png: bytes) -> list[tuple[int, int]]:
     """Where each plate's blue `i` badge sits along the top row."""
-    image = Image.open(io.BytesIO(png)).convert("RGB")
-    if image.size != SCREEN_SIZE:
-        raise ValueError(f"世界判讀座標只適用 1600x900，收到 {image.size[0]}x{image.size[1]}")
     # Raw bytes rather than `load()`, which is what every other parser here
     # does: three per RGB pixel, and typed as integers.
-    band = image.crop((BADGE_LEFT, BADGE_BAND[0], BADGE_RIGHT, BADGE_BAND[1]))
+    band = open_frame(png).crop((BADGE_LEFT, BADGE_BAND[0], BADGE_RIGHT, BADGE_BAND[1]))
     width, rows = band.size
     data = band.tobytes()
     lit = [

@@ -8,20 +8,18 @@ digits are matched against templates here instead of going through Gemini.
 
 from __future__ import annotations
 
-import io
 from typing import TYPE_CHECKING
 import logging
 
 from PIL import Image
 
 from ai_coc.models import LootOffer, ScoutView, VillageStock
+from ai_coc.parsers.frame import open_frame
 
 if TYPE_CHECKING:
     from collections.abc import Iterator, Sequence
 
 logger = logging.getLogger(__name__)
-
-SCREEN_SIZE = (1600, 900)
 
 # The loot panel sits under the opponent's name, one row per resource. It is
 # transparent, so the village behind it shows through to the right of the digits
@@ -380,7 +378,7 @@ IDLE_DIALOG_DARK = 0.7
 
 def battle_over(png: bytes) -> bool:
     """Whether the battle result screen is up with its 回營 button waiting."""
-    data = Image.open(io.BytesIO(png)).convert("RGB").crop(RETURN_HOME_BOX).tobytes()
+    data = open_frame(png).crop(RETURN_HOME_BOX).tobytes()
     green = sum(
         data[i + 1] > 150 and data[i + 1] - data[i] > 45 and data[i + 1] - data[i + 2] > 60
         for i in range(0, len(data), 3)
@@ -390,7 +388,7 @@ def battle_over(png: bytes) -> bool:
 
 def idle_disconnected(png: bytes) -> bool:
     """Whether the idle-disconnect dialog is covering the game."""
-    data = Image.open(io.BytesIO(png)).convert("RGB").crop(IDLE_DIALOG_BOX).tobytes()
+    data = open_frame(png).crop(IDLE_DIALOG_BOX).tobytes()
     panel = sum(
         max(data[i], data[i + 1], data[i + 2]) < 95
         and max(data[i], data[i + 1], data[i + 2]) - min(data[i], data[i + 1], data[i + 2]) < 30
@@ -582,13 +580,16 @@ def _signature(
     return bits
 
 
+def _nearest(signature: int) -> tuple[str, int]:
+    """The digit this bit pattern sits closest to, and how many bits off it is."""
+    digit = min(TEMPLATES, key=lambda d: (TEMPLATES[d] ^ signature).bit_count())
+    return digit, (TEMPLATES[digit] ^ signature).bit_count()
+
+
 def _match(mask: list[list[bool]], left: int, right: int, floor: int) -> tuple[str, int] | None:
     """One column span as the digit it matches best and how far off that was."""
     signature = _signature(mask, left, right, floor)
-    if signature is None:
-        return None
-    digit = min(TEMPLATES, key=lambda d: (TEMPLATES[d] ^ signature).bit_count())
-    return digit, (TEMPLATES[digit] ^ signature).bit_count()
+    return None if signature is None else _nearest(signature)
 
 
 def _split(mask: list[list[bool]], left: int, right: int, floor: int) -> list[tuple[str, int]]:
@@ -740,7 +741,7 @@ def skip_offered(png: bytes) -> bool:
     saturated orange rather than off the digits — the same test `can_skip`
     already uses, asked without needing a whole `ScoutView` to exist first.
     """
-    image = Image.open(io.BytesIO(png)).convert("RGB")
+    image = open_frame(png)
     return _orange_ratio(image, NEXT_BUTTON_BOX) >= BUTTON_ORANGE
 
 
@@ -751,7 +752,7 @@ def attack_menu_open(png: bytes) -> bool:
     An agent job that finished somewhere else would otherwise send them into
     whatever screen was left showing.
     """
-    image = Image.open(io.BytesIO(png)).convert("RGB")
+    image = open_frame(png)
     return _orange_ratio(image, FIND_MATCH_BOX) >= BUTTON_ORANGE
 
 
@@ -792,7 +793,7 @@ def night_attack_menu(png: bytes) -> bool:
     Two features rather than one, because a village is mostly grass and the
     button is green; see the constants for the frames each half lets through.
     """
-    image = Image.open(io.BytesIO(png)).convert("RGB")
+    image = open_frame(png)
     return (
         _button_ratio(image, NIGHT_FIND_BOX, "green") >= NIGHT_FIND_GREEN
         and _panel_ratio(image, NIGHT_PANEL_BOX) >= NIGHT_PANEL_PALE
@@ -806,7 +807,7 @@ def loot_cart_open(png: bytes) -> bool:
     that stopped at the tap has collected nothing at all — which is what the
     storage bars said the first time this was tried.
     """
-    image = Image.open(io.BytesIO(png)).convert("RGB")
+    image = open_frame(png)
     return _button_ratio(image, CART_COLLECT_BOX, "green") >= CART_COLLECT_GREEN
 
 
@@ -818,7 +819,7 @@ def searching_opponent(png: bytes) -> bool:
     search is still running, and therefore what a caller waits on — and what it
     taps when the wait has gone on long enough to be worth restarting.
     """
-    image = Image.open(io.BytesIO(png)).convert("RGB")
+    image = open_frame(png)
     return _button_ratio(image, SEARCHING_BOX, "red") >= SEARCHING_RED
 
 
@@ -879,7 +880,7 @@ def card_groups(png: bytes) -> list[list[int]]:
     dropped takes the whole card with it; `CARD_SPAN` is what that costs and how
     it is judged.
     """
-    image = Image.open(io.BytesIO(png)).convert("RGB")
+    image = open_frame(png)
     strip = image.crop((0, CARD_TOP, image.width, CARD_BOTTOM)).convert("L")
     columns = strip.resize((image.width, 1), Image.Resampling.BILINEAR).tobytes()
     pieces: list[tuple[int, int]] = []
@@ -909,7 +910,7 @@ def counted_cards(png: bytes, slots: Sequence[int]) -> list[int]:
     Heroes and the siege machine are the ones without it, which is what lets the
     attack loop drop those and leave spells alone.
     """
-    image = Image.open(io.BytesIO(png)).convert("RGB")
+    image = open_frame(png)
     counted: list[int] = []
     for centre in slots:
         data = image.crop((
@@ -954,7 +955,7 @@ def card_count(png: bytes, slot: int) -> int | None:
     count nobody can read costs the fallback tap count; a count read as more than
     twice what the card holds costs the burst that follows it.
     """
-    image = Image.open(io.BytesIO(png)).convert("RGB")
+    image = open_frame(png)
     band = image.crop((slot + COUNT_LEFT, COUNT_TOP, slot + COUNT_RIGHT, COUNT_BOTTOM))
     mask = _ink_mask(band, COUNT_INK_BRIGHTNESS)
     spans = [(a, b) for a, b in _glyph_columns(mask) if b - a > 3]
@@ -965,8 +966,8 @@ def card_count(png: bytes, slot: int) -> int | None:
         signature = _signature(mask, left, right)
         if signature is None:
             continue
-        digit = min(TEMPLATES, key=lambda d: (TEMPLATES[d] ^ signature).bit_count())
-        if (TEMPLATES[digit] ^ signature).bit_count() > COUNT_DIGIT_TOLERANCE:
+        digit, distance = _nearest(signature)
+        if distance > COUNT_DIGIT_TOLERANCE:
             return None
         digits += digit
     return int(digits) if digits else None
@@ -988,8 +989,7 @@ def card_drained(before: bytes, after: bytes, slots: Sequence[int]) -> list[int]
     question the loop keeps asking — did that drop land — without needing to read
     the number, and without believing a banner that means four different things.
     """
-    first = Image.open(io.BytesIO(before)).convert("RGB")
-    second = Image.open(io.BytesIO(after)).convert("RGB")
+    first, second = open_frame(before), open_frame(after)
     drained: list[int] = []
     for centre in slots:
         moved = sum(
@@ -1011,7 +1011,7 @@ def field_units(png: bytes, slots: Sequence[int]) -> list[int]:
     A unit, not a hero: measured on a recorded run, the game draws the same bar
     over a siege machine, so the caller cannot use this to tell the two apart.
     """
-    image = Image.open(io.BytesIO(png)).convert("RGB")
+    image = open_frame(png)
     down: list[int] = []
     for centre in slots:
         data = image.crop((
@@ -1045,8 +1045,8 @@ def split_numbers(mask: list[list[bool]], tolerance: int) -> list[int]:
         signature = _signature(mask, left, right)
         if signature is None:
             continue
-        digit = min(TEMPLATES, key=lambda d: (TEMPLATES[d] ^ signature).bit_count())
-        if (TEMPLATES[digit] ^ signature).bit_count() > tolerance:
+        digit, distance = _nearest(signature)
+        if distance > tolerance:
             numbers.append("")
             continue
         numbers[-1] += digit
@@ -1059,7 +1059,7 @@ def army_strength(png: bytes) -> tuple[int, int] | None:
     Checked before the attack is confirmed, because the search fee is charged
     after that and an army still being trained is not worth paying it for.
     """
-    image = Image.open(io.BytesIO(png)).convert("RGB")
+    image = open_frame(png)
     mask = _ink_mask(image.crop(ARMY_BOX), ARMY_INK_BRIGHTNESS)
     found = split_numbers(mask, ARMY_DIGIT_TOLERANCE)
     if len(found) != 2:
@@ -1073,7 +1073,7 @@ def freeze_cards(png: bytes, slots: Sequence[int]) -> list[int]:
     Both halves of cyan are asked for; see `FREEZE_BLUE` for what the green one
     alone lets through.
     """
-    image = Image.open(io.BytesIO(png)).convert("RGB")
+    image = open_frame(png)
     frozen: list[int] = []
     for centre in slots:
         data = image.crop((
@@ -1096,7 +1096,7 @@ def live_cards(png: bytes, slots: Sequence[int]) -> list[int]:
     Lets the attack loop keep emptying only the cards that are not done yet,
     rather than guessing a tap count that a bulk troop card would outlast.
     """
-    image = Image.open(io.BytesIO(png)).convert("RGB")
+    image = open_frame(png)
     live: list[int] = []
     for centre in slots:
         data = image.crop((
@@ -1124,7 +1124,7 @@ def selected_cards(png: bytes, slots: Sequence[int]) -> list[int]:
     same averaged strip `card_groups` cuts the row on. A three-column window
     either side covers the pixel or two a centre moves between frames.
     """
-    image = Image.open(io.BytesIO(png)).convert("RGB")
+    image = open_frame(png)
     strip = image.crop((0, CARD_TOP, image.width, CARD_BOTTOM)).convert("L")
     columns = strip.resize((image.width, 1), Image.Resampling.BILINEAR).tobytes()
     half = CARD_SELECTED_SPAN // 2
@@ -1144,9 +1144,7 @@ def read_scout(png: bytes) -> ScoutView | None:
     has no digits where the panel would be, so a failed read is how the caller
     learns to keep waiting rather than a separate screen classifier.
     """
-    image = Image.open(io.BytesIO(png)).convert("RGB")
-    if image.size != SCREEN_SIZE:
-        raise ValueError(f"戰利品面板座標只適用 1600x900，收到 {image.size[0]}x{image.size[1]}")
+    image = open_frame(png)
     gold, elixir, dark = (
         _read_loot_row(image, (PANEL_LEFT, top, PANEL_RIGHT, bottom)) for top, bottom in ROW_BOUNDS
     )
@@ -1177,9 +1175,7 @@ def read_builder_stock(png: bytes) -> VillageStock | None:
     else, so it is not read at all: `dark` comes back 0, and that village's
     `StorageCapacity` carries no dark ceiling either, so nothing compares them.
     """
-    image = Image.open(io.BytesIO(png)).convert("RGB")
-    if image.size != SCREEN_SIZE:
-        raise ValueError(f"儲量條座標只適用 1600x900，收到 {image.size[0]}x{image.size[1]}")
+    image = open_frame(png)
     gold, elixir = (
         _read_row(image, (STOCK_LEFT, top, STOCK_RIGHT, bottom), STOCK_DIGIT_TOLERANCE)
         for top, bottom in STOCK_ROW_BOUNDS[:2]
@@ -1203,9 +1199,7 @@ def storage_capacity(png: bytes, row: int) -> int | None:
     not a number, and a resource without a ceiling is simply left out of the
     comparison.
     """
-    image = Image.open(io.BytesIO(png)).convert("RGB")
-    if image.size != SCREEN_SIZE:
-        raise ValueError(f"儲量提示座標只適用 1600x900，收到 {image.size[0]}x{image.size[1]}")
+    image = open_frame(png)
     left, top, right, bottom = CAPACITY_BOX
     shift = CAPACITY_PITCH * row
     mask = _ink_mask(
@@ -1226,9 +1220,7 @@ def read_stock(png: bytes) -> VillageStock | None:
     rather than as an empty village. Three rows all resolving into digits is
     itself the evidence that the home screen is up.
     """
-    image = Image.open(io.BytesIO(png)).convert("RGB")
-    if image.size != SCREEN_SIZE:
-        raise ValueError(f"儲量條座標只適用 1600x900，收到 {image.size[0]}x{image.size[1]}")
+    image = open_frame(png)
     gold, elixir, dark = (
         _read_row(image, (left, top, STOCK_RIGHT, bottom), STOCK_DIGIT_TOLERANCE)
         for left, (top, bottom) in zip(

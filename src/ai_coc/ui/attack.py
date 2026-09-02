@@ -35,7 +35,7 @@ from ai_coc.ui.world import cross, uncovered
 from ai_coc.constants import COC_PACKAGE
 from ai_coc.ui.runner import restart_game
 from ai_coc.adapters.ai import GeminiClient
-from ai_coc.adapters.adb import AdbController
+from ai_coc.adapters.adb import ZOOM_PINCHES, AdbController
 from ai_coc.parsers.field import view_shift
 from ai_coc.parsers.scout import (
     card_count,
@@ -59,13 +59,15 @@ from ai_coc.parsers.scout import (
     searching_opponent,
 )
 from ai_coc.parsers.world import current_world
-from ai_coc.parsers.boundary import DEPLOY_BOUND, fitted_line, village_box
+from ai_coc.parsers.boundary import (
+    PLAYFIELD,
+    DEPLOY_BOUND,
+    VILLAGE_CENTRE,
+    fitted_line,
+    village_box,
+)
 
 logger = logging.getLogger(__name__)
-
-# Everything the loop does on a clock: when it is due, what to call it in the
-# log, and what to do. A tuple rather than a model because the payload is a bound
-# call rather than data, and it never leaves this module.
 
 # Every coordinate is the 1600x900 layout, the one `_apply_agent_action` assumes.
 HOME_ATTACK = (105, 830)
@@ -207,29 +209,17 @@ DEPLOY_LINES = {
 DEPLOY_START, DEPLOY_END = DEPLOY_LINES["top_left"]
 LINE_POINTS = 12
 
-# Where the spells go when no plan says otherwise. Rage covers 5 tiles, and the
-# 44x44 map spans about 1040x605 px here, so a tile is roughly 24x12 and the
-# footprint is a 240x120 ellipse rather than a circle: the board is isometric, so
-# vertical spacing is half the horizontal. Two overlapping rages waste one, hence
-# this pitch. It runs from the drop flank towards the middle, because rage
-# belongs where the troops are about to walk, not where they land.
-RAGE_PATH = (
-    (520, 300),
-    (760, 300),
-    (520, 420),
-    (760, 420),
-    (1000, 300),
-    (1000, 420),
-    (640, 180),
-    (880, 180),
-)
-# Freeze is the opposite: it is held back until the troops are deep enough to be
-# under fire, and goes where they are rather than where they were headed.
-FREEZE_TARGET = (800, 420)
-# One bottle's own footprint, which is what tells two of them apart. It is the
-# pitch RAGE_PATH is already laid out on; naming it is what lets a planned point
-# be measured against the same ellipse.
+# One bottle's own footprint, which is what tells two of them apart. Rage covers
+# 5 tiles, and the 44x44 map spans about 1040x605 px here, so a tile is roughly
+# 24x12 and the footprint is a 240x120 ellipse rather than a circle: the board is
+# isometric, so vertical spacing is half the horizontal. Two overlapping rages
+# waste one, which is the pitch `plans/flat.json` lays its grid out at, and
+# naming it is what lets a planned point be measured against the same ellipse.
 RAGE_SPAN = (240, 120)
+# How many bottles a rage card is taken to hold when its own `xN` corner will
+# not read. It is what the flat plan's grid carries, so a card the artwork
+# swallowed is asked for as many points as the fallback tactic can place.
+RAGE_BOTTLES = 8
 # How far past the edge of a footprint a crowded bottle gets pushed. Exactly to
 # the edge is what the geometry asks for, but the answer is rounded back to a
 # whole pixel, and half a pixel of that is enough to leave the point a hair
@@ -246,9 +236,9 @@ NUDGE_ATTEMPTS = 8
 # which is the width of the screen and precisely the failure this replaced —
 # a bottle covering ground nobody chose. One footprint is the honest limit,
 # because past that it is no longer the planner's point at all, and a point that
-# cannot be placed inside it is dropped so `RAGE_PATH` can put it somewhere
-# deliberate instead. The real plans need a fraction of it: replayed over 24
-# recorded rounds the furthest any point moved was 0.32 of a footprint.
+# cannot be placed inside it is dropped rather than walked out there. The real
+# plans need a fraction of it: replayed over 24 recorded rounds the furthest any
+# point moved was 0.32 of a footprint.
 NUDGE_REACH = 1.0
 
 # How long a pause has to be before the loop will spend a frame inside it. A
@@ -288,10 +278,11 @@ DROP_SETTLE = 0.5
 HERO_SETTLE = 1.5
 
 # A village whose boundary reaches past the chosen line refuses every drop, and
-# layouts vary far more than one line can allow for. So the line is tested with a
-# single troop and pushed further from the middle until the game accepts it,
-# staying inside the playfield the UI leaves free.
-SCREEN_CENTRE = (800, 400)
+# layouts vary far more than one line can allow for. So the line is pushed
+# further from the middle when a whole pass lands nothing, staying inside the
+# playfield the UI leaves free. The middle is the map's own, which is where the
+# camera puts the village at the start of every battle.
+SCREEN_CENTRE = VILLAGE_CENTRE
 PUSH_STEP = 70
 DEPLOY_ATTEMPTS = 5
 # A tile is about 24x12 px here, so two drops closer together than this are the
@@ -302,7 +293,6 @@ SPOT_APART = 20
 # A spell card that would not cast is offered the run once more and no further:
 # past that it is a card the game is refusing, not a tap it happened to swallow.
 SPELL_ATTEMPTS = 2
-PLAYFIELD = (30, 105, 1570, 700)
 # The 放棄 button, measured at x 12-205 and y 636-700 on the battle screen. It
 # is the one piece of UI the playfield would otherwise reach over, and a drop
 # pushed onto it is not a wasted troop but a button press: a hero pushed out
@@ -328,21 +318,15 @@ MIN_LINE_RADIUS = 300
 # has genuinely been left somewhere else.
 CAMERA_TOLERANCE = 60
 CAMERA_ATTEMPTS = 2
-# Putting the camera back at the far zoom before every battle, and how much of a
-# change in the frame counts as evidence it had drifted there. Two pinches
-# because `view` measured one as covering the whole range and a second as doing
-# nothing, so this is that plus a spare; the whole thing costs about three
-# seconds against a battle of three minutes.
-#
-# How short the village has to read before the pinch to say the camera had
-# drifted. Swept over a day of live rounds, every healthy one measured 500 to
-# 572 px tall and the single round that deployed nothing measured 411 — a
-# village grown too big for the screen and clipped at top and bottom. 470 sits
-# between them with room on both sides. This is only ever reported, never acted
-# on: the pinch has already happened.
-ZOOM_PINCHES = 2
+# How short the village has to read before the pre-battle pinch to say the
+# camera had drifted off the far zoom. Swept over a day of live rounds, every
+# healthy one measured 500 to 572 px tall and the single round that deployed
+# nothing measured 411 — a village grown too big for the screen and clipped at
+# top and bottom. 470 sits between them with room on both sides. This is only
+# ever reported, never acted on: the pinch has already happened.
 ZOOM_CLIPPED = 470
-CAMERA_GRIP = (800, 400)
+# A camera drag starts from the middle of the screen, so neither end of it
+# lands on the game's own button columns.
 CAMERA_DRAG_MS = 350
 CAMERA_SETTLE = 1.5
 
@@ -622,8 +606,8 @@ def spaced(points: Iterable[tuple[int, int]]) -> list[tuple[int, int]]:
     of asked for.
 
     **It is settled by moving the point, not by dropping it.** Dropping was the
-    first answer, and the caller made the loss back up from `RAGE_PATH` — a grid
-    laid across the whole village. Measured over 24 live rounds the planner drew
+    first answer, and the caller made the loss back up from a fixed grid laid
+    across the whole village. Measured over 24 live rounds the planner drew
     its 2x2 at 13% by 10% of the screen where the prompt asks for 15% by 13%,
     which puts the horizontal neighbour at 0.75 of a footprint and the vertical
     one at 0.56: the block collapsed to its own diagonal on **24 rounds out of
@@ -996,12 +980,24 @@ class AttackRunner(BaseModel):
         return battle_over(png)
 
     def _open_attack_menu(self) -> bytes | None:
-        """Get to the attack menu, clearing whatever is covering the village.
+        """Get to this village's attack menu, clearing whatever is covering the village.
 
-        The home village frame comes back with it. That is the one screen the
+        The village frame comes back with it. That is the one screen the
         storage bars are on, and the frame is already being taken here to check
         for the idle dialog, so reading the storages costs no extra capture.
+
+        One method for both villages, because the way in is the same tap: 攻擊
+        sits in the same corner on each, and what separates them is only which
+        dialog it opens — `attack_menu_open` does not recognise the builder
+        base's and `night_attack_menu` does not recognise the home village's.
+        The game reopens on whichever village it was closed on, so a run
+        pointed at one can find the other; without the crossing below it fails
+        safe but expensively and says the wrong thing, spending every attempt
+        here on the other village's dialog and reporting 畫面不在主村, which
+        reads as a game that is stuck rather than one in the other village.
         """
+        other: World = "night" if self.world == "day" else "day"
+        opened = attack_menu_open if self.world == "day" else night_attack_menu
         for _ in range(HOME_ATTEMPTS):
             home = self._frame("home")
             if idle_disconnected(home):
@@ -1012,21 +1008,16 @@ class AttackRunner(BaseModel):
                 logger.info("The last battle's result screen is still up; leaving it")
                 self._leave_result()
                 continue
-            # The game reopens on whichever village it was closed on, and this
-            # loop is the home village's. Without this it fails safe but
-            # expensively and says the wrong thing: 攻擊 in the corner opens the
-            # builder base's own dialog, `attack_menu_open` does not recognise
-            # it, and the run spends every attempt here before reporting
-            # 畫面不在主村 — which reads as a game that is stuck rather than one
-            # that is simply in the other village.
             # One crossing and then out, for the reason `GameRunner._home` gives:
             # `cross` already spends about a minute trying three spots, and
             # retrying it per attempt would turn a boat nobody can reach into
             # five minutes of silence rather than the one round this costs.
             here = current_world(home)
-            if here == "night":
-                logger.warning("The game is on the builder base; sailing home before attacking")
-                if cross(self.adb, self.display, "day") != "day":
+            if here == other:
+                logger.warning(
+                    "The game is on the %s village; sailing over before attacking", other
+                )
+                if cross(self.adb, self.display, self.world) != self.world:
                     logger.warning("The crossing never landed; this round has no village to open")
                     return None
                 continue
@@ -1050,14 +1041,48 @@ class AttackRunner(BaseModel):
             self._settle_ceilings()
             self._tap(HOME_ATTACK)
             time.sleep(2)
-            if attack_menu_open(self._frame("attack-menu")):
+            if opened(self._frame("attack-menu")):
                 return home
-            # Never `back` here: on the home village that is 確定退出遊戲嗎, one
+            # Never `back` here: on a clear village that is 確定退出遊戲嗎, one
             # tap away from closing the game. A building panel left open does
             # not cover the 攻擊 button in the corner anyway, so the tap above
             # only needs the panel to swallow one press and then retries.
             time.sleep(HOME_RETRY_DELAY)
         return None
+
+    def _stood_down(self, home: bytes) -> AttackReport | None:
+        """A report standing the run down on full storages, or None to carry on.
+
+        Asked before the search rather than after it, on both villages: a
+        village with every storage full has nowhere to put what this run would
+        win, and the search costs a fee on the home village and a wait on a
+        live player on the builder base — one has run to five and a half
+        minutes. **Every** storage, not any: a battle brings home three
+        resources, so one of them being at the ceiling is no reason to stop
+        earning the other two. An unreadable frame stops nothing, because a
+        village that cannot be read is not evidence of a full one.
+
+        The ceilings are this village's own, read off its bars by
+        `_settle_ceilings`, which is what lets one percentage serve both. The
+        builder base reads two rows, because what sits at its third is the
+        gems bar.
+        """
+        stock = (read_stock if self.world == "day" else read_builder_stock)(home)
+        if stock is None:
+            return None
+        full = self._ceiling.full(stock, self.stop_at)
+        if not full:
+            return None
+        held = f"金幣 {stock.gold}／聖水 {stock.elixir}"
+        if self.world == "day":
+            held += f"／黑水 {stock.dark}"
+        logger.info("Storage limit reached (%s); farming stops with %s", "/".join(full), held)
+        self.adb.back(self.display)
+        return AttackReport(
+            world=self.world,
+            stock_full=True,
+            message=f"{'、'.join(full)}都滿過 {self.stop_at}%（{held}），停止刷資源",
+        )
 
     def _leave_result(self) -> None:
         """Tap 回營 until the result screen has actually gone.
@@ -1100,7 +1125,7 @@ class AttackRunner(BaseModel):
 
         Falling back to a written-out plan rather than to constants is what makes
         the default readable and editable, and it is the same tactic the loop
-        used to hold in `DEPLOY_LINES` and `RAGE_PATH`.
+        used to hold in `DEPLOY_LINES` and a fixed grid of rage points.
         """
         if self.plan is not None:
             logger.info("Playing the plan handed in: %s", self.plan.reason or "no reason given")
@@ -1428,8 +1453,8 @@ class AttackRunner(BaseModel):
         everything reads it.
         """
         self.adb.swipe(
-            CAMERA_GRIP,
-            clear_of_controls((CAMERA_GRIP[0] + drift[0], CAMERA_GRIP[1] + drift[1])),
+            SCREEN_CENTRE,
+            clear_of_controls((SCREEN_CENTRE[0] + drift[0], SCREEN_CENTRE[1] + drift[1])),
             CAMERA_DRAG_MS,
             self.display,
         )
@@ -1527,8 +1552,8 @@ class AttackRunner(BaseModel):
             # centred village and the village is centred again by the time this
             # returns.
             self.adb.swipe(
-                CAMERA_GRIP,
-                clear_of_controls((CAMERA_GRIP[0] + drift[0], CAMERA_GRIP[1] + drift[1])),
+                SCREEN_CENTRE,
+                clear_of_controls((SCREEN_CENTRE[0] + drift[0], SCREEN_CENTRE[1] + drift[1])),
                 CAMERA_DRAG_MS,
                 self.display,
             )
@@ -1598,10 +1623,10 @@ class AttackRunner(BaseModel):
         singles = [x for x in rest if x not in spells]
         freezes = freeze_cards(frame, spells)
         rages = [x for x in spells if x not in freezes]
-        rage_count = sum(card_count(frame, x) or len(RAGE_PATH) for x in rages)
-        # One apiece where the count is unreadable: there is no fixed freeze grid
-        # to fall back on the way rage has RAGE_PATH, and asking for eight points
-        # for a single bottle would only spend the battle tapping empty ground.
+        rage_count = sum(card_count(frame, x) or RAGE_BOTTLES for x in rages)
+        # One apiece where the count is unreadable: the flat plan carries one
+        # freeze point, and asking for eight points for a single bottle would
+        # only spend the battle tapping empty ground.
         freeze_count = sum(card_count(frame, x) or 1 for x in freezes)
         plan = self._plan(frame, rage_count, freeze_count) or plans.flat()
         # **Which one-off card holds the siege machine is the plan's own answer,
@@ -1969,55 +1994,6 @@ class AttackRunner(BaseModel):
         logger.warning("The whole battle passed without any loot moving")
         return f"{reason}，但整場戰利品沒有變化，部隊可能沒有成功部署"
 
-    def _open_night_attack(self) -> bytes | None:
-        """Get to the builder base's 開始進攻 dialog, and hand back the village frame.
-
-        The same shape as `_open_attack_menu` and for the same reasons, with one
-        addition: the game reopens on whichever village it was closed on, so a
-        run asked for this one can find the other.
-
-        **`back` is pressed here, but only through `uncovered` and only at a
-        frame that is no village.** This used to say it was never pressed at
-        all, on the grounds that the 攻擊 button in the corner is not covered by
-        anything a stray tap can open. That is true of stray taps and false of
-        the game itself, which puts full-screen popups up on its own: measured
-        live, an event reward page held a run for 40 minutes with every attempt
-        tapping behind it. On a clear village `back` is still 確定退出遊戲嗎,
-        which is exactly why the branch is gated on `current_world` answering
-        nothing at all, and why `uncovered` refuses a battle as well.
-        """
-        for _ in range(HOME_ATTEMPTS):
-            home = self._frame("home")
-            if idle_disconnected(home):
-                logger.info("Idle-disconnect dialog is up; restarting the game")
-                self.display = restart_game(self.adb, self.display)
-                continue
-            if battle_over(home):
-                logger.info("The last battle's result screen is still up; leaving it")
-                self._leave_result()
-                continue
-            here = current_world(home)
-            if here == "day":
-                logger.warning("The game is on the home village; sailing over before attacking")
-                if cross(self.adb, self.display, "night") != "night":
-                    logger.warning("The crossing never landed; this round has no base to open")
-                    return None
-                continue
-            # Same as `_open_attack_menu`: something is over the base and the
-            # 攻擊 tap below would land on it.
-            if here is None:
-                uncovered(self.adb, self.display)
-                continue
-            # Same as `_open_attack_menu`: the bars can only be tapped from the
-            # village itself, and this is where the run knows it is on one.
-            self._settle_ceilings()
-            self._tap(HOME_ATTACK)
-            time.sleep(2)
-            if night_attack_menu(self._frame("night-menu")):
-                return home
-            time.sleep(HOME_RETRY_DELAY)
-        return None
-
     def _find_opponent(self) -> bytes | None:
         """Hold the matchmaker open until a battle opens, restarting it if it drags.
 
@@ -2354,41 +2330,20 @@ class AttackRunner(BaseModel):
 
         No thresholds and no skipping: the matchmaker picks the opponent and
         there is nothing to weigh, because the attack is free and both outcomes
-        pay — a win brings home more gold and a loss more elixir.
-
-        **The storage limits are this village's own** without being configured
-        per village: its storages are a different size from the home village's,
-        and what the run is given is a share rather than an amount, so the
-        ceilings it is measured against are the ones read off these bars. They
-        are asked before the search rather than after it for the reason the home
-        village asks before
-        its fee — the search costs nothing in game and waits on a live player,
-        and one has run to five and a half minutes, which is the real price of a
-        round that had nowhere to put what it won.
+        pay — a win brings home more gold and a loss more elixir. The storage
+        limits still apply, against this village's own ceilings; see
+        `_stood_down`.
         """
         self._panned = (0, 0)
         self._played = None
-        home = self._open_night_attack()
+        home = self._open_attack_menu()
         if home is None:
             logger.warning("The builder base's attack dialog never opened")
             return AttackReport(
                 world="night", message="畫面不在建築大師基地，沒有開啟攻擊選單就停手"
             )
-        stock = read_builder_stock(home)
-        if stock and (full := self._ceiling.full(stock, self.stop_at)):
-            logger.info(
-                "Storage limit reached (%s); the builder base stops with gold=%d elixir=%d",
-                "/".join(full),
-                stock.gold,
-                stock.elixir,
-            )
-            self.adb.back(self.display)
-            return AttackReport(
-                world="night",
-                stock_full=True,
-                message=f"{'、'.join(full)}都滿過 {self.stop_at}%"
-                f"（金幣 {stock.gold}／聖水 {stock.elixir}），停止刷資源",
-            )
+        if (full := self._stood_down(home)) is not None:
+            return full
         battle = self._find_opponent()
         if battle is None:
             return AttackReport(world="night", message="等不到對手，已放棄這一輪搜尋")
@@ -2443,27 +2398,9 @@ class AttackRunner(BaseModel):
         if home is None:
             logger.warning("The attack menu did not open; the game is not on the home village")
             return AttackReport(message="畫面不在主村，沒有開啟攻擊選單就停手")
-        # Before the search fee, like the army check below: a village with every
-        # storage full has nowhere to put what this run would win. **Every**, not
-        # any — a battle brings home three resources, so one of them being at the
-        # ceiling is no reason to stop paying a fee the other two still earn out.
-        # An unreadable frame stops nothing, because a village that cannot be
-        # read is not evidence of a full one.
-        stock = read_stock(home)
-        if stock and (full := self._ceiling.full(stock, self.stop_at)):
-            logger.info(
-                "Storage limit reached (%s); farming stops with gold=%d elixir=%d dark=%d",
-                "/".join(full),
-                stock.gold,
-                stock.elixir,
-                stock.dark,
-            )
-            self.adb.back(self.display)
-            return AttackReport(
-                stock_full=True,
-                message=f"{'、'.join(full)}都滿過 {self.stop_at}%"
-                f"（金幣 {stock.gold}／聖水 {stock.elixir}／黑水 {stock.dark}），停止刷資源",
-            )
+        # Before the search fee, like the army check below.
+        if (full := self._stood_down(home)) is not None:
+            return full
         self._tap(FIND_MATCH)
         time.sleep(2)
         strength = army_strength(self._frame("army"))
