@@ -123,6 +123,7 @@ from ai_coc.parsers.scout import (
     skip_offered,
     army_strength,
     counted_cards,
+    selected_cards,
     attack_menu_open,
     storage_capacity,
     night_attack_menu,
@@ -828,14 +829,14 @@ class NightAttackTests(unittest.TestCase):
             assert runner._deploy_night(b"") == ([], [307])
         assert order == ["troops"]
 
-    def test_the_second_stage_sends_the_pre_selected_machine_with_one_tap(self) -> None:
+    def test_the_second_stage_sends_the_preselected_machine_from_the_field(self) -> None:
         """The surviving machine's card comes back selected, so the field is tapped, not the card.
 
-        Measured on four recorded second stages: the card is drawn at the
-        selected width with a white border, and the loop's camera drag has
-        usually sent it already. Dropping it the usual way spent five retries on
-        its ability button and held the troops behind a machine already
-        fighting; a tap on the card would only deselect it.
+        Measured on five recorded second stages: the card is drawn at the
+        selected width with a white border. Dropping it the usual way spent
+        five retries on its ability button and held the troops behind a machine
+        already fighting; a tap on the card would only deselect it, and one
+        blind tap on the field was swallowed on a live round.
         """
         runner = self._runner()
         order: list[str] = []
@@ -848,6 +849,10 @@ class NightAttackTests(unittest.TestCase):
             patch.object(AttackRunner, "_night_plan", return_value=plans.night_flat()),
             patch.object(AttackRunner, "_flank", return_value=DEPLOY_LINES["top_left"]),
             patch.object(attack, "deploy_line", return_value=[(600, 110)]),
+            patch.object(attack.time, "sleep"),
+            patch.object(runner, "_frame", return_value=b""),
+            # The first spot is swallowed; the second sends it.
+            patch.object(attack, "selected_cards", side_effect=[[164], []]),
             patch.object(AdbController, "tap", side_effect=lambda *a: order.append("field")),
             patch.object(
                 AttackRunner, "_drop_singles", side_effect=lambda *a, **k: order.append("machine")
@@ -858,7 +863,14 @@ class NightAttackTests(unittest.TestCase):
             ),
         ):
             assert runner._deploy_night(b"", 1) == ([164], [307])
-        assert order == ["field", "hold", "troops"]
+        assert order == ["field", "field", "hold", "troops"]
+
+    def test_a_preselected_card_is_read_by_its_white_border(self) -> None:
+        """The border is what says the next tap on the field deploys this card."""
+        selected = (FRAMES / "night_stage2_cards.png").read_bytes()
+        assert selected_cards(selected, [164, 307]) == [164]
+        resting = (FRAMES / "night_cards.png").read_bytes()
+        assert selected_cards(resting, [164, 307]) == []
 
     def test_a_selected_machine_card_is_still_a_card(self) -> None:
         """The second stage opens with the machine's card preselected, 118 px wide.

@@ -1114,6 +1114,29 @@ def live_cards(png: bytes, slots: Sequence[int]) -> list[int]:
     return live
 
 
+def selected_cards(png: bytes, slots: Sequence[int]) -> list[int]:
+    """Which of these cards the game is drawing selected, by the white border.
+
+    A selected card is the one the next tap on the field deploys from, and the
+    builder base's second stage opens with the surviving machine's card in that
+    state. The border is what `CARD_SELECTED_EDGE` measures: 249 to 255 bright
+    at both edges of the card against at most 130 for one at rest, read off the
+    same averaged strip `card_groups` cuts the row on. A three-column window
+    either side covers the pixel or two a centre moves between frames.
+    """
+    image = Image.open(io.BytesIO(png)).convert("RGB")
+    strip = image.crop((0, CARD_TOP, image.width, CARD_BOTTOM)).convert("L")
+    columns = strip.resize((image.width, 1), Image.Resampling.BILINEAR).tobytes()
+    half = CARD_SELECTED_SPAN // 2
+    selected: list[int] = []
+    for centre in slots:
+        left = columns[centre - half - 1 : centre - half + 2]
+        right = columns[centre + half - 2 : centre + half + 1]
+        if max(left) >= CARD_SELECTED_EDGE and max(right) >= CARD_SELECTED_EDGE:
+            selected.append(centre)
+    return selected
+
+
 def read_scout(png: bytes) -> ScoutView | None:
     """The opponent on screen, or None when this screenshot shows no opponent at all.
 

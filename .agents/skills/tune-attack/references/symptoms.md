@@ -170,7 +170,7 @@
 
 **卡片列的順序是反的.** 主村是兵在前英雄在後, 夜世界是機器人在最左邊. 所以不要用 group 的位置去分, 要用有沒有 `xN` 角標 (`counted_cards`), 那個在兩邊意思一樣.
 
-**機器的技能不讀畫面, 每秒盲按一次** (`ABILITY_TAP`), 每 `ABILITY_POLL` 才拍一張看階段結束了沒. 要驗證有沒有按到就開 `--record`, 看機器卡片**上方**那條技能條: 洋紅色是充飽 (按下去就開), 青色由短變長是充能中 (約 14 秒), 兩種都沒有就是機器死了或者還在卡片裡. 連續好幾張都是洋紅色而 log 有在點, 才是真的沒按到. **第二階段開場時, 倖存的機器卡片是「選取中」的** (白邊, 比平常寬), 迴圈拉相機那一下就把它送上場了, 所以那裡只點一下地面不點卡片, log 是 `The machine came through from the stage before, preselected`. 要是第二階段又看到 `took nothing` 五次接 `never landed`, 或者 `0 machine card(s) still alive` 而畫面上機器明明活著, 就是這條被改壞了 —— 前者那五次點的是它的技能鍵, 後者是 `card_groups` 又讀不到選取中的卡片 (`CARD_SELECTED_SPAN`).
+**機器的技能不讀畫面, 每秒盲按一次** (`ABILITY_TAP`), 每 `ABILITY_POLL` 才拍一張看階段結束了沒. 要驗證有沒有按到就開 `--record`, 看機器卡片**上方**那條技能條: 洋紅色是充飽 (按下去就開), 青色由短變長是充能中 (約 14 秒), 兩種都沒有就是機器死了或者還在卡片裡. 連續好幾張都是洋紅色而 log 有在點, 才是真的沒按到. **第二階段開場時, 倖存的機器卡片是「選取中」的** (白邊, 比平常寬), 所以那裡點地面不點卡片, 點完讀白邊還在就換下一個落點 (`_send_selected`, 最多五個), log 是 `The machine came through from the stage before, preselected` 接 `still in its card after` 那幾行; 五個都被吞會有 `never left its card` 的 WARNING, 那時候機器整場留在卡片裡, 而技能的每一下點擊只是在切換選取. 要是第二階段又看到 `took nothing` 五次接 `never landed`, 或者 `0 machine card(s) still alive` 而畫面上機器明明活著, 就是這條被改壞了 —— 前者那五次點的是它的技能鍵, 後者是 `card_groups` 又讀不到選取中的卡片 (`CARD_SELECTED_SPAN`).
 
 還有兩件事沒有判讀器可以查, 只能看 log:
 

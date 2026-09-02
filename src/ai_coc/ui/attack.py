@@ -50,6 +50,7 @@ from ai_coc.parsers.scout import (
     skip_offered,
     army_strength,
     counted_cards,
+    selected_cards,
     attack_menu_open,
     storage_capacity,
     idle_disconnected,
@@ -2173,11 +2174,13 @@ class AttackRunner(BaseModel):
         if machines and stage == 0:
             out, _ = self._drop_singles(machines, line, "machine", spots)
         elif machines:
-            # The card comes back preselected, so one tap on the field is what
-            # sends it if the camera drag has not already; a tap on the card
-            # itself would only deselect it.
+            # The card comes back preselected, so a tap on the field is what
+            # sends it; a tap on the card itself would only deselect it.
             logger.info("The machine came through from the stage before, preselected; sending it")
-            self.adb.tap(*spots.get(machines[0], line[len(line) // 2]), self.display)
+            self._send_selected(
+                machines[0],
+                [spots.get(machines[0], line[len(line) // 2]), *single_spots(line, self._middle)],
+            )
             out = list(machines)
         if machines:
             # Every live card, not only the ones read as landed: the offer is
@@ -2214,6 +2217,26 @@ class AttackRunner(BaseModel):
         for _ in range(max(1, round(seconds / ABILITY_TAP))):
             self._offer_ability(machines)
             time.sleep(ABILITY_TAP)
+
+    def _send_selected(self, card: int, spots: list[tuple[int, int]]) -> bool:
+        """Tap the field until a preselected card is no longer selected; True once it went.
+
+        The card's own white border is the verdict, not the health bar: a
+        machine carried into the second stage has whatever health it kept, and
+        `field_units` reads a bar that is no longer green as no bar at all.
+        One blind tap was what a live round paid for — the plan's spot fell
+        outside the smaller second base's ground, the game swallowed it, and
+        the machine sat selected in its card for the whole stage while every
+        ability offer only toggled the selection.
+        """
+        for spot in spots[:DEPLOY_ATTEMPTS]:
+            self.adb.tap(*spot, self.display)
+            time.sleep(DROP_SETTLE)
+            if card not in selected_cards(self._frame("sent"), [card]):
+                return True
+            logger.info("The preselected machine is still in its card after %s", spot)
+        logger.warning("The preselected machine never left its card")
+        return False
 
     def _spread_night(
         self, troops: list[int], anchors: tuple[tuple[int, int], ...], pushed: int
