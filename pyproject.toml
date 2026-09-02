@@ -139,6 +139,11 @@ packages = ["src/ai_coc"]
 
 [tool.hatch.build.targets.sdist]
 # Basically everything except hidden files/directories (such as .github, .devcontainers, .python-version, etc)
+# `tests/*` is deliberately absent, where the template has it. The suite is nothing without
+# `tests/frames/`, and those are 33 MB of screenshots off a live account carrying player and clan
+# names; an sdist goes to PyPI whatever this repository's own visibility is, so this target is the
+# one place that matters. Shipping the tests without the frames is worse than shipping neither,
+# because every parser test reads one.
 include = [
     "/*.toml",
     "/*.json",
@@ -148,7 +153,6 @@ include = [
     "bin/*",
     "examples/*",
     "src/*",
-    "tests/*",
 ]
 exclude = [
     "/.github",
