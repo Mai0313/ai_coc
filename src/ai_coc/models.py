@@ -834,14 +834,6 @@ class AppConfig(BaseModel):
     # file because that is the only place a number nobody can measure belongs:
     # whoever is watching the frame rate is the one who gets to change it.
     restart_every: int = 50
-    # How often to nudge the screen while holding the session open. Clash of
-    # Clans will not let anyone attack a village whose owner is online, so a run
-    # that has finished farming is safer idling in the game than leaving it —
-    # and what keeps a session alive is touch input rather than a connection.
-    # Two minutes is comfortably inside the game's own idle timeout without
-    # spending an input every few seconds all night; it lives here because the
-    # timeout is the game's and can move under us.
-    keepalive_seconds: float = 120.0
     # Nested rather than three more flat keys, and it earns that twice over. At
     # the top level `model` would sit beside `restart_every` with nothing saying
     # which subsystem it belongs to, and that only gets worse as tiers are added.
@@ -1338,18 +1330,6 @@ class LaunchReport(BaseModel):
     # `ensure_coc` is satisfied by a pid, and a game still on its loading screen
     # answers every command by silently missing whatever it aimed at.
     at_village: bool = False
-    message: str = ""
-
-
-class OnlineReport(BaseModel):
-    """What one `online` command did while it held the session open.
-
-    The count is what separates a run that idled all night from one that fell
-    over on its first nudge, since both end the same way — quietly, on a stop.
-    """
-
-    nudges: int = 0
-    seconds: float = 0.0
     message: str = ""
 
 

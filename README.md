@@ -72,10 +72,7 @@ ai_coc attack --repeat 5         # five in a row
 ai_coc attack --repeat 0         # keep going until a storage fills up
 ai_coc stop                      # stand down after the battle in progress
 ai_coc attack --restart-every 0  # skip the scheduled emulator restart this run
-ai_coc online                    # sit in the game so nobody can raid the village
 ```
-
-**Between runs, stay online.** Clash of Clans will not let anyone attack a village whose owner is in the game, so the gap between one night's farming and the next is safer spent idling than logged out. `ai_coc online` holds the session open by sending the smallest gesture that counts as input — a short drag over empty ground, reversed each time so it does not walk the camera anywhere — and ends on the same `ai_coc stop` as everything else here. How often it nudges is `keepalive_seconds` in the settings file, and the window has the same thing as a 保持上線 checkbox.
 
 **The emulator is restarted every so many battles**, because MuMu drops frames after running for a while and nothing short of a restart clears it. How many sits in the settings file (`restart_every`, 50 by default) rather than being hard-coded, because that number is whatever a given machine turns out to need — `--restart-every` overrides it for one run, and `0` there turns it off the same way the loot flags do. It counts battles rather than rounds, so a night mostly spent waiting on the barracks does not spend restarts on an emulator that has barely been working.
 

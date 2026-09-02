@@ -1494,27 +1494,33 @@ class ConfigTests(unittest.TestCase):
 
         `timings` stayed in every existing file for a release after every clock
         moved onto the plan, so someone editing 大守護者's thirty seconds there
-        would have been editing nothing at all. Pydantic ignoring the key is
-        what keeps the upgrade from failing; rewriting the file is what stops it
-        lying about what the run will do.
+        would have been editing nothing at all. `keepalive_seconds` is the next
+        one out, now that holding the session open has been dropped. Pydantic
+        ignoring the key is what keeps the upgrade from failing; rewriting the
+        file is what stops it lying about what the run will do.
         """
         with tempfile.TemporaryDirectory() as td:
             path = Path(td) / "config.json"
             path.write_text(
-                json.dumps({"restart_every": 7, "timings": {"queen": 1, "warden": 30}}),
+                json.dumps({
+                    "restart_every": 7,
+                    "timings": {"queen": 1, "warden": 30},
+                    "keepalive_seconds": 120.0,
+                }),
                 encoding="utf-8",
             )
             config = ConfigStore(path=path).load()
             written = json.loads(path.read_text(encoding="utf-8"))
         assert config.restart_every == 7
         assert "timings" not in written
+        assert "keepalive_seconds" not in written
         # What it parsed is what it wrote. Rewriting `AppConfig()` instead would
         # pass every other assertion here while wiping the user's settings, and
         # this call is the first thing that runs after an upgrade.
         assert written["restart_every"] == 7
         # And a key the file never had is filled in, so it reads as what this run
         # will actually do rather than as what happened to be saved once.
-        assert written["keepalive_seconds"] == AppConfig().keepalive_seconds
+        assert written["stop_at"] == AppConfig().stop_at
 
     def test_a_file_already_matching_the_model_is_left_alone(self) -> None:
         """Rewriting on every load would touch the file a run only ever reads.
@@ -3307,71 +3313,6 @@ class RestartEveryTests(unittest.TestCase):
             patch.object(commands, "MuMuAdapter"),
         ):
             assert not commands._restart_emulator(MagicMock(), MagicMock())
-
-
-class OnlineTests(unittest.TestCase):
-    """Holding the session open, which is the one loop here with no natural end.
-
-    Clash of Clans will not let anyone raid a village whose owner is online, and
-    what keeps a session alive is input rather than a connection — so what is
-    worth testing is that something really gets sent, that it is harmless, and
-    that the only way out is the flag every other loop here answers.
-    """
-
-    def _run(self, stop_after: int, **kwargs: object) -> tuple[MagicMock, MagicMock]:
-        """Idle until the given number of nudges, then ask it to stand down."""
-        adb = MagicMock()
-
-        def nudged(*_: object, **__: object) -> None:
-            if adb.swipe.call_count >= stop_after:
-                self.flag.write_text("", encoding="utf-8")
-
-        adb.swipe.side_effect = nudged
-        with (
-            patch.object(commands, "STOP_FLAG", self.flag),
-            patch.object(commands, "_controller", return_value=adb),
-            patch.object(commands, "current_world", return_value="day"),
-            patch.object(commands.ConfigStore, "load", return_value=AppConfig()),
-            patch.object(commands, "_rest", return_value=False) as rest,
-        ):
-            self.report = commands.online(**kwargs)
-        return adb, rest
-
-    def setUp(self) -> None:
-        self.folder = tempfile.TemporaryDirectory()
-        self.addCleanup(self.folder.cleanup)
-        self.flag = Path(self.folder.name) / "stop"
-
-    def test_it_idles_until_the_flag_says_otherwise(self) -> None:
-        """There is no round count and no storage ceiling to end this one, so a
-        run that could not be stopped would have to be killed — and killing it
-        leaves the game somewhere the next run cannot start from.
-        """
-        adb, _ = self._run(stop_after=3)
-        assert adb.swipe.call_count == 3
-        assert self.report.nudges == 3
-        # Cleared at both ends like every other loop that reads it, or the next
-        # run stands down before it has done anything.
-        assert not self.flag.exists()
-
-    def test_the_nudge_reverses_so_the_camera_does_not_walk(self) -> None:
-        """A drag pans the village. Several hours of them in one direction would
-        walk the view off the map, and every coordinate with it.
-        """
-        adb, _ = self._run(stop_after=2)
-        first, second = (call.args[:2] for call in adb.swipe.call_args_list)
-        assert first == (second[1], second[0])
-
-    def test_the_flag_overrides_the_configured_interval(self) -> None:
-        """Same shape as the loot thresholds: the file is the default and the
-        flag is for one run.
-        """
-        _, rest = self._run(stop_after=1, seconds=5.0)
-        rest.assert_called_once_with(5.0)
-
-    def test_the_interval_comes_from_the_config_file_when_no_flag_is_given(self) -> None:
-        _, rest = self._run(stop_after=1)
-        rest.assert_called_once_with(AppConfig().keepalive_seconds)
 
 
 class LaunchTests(unittest.TestCase):

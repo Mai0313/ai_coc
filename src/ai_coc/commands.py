@@ -41,7 +41,6 @@ from ai_coc.models import (
     DonateReport,
     FrameReading,
     LaunchReport,
-    OnlineReport,
     RestartScope,
     AttackOptions,
     BuilderReport,
@@ -51,7 +50,7 @@ from ai_coc.models import (
     LootThresholds,
     StorageCapacity,
 )
-from ai_coc.constants import NUDGE_MS, NUDGE_TO, NUDGE_ROW, STOP_FLAG, NUDGE_FROM, COC_PACKAGE
+from ai_coc.constants import STOP_FLAG, COC_PACKAGE
 from ai_coc.adapters.ai import GeminiClient
 
 # A runtime import rather than a TYPE_CHECKING one: `FrameTicker` declares it as
@@ -1176,45 +1175,6 @@ def view(zoom: str = "out", times: int = 3) -> ViewReport:
     adb.zoom(zoom, times, COC_PACKAGE, adb.display_for(COC_PACKAGE))
     report = ViewReport(message=f"鏡頭{'拉遠' if zoom == 'out' else '拉近'}了 {times} 次")
     logger.info("View: %s", report.message)
-    return report
-
-
-def online(seconds: float | None = None) -> OnlineReport:
-    """Hold the session open so nobody can attack the village, until stopped.
-
-    Clash of Clans will not let anyone raid a village whose owner is online, so
-    a run that has finished farming is safer sitting in the game than leaving
-    it. **What keeps a session alive is input rather than a connection** — the
-    game drops an idle session whatever the socket is doing — so this sends the
-    smallest gesture that counts as one: a short drag over the middle of the
-    screen, which on a village pans the camera and does nothing else, reversed
-    each time so it does not walk the view anywhere over several hours.
-
-    It ends only on `ai_coc stop`, which is the same flag every other long loop
-    here reads: this one has no natural end, so a run that could not be stopped
-    would have to be killed, and killing it is what leaves the game somewhere
-    the next run cannot start from.
-    """
-    _clear_stop()
-    adb = _controller()
-    display = adb.display_for(COC_PACKAGE)
-    gap = ConfigStore().load().keepalive_seconds if seconds is None else seconds
-    report = OnlineReport()
-    started = time.monotonic()
-    logger.info("Holding the session open, nudging every %.0fs", gap)
-    while not stop_requested():
-        near, far = (NUDGE_FROM, NUDGE_TO) if report.nudges % 2 == 0 else (NUDGE_TO, NUDGE_FROM)
-        adb.swipe((near, NUDGE_ROW), (far, NUDGE_ROW), NUDGE_MS, display)
-        report.nudges += 1
-        # Through `_rest` rather than a plain sleep, so a stop asked for two
-        # minutes into a wait is answered in two seconds rather than at the end
-        # of it — the same reason the barracks wait goes through it.
-        if _rest(gap):
-            break
-    _clear_stop()
-    report.seconds = time.monotonic() - started
-    report.message = f"保持上線 {report.seconds / 60:.0f} 分鐘,動了 {report.nudges} 次畫面"
-    logger.info("Online: %s", report.message)
     return report
 
 
