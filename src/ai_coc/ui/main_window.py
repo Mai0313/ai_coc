@@ -70,10 +70,6 @@ from ai_coc.prompts import PROMPTS, render
 from ai_coc.constants import (
     LOG_DIR,
     APP_NAME,
-    NUDGE_MS,
-    NUDGE_TO,
-    NUDGE_ROW,
-    NUDGE_FROM,
     COC_PACKAGE,
     ORGANISATION,
     VERSION_LABEL,
@@ -222,10 +218,6 @@ class MainWindow(QMainWindow):
         self.live_busy = False
         self.live_timer = QTimer(self)
         self.live_timer.timeout.connect(self._live_tick)
-        # Its own timer rather than a step in the automation cycle, because what
-        # it is for is the stretch when nothing else is running.
-        self.online_timer = QTimer(self)
-        self.online_timer.timeout.connect(self._online_tick)
         self.setAcceptDrops(True)
         self._build_ui()
         self._attach_log_panel()
@@ -234,8 +226,6 @@ class MainWindow(QMainWindow):
         self.refresh_entity_mapping()
         if self.live_view.isChecked():
             self.live_timer.start(LIVE_INTERVAL)
-        if self.keep_online.isChecked():
-            self._toggle_keep_online(True)
 
     def _build_ui(self) -> None:
         self.setStyleSheet("""
@@ -571,20 +561,6 @@ class MainWindow(QMainWindow):
         )
         self.record_frames.toggled.connect(self._toggle_record_frames)
         layout.addWidget(self.record_frames)
-        # Clash of Clans will not let anyone raid a village whose owner is
-        # online, and what keeps a session alive is input rather than a
-        # connection — so this sends the smallest gesture that counts as one.
-        # Same interval as `ai_coc online`, from the same config file.
-        self.keep_online = QCheckBox("保持上線")
-        self.keep_online.setToolTip(
-            "每隔一段時間輕輕拖一下畫面，讓遊戲認為你還在線上；上線中的村莊別人打不了。"
-            "間隔在 ~/.ai_coc/config.json 的 keepalive_seconds"
-        )
-        self.keep_online.setChecked(
-            str(self.settings.value("keep_online", "false")).lower() == "true"
-        )
-        self.keep_online.toggled.connect(self._toggle_keep_online)
-        layout.addWidget(self.keep_online)
 
     def _automation_behavior_group(self) -> QGroupBox:
         behavior = QGroupBox("自主行為")
@@ -1038,36 +1014,6 @@ class MainWindow(QMainWindow):
         # Nothing but the setting: what reads it is `run_attack`, when it opens
         # the run. A round already under way keeps whatever it started with.
         self.settings.setValue("record_frames", on)
-
-    def _toggle_keep_online(self, on: bool) -> None:
-        """Start or stop the nudge that holds the session open."""
-        self.settings.setValue("keep_online", on)
-        if on:
-            self.online_timer.start(int(ConfigStore().load().keepalive_seconds * 1000))
-        else:
-            self.online_timer.stop()
-
-    def _online_tick(self) -> None:
-        """Send one harmless drag, so the game does not drop the session.
-
-        Deliberately silent in the same way `_live_tick` is: it fires on a timer
-        whether anyone is watching or not, so an emulator that is not up must
-        not raise a message box. And it stands aside for anything else that is
-        driving the game — a swipe landing in the middle of a deployment would
-        pan the battle camera out from under it.
-        """
-        if not self.mumu or not self.active or self.automation_active:
-            return
-        m, a = self.mumu, self.active
-
-        def nudge() -> None:
-            adb = m.controller(a.adb_serial)
-            display = adb.display_for(COC_PACKAGE)
-            adb.swipe((NUDGE_FROM, NUDGE_ROW), (NUDGE_TO, NUDGE_ROW), NUDGE_MS, display)
-
-        worker = Worker(nudge)
-        worker.signals.failed.connect(lambda message: logger.debug("Keepalive nudge: %s", message))
-        QThreadPool.globalInstance().start(worker)
 
     def _live_tick(self) -> None:
         """Put one fresh frame in the preview, unless the last one is still in flight.
