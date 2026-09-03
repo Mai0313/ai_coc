@@ -29,7 +29,13 @@ import logging
 from ai_coc.models import Crossing
 from ai_coc.constants import COC_PACKAGE
 from ai_coc.adapters.adb import ZOOM_PINCHES
-from ai_coc.parsers.scout import battle_over, card_groups, loot_cart_open, read_builder_stock
+from ai_coc.parsers.scout import (
+    battle_over,
+    card_groups,
+    loading_screen,
+    loot_cart_open,
+    read_builder_stock,
+)
 from ai_coc.parsers.world import current_world
 
 if TYPE_CHECKING:
@@ -181,6 +187,14 @@ def uncovered(adb: AdbController, display: DisplayTarget) -> World | None:
         png = adb.screenshot(display)
         if (here := current_world(png)) is not None:
             return here
+        # Nothing on the loading screen answers a press, so the presses were
+        # only ever noise in the log — and the log is what a session reads to
+        # tell a server that will not answer from a game on the wrong screen.
+        if loading_screen(png):
+            logger.info(
+                "The game is on its loading screen; there is nothing here to press back at"
+            )
+            return None
         if card_groups(png) or battle_over(png):
             logger.info("A battle is on screen; there is nothing here to press back at")
             return None

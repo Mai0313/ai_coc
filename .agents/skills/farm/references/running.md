@@ -115,7 +115,7 @@ jq '.[-1] | {world, stock_full, message}' ~/.ai_coc/logs/<run>/result.json
 
 那種時候 `uv run ai_coc launch --restart game` 重開遊戲而不動模擬器, `--restart emulator` 連模擬器一起重開.
 
-**`launch` 做的事比「確保遊戲在跑」多**, 三種 scope 都一樣: 它會一直輪詢到村莊真的畫出來 (最久三分鐘), 然後把鏡頭 pinch 回最遠, 而那個 pinch 順便會把村莊帶回螢幕中央. `LaunchReport.at_village` 就是在說村莊到底有沒有出現. 其他指令走的是 `_controller()`, 那只保證有一個 pid. 所以遊戲卡在載入畫面, 或者鏡頭被誰拉近了, 修法是 `launch` 而不是重跑原本那個指令.
+**`launch` 做的事比「確保遊戲在跑」多**, 三種 scope 都一樣: 它會一直輪詢到村莊真的畫出來 (最久三分鐘), 然後把鏡頭 pinch 回最遠, 而那個 pinch 順便會把村莊帶回螢幕中央. `LaunchReport.at_village` 就是在說村莊到底有沒有出現. 其他指令走的是 `_controller()`, 那只保證有一個 pid. 所以鏡頭被誰拉近了, 修法是 `launch` 而不是重跑原本那個指令. 遊戲卡在載入畫面則是另一回事: `launch` 一樣只等三分鐘, 放棄時 log 最後一行會說 `the game is on its loading screen`, 而那是伺服器的事, 攻擊迴圈自己會等 (最多 45 分鐘, 見 `farm` 的警覺樣態那節), 不要一直重跑 `launch`.
 
 **三個都會把進行中的戰鬥打斷**, 所以跑之前先確認背景那輪真的停了.
 

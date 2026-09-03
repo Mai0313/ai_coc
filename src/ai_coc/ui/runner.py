@@ -25,7 +25,7 @@ from ai_coc.prompts import render
 from ai_coc.constants import COC_PACKAGE
 from ai_coc.adapters.ai import GeminiClient
 from ai_coc.adapters.adb import ZOOM_PINCHES, AdbController, AdbControlError
-from ai_coc.parsers.scout import read_stock, idle_disconnected
+from ai_coc.parsers.scout import read_stock, loading_screen, idle_disconnected
 from ai_coc.parsers.world import current_world
 from ai_coc.parsers.building import game_dialog
 
@@ -231,6 +231,15 @@ class GameRunner(BaseModel):
                 logger.info("A dialog is covering the village; answering 取消")
                 self._tap(dialog.cancel)
                 time.sleep(BACK_SETTLE)
+                continue
+            # Waited on whether or not a village has been seen: a session the
+            # server dropped mid-run reloads from here, and a `back` pressed at
+            # it is aimed at nothing. The patience is still `HOME_TRIES`, since
+            # these loops are single passes measured in seconds; the attack
+            # loop is the one that waits a whole outage out.
+            if loading_screen(png):
+                logger.info("The game is on its loading screen; waiting for it")
+                time.sleep(LOAD_WAIT)
                 continue
             # **The game reopens on whichever village it was closed on**, and
             # every loop that reaches this method is the home village's own —

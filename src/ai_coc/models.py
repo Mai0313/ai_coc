@@ -1540,6 +1540,9 @@ class FrameReading(BaseModel):
     # and this is what tells a run debugging the second one which it is looking at.
     skip_offered: bool = False
     idle_dialog: bool = False
+    # 正在載入, which every other reader answers None on; this is what says a
+    # run that reported no village was in fact waiting on the server.
+    loading: bool = False
     card_groups: list[list[int]] = Field(default_factory=list)
     counted: list[int] = Field(default_factory=list)
     freezes: list[int] = Field(default_factory=list)

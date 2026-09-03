@@ -50,6 +50,7 @@ from ai_coc.parsers.scout import (
     skip_offered,
     army_strength,
     counted_cards,
+    loading_screen,
     selected_cards,
     attack_menu_open,
     storage_capacity,
@@ -404,6 +405,14 @@ BATTLE_TIMEOUT = 240
 # capture of a payout if a run is ever seen stuck on one.
 HOME_ATTEMPTS = 5
 HOME_RETRY_DELAY = 3
+# How the loading screen is waited out. Nothing on it answers a tap, and the
+# two outages measured ran 25 to 40 minutes with the game coming back on its
+# own; restarting it, or the emulator, shortened neither. So the wait is long,
+# and it is polled at a pace that keeps a whole outage to a few hundred
+# captures taken straight off the emulator rather than through `_frame`, since
+# a recorded run has nothing to learn from that many copies of the same bar.
+SERVER_POLL = 10.0
+SERVER_POLLS = 270
 # The result screen animates its stars in before its button answers, so leaving
 # it is a poll rather than a tap.
 RESULT_ATTEMPTS = 4
@@ -813,6 +822,10 @@ class AttackRunner(BaseModel):
     # run. A storage only grows when a builder finishes upgrading one, which is
     # days apart, against six taps and three captures to ask again every round.
     _capacity: StorageCapacity | None = PrivateAttr(default=None)
+    # Why the last `_open_attack_menu` gave up, when the reason is worth more
+    # than 畫面不在主村: a loading screen that outlasted `SERVER_POLLS`, or a
+    # stop that landed during that wait. Empty is the ordinary failure.
+    _stuck: str = PrivateAttr(default="")
 
     @property
     def played(self) -> AttackPlan | NightPlan | None:
@@ -998,11 +1011,26 @@ class AttackRunner(BaseModel):
         """
         other: World = "night" if self.world == "day" else "day"
         opened = attack_menu_open if self.world == "day" else night_attack_menu
+        self._stuck = ""
+        waited = False
         for _ in range(HOME_ATTEMPTS):
             home = self._frame("home")
             if idle_disconnected(home):
-                logger.info("Idle-disconnect dialog is up; restarting the game")
+                logger.info(
+                    "The session was dropped (idle, or the connection was lost); restarting"
+                )
                 self.display = restart_game(self.adb, self.display)
+                # A restart boots through 正在載入, and `restart_game` returns
+                # a couple of seconds before the village paints, so the next
+                # frame here is that screen: a fresh load, not a loaded game
+                # dropped back, and it gets a fresh wait. The attempts bound
+                # the round, not the flag.
+                waited = False
+                continue
+            if loading_screen(home):
+                if not self._wait_out_loading(waited):
+                    return None
+                waited = True
                 continue
             if battle_over(home):
                 logger.info("The last battle's result screen is still up; leaving it")
@@ -1049,6 +1077,49 @@ class AttackRunner(BaseModel):
             # only needs the panel to swallow one press and then retries.
             time.sleep(HOME_RETRY_DELAY)
         return None
+
+    def _wait_out_loading(self, again: bool) -> bool:
+        """Sit on 正在載入 until the game leaves it; False when the wait ended without it.
+
+        Nothing here taps, restarts or presses `back`, because none of those
+        brings the server back: measured across two outages of 25 to 40
+        minutes, a game restart and an emulator restart each left the bar
+        where it was and the game came back on its own. What ends the wait is
+        the screen changing — to a village, or to the dropped-session dialog
+        the attempts above already know how to answer.
+
+        Once per load, which is what `again` says: a game that loaded and
+        then dropped back onto this screen is a server that is not staying
+        up, and a second wait would be spent on exactly the outage the first
+        one measured. A restart starts a new load and the caller clears the
+        flag for it. Every way out is written to `_stuck` so the round's
+        report says which it was, since a stop and a server that never
+        answered are the two things a farming session most needs to tell
+        apart.
+        """
+        if again:
+            logger.warning("The loading screen is back; the server is not staying up")
+            self._stuck = "遊戲又回到載入畫面，伺服器可能還連不上，這一輪停手"
+            return False
+        logger.warning(
+            "The game is on its loading screen; waiting for the server rather than tapping"
+        )
+        for poll in range(1, SERVER_POLLS + 1):
+            if self.should_stop():
+                logger.info("Stop requested while waiting for the game to load")
+                self._stuck = "等待載入時收到停止要求，這一輪沒有開打"
+                return False
+            time.sleep(SERVER_POLL)
+            if not loading_screen(self.adb.screenshot(self.display)):
+                logger.info("The loading screen went after about %.0fs", poll * SERVER_POLL)
+                return True
+        minutes = SERVER_POLLS * SERVER_POLL / 60
+        logger.warning(
+            "Still on the loading screen after %.0f minutes; the server may be unreachable",
+            minutes,
+        )
+        self._stuck = f"遊戲卡在載入畫面 {minutes:.0f} 分鐘，伺服器可能連不上，這一輪停手"
+        return False
 
     def _stood_down(self, home: bytes) -> AttackReport | None:
         """A report standing the run down on full storages, or None to carry on.
@@ -2338,9 +2409,13 @@ class AttackRunner(BaseModel):
         self._played = None
         home = self._open_attack_menu()
         if home is None:
-            logger.warning("The builder base's attack dialog never opened")
+            logger.warning(
+                "The builder base's attack dialog never opened: %s",
+                self._stuck or "the game is not on the builder base",
+            )
             return AttackReport(
-                world="night", message="畫面不在建築大師基地，沒有開啟攻擊選單就停手"
+                world="night",
+                message=self._stuck or "畫面不在建築大師基地，沒有開啟攻擊選單就停手",
             )
         if (full := self._stood_down(home)) is not None:
             return full
@@ -2396,8 +2471,11 @@ class AttackRunner(BaseModel):
         self._played = None
         home = self._open_attack_menu()
         if home is None:
-            logger.warning("The attack menu did not open; the game is not on the home village")
-            return AttackReport(message="畫面不在主村，沒有開啟攻擊選單就停手")
+            logger.warning(
+                "The attack menu did not open: %s",
+                self._stuck or "the game is not on the home village",
+            )
+            return AttackReport(message=self._stuck or "畫面不在主村，沒有開啟攻擊選單就停手")
         # Before the search fee, like the army check below.
         if (full := self._stood_down(home)) is not None:
             return full
