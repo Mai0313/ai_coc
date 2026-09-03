@@ -280,6 +280,69 @@ class LoopCommandTests(unittest.TestCase):
             report = commands.builders()
         assert (report.free, report.total) == (1, 5)
 
+    def test_a_caller_with_its_own_stop_reaches_the_wall_runner_and_the_report(self) -> None:
+        """What lets the window run this function: it has a button, not a terminal.
+
+        Both halves matter. The runner reads it during the opening scan, which
+        is the longest unguarded stretch a wall run has, and the message is the
+        one place a stopped run is told apart from a village with no walls left
+        — a distinction that has already been misread once.
+        """
+        self._planners()
+        button = MagicMock(return_value=True)
+        with (
+            patch.object(commands, "_controller", return_value=_adb()),
+            patch.object(commands, "WallRunner") as runner,
+        ):
+            runner.return_value.run.return_value = MagicMock(message="每一個位置都沒有買成")
+            runner.return_value.run.return_value.upgrades = []
+            report = commands.walls(WallOptions(), button)
+        assert runner.call_args.kwargs["should_stop"] is button
+        # The flag was never written, so this is the caller's condition alone.
+        assert not commands.stop_requested()
+        assert report.message == "已停止，還沒買成任何一批"
+
+
+class AttackSeriesStopTests(unittest.TestCase):
+    """The series answers whoever started it, which is what lets the window run it.
+
+    `ai_coc stop` is still the default and still the only thing that reaches a
+    run started from another process. What the parameter adds is the window's
+    own button, which has nothing else to write to — and going through here is
+    what finally gives that button's flag somewhere to be cleared.
+    """
+
+    def _series(self, should_stop: MagicMock) -> tuple[MagicMock, list]:
+        runner = MagicMock(name="AttackRunner")
+        with (
+            patch.object(commands, "_controller", return_value=_adb()),
+            patch.object(commands.ConfigStore, "load", return_value=AppConfig()),
+            patch.object(commands, "_planner", return_value=None),
+            patch.object(commands, "_settle_game", return_value=DISPLAY),
+            patch.object(commands, "_pick_world", return_value="day"),
+            patch.object(commands, "FrameTicker"),
+            patch.object(commands, "AttackRunner", return_value=runner) as built,
+        ):
+            series = commands.attack(AttackOptions(rounds=1), should_stop)
+        return built, series.root
+
+    def test_a_caller_that_is_already_stopping_plays_nothing(self) -> None:
+        built, rounds = self._series(MagicMock(return_value=True))
+        assert rounds == []
+        built.return_value.run.assert_not_called()
+        # Nothing wrote the flag; the round loop ended on the caller's condition.
+        assert not commands.stop_requested()
+
+    def test_the_condition_is_handed_to_the_runner_that_plays_the_battle(self) -> None:
+        """Between rounds is not enough on its own: a stop asked for mid-search
+        has to reach the runner, which is the only place that can stand down
+        between opponents rather than mid-deploy.
+        """
+        button = MagicMock(return_value=False)
+        built, rounds = self._series(button)
+        assert built.call_args.kwargs["should_stop"] is button
+        assert len(rounds) == 1
+
 
 class SettleGameTests(unittest.TestCase):
     """Waiting for a village that can be tapped, then pinching the camera out."""
@@ -444,7 +507,7 @@ class RunPlumbingTests(unittest.TestCase):
             assert commands._restarted(runner, ticker, 1, 2) == 1
             restart.assert_not_called()
             assert commands._restarted(runner, ticker, 2, 2) == 0
-            restart.assert_called_once_with(runner, ticker)
+            restart.assert_called_once_with(runner, ticker, commands.stop_requested)
 
     def test_a_restart_that_failed_is_an_error_unless_somebody_asked_to_stop(self) -> None:
         with (
