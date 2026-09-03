@@ -408,10 +408,17 @@ property-decorators = []
 # Pydantic resolves annotations at runtime, so a model field's type must stay a
 # real import. Without this, TC003 moves it into `if TYPE_CHECKING` and the model
 # fails to build.
-# `GameRunner` is a `BaseModel` subclass, which ruff does not follow: without it
-# listed, TC002 moves a runner field's type into `if TYPE_CHECKING` and the model
-# imports perfectly but raises `is not fully defined` the first time one is built.
-runtime-evaluated-base-classes = ["pydantic.BaseModel", "ai_coc.ui.runner.GameRunner"]
+# `ScreenRunner` and `GameRunner` are `BaseModel` subclasses, which ruff does not
+# follow: without them listed, TC002 moves a runner field's type into
+# `if TYPE_CHECKING` and the model imports perfectly but raises `is not fully
+# defined` the first time one is built. Both, because ruff matches the class's
+# own bases rather than walking the chain — `AttackRunner(ScreenRunner)` and
+# `WallRunner(GameRunner)` each need the name they actually write.
+runtime-evaluated-base-classes = [
+    "pydantic.BaseModel",
+    "ai_coc.ui.runner.ScreenRunner",
+    "ai_coc.ui.runner.GameRunner",
+]
 
 [tool.ruff.lint.pyflakes]
 extend-generics = ["pyrootutils", "autorootcwd", "autoroot"]
