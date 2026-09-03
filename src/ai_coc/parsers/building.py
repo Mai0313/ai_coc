@@ -27,9 +27,10 @@ import logging
 import itertools
 
 from ai_coc.models import WallMenu, GameDialog, UpgradeButton
-from ai_coc.parsers.home import _mask, _patches
 from ai_coc.parsers.frame import open_frame
-from ai_coc.parsers.scout import read_stock, digits_from
+from ai_coc.parsers.scout import read_stock
+from ai_coc.parsers.glyphs import digits_from
+from ai_coc.parsers.regions import mask, patches
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -389,8 +390,8 @@ def upgrade_sheet(png: bytes) -> tuple[int, int] | None:
     biggest = max(
         (
             patch
-            for patch in _patches(
-                _mask(image.crop(SHEET_SPAN), SHEET_GREEN), right - left, bottom - top
+            for patch in patches(
+                mask(image.crop(SHEET_SPAN), SHEET_GREEN), right - left, bottom - top
             )
             if patch.count >= SHEET_BUTTON
         ),
