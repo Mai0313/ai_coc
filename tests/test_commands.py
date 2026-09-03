@@ -346,6 +346,13 @@ class SettleGameTests(unittest.TestCase):
         adb.restarted.assert_not_called()
         assert "loading screen" in logged.output[-1]
 
+    def test_a_dialog_that_survives_the_restart_is_named_rather_than_the_village(self) -> None:
+        with self.assertLogs("ai_coc.commands", "WARNING") as logged:
+            adb, display = self._settle([None] * 3, polls=3, dropped=[True] * 3)
+        assert display is None
+        assert adb.restarted.call_count == 1
+        assert "session is dropped" in logged.output[-1]
+
 
 class FrameTickerTests(unittest.TestCase):
     def _ticker(self, folder: Path, seconds: float) -> commands.FrameTicker:

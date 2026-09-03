@@ -729,11 +729,29 @@ class OpenAttackMenuTests(unittest.TestCase):
         seen["restarted"].assert_not_called()
 
     def test_a_loading_screen_that_comes_back_ends_the_round_naming_the_server(self) -> None:
-        """One wait per round: a game that loaded and dropped back is a server not staying up."""
+        """One wait per load: a game that loaded and dropped back is a server not staying up."""
         got, seen = self._open("day", [], loading=[True, False, True])
         assert got is None
         assert "又回到載入畫面" in seen["runner"]._stuck
         seen["tapped"].assert_not_called()
+
+    def test_a_restart_boots_through_the_loading_screen_and_that_is_a_fresh_wait(self) -> None:
+        """A wait that ended on the dropped-session dialog is answered with a restart.
+
+        `restart_game` returns a couple of seconds before the village paints,
+        so the frame after it is 正在載入 again — a new load, not a loaded game
+        dropped back, and refusing it there ended the round with a message
+        about a server that had in fact just come back.
+        """
+        got, seen = self._open(
+            "day",
+            ["day"],
+            idle=[False, True, False, False],
+            loading=[True, False, True, False, False],
+        )
+        assert got == b"home"
+        assert seen["runner"]._stuck == ""
+        seen["restarted"].assert_called_once()
 
 
 class WaitOutLoadingTests(unittest.TestCase):

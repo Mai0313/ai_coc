@@ -1300,7 +1300,12 @@ class ScoutTests(unittest.TestCase):
         match — a result screen reads 1.000 on the plate — which is why the
         purple fill at the bar's left end is required as well.
         """
-        assert loading_screen((FRAMES / "loading_screen.png").read_bytes())
+        png = (FRAMES / "loading_screen.png").read_bytes()
+        assert loading_screen(png)
+        # The fixture keeps the dialog box too, because both `_home` and
+        # `_open_attack_menu` ask `idle_disconnected` first: a splash that read
+        # as the dialog would be restarted out of rather than waited on.
+        assert not idle_disconnected(png)
         for name in ("battle_result", "event_reward", "searching", "world_day", "attack_menu"):
             assert not loading_screen((FRAMES / f"{name}.png").read_bytes()), name
 

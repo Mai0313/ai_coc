@@ -425,11 +425,13 @@ def _settle_game(
             # still down, and the loading screen after it is the state to wait
             # in rather than restart out of: measured across two outages,
             # neither a game nor an emulator restart shortened one.
-            if idle_disconnected(png) and not restarted:
-                logger.warning("The session was dropped; restarting the game")
-                restart_game(adb, display)
-                restarted = True
-                waiting = "the game is being restarted"
+            if idle_disconnected(png):
+                waiting = "the session is dropped and the one restart did not clear it"
+                if not restarted:
+                    logger.warning("The session was dropped; restarting the game")
+                    restart_game(adb, display)
+                    restarted = True
+                    waiting = "the game is being restarted"
             elif loading_screen(png):
                 waiting = "the game is on its loading screen"
             else:

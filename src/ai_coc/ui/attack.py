@@ -1020,6 +1020,12 @@ class AttackRunner(BaseModel):
                     "The session was dropped (idle, or the connection was lost); restarting"
                 )
                 self.display = restart_game(self.adb, self.display)
+                # A restart boots through 正在載入, and `restart_game` returns
+                # a couple of seconds before the village paints, so the next
+                # frame here is that screen: a fresh load, not a loaded game
+                # dropped back, and it gets a fresh wait. The attempts bound
+                # the round, not the flag.
+                waited = False
                 continue
             if loading_screen(home):
                 if not self._wait_out_loading(waited):
@@ -1082,10 +1088,11 @@ class AttackRunner(BaseModel):
         the screen changing — to a village, or to the dropped-session dialog
         the attempts above already know how to answer.
 
-        Once per round, which is what `again` says: a game that loaded and
+        Once per load, which is what `again` says: a game that loaded and
         then dropped back onto this screen is a server that is not staying
         up, and a second wait would be spent on exactly the outage the first
-        one measured. Every way out is written to `_stuck` so the round's
+        one measured. A restart starts a new load and the caller clears the
+        flag for it. Every way out is written to `_stuck` so the round's
         report says which it was, since a stop and a server that never
         answered are the two things a farming session most needs to tell
         apart.
