@@ -1569,11 +1569,18 @@ class DonateOptions(BaseModel):
 
 
 class FrameReading(BaseModel):
-    """Everything the parsers make of one frame, for the `read` command.
+    """What the parsers a loop leans on make of one frame, for the `read` command.
 
     A screen the loop mishandled is almost always a screen it misread, and this
     is what says which of the readers disagreed with the eye. It is one model
     rather than a printout so a recorded run can be replayed through it.
+
+    Not literally every function in `parsers/`, and the line is where a loop
+    would ask: a reader some loop consults to decide what to do next belongs
+    here, while one that only measures something the caller already found — the
+    hall's scroll arrows, the name strip, the chat's own panel top — does not.
+    That line moved once already, when the builder base's three screens turned
+    out to be missing from a command the skills point a stuck night round at.
     """
 
     # Which village the frame was taken on, and the reason it leads: every other
