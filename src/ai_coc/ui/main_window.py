@@ -231,6 +231,16 @@ class MainWindow(QMainWindow):
         group = QGroupBox("模擬器")
         layout = QVBoxLayout(group)
         self.instance_combo = QComboBox()
+        # **This picks what the buttons below and the preview act on, and not
+        # what the automation drives.** Every job in the cycle is a `commands.*`
+        # call and `_controller()` takes the first instance MuMu lists, so with
+        # more than one the window would be watching one emulator and driving
+        # another with nothing on screen saying so. Said here rather than fixed
+        # by threading an index through eight command signatures, because this
+        # account runs one instance and the two agree wherever that holds.
+        self.instance_combo.setToolTip(
+            "選擇下面幾個按鈕跟即時畫面要看哪一個模擬器。自動化一律驅動 MuMu 列出的第一個"
+        )
         self.instance_combo.currentIndexChanged.connect(self._select_instance)
         layout.addWidget(self.instance_combo)
         toolbar = QHBoxLayout()
@@ -611,14 +621,23 @@ class MainWindow(QMainWindow):
         self._run_job(
             "正在安排建築升級…",
             "upgrade",
-            lambda run: commands.upgrade(UpgradeOptions(frame_dir=run.frames)),
+            lambda run: commands.upgrade(UpgradeOptions(frame_dir=run.frames), self._stopping),
         )
 
     def run_walls(self) -> None:
+        # One batch per pass, for the reason `run_attack` takes one round: the
+        # cycle is what decides what comes next, and `WallOptions.rounds` of 0 —
+        # the CLI's default, where somebody is deliberately spending the loot —
+        # keeps buying until neither storage will pay for another wall. That is
+        # the whole session rather than a pass, and the collectors, the builders
+        # and the attack would wait it out. A batch is up to `MAX_BATCH` walls,
+        # so this is not a pass that barely does anything.
         self._run_job(
             "正在升級城牆…",
             "walls",
-            lambda run: commands.walls(WallOptions(frame_dir=run.frames), self._stopping),
+            lambda run: commands.walls(
+                WallOptions(frame_dir=run.frames, rounds=1), self._stopping
+            ),
         )
 
     def _thresholds(self) -> LootThresholds:

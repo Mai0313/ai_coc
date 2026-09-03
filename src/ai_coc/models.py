@@ -300,10 +300,6 @@ class AccountRow(BaseModel):
     requirement: str | None = None
 
 
-class AccountRowList(RootModel[list[AccountRow]]):
-    """Account rows on their way into a prompt."""
-
-
 class RegistryEntry(BaseModel):
     model_config = TOLERANT
 

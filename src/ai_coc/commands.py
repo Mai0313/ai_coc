@@ -1067,12 +1067,20 @@ def collect(frame_dir: Path | None = None) -> CollectReport:
     return report
 
 
-def upgrade(options: UpgradeOptions) -> BuildReport:
+def upgrade(
+    options: UpgradeOptions, should_stop: Callable[[], bool] = stop_requested
+) -> BuildReport:
     """Put the village's idle builders to work, with no window in the way.
 
     A builder standing around is the one thing a village cannot buy its way out
     of, so this is worth running whenever an upgrade finishes. Walls are left to
     `walls`, which needs no builder at all.
+
+    **This is the one upkeep command long enough to be worth stopping.** The
+    other three are seconds, but a run with no key to ask with, or one whose
+    finder came back empty, falls through to `_sweep` and spends a couple of
+    minutes tapping a grid. The check itself is in `GameRunner._opened`, which
+    is the walk all three finders share.
     """
     adb, display = _session(options.frame_dir)
     config = ConfigStore().load()
@@ -1083,6 +1091,7 @@ def upgrade(options: UpgradeOptions) -> BuildReport:
         keep_gold=options.keep_gold,
         keep_elixir=options.keep_elixir,
         at=options.at,
+        should_stop=should_stop,
         # Skipped when the run was told where to look, for the reason the wall
         # loop skips it: the whole point of asking is to find them.
         ai=None if options.at else _planner(config),
