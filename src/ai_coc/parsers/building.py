@@ -27,9 +27,10 @@ import logging
 import itertools
 
 from ai_coc.models import WallMenu, GameDialog, UpgradeButton
-from ai_coc.parsers.home import _mask, _patches
 from ai_coc.parsers.frame import open_frame
-from ai_coc.parsers.scout import read_stock, digits_from
+from ai_coc.parsers.scout import read_stock
+from ai_coc.parsers.glyphs import digits_from
+from ai_coc.parsers.regions import mask, patches
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -178,7 +179,9 @@ def _price_mask(band: Image.Image) -> list[list[bool]]:
     """One price reduced to its digits, told apart from the plate they sit on."""
     width, height = band.size
     data = band.tobytes()
-    mask: list[list[bool]] = []
+    # `ink` rather than `mask`, which is the name this module now imports from
+    # `parsers.regions`; the same collision in `parsers.home` reads the same way.
+    ink: list[list[bool]] = []
     for y in range(height):
         row: list[bool] = []
         for offset in range(y * width * 3, (y + 1) * width * 3, 3):
@@ -191,8 +194,8 @@ def _price_mask(band: Image.Image) -> list[list[bool]]:
                     and red - blue > INK_RED_MARGIN
                 )
             )
-        mask.append(row)
-    return mask
+        ink.append(row)
+    return ink
 
 
 def _price(image: Image.Image, centre: int) -> int | None:
@@ -389,8 +392,8 @@ def upgrade_sheet(png: bytes) -> tuple[int, int] | None:
     biggest = max(
         (
             patch
-            for patch in _patches(
-                _mask(image.crop(SHEET_SPAN), SHEET_GREEN), right - left, bottom - top
+            for patch in patches(
+                mask(image.crop(SHEET_SPAN), SHEET_GREEN), right - left, bottom - top
             )
             if patch.count >= SHEET_BUTTON
         ),

@@ -127,39 +127,60 @@ def restart_game(adb: AdbController, display: DisplayTarget) -> DisplayTarget:
         return display
 
 
-class GameRunner(BaseModel):
-    """Captures, taps, and getting back to a village that can be tapped."""
+class ScreenRunner(BaseModel):
+    """One emulator screen, and the two things every loop here does to it.
+
+    **`AttackRunner` is the other subclass, and it is why this is a class at
+    all.** It is not a `GameRunner` — it has no use for `_home`, since its way
+    back to a village has to cope with a result screen, a matchmaker and a
+    village it may have to sail to — but it declared these five fields with the
+    same names, types and defaults, and both methods with the same bodies. The
+    frame naming in particular (`0006_probe`, `0010_pass`) is written down in
+    `CLAUDE.md` and in two of the project's skills, and a convention documented
+    in three places and implemented in two is the drift `AGENTS.md` is a symlink
+    to avoid.
+    """
 
     adb: AdbController
     display: DisplayTarget
-    # Asked between whole units of work, never inside one, for the reason
-    # `AttackRunner` has the same field: a batch abandoned halfway leaves the
-    # game on a screen the next run has to dig itself out of. What a unit is
-    # belongs to each loop — a wall batch here, an opponent there.
+    # Asked between whole units of work, never inside one: a unit abandoned
+    # halfway leaves the game on a screen the next run has to dig itself out of.
+    # What a unit is belongs to each loop — a wall batch here, an opponent there.
     should_stop: Callable[[], bool] = lambda: False
     # Where to keep every frame the loop reads, for a run being studied afterwards.
     frame_dir: Path | None = None
-    # Who to ask where things are. None falls back to the sweep, which is what
-    # every loop here did before this existed and still does when it answers
-    # nothing usable.
+    # Who to ask the one question the parsers cannot answer. None is an ordinary
+    # answer everywhere: the finders fall back to the sweep and the attack loop
+    # to its flat plan, which is what every loop here did before this existed.
     ai: GeminiClient | None = None
 
     _captures: int = PrivateAttr(default=0)
-    # Whether a village has ever read on this runner, which is what says the game
-    # has finished starting. Cleared when the game is restarted, since that is the
-    # one moment a cold launch can be under way again.
-    _seen_village: bool = PrivateAttr(default=False)
 
     def _tap(self, point: tuple[int, int]) -> None:
         self.adb.tap(point[0], point[1], self.display)
 
     def _frame(self, label: str) -> bytes:
-        """One capture, kept on disk when the run is being recorded."""
+        """One capture, kept on disk when the run is being recorded.
+
+        Every screenshot a loop reads comes through here, so a recorded run is
+        the whole of it in the order the loop saw it, each frame named for what
+        it was being asked. Afterwards that is the only thing separating a frame
+        the parser misread from a tap that never landed.
+        """
         png = self.adb.screenshot(self.display)
         if self.frame_dir is not None:
             self._captures += 1
             (self.frame_dir / f"{self._captures:04d}_{label}.png").write_bytes(png)
         return png
+
+
+class GameRunner(ScreenRunner):
+    """Captures, taps, and getting back to a village that can be tapped."""
+
+    # Whether a village has ever read on this runner, which is what says the game
+    # has finished starting. Cleared when the game is restarted, since that is the
+    # one moment a cold launch can be under way again.
+    _seen_village: bool = PrivateAttr(default=False)
 
     def _after_tap(self, point: tuple[int, int], label: str) -> bytes:
         self._tap(point)

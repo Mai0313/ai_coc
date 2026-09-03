@@ -29,7 +29,7 @@ import itertools
 
 from ai_coc.models import HeroCard, HeroKind
 from ai_coc.parsers.frame import open_frame
-from ai_coc.parsers.scout import digits_from
+from ai_coc.parsers.glyphs import digits_from
 from ai_coc.parsers.building import (
     ICON_OFFSET,
     BUTTON_PITCH,

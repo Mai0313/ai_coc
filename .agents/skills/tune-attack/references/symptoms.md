@@ -34,7 +34,7 @@
 
 **症狀**: 明明有 100 萬卻讀成 10 萬, 或者一個對手在不同格畫面上讀出不同的數字.
 
-看 `parsers/scout.py` 的 `read_scout` 以及它底下切數字的那一段. `CLAUDE.md` 搜 `1 047 758`, 那一段講了三種靜默的讀錯: 中間的字元配不上就整行放棄, 只有右端配得差才丟掉, 以及數字之間沒有間隙所以超過 18 px 的區塊要切開而且切點要可信.
+看 `parsers/scout.py` 的 `read_scout` 決定哪些像素是戰利品面板, 再看 `parsers/glyphs.py` 切數字的那一段 —— 那是四個判讀器共用的引擎, 不是 scout 自己的. `CLAUDE.md` 搜 `1 047 758`, 那一段講了三種靜默的讀錯: 中間的字元配不上就整行放棄, 只有右端配得差才丟掉, 以及數字之間沒有間隙所以超過 18 px 的區塊要切開而且切點要可信.
 
 ## 迴圈走出還在打的戰鬥
 
@@ -81,7 +81,7 @@
 
 ## 座標整個對不上
 
-相機動過而沒有被記下來. 看 `_settle_camera`, `_pan`, `_panned`, `_onscreen`, 以及 `parsers/boundary.py` 的 `view_shift` 跟 `village_box`.
+相機動過而沒有被記下來. 看 `_settle_camera`, `_pan`, `_panned`, `_onscreen`, 以及 `parsers/field.py` 的 `view_shift` 跟 `parsers/boundary.py` 的 `village_box`.
 
 `view_shift` 是沿著拖曳方向把兩張畫面滑過去比對, 不是量兩次村莊位置, 因為 `village_box` 會被村莊自己的紅色裝飾騙到. `CLAUDE.md` 搜 `98 px`.
 
@@ -89,7 +89,7 @@
 
 ## 多讀到一張卡
 
-卡片列尾端的空槽是虛線框, 背景亮的時候會被切成一張卡然後被當成多出來的英雄. 分辨的方法是等級徽章, 看 `parsers/scout.py` 的 `_badged`.
+卡片列尾端的空槽是虛線框, 背景亮的時候會被切成一張卡然後被當成多出來的英雄. 分辨的方法是等級徽章, 看 `parsers/scout.py` 的 `_badged`. `ai_coc read` 的 `card_groups` 跟 `selected` 兩個欄位會直接說出它把這一列切成幾張、哪一張是選取中的.
 
 `card_groups` 只在**完整**的卡片列上有效, 所以 `_scout` 把它讀到的那張畫面交給 `_deploy`, 而不是讓 `_deploy` 自己去截.
 

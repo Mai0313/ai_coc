@@ -9,11 +9,10 @@ still have been paid for. Screen reading is `parsers.scout` instead.
 from __future__ import annotations
 
 import time
+from typing import TYPE_CHECKING
 import logging
-from pathlib import Path
-from collections.abc import Callable, Iterable, Sequence
 
-from pydantic import BaseModel, PrivateAttr
+from pydantic import PrivateAttr
 
 from ai_coc import plans
 from ai_coc.models import (
@@ -26,16 +25,14 @@ from ai_coc.models import (
     AttackStep,
     ScreenPoint,
     AttackReport,
-    DisplayTarget,
     LootThresholds,
     StorageCapacity,
 )
 from ai_coc.prompts import PROMPTS
 from ai_coc.ui.world import cross, uncovered
 from ai_coc.constants import COC_PACKAGE
-from ai_coc.ui.runner import restart_game
-from ai_coc.adapters.ai import GeminiClient
-from ai_coc.adapters.adb import ZOOM_PINCHES, AdbController
+from ai_coc.ui.runner import ScreenRunner, restart_game
+from ai_coc.adapters.adb import ZOOM_PINCHES
 from ai_coc.parsers.field import view_shift
 from ai_coc.parsers.scout import (
     card_count,
@@ -67,6 +64,9 @@ from ai_coc.parsers.boundary import (
     fitted_line,
     village_box,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable, Sequence
 
 logger = logging.getLogger(__name__)
 
@@ -742,17 +742,27 @@ PLAN_PROMPT = PROMPTS["attack_plan"]
 NIGHT_PROMPT = PROMPTS["night_plan"]
 
 
-class AttackRunner(BaseModel):
+class AttackRunner(ScreenRunner):
     """Drives one attack from the home village and back.
 
     Screen reading never involves Gemini; only the tactical choice does, and only
     once an opponent has already passed the loot thresholds, so a skipped
     opponent costs nothing. Without `ai`, or if the call fails, the fixed flank
     and spell grid are used instead.
+
+    **A `ScreenRunner` rather than a `GameRunner`**, which is where the screen,
+    the tap and the recorded capture come from. It is not the other one because
+    it cannot use `_home`: that method means the home village and answers a
+    covered screen with `back`, where this loop has a result screen to leave, a
+    matchmaker to sit through, a loading screen to wait out and possibly a boat
+    to catch — see `_open_attack_menu`, which is its own answer to the same
+    question.
+
+    `should_stop` is checked between opponents only. A battle already under way
+    is played out: abandoning one mid-deploy would leave the army on the field
+    and the game on a screen the next run does not know how to get home from.
     """
 
-    adb: AdbController
-    display: DisplayTarget
     # Which village to play. The two are different games under one loop: the
     # home village scouts opponents, weighs their loot against thresholds and
     # pays a search fee, while the builder base is matched against a live player
@@ -766,19 +776,11 @@ class AttackRunner(BaseModel):
     # both villages, because the ceilings themselves are read off the game.
     stop_at: int = 0
     max_skips: int = 20
-    ai: GeminiClient | None = None
     # A plan settled before the run, which skips the Gemini call entirely. This is
     # what `--plan-in` fills, and it is how a hand-written tactic is replayed
     # exactly: the loop plays what it is given rather than asking for its own.
     plan: AttackPlan | None = None
-    # Checked between opponents only. A battle already under way is played out:
-    # abandoning one mid-deploy would leave the army on the field and the game
-    # on a screen the next run does not know how to get home from.
-    should_stop: Callable[[], bool] = lambda: False
-    # Where to keep every frame the loop reads, for a run being studied afterwards.
-    frame_dir: Path | None = None
 
-    _captures: int = PrivateAttr(default=0)
     _seen: LootOffer | None = PrivateAttr(default=None)
     # Whether the last frame `_scout` gave up on still had 下一個 on it, which
     # decides how the round is left: 結束戰鬥 is only on the screen while that
@@ -876,23 +878,6 @@ class AttackRunner(BaseModel):
                 cards, self._onscreen(tuple(point.pixels() for point in points)), strict=False
             )
         }
-
-    def _tap(self, point: tuple[int, int]) -> None:
-        self.adb.tap(point[0], point[1], self.display)
-
-    def _frame(self, label: str) -> bytes:
-        """One capture, kept on disk when the run is being recorded.
-
-        Every screenshot the loop reads comes through here, so a recorded run is
-        the whole battle in the order the loop saw it, each frame named for what
-        it was being asked. Afterwards that is the only thing separating a frame
-        the parser misread from a tap that never landed.
-        """
-        png = self.adb.screenshot(self.display)
-        if self.frame_dir is not None:
-            self._captures += 1
-            (self.frame_dir / f"{self._captures:04d}_{label}.png").write_bytes(png)
-        return png
 
     def _settle_ceilings(self) -> None:
         """Read what this village's storages hold when full, once a run, off their tooltips.
@@ -1860,8 +1845,11 @@ class AttackRunner(BaseModel):
         elif step.act in ("rage", "freeze"):
             cards = row.rages if step.act == "rage" else row.freezes
             wanted = max(row.rage_count, 1) if step.act == "rage" else max(len(cards), 1)
+            # `spaced` can drop every point it could not clear, which is what
+            # the fallback below covers — so `targets` is never empty, `wanted`
+            # is at least one, and the slice always carries something.
             targets = tuple(spaced(list(points))) or (middle,)
-            self._cast(cards, targets[:wanted] or targets, row.frame)
+            self._cast(cards, targets[:wanted], row.frame)
 
     def _drop_at(self, cards: list[int], spot: tuple[int, int]) -> None:
         """Send every card in one shell round trip, and write down where they went."""

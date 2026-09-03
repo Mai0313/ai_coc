@@ -15,16 +15,20 @@ bubble's own orange plate instead, which nothing else on the map matches either.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
 import logging
-
-from PIL import Image, ImageChops
 
 from ai_coc.models import BuildQueue, ResourceBubble
 from ai_coc.parsers.frame import open_frame
 
-# The digit reader and the mask it wants both live in `scout`, which owns the
-# templates. Nothing here is worth a second copy of either.
-from ai_coc.parsers.scout import _nearest, _ink_mask, _signature, split_numbers, _glyph_columns
+# The digit reader and the mask it wants; nothing here is worth a second copy of
+# either. It used to be reached for through `parsers.scout`, by private name,
+# because that is where it happened to have been written.
+from ai_coc.parsers.glyphs import nearest, ink_mask, signature, glyph_columns, split_numbers
+from ai_coc.parsers.regions import mask, patches
+
+if TYPE_CHECKING:
+    from PIL import Image
 
 logger = logging.getLogger(__name__)
 
@@ -127,105 +131,6 @@ UNIT_TEMPLATES = {
 UNIT_LADDER = (86400, 3600, 60, 1)
 
 
-class _Patch:
-    """One connected patch of pixels, grown a row at a time. Not a model: it
-    lives for the length of one scan and never leaves this module.
-    """
-
-    __slots__ = ("bottom", "count", "left", "right", "top")
-
-    def __init__(self, left: int, right: int, row: int) -> None:
-        self.left, self.right, self.top, self.bottom = left, right, row, row
-        self.count = right - left + 1
-
-    def absorb(self, other: _Patch) -> None:
-        self.left = min(self.left, other.left)
-        self.right = max(self.right, other.right)
-        self.top = min(self.top, other.top)
-        self.bottom = max(self.bottom, other.bottom)
-        self.count += other.count
-
-    @property
-    def middle(self) -> tuple[int, int]:
-        return (self.left + self.right) // 2, (self.top + self.bottom) // 2
-
-    def sized(self, width: tuple[int, int], height: tuple[int, int], fill: float) -> bool:
-        across, down = self.right - self.left + 1, self.bottom - self.top + 1
-        return (
-            width[0] <= across <= width[1]
-            and height[0] <= down <= height[1]
-            and self.count / (across * down) >= fill
-        )
-
-
-def _mask(image: Image.Image, ranges: tuple[tuple[int, int], ...]) -> bytes:
-    """The pixels inside all three channel ranges, one byte each.
-
-    Built through `point`, which walks the image in C against a lookup table, so
-    what Python is left to scan is a byte per pixel that is almost entirely zero.
-    Testing three channels in Python instead cost 0.78 s a frame, which is longer
-    than the tap it is deciding.
-    """
-    lit: Image.Image | None = None
-    for band, (low, high) in zip(image.split(), ranges, strict=True):
-        inside = band.point([255 if low <= value <= high else 0 for value in range(256)])
-        lit = inside if lit is None else ImageChops.multiply(lit, inside)
-    return lit.tobytes() if lit is not None else b""
-
-
-def _runs(data: bytes, base: int, width: int) -> list[tuple[int, int]]:
-    """The horizontal spans of lit pixels on one row of a mask.
-
-    `bytes.find` skips the dark stretches in C, which is nearly all of every row.
-    """
-    spans: list[tuple[int, int]] = []
-    x = 0
-    while x < width:
-        start = data.find(255, base + x, base + width)
-        if start < 0:
-            break
-        end = start
-        while end + 1 < base + width and data[end + 1] == 255:
-            end += 1
-        spans.append((start - base, end - base))
-        x = end - base + 1
-    return spans
-
-
-def _patches(data: bytes, width: int, height: int) -> list[_Patch]:
-    """Every connected patch in a mask.
-
-    Row by row, joining each span to any span it touches on the row above,
-    corners included, through a union-find — so a shape that closes back on
-    itself comes out as one patch rather than two.
-    """
-    roots: dict[int, _Patch] = {}
-    parent: list[int] = []
-
-    def find(index: int) -> int:
-        while parent[index] != index:
-            parent[index] = parent[parent[index]]
-            index = parent[index]
-        return index
-
-    previous: list[tuple[int, int, int]] = []
-    for row in range(height):
-        current: list[tuple[int, int, int]] = []
-        for start, end in _runs(data, row * width, width):
-            index = len(parent)
-            parent.append(index)
-            roots[index] = _Patch(start, end, row)
-            for before_left, before_right, before in previous:
-                if before_left <= end + 1 and before_right >= start - 1:
-                    keep, drop = find(before), find(index)
-                    if keep != drop:
-                        parent[drop] = keep
-                        roots[keep].absorb(roots.pop(drop))
-            current.append((start, end, index))
-        previous = current
-    return list(roots.values())
-
-
 def _in_storage_bars(point: tuple[int, int]) -> bool:
     left, top, right, bottom = STORAGE_BARS
     return left <= point[0] <= right and top <= point[1] <= bottom
@@ -244,7 +149,7 @@ def collect_bubbles(png: bytes) -> list[ResourceBubble]:
     width, height = right - left, bottom - top
     found: list[ResourceBubble] = []
     for resource, ranges, across, down, fill in MARKERS:
-        for patch in _patches(_mask(village, ranges), width, height):
+        for patch in patches(mask(village, ranges), width, height):
             if not patch.sized(across, down, fill):
                 continue
             middle = (patch.middle[0] + left, patch.middle[1] + top)
@@ -286,17 +191,17 @@ def _remaining(image: Image.Image, bar_top: int) -> int | None:
     settles it.
     """
     box = (TIME_BOX[0], bar_top - TIME_HEIGHT, TIME_BOX[1], bar_top)
-    mask = _ink_mask(image.crop(box))
+    ink = ink_mask(image.crop(box))
     numbers: list[int] = []
     digits = ""
     scale: int | None = None
     # Speckle is left in: half of what this row has to read is Chinese, and 小
     # is three short strokes that the digit reader's filter takes for noise.
-    for left, right in _glyph_columns(mask, speckle=False):
-        signature = _signature(mask, left, right)
-        if signature is None:
+    for left, right in glyph_columns(ink, speckle=False):
+        pattern = signature(ink, left, right)
+        if pattern is None:
             continue
-        digit, distance = _nearest(signature)
+        digit, distance = nearest(pattern)
         if distance <= TIME_DIGIT_TOLERANCE:
             digits += digit
             continue
@@ -308,9 +213,9 @@ def _remaining(image: Image.Image, bar_top: int) -> int | None:
         # The first character after the first number is the one unit worth
         # matching; everything after it follows from the ladder.
         unit = min(
-            UNIT_TEMPLATES, key=lambda seconds: (UNIT_TEMPLATES[seconds] ^ signature).bit_count()
+            UNIT_TEMPLATES, key=lambda seconds: (UNIT_TEMPLATES[seconds] ^ pattern).bit_count()
         )
-        if (UNIT_TEMPLATES[unit] ^ signature).bit_count() <= TIME_DIGIT_TOLERANCE:
+        if (UNIT_TEMPLATES[unit] ^ pattern).bit_count() <= TIME_DIGIT_TOLERANCE:
             scale = unit
     if digits:
         numbers.append(int(digits))
@@ -354,7 +259,7 @@ def free_builders(png: bytes) -> tuple[int, int] | None:
     box above is sized to the widest number the counter can hold rather than to
     the one it happened to be showing when it was cut.
     """
-    found = split_numbers(_ink_mask(open_frame(png).crop(BUILDER_BOX)), BUILDER_TOLERANCE)
+    found = split_numbers(ink_mask(open_frame(png).crop(BUILDER_BOX)), BUILDER_TOLERANCE)
     if len(found) != 2:
         return None
     return found[0], found[1]

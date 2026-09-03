@@ -886,9 +886,17 @@ class AttackReport(BaseModel):
     # Which village it played, because the two are different games under one
     # command and a report that does not say is a report nobody can place.
     world: World = "day"
-    # How many times the army went down. More than one is the builder base's
-    # second stage, which the game only offers after a first attack takes the
-    # whole base; 0 is a round that never deployed.
+    # How many times the army went down, **on the builder base**. More than one
+    # is its second stage, which the game only offers after a first attack takes
+    # the whole base, and 0 there is a round that never deployed.
+    #
+    # **The home village leaves it at 0 whatever happened**, which is worth
+    # saying because the field reads as if it counted both: there `attacked`
+    # answers the same question and answers it better, since it carries what the
+    # opponent was advertising rather than only that there was one. So a caller
+    # asking "did this round really fight" has to ask both ways, which is what
+    # `commands.attack` does before it counts a battle towards the emulator
+    # restart or a trip to the loot cart.
     phases: int = 0
     skipped: int = 0
     # The opponent that was fought, as its scout screen advertised it — what was
@@ -960,6 +968,63 @@ class AttackSeries(RootModel[list[AttackReport]]):
     """
 
     root: list[AttackReport] = Field(default_factory=list)
+
+
+class Patch(BaseModel):
+    """One connected patch of one colour, grown a row at a time by `parsers.regions`.
+
+    Mutable, because that is what growing means: `absorb` folds a patch on the
+    row above into this one, and a frozen model would have to rebuild both.
+
+    **It was a `__slots__` class in `parsers.home`, and its own docstring gave
+    the reason: "it lives for the length of one scan and never leaves this
+    module".** The second half had stopped being true — `parsers.clan`
+    annotated with it and `parsers.building` scanned with it — which is what
+    made it the one structured value here crossing a module boundary without
+    being a model.
+
+    The other half of that reasoning was speed, and it does not survive being
+    measured either. Swept over the committed fixtures the worst frame builds
+    3644 of these; the whole scan on that frame costs 5.1 ms as a slotted class
+    and 11.0 ms as a model, inside a `collect_bubbles` that costs 54 ms and
+    behind a capture that costs 700. The 5.8 ms bought a rule with one
+    unexplained exception in it.
+    """
+
+    left: int
+    right: int
+    top: int
+    bottom: int
+    count: int
+
+    @classmethod
+    def row(cls, left: int, right: int, row: int) -> Patch:
+        """A patch that is so far one horizontal run on one row.
+
+        Pydantic takes keywords only, where the slotted class this replaced was
+        built positionally from three of its five fields and derived the other
+        two. This is where that derivation went.
+        """
+        return cls(left=left, right=right, top=row, bottom=row, count=right - left + 1)
+
+    def absorb(self, other: Patch) -> None:
+        self.left = min(self.left, other.left)
+        self.right = max(self.right, other.right)
+        self.top = min(self.top, other.top)
+        self.bottom = max(self.bottom, other.bottom)
+        self.count += other.count
+
+    @property
+    def middle(self) -> tuple[int, int]:
+        return (self.left + self.right) // 2, (self.top + self.bottom) // 2
+
+    def sized(self, width: tuple[int, int], height: tuple[int, int], fill: float) -> bool:
+        across, down = self.right - self.left + 1, self.bottom - self.top + 1
+        return (
+            width[0] <= across <= width[1]
+            and height[0] <= down <= height[1]
+            and self.count / (across * down) >= fill
+        )
 
 
 class ResourceBubble(BaseModel):
@@ -1504,11 +1569,18 @@ class DonateOptions(BaseModel):
 
 
 class FrameReading(BaseModel):
-    """Everything the parsers make of one frame, for the `read` command.
+    """What the parsers a loop leans on make of one frame, for the `read` command.
 
     A screen the loop mishandled is almost always a screen it misread, and this
     is what says which of the readers disagreed with the eye. It is one model
     rather than a printout so a recorded run can be replayed through it.
+
+    Not literally every function in `parsers/`, and the line is where a loop
+    would ask: a reader some loop consults to decide what to do next belongs
+    here, while one that only measures something the caller already found — the
+    hall's scroll arrows, the name strip, the chat's own panel top — does not.
+    That line moved once already, when the builder base's three screens turned
+    out to be missing from a command the skills point a stuck night round at.
     """
 
     # Which village the frame was taken on, and the reason it leads: every other
@@ -1535,6 +1607,23 @@ class FrameReading(BaseModel):
     upgrades: list[UpgradeButton] = Field(default_factory=list)
     donatable: int = 0
     attack_menu: bool = False
+    # The builder base's own three screens. They were missing while the skills
+    # were already pointing a session at this command to debug a night round —
+    # so a round reporting 畫面不在建築大師基地 could be asked every question
+    # except the one that had actually failed. `attack_menu` above answers only
+    # for the home village, because the two dialogs share nothing but the corner
+    # the button that opens them sits in.
+    night_menu: bool = False
+    searching: bool = False
+    loot_cart: bool = False
+    # The result screen, which is what ends a battle for every loop here —
+    # `read_scout` answering None does not, and the two were confused once at
+    # the cost of five rounds walking out of battles still being fought.
+    battle_over: bool = False
+    # The game's own yes/no panel, and both of its buttons. Which one to press
+    # is never this reader's to say: 升級城牆 and 確定退出遊戲嗎 are the same
+    # panel in the same pixels.
+    dialog: GameDialog | None = None
     # Whether 下一個 is up, which `scout` cannot answer where it matters: it is
     # None both for 正在搜尋對手 and for an opponent whose loot will not read,
     # and this is what tells a run debugging the second one which it is looking at.
@@ -1548,7 +1637,19 @@ class FrameReading(BaseModel):
     freezes: list[int] = Field(default_factory=list)
     live: list[int] = Field(default_factory=list)
     on_field: list[int] = Field(default_factory=list)
+    # Which cards the game is drawing selected. The builder base's second stage
+    # opens with the surviving machine's card in that state, and a run that
+    # could not read it was offered no ability for the whole stage — so this is
+    # a reader whose being wrong has already cost a battle.
+    selected: list[int] = Field(default_factory=list)
     counts: dict[int, int | None] = Field(default_factory=dict)
+    # Where 確認 sits on the full-screen upgrade sheet, which is what every
+    # building but a wall confirms through.
+    upgrade_sheet: tuple[int, int] | None = None
+    # What the game's own red line encloses, which is the one measurement behind
+    # every coordinate a battle uses: a camera left somewhere else puts the whole
+    # army where nobody asked for it, and this is what says so.
+    village_box: tuple[int, int, int, int] | None = None
 
 
 class UiElement(BaseModel):

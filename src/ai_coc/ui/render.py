@@ -7,6 +7,7 @@ from html import escape
 import time
 from typing import TYPE_CHECKING
 
+from pydantic import BaseModel, PrivateAttr
 from rich.text import Text
 from markdown_it import MarkdownIt
 from rich.console import Console
@@ -60,17 +61,32 @@ def transcript_to_html(transcript: ChatTranscript) -> str:
     return "".join(blocks)
 
 
-class LogHtmlRenderer:
-    """One rich console per log panel, exporting each record as a coloured HTML line."""
+class LogHtmlRenderer(BaseModel):
+    """One rich console per log panel, exporting each record as a coloured HTML line.
 
-    def __init__(self, width: int = 160) -> None:
-        self.buffer = StringIO()
-        self.console = Console(
-            file=self.buffer, record=True, width=width, color_system="truecolor", soft_wrap=True
+    A model with its console in a `PrivateAttr`, which is the shape every adapter
+    in this project already has: what a caller may set is a field, and the
+    third-party object built from it is not.
+    """
+
+    width: int = 160
+
+    _buffer: StringIO = PrivateAttr(default_factory=StringIO)
+    # Built in `model_post_init` rather than by a factory, because it needs the
+    # width the caller asked for.
+    _console: Console = PrivateAttr()
+
+    def model_post_init(self, context: object, /) -> None:
+        self._console = Console(
+            file=self._buffer,
+            record=True,
+            width=self.width,
+            color_system="truecolor",
+            soft_wrap=True,
         )
 
     def render(self, record: logging.LogRecord) -> str:
-        self.console.print(
+        self._console.print(
             Text.assemble(
                 (time.strftime(TIME_FORMAT, time.localtime(record.created)), "dim"),
                 " ",
@@ -82,15 +98,15 @@ class LogHtmlRenderer:
         )
         kind, value, trace = record.exc_info or (None, None, None)
         if kind and value:
-            self.console.print(
-                Traceback.from_exception(kind, value, trace, width=self.console.width)
+            self._console.print(
+                Traceback.from_exception(kind, value, trace, width=self._console.width)
             )
         # Without a theme rich exports the light-terminal palette, whose red is
         # #800000 — unreadable on the panel's dark background.
-        html = self.console.export_html(
+        html = self._console.export_html(
             theme=MONOKAI, inline_styles=True, code_format="{code}", clear=True
         )
         # export_html only clears the recorded segments; the sink grows without this.
-        self.buffer.seek(0)
-        self.buffer.truncate(0)
+        self._buffer.seek(0)
+        self._buffer.truncate(0)
         return f'<pre style="margin:0; white-space:pre-wrap">{html.rstrip()}</pre>'

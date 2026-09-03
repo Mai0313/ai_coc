@@ -58,7 +58,7 @@ class LogRenderTests(unittest.TestCase):
         renderer = LogHtmlRenderer()
         for index in range(20):
             renderer.render(_record(logging.INFO, f"line {index}"))
-        assert renderer.buffer.getvalue() == ""
+        assert renderer._buffer.getvalue() == ""
 
 
 if __name__ == "__main__":

@@ -116,7 +116,6 @@ from ai_coc.parsers.scout import (
     read_stock,
     battle_over,
     card_groups,
-    digits_from,
     field_units,
     card_drained,
     freeze_cards,
@@ -133,6 +132,7 @@ from ai_coc.parsers.scout import (
     searching_opponent,
 )
 from ai_coc.parsers.world import info_badges, current_world
+from ai_coc.parsers.glyphs import digits_from
 from ai_coc.ui.main_window import LIVE_INTERVAL, MainWindow
 from ai_coc.adapters.config import ConfigStore
 from ai_coc.parsers.village import parse_village

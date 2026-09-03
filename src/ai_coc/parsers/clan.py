@@ -8,10 +8,14 @@ panel is drawn on, and whether a card is in colour or in greyscale.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
 import logging
 
-from ai_coc.parsers.home import _mask, _Patch, _patches
 from ai_coc.parsers.frame import SCREEN_SIZE, open_frame
+from ai_coc.parsers.regions import mask, patches
+
+if TYPE_CHECKING:
+    from ai_coc.models import Patch
 
 logger = logging.getLogger(__name__)
 
@@ -96,8 +100,8 @@ def reinforce_button(png: bytes) -> tuple[int, int] | None:
     width, height = right - left, bottom - top
     panel = open_frame(png).crop(CHAT_PANEL)
 
-    def buttons(ranges: tuple[tuple[int, int], ...]) -> list[_Patch]:
-        found = _patches(_mask(panel, ranges), width, height)
+    def buttons(ranges: tuple[tuple[int, int], ...]) -> list[Patch]:
+        found = patches(mask(panel, ranges), width, height)
         return [patch for patch in found if patch.count >= MIN_BUTTON_AREA]
 
     reds = buttons(ATTACK_RED)
