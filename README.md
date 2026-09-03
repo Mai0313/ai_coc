@@ -188,7 +188,7 @@ The first line of every run says which directory it is, and the name is `<when>-
 }
 ```
 
-That is the whole file, and it is what a first run writes. A key the app no longer reads is dropped the next time it loads, and a key the file never had is filled in, so what is on disk is always a statement of what the next run will do rather than of what was saved once.
+That is the whole file. **Nothing headless writes it** — a run that finds no file uses exactly these values and leaves the disk alone — so it appears the first time the window's 儲存設定 is pressed. Once it exists it is kept honest on every load: a key the app no longer reads is dropped and a key the file never had is filled in, so what is on disk is always a statement of what the next run will do rather than of what was saved once.
 
 - **thresholds**: who is worth attacking. Set them too high and a run skips dozens of opponents without ever starting a battle
 - **stop_at**: how full every storage has to be before a run stands down, as a percentage. **One number for both villages**, because the loop reads each storage's real ceiling off the game — tap a storage bar and it writes 最大儲存量 on the spot. Every storage has to reach it, not just one of them: a battle brings home three, so one at the ceiling is no reason to stop earning the other two. `0` never stands a run down, and a storage whose ceiling would not read is left out of the count. `--stop-at` overrides it for one run, `0` included, which is what a test battle against a village that farming has just filled needs

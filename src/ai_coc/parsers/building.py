@@ -179,7 +179,9 @@ def _price_mask(band: Image.Image) -> list[list[bool]]:
     """One price reduced to its digits, told apart from the plate they sit on."""
     width, height = band.size
     data = band.tobytes()
-    mask: list[list[bool]] = []
+    # `ink` rather than `mask`, which is the name this module now imports from
+    # `parsers.regions`; the same collision in `parsers.home` reads the same way.
+    ink: list[list[bool]] = []
     for y in range(height):
         row: list[bool] = []
         for offset in range(y * width * 3, (y + 1) * width * 3, 3):
@@ -192,8 +194,8 @@ def _price_mask(band: Image.Image) -> list[list[bool]]:
                     and red - blue > INK_RED_MARGIN
                 )
             )
-        mask.append(row)
-    return mask
+        ink.append(row)
+    return ink
 
 
 def _price(image: Image.Image, centre: int) -> int | None:

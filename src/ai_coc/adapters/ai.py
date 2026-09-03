@@ -17,7 +17,6 @@ from ai_coc.models import (
     GeminiResponseFormat,
     GeminiGenerationConfig,
 )
-from ai_coc.prompts import PROMPTS
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -200,6 +199,3 @@ class GeminiClient(BaseModel):
 
     def test(self) -> str:
         return self._create("Reply with exactly: AI CoC connected", None)
-
-
-AGENT_PROFILE = PROMPTS["agent_profile"]

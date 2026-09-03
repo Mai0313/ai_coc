@@ -78,7 +78,7 @@ from ai_coc.constants import (
     DEFAULT_GEMINI_MODEL,
     AGENT_PROFILE_VERSION,
 )
-from ai_coc.adapters.ai import AGENT_PROFILE, GeminiClient
+from ai_coc.adapters.ai import GeminiClient
 from ai_coc.adapters.mumu import MuMuAdapter
 from ai_coc.logging_setup import configure_logging
 from ai_coc.adapters.config import ConfigStore
@@ -111,6 +111,9 @@ NEXT_CYCLE_DELAY = 3000
 LIVE_INTERVAL = 500
 # Taken from the model so the picker cannot drift from what Gemini accepts.
 THINKING_LEVELS = list(get_args(ThinkingLevel))
+# Where the AI 助手 tab sits, which three places here and one in `cli.py` need
+# to raise it. A bare 2 in four places is four things a new tab breaks quietly.
+AGENT_TAB = 2
 
 
 class MainWindow(QMainWindow):
@@ -470,7 +473,7 @@ class MainWindow(QMainWindow):
         path = Path(event.mimeData().urls()[0].toLocalFile())
         try:
             self._set_chat_image(path.read_bytes(), path.name)
-            self.tabs.setCurrentIndex(2)
+            self.tabs.setCurrentIndex(AGENT_TAB)
             event.acceptProposedAction()
         except Exception as exc:
             self._error("圖片載入失敗", str(exc))
@@ -1173,7 +1176,7 @@ class MainWindow(QMainWindow):
     def live_ai_test(self) -> None:
         m, a = self._require()
         client = self.gemini_client()
-        self.tabs.setCurrentIndex(2)
+        self.tabs.setCurrentIndex(AGENT_TAB)
         self._say("system", "實機測試：正在啟動 CoC、擷取畫面並等待 AI 回覆…")
         answer = self._say("assistant", "實機 AI 回覆")
         captured: list[bytes] = []
@@ -1241,7 +1244,7 @@ class MainWindow(QMainWindow):
         frame = self.current_frame if self.chat_image_pending else None
         context = render(
             "chat",
-            profile=AGENT_PROFILE,
+            profile=PROMPTS["agent_profile"],
             knowledge=self.knowledge_context(),
             account=self.account_context(),
             emulator=self.active.emulator_id if self.active else "none",
@@ -1275,7 +1278,7 @@ class MainWindow(QMainWindow):
             item = pending[0]
             logger.info("Resuming pending task #%d: %s", item.id, item.instruction)
             self._say("system", f"自動繼續未完成任務 #{item.id}：{item.instruction}")
-            self.tabs.setCurrentIndex(2)
+            self.tabs.setCurrentIndex(AGENT_TAB)
             self.execute_agent_command(item.instruction, item.id, automated=True)
 
     def _apply_agent_action(

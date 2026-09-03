@@ -26,7 +26,7 @@ from ai_coc.models import (
 )
 from ai_coc.constants import APP_NAME
 from ai_coc.logging_setup import configure_logging
-from ai_coc.ui.main_window import MainWindow
+from ai_coc.ui.main_window import AGENT_TAB, MainWindow
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -306,7 +306,7 @@ def main() -> int:
     if arguments.agent_command:
 
         def run_command(text: str = arguments.agent_command) -> None:
-            window.tabs.setCurrentIndex(2)
+            window.tabs.setCurrentIndex(AGENT_TAB)
             window.chat_input.setText(text)
             window.send_chat()
 

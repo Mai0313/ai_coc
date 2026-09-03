@@ -8,10 +8,14 @@ panel is drawn on, and whether a card is in colour or in greyscale.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
 import logging
 
 from ai_coc.parsers.frame import SCREEN_SIZE, open_frame
-from ai_coc.parsers.regions import Patch, mask, patches
+from ai_coc.parsers.regions import mask, patches
+
+if TYPE_CHECKING:
+    from ai_coc.models import Patch
 
 logger = logging.getLogger(__name__)
 
