@@ -12,7 +12,7 @@
 
 看 `_open_attack_menu`, `attack_menu_open`, 以及 `ui/runner.py` 的 `_home`. `_home` 是所有迴圈共用的回家路徑, 它要分辨四種擋路的東西: 遊戲還在載入, 開著的面板, 對話框, 掉線. `CLAUDE.md` 搜 `back` 跟 `確定退出遊戲嗎`, 那一段解釋為什麼在乾淨的村莊上按 back 是災難.
 
-掉線的話 `idle_disconnected` 會認出來, `restart_game` 會重開遊戲並**重新解析 display**.
+掉線的話 `idle_disconnected` 會認出來 (閒置那張跟 連線已中斷 那張都算), `restart_game` 會重開遊戲並**重新解析 display**. 還在載入的話 `loading_screen` 會認出來, `_open_attack_menu` 會等它 (`_wait_out_loading`, 每輪一次, 最多 45 分鐘), message 會說「遊戲卡在載入畫面」而不是「畫面不在主村」; 所以看到這一句的話, 原因也不是伺服器.
 
 **第五種擋路的是站錯村莊**, 而它以前就是報這一句. 遊戲會開在上次離開的那一張地圖, 而夜世界 (建築大師基地) 的攻擊按鈕在同一個角落, 開出來的卻是另一個對話框 —— `attack_menu_open` 認不得它, 於是整輪的重試都花在那裡, 最後報「畫面不在主村」, 讀起來像遊戲卡住而不是像走錯地方. 現在 `_open_attack_menu` 會先問 `current_world`, 是夜世界就坐船回來再打, log 裡是 `sailing home before attacking`. 所以現在還看到這一句的話, 原因就不是這個.
 

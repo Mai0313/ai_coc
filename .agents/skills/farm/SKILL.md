@@ -113,7 +113,8 @@ uv run ai_coc attack --world night --repeat 0
 - 連續三輪以上 `attacked=None` 而理由都是兵力不足: 兵營可能根本沒在練, 或者軍隊配置被改過. 去看一眼再回報
 - 連續打完但每輪 `skipped` 都是幾十: 門檻對現在的獎盃區間來說太高了, 值得跟使用者提一句
 - 打完了但 `attacked` 的數字很小: 進攻打不動人家, 這是 tune-attack 的題目, 這裡只負責報告
-- log 裡出現重新登入 / 重開遊戲: `ui/runner.py` 的 `restart_game` 自己會處理, 會回到村莊, 不用管. 但如果一直重複發生, 那是要查的
+- log 裡出現重新登入 / 重開遊戲 (`The session was dropped`): `ui/runner.py` 的 `restart_game` 自己會處理, 會回到村莊, 不用管. 閒置斷線跟 連線已中斷 兩張對話框都走這條. 但如果一直重複發生, 那是要查的
+- log 裡出現 `waiting for the server rather than tapping`: 遊戲卡在載入畫面, 通常是伺服器那邊的事. 迴圈自己會等, 最多 45 分鐘, 每一輪只等一次, 等到了就接著打; 等不到的那一輪 message 會說「遊戲卡在載入畫面 45 分鐘」或「又回到載入畫面」. 這時候**不要**去重開遊戲或模擬器: 實測兩次都是它自己回來的, 重開沒有縮短過任何一次. 連續兩輪都是這句再停下來講
 - log 裡出現 `The camera was not at the far zoom`: 那一輪多半是白打的, 因為這個專案每一個座標都是在最遠的 zoom 量的, 鏡頭飄掉就全部落空. 迴圈每場自己會 pinch 回去, 所以偶爾一條不用管, 連著出現就去看畫面. 手動修法是 `ai_coc view --zoom out`, 但要先把迴圈停掉
 
 ## 倉庫滿了: 把資源花掉, 再回來打
