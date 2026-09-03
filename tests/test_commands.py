@@ -529,6 +529,21 @@ class RunPlumbingTests(unittest.TestCase):
         assert str(commands.STOP_FLAG) in message
         assert commands.stop_requested()
 
+    def test_clearing_the_flag_is_public_because_the_start_button_is_an_end(self) -> None:
+        """The window decides whether to stand down before it calls anything here.
+
+        So a flag left behind by `ai_coc stop` — which is the ordinary state
+        after a farming session, since nothing takes it once the loops stop —
+        has to be cleared by `start_automation` itself. Reached through the
+        public name rather than the widget, which no test can build.
+        """
+        commands.stop()
+        commands.clear_stop()
+        assert not commands.stop_requested()
+        # Idempotent, because the button can be pressed with no flag there.
+        commands.clear_stop()
+        assert not commands.stop_requested()
+
 
 class ReadCommandTests(unittest.TestCase):
     def test_a_home_village_frame_reads_as_one(self) -> None:

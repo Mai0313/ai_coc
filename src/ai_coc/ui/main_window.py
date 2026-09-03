@@ -464,10 +464,16 @@ class MainWindow(QMainWindow):
     def start_automation(self) -> None:
         self.save_automation()
         self.automation_active = True
-        # Cleared at both ends for the reason `commands._clear_stop` is: a latch
-        # left set by a run that stopped would stand the next one down before it
-        # had done anything, reported as a stop nobody asked for.
+        # Both halves of the stop, cleared for the one reason `clear_stop`
+        # gives: whichever of them a stopped run left behind would stand this
+        # one down before it had done anything, reported as a stop nobody asked
+        # for. **The file needs clearing here and not only inside `commands.*`**,
+        # because `_stood_down` runs before any job does — measured, a flag left
+        # by `ai_coc stop` at the end of a farming session made every press of
+        # this button stand down on the spot with nothing ever reaching the
+        # `clear_stop` inside `attack`.
         self.stop_seen = False
+        commands.clear_stop()
         self.automation_timer.start(self.cycle_minutes.value() * 60000)
         self._paint_run_button()
         self.automation_log.appendPlainText("自動化已啟動，第一輪開始。")
@@ -573,7 +579,9 @@ class MainWindow(QMainWindow):
             if done:
                 done(report)
             else:
-                self.automation_log.appendPlainText(f"{label} {report.message}")
+                # The message alone, because `label` is already the line above
+                # it: together they read 正在收取採集器… 收了 8 個採集器.
+                self.automation_log.appendPlainText(report.message)
 
         def finished() -> None:
             self.job_running = False

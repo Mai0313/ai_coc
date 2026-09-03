@@ -317,7 +317,7 @@ def stop_requested() -> bool:
     return STOP_FLAG.exists()
 
 
-def _clear_stop() -> None:
+def clear_stop() -> None:
     """Take the flag, and call this at both ends of every loop that reads it.
 
     At the start because a process killed outright never reaches the other end,
@@ -326,6 +326,14 @@ def _clear_stop() -> None:
     request that has been served should stop looking like one still waiting: a
     flag that is still there means somebody asked and no loop has taken it yet,
     which is what makes the file worth looking at to tell whether a stop landed.
+
+    **Public because the window has a start button and that is one of those
+    ends.** It reads the flag now, and it decides whether to stand down *before*
+    it calls anything in here — so a flag left behind by a terminal's stop, or
+    by a killed run, would have it standing itself down on every press with
+    nothing ever reaching the `clear_stop` inside `attack` or `walls`. Measured:
+    the file sat there after a farming session ended, which is the ordinary
+    case rather than a corner, since nothing takes the flag once the loops stop.
     """
     STOP_FLAG.unlink(missing_ok=True)
 
@@ -665,10 +673,10 @@ def attack(
     stop button rather than a terminal, and the button has to reach a battle
     already under way; a run started there passes a condition that answers to
     both, so `ai_coc stop` from a terminal still ends a window's round. Nothing
-    replaces the flag — the default is it, and `_clear_stop` at both ends of
+    replaces the flag — the default is it, and `clear_stop` at both ends of
     this function is what the window never had a place to do for itself.
     """
-    _clear_stop()
+    clear_stop()
     adb = _controller()
     _prepare_frames(options)
     plan = plans.load(options.plan_in) if options.plan_in else None
@@ -799,7 +807,7 @@ def attack(
                 logger.info("Nothing was attacked; waiting %ds for the army", IDLE_REST)
                 if _rest(IDLE_REST, should_stop):
                     break
-    _clear_stop()
+    clear_stop()
     return series
 
 
@@ -988,7 +996,7 @@ def walls(options: WallOptions, should_stop: Callable[[], bool] = stop_requested
     button reaches the scan as well; see `attack` for why the flag stays the
     default rather than being replaced.
     """
-    _clear_stop()
+    clear_stop()
     adb, display = _session(options.frame_dir)
     runner = WallRunner(
         adb=adb,
@@ -1014,7 +1022,7 @@ def walls(options: WallOptions, should_stop: Callable[[], bool] = stop_requested
         report.message = (
             f"已停止，{report.message}" if report.upgrades else "已停止，還沒買成任何一批"
         )
-    _clear_stop()
+    clear_stop()
     logger.info(
         "Walls: %s (金幣 %d／聖水 %d)", report.message, report.paid("gold"), report.paid("elixir")
     )
