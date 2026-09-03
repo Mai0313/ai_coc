@@ -9,7 +9,7 @@ from contextlib import closing
 
 from pydantic import BaseModel, PrivateAttr
 
-from ai_coc.models import AccountRow, TaskRecord, KnowledgeItem, RegistryEntry, AccountSnapshot
+from ai_coc.models import AccountRow, RegistryEntry, AccountSnapshot
 from ai_coc.constants import DB_PATH, SCHEMA_VERSION, MASTER_DB_VERSION
 
 
@@ -56,15 +56,16 @@ class Database(BaseModel):
                 sample_json TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'UNKNOWN',
                 PRIMARY KEY(data_id, section)
             );
-            CREATE TABLE IF NOT EXISTS knowledge(
-                id INTEGER PRIMARY KEY AUTOINCREMENT, emulator_id TEXT, frame_id TEXT,
-                statement TEXT NOT NULL, status TEXT NOT NULL, created_at TEXT NOT NULL
-            );
-            CREATE TABLE IF NOT EXISTS tasks(
-                id INTEGER PRIMARY KEY AUTOINCREMENT, instruction TEXT NOT NULL,
-                status TEXT NOT NULL DEFAULT 'PENDING', progress TEXT NOT NULL DEFAULT '',
-                created_at TEXT NOT NULL, updated_at TEXT NOT NULL
-            );
+            -- The AI 助手 tab's own two tables, and the only writers either ever
+            -- had. `knowledge` held what the user typed at the chat as teaching
+            -- and `tasks` made one agent command durable across a restart; both
+            -- went with the tab. Dropped rather than left standing because there
+            -- is no migration tooling here, so a table this script stops
+            -- creating would otherwise survive on every database that already
+            -- has it and on none that is made after — which is the drift a
+            -- bumped SCHEMA_VERSION exists to rule out.
+            DROP TABLE IF EXISTS knowledge;
+            DROP TABLE IF EXISTS tasks;
             """)
             con.executemany(
                 "INSERT OR REPLACE INTO metadata(key,value) VALUES(?,?)",
@@ -158,43 +159,3 @@ class Database(BaseModel):
                 (tag,),
             ).fetchall()
         return [AccountRow.model_validate(dict(row)) for row in rows]
-
-    def add_knowledge(self, emulator_id: str, frame_id: str, statement: str, status: str) -> None:
-        with closing(self.connect()) as con, con:
-            con.execute(
-                "INSERT INTO knowledge(emulator_id,frame_id,statement,status,created_at) VALUES(?,?,?,?,?)",
-                (emulator_id, frame_id, statement, status, datetime.now(UTC).isoformat()),
-            )
-
-    def recent_knowledge(self, limit: int = 50) -> list[KnowledgeItem]:
-        with closing(self.connect()) as con:
-            rows = con.execute(
-                "SELECT * FROM knowledge ORDER BY id DESC LIMIT ?", (limit,)
-            ).fetchall()
-        return [KnowledgeItem.model_validate(dict(row)) for row in reversed(rows)]
-
-    def add_task(self, instruction: str) -> int:
-        now = datetime.now(UTC).isoformat()
-        with closing(self.connect()) as con, con:
-            cursor = con.execute(
-                "INSERT INTO tasks(instruction,status,progress,created_at,updated_at) VALUES(?,?,?,?,?)",
-                (instruction, "PENDING", "等待執行", now, now),
-            )
-            if cursor.lastrowid is None:
-                raise RuntimeError("Task insert did not return an identifier")
-            return int(cursor.lastrowid)
-
-    def pending_tasks(self) -> list[TaskRecord]:
-        with closing(self.connect()) as con:
-            rows = con.execute(
-                "SELECT * FROM tasks WHERE status IN ('PENDING','RUNNING') ORDER BY id"
-            ).fetchall()
-        return [TaskRecord.model_validate(dict(row)) for row in rows]
-
-    def update_task(self, task_id: int, status: str, progress: str) -> None:
-        now = datetime.now(UTC).isoformat()
-        with closing(self.connect()) as con, con:
-            con.execute(
-                "UPDATE tasks SET status=?,progress=?,updated_at=? WHERE id=?",
-                (status, progress, now, task_id),
-            )

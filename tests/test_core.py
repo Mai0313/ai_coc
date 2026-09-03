@@ -1703,16 +1703,11 @@ class PromptTests(unittest.TestCase):
         file nothing asks for is a prompt somebody will keep rewording for nothing.
         """
         assert set(PROMPTS) == {
-            "agent_profile",
-            "agent_step",
             "attack_plan",
-            "chat",
             "find_targets",
-            "live_test",
             "locate_target",
             "name_building",
             "night_plan",
-            "reference_image",
         }
 
     def test_a_prompt_fills_in_its_placeholders(self) -> None:

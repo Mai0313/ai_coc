@@ -1,15 +1,13 @@
-"""Turn Markdown replies and log records into the HTML the Qt panels display."""
+"""Turn log records into the HTML the window's 執行紀錄 panel displays."""
 
 from __future__ import annotations
 
 from io import StringIO
-from html import escape
 import time
 from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, PrivateAttr
 from rich.text import Text
-from markdown_it import MarkdownIt
 from rich.console import Console
 from rich.traceback import Traceback
 from rich.terminal_theme import MONOKAI
@@ -19,22 +17,6 @@ from ai_coc.logging_setup import TIME_FORMAT
 if TYPE_CHECKING:
     import logging
 
-    from ai_coc.models import ChatTranscript
-
-# Qt's rich text is a subset of CSS 2.1; keep to selectors and properties it honours.
-CHAT_STYLESHEET = """
-h1, h2, h3, h4 { color: #8fb8ff; }
-a { color: #70a4ff; }
-code { background-color: #0b1220; color: #ffd479; font-family: Consolas, monospace; }
-pre { background-color: #0b1220; color: #d7e3f7; font-family: Consolas, monospace; }
-blockquote { color: #9fb3d0; }
-th, td { border: 1px solid #33415a; padding: 4px; }
-.speaker { font-weight: bold; }
-.user { color: #7fd1a8; }
-.assistant { color: #70a4ff; }
-.system { color: #91a3c0; }
-"""
-
 LEVEL_STYLES = {
     "DEBUG": "dim cyan",
     "INFO": "green",
@@ -42,23 +24,6 @@ LEVEL_STYLES = {
     "ERROR": "bold red",
     "CRITICAL": "bold white on red",
 }
-
-# Raw HTML stays off: a model reply is text to display, never markup to trust.
-_MARKDOWN = MarkdownIt("commonmark", {"html": False}).enable(["table", "strikethrough"])
-
-
-def markdown_to_html(text: str) -> str:
-    return _MARKDOWN.render(text)
-
-
-def transcript_to_html(transcript: ChatTranscript) -> str:
-    """The whole conversation; a streaming reply is re-rendered on every repaint."""
-    blocks = []
-    for message in transcript.root:
-        blocks.append(f'<p class="speaker {message.role}">{escape(message.heading)}</p>')
-        if message.body:
-            blocks.append(markdown_to_html(message.body))
-    return "".join(blocks)
 
 
 class LogHtmlRenderer(BaseModel):

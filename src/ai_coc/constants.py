@@ -8,9 +8,11 @@ APP_NAME = "AI CoC"
 ORGANISATION = "Hsien0818666"
 
 VERSION_LABEL = f"v{__version__}"
-SCHEMA_VERSION = "1"
+# Bumped to 2 when the AI 助手 tab went and took the `knowledge` and `tasks`
+# tables with it. There is no migration tooling here, so what handles a database
+# that already has them is a `DROP TABLE IF EXISTS` in `Database._initialize`.
+SCHEMA_VERSION = "2"
 MASTER_DB_VERSION = "seed-2026-08-22"
-AGENT_PROFILE_VERSION = "0.1.0"
 COC_PACKAGE = "com.supercell.clashofclans"
 DEFAULT_GEMINI_MODEL = "gemini-3.5-flash"
 # The cheap tier, for the one question the parsers provably cannot answer: which

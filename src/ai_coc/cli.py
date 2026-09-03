@@ -6,7 +6,6 @@ import logging
 from pathlib import Path
 import argparse
 
-from PyQt5.QtCore import QTimer
 from PyQt5.QtWidgets import QApplication
 
 # PyInstaller runs this file as `__main__`, which has no package context, so these
@@ -26,7 +25,7 @@ from ai_coc.models import (
 )
 from ai_coc.constants import APP_NAME
 from ai_coc.logging_setup import configure_logging
-from ai_coc.ui.main_window import AGENT_TAB, MainWindow
+from ai_coc.ui.main_window import MainWindow
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -58,15 +57,8 @@ RECORDABLE = (
 
 
 def _parser() -> argparse.ArgumentParser:
-    """Every argument the entry point takes; no sub-command means open the window.
-
-    The two GUI switches are declared here as well, rather than left to a scan of
-    raw argv. Otherwise anything starting with a dash has to bypass argparse,
-    which takes `--help` down with it.
-    """
+    """Every argument the entry point takes; no sub-command means open the window."""
     parser = argparse.ArgumentParser(prog="ai_coc", description=APP_NAME)
-    parser.add_argument("--live-test", action="store_true", help="開視窗後對目前畫面問 AI 一次")
-    parser.add_argument("--agent-command", default="", help="開視窗後把這句話送進 AI 助手執行")
     sub = parser.add_subparsers(dest="command")
     run = sub.add_parser("attack", help="跑進攻迴圈")
     # Omitted means "whichever village the game is on", which is the honest
@@ -301,16 +293,6 @@ def main() -> int:
     app.setApplicationVersion(__version__)
     window = MainWindow(run)
     window.show()
-    if arguments.live_test:
-        QTimer.singleShot(2500, window.live_ai_test)
-    if arguments.agent_command:
-
-        def run_command(text: str = arguments.agent_command) -> None:
-            window.tabs.setCurrentIndex(AGENT_TAB)
-            window.chat_input.setText(text)
-            window.send_chat()
-
-        QTimer.singleShot(2500, run_command)
     return app.exec_()
 
 

@@ -11,7 +11,6 @@ import subprocess
 from pydantic import Field, BaseModel, PrivateAttr
 
 from ai_coc.models import (
-    UiElement,
     AdbEndpoint,
     MuMuCliResult,
     MuMuCliVersion,
@@ -260,10 +259,3 @@ class MuMuAdapter(BaseModel):
     ) -> None:
         adb = self.controller(instance.adb_serial)
         adb.swipe(start, end, duration_ms, adb.display_for(COC_PACKAGE))
-
-    def back(self, instance: EmulatorInstance) -> None:
-        adb = self.controller(instance.adb_serial)
-        adb.back(adb.display_for(COC_PACKAGE))
-
-    def ui_elements(self, instance: EmulatorInstance) -> list[UiElement]:
-        return self.controller(instance.adb_serial).ui_elements()

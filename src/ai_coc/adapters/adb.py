@@ -8,9 +8,8 @@ import logging
 
 import adbutils
 from pydantic import BaseModel
-from defusedxml import ElementTree as ET  # noqa: N817 - the conventional alias for ElementTree
 
-from ai_coc.models import UiElement, AdbEndpoint, DisplayTarget
+from ai_coc.models import AdbEndpoint, DisplayTarget
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -426,34 +425,3 @@ class AdbController(BaseModel):
     def stop_app(self, package: str) -> None:
         logger.info("Force-stopping %s on %s", package, self.serial)
         self.shell(["am", "force-stop", package], timeout=8)
-
-    def ui_elements(self) -> list[UiElement]:
-        """Read Android's accessibility hierarchy without extra device agents."""
-        try:
-            xml_data = self.connect().dump_hierarchy()
-        except adbutils.AdbError as exc:
-            logger.warning("uiautomator dump failed on %s: %s", self.serial, exc)
-            return []
-        try:
-            root = ET.fromstring(xml_data[xml_data.find("<?xml") :])
-        except (ET.ParseError, ValueError):
-            logger.warning("uiautomator dump on %s was not parseable XML", self.serial)
-            return []
-        elements: list[UiElement] = []
-        for node in root.iter("node"):
-            text = (node.get("text") or node.get("content-desc") or "").strip()
-            match = re.fullmatch(r"\[(\d+),(\d+)\]\[(\d+),(\d+)\]", node.get("bounds", ""))
-            if not match or not (text or node.get("clickable") == "true"):
-                continue
-            left, top, right, bottom = map(int, match.groups())
-            elements.append(
-                UiElement(
-                    text=text,
-                    resource_id=node.get("resource-id", ""),
-                    clickable=node.get("clickable") == "true",
-                    x=(left + right) // 2,
-                    y=(top + bottom) // 2,
-                )
-            )
-        logger.info("Accessibility dump on %s returned %d elements", self.serial, len(elements))
-        return elements[:120]

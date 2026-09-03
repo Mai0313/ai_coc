@@ -30,9 +30,7 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "adbutils" },
-    { name = "defusedxml" },
     { name = "google-genai" },
-    { name = "markdown-it-py" },
     { name = "pillow" },
     { name = "pydantic" },
     { name = "pyqt5" },

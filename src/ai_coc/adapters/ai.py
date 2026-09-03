@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import time
 import base64
-from typing import TYPE_CHECKING, Any, TypeVar, cast
+from typing import TypeVar, cast
 import logging
 
 from google import genai
@@ -17,9 +17,6 @@ from ai_coc.models import (
     GeminiResponseFormat,
     GeminiGenerationConfig,
 )
-
-if TYPE_CHECKING:
-    from collections.abc import Iterator
 
 logger = logging.getLogger(__name__)
 
@@ -100,8 +97,9 @@ class GeminiClient(BaseModel):
         """One request; `timeout` is seconds, and giving up is the caller's to handle.
 
         The deadline belongs to the call rather than to the client because one
-        client serves the chat, the agent loop and the attack planner, and only
-        the planner has a window it can miss. A timed-out call raises the SDK's
+        client serves the attack planner, the target finder and the building
+        namer, and only the planner has a window it can miss. A timed-out call
+        raises the SDK's
         own `APITimeoutError`, which is **not** a `google.genai.errors.APIError`
         and so does not reach the handler below — that is deliberate, since the
         only caller passing a deadline is the one that answers a failure by
@@ -132,31 +130,6 @@ class GeminiClient(BaseModel):
 
     def generate(self, prompt: str, image_png: bytes | None = None) -> str:
         return self._create(prompt, image_png)
-
-    def stream(self, prompt: str, image_png: bytes | None = None) -> Iterator[str]:
-        """Yield the reply in the chunks Gemini sends, so the UI can show it as it arrives."""
-        request = self._request(prompt, image_png)
-        started = time.monotonic()
-        received = 0
-        try:
-            events = cast(
-                "Iterator[Any]", self.client.interactions.create(**request.body(), stream=True)
-            )
-            for event in events:
-                # Anything else is a step boundary or a tool event this app never asks for.
-                if event.event_type == "error":
-                    # ErrorEvent.error is optional; fall back to the event itself.
-                    reason = event.error.message if event.error else event
-                    raise RuntimeError(f"Gemini 串流中斷：{reason}")
-                if event.event_type == "step.delta" and event.delta.type == "text":
-                    received += len(event.delta.text)
-                    yield event.delta.text
-        except errors.APIError as exc:
-            logger.exception("Gemini stream failed on model %s", self.settings.model)
-            raise RuntimeError(f"Gemini 串流失敗（{self.settings.model}）：{exc}") from exc
-        logger.info("Gemini streamed %d chars in %.1fs", received, time.monotonic() - started)
-        if not received:
-            raise RuntimeError("Gemini 沒有回傳內容")
 
     def generate_structured(
         self,
