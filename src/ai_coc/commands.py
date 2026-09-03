@@ -68,6 +68,7 @@ from ai_coc.parsers.scout import (
     live_cards,
     read_scout,
     read_stock,
+    battle_over,
     card_groups,
     field_units,
     card_drained,
@@ -76,16 +77,20 @@ from ai_coc.parsers.scout import (
     army_strength,
     counted_cards,
     loading_screen,
+    loot_cart_open,
+    selected_cards,
     attack_menu_open,
     storage_capacity,
     idle_disconnected,
+    night_attack_menu,
     read_builder_stock,
+    searching_opponent,
 )
 from ai_coc.parsers.world import current_world
 from ai_coc.adapters.config import ConfigStore
 from ai_coc.adapters.secrets import SecretStore
-from ai_coc.parsers.boundary import PLAYFIELD, VILLAGE_CENTRE, boundary_reach
-from ai_coc.parsers.building import wall_menu, upgrade_buttons
+from ai_coc.parsers.boundary import PLAYFIELD, VILLAGE_CENTRE, village_box, boundary_reach
+from ai_coc.parsers.building import wall_menu, game_dialog, upgrade_sheet, upgrade_buttons
 
 from .ui.clan import ClanRunner
 from .ui.hero import HeroRunner
@@ -1220,6 +1225,11 @@ def read(png: bytes) -> FrameReading:
         upgrades=upgrade_buttons(png),
         donatable=len(donatable_cards(png)),
         attack_menu=attack_menu_open(png),
+        night_menu=night_attack_menu(png),
+        searching=searching_opponent(png),
+        loot_cart=loot_cart_open(png),
+        battle_over=battle_over(png),
+        dialog=game_dialog(png),
         skip_offered=skip_offered(png),
         idle_dialog=idle_disconnected(png),
         loading=loading_screen(png),
@@ -1228,5 +1238,8 @@ def read(png: bytes) -> FrameReading:
         freezes=freeze_cards(png, slots),
         live=live_cards(png, slots),
         on_field=field_units(png, slots),
+        selected=selected_cards(png, slots),
         counts={slot: card_count(png, slot) for slot in slots},
+        upgrade_sheet=upgrade_sheet(png),
+        village_box=village_box(png),
     )

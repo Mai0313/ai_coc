@@ -411,9 +411,13 @@ property-decorators = []
 # `ScreenRunner` and `GameRunner` are `BaseModel` subclasses, which ruff does not
 # follow: without them listed, TC002 moves a runner field's type into
 # `if TYPE_CHECKING` and the model imports perfectly but raises `is not fully
-# defined` the first time one is built. Both, because ruff matches the class's
-# own bases rather than walking the chain — `AttackRunner(ScreenRunner)` and
-# `WallRunner(GameRunner)` each need the name they actually write.
+# defined` the first time one is built.
+# `ScreenRunner` is listed as insurance rather than for a reproduced failure, and
+# the difference is worth writing down: taking it out today changes nothing ruff
+# reports, because every type `AttackRunner` declares arrives inside an import
+# block that is used at runtime elsewhere in that file. That is a fact about
+# today's fields, not about the rule, and the next field added to a runner is
+# what it would cost.
 runtime-evaluated-base-classes = [
     "pydantic.BaseModel",
     "ai_coc.ui.runner.ScreenRunner",

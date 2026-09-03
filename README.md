@@ -171,12 +171,29 @@ The first line of every run says which directory it is, and the name is `<when>-
     "min_elixir": 500000,
     "min_dark": 5000
   },
-  "stop_at": 90
+  "stop_at": 90,
+  "restart_every": 50,
+  "gemini": {
+    "main": {
+      "model": "gemini-3.5-flash",
+      "base_url": "",
+      "thinking_level": "low"
+    },
+    "lite": {
+      "model": "gemini-3.5-flash-lite",
+      "base_url": "",
+      "thinking_level": "low"
+    }
+  }
 }
 ```
 
+That is the whole file, and it is what a first run writes. A key the app no longer reads is dropped the next time it loads, and a key the file never had is filled in, so what is on disk is always a statement of what the next run will do rather than of what was saved once.
+
 - **thresholds**: who is worth attacking. Set them too high and a run skips dozens of opponents without ever starting a battle
 - **stop_at**: how full every storage has to be before a run stands down, as a percentage. **One number for both villages**, because the loop reads each storage's real ceiling off the game — tap a storage bar and it writes 最大儲存量 on the spot. Every storage has to reach it, not just one of them: a battle brings home three, so one at the ceiling is no reason to stop earning the other two. `0` never stands a run down, and a storage whose ceiling would not read is left out of the count. `--stop-at` overrides it for one run, `0` included, which is what a test battle against a village that farming has just filled needs
+- **restart_every**: how many battles to fight before restarting the emulator and the game. MuMu drops frames after running for a while and nothing short of a restart clears it, which is a property of the emulator rather than anything this code can measure — so this is the one number in the file that is somebody's observation. `0` turns it off; `--restart-every` overrides it for one run
+- **gemini**: which model answers each kind of call. `main` is asked once per run against a whole screenshot — the attack plan, the target finder — so nothing there is racing anything and the better model is simply the right one. `lite` is asked once per candidate against a cropped strip, which is a classification rather than a judgement and is where a cheaper model earns its place. `base_url` empty means Google's own endpoint. **The API key is not here**, deliberately: it lives in the DPAPI store beside this file, so there is no slot in a plaintext file that looks like the place to put it
 
 There are no ability or spell timings here any more. They were a table of per-hero constants, and editing them meant guessing how long an army takes to walk across a village nobody had looked at — which is the planner's job, done with the village on screen. Every clock lives on the plan now: see `plans/flat.json` for the shape, and `--plan-in` to replay one.
 

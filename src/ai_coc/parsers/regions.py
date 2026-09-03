@@ -12,11 +12,10 @@ name.** `home` is named for a screen, so `building` and `clan` reaching into it
 read as one reader borrowing from another rather than as three readers standing
 on one scan.
 
-Colour alone is never enough and the size is what does the work: swept over a
-single village frame, the gold range answers thirteen patches and the magenta
-one nine — storage bars, the shop button, spell factories, a burning building —
-and every one of them is either far larger or far smaller than a marker. So a
-caller gets patches back and holds them to a shape itself.
+Colour alone is never enough, and what is enough differs for each of the three,
+so nothing here decides: a caller gets every patch back and holds it to a shape
+of its own. `parsers.home`'s `MARKERS` is where that costs the most and says
+what it measured.
 """
 
 from __future__ import annotations
@@ -24,55 +23,11 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from PIL import ImageChops
-from pydantic import BaseModel
+
+from ai_coc.models import Patch
 
 if TYPE_CHECKING:
     from PIL import Image
-
-
-class Patch(BaseModel):
-    """One connected patch of pixels, grown a row at a time.
-
-    Mutable, because that is what growing means: `absorb` folds a patch on the
-    row above into this one, and a frozen model would have to rebuild both.
-
-    **It was a `__slots__` class, on the reasoning that a model would be too
-    slow for a scan.** Measured on a live village frame, that scan builds 591 of
-    these: 0.09 ms as a slotted class against 0.64 ms as a model, on a parse
-    that costs about 150 ms and a capture that costs 700. The half-millisecond
-    it saved was not worth being the one structured value in this project that
-    crosses a module boundary without being one.
-    """
-
-    left: int
-    right: int
-    top: int
-    bottom: int
-    count: int
-
-    @classmethod
-    def row(cls, left: int, right: int, row: int) -> Patch:
-        """A patch that is so far one horizontal run on one row."""
-        return cls(left=left, right=right, top=row, bottom=row, count=right - left + 1)
-
-    def absorb(self, other: Patch) -> None:
-        self.left = min(self.left, other.left)
-        self.right = max(self.right, other.right)
-        self.top = min(self.top, other.top)
-        self.bottom = max(self.bottom, other.bottom)
-        self.count += other.count
-
-    @property
-    def middle(self) -> tuple[int, int]:
-        return (self.left + self.right) // 2, (self.top + self.bottom) // 2
-
-    def sized(self, width: tuple[int, int], height: tuple[int, int], fill: float) -> bool:
-        across, down = self.right - self.left + 1, self.bottom - self.top + 1
-        return (
-            width[0] <= across <= width[1]
-            and height[0] <= down <= height[1]
-            and self.count / (across * down) >= fill
-        )
 
 
 def mask(image: Image.Image, ranges: tuple[tuple[int, int], ...]) -> bytes:

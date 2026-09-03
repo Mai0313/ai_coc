@@ -133,11 +133,12 @@ class ScreenRunner(BaseModel):
     **`AttackRunner` is the other subclass, and it is why this is a class at
     all.** It is not a `GameRunner` — it has no use for `_home`, since its way
     back to a village has to cope with a result screen, a matchmaker and a
-    village it may have to sail to — but it declared the same five fields and
-    the same two methods, character for character. The frame naming in
-    particular (`0006_probe`, `0010_pass`) is written down in `CLAUDE.md` and in
-    two of the project's skills, and a convention documented in three places and
-    implemented in two is the drift `AGENTS.md` is a symlink to avoid.
+    village it may have to sail to — but it declared these five fields with the
+    same names, types and defaults, and both methods with the same bodies. The
+    frame naming in particular (`0006_probe`, `0010_pass`) is written down in
+    `CLAUDE.md` and in two of the project's skills, and a convention documented
+    in three places and implemented in two is the drift `AGENTS.md` is a symlink
+    to avoid.
     """
 
     adb: AdbController

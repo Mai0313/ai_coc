@@ -29,6 +29,14 @@ def flat() -> AttackPlan:
 
 
 def load_night(path: Path) -> NightPlan:
+    """One builder base plan off disk, which today only `night_flat` asks for.
+
+    Kept beside `load` rather than folded into its one caller: `--plan-in` is
+    the home village's flag and says so, so the single caller is a fact about
+    which flags exist rather than about this pair, and a loader on one of the
+    two documents and not the other is a question every reader has to answer
+    again.
+    """
     return NightPlan.model_validate_json(path.read_text(encoding="utf-8"))
 
 

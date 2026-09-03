@@ -1845,8 +1845,11 @@ class AttackRunner(ScreenRunner):
         elif step.act in ("rage", "freeze"):
             cards = row.rages if step.act == "rage" else row.freezes
             wanted = max(row.rage_count, 1) if step.act == "rage" else max(len(cards), 1)
+            # `spaced` can drop every point it could not clear, which is what
+            # the fallback below covers — so `targets` is never empty, `wanted`
+            # is at least one, and the slice always carries something.
             targets = tuple(spaced(list(points))) or (middle,)
-            self._cast(cards, targets[:wanted] or targets, row.frame)
+            self._cast(cards, targets[:wanted], row.frame)
 
     def _drop_at(self, cards: list[int], spot: tuple[int, int]) -> None:
         """Send every card in one shell round trip, and write down where they went."""

@@ -488,6 +488,42 @@ class ReadCommandTests(unittest.TestCase):
         assert reading.world is None
         assert not commands.read((FRAMES / "world_day.png").read_bytes()).loading
 
+    def test_the_builder_bases_own_screens_each_have_a_field(self) -> None:
+        """A night round reporting 畫面不在建築大師基地 could be asked every question but that one.
+
+        `attack_menu` answers for the home village alone — the two dialogs share
+        nothing but the corner the button that opens them sits in — so without
+        these a session debugging that report had no reader to ask.
+        """
+        menu = commands.read((FRAMES / "night_menu.png").read_bytes())
+        assert menu.night_menu
+        assert not menu.attack_menu
+        searching = commands.read((FRAMES / "night_searching.png").read_bytes())
+        assert searching.searching
+        assert not searching.night_menu
+        village = commands.read((FRAMES / "world_day.png").read_bytes())
+        assert not village.night_menu
+        assert not village.searching
+
+    def test_the_result_screen_is_what_ends_a_battle_and_read_says_so(self) -> None:
+        """`read_scout` answering None does not end one; these two were confused once."""
+        assert commands.read((FRAMES / "battle_result.png").read_bytes()).battle_over
+        assert commands.read((FRAMES / "battle_result_lit.png").read_bytes()).battle_over
+        assert not commands.read((FRAMES / "world_day.png").read_bytes()).battle_over
+
+    def test_the_sheet_and_the_dialog_a_spend_confirms_through_are_both_reported(self) -> None:
+        assert commands.read((FRAMES / "upgrade_sheet.png").read_bytes()).upgrade_sheet is not None
+        assert commands.read((FRAMES / "wall_spend_dialog.png").read_bytes()).dialog is not None
+        village = commands.read((FRAMES / "world_day.png").read_bytes())
+        assert village.upgrade_sheet is None
+        assert village.dialog is None
+
+    def test_a_battle_frame_measures_where_the_village_sits(self) -> None:
+        """The one measurement every coordinate in a battle rests on."""
+        box = commands.read((FRAMES / "battle_boundary_grass.png").read_bytes()).village_box
+        assert box is not None
+        assert box[2] - box[0] > 400
+
 
 class CaptureAndViewTests(unittest.TestCase):
     def test_a_burst_is_numbered_and_spaced_by_the_gap(self) -> None:

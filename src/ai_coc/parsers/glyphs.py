@@ -7,11 +7,12 @@ price once a batch. Position, font and size are all fixed by the 1600x900
 layout, so a digit is normalised to a bit pattern and compared against ten of
 them.
 
-**This lived inside `parsers.scout` and three other modules reached into it by
-private name** — `home` for five of them, `building` and `hero` for one each.
-That is the shape of a shared engine that never got its own file: the module it
-sat in is named for a screen, so every import of it read as one reader borrowing
-from another rather than as four readers standing on one thing.
+**This lived inside `parsers.scout`, which is named for a screen**, so all four
+of its callers read as one reader borrowing from another rather than as four
+standing on one engine. `parsers.home` was reaching in by private name for four
+of these; `parsers.building` and `parsers.hero` took only `digits_from`, which
+was already public, and that is the shape of the problem — the public half of an
+engine had been noticed and the private half had not.
 
 Nothing here knows what it is reading. What counts as ink depends on what the
 text is painted over, so the mask is built by the caller and handed in:
