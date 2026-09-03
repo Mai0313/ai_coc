@@ -75,6 +75,7 @@ from ai_coc.parsers.scout import (
     skip_offered,
     army_strength,
     counted_cards,
+    loading_screen,
     attack_menu_open,
     storage_capacity,
     idle_disconnected,
@@ -91,6 +92,7 @@ from .ui.hero import HeroRunner
 from .ui.walls import WallRunner
 from .ui.world import cross, collect_cart
 from .ui.attack import CARD_ROW_Y, DROP_SETTLE, SINGLE_DROP_DELAY, AttackRunner
+from .ui.runner import restart_game
 from .ui.upkeep import UpkeepRunner
 
 if TYPE_CHECKING:
@@ -383,6 +385,7 @@ def _settle_game(
     is the caller's decision, not this one's.
     """
     waiting = "nothing was tried"
+    restarted = False
     for _ in range(polls):
         # Checked inside the wait rather than only around it: this is the
         # longest stretch of a run where nothing else looks at the flag, and a
@@ -412,10 +415,25 @@ def _settle_game(
             # village with the camera at a map corner can leave the dark elixir
             # row unreadable, which had `read_stock` call an ordinary village no
             # village at all.
-            if current_world(adb.screenshot(display)) is not None:
+            png = adb.screenshot(display)
+            if current_world(png) is not None:
                 adb.zoom("out", ZOOM_PINCHES, COC_PACKAGE, display)
                 return display
-            waiting = "the village has not painted yet"
+            # A session the server dropped would otherwise sit under its dialog
+            # for the whole wait, since nothing else here answers one. Once,
+            # because a restart that lands back on the dialog is the server
+            # still down, and the loading screen after it is the state to wait
+            # in rather than restart out of: measured across two outages,
+            # neither a game nor an emulator restart shortened one.
+            if idle_disconnected(png) and not restarted:
+                logger.warning("The session was dropped; restarting the game")
+                restart_game(adb, display)
+                restarted = True
+                waiting = "the game is being restarted"
+            elif loading_screen(png):
+                waiting = "the game is on its loading screen"
+            else:
+                waiting = "the village has not painted yet"
         logger.debug("Still waiting for the game: %s", waiting)
         time.sleep(RESTART_POLL_GAP)
     logger.warning(
@@ -1202,6 +1220,7 @@ def read(png: bytes) -> FrameReading:
         attack_menu=attack_menu_open(png),
         skip_offered=skip_offered(png),
         idle_dialog=idle_disconnected(png),
+        loading=loading_screen(png),
         card_groups=groups,
         counted=counted_cards(png, slots),
         freezes=freeze_cards(png, slots),

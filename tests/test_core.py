@@ -123,9 +123,11 @@ from ai_coc.parsers.scout import (
     skip_offered,
     army_strength,
     counted_cards,
+    loading_screen,
     selected_cards,
     attack_menu_open,
     storage_capacity,
+    idle_disconnected,
     night_attack_menu,
     read_builder_stock,
     searching_opponent,
@@ -981,7 +983,11 @@ class CrossingTests(unittest.TestCase):
     """Sailing between the two villages, which is a tap the boat may or may not take."""
 
     def _cross(
-        self, seen: list[str | None], want: str = "day", battle: bool = False
+        self,
+        seen: list[str | None],
+        want: str = "day",
+        battle: bool = False,
+        loading: bool = False,
     ) -> tuple[MagicMock, str | None]:
         adb = MagicMock()
         with (
@@ -989,6 +995,7 @@ class CrossingTests(unittest.TestCase):
             patch.object(world_ui, "current_world", side_effect=seen),
             patch.object(world_ui, "card_groups", return_value=[[1]] if battle else []),
             patch.object(world_ui, "battle_over", return_value=False),
+            patch.object(world_ui, "loading_screen", return_value=loading),
         ):
             landed = world_ui.cross(adb, DisplayTarget(logical_id="1", physical_id="2"), want)
         return adb, landed
@@ -1053,6 +1060,13 @@ class CrossingTests(unittest.TestCase):
         assert landed is None
         assert adb.swipe.call_count == 0
         assert adb.back.call_count == world_ui.UNCOVER_TRIES
+
+    def test_a_loading_screen_is_never_pressed_at(self) -> None:
+        """Nothing on it answers a press, and the presses were noise in the one log that matters."""
+        adb, landed = self._cross([None], loading=True)
+        assert landed is None
+        assert adb.back.call_count == 0
+        assert adb.screenshot.call_count == 1
 
     def test_the_cart_is_judged_on_the_builder_bases_own_two_rows(self) -> None:
         """`read_stock` wants a third row that village does not have.
@@ -1275,6 +1289,32 @@ class ScoutTests(unittest.TestCase):
         assert battle_over((FRAMES / "battle_result_lit.png").read_bytes())
         assert not battle_over((FRAMES / "attack_menu.png").read_bytes())
         assert not battle_over((FRAMES / "scout_in_battle.png").read_bytes())
+
+    def test_the_loading_screen_is_read_off_its_bar_and_nothing_else_is(self) -> None:
+        """正在載入, which is where a game sits while the server will not answer.
+
+        The bar is UI over a splash that changes with the season, and every
+        other reader answers None on it, so without this a game waiting on the
+        server read as a game on the wrong screen. The fixture is the bar alone;
+        the frames it is held against are the ones a grey strip alone would
+        match — a result screen reads 1.000 on the plate — which is why the
+        purple fill at the bar's left end is required as well.
+        """
+        assert loading_screen((FRAMES / "loading_screen.png").read_bytes())
+        for name in ("battle_result", "event_reward", "searching", "world_day", "attack_menu"):
+            assert not loading_screen((FRAMES / f"{name}.png").read_bytes()), name
+
+    def test_the_lost_connection_dialog_reads_as_a_dropped_session(self) -> None:
+        """連線已中斷 is the idle dialog's sheet with 再試一次 where the button was.
+
+        Nothing tells the two apart and nothing needs to: a restart logs in
+        again exactly as either button would. What this holds is that the one
+        reader keeps covering both, and that the sheet is not the loading
+        screen, which is waited on rather than restarted out of.
+        """
+        png = (FRAMES / "connection_lost.png").read_bytes()
+        assert idle_disconnected(png)
+        assert not loading_screen(png)
 
     def test_an_event_reward_page_is_not_a_result_screen(self) -> None:
         """A page of green tick marks, one of which lands in the 回營 box.
@@ -3319,6 +3359,8 @@ class RestartEveryTests(unittest.TestCase):
             # whichever village it was closed on, and `read_stock` answers on
             # both, so it can say a village is up but never which one.
             patch.object(commands, "current_world", side_effect=[None, None, "day"]),
+            patch.object(commands, "idle_disconnected", return_value=False),
+            patch.object(commands, "loading_screen", return_value=False),
         ):
             mumu.return_value.controller.return_value = adb
             assert commands._restart_emulator(runner, ticker)
@@ -3366,6 +3408,8 @@ class RestartEveryTests(unittest.TestCase):
             patch.object(commands.time, "sleep"),
             patch.object(commands, "stop_requested", return_value=False),
             patch.object(commands, "current_world", return_value=None),
+            patch.object(commands, "idle_disconnected", return_value=False),
+            patch.object(commands, "loading_screen", return_value=False),
         ):
             mumu.return_value.controller.return_value = adb
             assert not commands._restart_emulator(MagicMock(), MagicMock())
@@ -3733,12 +3777,24 @@ class WallMenuTests(unittest.TestCase):
 class HomeTests(unittest.TestCase):
     """Getting back to a village, and how long an unreadable frame is worth waiting on."""
 
-    def _backs(self, run: shared.GameRunner, reads: list[VillageStock | None]) -> int:
-        """Walk `_home` over these `read_stock` answers; how many times it pressed back."""
+    def _backs(
+        self,
+        run: shared.GameRunner,
+        reads: list[VillageStock | None],
+        loading: list[bool] | None = None,
+    ) -> int:
+        """Walk `_home` over these `read_stock` answers; how many times it pressed back.
+
+        `loading` is what each frame reads as before the storages are asked; a
+        frame that is the loading screen never reaches them.
+        """
         with (
             patch.object(shared.time, "sleep"),
             patch.object(run, "_frame", return_value=b""),
             patch.object(shared, "idle_disconnected", return_value=False),
+            patch.object(
+                shared, "loading_screen", side_effect=loading or [False] * shared.HOME_TRIES
+            ),
             patch.object(shared, "game_dialog", return_value=None),
             patch.object(shared, "read_stock", side_effect=reads),
             # Asked one frame earlier than the storages and about a different
@@ -3779,12 +3835,20 @@ class HomeTests(unittest.TestCase):
         assert self._backs(run, [held]) == 0
         assert self._backs(run, [None, None, None, held]) == 3
 
+    def test_a_loading_screen_is_waited_on_even_after_a_village_has_read(self) -> None:
+        """A session the server dropped mid-run reloads from here, and `back` at it is aimed at nothing."""
+        held = VillageStock(gold=1, elixir=1, dark=1)
+        run = self._runner()
+        assert self._backs(run, [held]) == 0
+        assert self._backs(run, [held], loading=[True, True, False]) == 0
+
     def _sailing(self, run: shared.GameRunner, seen: list[str], landed: str) -> MagicMock:
         """Walk `_home` over these worlds with the crossing answering `landed`."""
         with (
             patch.object(shared.time, "sleep"),
             patch.object(run, "_frame", return_value=b""),
             patch.object(shared, "idle_disconnected", return_value=False),
+            patch.object(shared, "loading_screen", return_value=False),
             patch.object(shared, "game_dialog", return_value=None),
             patch.object(shared, "current_world", side_effect=seen * shared.HOME_TRIES),
             patch.object(
@@ -3824,6 +3888,7 @@ class HomeTests(unittest.TestCase):
             patch.object(run, "_frame", return_value=b""),
             # Dropped on the first frame, then a launch nothing may press at.
             patch.object(shared, "idle_disconnected", side_effect=[True, False, False, False]),
+            patch.object(shared, "loading_screen", return_value=False),
             patch.object(shared, "game_dialog", return_value=None),
             patch.object(shared, "read_stock", side_effect=[None, None, held]),
             patch.object(shared, "current_world", side_effect=[None, None, "day"]),

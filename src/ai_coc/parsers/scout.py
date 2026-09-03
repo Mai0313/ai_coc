@@ -372,8 +372,30 @@ RETURN_HOME_GREEN = 0.23
 # will meet this, and nothing else clears it: the game stops responding to taps
 # until 重新登入遊戲 is pressed. Measured, its flat grey panel fills 0.97 of this
 # box where a village reads 0.14 and even the result screen only 0.45.
+#
+# 連線已中斷 / 與伺服器連線中斷 is the same sheet with 再試一次 where the button
+# was, and it reads here too — measured at 0.94 dark and 1.00 flat on a live
+# capture. Nothing tells the two apart, and nothing needs to: a restart is the
+# answer to both, since it logs in again exactly as either button would.
 IDLE_DIALOG_BOX = (400, 340, 1200, 560)
 IDLE_DIALOG_DARK = 0.7
+
+# 正在載入. The bar the game draws while it connects, which is where a game sits
+# when the server will not answer: measured twice in one night at 25 to 40
+# minutes each, with the fill never moving off 1%. The bar is UI painted over a
+# splash that changes with the season, so what is read is the bar alone — the
+# right-hand end of its grey plate, clear of the 正在載入 label written across
+# its middle, and the purple fill at its left end, which is what no other screen
+# carries. A plate pixel counts whether it is still grey or already purple, so
+# a bar that has crept along reads the same as one stuck at the start. Swept
+# over 11 464 recorded frames: the twenty that were this screen read 0.887 on
+# the fill, a grey strip alone reaches 1.000 on a result screen, and no other
+# frame puts more than 0.006 of purple in the fill box. Both are required, and
+# the fill is what makes it clean.
+LOADING_PLATE = (860, 763, 985, 772)
+LOADING_FILL = (602, 760, 612, 776)
+LOADING_PLATE_FLAT = 0.9
+LOADING_FILL_PURPLE = 0.5
 
 
 def battle_over(png: bytes) -> bool:
@@ -387,7 +409,13 @@ def battle_over(png: bytes) -> bool:
 
 
 def idle_disconnected(png: bytes) -> bool:
-    """Whether the idle-disconnect dialog is covering the game."""
+    """Whether a dropped-session dialog is covering the game.
+
+    Two dialogs read here and both mean the same thing to a caller: the idle
+    one (還在嗎, with 重新登入遊戲) and the lost-connection one (連線已中斷, with
+    再試一次). Either way the session is gone and restarting the game is what
+    gets it back.
+    """
     data = open_frame(png).crop(IDLE_DIALOG_BOX).tobytes()
     panel = sum(
         max(data[i], data[i + 1], data[i + 2]) < 95
@@ -395,6 +423,36 @@ def idle_disconnected(png: bytes) -> bool:
         for i in range(0, len(data), 3)
     )
     return panel / (len(data) // 3) >= IDLE_DIALOG_DARK
+
+
+def _purple(r: int, g: int, b: int) -> bool:
+    return r > 110 and b > 110 and g < r - 40
+
+
+def loading_screen(png: bytes) -> bool:
+    """Whether the game is on 正在載入, which is where it waits for the server.
+
+    Nothing on this screen answers a tap, so a loop that reads it has nothing
+    to press and nothing to open: the only thing to do is wait. See the
+    constants above for what is measured and why both halves are needed.
+    """
+    image = open_frame(png)
+    plate = image.crop(LOADING_PLATE).tobytes()
+    flat = sum(
+        _purple(plate[i], plate[i + 1], plate[i + 2])
+        or (
+            max(plate[i], plate[i + 1], plate[i + 2]) - min(plate[i], plate[i + 1], plate[i + 2])
+            < 25
+            and 60 < max(plate[i], plate[i + 1], plate[i + 2]) < 230
+        )
+        for i in range(0, len(plate), 3)
+    )
+    fill = image.crop(LOADING_FILL).tobytes()
+    purple = sum(_purple(fill[i], fill[i + 1], fill[i + 2]) for i in range(0, len(fill), 3))
+    return (
+        flat / (len(plate) // 3) >= LOADING_PLATE_FLAT
+        and purple / (len(fill) // 3) >= LOADING_FILL_PURPLE
+    )
 
 
 # The digits are near-white with a black outline; the village behind them is not.

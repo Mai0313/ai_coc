@@ -290,14 +290,24 @@ class SettleGameTests(unittest.TestCase):
         displays: list[object] | None = None,
         polls: int = 3,
         stop: bool = False,
+        **screens: list[bool],
     ) -> tuple[MagicMock, DisplayTarget | None]:
+        """Poll against canned readings; `dropped` and `loading` are what each frame reads as."""
         adb = _adb()
         if displays is not None:
             adb.display_for.side_effect = displays
         with (
             patch.object(commands.time, "sleep"),
             patch.object(commands, "current_world", side_effect=worlds),
+            patch.object(
+                commands, "idle_disconnected", side_effect=screens.get("dropped") or [False] * 9
+            ),
+            patch.object(
+                commands, "loading_screen", side_effect=screens.get("loading") or [False] * 9
+            ),
+            patch.object(commands, "restart_game", return_value=DISPLAY) as restarted,
         ):
+            adb.restarted = restarted
             return adb, commands._settle_game(adb, polls, lambda: stop)
 
     def test_either_village_ends_the_wait_and_the_camera_goes_out(self) -> None:
@@ -320,6 +330,21 @@ class SettleGameTests(unittest.TestCase):
         adb, display = self._settle([], stop=True)
         assert display is None
         adb.screenshot.assert_not_called()
+
+    def test_a_dropped_session_is_restarted_once_and_no_more(self) -> None:
+        """A restart that lands back on the dialog is the server still down, not a game to restart again."""
+        adb, display = self._settle(
+            [None, None, "day"], polls=3, dropped=[True, True, False], loading=[False]
+        )
+        assert display == DISPLAY
+        assert adb.restarted.call_count == 1
+
+    def test_giving_up_names_the_loading_screen(self) -> None:
+        with self.assertLogs("ai_coc.commands", "WARNING") as logged:
+            adb, display = self._settle([None] * 3, polls=3, loading=[True] * 3)
+        assert display is None
+        adb.restarted.assert_not_called()
+        assert "loading screen" in logged.output[-1]
 
 
 class FrameTickerTests(unittest.TestCase):
@@ -448,6 +473,13 @@ class ReadCommandTests(unittest.TestCase):
         reading = commands.read((FRAMES / "world_night.png").read_bytes())
         assert reading.world == "night"
         assert reading.builder_stock == VillageStock(gold=574030, elixir=589419, dark=0)
+
+    def test_read_says_when_a_frame_is_the_loading_screen(self) -> None:
+        """Every other field is empty there, which used to leave a run's no-village report unexplained."""
+        reading = commands.read((FRAMES / "loading_screen.png").read_bytes())
+        assert reading.loading
+        assert reading.world is None
+        assert not commands.read((FRAMES / "world_day.png").read_bytes()).loading
 
 
 class CaptureAndViewTests(unittest.TestCase):

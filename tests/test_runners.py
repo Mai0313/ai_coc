@@ -140,6 +140,7 @@ class OpenedWalkTests(unittest.TestCase):
             patch.object(shared.time, "sleep"),
             patch.object(runner, "_frame", return_value=b""),
             patch.object(shared, "idle_disconnected", return_value=False),
+            patch.object(shared, "loading_screen", return_value=False),
             patch.object(shared, "game_dialog", side_effect=[dialog, None]),
             patch.object(shared, "current_world", return_value="day"),
             patch.object(shared, "read_stock", return_value=STOCK),
@@ -647,8 +648,15 @@ class OpenAttackMenuTests(unittest.TestCase):
         with (
             patch.object(attack.time, "sleep"),
             patch.object(runner, "_frame", return_value=b"home"),
+            # The loading wait captures straight off the emulator rather than
+            # through `_frame`, so a recorded run is not left holding hundreds
+            # of copies of the same bar.
+            patch.object(AdbController, "screenshot", return_value=b"home"),
             patch.object(
                 attack, "idle_disconnected", side_effect=screens.get("idle") or [False] * 20
+            ),
+            patch.object(
+                attack, "loading_screen", side_effect=screens.get("loading") or [False] * 20
             ),
             patch.object(attack, "battle_over", side_effect=screens.get("result") or [False] * 20),
             patch.object(attack, "current_world", side_effect=worlds),
@@ -671,6 +679,7 @@ class OpenAttackMenuTests(unittest.TestCase):
             "ceilings": ceilings,
             "left": left,
             "tapped": tapped,
+            "runner": runner,
         }
 
     def test_the_ordinary_case_reads_the_ceilings_once_and_taps_attack(self) -> None:
@@ -710,6 +719,83 @@ class OpenAttackMenuTests(unittest.TestCase):
         got, seen = self._open("day", ["day"] * HOME_ATTEMPTS, day_menu=False)
         assert got is None
         assert seen["tapped"].call_count == HOME_ATTEMPTS
+
+    def test_a_loading_screen_is_waited_out_and_the_round_then_goes_on(self) -> None:
+        """The wait reads the screen itself, so the third answer is the attempt after it."""
+        got, seen = self._open("day", ["day"], loading=[True, False, False])
+        assert got == b"home"
+        assert seen["runner"]._stuck == ""
+        seen["cleared"].assert_not_called()
+        seen["restarted"].assert_not_called()
+
+    def test_a_loading_screen_that_comes_back_ends_the_round_naming_the_server(self) -> None:
+        """One wait per round: a game that loaded and dropped back is a server not staying up."""
+        got, seen = self._open("day", [], loading=[True, False, True])
+        assert got is None
+        assert "又回到載入畫面" in seen["runner"]._stuck
+        seen["tapped"].assert_not_called()
+
+
+class WaitOutLoadingTests(unittest.TestCase):
+    """Sitting on 正在載入 without tapping, restarting or pressing at it."""
+
+    def _wait(
+        self, reads: list[bool], stop: bool = False, again: bool = False
+    ) -> tuple[bool, AttackRunner, MagicMock]:
+        runner = AttackRunner(
+            adb=_adb(),
+            display=DISPLAY,
+            world="day",
+            thresholds=LootThresholds(),
+            should_stop=lambda: stop,
+        )
+        with (
+            patch.object(attack.time, "sleep") as slept,
+            patch.object(attack, "loading_screen", side_effect=reads),
+            patch.object(AdbController, "screenshot", return_value=b"") as shot,
+            patch.object(AdbController, "tap"),
+            patch.object(AdbController, "back") as back,
+        ):
+            went = runner._wait_out_loading(again)
+        assert back.call_count == 0
+        shot.slept = slept
+        return went, runner, shot
+
+    def test_the_wait_ends_when_the_screen_changes(self) -> None:
+        went, runner, shot = self._wait([True, True, False])
+        assert went
+        assert runner._stuck == ""
+        assert shot.call_count == 3
+        assert shot.slept.call_count == 3
+
+    def test_patience_running_out_names_the_server(self) -> None:
+        with patch.object(attack, "SERVER_POLLS", 3):
+            went, runner, shot = self._wait([True] * 3)
+        assert not went
+        assert "載入畫面" in runner._stuck
+        assert shot.call_count == 3
+
+    def test_a_stop_ends_the_wait_and_says_so_rather_than_blaming_the_server(self) -> None:
+        went, runner, shot = self._wait([], stop=True)
+        assert not went
+        assert "停止" in runner._stuck
+        assert shot.call_count == 0
+
+    def test_a_second_wait_in_one_round_is_refused_without_a_capture(self) -> None:
+        went, runner, shot = self._wait([], again=True)
+        assert not went
+        assert "又回到載入畫面" in runner._stuck
+        assert shot.call_count == 0
+
+    def test_the_reason_reaches_the_report_on_both_villages(self) -> None:
+        for world, fallback in (("day", "畫面不在主村"), ("night", "畫面不在建築大師基地")):
+            runner = AttackRunner(
+                adb=_adb(), display=DISPLAY, world=world, thresholds=LootThresholds()
+            )
+            with patch.object(AttackRunner, "_open_attack_menu", return_value=None):
+                assert fallback in runner.run().message
+                runner._stuck = "遊戲卡在載入畫面 45 分鐘"
+                assert runner.run().message == "遊戲卡在載入畫面 45 分鐘"
 
 
 class StoodDownTests(unittest.TestCase):
