@@ -10,14 +10,13 @@ from PyQt5.QtCore import QObject, QRunnable, pyqtSignal
 from .render import LogHtmlRenderer
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterator
+    from collections.abc import Callable
 
 logger = logging.getLogger(__name__)
 
 
 class WorkerSignals(QObject):
     result = pyqtSignal(object)
-    delta = pyqtSignal(str)
     error = pyqtSignal(str)
     finished = pyqtSignal()
 
@@ -36,26 +35,6 @@ class Worker(QRunnable):
             # Without this the traceback dies inside the thread pool and the
             # user only ever sees the message box.
             logger.exception("背景工作失敗：%s", self.label)
-            self.signals.error.emit(str(exc))
-        finally:
-            self.signals.finished.emit()
-
-
-class StreamWorker(QRunnable):
-    """Drain a text generator on the pool, handing each chunk to the UI thread."""
-
-    def __init__(self, fn: Callable[[], Iterator[str]], label: str = "") -> None:
-        super().__init__()
-        self.fn = fn
-        self.label = label
-        self.signals = WorkerSignals()
-
-    def run(self) -> None:
-        try:
-            for chunk in self.fn():
-                self.signals.delta.emit(chunk)
-        except Exception as exc:
-            logger.exception("串流工作失敗：%s", self.label)
             self.signals.error.emit(str(exc))
         finally:
             self.signals.finished.emit()

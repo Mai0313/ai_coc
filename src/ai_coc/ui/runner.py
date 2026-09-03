@@ -315,8 +315,20 @@ class GameRunner(ScreenRunner):
         sweep's grid point is a sample of whatever it lands on, a hand-named
         spot misses because the camera moved since somebody looked, and a
         spotted one misses because it was a guess. None of those is rare.
+
+        **And one place to stop, for the same reason.** A tap costs a
+        `MENU_SETTLE` and a capture, so a full sweep is a couple of minutes with
+        nothing else to interrupt it — which is what `ai_coc upgrade` spends
+        whenever there is no key to ask with or the finder comes back empty.
+        Leaving here is safe in the way leaving a batch is not, because the walk
+        has already backed out of whatever the last tap opened; `WallRunner._scan`
+        made the same check at its own call site before this one existed, and
+        still does, since it has a batch loop below the walk that this cannot see.
         """
         for spot in points:
+            if self.should_stop():
+                logger.info("Stop requested; ending the %s walk", label)
+                return
             png = self._after_tap(spot, f"{label}_{spot[0]:04d}_{spot[1]:04d}")
             if read_stock(png) is None:
                 logger.info("The tap at (%d, %d) covered the village; backing out", *spot)

@@ -317,7 +317,7 @@ def stop_requested() -> bool:
     return STOP_FLAG.exists()
 
 
-def _clear_stop() -> None:
+def clear_stop() -> None:
     """Take the flag, and call this at both ends of every loop that reads it.
 
     At the start because a process killed outright never reaches the other end,
@@ -326,11 +326,19 @@ def _clear_stop() -> None:
     request that has been served should stop looking like one still waiting: a
     flag that is still there means somebody asked and no loop has taken it yet,
     which is what makes the file worth looking at to tell whether a stop landed.
+
+    **Public because the window has a start button and that is one of those
+    ends.** It reads the flag now, and it decides whether to stand down *before*
+    it calls anything in here — so a flag left behind by a terminal's stop, or
+    by a killed run, would have it standing itself down on every press with
+    nothing ever reaching the `clear_stop` inside `attack` or `walls`. Measured:
+    the file sat there after a farming session ended, which is the ordinary
+    case rather than a corner, since nothing takes the flag once the loops stop.
     """
     STOP_FLAG.unlink(missing_ok=True)
 
 
-def _rest(seconds: float) -> bool:
+def _rest(seconds: float, should_stop: Callable[[], bool] = stop_requested) -> bool:
     """Wait out the barracks, answering whether the wait was cut short.
 
     A stop that lands here is said out loud, because the flag is cleared on
@@ -338,7 +346,7 @@ def _rest(seconds: float) -> bool:
     """
     try:
         for _ in range(int(seconds / STOP_POLL)):
-            if stop_requested():
+            if should_stop():
                 logger.info("Stop requested while waiting for the army; ending the series")
                 return True
             time.sleep(STOP_POLL)
@@ -449,7 +457,9 @@ def _settle_game(
     return None
 
 
-def _restart_emulator(runner: AttackRunner, ticker: FrameTicker) -> bool:
+def _restart_emulator(
+    runner: AttackRunner, ticker: FrameTicker, should_stop: Callable[[], bool] = stop_requested
+) -> bool:
     """Restart the emulator and the game, and point the run at what came back.
 
     MuMu drops frames after running for a while and nothing short of this clears
@@ -485,7 +495,7 @@ def _restart_emulator(runner: AttackRunner, ticker: FrameTicker) -> bool:
     # afterwards deployed nothing at all — two rounds of `0 of 4 hero card(s)
     # landed` before a recorded frame showed a battlefield zoomed most of the
     # way in.
-    display = _settle_game(adb, RESTART_POLLS, stop_requested)
+    display = _settle_game(adb, RESTART_POLLS, should_stop)
     if display is None:
         return False
     # Both objects. The ticker captures from its own thread and would otherwise
@@ -517,7 +527,13 @@ def _prepare_frames(options: AttackOptions) -> None:
         raise ValueError("--shot-every 要搭配 --record，不然心跳畫面沒有地方放")
 
 
-def _restarted(runner: AttackRunner, ticker: FrameTicker, fought: int, every: int) -> int | None:
+def _restarted(
+    runner: AttackRunner,
+    ticker: FrameTicker,
+    fought: int,
+    every: int,
+    should_stop: Callable[[], bool] = stop_requested,
+) -> int | None:
     """How many battles to carry forward, or None when the emulator never returned.
 
     `fought` unchanged where no restart was due, and zero after one. The
@@ -527,13 +543,13 @@ def _restarted(runner: AttackRunner, ticker: FrameTicker, fought: int, every: in
     if not every or fought < every:
         return fought
     logger.info("%d battle(s) fought; restarting the emulator", fought)
-    if _restart_emulator(runner, ticker):
+    if _restart_emulator(runner, ticker, should_stop):
         return 0
     # The series ends either way, but only one of these is an alarm: a stop
     # asked for mid-restart comes back the same False as an emulator that never
     # returned, and an error line that cries wolf on an ordinary `ai_coc stop`
     # is worth less than no error line at all.
-    if not stop_requested():
+    if not should_stop():
         logger.error("The village never came back after the restart; stopping here")
     return None
 
@@ -629,7 +645,9 @@ def _empty_cart(world: World, battles: int, adb: AdbController, display: Display
         collect_cart(adb, display)
 
 
-def attack(options: AttackOptions) -> AttackSeries:
+def attack(
+    options: AttackOptions, should_stop: Callable[[], bool] = stop_requested
+) -> AttackSeries:
     """The attack loop, with no window in the way, for as many rounds as asked.
 
     Thresholds, storage limits and the model to plan with all come from the
@@ -650,8 +668,15 @@ def attack(options: AttackOptions) -> AttackSeries:
     Either `ai_coc stop` or a Ctrl-C ends the series rather than the process, so
     the rounds already played are still reported. The flag is the one that
     reaches a run put in the background, which nothing can send a Ctrl-C to.
+
+    **`should_stop` is what lets the window run this same function.** It has a
+    stop button rather than a terminal, and the button has to reach a battle
+    already under way; a run started there passes a condition that answers to
+    both, so `ai_coc stop` from a terminal still ends a window's round. Nothing
+    replaces the flag — the default is it, and `clear_stop` at both ends of
+    this function is what the window never had a place to do for itself.
     """
-    _clear_stop()
+    clear_stop()
     adb = _controller()
     _prepare_frames(options)
     plan = plans.load(options.plan_in) if options.plan_in else None
@@ -662,7 +687,7 @@ def attack(options: AttackOptions) -> AttackSeries:
     # seconds in, read no village at all, and ended the whole series before round
     # one. This is the same wait a restart already does, and it leaves the camera
     # at the far zoom on the way past, which every coordinate below wants anyway.
-    display = _settle_game(adb, WORLD_SETTLE_POLLS) or adb.display_for(COC_PACKAGE)
+    display = _settle_game(adb, WORLD_SETTLE_POLLS, should_stop) or adb.display_for(COC_PACKAGE)
     world = _pick_world(adb, display, options.world)
     if world is None:
         return AttackSeries(
@@ -682,7 +707,7 @@ def attack(options: AttackOptions) -> AttackSeries:
         stop_at=config.stop_at if options.stop_at is None else options.stop_at,
         ai=None if plan else _planner(config),
         plan=plan,
-        should_stop=stop_requested,
+        should_stop=should_stop,
         frame_dir=options.frame_dir,
     )
     series = AttackSeries()
@@ -705,7 +730,7 @@ def attack(options: AttackOptions) -> AttackSeries:
             # Between rounds, which is the cheapest place to stop: the village is
             # on screen, nothing is deployed, and the rounds already played are
             # in the series either way.
-            if stop_requested():
+            if should_stop():
                 logger.info(
                     "Stop requested; ending the series after %d round(s)", len(series.root)
                 )
@@ -713,7 +738,7 @@ def attack(options: AttackOptions) -> AttackSeries:
             # And the cheapest place to restart, for the same reasons. After the
             # stop check rather than before it, because a run being stood down
             # has no use for a fresh emulator.
-            carried = _restarted(runner, ticker, fought, restart_every)
+            carried = _restarted(runner, ticker, fought, restart_every, should_stop)
             if carried is None:
                 # Everything after this would be aimed at an emulator that never
                 # came back, so the series ends here holding the rounds it really
@@ -778,15 +803,11 @@ def attack(options: AttackOptions) -> AttackSeries:
             # barracks first. Falling through to the loop's own check is what
             # logs why the series ended, and `run.log` is the only thing a
             # background run leaves to read while it is still going.
-            if (
-                not fighting
-                and not stop_requested()
-                and (rounds <= 0 or len(series.root) < rounds)
-            ):
+            if not fighting and not should_stop() and (rounds <= 0 or len(series.root) < rounds):
                 logger.info("Nothing was attacked; waiting %ds for the army", IDLE_REST)
-                if _rest(IDLE_REST):
+                if _rest(IDLE_REST, should_stop):
                     break
-    _clear_stop()
+    clear_stop()
     return series
 
 
@@ -960,7 +981,7 @@ def bounds(frame_dir: Path | None = None) -> MapSurvey:
     return runner.survey
 
 
-def walls(options: WallOptions) -> WallReport:
+def walls(options: WallOptions, should_stop: Callable[[], bool] = stop_requested) -> WallReport:
     """Spend the storages on wall upgrades, with no window in the way.
 
     Walls upgrade the instant they are paid for and tie up no builder, so this is
@@ -971,9 +992,11 @@ def walls(options: WallOptions) -> WallReport:
     `ai_coc stop` ends this one too, between batches. A run with `--rounds 0`
     against a village full of walls is the other loop here that goes on long
     enough to be worth interrupting, and it answers the same flag rather than a
-    second mechanism of its own.
+    second mechanism of its own. `should_stop` is what the window passes so its
+    button reaches the scan as well; see `attack` for why the flag stays the
+    default rather than being replaced.
     """
-    _clear_stop()
+    clear_stop()
     adb, display = _session(options.frame_dir)
     runner = WallRunner(
         adb=adb,
@@ -986,7 +1009,7 @@ def walls(options: WallOptions) -> WallReport:
         # asking is to find them, and a caller that named them has already
         # looked at the screen.
         ai=None if options.at else _planner(ConfigStore().load()),
-        should_stop=stop_requested,
+        should_stop=should_stop,
         frame_dir=options.frame_dir,
     )
     report = runner.run()
@@ -995,11 +1018,11 @@ def walls(options: WallOptions) -> WallReport:
     # the walls. A run stopped before it bought anything is the exception — its
     # own fallback message is a verdict on positions it never tried, and that
     # sentence has been read as "the walls are finished" and taken for it.
-    if stop_requested():
+    if should_stop():
         report.message = (
             f"已停止，{report.message}" if report.upgrades else "已停止，還沒買成任何一批"
         )
-    _clear_stop()
+    clear_stop()
     logger.info(
         "Walls: %s (金幣 %d／聖水 %d)", report.message, report.paid("gold"), report.paid("elixir")
     )
@@ -1044,12 +1067,20 @@ def collect(frame_dir: Path | None = None) -> CollectReport:
     return report
 
 
-def upgrade(options: UpgradeOptions) -> BuildReport:
+def upgrade(
+    options: UpgradeOptions, should_stop: Callable[[], bool] = stop_requested
+) -> BuildReport:
     """Put the village's idle builders to work, with no window in the way.
 
     A builder standing around is the one thing a village cannot buy its way out
     of, so this is worth running whenever an upgrade finishes. Walls are left to
     `walls`, which needs no builder at all.
+
+    **This is the one upkeep command long enough to be worth stopping.** The
+    other three are seconds, but a run with no key to ask with, or one whose
+    finder came back empty, falls through to `_sweep` and spends a couple of
+    minutes tapping a grid. The check itself is in `GameRunner._opened`, which
+    is the walk all three finders share.
     """
     adb, display = _session(options.frame_dir)
     config = ConfigStore().load()
@@ -1060,6 +1091,7 @@ def upgrade(options: UpgradeOptions) -> BuildReport:
         keep_gold=options.keep_gold,
         keep_elixir=options.keep_elixir,
         at=options.at,
+        should_stop=should_stop,
         # Skipped when the run was told where to look, for the reason the wall
         # loop skips it: the whole point of asking is to find them.
         ai=None if options.at else _planner(config),

@@ -230,8 +230,8 @@ TODO.md
 secrets/
 config/settings.json
 
-# Private runtime/account data. COC_LIVE_TEST_SCREENSHOT and COC_AGENT_SCREENSHOT
-# write frames of a live account wherever they are pointed.
+# Private runtime/account data: anything here is frames or an export of a live
+# account, carrying the player's own name and their clan's.
 data/accounts/
 data/runtime/
 screenshots/

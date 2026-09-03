@@ -31,7 +31,7 @@ Other Languages: [English](README.md) | [繁體中文](README.zh-TW.md) | [简�
 
 **Keeps the village ticking.** Empties the collectors, reads what every builder is on and how long is left, and donates troops to whoever is asking in the clan chat.
 
-**Recovers on its own.** A session dropped for idling restarts the game and carries on, whichever loop was running. Every command typed into the AI tab is stored as a task, so an interrupted run is picked up again on the next start.
+**Recovers on its own.** A session dropped for idling restarts the game and carries on, whichever loop was running. A server that is not answering is waited out rather than tapped at.
 
 **Keeps your key out of plain settings.** The Gemini API key is stored through Windows DPAPI, never in the registry or a config file.
 
@@ -41,7 +41,7 @@ Imported village exports keep unknown fields and unknown `data_id`s instead of f
 
 - Windows. The app talks to `mumu-cli.exe`, reads the registry through `winreg` and calls DPAPI through `ctypes.windll`, none of which exist elsewhere
 - [MuMu Player 12](https://www.mumuplayer.com/) with Clash of Clans installed, running at 1600x900
-- A Gemini API key. The per-battle tactic and the whole AI tab need it; enter it in the app's settings tab. Without one the attack loop falls back to a fixed tactic, and the wall, collector, builder, hero and donation commands never ask it anything in the first place
+- A Gemini API key, entered in the app's settings tab. It answers three things and nothing else: the tactic for each battle, where the walls and buildings are on the map, and which building a menu belongs to. Without one the attack loop falls back to a fixed tactic, the wall and upgrade loops sweep for their targets instead, and the collector, builder, hero and donation commands never ask it anything in the first place
 
 ## 🚀 Install and run
 

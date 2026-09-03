@@ -1,25 +1,11 @@
 from __future__ import annotations
 
-import os
 import time
 from typing import TYPE_CHECKING, Any, get_args
 import logging
-from pathlib import Path
-from functools import partial
 
 from PyQt5.QtGui import QPixmap, QDesktopServices
-from PyQt5.QtCore import (
-    Qt,
-    QUrl,
-    QEvent,
-    QTimer,
-    QBuffer,
-    QObject,
-    QIODevice,
-    QSettings,
-    QByteArray,
-    QThreadPool,
-)
+from PyQt5.QtCore import Qt, QUrl, QTimer, QSettings, QThreadPool
 from PyQt5.QtWidgets import (
     QLabel,
     QWidget,
@@ -46,25 +32,24 @@ from PyQt5.QtWidgets import (
     QTableWidgetItem,
 )
 
+from ai_coc import commands
 from ai_coc.models import (
     Frame,
     RunLog,
-    ChatRole,
-    AgentAction,
-    ChatMessage,
-    AttackReport,
+    WallOptions,
+    AttackSeries,
+    AttackOptions,
     DisplayTarget,
+    DonateOptions,
     GeminiSetting,
     LocatedTarget,
     ThinkingLevel,
-    UiElementList,
-    AccountRowList,
-    ChatTranscript,
     LootThresholds,
+    UpgradeOptions,
     AccountSnapshot,
     EmulatorInstance,
 )
-from ai_coc.prompts import PROMPTS, render
+from ai_coc.prompts import render
 from ai_coc.constants import (
     LOG_DIR,
     APP_NAME,
@@ -76,7 +61,6 @@ from ai_coc.constants import (
     MASTER_DB_VERSION,
     ENTITY_MAPPING_URL,
     DEFAULT_GEMINI_MODEL,
-    AGENT_PROFILE_VERSION,
 )
 from ai_coc.adapters.ai import GeminiClient
 from ai_coc.adapters.mumu import MuMuAdapter
@@ -87,14 +71,12 @@ from ai_coc.adapters.mapping import fetch_entity_mapping
 from ai_coc.adapters.secrets import SecretStore
 from ai_coc.adapters.database import Database
 
-from .attack import AttackRunner
-from .render import CHAT_STYLESHEET, transcript_to_html
-from .workers import Worker, LogBridge, StreamWorker, UiLogHandler
+from .workers import Worker, LogBridge, UiLogHandler
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterator
+    from collections.abc import Callable
 
-    from PyQt5.QtGui import QDropEvent, QDragEnterEvent
+    from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
 
@@ -111,9 +93,6 @@ NEXT_CYCLE_DELAY = 3000
 LIVE_INTERVAL = 500
 # Taken from the model so the picker cannot drift from what Gemini accepts.
 THINKING_LEVELS = list(get_args(ThinkingLevel))
-# Where the AI 助手 tab sits, which three places here and one in `cli.py` need
-# to raise it. A bare 2 in four places is four things a new tab breaks quietly.
-AGENT_TAB = 2
 
 
 class MainWindow(QMainWindow):
@@ -136,21 +115,22 @@ class MainWindow(QMainWindow):
         self.instances: list[EmulatorInstance] = []
         self.active: EmulatorInstance | None = None
         self.current_frame: Frame | None = None
-        self.chat_image_pending = False
         self.frame_sequence = 0
         self.current_account_tag = ""
-        self.running_task_id: int | None = None
-        self.attack_running = False
+        # One flag for "a pass is in flight", because every job in the cycle is
+        # now a `commands.*` call and they all share one emulator: two of them
+        # running at once interleave taps on the same display. It replaces the
+        # pair that used to do this — a task-row id and an attack-only bool —
+        # which needed two only because the upkeep jobs went through the agent
+        # loop and the attack did not.
+        self.job_running = False
         # Read from the worker threads as well as the UI one, so it is a plain
-        # bool rather than the timer's own state: stopping has to reach the
-        # attack loop and the agent loop, not just the next scheduled cycle.
+        # bool rather than the timer's own state: stopping has to reach the loop
+        # that is playing, not just the next scheduled cycle.
         self.automation_active = False
-        self.chat = ChatTranscript()
-        # A streamed reply arrives token by token; repaint on a beat instead.
-        self.chat_repaint = QTimer(self)
-        self.chat_repaint.setSingleShot(True)
-        self.chat_repaint.setInterval(120)
-        self.chat_repaint.timeout.connect(self._paint_chat)
+        # Whether `_stopping` has seen the file flag. Latched rather than read
+        # again later, because `commands.*` clears the flag on its way out.
+        self.stop_seen = False
         self.automation_timer = QTimer(self)
         self.automation_timer.timeout.connect(self.automation_cycle)
         self.automation_step = 0
@@ -161,7 +141,6 @@ class MainWindow(QMainWindow):
         self.live_busy = False
         self.live_timer = QTimer(self)
         self.live_timer.timeout.connect(self._live_tick)
-        self.setAcceptDrops(True)
         self._build_ui()
         self._attach_log_panel()
         self.statusBar().showMessage("Ready — 偵測 MuMu 以開始")
@@ -189,7 +168,6 @@ class MainWindow(QMainWindow):
         tabs = QTabWidget()
         tabs.addTab(self._control_tab(), "主控")
         tabs.addTab(self._account_tab(), "帳號進度")
-        tabs.addTab(self._agent_tab(), "AI 助手")
         tabs.addTab(self._settings_tab(), "設定")
         tabs.addTab(self._about_tab(), "關於")
         self.tabs = tabs
@@ -253,6 +231,16 @@ class MainWindow(QMainWindow):
         group = QGroupBox("模擬器")
         layout = QVBoxLayout(group)
         self.instance_combo = QComboBox()
+        # **This picks what the buttons below and the preview act on, and not
+        # what the automation drives.** Every job in the cycle is a `commands.*`
+        # call and `_controller()` takes the first instance MuMu lists, so with
+        # more than one the window would be watching one emulator and driving
+        # another with nothing on screen saying so. Said here rather than fixed
+        # by threading an index through eight command signatures, because this
+        # account runs one instance and the two agree wherever that holds.
+        self.instance_combo.setToolTip(
+            "選擇下面幾個按鈕跟即時畫面要看哪一個模擬器。自動化一律驅動 MuMu 列出的第一個"
+        )
         self.instance_combo.currentIndexChanged.connect(self._select_instance)
         layout.addWidget(self.instance_combo)
         toolbar = QHBoxLayout()
@@ -354,129 +342,6 @@ class MainWindow(QMainWindow):
         self.account_summary.setMaximumHeight(140)
         layout.addWidget(self.account_summary)
         return page
-
-    def _agent_tab(self) -> QWidget:
-        page = QWidget()
-        layout = QVBoxLayout(page)
-        buttons = QHBoxLayout()
-        teach = QPushButton("儲存為使用者教學")
-        teach.clicked.connect(self.save_teaching)
-        choose_image = QPushButton("選擇圖片")
-        choose_image.clicked.connect(self.choose_chat_image)
-        paste_image = QPushButton("貼上圖片")
-        paste_image.clicked.connect(self.paste_chat_image)
-        buttons.addWidget(choose_image)
-        buttons.addWidget(paste_image)
-        buttons.addWidget(teach)
-        buttons.addStretch()
-        layout.addLayout(buttons)
-        self.chat_image_preview = QLabel("尚未附加圖片（也可以將圖片拖進視窗）")
-        self.chat_image_preview.setAlignment(Qt.AlignCenter)
-        self.chat_image_preview.setMaximumHeight(180)
-        self.chat_image_preview.setStyleSheet(
-            "background:#0e141f;border:1px dashed #486083;border-radius:6px;padding:8px;color:#91a3c0"
-        )
-        layout.addWidget(self.chat_image_preview)
-        self.chat_history = QTextBrowser()
-        self.chat_history.document().setDefaultStyleSheet(CHAT_STYLESHEET)
-        layout.addWidget(self.chat_history)
-        row = QHBoxLayout()
-        self.chat_input = QLineEdit()
-        self.chat_input.setPlaceholderText("Ask or teach the CoC Agent…")
-        self.chat_input.installEventFilter(self)
-        self.chat_input.returnPressed.connect(self.send_chat)
-        send = QPushButton("送出")
-        send.clicked.connect(self.send_chat)
-        row.addWidget(self.chat_input)
-        row.addWidget(send)
-        layout.addLayout(row)
-        return page
-
-    def _say(self, role: ChatRole, heading: str, body: str = "") -> ChatMessage:
-        """Add one entry to the transcript and repaint it."""
-        message = self.chat.add(role, heading, body)
-        self._paint_chat()
-        return message
-
-    def _paint_chat(self) -> None:
-        bar = self.chat_history.verticalScrollBar()
-        follow = bar.value() >= bar.maximum() - 4
-        position = bar.value()
-        self.chat_history.setHtml(transcript_to_html(self.chat))
-        bar.setValue(bar.maximum() if follow else min(position, bar.maximum()))
-
-    def _grow(self, message: ChatMessage, chunk: str) -> None:
-        message.body += chunk
-        if not self.chat_repaint.isActive():
-            self.chat_repaint.start()
-
-    def eventFilter(self, watched: QObject, event: QEvent) -> bool:  # noqa: N802 - Qt override
-        if (
-            watched is getattr(self, "chat_input", None)
-            and event.type() == QEvent.KeyPress
-            and event.key() == Qt.Key_V
-            and event.modifiers() & Qt.ControlModifier
-            and not QApplication.clipboard().image().isNull()
-        ):
-            self.paste_chat_image()
-            return True
-        return super().eventFilter(watched, event)
-
-    def _set_chat_image(self, png: bytes, label: str) -> None:
-        pix = QPixmap()
-        if not pix.loadFromData(png):
-            raise ValueError("無法讀取圖片")
-        self.frame_sequence += 1
-        self.current_frame = Frame.create(
-            "uploaded-image", self.current_account_tag, png, self.frame_sequence
-        )
-        self.chat_image_pending = True
-        self.chat_image_preview.setPixmap(
-            pix.scaled(900, 170, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-        )
-        self.chat_image_preview.setToolTip(label)
-        self._say("system", f"已附加圖片：{label}")
-
-    def choose_chat_image(self) -> None:
-        path, _ = QFileDialog.getOpenFileName(
-            self, "選擇要傳給 AI 的圖片", "", "圖片 (*.png *.jpg *.jpeg *.webp *.bmp)"
-        )
-        if path:
-            try:
-                self._set_chat_image(Path(path).read_bytes(), Path(path).name)
-            except Exception as exc:
-                self._error("圖片載入失敗", str(exc))
-
-    def paste_chat_image(self) -> None:
-        image = QApplication.clipboard().image()
-        if image.isNull():
-            self._error("貼上圖片", "剪貼簿裡沒有圖片")
-            return
-        data = QByteArray()
-        buffer = QBuffer(data)
-        buffer.open(QIODevice.WriteOnly)
-        image.save(buffer, "PNG")
-        self._set_chat_image(bytes(data), "剪貼簿圖片")
-
-    def dragEnterEvent(self, event: QDragEnterEvent) -> None:  # noqa: N802 - Qt override
-        urls = event.mimeData().urls()
-        if urls and Path(urls[0].toLocalFile()).suffix.lower() in {
-            ".png",
-            ".jpg",
-            ".jpeg",
-            ".webp",
-            ".bmp",
-        }:
-            event.acceptProposedAction()
-
-    def dropEvent(self, event: QDropEvent) -> None:  # noqa: N802 - Qt override
-        path = Path(event.mimeData().urls()[0].toLocalFile())
-        try:
-            self._set_chat_image(path.read_bytes(), path.name)
-            self.tabs.setCurrentIndex(AGENT_TAB)
-            event.acceptProposedAction()
-        except Exception as exc:
-            self._error("圖片載入失敗", str(exc))
 
     def _preview_switches(self, layout: QVBoxLayout) -> None:
         """The two switches over the preview, in their own method for length.
@@ -609,14 +474,19 @@ class MainWindow(QMainWindow):
     def start_automation(self) -> None:
         self.save_automation()
         self.automation_active = True
+        # Both halves of the stop, cleared for the one reason `clear_stop`
+        # gives: whichever of them a stopped run left behind would stand this
+        # one down before it had done anything, reported as a stop nobody asked
+        # for. **The file needs clearing here and not only inside `commands.*`**,
+        # because `_stood_down` runs before any job does — measured, a flag left
+        # by `ai_coc stop` at the end of a farming session made every press of
+        # this button stand down on the spot with nothing ever reaching the
+        # `clear_stop` inside `attack`.
+        self.stop_seen = False
+        commands.clear_stop()
         self.automation_timer.start(self.cycle_minutes.value() * 60000)
         self._paint_run_button()
         self.automation_log.appendPlainText("自動化已啟動，第一輪開始。")
-        # Nothing runs before this button, so an unfinished task from a previous
-        # session is picked back up here. It goes first because a PENDING row
-        # makes `automation_cycle` stand down, and `execute_agent_command` claims
-        # `running_task_id` straight away, so the cycle below sees it and yields.
-        QTimer.singleShot(100, self.resume_pending_tasks)
         QTimer.singleShot(300, self.automation_cycle)
 
     def stop_automation(self) -> None:
@@ -624,46 +494,62 @@ class MainWindow(QMainWindow):
         self.automation_timer.stop()
         self._paint_run_button()
         self.automation_log.appendPlainText(
-            "已停止：不再搜尋新對手，也不再接續未完成任務。已經開打的這一場會打完再回營。"
+            "已停止：不再開始新的一輪。已經開打的這一場會打完再回營。"
         )
 
+    def _stopping(self) -> bool:
+        """Whether the pass that is running should stand down.
+
+        Both sources, because a run started here answers to two: this window's
+        own button, and `ai_coc stop`, which is the only thing that reaches a
+        run from outside the process. Reading the flag here is new and only safe
+        because these passes go through `commands.*`, which clears it at both
+        ends — a window reading it with nowhere to clear it would stand itself
+        down the moment it started.
+
+        **That clearing is also why the flag is latched rather than read again
+        later.** `commands.attack` and `commands.walls` take the flag on their
+        way out, so by the time the pass ends there is nothing left to see —
+        and without the latch a terminal's stop would end one pass and the cycle
+        would start the next one `NEXT_CYCLE_DELAY` later, which is a stop that
+        did not stop anything. This runs on a worker thread, so it only records;
+        `_stood_down` is where the UI thread acts on it.
+        """
+        if commands.stop_requested():
+            self.stop_seen = True
+        return self.stop_seen or not self.automation_active
+
+    def _stood_down(self) -> bool:
+        """Switch the automation off for a stop that came from outside, once.
+
+        False when the button was what stopped it, since `stop_automation` has
+        already run and said so.
+        """
+        if not self._stopping() or not self.automation_active:
+            return False
+        self.automation_log.appendPlainText("收到外部的停止要求（ai_coc stop）。")
+        self.stop_automation()
+        self.stop_seen = False
+        return True
+
     def automation_cycle(self) -> None:
-        # An attack holds no task row, so it needs its own flag here: a second
-        # runner started mid-attack would interleave taps on the same display.
-        if (
-            not self.automation_active
-            or self.running_task_id is not None
-            or self.attack_running
-            or self.db.pending_tasks()
-            or not self.active
-        ):
+        if not self.automation_active or self.job_running or not self.active:
+            return
+        # A stop that arrived between passes rather than during one; the pass
+        # itself answers `_stopping` on its own thread.
+        if self._stood_down():
             return
         jobs: list[Callable[[], None]] = [
-            partial(self._queue_agent_job, instruction)
-            for enabled, instruction in (
-                (
-                    self.auto_collect.isChecked(),
-                    "回到主村，收取所有金礦、聖水收集器和黑水鑽井的資源，完成後回到主村畫面",
-                ),
-                (
-                    self.auto_donate.isChecked(),
-                    "打開部落聊天室，檢查可捐兵請求並依現有軍隊安全捐兵，完成後返回主村",
-                ),
-                (
-                    self.auto_upgrade.isChecked(),
-                    "檢查空閒建築工人與目前資源，依已保存的升級優先順序安排一項建築升級",
-                ),
-                (
-                    self.auto_walls.isChecked(),
-                    "檢查保留資源門檻後，使用超出保留量的資源升級一段城牆",
-                ),
+            job
+            for enabled, job in (
+                (self.auto_collect.isChecked(), self.run_collect),
+                (self.auto_donate.isChecked(), self.run_donate),
+                (self.auto_upgrade.isChecked(), self.run_upgrade),
+                (self.auto_walls.isChecked(), self.run_walls),
+                (self.auto_attack.isChecked(), self.run_attack),
             )
             if enabled
         ]
-        # Attacking is a fixed sequence against a screen that expires in 30
-        # seconds, so it drives itself instead of going through the agent loop.
-        if self.auto_attack.isChecked():
-            jobs.append(self.run_attack)
         if not jobs:
             self.automation_log.appendPlainText("巡檢完成：尚未啟用任何自主行為。")
             return
@@ -671,10 +557,88 @@ class MainWindow(QMainWindow):
         self.automation_step += 1
         job()
 
-    def _queue_agent_job(self, instruction: str) -> None:
-        task_id = self.db.add_task(instruction)
-        self.automation_log.appendPlainText(f"建立自主任務 #{task_id}：{instruction}")
-        self.execute_agent_command(instruction, task_id, automated=True)
+    def _run_job(
+        self,
+        label: str,
+        what: str,
+        task: Callable[[RunLog], BaseModel],
+        done: Callable[[Any], None] | None = None,
+    ) -> None:
+        """Run one pass of the cycle as the same function the CLI runs.
+
+        Every job here is a `commands.*` call, which is what keeps the window
+        and the terminal playing the same way: read that module's own docstring
+        — the only thing the window ever provided was the wiring, and those
+        functions are that wiring. So what is left for the window is the three
+        things a terminal gets from `cli.py` instead: this pass's own run
+        directory, handing the log back afterwards, and starting the next pass.
+
+        `RunLog.open` and `configure_logging` are called here rather than inside
+        the worker because both belong on the thread that owns the widgets this
+        reads. `done` defaults to printing the report's own message, which is
+        what four of the five jobs want.
+        """
+        run = RunLog.open(what, recording=self.record_frames.isChecked())
+        configure_logging(run)
+        self.job_running = True
+
+        def answered(report: Any) -> None:  # noqa: ANN401 - whichever report model the job returns
+            # Beside its own log, so a pass started from the window leaves the
+            # same evidence a headless one does.
+            run.answer(report.model_dump_json(indent=2))
+            if done:
+                done(report)
+            else:
+                # The message alone, because `label` is already the line above
+                # it: together they read 正在收取採集器… 收了 8 個採集器.
+                self.automation_log.appendPlainText(report.message)
+
+        def finished() -> None:
+            self.job_running = False
+            # This run is over, so the log goes back to the window's own.
+            # Without that every later line the window writes — the preview, the
+            # next cycle's own setup — keeps landing in a finished pass's
+            # `run.log`, which is the one file someone opens to reconstruct that
+            # pass; and handing back None instead would leave them nowhere.
+            configure_logging(self.session)
+            if not self._stood_down():
+                self._queue_next_cycle()
+
+        self.automation_log.appendPlainText(label)
+        self.run_async(label, lambda: task(run), answered, finished)
+
+    def run_collect(self) -> None:
+        self._run_job("正在收取採集器…", "collect", lambda run: commands.collect(run.frames))
+
+    def run_donate(self) -> None:
+        self._run_job(
+            "正在檢查部落增援請求…",
+            "donate",
+            lambda run: commands.donate(DonateOptions(frame_dir=run.frames)),
+        )
+
+    def run_upgrade(self) -> None:
+        self._run_job(
+            "正在安排建築升級…",
+            "upgrade",
+            lambda run: commands.upgrade(UpgradeOptions(frame_dir=run.frames), self._stopping),
+        )
+
+    def run_walls(self) -> None:
+        # One batch per pass, for the reason `run_attack` takes one round: the
+        # cycle is what decides what comes next, and `WallOptions.rounds` of 0 —
+        # the CLI's default, where somebody is deliberately spending the loot —
+        # keeps buying until neither storage will pay for another wall. That is
+        # the whole session rather than a pass, and the collectors, the builders
+        # and the attack would wait it out. A batch is up to `MAX_BATCH` walls,
+        # so this is not a pass that barely does anything.
+        self._run_job(
+            "正在升級城牆…",
+            "walls",
+            lambda run: commands.walls(
+                WallOptions(frame_dir=run.frames, rounds=1), self._stopping
+            ),
+        )
 
     def _thresholds(self) -> LootThresholds:
         return LootThresholds(
@@ -684,36 +648,11 @@ class MainWindow(QMainWindow):
         )
 
     def run_attack(self) -> None:
-        m, a = self._require()
-        thresholds = self._thresholds()
-        stop_at = self.stop_at.value()
-
-        # The client is only used once an opponent has passed the thresholds, to
-        # pick the flank and the spell targets; screen reading never needs it.
-        planner = self.gemini_client() if self.api_key.text().strip() else None
-        # Opened here rather than inside the worker: it makes a directory and
-        # retargets the run-scoped log handler, and both belong on the thread
-        # that owns the settings this reads.
-        run = RunLog.open("attack", recording=self.record_frames.isChecked())
-        configure_logging(run)
-
-        def task() -> AttackReport:
-            active = m.ensure_coc(a.index)
-            adb = m.controller(active.adb_serial)
-            return AttackRunner(
-                adb=adb,
-                display=adb.display_for(COC_PACKAGE),
-                thresholds=thresholds,
-                stop_at=stop_at,
-                ai=planner,
-                should_stop=lambda: not self.automation_active,
-                frame_dir=run.frames,
-            ).run()
-
-        def done(report: AttackReport) -> None:
-            # Beside its own log, so a round started from the window leaves the
-            # same evidence a headless one does.
-            run.answer(report.model_dump_json(indent=2))
+        def done(series: AttackSeries) -> None:
+            if not series.root:
+                self.automation_log.appendPlainText("這一輪沒有打成任何一場。")
+                return
+            report = series.root[-1]
             # The storage is full, so the next pass would only read it again and
             # come back here. Stopping is the whole point of the threshold. The
             # skip count is left out of this one: it returns before any opponent
@@ -727,19 +666,20 @@ class MainWindow(QMainWindow):
                 f"進攻巡檢結束（跳過 {report.skipped} 個對手）：{report.message}"
             )
 
-        def finished() -> None:
-            self.attack_running = False
-            # This run is over, so the log goes back to the window's own. Without
-            # that every later line the window writes — the preview, the chat,
-            # the next cycle's own setup — keeps landing in a finished battle's
-            # `run.log`, which is the one file someone opens to reconstruct that
-            # battle; and handing back None instead would leave them nowhere.
-            configure_logging(self.session)
-            self._queue_next_cycle()
-
-        self.automation_log.appendPlainText("開始搜尋對手…")
-        self.attack_running = True
-        self.run_async("AI 正在搜尋對手並進攻…", task, done, finished)
+        # One round per pass, because the cycle is what decides what comes next:
+        # `commands.attack` would otherwise keep playing and the collectors,
+        # the builders and the walls would never get their turn. Thresholds,
+        # the storage share and the planner all come out of the shared config
+        # file in there, which is what `save_automation` writes on the way in.
+        self._run_job(
+            "AI 正在搜尋對手並進攻…",
+            "attack",
+            lambda run: commands.attack(
+                AttackOptions(frame_dir=run.frames, plan_log=run.plan_log, rounds=1),
+                self._stopping,
+            ),
+            done,
+        )
 
     def _settings_tab(self) -> QWidget:
         page = QWidget()
@@ -794,7 +734,7 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout(page)
         text = QLabel(
             f"<h1>{APP_NAME}</h1><p>{VERSION_LABEL}</p>"
-            f"<p>Master DB: {MASTER_DB_VERSION}<br>Schema: {SCHEMA_VERSION}<br>Agent Profile: {AGENT_PROFILE_VERSION}</p>"
+            f"<p>Master DB: {MASTER_DB_VERSION}<br>Schema: {SCHEMA_VERSION}</p>"
         )
         text.setTextFormat(Qt.RichText)
         layout.addWidget(text)
@@ -818,39 +758,6 @@ class MainWindow(QMainWindow):
             worker.signals.finished.connect(finished)
         worker.signals.error.connect(lambda message: self._error(label, message))
         worker.signals.finished.connect(lambda: self.statusBar().showMessage("Ready"))
-        self.pool.start(worker)
-
-    def run_stream(
-        self,
-        label: str,
-        fn: Callable[[], Iterator[str]],
-        into: ChatMessage,
-        done: Callable[[], None] | None = None,
-    ) -> None:
-        """Grow one transcript entry from a generator running on the pool."""
-        logger.info("Started: %s", label)
-        self.statusBar().showMessage(label)
-
-        failures: list[str] = []
-
-        def failed(message: str) -> None:
-            # Otherwise the dismissed message box leaves an empty reply with no reason.
-            failures.append(message)
-            into.body += f"\n\n**失敗**：{message}"
-            self._error(label, message)
-
-        def finished() -> None:
-            self._paint_chat()
-            self.statusBar().showMessage("Ready")
-            # StreamWorker signals `finished` from a `finally`, so a failed stream
-            # gets here too; `done` may only run when the reply actually arrived.
-            if done and not failures:
-                done()
-
-        worker = StreamWorker(fn, label)
-        worker.signals.delta.connect(lambda chunk: self._grow(into, chunk))
-        worker.signals.error.connect(failed)
-        worker.signals.finished.connect(finished)
         self.pool.start(worker)
 
     def _error(self, title: str, message: str) -> None:
@@ -1158,223 +1065,3 @@ class MainWindow(QMainWindow):
         preferred = current if current in models else DEFAULT_GEMINI_MODEL
         index = self.model_combo.findText(preferred)
         self.model_combo.setCurrentIndex(max(index, 0))
-
-    def account_context(self) -> str:
-        if not self.current_account_tag:
-            return "No Village JSON imported."
-        return AccountRowList(
-            self.db.account_rows(self.current_account_tag)[:40]
-        ).model_dump_json()
-
-    def knowledge_context(self) -> str:
-        items = self.db.recent_knowledge(40)
-        return (
-            "\n".join(f"- [{item.status}] {item.statement}" for item in items)
-            or "尚無使用者教學。"
-        )
-
-    def live_ai_test(self) -> None:
-        m, a = self._require()
-        client = self.gemini_client()
-        self.tabs.setCurrentIndex(AGENT_TAB)
-        self._say("system", "實機測試：正在啟動 CoC、擷取畫面並等待 AI 回覆…")
-        answer = self._say("assistant", "實機 AI 回覆")
-        captured: list[bytes] = []
-
-        def task() -> Iterator[str]:
-            active = m.ensure_coc(a.index)
-            png = m.screenshot(active)
-            captured.append(png)
-            yield from client.stream(PROMPTS["live_test"], png)
-
-        def done() -> None:
-            # Only reached once the whole generator ran, so the capture is there.
-            self.frame_sequence += 1
-            self.current_frame = Frame.create(
-                a.emulator_id, self.current_account_tag, captured[0], self.frame_sequence
-            )
-            proof_path = os.environ.get("COC_LIVE_TEST_SCREENSHOT", "").strip()
-            if proof_path:
-                QTimer.singleShot(800, lambda: self.grab().save(proof_path, "PNG"))
-
-        self.run_stream("實機 AI 測試進行中，請等待回覆…", task, answer, done)
-
-    def send_chat(self) -> None:
-        text = self.chat_input.text().strip()
-        if not text:
-            return
-        should_remember = any(
-            word in text for word in ("記住", "記下", "以後要", "下次要", "我教你")
-        )
-        if should_remember:
-            self.db.add_knowledge(
-                self.active.emulator_id if self.active else "",
-                self.current_frame.frame_id if self.current_frame else "",
-                text,
-                "USER_CONFIRMED",
-            )
-        recent = self.chat.tail(3500)
-        self.chat_input.clear()
-        self._say("user", "你", text)
-        if (
-            any(
-                word in text
-                for word in (
-                    "打開",
-                    "開啟",
-                    "點擊",
-                    "按下",
-                    "進入",
-                    "返回",
-                    "關閉",
-                    "收取",
-                    "捐兵",
-                    "升級",
-                    "刷牆",
-                    "進攻",
-                    "搜尋",
-                )
-            )
-            and self.active
-        ):
-            task_id = self.db.add_task(text)
-            self._say("system", "AI 正在操作 MuMu 並確認畫面，請稍候…")
-            self.execute_agent_command(text, task_id)
-            return
-        frame = self.current_frame if self.chat_image_pending else None
-        context = render(
-            "chat",
-            profile=PROMPTS["agent_profile"],
-            knowledge=self.knowledge_context(),
-            account=self.account_context(),
-            emulator=self.active.emulator_id if self.active else "none",
-            recent=recent,
-            text=text,
-        )
-
-        def done() -> None:
-            if frame:
-                self.chat_image_pending = False
-                self.chat_image_preview.clear()
-                self.chat_image_preview.setText("尚未附加圖片（也可以將圖片拖進視窗）")
-
-        client = self.gemini_client()
-        reply = self._say("assistant", "AI 回覆")
-        self.run_stream(
-            "AI 正在回覆…",
-            lambda: client.stream(context, frame.png if frame else None),
-            reply,
-            done,
-        )
-
-    def resume_pending_tasks(self) -> None:
-        # Without the flag, pressing stop only kept the *timer* quiet: the task
-        # in flight still finished, and its completion resumed the next pending
-        # one, so the automation carried on as if nothing had been pressed.
-        if not self.automation_active or self.running_task_id is not None or not self.active:
-            return
-        pending = self.db.pending_tasks()
-        if pending:
-            item = pending[0]
-            logger.info("Resuming pending task #%d: %s", item.id, item.instruction)
-            self._say("system", f"自動繼續未完成任務 #{item.id}：{item.instruction}")
-            self.tabs.setCurrentIndex(AGENT_TAB)
-            self.execute_agent_command(item.instruction, item.id, automated=True)
-
-    def _apply_agent_action(
-        self, m: MuMuAdapter, active: EmulatorInstance, action: AgentAction
-    ) -> bool:
-        """Perform one AI-proposed action; False when the action is not executable."""
-        if action.action == "tap":
-            m.tap(active, int(action.x_pct * 16), int(action.y_pct * 9))
-        elif action.action == "back":
-            m.back(active)
-        elif action.action == "swipe_up":
-            m.swipe(active, (800, 720), (800, 220), 500)
-        elif action.action == "swipe_down":
-            m.swipe(active, (800, 220), (800, 720), 500)
-        else:
-            return False
-        return True
-
-    def execute_agent_command(self, command: str, task_id: int, automated: bool = False) -> None:
-        m, a = self._require()
-        client = self.gemini_client()
-        self.running_task_id = task_id
-        self.db.update_task(task_id, "RUNNING", "正在觀察目前畫面")
-        reference_frame = self.current_frame if self.chat_image_pending else None
-
-        def task() -> tuple[bytes, str, bool]:
-            reference = ""
-            if reference_frame:
-                reference = client.generate(PROMPTS["reference_image"], reference_frame.png)
-            active = m.ensure_coc(a.index)
-            last_png = b""
-            max_steps = (
-                25 if any(word in command for word in ("進攻", "戰鬥", "搜尋資源村")) else 8
-            )
-            logger.info("Agent task #%d starts, at most %d steps: %s", task_id, max_steps, command)
-            for step in range(max_steps):
-                # A command typed into the AI tab is the user's own, so only the
-                # automation's own jobs answer to the stop button. Left PENDING
-                # rather than COMPLETED, so starting the automation again
-                # picks the task back up where it stopped.
-                if automated and not self.automation_active:
-                    logger.info(
-                        "Agent task #%d stops after %d step(s): stop pressed", task_id, step
-                    )
-                    return last_png, "已停止自動化，這個任務保留為未完成", False
-                self.db.update_task(task_id, "RUNNING", f"第 {step + 1} 步：截圖、判斷與驗證")
-                last_png = m.screenshot(active)
-                elements = UiElementList(m.ui_elements(active)).model_dump_json()
-                prompt = render(
-                    "agent_step",
-                    command=command,
-                    reference=reference,
-                    knowledge=self.knowledge_context(),
-                    elements=elements,
-                    may_upgrade=self.auto_upgrade.isChecked(),
-                    may_walls=self.auto_walls.isChecked(),
-                    may_attack=self.auto_attack.isChecked(),
-                )
-                action = client.generate_structured(prompt, AgentAction, last_png)
-                logger.info("Agent step %d/%d: %s", step + 1, max_steps, action.model_dump())
-                if action.done:
-                    return last_png, action.message or "指令已完成", True
-                if not self._apply_agent_action(m, active, action):
-                    return last_png, action.message or "AI 無法安全執行這個操作", False
-                time.sleep(2)
-            return last_png, f"已執行操作，但 {max_steps} 次畫面確認後仍無法確認完成。", False
-
-        def done(result: tuple[bytes, str, bool]) -> None:
-            png, message, completed = result
-            self.frame_sequence += 1
-            self.current_frame = Frame.create(
-                a.emulator_id, self.current_account_tag, png, self.frame_sequence
-            )
-            self.chat_image_pending = False
-            self._say("assistant", "AI 操作結果", message)
-            self.db.update_task(task_id, "COMPLETED" if completed else "PENDING", message)
-            self.running_task_id = None
-            proof_path = os.environ.get("COC_AGENT_SCREENSHOT", "").strip()
-            if proof_path:
-                QTimer.singleShot(800, lambda: self.grab().save(proof_path, "PNG"))
-            if completed:
-                QTimer.singleShot(1200, self.resume_pending_tasks)
-            self._queue_next_cycle()
-
-        self.run_async("AI 正在操作並確認 MuMu 畫面…", task, done)
-
-    def save_teaching(self) -> None:
-        statement = self.chat_input.text().strip()
-        if not statement:
-            QMessageBox.information(self, "Teaching", "請先在輸入框輸入教學內容。")
-            return
-        self.db.add_knowledge(
-            self.active.emulator_id if self.active else "",
-            self.current_frame.frame_id if self.current_frame else "",
-            statement,
-            "USER_CONFIRMED",
-        )
-        self._say("system", "TEACHING [USER_CONFIRMED]", statement)
-        self.chat_input.clear()

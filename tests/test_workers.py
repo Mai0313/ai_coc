@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 import unittest
 
-from ai_coc.ui.workers import Worker, LogBridge, StreamWorker, UiLogHandler
+from ai_coc.ui.workers import Worker, LogBridge, UiLogHandler
 
 
 class WorkerTests(unittest.TestCase):
@@ -36,32 +36,6 @@ class WorkerTests(unittest.TestCase):
         worker.run()
         assert errors == ["division by zero"]
         assert results == []
-        assert finished == [True]
-
-
-class StreamWorkerTests(unittest.TestCase):
-    def test_every_chunk_is_handed_over_in_order(self) -> None:
-        chunks: list[str] = []
-        worker = StreamWorker(lambda: iter(["好", "的"]), "reply")
-        worker.signals.delta.connect(chunks.append)
-        worker.run()
-        assert chunks == ["好", "的"]
-
-    def test_a_stream_that_breaks_midway_keeps_what_arrived_and_reports_why(self) -> None:
-        def broken() -> object:
-            yield "半"
-            raise RuntimeError("quota")
-
-        chunks: list[str] = []
-        errors: list[str] = []
-        finished: list[bool] = []
-        worker = StreamWorker(broken, "reply")
-        worker.signals.delta.connect(chunks.append)
-        worker.signals.error.connect(errors.append)
-        worker.signals.finished.connect(lambda: finished.append(True))
-        worker.run()
-        assert chunks == ["半"]
-        assert errors == ["quota"]
         assert finished == [True]
 
 

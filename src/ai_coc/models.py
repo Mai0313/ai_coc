@@ -300,10 +300,6 @@ class AccountRow(BaseModel):
     requirement: str | None = None
 
 
-class AccountRowList(RootModel[list[AccountRow]]):
-    """Account rows on their way into a prompt."""
-
-
 class RegistryEntry(BaseModel):
     model_config = TOLERANT
 
@@ -331,24 +327,6 @@ class EntityMapping(RootModel[dict[str, dict[int, str]]]):
             for group, entries in self.root.items()
             for data_id, name in entries.items()
         ]
-
-
-class KnowledgeItem(BaseModel):
-    id: int
-    emulator_id: str | None = None
-    frame_id: str | None = None
-    statement: str
-    status: str
-    created_at: str
-
-
-class TaskRecord(BaseModel):
-    id: int
-    instruction: str
-    status: str
-    progress: str = ""
-    created_at: str
-    updated_at: str
 
 
 class LootOffer(BaseModel):
@@ -584,7 +562,7 @@ class ScoutView(BaseModel):
 
 
 class ScreenPoint(BaseModel):
-    """A spot on the battle screen, as percentages the way `AgentAction` uses them."""
+    """A spot on the battle screen, as the percentages every model answers in."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -1652,22 +1630,6 @@ class FrameReading(BaseModel):
     village_box: tuple[int, int, int, int] | None = None
 
 
-class UiElement(BaseModel):
-    """One clickable or labelled node from Android's accessibility hierarchy."""
-
-    model_config = ConfigDict(frozen=True)
-
-    text: str
-    resource_id: str
-    clickable: bool
-    x: int
-    y: int
-
-
-class UiElementList(RootModel[list[UiElement]]):
-    """Accessibility nodes on their way into a prompt."""
-
-
 class GeminiTextPart(BaseModel):
     type: Literal["text"] = "text"
     text: str
@@ -1712,40 +1674,3 @@ class LocatedTarget(BaseModel):
     x_pct: float = 50.0
     y_pct: float = 50.0
     reason: str = ""
-
-
-class AgentAction(BaseModel):
-    """One step of the agent loop: what to do next, or that the task is done."""
-
-    done: bool = False
-    action: Literal["tap", "back", "swipe_up", "swipe_down", "none"] = "none"
-    x_pct: float = 50.0
-    y_pct: float = 50.0
-    message: str = ""
-
-
-ChatRole = Literal["user", "assistant", "system"]
-
-
-class ChatMessage(BaseModel):
-    """One entry of the AI 助手 transcript; `body` is Markdown."""
-
-    role: ChatRole
-    heading: str
-    body: str = ""
-
-
-class ChatTranscript(RootModel[list[ChatMessage]]):
-    """The AI 助手 conversation, re-rendered to HTML as a streamed reply grows."""
-
-    root: list[ChatMessage] = Field(default_factory=list)
-
-    def add(self, role: ChatRole, heading: str, body: str = "") -> ChatMessage:
-        message = ChatMessage(role=role, heading=heading, body=body)
-        self.root.append(message)
-        return message
-
-    def tail(self, characters: int) -> str:
-        """The end of the conversation as plain text, for the next prompt's context."""
-        joined = "\n\n".join(f"{item.heading}\n{item.body}" for item in self.root)
-        return joined[-characters:]

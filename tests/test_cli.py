@@ -70,10 +70,7 @@ class ParserTests(unittest.TestCase):
             assert parser.parse_args([name, *extra]).command == name
 
     def test_no_sub_command_means_the_window(self) -> None:
-        arguments = _args()
-        assert arguments.command is None
-        assert not arguments.live_test
-        assert arguments.agent_command == ""
+        assert _args().command is None
 
     def test_record_is_only_offered_where_a_loop_reads_frames(self) -> None:
         for name in RECORDABLE:

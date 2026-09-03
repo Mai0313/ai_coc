@@ -76,9 +76,7 @@ uv run ai_coc
 
 The `test` group is what the suite needs; a plain `uv sync` installs enough to run the app but not enough to test it.
 
-Two command-line hooks exist for smoke tests against the live game. `--live-test` captures a frame and asks Gemini to describe it; `--agent-command=<text>` types a command into the AI tab and runs it. Both save a proof screenshot when `COC_LIVE_TEST_SCREENSHOT` / `COC_AGENT_SCREENSHOT` point at a path.
-
-Beyond those, every loop has a headless sub-command (`uv run ai_coc attack`, `walls`, `collect`, and the rest; see the README). Those are how the game is actually worked on: a feature reachable only through a widget cannot be driven against the live game while it is being written.
+Every loop has a headless sub-command (`uv run ai_coc attack`, `walls`, `collect`, and the rest; see the README), and those are how the game is worked on: a feature reachable only through a widget cannot be driven against the live game while it is being written. The window runs the same functions, so a sub-command is also the smoke test for what the window does.
 
 Supported Python versions are declared in `pyproject.toml`. Use `uv` to manage interpreters when needed:
 

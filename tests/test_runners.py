@@ -115,6 +115,36 @@ class OpenedWalkTests(unittest.TestCase):
             opened = list(runner._opened([(1, 1), (2, 2), (3, 3)], "named"))
         assert [spot for spot, _ in opened] == [(1, 1)]
 
+    def test_a_stop_ends_the_walk_where_the_last_tap_was_already_backed_out_of(self) -> None:
+        """The one place a sweep can be interrupted, and so every finder's.
+
+        A tap costs a settle and a capture, so a full grid is a couple of
+        minutes with nothing else to check a stop against — which is what
+        `ai_coc upgrade` spends whenever it has no key to ask with. Leaving here
+        is safe because the walk has already backed out of whatever the last tap
+        opened.
+        """
+        runner = GameRunner(
+            adb=_adb(), display=DISPLAY, should_stop=lambda: len(tapped.call_args_list) >= 2
+        )
+        with (
+            patch.object(runner, "_after_tap", return_value=b"") as tapped,
+            patch.object(shared, "read_stock", return_value=STOCK),
+        ):
+            opened = list(runner._opened([(1, 1), (2, 2), (3, 3), (4, 4)], "named"))
+        assert [spot for spot, _ in opened] == [(1, 1), (2, 2)]
+        assert tapped.call_count == 2
+
+    def test_a_walk_nobody_stopped_taps_every_point_it_was_given(self) -> None:
+        runner = self._runner()
+        with (
+            patch.object(runner, "_after_tap", return_value=b"") as tapped,
+            patch.object(shared, "read_stock", return_value=STOCK),
+        ):
+            opened = list(runner._opened([(1, 1), (2, 2), (3, 3)], "named"))
+        assert [spot for spot, _ in opened] == [(1, 1), (2, 2), (3, 3)]
+        assert tapped.call_count == 3
+
     def test_the_sweep_is_that_walk_over_the_grid_with_the_staggered_points_held_to_the_limit(
         self,
     ) -> None:

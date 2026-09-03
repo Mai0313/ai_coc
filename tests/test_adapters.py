@@ -99,17 +99,6 @@ Logical Displays: size=2
     mBaseDisplayInfo=DisplayInfo{"mumuscreen001", displayId 2, displayGroupId 0}
 """
 
-HIERARCHY = (
-    "junk the dump prints first\n"
-    "<?xml version='1.0' encoding='UTF-8' standalone='yes' ?>"
-    '<hierarchy rotation="0">'
-    '<node index="0" text="" resource-id="" clickable="false" bounds="[0,0][1600,900]">'
-    '<node index="0" text="攻擊" resource-id="btn_attack" clickable="true" bounds="[50,800][160,860]" />'
-    '<node index="1" text="" content-desc="設定" resource-id="" clickable="false" bounds="[1500,10][1580,90]" />'
-    '<node index="2" text="" resource-id="" clickable="true" bounds="garbage" />'
-    "</node></hierarchy>"
-)
-
 
 def _controller() -> AdbController:
     return AdbController(endpoint=AdbEndpoint(port=16384))
@@ -199,28 +188,6 @@ class AdbConnectionTests(unittest.TestCase):
             assert _controller().is_running(COC_PACKAGE)
         with patch.object(AdbController, "shell", return_value="\n"):
             assert not _controller().is_running(COC_PACKAGE)
-
-
-class AccessibilityTests(unittest.TestCase):
-    def test_the_hierarchy_becomes_elements_with_their_centres(self) -> None:
-        device = MagicMock()
-        device.dump_hierarchy.return_value = HIERARCHY
-        with patch.object(AdbController, "connect", return_value=device):
-            elements = _controller().ui_elements()
-        assert [(e.text, e.resource_id, e.clickable, e.x, e.y) for e in elements] == [
-            ("攻擊", "btn_attack", True, 105, 830),
-            ("設定", "", False, 1540, 50),
-        ]
-
-    def test_a_dump_that_fails_or_will_not_parse_is_an_empty_list(self) -> None:
-        device = MagicMock()
-        device.dump_hierarchy.side_effect = adb_module.adbutils.AdbError("no uiautomator")
-        with patch.object(AdbController, "connect", return_value=device):
-            assert _controller().ui_elements() == []
-        device.dump_hierarchy.side_effect = None
-        device.dump_hierarchy.return_value = "<?xml version='1.0'?><hierarchy><node"
-        with patch.object(AdbController, "connect", return_value=device):
-            assert _controller().ui_elements() == []
 
 
 class TouchNodeTests(unittest.TestCase):
@@ -522,21 +489,34 @@ class DatabaseTests(unittest.TestCase):
         self.addCleanup(folder.cleanup)
         self.db = Database(path=Path(folder.name) / "test.sqlite3")
 
-    def test_a_task_is_pending_until_it_is_completed(self) -> None:
-        task_id = self.db.add_task("收資源")
-        [pending] = self.db.pending_tasks()
-        assert (pending.id, pending.status, pending.instruction) == (task_id, "PENDING", "收資源")
-        self.db.update_task(task_id, "RUNNING", "第 1 步")
-        assert self.db.pending_tasks()[0].status == "RUNNING"
-        self.db.update_task(task_id, "COMPLETED", "完成")
-        assert self.db.pending_tasks() == []
+    def test_the_ai_assistants_two_tables_are_dropped_from_a_database_that_has_them(self) -> None:
+        """The one thing `_initialize` has to do that creating tables cannot.
 
-    def test_knowledge_comes_back_oldest_first_within_the_limit(self) -> None:
-        self.db.add_knowledge("mumu:0", "f1", "先收資源", "USER_CONFIRMED")
-        self.db.add_knowledge("mumu:0", "f2", "再捐兵", "USER_CONFIRMED")
-        recent = self.db.recent_knowledge(1)
-        assert [item.statement for item in recent] == ["再捐兵"]
-        assert [item.statement for item in self.db.recent_knowledge()] == ["先收資源", "再捐兵"]
+        There is no migration tooling here, so a table this script stops
+        creating survives on every database that already had it. Both of these
+        belonged to the AI 助手 tab and went with it.
+        """
+        with closing(self.db.connect()) as con, con:
+            con.executescript("""
+            CREATE TABLE knowledge(
+                id INTEGER PRIMARY KEY AUTOINCREMENT, emulator_id TEXT, frame_id TEXT,
+                statement TEXT NOT NULL, status TEXT NOT NULL, created_at TEXT NOT NULL
+            );
+            CREATE TABLE tasks(
+                id INTEGER PRIMARY KEY AUTOINCREMENT, instruction TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'PENDING', progress TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+            );
+            """)
+        Database(path=self.db.path)
+        with closing(self.db.connect()) as con:
+            names = {
+                row["name"]
+                for row in con.execute("SELECT name FROM sqlite_master WHERE type='table'")
+            }
+        assert not names & {"knowledge", "tasks"}
+        # The tables it does own are still there, so this drops rather than resets.
+        assert "id_registry" in names
 
     def test_an_unknown_data_id_is_queued_rather_than_refused(self) -> None:
         snapshot = AccountSnapshot(
