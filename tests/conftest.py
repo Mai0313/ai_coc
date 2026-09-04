@@ -27,9 +27,9 @@ if TYPE_CHECKING:
 def _state_file_in_tmp(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Point the state file at a path of this test's own, for every test.
 
-    `_claimed` goes back with it: it is module state that outlives one test, and
+    `_held` goes back with it: it is module state that outlives one test, and
     left set by a test that claimed, the next test's `stop_requested` would read
     its own empty directory as somebody having deleted the file.
     """
     monkeypatch.setattr(commands, "STATE_PATH", tmp_path / "state.json")
-    monkeypatch.setattr(commands, "_claimed", False)
+    monkeypatch.setattr(commands, "_held", None)

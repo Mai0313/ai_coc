@@ -302,13 +302,16 @@ CART_EVERY = 3
 STOP_POLL = 2.0
 
 
-# Whether this process has claimed the emulator at any point. It is what lets a
-# **missing** file mean "somebody deleted it, stand down" without also meaning
-# that to a process which never wrote one: a fresh machine has no state file at
-# all, and without this every first run on it would read its own absence as a
-# stop and end at zero rounds. Nothing outside this module needs it, and it is
-# a bare bool rather than a model because the worker threads read it.
-_claimed = False
+# The claim this process wrote, or None while it holds none. Two things need it.
+#
+# A **missing** file means "somebody deleted it, stand down" only to a process
+# that wrote one: a fresh machine has no state file at all, and without this
+# every first run on it would read its own absence as a stop and end at zero
+# rounds. And it carries `started` across exactly that deletion — the record
+# that held it is gone by then, so the `idle` written on the way out would
+# otherwise lose how long the run took, measured live on the first deletion
+# this ever answered.
+_held: RunnerState | None = None
 
 
 def read_state() -> RunnerState | None:
@@ -383,21 +386,20 @@ def claim(command: str, log: Path | None = None) -> Iterator[None]:
     would need to tell a live run from a killed one, which is a pid liveness
     call this deliberately does not make.
     """
-    global _claimed  # noqa: PLW0603 - process-wide by nature; see `_claimed`
+    global _held  # noqa: PLW0603 - process-wide by nature; see `_held`
     held = read_state()
     if held is not None and held.pid == os.getpid() and held.status != "idle":
         yield
         return
-    _write_state(
-        RunnerState(
-            status="running",
-            pid=os.getpid(),
-            command=command,
-            started=datetime.now().astimezone(),
-            log=log,
-        )
+    mine = RunnerState(
+        status="running",
+        pid=os.getpid(),
+        command=command,
+        started=datetime.now().astimezone(),
+        log=log,
     )
-    _claimed = True
+    _write_state(mine)
+    _held = mine
     try:
         yield
     finally:
@@ -417,7 +419,7 @@ def _release(command: str, log: Path | None) -> None:
     by the time this runs, and leaving it standing would have the next reader
     believe a run is still winding down hours after it finished.
     """
-    global _claimed  # noqa: PLW0603 - process-wide by nature; see `_claimed`
+    global _held  # noqa: PLW0603 - process-wide by nature; see `_held`
     held = read_state()
     if held is not None and held.pid not in (0, os.getpid()):
         return
@@ -426,12 +428,15 @@ def _release(command: str, log: Path | None) -> None:
             status="idle",
             pid=os.getpid(),
             command=command,
-            started=held.started if held else None,
+            # This process's own copy rather than the file's, because the file
+            # is gone whenever the run was stopped by deleting it, and that is
+            # the case where the record would otherwise lose its start time.
+            started=_held.started if _held else None,
             ended=datetime.now().astimezone(),
             log=log,
         )
     )
-    _claimed = False
+    _held = None
 
 
 def stop() -> str:
@@ -468,7 +473,7 @@ def stop_requested() -> bool:
     """
     state = read_state()
     if state is None:
-        return _claimed
+        return _held is not None
     return state.status == "stopping"
 
 

@@ -3096,12 +3096,21 @@ class RunnerStateTests(unittest.TestCase):
     def test_a_file_deleted_by_hand_stops_the_run_that_wrote_it(self) -> None:
         """The escape hatch for somebody whose agent died mid-run and whose only
         other move is finding a pid in the task manager.
+
+        The `idle` written on the way out is the receipt that it really stood
+        down, and it still carries `started` — which the file cannot supply,
+        being the very thing that was deleted.
         """
         with tempfile.TemporaryDirectory() as folder:
             state = Path(folder) / "state.json"
-            with patch.object(commands, "STATE_PATH", state), commands.claim("attack"):
+            self.enterContext(patch.object(commands, "STATE_PATH", state))
+            with commands.claim("attack"):
                 state.unlink()
                 assert commands.stop_requested()
+            back = commands.read_state()
+            assert back is not None
+            assert (back.status, back.command) == ("idle", "attack")
+            assert back.started is not None
 
     def test_a_missing_file_is_no_stop_to_a_process_that_never_wrote_one(self) -> None:
         """A fresh machine has no state file, so reading its absence as a stop
