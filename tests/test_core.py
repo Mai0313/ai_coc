@@ -3133,6 +3133,43 @@ class RunnerStateTests(unittest.TestCase):
                 state.write_text('{"status": "runn', encoding="utf-8")
                 assert not commands.stop_requested()
 
+    def test_a_torn_read_at_claim_time_still_writes_a_record(self) -> None:
+        """`read_state` recovers an unreadable file as "running, and ours", which
+        is what keeps a battle from standing down over a moment. Keying the
+        reentrancy test on that instead of on this process's own record had
+        `claim` yield without writing anything: the run drove the emulator
+        unrecorded, `stop` read the last run's `idle` and said there was nothing
+        to stop, and deleting the file was not a stop either — every documented
+        way out gone at once, silently.
+        """
+        with tempfile.TemporaryDirectory() as folder:
+            state = Path(folder) / "state.json"
+            state.write_text("", encoding="utf-8")
+            self.enterContext(patch.object(commands, "STATE_PATH", state))
+            with commands.claim("attack"):
+                held = commands.read_state()
+                assert held is not None
+                assert (held.status, held.command) == ("running", "attack")
+                commands.stop()
+                assert commands.stop_requested()
+
+    def test_the_scratch_file_belongs_to_one_process(self) -> None:
+        """Two processes write this file by design: `ai_coc stop` exists to run
+        against a loop that is writing at its own claim and release. One shared
+        scratch name has them truncating each other's half-built copy, and on
+        Windows the loser's `os.replace` raises `PermissionError` out of
+        `_release` inside `claim`'s `finally` — past `run.answer`, so the run
+        ends with no `result.json`, which is the one signal telling a clean stop
+        from a killed process.
+        """
+        with tempfile.TemporaryDirectory() as folder:
+            self.enterContext(patch.object(commands, "STATE_PATH", Path(folder) / "state.json"))
+            with patch.object(commands.os, "replace"):
+                commands._write_state(RunnerState(status="idle"))
+            assert [path.name for path in Path(folder).iterdir()] == [
+                f"state.json.{os.getpid()}.tmp"
+            ]
+
     def test_a_claim_this_process_holds_is_left_to_its_outermost_owner(self) -> None:
         """The window runs every pass as its own `commands.*` call inside the
         claim its automation cycle holds, so a nested release would publish

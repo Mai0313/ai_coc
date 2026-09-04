@@ -357,8 +357,17 @@ def _write_state(state: RunnerState) -> None:
     seconds from another process; landing in that window returns zero bytes,
     which is a parse failure on a file that was never actually broken. The
     rename is atomic on Windows, so a reader gets the old state or the new one.
+
+    **The scratch file carries this process's pid**, because the writers here
+    are concurrent by design: `ai_coc stop` exists to be run against a loop that
+    is itself writing at its claim and its release. One shared scratch name has
+    them truncating each other's half-built file, and on Windows `os.replace`
+    wants its source unopened — so the loser raises `PermissionError` out of
+    `_release`, inside `claim`'s `finally`, which propagates past `run.answer`
+    and leaves the run with no `result.json` at all. That file is the signal
+    `farm` uses to tell a clean stop from a killed process.
     """
-    scratch = STATE_PATH.with_suffix(".json.tmp")
+    scratch = STATE_PATH.with_name(f"{STATE_PATH.name}.{os.getpid()}.tmp")
     scratch.write_text(state.model_dump_json(indent=2), encoding="utf-8")
     os.replace(scratch, STATE_PATH)
 
@@ -379,6 +388,14 @@ def claim(command: str, log: Path | None = None) -> Iterator[None]:
     of each pass would publish `idle` between passes and read, from outside, as
     an emulator nobody is using.
 
+    **That test reads this process's own record and never the file**, because
+    the file cannot answer it. A read that fails or comes back torn recovers as
+    "running, and it is ours", which is the answer that keeps a battle from
+    standing down over a moment — and taking it for a claim already held would
+    have this yield without writing anything, leaving the run unrecorded and
+    stoppable by nothing at all: `stop` would read the last run's `idle` and say
+    there was nothing to stop, and deleting the file would not stop it either.
+
     **It never refuses.** A second run started while one is going overwrites
     this record and both then drive the same display, which is the thing the
     file exists to let a session avoid rather than a thing it prevents: the
@@ -387,8 +404,7 @@ def claim(command: str, log: Path | None = None) -> Iterator[None]:
     call this deliberately does not make.
     """
     global _held  # noqa: PLW0603 - process-wide by nature; see `_held`
-    held = read_state()
-    if held is not None and held.pid == os.getpid() and held.status != "idle":
+    if _held is not None:
         yield
         return
     mine = RunnerState(
