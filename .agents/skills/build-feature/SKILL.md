@@ -26,7 +26,7 @@ description: >-
 沒被自動化的東西, 按定義就是**還沒有人寫過判讀器的畫面**. 所以你不可能靠讀程式碼找到題目, 只能靠實際走進遊戲裡看. log 只說得出已經寫好的那些迴圈在做什麼, 它對還沒做的東西完全沉默.
 
 ```bash
-uv run ai_coc capture .runs/explore --count 20 --gap 1.5   # 從活著的遊戲連拍
+uv run ai_coc capture --count 20 --gap 1.5 --label explore   # 從活著的遊戲連拍
 uv run ai_coc read <png>                                          # 現有 parser 對這張圖的說法
 ```
 
@@ -115,4 +115,4 @@ uv run ai_coc read <png>                                          # 現有 parse
 <跑了幾輪, 進帳多少, 現在停在哪. 資源打滿的話直接套 farm 的任務報告那一節>
 ```
 
-截圖不要貼進報告裡, 給路徑就好. 迴圈自己留的那些要開 `--record` 才會有, 而且是進那一次執行自己的 `~/.ai_coc/logs/<when>-<what>/frames/`; 沒開的話迴圈什麼都不留. 你自己 `capture` 出來的要放 `.runs/`, 那是這個專案約定放這種東西的位置 —— 丟在 repo 根目錄的東西會出現在 `git status` 裡.
+截圖不要貼進報告裡, 給路徑就好. 迴圈自己留的那些要開 `--record` 才會有, 而且是進那一次執行自己的 `~/.ai_coc/logs/<when>-<what>/frames/`; 沒開的話迴圈什麼都不留. 你自己 `capture` 出來的也進同一個地方, 而且不能指定路徑 —— 用 `--label` 給那一次取個名字就找得回來. **畫面只留七天, log 永久留**, 所以要長期留著的證據自己複製一份出來.

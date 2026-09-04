@@ -134,7 +134,8 @@ ai_coc launch --restart emulator      # restart the emulator, then bring the gam
 ### Looking at what it sees
 
 ```bash
-ai_coc capture ./shots --count 30     # a burst off the live game
+ai_coc capture --count 30             # a burst off the live game, into this run's own folder
+ai_coc <any command> --label baseline # name this run's folder so it is findable later
 ai_coc read shot.png                  # what each reader makes of one frame
 ai_coc view --zoom out                # put the camera back where every coordinate was measured
 ai_coc world                          # which of the two villages the game is on
@@ -158,7 +159,9 @@ Every run gets a directory of its own, whichever side of the app started it:
 └── frames/        # only with --record
 ```
 
-The first line of every run says which directory it is, and the name is `<when>-<what>` so a listing reads as a history. There is no second file mixing every run together — `grep -r ~/.ai_coc/logs/*/run.log` answers across runs and tells you which one each hit came from.
+The first line of every run says which directory it is, and the name is `<when>-<what>` so a listing reads as a history. `--label` adds a third part on any command (`2026-08-29-011423-attack-baseline`) for a run you want to find again. There is no second file mixing every run together — `grep -r ~/.ai_coc/logs/*/run.log` answers across runs and tells you which one each hit came from.
+
+**Frames are kept for a week; the logs are kept forever.** A run's `frames/` is deleted once it is older than that, and nothing else in the directory ever is. The split is worth stating because it is lopsided: on this machine 11 456 recorded PNGs came to 27.2 GB while every `run.log`, `result.json` and `plans.jsonl` together came to 4.6 MB. Copy anything you want to keep longer out of there.
 
 ## ⚙️ Settings
 

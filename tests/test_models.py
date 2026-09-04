@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import os
 import json
 import math
 from pathlib import Path
+from datetime import UTC, datetime, timedelta
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -303,6 +305,55 @@ class RunLogTests(unittest.TestCase):
             assert second.directory.name == "2026-09-03-000000-read-2"
             assert third.directory.name == "2026-09-03-000000-read-3"
             assert third.directory.is_dir()
+
+    def test_a_label_becomes_the_third_part_of_the_name(self) -> None:
+        """A session saving evidence wants to find that run again afterwards,
+        and inventing a path was the alternative: measured on this machine, 20
+        of 438 run directories had been hand-named, four of them ending in
+        `.png` because somebody read a directory argument as a filename.
+        """
+        with (
+            tempfile.TemporaryDirectory() as folder,
+            patch.object(models, "LOG_DIR", Path(folder)),
+            patch.object(models, "datetime") as clock,
+        ):
+            clock.now.return_value.astimezone.return_value.strftime.return_value = (
+                "2026-09-04-000000"
+            )
+            named = RunLog.open("capture", label="baseline")
+            # A separator getting through would put the run somewhere nobody
+            # goes looking, which is the failure a label replaces rather than
+            # reproduces in a new place.
+            awkward = RunLog.open("capture", label="night/run 2")
+            plain = RunLog.open("read")
+        assert named.directory.name == "2026-09-04-000000-capture-baseline"
+        assert awkward.directory.name == "2026-09-04-000000-capture-night-run-2"
+        assert plain.directory.name == "2026-09-04-000000-read"
+
+    def test_old_frames_are_culled_and_the_log_beside_them_is_kept(self) -> None:
+        """Measured across 438 runs here, 11 456 PNGs came to 27.2 GB while
+        every `run.log`, `result.json` and `plans.jsonl` together came to 4.6 MB
+        — so the listing stays the history and only the frames age out.
+        """
+        with (
+            tempfile.TemporaryDirectory() as folder,
+            patch.object(models, "LOG_DIR", Path(folder)),
+        ):
+            old, fresh = Path(folder) / "old-attack", Path(folder) / "fresh-attack"
+            for run in (old, fresh):
+                (run / "frames").mkdir(parents=True)
+                (run / "frames" / "0001.png").write_bytes(b"png")
+                (run / "run.log").write_text("kept", encoding="utf-8")
+            stale = (
+                datetime.now(UTC) - timedelta(days=models.FRAME_RETENTION_DAYS + 1)
+            ).timestamp()
+            os.utime(old / "frames", (stale, stale))
+
+            models._cull_old_frames()
+
+            assert not (old / "frames").exists()
+            assert (old / "run.log").read_text(encoding="utf-8") == "kept"
+            assert (fresh / "frames" / "0001.png").exists()
 
     def test_the_paths_hang_off_the_directory(self) -> None:
         with tempfile.TemporaryDirectory() as folder:

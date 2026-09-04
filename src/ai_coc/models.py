@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import re
 import math
+import shutil
 from typing import Any, Literal
 from pathlib import Path
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from pydantic import Field, BaseModel, RootModel, ConfigDict, AliasChoices, field_validator
 
@@ -13,6 +15,7 @@ from .constants import (
     ENTITY_CATEGORIES,
     DEFAULT_LITE_MODEL,
     DEFAULT_GEMINI_MODEL,
+    FRAME_RETENTION_DAYS,
 )
 
 # Village JSON and the MuMu CLI both gain fields between game and emulator
@@ -1159,6 +1162,57 @@ class RunnerState(BaseModel):
     log: Path | None = None
 
 
+def _labelled(label: str) -> str:
+    """A label reduced to what can safely be one part of a directory name.
+
+    Anything that is not a letter, a digit, an underscore or a hyphen becomes a
+    hyphen. A path separator getting through would put the run somewhere nobody
+    goes looking, which is the failure the label exists to end rather than to
+    reproduce in a new place.
+    """
+    return re.sub(r"[^\w-]+", "-", label, flags=re.UNICODE).strip("-")[:40]
+
+
+def _cull_old_frames(keep: timedelta = timedelta(days=FRAME_RETENTION_DAYS)) -> int:
+    """Delete the `frames/` of runs older than the window, and nothing else.
+
+    Judged on the frames' own mtime rather than the run directory's, because
+    `result.json` is written after the last frame and would keep a directory
+    looking fresh for as long as anything else in it was still being touched.
+
+    **Housekeeping never fails the run it rides on.** Whatever cannot be read or
+    removed is left where it is and met again next time; a frame this could not
+    delete is worth less than the run it would have taken down with it.
+
+    **It answers how many runs lost their frames rather than logging it**, which
+    is the long way round for a reason: this runs from `RunLog.open`, which is
+    called *before* `configure_logging`, so a line written here would reach no
+    handler at all on the CLI path. The count rides on the `RunLog` and is said
+    out loud once the sinks exist. Saying it matters because this is the one
+    destructive thing in the project — a session following a path out of an old
+    report to a directory that is gone has otherwise no way to tell a cull from
+    a bug, or a partial failure from a clean sweep.
+    """
+    cutoff = datetime.now(UTC) - keep
+    try:
+        runs = list(LOG_DIR.iterdir())
+    except OSError:
+        return 0
+    culled = 0
+    for run in runs:
+        frames = run / "frames"
+        try:
+            stale = (
+                frames.is_dir() and datetime.fromtimestamp(frames.stat().st_mtime, UTC) < cutoff
+            )
+        except OSError:
+            continue
+        if stale:
+            shutil.rmtree(frames, ignore_errors=True)
+            culled += 1
+    return culled
+
+
 class RunLog(BaseModel):
     """One execution's own directory: its log, its answer, and what it saw.
 
@@ -1185,17 +1239,29 @@ class RunLog(BaseModel):
 
     directory: Path
     recording: bool = False
+    # How many runs lost their frames to the cull that ran when this one opened.
+    # It travels here because the cull happens before logging is configured; see
+    # `_cull_old_frames`, and `logging_setup._attach_run` for where it is said.
+    culled: int = 0
 
     @classmethod
-    def open(cls, command: str, recording: bool = False) -> RunLog:
+    def open(cls, command: str, recording: bool = False, label: str = "") -> RunLog:
         """Make the directory a run about to start will write into.
 
         Named `<when>-<what>` so that a plain listing of the log directory reads
         as a history, which is what makes a run from three days ago findable
-        without opening any of them.
+        without opening any of them. `label` adds a third part, because a
+        session capturing evidence wants to find that one again afterwards and
+        the alternative was inventing a path: measured on this machine, 20 of
+        438 run directories had been hand-named, four of them ending in `.png`
+        because somebody read a directory argument as a filename.
+
+        Culling old frames rides here rather than in a command of its own, since
+        nobody would remember to run one.
         """
+        culled = _cull_old_frames()
         stamp = datetime.now().astimezone().strftime("%Y-%m-%d-%H%M%S")
-        base = LOG_DIR / f"{stamp}-{command}"
+        base = LOG_DIR / f"{stamp}-{command}{f'-{slug}' if (slug := _labelled(label)) else ''}"
         # Two runs of the same command inside one second would otherwise land in
         # one directory, one `result.json` overwriting the other and both logs
         # interleaved. A shell loop over `ai_coc read` is how that really
@@ -1206,7 +1272,7 @@ class RunLog(BaseModel):
             directory = base.with_name(f"{base.name}-{attempt}")
             attempt += 1
         directory.mkdir(parents=True)
-        return cls(directory=directory, recording=recording)
+        return cls(directory=directory, recording=recording, culled=culled)
 
     @property
     def log_path(self) -> Path:

@@ -27,10 +27,12 @@ uv run ai_coc read <png>
 ## 從活著的遊戲抓畫面
 
 ```bash
-uv run ai_coc capture <dir> --count 30 --gap 1.5
+uv run ai_coc capture --count 30 --gap 1.5 --label <這次在測什麼>
 ```
 
 要量一個判讀器還讀不懂的新畫面時用這個. 一次一張抓不到只存在於某個瞬間的畫面, 所以它是連拍.
+
+**存到哪裡不能指定, 它自己進那次執行的 `frames/`**, 而 `--label` 是之後認出「這批是在測什麼」的唯一辦法, 所以要寫. **而且畫面只留七天** —— 過期的 `frames/` 會被下一次開跑的指令刪掉, 同個目錄的 `run.log` 跟 `result.json` 不動. 一個調整要跨好幾天對照的話, 把那幾張自己複製到別的地方去, 不要指望它們還在.
 
 **不要自己去下裸的 `adb shell screencap`.** MuMu 會把遊戲開在它自己的 display 上, 不指定 display 的話截圖前面會被塞一段多 display 的警告導致解碼失敗, 而 `input tap` 會安靜地點到 launcher 上. `AdbController.display_for(package)` 才是正確的作法, 而 `ai_coc capture` 已經幫你做完了.
 

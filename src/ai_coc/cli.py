@@ -191,8 +191,10 @@ def _parser() -> argparse.ArgumentParser:
     give.add_argument("--rounds", type=int, default=0, help="最多捐幾次,0 代表捐到不能捐為止")
     sub.add_parser("probe", help="花一場戰鬥實測邊界，對照判讀器說的")
     sub.add_parser("bounds", help="花一場戰鬥實測地圖邊緣，回推村莊範圍")
+    # No directory argument: it writes into this run's own `frames/` like every
+    # other command that saves what it saw. Whoever ran it used to invent a
+    # path, and `--label` is what that need becomes.
     shot = sub.add_parser("capture", help="從遊戲連續存畫面")
-    shot.add_argument("out", type=Path)
     shot.add_argument("--count", type=int, default=1)
     shot.add_argument("--gap", type=float, default=1.5)
     frame = sub.add_parser("read", help="把一張畫面丟給每個 parser,印出各自讀到什麼")
@@ -200,6 +202,15 @@ def _parser() -> argparse.ArgumentParser:
     for name in RECORDABLE:
         sub.choices[name].add_argument(
             "--record", action="store_true", help="把這次讀到的每一張畫面存進這次的紀錄資料夾"
+        )
+    # Every sub-command, because why a session names a run — to find it again
+    # afterwards — has nothing to do with which one it ran.
+    for one in sub.choices.values():
+        one.add_argument(
+            "--label",
+            default="",
+            metavar="名稱",
+            help="在這次的紀錄資料夾名字後面加上這個,方便之後認出是哪一次",
         )
     return parser
 
@@ -261,8 +272,11 @@ def _answer(arguments: argparse.Namespace, run: RunLog) -> BaseModel | str:
         ),
         "probe": lambda: commands.probe(run.frames),
         "bounds": lambda: commands.bounds(run.frames),
+        # `run.frames` rather than a directory of its own: `main` opens a
+        # capture's run with recording already on, because saving frames is the
+        # whole of what the command does, so this is never None here.
         "capture": lambda: "\n".join(
-            str(path) for path in commands.capture(a.out, a.count, a.gap)
+            str(path) for path in commands.capture(run.frames, a.count, a.gap)
         ),
         "read": lambda: commands.read(a.png.read_bytes()),
     }
@@ -308,7 +322,13 @@ def main() -> int:
     arguments = _parser().parse_args()
     # Opened after parsing, so `--help` and a rejected flag leave no empty
     # directory behind, and so its name can say which command it holds.
-    run = RunLog.open(arguments.command or "app", recording=getattr(arguments, "record", False))
+    # `capture` records by definition — saving frames is the command — so it
+    # carries no `--record` of its own and turns it on here instead.
+    run = RunLog.open(
+        arguments.command or "app",
+        recording=getattr(arguments, "record", False) or arguments.command == "capture",
+        label=getattr(arguments, "label", ""),
+    )
     configure_logging(run)
     # First line of every run, because a directory nobody can name is one nobody
     # goes back to: this is what a session reads to find the frames afterwards.
