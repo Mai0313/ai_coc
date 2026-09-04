@@ -37,10 +37,12 @@ uv run ai_coc attack --world day --repeat 0 --record
 ├── run.log        # 這次執行的完整紀錄, 純文字
 ├── result.json    # 這次的答案, 跑完才會有內容
 ├── plans.jsonl    # 只有 attack 有: 一場一行, 那一場的整份戰術
-└── frames/        # 只有 --record 才有
+└── frames/        # 迴圈自己讀的畫面要開 --record; capture 一定會有
 ```
 
-**目錄在哪不用猜, 開跑第一行 log 就會說** (`This run is being kept in ...`). 名字是「時間-指令」, 所以 `ls -t ~/.ai_coc/logs` 最上面那個就是最近的一次.
+**目錄在哪不用猜, 開跑第一行 log 就會說** (`This run is being kept in ...`). 名字是「時間-指令」, 所以 `ls -t ~/.ai_coc/logs` 最上面那個就是最近的一次. 任何指令都可以加 `--label <名字>` 在後面再接一段 (`…-attack-baseline`), 那是給之後還要找回來的那一次用的.
+
+**畫面只留七天, log 永久留.** 過期的 `frames/` 會在下一次有指令開跑的時候被刪掉, 同一個目錄裡的 `run.log`、`result.json`、`plans.jsonl` 一律不動 —— 刪了會在 log 裡寫一行說刪了幾個, 所以路徑找不到東西的時候分得出是被清掉還是壞掉. 要留久一點的證據自己複製一份出來.
 
 **`result.json` 是一個陣列, 不是一個物件.** `attack` 寫的是 `AttackSeries`: 一輪一個 `AttackReport`, 照跑的順序排, 頂層沒有 `stock_full` 這種欄位. 「這個世界打完了沒」看的是**最後一個元素**:
 

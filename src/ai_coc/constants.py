@@ -36,6 +36,15 @@ ACCOUNT_JSON_DIR.mkdir(parents=True, exist_ok=True)
 LOG_DIR = data_root() / "logs"
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 
+# How long a run's recorded frames are kept. **The log beside them is never
+# culled**, and the size split is what makes that easy to draw: measured across
+# 438 runs on this machine, 11 456 PNGs came to 27.2 GB while every `run.log`,
+# `result.json` and `plans.jsonl` together came to 4.6 MB. The directory names
+# are the history and `grep -r` over the logs is how a pattern is found across
+# runs, so those cost nothing worth reclaiming; a week-old frame nobody has
+# opened is the whole of it.
+FRAME_RETENTION_DAYS = 7
+
 # Which command is driving the emulator, and whether it has been asked to stand
 # down. Stopping a headless run has to be a file rather than a signal: the
 # window has a stop button, but a run started from a terminal has nothing, since

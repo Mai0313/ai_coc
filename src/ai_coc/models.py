@@ -15,6 +15,7 @@ from .constants import (
     ENTITY_CATEGORIES,
     DEFAULT_LITE_MODEL,
     DEFAULT_GEMINI_MODEL,
+    FRAME_RETENTION_DAYS,
 )
 
 # Village JSON and the MuMu CLI both gain fields between game and emulator
@@ -1161,16 +1162,6 @@ class RunnerState(BaseModel):
     log: Path | None = None
 
 
-# How long a run's recorded frames are kept. **The log beside them is never
-# culled**, and the size split is what makes that easy to draw: measured across
-# 438 runs on this machine, 11 456 PNGs came to 27.2 GB while every `run.log`,
-# `result.json` and `plans.jsonl` together came to 4.6 MB. The directory names
-# are the history and `grep -r` over the logs is how a pattern is found across
-# runs, so those cost nothing worth reclaiming; a week-old frame nobody has
-# opened is the whole of it.
-FRAME_RETENTION_DAYS = 7
-
-
 def _labelled(label: str) -> str:
     """A label reduced to what can safely be one part of a directory name.
 
@@ -1182,7 +1173,7 @@ def _labelled(label: str) -> str:
     return re.sub(r"[^\w-]+", "-", label, flags=re.UNICODE).strip("-")[:40]
 
 
-def _cull_old_frames(keep: timedelta = timedelta(days=FRAME_RETENTION_DAYS)) -> None:
+def _cull_old_frames(keep: timedelta = timedelta(days=FRAME_RETENTION_DAYS)) -> int:
     """Delete the `frames/` of runs older than the window, and nothing else.
 
     Judged on the frames' own mtime rather than the run directory's, because
@@ -1192,12 +1183,22 @@ def _cull_old_frames(keep: timedelta = timedelta(days=FRAME_RETENTION_DAYS)) -> 
     **Housekeeping never fails the run it rides on.** Whatever cannot be read or
     removed is left where it is and met again next time; a frame this could not
     delete is worth less than the run it would have taken down with it.
+
+    **It answers how many runs lost their frames rather than logging it**, which
+    is the long way round for a reason: this runs from `RunLog.open`, which is
+    called *before* `configure_logging`, so a line written here would reach no
+    handler at all on the CLI path. The count rides on the `RunLog` and is said
+    out loud once the sinks exist. Saying it matters because this is the one
+    destructive thing in the project — a session following a path out of an old
+    report to a directory that is gone has otherwise no way to tell a cull from
+    a bug, or a partial failure from a clean sweep.
     """
     cutoff = datetime.now(UTC) - keep
     try:
         runs = list(LOG_DIR.iterdir())
     except OSError:
-        return
+        return 0
+    culled = 0
     for run in runs:
         frames = run / "frames"
         try:
@@ -1208,6 +1209,8 @@ def _cull_old_frames(keep: timedelta = timedelta(days=FRAME_RETENTION_DAYS)) -> 
             continue
         if stale:
             shutil.rmtree(frames, ignore_errors=True)
+            culled += 1
+    return culled
 
 
 class RunLog(BaseModel):
@@ -1236,6 +1239,10 @@ class RunLog(BaseModel):
 
     directory: Path
     recording: bool = False
+    # How many runs lost their frames to the cull that ran when this one opened.
+    # It travels here because the cull happens before logging is configured; see
+    # `_cull_old_frames`, and `logging_setup._attach_run` for where it is said.
+    culled: int = 0
 
     @classmethod
     def open(cls, command: str, recording: bool = False, label: str = "") -> RunLog:
@@ -1252,7 +1259,7 @@ class RunLog(BaseModel):
         Culling old frames rides here rather than in a command of its own, since
         nobody would remember to run one.
         """
-        _cull_old_frames()
+        culled = _cull_old_frames()
         stamp = datetime.now().astimezone().strftime("%Y-%m-%d-%H%M%S")
         base = LOG_DIR / f"{stamp}-{command}{f'-{slug}' if (slug := _labelled(label)) else ''}"
         # Two runs of the same command inside one second would otherwise land in
@@ -1265,7 +1272,7 @@ class RunLog(BaseModel):
             directory = base.with_name(f"{base.name}-{attempt}")
             attempt += 1
         directory.mkdir(parents=True)
-        return cls(directory=directory, recording=recording)
+        return cls(directory=directory, recording=recording, culled=culled)
 
     @property
     def log_path(self) -> Path:
