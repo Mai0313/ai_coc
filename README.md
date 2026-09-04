@@ -77,7 +77,7 @@ ai_coc attack --stop-at 0        # attack however full the storages are
 
 **The emulator is restarted every so many battles**, because MuMu drops frames after running for a while and nothing short of a restart clears it. How many sits in the settings file (`restart_every`, 50 by default) rather than being hard-coded, because that number is whatever a given machine turns out to need — `--restart-every` overrides it for one run, and `0` there turns it off the same way the loot flags do. It counts battles rather than rounds, so a night mostly spent waiting on the barracks does not spend restarts on an emulator that has barely been working.
 
-`stop` writes a flag and returns at once. The loop reads it between battles and between opponents, never mid-battle, so the worst case is one more battle: abandoning one halfway would leave the army on the field and the game on a screen the next run cannot get home from.
+`stop` marks `~/.ai_coc/state.json` and returns at once. The loop reads it between battles and between opponents, never mid-battle, so the worst case is one more battle: abandoning one halfway would leave the army on the field and the game on a screen the next run cannot get home from. With nothing running it says so, rather than leaving a request nobody will take.
 
 Loot thresholds come from the settings file, and can be overridden for one run. Passing `0` is different from leaving a flag out: out means "use the configured value", `0` means "take this threshold out entirely":
 
@@ -197,7 +197,7 @@ That is the whole file. **Nothing headless writes it** — a run that finds no f
 
 There are no ability or spell timings here any more. They were a table of per-hero constants, and editing them meant guessing how long an army takes to walk across a village nobody had looked at — which is the planner's job, done with the village on screen. Every clock lives on the plan now: see `plans/flat.json` for the shape, and `--plan-in` to replay one.
 
-Everything else lives in `~/.ai_coc`: the SQLite database, imported account JSON, the run logs, and the DPAPI-protected key file.
+Everything else lives in `~/.ai_coc`: the SQLite database, imported account JSON, the run logs, the DPAPI-protected key file, and `state.json` — which command is driving the emulator, its pid, and its log directory. It is kept after a run ends rather than removed, so the record says what the last run was instead of going blank; deleting it by hand asks whichever run wrote it to stand down, which is the way out when whatever started that run is gone.
 
 ## 🤝 Contributing
 

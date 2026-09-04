@@ -1,4 +1,5 @@
 import io
+import os
 import json
 import math
 import time
@@ -32,6 +33,7 @@ from ai_coc.models import (
     HeroReport,
     PlayedPlan,
     AdbEndpoint,
+    RunnerState,
     ScreenPoint,
     ScreenSpots,
     WallOptions,
@@ -3038,84 +3040,195 @@ class AttackTests(unittest.TestCase):
             assert dotenv_value("ABSENT", env) == ""
 
 
-class StopFlagTests(unittest.TestCase):
-    """Stopping a headless run, which is a file because it cannot be a signal.
+class RunnerStateTests(unittest.TestCase):
+    """Stopping a headless run, and saying who is driving, out of one file.
 
     The window has a stop button; a run put in the background by whatever started
     it has nothing, and killing the process never reaches the `KeyboardInterrupt`
-    handler that leaves the game somewhere the next run can start from.
+    handler that leaves the game somewhere the next run can start from. The same
+    file answers the question nothing on this machine used to record at all:
+    whether anything is driving the emulator, which a second session had to be
+    told in the chat and now reads for itself.
     """
 
-    def test_the_flag_is_written_and_read_by_the_same_pair(self) -> None:
+    def test_a_stop_is_asked_for_and_read_through_the_same_file(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
-            flag = Path(folder) / "stop"
-            with patch.object(commands, "STOP_FLAG", flag):
+            state = Path(folder) / "state.json"
+            with patch.object(commands, "STATE_PATH", state), commands.claim("attack"):
                 assert not commands.stop_requested()
                 commands.stop()
                 assert commands.stop_requested()
 
-    def test_a_new_run_consumes_a_flag_the_last_one_left_behind(self) -> None:
-        """Stopping means the loop running now, never the next one to start.
-
-        Checked through a run that dies on its first real step, which is what
-        says the flag is cleared before anything touches the game rather than
-        somewhere along the way.
+    def test_a_run_that_finished_leaves_behind_what_it_was(self) -> None:
+        """`idle` is a record rather than an absence, which is the half a flag
+        could not do: a file that existed only while a run did cannot separate
+        "nothing has run here" from "one just finished", and the second is what
+        a session asking for the screen actually wants to know.
         """
         with tempfile.TemporaryDirectory() as folder:
-            flag = Path(folder) / "stop"
-            flag.write_text("", encoding="utf-8")
-            with (
-                patch.object(commands, "STOP_FLAG", flag),
-                patch.object(commands, "_controller", side_effect=RuntimeError),
-                patch.object(commands, "current_world", return_value="day"),
-                pytest.raises(RuntimeError),
-            ):
-                commands.attack(AttackOptions())
-            assert not flag.exists()
+            state, log = Path(folder) / "state.json", Path(folder) / "run"
+            with patch.object(commands, "STATE_PATH", state):
+                with commands.claim("walls", log):
+                    held = commands.read_state()
+                    assert held is not None
+                    assert (held.status, held.command, held.pid) == (
+                        "running",
+                        "walls",
+                        os.getpid(),
+                    )
+                after = commands.read_state()
+            assert after is not None
+            assert (after.status, after.command, after.log) == ("idle", "walls", log)
+            assert after.ended is not None
+
+    def test_a_claim_takes_over_a_stop_the_last_run_never_read(self) -> None:
+        """Stopping means the run going now, never the next one to start. One
+        left standing by a run that was killed would otherwise end the next one
+        at zero rounds, reported as a stop nobody asked for.
+        """
+        with tempfile.TemporaryDirectory() as folder:
+            state = Path(folder) / "state.json"
+            with patch.object(commands, "STATE_PATH", state):
+                commands._write_state(RunnerState(status="stopping", pid=1, command="attack"))
+                with commands.claim("attack"):
+                    assert not commands.stop_requested()
+
+    def test_a_file_deleted_by_hand_stops_the_run_that_wrote_it(self) -> None:
+        """The escape hatch for somebody whose agent died mid-run and whose only
+        other move is finding a pid in the task manager.
+
+        The `idle` written on the way out is the receipt that it really stood
+        down, and it still carries `started` — which the file cannot supply,
+        being the very thing that was deleted.
+        """
+        with tempfile.TemporaryDirectory() as folder:
+            state = Path(folder) / "state.json"
+            self.enterContext(patch.object(commands, "STATE_PATH", state))
+            with commands.claim("attack"):
+                state.unlink()
+                assert commands.stop_requested()
+            back = commands.read_state()
+            assert back is not None
+            assert (back.status, back.command) == ("idle", "attack")
+            assert back.started is not None
+
+    def test_a_missing_file_is_no_stop_to_a_process_that_never_wrote_one(self) -> None:
+        """A fresh machine has no state file, so reading its absence as a stop
+        would end every first run on it before it started.
+        """
+        with (
+            tempfile.TemporaryDirectory() as folder,
+            patch.object(commands, "STATE_PATH", Path(folder) / "state.json"),
+        ):
+            assert not commands.stop_requested()
+
+    def test_a_half_written_file_is_not_a_stop(self) -> None:
+        """Two processes share this file and `stop` is a read-modify-write, so a
+        truncated read is a moment rather than a fault. `should_stop` is polled
+        from inside a battle, where standing down on one costs the army.
+        """
+        with tempfile.TemporaryDirectory() as folder:
+            state = Path(folder) / "state.json"
+            with patch.object(commands, "STATE_PATH", state), commands.claim("attack"):
+                state.write_text('{"status": "runn', encoding="utf-8")
+                assert not commands.stop_requested()
+
+    def test_a_torn_read_at_claim_time_still_writes_a_record(self) -> None:
+        """`read_state` recovers an unreadable file as "running, and ours", which
+        is what keeps a battle from standing down over a moment. Keying the
+        reentrancy test on that instead of on this process's own record had
+        `claim` yield without writing anything: the run drove the emulator
+        unrecorded, `stop` read the last run's `idle` and said there was nothing
+        to stop, and deleting the file was not a stop either — every documented
+        way out gone at once, silently.
+        """
+        with tempfile.TemporaryDirectory() as folder:
+            state = Path(folder) / "state.json"
+            state.write_text("", encoding="utf-8")
+            self.enterContext(patch.object(commands, "STATE_PATH", state))
+            with commands.claim("attack"):
+                held = commands.read_state()
+                assert held is not None
+                assert (held.status, held.command) == ("running", "attack")
+                commands.stop()
+                assert commands.stop_requested()
+
+    def test_the_scratch_file_belongs_to_one_process(self) -> None:
+        """Two processes write this file by design: `ai_coc stop` exists to run
+        against a loop that is writing at its own claim and release. One shared
+        scratch name has them truncating each other's half-built copy, and on
+        Windows the loser's `os.replace` raises `PermissionError` out of
+        `_release` inside `claim`'s `finally` — past `run.answer`, so the run
+        ends with no `result.json`, which is the one signal telling a clean stop
+        from a killed process.
+        """
+        with tempfile.TemporaryDirectory() as folder:
+            self.enterContext(patch.object(commands, "STATE_PATH", Path(folder) / "state.json"))
+            with patch.object(commands.os, "replace"):
+                commands._write_state(RunnerState(status="idle"))
+            assert [path.name for path in Path(folder).iterdir()] == [
+                f"state.json.{os.getpid()}.tmp"
+            ]
+
+    def test_a_claim_this_process_holds_is_left_to_its_outermost_owner(self) -> None:
+        """The window runs every pass as its own `commands.*` call inside the
+        claim its automation cycle holds, so a nested release would publish
+        `idle` between passes and read, from outside, as a free emulator.
+        """
+        with tempfile.TemporaryDirectory() as folder:
+            state = Path(folder) / "state.json"
+            with patch.object(commands, "STATE_PATH", state), commands.claim("automation"):
+                with commands.claim("collect"):
+                    pass
+                held = commands.read_state()
+                assert held is not None
+                assert (held.status, held.command) == ("running", "automation")
+
+    def test_a_release_leaves_a_claim_that_is_not_its_own_alone(self) -> None:
+        """A run that outlived its own record must not wipe out the one after
+        it, which is what another process claiming in between looks like.
+        """
+        with tempfile.TemporaryDirectory() as folder:
+            state = Path(folder) / "state.json"
+            with patch.object(commands, "STATE_PATH", state):
+                with commands.claim("attack"):
+                    commands._write_state(
+                        RunnerState(status="running", pid=os.getpid() + 1, command="walls")
+                    )
+                held = commands.read_state()
+            assert held is not None
+            assert (held.status, held.command) == ("running", "walls")
 
     def test_the_barracks_wait_gives_up_the_moment_it_is_stood_down(self) -> None:
         """A minute slept through in one go reads as a stop that did nothing."""
         with tempfile.TemporaryDirectory() as folder:
-            flag = Path(folder) / "stop"
-            flag.write_text("", encoding="utf-8")
-            with patch.object(commands, "STOP_FLAG", flag):
+            state = Path(folder) / "state.json"
+            with patch.object(commands, "STATE_PATH", state), commands.claim("attack"):
+                commands.stop()
                 started = time.monotonic()
                 assert commands._rest(commands.IDLE_REST)
             assert time.monotonic() - started < commands.IDLE_REST / 2
 
-    def test_a_finished_run_takes_the_flag_with_it(self) -> None:
-        """A flag still sitting there means no loop has picked it up yet, which
-        is what makes the file worth looking at to tell whether a stop landed.
-        Asked for mid-run, so the clear at the start cannot be what answers it.
+    def test_stopping_nothing_says_so_rather_than_writing_a_request(self) -> None:
+        """The other half a flag could not do: it wrote a file whether or not
+        anything was listening, so a stop that landed and one that fell on an
+        idle machine read the same.
         """
+        with (
+            tempfile.TemporaryDirectory() as folder,
+            patch.object(commands, "STATE_PATH", Path(folder) / "state.json"),
+        ):
+            assert "沒有指令在跑" in commands.stop()
+            assert not commands.stop_requested()
+
+    def test_the_wall_command_answers_the_same_file(self) -> None:
+        """One file for every long loop rather than a mechanism each."""
         with tempfile.TemporaryDirectory() as folder:
-            flag = Path(folder) / "stop"
-
-            def asked_mid_run() -> MagicMock:
-                flag.write_text("", encoding="utf-8")
-                return MagicMock(stock_full=True)
-
-            with (
-                patch.object(commands, "STOP_FLAG", flag),
-                patch.object(commands, "_controller"),
-                patch.object(commands, "current_world", return_value="day"),
-                patch.object(commands, "_planner", return_value=None),
-                patch.object(commands.ConfigStore, "load", return_value=AppConfig()),
-                patch.object(commands, "FrameTicker"),
-                patch.object(commands, "AttackRunner") as runner,
-            ):
-                runner.return_value.run.side_effect = asked_mid_run
-                commands.attack(AttackOptions(rounds=1))
-            assert not flag.exists()
-
-    def test_the_wall_command_answers_the_same_flag(self) -> None:
-        """One flag for every long loop rather than a mechanism each."""
-        with tempfile.TemporaryDirectory() as folder:
-            flag = Path(folder) / "stop"
+            state = Path(folder) / "state.json"
             report = MagicMock(message="")
             report.paid.return_value = 0
             with (
-                patch.object(commands, "STOP_FLAG", flag),
+                patch.object(commands, "STATE_PATH", state),
                 patch.object(commands, "_controller"),
                 patch.object(commands, "current_world", return_value="day"),
                 patch.object(commands, "WallRunner") as runner,
@@ -3129,35 +3242,35 @@ class StopFlagTests(unittest.TestCase):
         command's own fact, so the prefix goes on here rather than in the loop.
         """
         with tempfile.TemporaryDirectory() as folder:
-            flag = Path(folder) / "stop"
+            state = Path(folder) / "state.json"
 
             def asked_mid_run() -> MagicMock:
-                flag.write_text("", encoding="utf-8")
+                commands.stop()
                 report = MagicMock(message="升級了 3 面城牆")
                 report.paid.return_value = 0
                 return report
 
             with (
-                patch.object(commands, "STOP_FLAG", flag),
+                patch.object(commands, "STATE_PATH", state),
                 patch.object(commands, "_controller"),
                 patch.object(commands, "current_world", return_value="day"),
                 patch.object(commands, "WallRunner") as runner,
+                commands.claim("walls"),
             ):
                 runner.return_value.run.side_effect = asked_mid_run
                 result = commands.walls(WallOptions())
             assert result.message == "已停止，升級了 3 面城牆"
-            assert not flag.exists()
 
-    def test_a_headless_run_hands_the_flag_to_the_runner(self) -> None:
+    def test_a_headless_run_hands_the_state_to_the_runner(self) -> None:
         """The interface was there all along; only the window ever passed it.
 
         Which is the whole bug: `should_stop` defaults to never stopping, so a
         run started from a terminal read as one that simply could not be stopped.
         """
         with tempfile.TemporaryDirectory() as folder:
-            flag = Path(folder) / "stop"
+            state = Path(folder) / "state.json"
             with (
-                patch.object(commands, "STOP_FLAG", flag),
+                patch.object(commands, "STATE_PATH", state),
                 patch.object(commands, "_controller"),
                 patch.object(commands, "current_world", return_value="day"),
                 patch.object(commands, "_planner", return_value=None),
@@ -3866,7 +3979,7 @@ class HomeTests(unittest.TestCase):
         Retried once per attempt this method would spend `HOME_TRIES` whole
         crossings on a boat nobody can reach — about twenty minutes, against
         fifty seconds for the worst path here before it, and none of it
-        interruptible since `_home` reads no stop flag.
+        interruptible since `_home` never reads the state file.
         """
         assert self._sailing(self._runner(), ["night"], "night").call_count == 1
 

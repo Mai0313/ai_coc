@@ -277,7 +277,7 @@ class GameRunner(ScreenRunner):
             # loop would spend every one of its `HOME_TRIES` on another whole
             # crossing — twenty minutes against about fifty seconds for the
             # worst path here before this, and none of it interruptible, since
-            # `_home` reads no stop flag.
+            # `_home` never reads the state file.
             if current_world(png) == "night":
                 logger.warning("The game came up on the builder base; sailing home first")
                 if cross(self.adb, self.display, "day") == "day":
