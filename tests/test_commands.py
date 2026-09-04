@@ -330,7 +330,8 @@ class AttackSeriesStopTests(unittest.TestCase):
         built, rounds = self._series(MagicMock(return_value=True))
         assert rounds == []
         built.return_value.run.assert_not_called()
-        # Nothing wrote the flag; the round loop ended on the caller's condition.
+        # Nobody asked the state file to stop; the round loop ended on the
+        # caller's own condition.
         assert not commands.stop_requested()
 
     def test_the_condition_is_handed_to_the_runner_that_plays_the_battle(self) -> None:

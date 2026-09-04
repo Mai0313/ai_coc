@@ -3933,7 +3933,7 @@ class HomeTests(unittest.TestCase):
         Retried once per attempt this method would spend `HOME_TRIES` whole
         crossings on a boat nobody can reach — about twenty minutes, against
         fifty seconds for the worst path here before it, and none of it
-        interruptible since `_home` reads no stop flag.
+        interruptible since `_home` never reads the state file.
         """
         assert self._sailing(self._runner(), ["night"], "night").call_count == 1
 
