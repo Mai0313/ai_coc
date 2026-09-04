@@ -27,7 +27,7 @@ uv run ai_coc read <png>
 ## 從活著的遊戲抓畫面
 
 ```bash
-uv run ai_coc capture <dir> --count 30 --gap 1.5
+uv run ai_coc capture --count 30 --gap 1.5 --label <這次在測什麼>
 ```
 
 要量一個判讀器還讀不懂的新畫面時用這個. 一次一張抓不到只存在於某個瞬間的畫面, 所以它是連拍.

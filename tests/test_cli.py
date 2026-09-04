@@ -18,7 +18,7 @@ from unittest.mock import patch
 
 import pytest
 
-from ai_coc import commands
+from ai_coc import cli, models, commands
 from ai_coc.cli import RECORDABLE, _spot, _answer, _parser, _run_command
 from ai_coc.models import (
     RunLog,
@@ -52,7 +52,7 @@ MINIMAL: dict[str, list[str]] = {
     "donate": [],
     "probe": [],
     "bounds": [],
-    "capture": ["shots"],
+    "capture": [],
     "read": ["shot.png"],
 }
 
@@ -238,11 +238,33 @@ class DispatchTests(unittest.TestCase):
         ):
             _run_command(_args("stop"), self.run)
             stopped = (self.run.directory / "result.json").read_text(encoding="utf-8")
-            _run_command(_args("capture", "shots", "--count", "2", "--gap", "0.5"), self.run)
-            saved = (self.run.directory / "result.json").read_text(encoding="utf-8")
+            _run_command(_args("capture", "--count", "2", "--gap", "0.5"), self.recorded)
+            saved = (self.recorded.directory / "result.json").read_text(encoding="utf-8")
         assert stopped == "已要求停止"
         assert saved == "a.png\nb.png"
-        captured.assert_called_once_with(Path("shots"), 2, 0.5)
+        # This run's own frame directory rather than a path off the command
+        # line, which is what let a caller put frames anywhere it liked.
+        captured.assert_called_once_with(self.recorded.frames, 2, 0.5)
+
+    def test_a_capture_run_records_without_being_asked(self) -> None:
+        """Saving frames is the whole of what the command does, so it carries no
+        `--record` and there is nothing for a caller to forget. Reached through
+        `main`, because that is where the two are joined and where a `--label`
+        also has to arrive.
+        """
+        with (
+            tempfile.TemporaryDirectory() as folder,
+            patch.object(models, "LOG_DIR", Path(folder)),
+            patch.object(sys, "argv", ["ai_coc", "capture", "--label", "baseline"]),
+            patch.object(commands, "capture", return_value=[]) as captured,
+            patch.object(cli, "configure_logging"),
+            patch("sys.stdout", new_callable=io.StringIO),
+        ):
+            assert cli.main() == 0
+        frames = captured.call_args.args[0]
+        assert frames is not None
+        assert frames.name == "frames"
+        assert frames.parent.name.endswith("-capture-baseline")
 
     def test_read_puts_the_named_file_through_every_parser(self) -> None:
         """The one command that runs its real code here: it needs no emulator."""

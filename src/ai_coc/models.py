@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import re
 import math
+import shutil
 from typing import Any, Literal
 from pathlib import Path
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from pydantic import Field, BaseModel, RootModel, ConfigDict, AliasChoices, field_validator
 
@@ -1159,6 +1161,55 @@ class RunnerState(BaseModel):
     log: Path | None = None
 
 
+# How long a run's recorded frames are kept. **The log beside them is never
+# culled**, and the size split is what makes that easy to draw: measured across
+# 438 runs on this machine, 11 456 PNGs came to 27.2 GB while every `run.log`,
+# `result.json` and `plans.jsonl` together came to 4.6 MB. The directory names
+# are the history and `grep -r` over the logs is how a pattern is found across
+# runs, so those cost nothing worth reclaiming; a week-old frame nobody has
+# opened is the whole of it.
+FRAME_RETENTION_DAYS = 7
+
+
+def _labelled(label: str) -> str:
+    """A label reduced to what can safely be one part of a directory name.
+
+    Anything that is not a letter, a digit, an underscore or a hyphen becomes a
+    hyphen. A path separator getting through would put the run somewhere nobody
+    goes looking, which is the failure the label exists to end rather than to
+    reproduce in a new place.
+    """
+    return re.sub(r"[^\w-]+", "-", label, flags=re.UNICODE).strip("-")[:40]
+
+
+def _cull_old_frames(keep: timedelta = timedelta(days=FRAME_RETENTION_DAYS)) -> None:
+    """Delete the `frames/` of runs older than the window, and nothing else.
+
+    Judged on the frames' own mtime rather than the run directory's, because
+    `result.json` is written after the last frame and would keep a directory
+    looking fresh for as long as anything else in it was still being touched.
+
+    **Housekeeping never fails the run it rides on.** Whatever cannot be read or
+    removed is left where it is and met again next time; a frame this could not
+    delete is worth less than the run it would have taken down with it.
+    """
+    cutoff = datetime.now(UTC) - keep
+    try:
+        runs = list(LOG_DIR.iterdir())
+    except OSError:
+        return
+    for run in runs:
+        frames = run / "frames"
+        try:
+            stale = (
+                frames.is_dir() and datetime.fromtimestamp(frames.stat().st_mtime, UTC) < cutoff
+            )
+        except OSError:
+            continue
+        if stale:
+            shutil.rmtree(frames, ignore_errors=True)
+
+
 class RunLog(BaseModel):
     """One execution's own directory: its log, its answer, and what it saw.
 
@@ -1187,15 +1238,23 @@ class RunLog(BaseModel):
     recording: bool = False
 
     @classmethod
-    def open(cls, command: str, recording: bool = False) -> RunLog:
+    def open(cls, command: str, recording: bool = False, label: str = "") -> RunLog:
         """Make the directory a run about to start will write into.
 
         Named `<when>-<what>` so that a plain listing of the log directory reads
         as a history, which is what makes a run from three days ago findable
-        without opening any of them.
+        without opening any of them. `label` adds a third part, because a
+        session capturing evidence wants to find that one again afterwards and
+        the alternative was inventing a path: measured on this machine, 20 of
+        438 run directories had been hand-named, four of them ending in `.png`
+        because somebody read a directory argument as a filename.
+
+        Culling old frames rides here rather than in a command of its own, since
+        nobody would remember to run one.
         """
+        _cull_old_frames()
         stamp = datetime.now().astimezone().strftime("%Y-%m-%d-%H%M%S")
-        base = LOG_DIR / f"{stamp}-{command}"
+        base = LOG_DIR / f"{stamp}-{command}{f'-{slug}' if (slug := _labelled(label)) else ''}"
         # Two runs of the same command inside one second would otherwise land in
         # one directory, one `result.json` overwriting the other and both logs
         # interleaved. A shell loop over `ai_coc read` is how that really
