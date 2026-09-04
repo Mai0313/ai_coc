@@ -10,12 +10,15 @@ is the whole reason the attack loop grew a `frame_dir` at the same time.
 
 from __future__ import annotations
 
+import os
 import math
 import time
 from typing import TYPE_CHECKING, Self, Literal
 import logging
 from pathlib import Path
+from datetime import datetime
 import threading
+from contextlib import contextmanager
 
 from pydantic import BaseModel, PrivateAttr
 
@@ -34,6 +37,7 @@ from ai_coc.models import (
     WallReport,
     BuildReport,
     HeroOptions,
+    RunnerState,
     WallOptions,
     WorldReport,
     AttackReport,
@@ -52,7 +56,7 @@ from ai_coc.models import (
     UpgradeOptions,
     StorageCapacity,
 )
-from ai_coc.constants import STOP_FLAG, COC_PACKAGE
+from ai_coc.constants import STATE_PATH, COC_PACKAGE
 from ai_coc.adapters.ai import GeminiClient
 
 # A runtime import rather than a TYPE_CHECKING one: `FrameTicker` declares it as
@@ -101,7 +105,7 @@ from .ui.runner import restart_game
 from .ui.upkeep import UpkeepRunner
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Iterator
 
 logger = logging.getLogger(__name__)
 
@@ -298,51 +302,181 @@ CART_EVERY = 3
 STOP_POLL = 2.0
 
 
-def stop() -> str:
-    """Ask whichever long loop is running to stand down, without waiting for it.
+# Whether this process has claimed the emulator at any point. It is what lets a
+# **missing** file mean "somebody deleted it, stand down" without also meaning
+# that to a process which never wrote one: a fresh machine has no state file at
+# all, and without this every first run on it would read its own absence as a
+# stop and end at zero rounds. Nothing outside this module needs it, and it is
+# a bare bool rather than a model because the worker threads read it.
+_claimed = False
 
-    Nothing here touches the game or looks for a process: this writes the flag
+
+def read_state() -> RunnerState | None:
+    """What the state file says; None when there is no file at all.
+
+    **Nothing in here raises, which is the whole point.** `should_stop` is
+    called from inside a battle — `AttackRunner` polls it between opponents and
+    `GameRunner._opened` after every tap — and the only thing catching anything
+    up there is a `KeyboardInterrupt` handler, so an exception raised on a read
+    would end the series with the army still on the field. The old flag was a
+    `Path.exists()` and could not fail; this one parses JSON off a file two
+    processes may be writing, so every way that can go wrong lands on "carry
+    on" instead.
+
+    **A missing file and an unreadable one are not the same answer.** Missing
+    is a stop, because deleting it by hand is the escape hatch for somebody
+    whose agent has died mid-run and whose only other move is the task manager.
+    Unreadable is not: a write interrupted halfway leaves exactly that, and so
+    does a read landing between another process's truncate and its write, so
+    standing a farming run down over one is worse than ignoring it — the next
+    claim rewrites the file anyway.
+    """
+    try:
+        text = STATE_PATH.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return None
+    except OSError:
+        # Windows holds a file open against another process's write, so this is
+        # a moment rather than a fault. Answering "no stop" costs one more poll.
+        logger.warning("%s could not be read; carrying on", STATE_PATH)
+        return RunnerState(status="running", pid=os.getpid())
+    try:
+        return RunnerState.model_validate_json(text)
+    except ValueError:
+        logger.warning("%s will not parse; carrying on as if nobody had asked", STATE_PATH)
+        return RunnerState(status="running", pid=os.getpid())
+
+
+def _write_state(state: RunnerState) -> None:
+    """Replace the file rather than rewrite it, so no reader sees it half-built.
+
+    `write_text` truncates before it writes, and something reads this every few
+    seconds from another process; landing in that window returns zero bytes,
+    which is a parse failure on a file that was never actually broken. The
+    rename is atomic on Windows, so a reader gets the old state or the new one.
+    """
+    scratch = STATE_PATH.with_suffix(".json.tmp")
+    scratch.write_text(state.model_dump_json(indent=2), encoding="utf-8")
+    os.replace(scratch, STATE_PATH)
+
+
+@contextmanager
+def claim(command: str, log: Path | None = None) -> Iterator[None]:
+    """Say that this process is driving the emulator, and hand it back after.
+
+    Every command that touches the emulator takes one, short ones included: a
+    `collect` that runs for eight seconds still holds the screen for those
+    eight, and a second session that reads the file wants the truth rather than
+    only being told about the long runs. `read` takes none, since it parses a
+    PNG and never opens ADB.
+
+    **A claim this process already holds is left alone, and the outermost one
+    owns the release.** The window runs every pass as its own `commands.*` call
+    while the automation cycle carries on around them, so a release at the end
+    of each pass would publish `idle` between passes and read, from outside, as
+    an emulator nobody is using.
+
+    **It never refuses.** A second run started while one is going overwrites
+    this record and both then drive the same display, which is the thing the
+    file exists to let a session avoid rather than a thing it prevents: the
+    check belongs to whoever is about to start, and a lock that could refuse
+    would need to tell a live run from a killed one, which is a pid liveness
+    call this deliberately does not make.
+    """
+    global _claimed  # noqa: PLW0603 - process-wide by nature; see `_claimed`
+    held = read_state()
+    if held is not None and held.pid == os.getpid() and held.status != "idle":
+        yield
+        return
+    _write_state(
+        RunnerState(
+            status="running",
+            pid=os.getpid(),
+            command=command,
+            started=datetime.now().astimezone(),
+            log=log,
+        )
+    )
+    _claimed = True
+    try:
+        yield
+    finally:
+        _release(command, log)
+
+
+def _release(command: str, log: Path | None) -> None:
+    """Write down that this run has finished, unless somebody else has claimed.
+
+    The pid check is what keeps a run that outlived its own record from wiping
+    out the one after it. A file deleted by hand is written back, because that
+    deletion was a stop request and the `idle` landing here is its receipt: the
+    file coming back is how whoever deleted it sees that the loop really stood
+    down rather than ignored them.
+
+    `stopping` becomes `idle` like any other ending. The request has been served
+    by the time this runs, and leaving it standing would have the next reader
+    believe a run is still winding down hours after it finished.
+    """
+    global _claimed  # noqa: PLW0603 - process-wide by nature; see `_claimed`
+    held = read_state()
+    if held is not None and held.pid not in (0, os.getpid()):
+        return
+    _write_state(
+        RunnerState(
+            status="idle",
+            pid=os.getpid(),
+            command=command,
+            started=held.started if held else None,
+            ended=datetime.now().astimezone(),
+            log=log,
+        )
+    )
+    _claimed = False
+
+
+def stop() -> str:
+    """Ask whichever command is driving the emulator to finish and stand down.
+
+    Nothing here touches the game or looks for a process: this changes one field
     and ends. What actually stops is the loop, when it next looks, and where
     that is belongs to each of them — `attack` between rounds and between
     opponents, `walls` between batches and during the opening scan. Never
     mid-battle or mid-batch, because either one abandoned halfway leaves the
     game on a screen the next run does not know how to get home from.
+
+    Saying so when there is nothing to stop is the half the old flag could not
+    do: it wrote a file whether or not anything was listening, so a stop that
+    landed and one that fell on an idle machine read identically.
     """
-    STOP_FLAG.write_text("", encoding="utf-8")
-    return f"已要求停止,旗標寫在 {STOP_FLAG}。正在跑的迴圈會做完手上這一件事才收工。"
+    state = read_state()
+    if state is None or state.status == "idle":
+        return "現在沒有指令在跑,沒有東西要停。"
+    _write_state(state.model_copy(update={"status": "stopping"}))
+    return (
+        f"已要求 {state.command}(pid {state.pid})收工,狀態寫在 {STATE_PATH}。"
+        "它會做完手上這一件事才停。"
+    )
 
 
 def stop_requested() -> bool:
-    """Whether somebody has asked the loop that is running now to stand down."""
-    return STOP_FLAG.exists()
+    """Whether the command driving the emulator now should stand down.
 
-
-def clear_stop() -> None:
-    """Take the flag, and call this at both ends of every loop that reads it.
-
-    At the start because a process killed outright never reaches the other end,
-    and a flag left behind that way would stand the next run down before it had
-    done anything — reported as a stop nobody asked for. At the end because a
-    request that has been served should stop looking like one still waiting: a
-    flag that is still there means somebody asked and no loop has taken it yet,
-    which is what makes the file worth looking at to tell whether a stop landed.
-
-    **Public because the window has a start button and that is one of those
-    ends.** It reads the flag now, and it decides whether to stand down *before*
-    it calls anything in here — so a flag left behind by a terminal's stop, or
-    by a killed run, would have it standing itself down on every press with
-    nothing ever reaching the `clear_stop` inside `attack` or `walls`. Measured:
-    the file sat there after a farming session ended, which is the ordinary
-    case rather than a corner, since nothing takes the flag once the loops stop.
+    A file that is not there is only a stop **to a process that wrote one**.
+    Otherwise a machine that has never run this — or a caller reaching `attack`
+    without going through a claim, which every test does — reads its own
+    absence as a stop and ends before it starts.
     """
-    STOP_FLAG.unlink(missing_ok=True)
+    state = read_state()
+    if state is None:
+        return _claimed
+    return state.status == "stopping"
 
 
 def _rest(seconds: float, should_stop: Callable[[], bool] = stop_requested) -> bool:
     """Wait out the barracks, answering whether the wait was cut short.
 
-    A stop that lands here is said out loud, because the flag is cleared on
-    the way out and this line is then the only trace it leaves in `run.log`.
+    A stop that lands here is said out loud, because the state file goes back to
+    `idle` on the way out and this line is then its only trace in `run.log`.
     """
     try:
         for _ in range(int(seconds / STOP_POLL)):
@@ -401,7 +535,7 @@ def _settle_game(
     restarted = False
     for _ in range(polls):
         # Checked inside the wait rather than only around it: this is the
-        # longest stretch of a run where nothing else looks at the flag, and a
+        # longest stretch of a run where nothing else reads the state, and a
         # stop that takes two minutes to show reads as one that did nothing.
         if should_stop():
             logger.info("Stop requested while the game was coming up")
@@ -666,17 +800,16 @@ def attack(
     loop play needs: a tactic is judged over a run of battles rather than one,
     and the interesting ones are the battles nobody was sitting there to start.
     Either `ai_coc stop` or a Ctrl-C ends the series rather than the process, so
-    the rounds already played are still reported. The flag is the one that
+    the rounds already played are still reported. The state file is the one that
     reaches a run put in the background, which nothing can send a Ctrl-C to.
 
     **`should_stop` is what lets the window run this same function.** It has a
     stop button rather than a terminal, and the button has to reach a battle
     already under way; a run started there passes a condition that answers to
     both, so `ai_coc stop` from a terminal still ends a window's round. Nothing
-    replaces the flag — the default is it, and `clear_stop` at both ends of
-    this function is what the window never had a place to do for itself.
+    replaces the state file — the default reads it, and the `claim` around this
+    call is what marks the run as under way for anybody looking from outside.
     """
-    clear_stop()
     adb = _controller()
     _prepare_frames(options)
     plan = plans.load(options.plan_in) if options.plan_in else None
@@ -807,7 +940,6 @@ def attack(
                 logger.info("Nothing was attacked; waiting %ds for the army", IDLE_REST)
                 if _rest(IDLE_REST, should_stop):
                     break
-    clear_stop()
     return series
 
 
@@ -991,12 +1123,11 @@ def walls(options: WallOptions, should_stop: Callable[[], bool] = stop_requested
 
     `ai_coc stop` ends this one too, between batches. A run with `--rounds 0`
     against a village full of walls is the other loop here that goes on long
-    enough to be worth interrupting, and it answers the same flag rather than a
+    enough to be worth interrupting, and it answers the same file rather than a
     second mechanism of its own. `should_stop` is what the window passes so its
-    button reaches the scan as well; see `attack` for why the flag stays the
-    default rather than being replaced.
+    button reaches the scan as well; see `attack` for why the state file stays
+    the default rather than being replaced.
     """
-    clear_stop()
     adb, display = _session(options.frame_dir)
     runner = WallRunner(
         adb=adb,
@@ -1022,7 +1153,6 @@ def walls(options: WallOptions, should_stop: Callable[[], bool] = stop_requested
         report.message = (
             f"已停止，{report.message}" if report.upgrades else "已停止，還沒買成任何一批"
         )
-    clear_stop()
     logger.info(
         "Walls: %s (金幣 %d／聖水 %d)", report.message, report.paid("gold"), report.paid("elixir")
     )

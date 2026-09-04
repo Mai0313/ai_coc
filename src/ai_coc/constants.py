@@ -36,14 +36,27 @@ ACCOUNT_JSON_DIR.mkdir(parents=True, exist_ok=True)
 LOG_DIR = data_root() / "logs"
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 
-# Stopping a headless run is a file rather than a signal. The window has a stop
-# button, but a run started from a terminal has nothing: whatever put it in the
-# background cannot send it a Ctrl-C, so killing the process is the only other
-# way to end it — and a killed process never reaches the `KeyboardInterrupt`
-# handler, which leaves the army on the field and the game on a screen the next
-# run cannot get home from. `ai_coc stop` writes this file, the loop reads it
-# between rounds, and the process ends the way it would have anyway.
-STOP_FLAG = data_root() / "stop"
+# Which command is driving the emulator, and whether it has been asked to stand
+# down. Stopping a headless run has to be a file rather than a signal: the
+# window has a stop button, but a run started from a terminal has nothing, since
+# whatever put it in the background cannot send it a Ctrl-C — and a killed
+# process never reaches the `KeyboardInterrupt` handler, which leaves the army
+# on the field and the game on a screen the next run cannot get home from.
+#
+# **One file answering both questions, because they are one question asked at
+# two moments.** It replaced a `stop` flag that existed only while somebody was
+# asking, so nothing on this machine recorded that a run was under way: a second
+# session had no way to tell a farming run from an idle emulator and was told in
+# the chat instead, which is a step the person driving has to remember on every
+# session and which nothing catches when they forget.
+#
+# **Never deleted, so `idle` is a record rather than an absence.** A file that
+# existed only while a run did could not separate "nothing has run" from "a run
+# just finished", and the second is what a session wanting the screen actually
+# asks. Deleting it by hand still stands the loop down, which is the one move
+# left to somebody whose agent has died mid-run and who would otherwise be in
+# the task manager looking for a pid.
+STATE_PATH = data_root() / "state.json"
 
 # The community keeps this data_id → name table current with each game update.
 # Without it every imported entity shows as UNKNOWN.

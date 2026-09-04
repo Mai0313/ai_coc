@@ -1122,6 +1122,43 @@ class ViewReport(BaseModel):
     message: str = ""
 
 
+RunnerStatus = Literal["running", "stopping", "idle"]
+
+
+class RunnerState(BaseModel):
+    """Who is driving the emulator, kept between runs rather than during one.
+
+    There is one emulator, so two commands at once interleave taps on the same
+    display. Nothing wrote that down before this: a session that wanted the
+    screen had to be told in the chat whether a farming run was up, and a run
+    killed outright left the same trace as one that never started.
+
+    **`idle` is the answer to a different question than a missing file.** A run
+    that has finished leaves this behind holding what it was and where its log
+    went, which is what a session asking "can I have the screen" is really
+    asking. Deleting the file by hand is the escape hatch for whoever no longer
+    has an agent to ask nicely with, and reads as a stop for that reason.
+
+    `pid` is what separates a run still going from one that was killed, and what
+    keeps a release from writing over a claim that is not its own. Nothing here
+    checks whether that process is alive: the next claim overwrites the record
+    anyway, so a stale one only ever misleads a reader, and one line of
+    `Get-Process` settles it for them without a platform call in here.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    status: RunnerStatus = "idle"
+    pid: int = 0
+    command: str = ""
+    started: datetime | None = None
+    ended: datetime | None = None
+    # Where this run's own log went, so a reader is one step from the whole of
+    # it. The alternative was copying the progress in here and keeping two
+    # records of one run in step, which is the arrangement that goes stale.
+    log: Path | None = None
+
+
 class RunLog(BaseModel):
     """One execution's own directory: its log, its answer, and what it saw.
 

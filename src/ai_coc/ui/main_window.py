@@ -3,6 +3,7 @@ from __future__ import annotations
 import time
 from typing import TYPE_CHECKING, Any, get_args
 import logging
+from contextlib import ExitStack
 
 from PyQt5.QtGui import QPixmap, QDesktopServices
 from PyQt5.QtCore import Qt, QUrl, QTimer, QSettings, QThreadPool
@@ -128,9 +129,17 @@ class MainWindow(QMainWindow):
         # bool rather than the timer's own state: stopping has to reach the loop
         # that is playing, not just the next scheduled cycle.
         self.automation_active = False
-        # Whether `_stopping` has seen the file flag. Latched rather than read
-        # again later, because `commands.*` clears the flag on its way out.
+        # Whether `_stopping` has seen a stop in the state file. Latched rather
+        # than read again later, because the claim around each pass writes
+        # `idle` back on the way out, so the `stopping` a terminal asked for is
+        # gone by the time the pass returns.
         self.stop_seen = False
+        # The claim the automation holds for its whole run, kept as a field
+        # because it spans two methods: `start_automation` takes it and
+        # `stop_automation` hands it back. Each pass's own claim nests inside
+        # this one and does nothing, which is what keeps the state file on
+        # `running` through the gaps between passes instead of flickering.
+        self.holding = ExitStack()
         self.automation_timer = QTimer(self)
         self.automation_timer.timeout.connect(self.automation_cycle)
         self.automation_step = 0
@@ -474,16 +483,21 @@ class MainWindow(QMainWindow):
     def start_automation(self) -> None:
         self.save_automation()
         self.automation_active = True
-        # Both halves of the stop, cleared for the one reason `clear_stop`
-        # gives: whichever of them a stopped run left behind would stand this
-        # one down before it had done anything, reported as a stop nobody asked
-        # for. **The file needs clearing here and not only inside `commands.*`**,
-        # because `_stood_down` runs before any job does — measured, a flag left
-        # by `ai_coc stop` at the end of a farming session made every press of
-        # this button stand down on the spot with nothing ever reaching the
-        # `clear_stop` inside `attack`.
+        # Both halves of the stop, taken back for the reason the old `clear_stop`
+        # gave: whichever of them a stopped run left behind would stand this one
+        # down before it had done anything, reported as a stop nobody asked for.
+        # **The claim belongs here and not only inside each pass**, because
+        # `_stood_down` runs before any job does — measured on the flag this
+        # replaced, one left by `ai_coc stop` at the end of a farming session
+        # made every press of this button stand down on the spot, with nothing
+        # ever reaching the pass that would have cleared it.
+        #
+        # Held for the whole run rather than per pass, so the state file reads
+        # `running` across the three seconds between one pass and the next: each
+        # pass's own claim nests inside this one and does nothing.
         self.stop_seen = False
-        commands.clear_stop()
+        self.holding.close()
+        self.holding.enter_context(commands.claim("automation", self.session.directory))
         self.automation_timer.start(self.cycle_minutes.value() * 60000)
         self._paint_run_button()
         self.automation_log.appendPlainText("自動化已啟動，第一輪開始。")
@@ -492,6 +506,12 @@ class MainWindow(QMainWindow):
     def stop_automation(self) -> None:
         self.automation_active = False
         self.automation_timer.stop()
+        # A pass already in flight keeps the claim until it really ends, since
+        # this stops the *next* one from starting rather than the battle under
+        # way — `_run_job`'s `finished` hands it back at that point. With
+        # nothing in flight there is no later moment, so it goes back here.
+        if not self.job_running:
+            self.holding.close()
         self._paint_run_button()
         self.automation_log.appendPlainText(
             "已停止：不再開始新的一輪。已經開打的這一場會打完再回營。"
@@ -502,18 +522,19 @@ class MainWindow(QMainWindow):
 
         Both sources, because a run started here answers to two: this window's
         own button, and `ai_coc stop`, which is the only thing that reaches a
-        run from outside the process. Reading the flag here is new and only safe
-        because these passes go through `commands.*`, which clears it at both
-        ends — a window reading it with nowhere to clear it would stand itself
-        down the moment it started.
+        run from outside the process. Reading the state file here is only safe
+        because `start_automation` claims before any pass runs — a window
+        reading it with nothing of its own written down would take a `stopping`
+        left by an earlier terminal run, or the file's own absence on a fresh
+        machine, and stand itself down the moment it started.
 
-        **That clearing is also why the flag is latched rather than read again
-        later.** `commands.attack` and `commands.walls` take the flag on their
-        way out, so by the time the pass ends there is nothing left to see —
-        and without the latch a terminal's stop would end one pass and the cycle
-        would start the next one `NEXT_CYCLE_DELAY` later, which is a stop that
-        did not stop anything. This runs on a worker thread, so it only records;
-        `_stood_down` is where the UI thread acts on it.
+        **That claim is also why this is latched rather than read again later.**
+        Handing the emulator back writes `idle`, so the `stopping` a terminal
+        asked for is gone by the time the pass ends — and without the latch that
+        stop would end one pass while the cycle started the next one
+        `NEXT_CYCLE_DELAY` later, which is a stop that did not stop anything.
+        This runs on a worker thread, so it only records; `_stood_down` is where
+        the UI thread acts on it.
         """
         if commands.stop_requested():
             self.stop_seen = True
@@ -603,9 +624,27 @@ class MainWindow(QMainWindow):
             configure_logging(self.session)
             if not self._stood_down():
                 self._queue_next_cycle()
+            # The automation is over and this was its last pass, so the claim it
+            # held across the whole cycle goes back now rather than when the
+            # button was pressed — that moment left a battle still playing.
+            # Closing an already-closed stack is a no-op, and a one-off job
+            # never opened this one at all: its claim lives and dies in
+            # `driving` above.
+            if not self.automation_active:
+                self.holding.close()
+
+        def driving() -> BaseModel:
+            # Around the job rather than around `_run_job`, because everything
+            # above this runs on the UI thread while the job itself is the part
+            # that reaches the emulator. A pass of the automation cycle finds
+            # the claim `start_automation` already took and leaves it alone, so
+            # the state file reads `running` across the three seconds between
+            # one pass and the next instead of flickering to `idle` in each gap.
+            with commands.claim(what, run.directory):
+                return task(run)
 
         self.automation_log.appendPlainText(label)
-        self.run_async(label, lambda: task(run), answered, finished)
+        self.run_async(label, driving, answered, finished)
 
     def run_collect(self) -> None:
         self._run_job("正在收取採集器…", "collect", lambda run: commands.collect(run.frames))

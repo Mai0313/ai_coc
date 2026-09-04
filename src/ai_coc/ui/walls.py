@@ -154,7 +154,7 @@ class WallRunner(GameRunner):
         `WALL_PITCH` for the run where every sample it took was a wall the town
         hall had capped.
 
-        The stop flag is read before any of them, because looking costs taps
+        The stop is read before any of them, because looking costs taps
         whichever one answers. `_scan` reads it inside its own loop as well,
         since that is the long one, but none of them should start on a run
         already asked to stand down.

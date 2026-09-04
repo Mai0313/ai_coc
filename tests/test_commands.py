@@ -513,6 +513,9 @@ class RunPlumbingTests(unittest.TestCase):
         with (
             patch.object(commands, "_restart_emulator", return_value=False),
             patch.object(commands.logger, "error") as alarm,
+            # `stop` only has something to ask of a run that claimed the
+            # emulator, which is every real one and no bare unit test.
+            commands.claim("attack"),
         ):
             assert commands._restarted(MagicMock(), MagicMock(), 2, 2) is None
             assert alarm.call_count == 1
@@ -524,25 +527,29 @@ class RunPlumbingTests(unittest.TestCase):
         with patch.object(commands, "STOP_POLL", 0.001):
             assert not commands._rest(0.005)
 
-    def test_stop_names_the_flag_it_wrote(self) -> None:
-        message = commands.stop()
-        assert str(commands.STOP_FLAG) in message
-        assert commands.stop_requested()
+    def test_stop_names_what_it_asked_to_stand_down(self) -> None:
+        """Which command and which pid, because the answer to "did that land"
+        used to be a file that looked the same however it got there.
+        """
+        with commands.claim("attack"):
+            message = commands.stop()
+            assert "attack" in message
+            assert str(commands.STATE_PATH) in message
+            assert commands.stop_requested()
 
-    def test_clearing_the_flag_is_public_because_the_start_button_is_an_end(self) -> None:
+    def test_the_claim_is_public_because_the_start_button_needs_it(self) -> None:
         """The window decides whether to stand down before it calls anything here.
 
-        So a flag left behind by `ai_coc stop` — which is the ordinary state
-        after a farming session, since nothing takes it once the loops stop —
-        has to be cleared by `start_automation` itself. Reached through the
-        public name rather than the widget, which no test can build.
+        So a `stopping` left by `ai_coc stop` — the ordinary state after a
+        farming session, since nothing takes it once the loops stop — has to be
+        overwritten by `start_automation` itself. Reached through the public
+        name rather than the widget, which no test can build.
         """
-        commands.stop()
-        commands.clear_stop()
-        assert not commands.stop_requested()
-        # Idempotent, because the button can be pressed with no flag there.
-        commands.clear_stop()
-        assert not commands.stop_requested()
+        with commands.claim("attack"):
+            commands.stop()
+            assert commands.stop_requested()
+        with commands.claim("automation"):
+            assert not commands.stop_requested()
 
 
 class ReadCommandTests(unittest.TestCase):

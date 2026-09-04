@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Any, get_args
 import logging
 from pathlib import Path
 import argparse
+from contextlib import nullcontext
 
 from PyQt5.QtWidgets import QApplication
 
@@ -28,6 +29,7 @@ from ai_coc.logging_setup import configure_logging
 from ai_coc.ui.main_window import MainWindow
 
 if TYPE_CHECKING:
+    from contextlib import AbstractContextManager
     from collections.abc import Callable
 
     from pydantic import BaseModel
@@ -54,6 +56,19 @@ RECORDABLE = (
     "probe",
     "bounds",
 )
+
+# The two sub-commands that hold no claim on the emulator, listed the way round
+# that fails safely: `read` parses a PNG off the disk and `stop` changes one
+# field of the state file, so neither ever opens ADB. Everything else claims,
+# short ones included — a `collect` holds the display for the eight seconds it
+# takes, and a session reading the state file to find out whether the screen is
+# free wants that as much as it wants to know about a farming run.
+#
+# Naming the exceptions rather than the claimers is what keeps a command added
+# later honest: forgotten here it claims, which costs two writes it did not
+# need, where a positive list forgotten would have it drive the emulator while
+# the file says nobody is.
+WITHOUT_CLAIM = ("read", "stop")
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -262,11 +277,24 @@ def _run_command(arguments: argparse.Namespace, run: RunLog) -> int:
     well, so the answer and the log explaining it are found together instead of
     that depending on whoever started the run having redirected stdout.
     """
-    answer = _answer(arguments, run)
+    with _claim_for(arguments.command, run):
+        answer = _answer(arguments, run)
+    # Outside the claim: writing the answer down and printing it touch no
+    # emulator, and holding the screen across them would say this run is still
+    # driving when it has finished.
     result = answer if isinstance(answer, str) else answer.model_dump_json(indent=2)
     run.answer(result)
     sys.stdout.write(f"{result}\n")
     return 0
+
+
+def _claim_for(command: str, run: RunLog) -> AbstractContextManager[None]:
+    """Hold the emulator for this command, or nothing at all for the two that
+    never touch it.
+    """
+    if command in WITHOUT_CLAIM:
+        return nullcontext()
+    return commands.claim(command, run.directory)
 
 
 def _spot(text: str) -> tuple[int, int]:

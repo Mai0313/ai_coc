@@ -105,7 +105,7 @@ SEARCH_CANCEL = (798, 786)
 # somebody else to be looking too rather than for a server to answer. Measured
 # here, one search took five and a half minutes; the player says that is rare.
 # So a search that drags is cancelled and started again rather than sat out —
-# a fresh one gets a fresh pass over whoever is queueing now — and the flag is
+# a fresh one gets a fresh pass over whoever is queueing now — and the state is
 # read throughout, because a stop that takes minutes to show reads as one that
 # did nothing.
 SEARCH_PATIENCE = 150
@@ -1009,7 +1009,7 @@ class AttackRunner(ScreenRunner):
                 # a couple of seconds before the village paints, so the next
                 # frame here is that screen: a fresh load, not a loaded game
                 # dropped back, and it gets a fresh wait. The attempts bound
-                # the round, not the flag.
+                # the round, not the stop.
                 waited = False
                 continue
             if loading_screen(home):
