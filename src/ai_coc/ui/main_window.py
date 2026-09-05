@@ -26,7 +26,6 @@ from PyQt5.QtWidgets import (
     QVBoxLayout,
     QTableWidget,
     QTextBrowser,
-    QPlainTextEdit,
     QTableWidgetItem,
 )
 
@@ -158,7 +157,7 @@ class MainWindow(QMainWindow):
             QGroupBox::title { subcontrol-origin: margin; left: 12px; padding: 0 6px; color: #70a4ff; }
             QPushButton { background: #2b6de0; color: white; border: 0; border-radius: 6px; padding: 8px 14px; }
             QPushButton:hover { background: #4385f2; } QPushButton:pressed { background: #1d54b6; }
-            QLineEdit, QPlainTextEdit, QTextBrowser, QComboBox, QTableWidget { background: #0e141f; color: #e8edf7; border: 1px solid #34435d; border-radius: 6px; padding: 6px; }
+            QLineEdit, QTextBrowser, QComboBox, QTableWidget { background: #0e141f; color: #e8edf7; border: 1px solid #34435d; border-radius: 6px; padding: 6px; }
             QHeaderView::section { background: #243149; color: #dbe6fa; padding: 6px; border: 0; }
             QStatusBar { background: #0d121b; color: #91a3c0; }
         """)
@@ -253,10 +252,6 @@ class MainWindow(QMainWindow):
             button.clicked.connect(fn)
             toolbar.addWidget(button)
         layout.addLayout(toolbar)
-        self.emulator_details = QPlainTextEdit()
-        self.emulator_details.setReadOnly(True)
-        self.emulator_details.setMaximumHeight(150)
-        layout.addWidget(self.emulator_details)
         return group
 
     def _control_tab(self) -> QWidget:
@@ -280,12 +275,7 @@ class MainWindow(QMainWindow):
         self.frame_label.setMinimumSize(520, 300)
         self.frame_label.setStyleSheet("background:#16181d;color:#bbb;border:1px solid #444")
         right_layout.addWidget(self.frame_label)
-        run_log = QGroupBox("自動化進度")
-        run_log_layout = QVBoxLayout(run_log)
-        self.automation_log = QPlainTextEdit()
-        self.automation_log.setReadOnly(True)
-        run_log_layout.addWidget(self.automation_log)
-        right_layout.addWidget(run_log, 1)
+        right_layout.addStretch(1)
         splitter.addWidget(left)
         splitter.addWidget(right)
         splitter.setSizes([520, 720])
@@ -428,7 +418,7 @@ class MainWindow(QMainWindow):
             self.settings.setValue(key, widget.isChecked())
         self.settings.setValue("cycle_minutes", self.cycle_minutes.value())
         self._save_config(thresholds=self._thresholds(), stop_at=self.stop_at.value())
-        self.automation_log.appendPlainText("自動化設定已保存。")
+        logger.info("Automation settings saved")
 
     def _save_config(self, **changes: object) -> None:
         """Change part of the shared config and write the whole of it back.
@@ -478,7 +468,7 @@ class MainWindow(QMainWindow):
         self.holding.enter_context(commands.claim("automation", self.session.directory))
         self.automation_timer.start(self.cycle_minutes.value() * 60000)
         self._paint_run_button()
-        self.automation_log.appendPlainText("自動化已啟動，第一輪開始。")
+        logger.info("自動化已啟動,第一輪開始")
         QTimer.singleShot(300, self.automation_cycle)
 
     def stop_automation(self) -> None:
@@ -491,9 +481,7 @@ class MainWindow(QMainWindow):
         if not self.job_running:
             self.holding.close()
         self._paint_run_button()
-        self.automation_log.appendPlainText(
-            "已停止：不再開始新的一輪。已經開打的這一場會打完再回營。"
-        )
+        logger.info("已停止:不再開始新的一輪,已經開打的這一場會打完再回營")
 
     def _stopping(self) -> bool:
         """Whether the pass that is running should stand down.
@@ -526,7 +514,7 @@ class MainWindow(QMainWindow):
         """
         if not self._stopping() or not self.automation_active:
             return False
-        self.automation_log.appendPlainText("收到外部的停止要求（ai_coc stop）。")
+        logger.info("收到外部的停止要求(ai_coc stop)")
         self.stop_automation()
         self.stop_seen = False
         return True
@@ -550,7 +538,7 @@ class MainWindow(QMainWindow):
             if enabled
         ]
         if not jobs:
-            self.automation_log.appendPlainText("巡檢完成：尚未啟用任何自主行為。")
+            logger.info("巡檢完成:尚未啟用任何自主行為")
             return
         job = jobs[self.automation_step % len(jobs)]
         self.automation_step += 1
@@ -590,7 +578,7 @@ class MainWindow(QMainWindow):
             else:
                 # The message alone, because `label` is already the line above
                 # it: together they read 正在收取採集器… 收了 8 個採集器.
-                self.automation_log.appendPlainText(report.message)
+                logger.info("%s", report.message)
 
         def finished() -> None:
             self.job_running = False
@@ -621,7 +609,7 @@ class MainWindow(QMainWindow):
             with commands.claim(what, run.directory):
                 return task(run)
 
-        self.automation_log.appendPlainText(label)
+        logger.info("%s", label)
         self.run_async(label, driving, answered, finished)
 
     def run_collect(self) -> None:
@@ -667,7 +655,7 @@ class MainWindow(QMainWindow):
     def run_attack(self) -> None:
         def done(series: AttackSeries) -> None:
             if not series.root:
-                self.automation_log.appendPlainText("這一輪沒有打成任何一場。")
+                logger.info("這一輪沒有打成任何一場")
                 return
             report = series.root[-1]
             # The storage is full, so the next pass would only read it again and
@@ -676,12 +664,10 @@ class MainWindow(QMainWindow):
             # is scouted, and this is the only line saying why the automation
             # switched itself off.
             if report.stock_full:
-                self.automation_log.appendPlainText(report.message)
+                logger.info("%s", report.message)
                 self.stop_automation()
                 return
-            self.automation_log.appendPlainText(
-                f"進攻巡檢結束（跳過 {report.skipped} 個對手）：{report.message}"
-            )
+            logger.info("進攻巡檢結束(跳過 %d 個對手):%s", report.skipped, report.message)
 
         # One round per pass, because the cycle is what decides what comes next:
         # `commands.attack` would otherwise keep playing and the collectors,
@@ -802,15 +788,14 @@ class MainWindow(QMainWindow):
         self.run_async("Detecting MuMu instances…", task, done)
 
     def _select_instance(self, index: int) -> None:
+        """Which emulator the buttons and the preview act on.
+
+        It used to also fill a panel of thirteen fields — window handles, pid,
+        dpi, the account tag — under the dropdown. What the dropdown itself
+        shows is the part anyone reads, and the rest is in the run log.
+        """
         if 0 <= index < len(self.instances):
             self.active = self.instances[index]
-            a = self.active
-            self.emulator_details.setPlainText(
-                f"emulator_id: {a.emulator_id}\ninstance_id: {a.index}\nname: {a.name}\nstate: {a.state}\n"
-                f"android: {a.android_version} / ready={a.android_started}\nadb_serial: {a.adb_serial}\n"
-                f"pid: {a.pid}\nmain_hwnd: 0x{a.main_hwnd:X}\nrender_hwnd: 0x{a.render_hwnd:X}\n"
-                f"resolution: {a.resolution}\ndpi: {a.dpi}\nCoC running: {a.coc_running}\naccount_tag: {self.current_account_tag or 'unbound'}"
-            )
 
     def _require(self) -> tuple[MuMuAdapter, EmulatorInstance]:
         if not self.mumu or not self.active:
@@ -946,8 +931,6 @@ class MainWindow(QMainWindow):
                 self.account_table.setItem(
                     index, column, QTableWidgetItem("—" if value is None else str(value))
                 )
-        if export.tag:
-            self._select_instance(self.instance_combo.currentIndex())
 
     def gemini_client(self) -> GeminiClient:
         return GeminiClient(
