@@ -14,7 +14,8 @@ the row along the top; the builder base does not, and structurally cannot: the
 builder base is real-time matchmaking against another live player, and a shield
 that stopped you being attacked there would contradict the mode's own design.
 That is a stronger guarantee than anything else on the screen offers, and it is
-why the count below is safe to lean on where the obvious candidates are not.
+why the row's own reach is safe to lean on where the obvious candidates are not:
+the shield's plate is the one that pushes the row out to its widest.
 
 **Two candidates were measured and thrown away, both for the same reason** — they
 pass today on this account and would break silently on another one, or on this
@@ -41,12 +42,13 @@ the 933 end is the shield's own, which the builder base cannot have at all.
 gem shower — the game's own reward animation — drifts across the top row and
 covers a plate for a few seconds, which took the home village's count from three
 to two and answered "builder base" for it. Swept over 561 recorded frames on
-this machine, 35 read all three badges, 5 read `[516, 719]` with the shield
-covered, and two more read `[933]` and `[516, 933]` with a different one
-covered: eight home village frames, six of which the count called the wrong
-village and the loop then sailed away from. Reading the span leaves all eight
+this machine, 35 read all three badges and 8 read fewer: 5 as `[516, 719]` with
+the shield covered, and one each as `[933]`, `[516, 933]` and `[516]`. Six of
+those eight the count called the wrong village outright, and the loop sailed
+away from the village it was on. Reading the span leaves seven of the eight
 correct, because an occluded badge shortens the row without moving the ends that
-are still visible.
+are still visible; the eighth is the lone `[516]`, which stays None for the
+reason below.
 
 A lone badge is not enough on its own: the loading screen puts one 20 px patch
 of a character's blue tunic at x 509, seven pixels from where the home village's
@@ -82,8 +84,9 @@ logger = logging.getLogger(__name__)
 #
 # The row is laid out from the middle of the screen outwards and holds a
 # different number of plates in each village, so every badge sits at a different
-# x in the two. Nothing here reads a fixed position: the band is swept and what
-# is found is counted.
+# x in the two. Nothing here reads a fixed position: the band is swept and
+# whatever is found is reported with its place, which is what `current_world`
+# reads the village off.
 BADGE_BAND = (12, 32)
 BADGE_LEFT, BADGE_RIGHT = 380, 1300
 BADGE_BLUE = 170

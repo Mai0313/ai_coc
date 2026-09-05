@@ -72,9 +72,18 @@ LOOT_INK_BRIGHTNESS = 190
 #
 # It is a **retry rather than a replacement** so an ordinary frame reads exactly
 # as it did: the relative floor only ever runs on a row the fixed one could not
-# read. And it cannot make a screen with no opponent read as one, because that is
-# not what the floor decides — the searching screen has 255s in this same box and
-# still answers None, on the glyph match.
+# read.
+#
+# **What keeps a screen with no opponent from reading as one is the glyph match,
+# not this floor**, and it is worth being exact about that because the floor
+# offers no margin at all here. 正在搜尋對手 is itself a dim screen — measured on
+# the committed frame, its loot box peaks at 102 to 105, so the retry runs on
+# every poll of it with a floor of 86 to 89, *lower* than the 109 a genuinely
+# dimmed panel gets. It still answers None, on every recorded frame and after
+# darkening each scout fixture down to a twentieth of its brightness, because
+# whatever ink comes through does not resolve as digits within
+# `LOOT_DIGIT_TOLERANCE`. Widening that tolerance would be the change that makes
+# this unsafe, not lowering the floor further.
 DIM_INK_RATIO = 0.85
 
 # The game paints these buttons in one saturated orange that nothing behind them
@@ -546,8 +555,9 @@ def _dimmed_floor(crop: Image.Image) -> int | None:
     a scout panel's gold as 1 and another's elixir as 2, and a loop believing
     those skips an opponent holding half a million.
     """
-    data = crop.tobytes()
-    brightest = max(max(data[i], data[i + 1], data[i + 2]) for i in range(0, len(data), 3))
+    # Every byte of an RGB crop, which is the brightest channel of the brightest
+    # pixel — the same answer a per-pixel scan gives, an order of magnitude faster.
+    brightest = max(crop.tobytes())
     if brightest >= LOOT_INK_BRIGHTNESS:
         return None
     return int(brightest * DIM_INK_RATIO)

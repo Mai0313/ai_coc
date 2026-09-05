@@ -401,6 +401,9 @@ class WorldTests(unittest.TestCase):
         floating over the rest.
         """
         assert current_world((FRAMES / "world_day_occluded.png").read_bytes()) == "day"
+        # The same shower heavier: only the shield's own badge is left, and it is
+        # the one place the builder base's row never reaches.
+        assert current_world((FRAMES / "world_day_shield_only.png").read_bytes()) == "day"
 
     def test_one_badge_is_only_enough_when_it_is_the_shields(self) -> None:
         """The loading screen puts a character's blue tunic 7 px from where the
