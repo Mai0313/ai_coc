@@ -5,9 +5,27 @@ other way out. MuMu mirrors that clipboard onto Windows, so this is where the
 payload arrives.
 
 Reading it on the Android side was measured and rejected: `cmd clipboard get`
-has no shell implementation on this emulator (Android 15), leaving only the
-binder service, which would have to be called by transaction id — a number that
-moves between Android releases and fails silently when it does.
+answers `No shell command implementation.` on this emulator (Android 15) and
+`am get-clipboard` is gone, leaving only the binder service, which would have to
+be called by transaction id — a number that moves between Android releases and
+fails silently when it does.
+
+**Worth revisiting if that command comes back, but not by trying it first and
+falling back to this.** Its refusal is a plain string rather than a non-zero
+exit, so "did it work" would be a comparison against text nobody has seen
+succeed. Three things have to be established before that path is more reliable
+than this one, and every one of them fails by returning a payload that parses:
+
+- It has to answer while Clash of Clans is in the foreground and this process is
+  not, since Android 10 stopped background reads and an empty answer here means
+  "nothing was copied".
+- It has to carry all of a real export — 7 KB and growing — without `adb shell`
+  truncating it, because a village JSON cut in half still parses and still has a
+  tag on it.
+- Its failure has to be distinguishable from an empty clipboard.
+
+Until then the mirror below is the measured path, and the cost of it is one
+Windows dependency this project already has.
 
 Plain functions rather than a model, like `mapping.py`: there is no state to
 carry, and the ctypes structures a model could not hold anyway.
