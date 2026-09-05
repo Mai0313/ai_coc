@@ -108,10 +108,12 @@ from ai_coc.parsers.hero import SCROLL_LEFT, SCROLL_RIGHT, can_scroll, hero_card
 from ai_coc.parsers.home import builder_jobs, free_builders, collect_bubbles
 from ai_coc.logging_setup import _attach_run, configure_logging
 from ai_coc.parsers.field import view_shift
+from ai_coc.parsers.frame import open_frame
 from ai_coc.parsers.scout import (
     PANEL_LEFT,
     ROW_BOUNDS,
     PANEL_RIGHT,
+    LOOT_INK_BRIGHTNESS,
     card_count,
     live_cards,
     read_scout,
@@ -122,6 +124,7 @@ from ai_coc.parsers.scout import (
     card_drained,
     freeze_cards,
     skip_offered,
+    _dimmed_floor,
     army_strength,
     counted_cards,
     loading_screen,
@@ -387,6 +390,25 @@ class WorldTests(unittest.TestCase):
     def test_the_builder_base_carries_two(self) -> None:
         """It has no 護盾 plate, and a real-time mode structurally cannot grow one."""
         assert current_world((FRAMES / "world_night.png").read_bytes()) == "night"
+
+    def test_a_plate_covered_by_an_animation_does_not_change_the_village(self) -> None:
+        """A gem shower drifts over the top row and hides one plate for a few seconds.
+
+        Counting badges read that home village as two plates and answered
+        "builder base", and the attack loop then sailed away from the village it
+        was standing on — three times in one recorded run. The row is centred,
+        so the plate that is still visible at x 516 places it whatever is
+        floating over the rest.
+        """
+        assert current_world((FRAMES / "world_day_occluded.png").read_bytes()) == "day"
+
+    def test_one_badge_is_only_enough_when_it_is_the_shields(self) -> None:
+        """The loading screen puts a character's blue tunic 7 px from where the
+        home village's leftmost badge sits, so a lone badge on the left says
+        nothing. The shield's own place is different: the builder base's row
+        never reaches it, so anything there is the home village.
+        """
+        assert current_world((FRAMES / "loading_screen_badge_noise.png").read_bytes()) is None
 
     def test_the_plates_are_found_where_the_camera_left_them(self) -> None:
         """The row is laid out from the middle, so both villages move it as they please.
@@ -1353,6 +1375,40 @@ class ScoutTests(unittest.TestCase):
 
     def test_the_search_transition_reads_as_no_opponent(self) -> None:
         assert read_scout((FRAMES / "searching.png").read_bytes()) is None
+
+    def test_a_panel_the_game_dimmed_behind_a_popup_still_reads(self) -> None:
+        """The event's 選擇一項獎勵 cards dim the whole screen while they wait.
+
+        Measured on this frame: the digits peak at 128 where they read 255 a few
+        seconds later, so the fixed ink floor of 190 left nothing standing and
+        the panel read as no opponent — for the whole battle, since the cards
+        stay up until somebody answers them. That is the round the loop reports
+        as 整場都讀不到戰利品面板, unable to say whether the army landed.
+        """
+        view = read_scout((FRAMES / "battle_dimmed_by_popup.png").read_bytes())
+        assert view is not None
+        assert (view.loot.gold, view.loot.elixir, view.loot.dark) == (289806, 363829, 2437)
+
+    def test_the_dim_retry_stays_out_of_the_way_of_an_ordinary_frame(self) -> None:
+        """It runs only on a row that never reached the fixed floor.
+
+        Scaling the floor on every row instead lowers it slightly on ordinary
+        frames too — a row peaking at 220 lands at 187 rather than 190 — and
+        that is enough village speckle to turn an honest failure into a short
+        number. Swept over every frame on this machine, that read one scout
+        panel's gold as 1 and another's elixir as 2, which a loop believes and
+        skips an opponent holding half a million for.
+        """
+        for name, dimmed in (("battle_dimmed_by_popup.png", True), ("scout_grass.png", False)):
+            image = open_frame((FRAMES / name).read_bytes())
+            floors = [
+                _dimmed_floor(image.crop((PANEL_LEFT, top, PANEL_RIGHT, bottom)))
+                for top, bottom in ROW_BOUNDS
+            ]
+            if dimmed:
+                assert all(floor is not None and floor < LOOT_INK_BRIGHTNESS for floor in floors)
+            else:
+                assert floors == [None, None, None], name
 
     def test_the_attack_menu_is_recognised_before_the_run_commits(self) -> None:
         assert attack_menu_open((FRAMES / "attack_menu.png").read_bytes())

@@ -30,14 +30,33 @@ one later:
   digits at all — measured, 0 of 237 home village frames — so there is nothing
   to count, and a night world that ever gained dark elixir would break it anyway.
 
-What is counted is the little blue `i` badge the game floats over each plate.
-Three of them is the home village, two is the builder base. Measured: 233 real
-home village frames all read 3 and 11 builder base frames all read 2, while
-4360 frames of everything else — battles, dialogs, the matchmaker, loading —
-read 0. It is also **a better village test than `read_stock`**, which is the
-one it replaces: two of those home frames had the camera at a map corner with
-the dark row unreadable, so `read_stock` called them "not a village" while this
-read them correctly.
+What is read is the little blue `i` badge the game floats over each plate — but
+**how far the row reaches, not how many badges are in it.** The row is centred,
+so a third plate pushes both ends outwards: measured over every frame on this
+machine, the home village's badges sit at x 516, 719 and 933 and the builder
+base's at 628-644 and 830-846. One visible badge therefore places the row, and
+the 933 end is the shield's own, which the builder base cannot have at all.
+
+**Counting them was wrong, and it was wrong in the direction that costs.** A
+gem shower — the game's own reward animation — drifts across the top row and
+covers a plate for a few seconds, which took the home village's count from three
+to two and answered "builder base" for it. Swept over 561 recorded frames on
+this machine, 35 read all three badges, 5 read `[516, 719]` with the shield
+covered, and two more read `[933]` and `[516, 933]` with a different one
+covered: eight home village frames, six of which the count called the wrong
+village and the loop then sailed away from. Reading the span leaves all eight
+correct, because an occluded badge shortens the row without moving the ends that
+are still visible.
+
+A lone badge is not enough on its own: the loading screen puts one 20 px patch
+of a character's blue tunic at x 509, seven pixels from where the home village's
+leftmost really sits. So a single badge answers None unless it is the shield's,
+which nothing else on any recorded frame reaches.
+
+It is also **a better village test than `read_stock`**, which is the one it
+replaces: two home frames had the camera at a map corner with the dark row
+unreadable, so `read_stock` called them "not a village" while this reads them
+correctly.
 
 Nothing here reads the boat. The boat is the only way to cross between the two,
 so it has to be *tapped*, but a boat is a sprite and the game dresses it up for
@@ -77,9 +96,17 @@ BADGE_COVERAGE = 0.7
 BADGE_GAP = 14
 BADGE_WIDTH = (20, 40)
 
-# Three plates on the home village (boost, builders, shield) against two on the
-# builder base (boost, builders). Anything else is not a village at all.
-BADGES_PER_WORLD: dict[int, World] = {3: "day", 2: "night"}
+# Where the row starts tells the two apart, because it is centred and the home
+# village has one plate more. Measured: the home village's leftmost badge sits at
+# 516 on every frame here and the builder base's at 628 to 644, so the line goes
+# between them with 60 px of room on each side — far more than the 16 px the
+# builder base's own two readings differ by.
+ROW_LEFT_SPLIT = 576
+# The shield's own plate, and the one feature that needs no comparison: the
+# builder base is real-time matchmaking against a live player, so it has no
+# shield and its row never reaches this far. Measured, its rightmost badge tops
+# out at 846.
+SHIELD_BADGE_LEFT = 900
 
 
 def info_badges(png: bytes) -> list[tuple[int, int]]:
@@ -114,11 +141,18 @@ def current_world(png: bytes) -> World | None:
     **None is a third answer rather than a failure**, and callers have to keep it
     apart from "the home village": a loading screen, a battle, a dialog and the
     matchmaker all land here, and none of them is evidence about which village is
-    underneath. Measured, all 4360 of those read no badges at all, so None here
-    really does mean "not a village" rather than "a village I could not place".
+    underneath. Measured, all 515 of those on this machine read no badges at all,
+    so None really does mean "not a village" rather than "a village I could not
+    place".
     """
     badges = info_badges(png)
-    world = BADGES_PER_WORLD.get(len(badges))
-    if world is None:
-        logger.debug("No village on screen; %d plate badge(s) in the top row", len(badges))
-    return world
+    if not badges:
+        logger.debug("No village on screen; no plate badges in the top row")
+        return None
+    centres = [(left + right) // 2 for left, right in badges]
+    if centres[-1] >= SHIELD_BADGE_LEFT:
+        return "day"
+    if len(centres) < 2:
+        logger.debug("One badge at x=%d is not enough to place the row", centres[0])
+        return None
+    return "day" if centres[0] < ROW_LEFT_SPLIT else "night"

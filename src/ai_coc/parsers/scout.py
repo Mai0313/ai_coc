@@ -56,6 +56,26 @@ LOOT_DIGIT_TOLERANCE = 35
 # the glyphs came out too short to measure, the row read as nothing, and the
 # whole opponent was judged on dark=0.
 LOOT_INK_BRIGHTNESS = 190
+# **The game dims the whole screen behind a popup**, and the loot panel goes with
+# it. Measured on a battle the event's 選擇一項獎勵 cards appeared over: the
+# digits peaked at 128 where they read 255 moments later, so a fixed floor of 190
+# left zero ink pixels and the panel read as no opponent at all — for the whole
+# battle, because the cards stay up until somebody answers them. That is the
+# round `_wait_out_battle` then reports as 整場都讀不到戰利品面板.
+#
+# A lower fixed floor is not the answer: at 110 the *undimmed* village behind the
+# panel comes through too, since its own background sits at 107 to 163. What is
+# stable across both is the gap between the digits and what they are drawn over,
+# so the retry scales its floor to the brightest thing in the row — 128 dimmed,
+# 255 not — and asks for 85% of it. Dimmed that puts the line at 109, above the
+# 102 background; undimmed it lands at 217, above the 163.
+#
+# It is a **retry rather than a replacement** so an ordinary frame reads exactly
+# as it did: the relative floor only ever runs on a row the fixed one could not
+# read. And it cannot make a screen with no opponent read as one, because that is
+# not what the floor decides — the searching screen has 255s in this same box and
+# still answers None, on the glyph match.
+DIM_INK_RATIO = 0.85
 
 # The game paints these buttons in one saturated orange that nothing behind them
 # comes close to, so a box around either doubles as a check on which screen is
@@ -501,13 +521,36 @@ def _read_loot_row(image: Image.Image, box: tuple[int, int, int, int]) -> int | 
     in ten came back as 104 758 — which a 500k threshold skips outright. The row
     fails instead, and the caller reads the next frame.
     """
-    glyphs = list(row_glyphs(ink_mask(image.crop(box), LOOT_INK_BRIGHTNESS)))
-    while glyphs and glyphs[-1][1] > LOOT_DIGIT_TOLERANCE:
-        glyphs.pop()
-    if any(distance > LOOT_DIGIT_TOLERANCE for _, distance in glyphs):
+    crop = image.crop(box)
+    for floor in (LOOT_INK_BRIGHTNESS, _dimmed_floor(crop)):
+        if floor is None:
+            break
+        glyphs = list(row_glyphs(ink_mask(crop, floor)))
+        while glyphs and glyphs[-1][1] > LOOT_DIGIT_TOLERANCE:
+            glyphs.pop()
+        if any(distance > LOOT_DIGIT_TOLERANCE for _, distance in glyphs):
+            continue
+        if digits := "".join(digit for digit, _ in glyphs):
+            return int(digits)
+    return None
+
+
+def _dimmed_floor(crop: Image.Image) -> int | None:
+    """An ink floor scaled to this row, or None when the row is not dimmed at all.
+
+    **None for anything that reaches the fixed floor**, and that guard is the
+    whole of what keeps this safe. Scaling it on every row instead lowers the
+    floor slightly on ordinary frames too — a row peaking at 220 lands at 187
+    rather than 190 — which is enough village speckle to turn a row that had
+    honestly failed into a short number. Swept over every frame here, that read
+    a scout panel's gold as 1 and another's elixir as 2, and a loop believing
+    those skips an opponent holding half a million.
+    """
+    data = crop.tobytes()
+    brightest = max(max(data[i], data[i + 1], data[i + 2]) for i in range(0, len(data), 3))
+    if brightest >= LOOT_INK_BRIGHTNESS:
         return None
-    digits = "".join(digit for digit, _ in glyphs)
-    return int(digits) if digits else None
+    return int(brightest * DIM_INK_RATIO)
 
 
 def _orange_ratio(image: Image.Image, box: tuple[int, int, int, int]) -> float:
