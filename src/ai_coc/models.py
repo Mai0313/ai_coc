@@ -331,27 +331,6 @@ class VillageExport(BaseModel):
     message: str = ""
 
 
-class AccountRow(BaseModel):
-    """An account entity joined with the ID registry and any known level data."""
-
-    model_config = TOLERANT
-
-    tag: str
-    section: str
-    data_id: int
-    level: int | None = None
-    count: int | None = None
-    raw_json: str = ""
-    name: str | None = None
-    world: str | None = None
-    category: str | None = None
-    next_level: int | None = None
-    upgrade_cost: int | None = None
-    resource_type: str | None = None
-    upgrade_seconds: int | None = None
-    requirement: str | None = None
-
-
 class RegistryEntry(BaseModel):
     model_config = TOLERANT
 

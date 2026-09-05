@@ -8,11 +8,6 @@ APP_NAME = "AI CoC"
 ORGANISATION = "Mai0313"
 
 VERSION_LABEL = f"v{__version__}"
-# Bumped to 2 when the AI 助手 tab went and took the `knowledge` and `tasks`
-# tables with it. There is no migration tooling here, so what handles a database
-# that already has them is a `DROP TABLE IF EXISTS` in `Database._initialize`.
-SCHEMA_VERSION = "2"
-MASTER_DB_VERSION = "seed-2026-08-22"
 COC_PACKAGE = "com.supercell.clashofclans"
 DEFAULT_GEMINI_MODEL = "gemini-3.5-flash"
 # The cheap tier, for the one question the parsers provably cannot answer: which
@@ -30,7 +25,6 @@ def data_root() -> Path:
     return root
 
 
-DB_PATH = data_root() / "controller.sqlite3"
 ACCOUNT_JSON_DIR = data_root() / "account_json"
 ACCOUNT_JSON_DIR.mkdir(parents=True, exist_ok=True)
 LOG_DIR = data_root() / "logs"

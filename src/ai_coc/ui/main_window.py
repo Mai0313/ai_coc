@@ -52,18 +52,13 @@ from ai_coc.constants import (
     COC_PACKAGE,
     ORGANISATION,
     VERSION_LABEL,
-    SCHEMA_VERSION,
-    MASTER_DB_VERSION,
-    ENTITY_MAPPING_URL,
     DEFAULT_GEMINI_MODEL,
 )
 from ai_coc.adapters.ai import GeminiClient
 from ai_coc.adapters.mumu import MuMuAdapter
 from ai_coc.logging_setup import configure_logging
 from ai_coc.adapters.config import ConfigStore
-from ai_coc.adapters.mapping import fetch_entity_mapping
 from ai_coc.adapters.secrets import SecretStore
-from ai_coc.adapters.database import Database
 
 from .workers import Worker, LogBridge, UiLogHandler
 
@@ -101,7 +96,6 @@ class MainWindow(QMainWindow):
         self.setWindowTitle(f"{APP_NAME} — {VERSION_LABEL}")
         self.resize(1260, 820)
         self.pool = QThreadPool.globalInstance()
-        self.db = Database()
         self.secrets = SecretStore()
         self.settings = QSettings(ORGANISATION, "CoCAIController")
         self.config = ConfigStore().load()
@@ -147,7 +141,6 @@ class MainWindow(QMainWindow):
         self._attach_log_panel()
         self.statusBar().showMessage("Ready — 偵測 MuMu 以開始")
         self.refresh_instances()
-        self.refresh_entity_mapping()
         # Straight rather than through a worker: it reads one file this machine
         # already has, and the table is worth having filled before the emulator
         # has even been found.
@@ -756,10 +749,7 @@ class MainWindow(QMainWindow):
     def _about_tab(self) -> QWidget:
         page = QWidget()
         layout = QVBoxLayout(page)
-        text = QLabel(
-            f"<h1>{APP_NAME}</h1><p>{VERSION_LABEL}</p>"
-            f"<p>Master DB: {MASTER_DB_VERSION}<br>Schema: {SCHEMA_VERSION}</p>"
-        )
+        text = QLabel(f"<h1>{APP_NAME}</h1><p>{VERSION_LABEL}</p>")
         text.setTextFormat(Qt.RichText)
         layout.addWidget(text)
         layout.addStretch()
@@ -958,17 +948,6 @@ class MainWindow(QMainWindow):
                 )
         if export.tag:
             self._select_instance(self.instance_combo.currentIndex())
-
-    def refresh_entity_mapping(self) -> None:
-        def task() -> int:
-            entries = fetch_entity_mapping().registry_entries(ENTITY_MAPPING_URL)
-            self.db.import_registry(entries)
-            return len(entries)
-
-        def done(count: int) -> None:
-            logger.info("Entity registry now holds %d community names", count)
-
-        self.run_async("正在更新實體名稱對照表…", task, done)
 
     def gemini_client(self) -> GeminiClient:
         return GeminiClient(
