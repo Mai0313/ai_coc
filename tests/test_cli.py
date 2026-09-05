@@ -24,12 +24,14 @@ from ai_coc.models import (
     RunLog,
     ViewReport,
     HeroOptions,
+    NamedEntity,
     WallOptions,
     AttackSeries,
     AttackOptions,
     CollectReport,
     DonateOptions,
     LootOverrides,
+    VillageExport,
     UpgradeOptions,
 )
 
@@ -54,6 +56,7 @@ MINIMAL: dict[str, list[str]] = {
     "bounds": [],
     "capture": [],
     "read": ["shot.png"],
+    "export": [],
 }
 
 
@@ -245,6 +248,57 @@ class DispatchTests(unittest.TestCase):
         # This run's own frame directory rather than a path off the command
         # line, which is what let a caller put frames anywhere it liked.
         captured.assert_called_once_with(self.recorded.frames, 2, 0.5)
+
+    def test_a_table_is_only_for_the_terminal_and_the_answer_is_still_json(self) -> None:
+        """`--table` changes what a person sees, never what the run wrote down."""
+        export = VillageExport(
+            tag="#TEST",
+            exported_at="2026-09-06T00:00:00+00:00",
+            entities=[
+                NamedEntity(section="buildings", data_id=1000001, level=16, name="Town Hall")
+            ],
+            message="ok",
+        )
+        with (
+            patch.object(commands, "export", return_value=export),
+            patch.object(commands, "claim"),
+            patch("sys.stdout", new_callable=io.StringIO) as out,
+        ):
+            _run_command(_args("export", "--table"), self.run)
+        written = (self.run.directory / "result.json").read_text(encoding="utf-8")
+        assert written == export.model_dump_json(indent=2)
+        # The table, not the JSON: rich draws the row rather than the field names.
+        assert "Town Hall" in out.getvalue()
+        assert '"data_id"' not in out.getvalue()
+
+    def test_a_table_with_no_rows_still_says_why(self) -> None:
+        """`--last --table` on a machine that has never run this is the line both
+        skills open with, and the failure's only explanation is the message.
+        """
+        blank = VillageExport(tag="", exported_at="", message="還沒有匯出過任何村莊資訊")
+        with (
+            patch.object(commands, "export", return_value=blank),
+            patch.object(commands, "claim"),
+            patch("sys.stdout", new_callable=io.StringIO) as out,
+        ):
+            _run_command(_args("export", "--table", "--last"), self.run)
+        assert "還沒有匯出過任何村莊資訊" in out.getvalue()
+
+    def test_reading_the_last_export_takes_no_claim_on_the_emulator(self) -> None:
+        """`--last` reads one file. A claim there would overwrite a farming run's
+        own record and release it as `idle` while a battle was still going on.
+        """
+        blank = VillageExport(tag="", exported_at="", message="還沒有匯出過任何村莊資訊")
+        with (
+            patch.object(commands, "export", return_value=blank) as exported,
+            patch.object(commands, "claim") as claimed,
+            patch("sys.stdout", new_callable=io.StringIO),
+        ):
+            _run_command(_args("export", "--last"), self.run)
+            claimed.assert_not_called()
+            _run_command(_args("export"), self.run)
+            claimed.assert_called_once()
+        assert [call.args[1] for call in exported.call_args_list] == [True, False]
 
     def test_a_capture_run_records_without_being_asked(self) -> None:
         """Saving frames is the whole of what the command does, so it carries no

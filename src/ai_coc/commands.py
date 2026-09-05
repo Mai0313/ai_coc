@@ -16,7 +16,7 @@ import time
 from typing import TYPE_CHECKING, Self, Literal
 import logging
 from pathlib import Path
-from datetime import datetime
+from datetime import UTC, datetime
 import threading
 from contextlib import contextmanager
 
@@ -37,6 +37,7 @@ from ai_coc.models import (
     WallReport,
     BuildReport,
     HeroOptions,
+    NamedEntity,
     RunnerState,
     WallOptions,
     WorldReport,
@@ -51,12 +52,14 @@ from ai_coc.models import (
     CollectReport,
     DisplayTarget,
     DonateOptions,
+    VillageEntity,
+    VillageExport,
     BoundarySurvey,
     LootThresholds,
     UpgradeOptions,
     StorageCapacity,
 )
-from ai_coc.constants import STATE_PATH, COC_PACKAGE
+from ai_coc.constants import STATE_PATH, COC_PACKAGE, ACCOUNT_JSON_DIR, ENTITY_MAPPING_URL
 from ai_coc.adapters.ai import GeminiClient
 
 # A runtime import rather than a TYPE_CHECKING one: `FrameTicker` declares it as
@@ -92,9 +95,13 @@ from ai_coc.parsers.scout import (
 )
 from ai_coc.parsers.world import current_world
 from ai_coc.adapters.config import ConfigStore
+from ai_coc.parsers.village import parse_village_text
+from ai_coc.adapters.mapping import fetch_entity_mapping
 from ai_coc.adapters.secrets import SecretStore
 from ai_coc.parsers.boundary import PLAYFIELD, VILLAGE_CENTRE, village_box, boundary_reach
 from ai_coc.parsers.building import wall_menu, game_dialog, upgrade_sheet, upgrade_buttons
+from ai_coc.parsers.settings import export_row, settings_open, more_settings_open
+from ai_coc.adapters.clipboard import read_clipboard, clear_clipboard, write_clipboard
 
 from .ui.clan import ClanRunner
 from .ui.hero import HeroRunner
@@ -1364,6 +1371,196 @@ def view(zoom: str = "out", times: int = 3) -> ViewReport:
     return report
 
 
+# The village export lives behind 設定 → 更多設定 → scroll → 複製, and every one
+# of these was measured on the live game at 1600x900. The copy button is not
+# here because `export_row` returns it: it is the one step that must not be
+# tapped on an unverified screen, so its coordinate travels with the reader that
+# confirms the row.
+SETTINGS_GEAR = (1540, 652)
+MORE_SETTINGS = (793, 770)
+CLOSE_SETTINGS = (1288, 99)
+SETTINGS_SCROLL = ((800, 650), (800, 250))
+SCROLL_MS = 400
+# The list is about four swipes deep; the extra ones cost nothing because the
+# loop stops as soon as the row reads, and the game clamps at the bottom.
+SCROLL_TRIES = 6
+# Each menu is a full-screen page with an animation on it.
+PAGE_SETTLE = 1.2
+# How long to wait for MuMu to mirror the Android clipboard onto Windows.
+# Measured: the payload was already there on the first read after the tap, and a
+# cleared clipboard stayed empty for ten seconds with nothing copied — so a poll
+# that runs out really is "nothing was copied" rather than "not yet".
+CLIPBOARD_POLLS = 15
+CLIPBOARD_GAP = 0.4
+
+
+def _named(entities: list[VillageEntity], names: dict[int, str]) -> list[NamedEntity]:
+    """Every entity with whatever the community mapping calls it, None where it has nothing."""
+    return [
+        NamedEntity.model_validate({**entity.model_dump(), "name": names.get(entity.data_id)})
+        for entity in entities
+    ]
+
+
+def _export_path(tag: str) -> Path:
+    """Where one account's export is kept, with the tag made safe to be a filename.
+
+    The tag comes off the clipboard, so it is outside data: anything that parses
+    as JSON can put a `/` or a trailing dot in it, which is a path escape rather
+    than a filename.
+    """
+    safe = "".join(ch for ch in tag if ch.isalnum() or ch in "-_#") or "UNKNOWN"
+    return ACCOUNT_JSON_DIR / f"{safe}.json"
+
+
+def _last_export() -> VillageExport:
+    """The most recent export on this machine, without touching the emulator.
+
+    This is what the window shows when it opens and what `--last` prints. A file
+    written before this command existed holds the game's raw payload rather than
+    an export, and says so rather than coming back as an empty village.
+    """
+    saved = sorted(ACCOUNT_JSON_DIR.glob("*.json"), key=lambda one: one.stat().st_mtime)
+    if not saved:
+        return VillageExport(tag="", exported_at="", message="還沒有匯出過任何村莊資訊")
+    try:
+        export = VillageExport.model_validate_json(saved[-1].read_text(encoding="utf-8"))
+    except ValueError:
+        return VillageExport(
+            tag="",
+            exported_at="",
+            message=f"{saved[-1].name} 不是這個指令存的格式,請重新執行一次 ai_coc export",
+        )
+    return export.model_copy(
+        update={"message": f"{export.tag} 共 {len(export.entities)} 筆,讀自 {saved[-1]}"}
+    )
+
+
+def _copy_village(adb: AdbController, display: DisplayTarget, frame_dir: Path | None) -> str:
+    """Walk the settings menus and come back with whatever the game copied.
+
+    Every step is verified before the next tap, because these are fixed
+    coordinates on full-screen pages: a menu that did not open leaves the next
+    tap somewhere nobody chose. On the scrolled page that is the 更高幀數 toggle,
+    which flips a game setting and reports nothing at all.
+
+    The clipboard is emptied before the copy is tapped, so what is read
+    afterwards is known to be new. Without that, a tap that missed reads back
+    the payload from the last run and the whole command reports success on stale
+    data. **And whatever was on it goes back afterwards**, because it belongs to
+    whoever is at the keyboard: this command is worth running while somebody is
+    in the middle of something else, and leaving 7 KB of village JSON where
+    their own copy used to be is a cost they did not agree to.
+    """
+
+    def look(label: str) -> bytes:
+        png = adb.screenshot(display)
+        if frame_dir is not None:
+            (frame_dir / f"{label}.png").write_bytes(png)
+        return png
+
+    adb.tap(*SETTINGS_GEAR, display)
+    time.sleep(PAGE_SETTLE)
+    if not settings_open(look("settings")):
+        raise RuntimeError("點了設定齒輪,但設定視窗沒有打開")
+    adb.tap(*MORE_SETTINGS, display)
+    time.sleep(PAGE_SETTLE)
+    if not more_settings_open(look("more_settings")):
+        raise RuntimeError("點了更多設定,但那一頁沒有打開")
+    for attempt in range(SCROLL_TRIES):
+        spot = export_row(look(f"scroll_{attempt}"))
+        if spot is not None:
+            break
+        adb.swipe(*SETTINGS_SCROLL, SCROLL_MS, display)
+        time.sleep(PAGE_SETTLE)
+    else:
+        raise RuntimeError("捲到底了還是找不到「以 JSON 格式匯出村莊數據」那一列")
+    held = read_clipboard()
+    clear_clipboard()
+    adb.tap(*spot, display)
+    try:
+        for _ in range(CLIPBOARD_POLLS):
+            time.sleep(CLIPBOARD_GAP)
+            if payload := read_clipboard():
+                return payload
+        look("nothing_copied")
+        raise RuntimeError(
+            "點了複製,但剪貼簿沒有東西。MuMu 的共用剪貼簿可能被關掉了,遊戲那一下也可能沒吃到"
+        )
+    finally:
+        write_clipboard(held)
+
+
+def export(frame_dir: Path | None = None, last: bool = False) -> VillageExport:
+    """Get the village out of the game and name everything in it.
+
+    The game will write the whole village out as JSON, which is the only
+    complete account of what a village holds — every building, every level,
+    every troop — and far more than the screen readers can see. It used to be
+    driven by asking Gemini to find each of the three buttons on a screenshot,
+    once per step, which is both unreliable and an AI call for something that
+    never moves. The coordinates are measured now and the reading is what
+    decides whether to tap them.
+
+    Only the named result is kept. The game's own payload is not thrown away in
+    the process: every section it carries becomes entities, every field of every
+    row survives on them, and the export time and boosts come across whole.
+    """
+    if last:
+        return _last_export()
+    # Fetched before the emulator is touched: it reaches the network, and a run
+    # that fails on it after walking the menus has spent the taps and thrown the
+    # answer away.
+    names = {
+        entry.data_id: entry.name
+        for entry in fetch_entity_mapping().registry_entries(ENTITY_MAPPING_URL)
+    }
+    adb = _controller()
+    display = _settle_game(adb, WORLD_SETTLE_POLLS)
+    if display is None:
+        return VillageExport(tag="", exported_at="", message="遊戲沒有回到村莊畫面,沒有匯出")
+    if frame_dir is not None:
+        frame_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        payload = _copy_village(adb, display, frame_dir)
+        # Parsed inside the same guard, because the clipboard is the one input
+        # here that comes from outside: anything else copied during the poll is
+        # read as the payload, and a `ValidationError` reaching the top would
+        # leave `result.json` unwritten with only the log to reconstruct from.
+        snapshot = parse_village_text(payload)
+    except RuntimeError as exc:
+        return VillageExport(tag="", exported_at="", message=str(exc))
+    except ValueError as exc:
+        logger.warning("The clipboard payload was not a village: %s", exc)
+        return VillageExport(
+            tag="",
+            exported_at="",
+            message="剪貼簿裡的不是村莊資料,複製的當下可能被別的東西蓋過去了",
+        )
+    finally:
+        # Whatever happened, the settings window is left covering the village,
+        # and every other command starts by assuming one is on screen.
+        adb.tap(*CLOSE_SETTINGS, display)
+    stamp = snapshot.raw.timestamp
+    when = (
+        datetime.fromtimestamp(stamp, UTC).isoformat() if stamp else datetime.now(UTC).isoformat()
+    )
+    named = _named(snapshot.entities, names)
+    unnamed = sum(1 for entity in named if entity.name is None)
+    path = _export_path(snapshot.tag)
+    result = VillageExport(
+        tag=snapshot.tag,
+        exported_at=when,
+        timestamp=stamp,
+        entities=named,
+        boosts=snapshot.raw.boosts,
+        message=f"{snapshot.tag} 共 {len(named)} 筆,其中 {unnamed} 筆還沒有名字,存到 {path}",
+    )
+    path.write_text(result.model_dump_json(indent=2), encoding="utf-8")
+    logger.info("Export: %s", result.message)
+    return result
+
+
 def capture(out_dir: Path, count: int = 1, gap: float = 1.5) -> list[Path]:
     """Save frames off the live game, for measuring a screen the parsers cannot read yet.
 
@@ -1416,6 +1613,9 @@ def read(png: bytes) -> FrameReading:
         skip_offered=skip_offered(png),
         idle_dialog=idle_disconnected(png),
         loading=loading_screen(png),
+        settings_menu=settings_open(png),
+        more_settings=more_settings_open(png),
+        export_row=export_row(png),
         card_groups=groups,
         counted=counted_cards(png, slots),
         freezes=freeze_cards(png, slots),

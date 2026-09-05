@@ -254,23 +254,38 @@ class VillageDocument(BaseModel):
     model_config = TOLERANT
 
     tag: str = Field(default="UNKNOWN", validation_alias=AliasChoices("tag", "player_tag"))
+    # Declared rather than left in the extras because both are read: the game's
+    # own export time is what says a payload is this export and not the last
+    # one, and the boosts are the only counters that belong to no section.
+    timestamp: int | None = None
+    boosts: dict[str, int] = Field(default_factory=dict)
 
     @field_validator("tag", mode="before")
     @classmethod
     def _clean_tag(cls, value: Any) -> str:  # noqa: ANN401 - arbitrary JSON value
         return str(value or "").strip() or "UNKNOWN"
 
+    def sections(self) -> list[str]:
+        """Every key holding a list of entities, which is what a section is."""
+        return [key for key, value in (self.model_extra or {}).items() if isinstance(value, list)]
+
     def entries(self, section: str) -> list[VillageEntity]:
-        """Rows of one section; a row without a usable data_id is skipped, not fatal."""
+        """Rows of one section; a row without a usable data_id is skipped, not fatal.
+
+        A row is usually an object, but `skins` and `house_parts` are written as
+        bare data_ids — so a plain number is one too, rather than something to
+        skip.
+        """
         values = (self.model_extra or {}).get(section)
         if not isinstance(values, list):
             return []
         entities: list[VillageEntity] = []
         for item in values:
-            if not isinstance(item, dict):
+            row = {"data": item} if isinstance(item, int) else item
+            if not isinstance(row, dict):
                 continue
             try:
-                entities.append(VillageEntity.model_validate({**item, "section": section}))
+                entities.append(VillageEntity.model_validate({**row, "section": section}))
             except ValueError:
                 continue
         return entities
@@ -280,6 +295,40 @@ class AccountSnapshot(BaseModel):
     tag: str
     raw: VillageDocument
     entities: list[VillageEntity] = Field(default_factory=list)
+
+
+class NamedEntity(VillageEntity):
+    """One entity with whatever the community mapping calls it.
+
+    None rather than the number when the mapping has no entry, so the file stays
+    honest about which names are real: measured on one real export, 65 of 226
+    have no name — 39 hero equipment, 7 house parts, 6 skins, 8 obstacles, 4
+    decorations and 1 helper, none of which the community gist covers. Writing
+    the data_id into `name` would hide which ones to revisit once the mapping
+    catches up, and the id is right there in its own field anyway.
+    """
+
+    name: str | None = None
+
+
+class VillageExport(BaseModel):
+    """What `ai_coc export` answers with, and what it writes to `account_json/`.
+
+    The game's own payload is not kept. Everything in it is here — every
+    section, every field of every row through `VillageEntity`'s tolerance, the
+    export time and the boosts — so this is the same data named rather than a
+    subset of it.
+    """
+
+    tag: str
+    # The game's own export time, which is what says a clipboard payload is this
+    # export rather than the one still sitting there from last time. ISO for
+    # reading, the raw counter for comparing.
+    exported_at: str
+    timestamp: int | None = None
+    entities: list[NamedEntity] = Field(default_factory=list)
+    boosts: dict[str, int] = Field(default_factory=dict)
+    message: str = ""
 
 
 class AccountRow(BaseModel):
@@ -1713,6 +1762,13 @@ class FrameReading(BaseModel):
     # 正在載入, which every other reader answers None on; this is what says a
     # run that reported no village was in fact waiting on the server.
     loading: bool = False
+    # The two settings pages the village export sits behind, and the row itself.
+    # `export_row` is the coordinate `export` taps, so a run that reported it
+    # could not find the row can be asked the same question about the frame it
+    # kept — which is the whole reason a reader belongs in this command.
+    settings_menu: bool = False
+    more_settings: bool = False
+    export_row: tuple[int, int] | None = None
     card_groups: list[list[int]] = Field(default_factory=list)
     counted: list[int] = Field(default_factory=list)
     freezes: list[int] = Field(default_factory=list)
@@ -1768,12 +1824,3 @@ class GeminiRequest(BaseModel):
 
     def body(self) -> dict[str, Any]:
         return self.model_dump(by_alias=True, exclude_none=True)
-
-
-class LocatedTarget(BaseModel):
-    """Where Gemini says a requested control sits, as screen percentages."""
-
-    found: bool
-    x_pct: float = 50.0
-    y_pct: float = 50.0
-    reason: str = ""

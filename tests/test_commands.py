@@ -8,9 +8,11 @@ it builds. The runners themselves are tested in `test_runners.py`.
 
 from __future__ import annotations
 
+import json
 import math
 import time
 from pathlib import Path
+from datetime import UTC, datetime
 import tempfile
 import unittest
 from unittest.mock import MagicMock, patch
@@ -37,6 +39,8 @@ from ai_coc.models import (
     CollectReport,
     DisplayTarget,
     DonateOptions,
+    EntityMapping,
+    VillageExport,
     LootThresholds,
     UpgradeOptions,
     StorageCapacity,
@@ -739,6 +743,152 @@ class SurveyRunnerTests(unittest.TestCase):
         ):
             assert commands.probe().rays == []
             assert commands.bounds().edges == []
+
+
+PAYLOAD = json.dumps({
+    "tag": "#TEST",
+    "timestamp": 1788624472,
+    "buildings": [{"data": 1000001, "lvl": 16}],
+    "equipment": [{"data": 90000000, "lvl": 3}],
+    "boosts": {"clocktower_cooldown": 77842},
+})
+
+
+class ExportTests(unittest.TestCase):
+    """Walking the settings menus for the game's own village export.
+
+    Every tap is a fixed coordinate, so what is tested here is mostly refusal:
+    a step that cannot confirm its screen must not go on to the next one.
+    """
+
+    def setUp(self) -> None:
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        self.saved = Path(folder.name)
+        self.adb = _adb()
+        mapping = EntityMapping.model_validate({"th_buildings": {1000001: "Town Hall"}})
+        stack = [
+            patch.object(commands, "_controller", return_value=self.adb),
+            patch.object(commands, "_settle_game", return_value=DISPLAY),
+            patch.object(commands, "fetch_entity_mapping", return_value=mapping),
+            patch.object(commands, "ACCOUNT_JSON_DIR", self.saved),
+            patch.object(commands, "PAGE_SETTLE", 0),
+            patch.object(commands, "CLIPBOARD_GAP", 0),
+        ]
+        for one in stack:
+            one.start()
+            self.addCleanup(one.stop)
+
+    def _export(self, **screens: object) -> tuple[object, MagicMock]:
+        # The clipboard is read once for what was already on it and then once
+        # per poll, so a `clip` given as a list is those reads in order.
+        clip = screens.get("clip", PAYLOAD)
+        reads = clip if isinstance(clip, list) else [clip] * (commands.CLIPBOARD_POLLS + 2)
+        with (
+            patch.object(commands, "settings_open", return_value=screens.get("settings", True)),
+            patch.object(commands, "more_settings_open", return_value=screens.get("more", True)),
+            patch.object(commands, "export_row", return_value=screens.get("row", (1131, 560))),
+            patch.object(commands, "read_clipboard", side_effect=reads),
+            patch.object(commands, "write_clipboard") as self.wrote,
+            patch.object(commands, "clear_clipboard") as cleared,
+        ):
+            return commands.export(), cleared
+
+    def test_the_village_is_named_and_written_down(self) -> None:
+        report, cleared = self._export()
+        assert report.tag == "#TEST"
+        # The game's own export time, not this machine's clock.
+        assert report.exported_at == datetime.fromtimestamp(1788624472, UTC).isoformat()
+        assert report.timestamp == 1788624472
+        assert report.boosts == {"clocktower_cooldown": 77842}
+        names = {entity.data_id: entity.name for entity in report.entities}
+        # Mapped where the community table has it, None where it does not —
+        # never the number written into the name.
+        assert names == {1000001: "Town Hall", 90000000: None}
+        cleared.assert_called_once()
+        written = (self.saved / "#TEST.json").read_text(encoding="utf-8")
+        assert VillageExport.model_validate_json(written).tag == "#TEST"
+
+    def test_a_game_that_never_came_back_is_not_tapped_at(self) -> None:
+        """`_settle_game` answers None for a dropped session it could not restart,
+        a game still loading, and an emulator with no window yet. The gear is a
+        fixed coordinate, so none of those may be tapped on.
+        """
+        with patch.object(commands, "_settle_game", return_value=None):
+            report = commands.export()
+        assert "沒有回到村莊畫面" in report.message
+        self.adb.tap.assert_not_called()
+        self.adb.swipe.assert_not_called()
+
+    def test_a_menu_that_did_not_open_stops_before_the_next_tap(self) -> None:
+        """The whole point of reading: the second tap is a fixed coordinate."""
+        report, _ = self._export(settings=False)
+        assert "設定視窗沒有打開" in report.message
+        assert report.entities == []
+        # The gear, and then the close — never 更多設定 at a screen nobody confirmed.
+        assert [call.args[:2] for call in self.adb.tap.call_args_list] == [
+            commands.SETTINGS_GEAR,
+            commands.CLOSE_SETTINGS,
+        ]
+
+    def test_a_list_that_never_reaches_the_row_is_never_tapped(self) -> None:
+        """A missed scroll leaves the copy coordinate over a settings toggle."""
+        report, cleared = self._export(row=None)
+        assert "找不到" in report.message
+        cleared.assert_not_called()
+        assert self.adb.swipe.call_count == commands.SCROLL_TRIES
+        assert (1131, 560) not in [call.args[:2] for call in self.adb.tap.call_args_list]
+
+    def test_an_empty_clipboard_is_reported_rather_than_read_as_a_village(self) -> None:
+        """Cleared first, so nothing arriving really is nothing copied."""
+        with patch.object(commands, "CLIPBOARD_POLLS", 2):
+            report, cleared = self._export(clip="")
+        assert "剪貼簿沒有東西" in report.message
+        cleared.assert_called_once()
+        assert not list(self.saved.glob("*.json"))
+
+    def test_whatever_was_on_the_clipboard_goes_back_on_it(self) -> None:
+        """It belongs to whoever is at the keyboard, and this runs while they are working."""
+        held = "something the user was copying"
+        report, _ = self._export(clip=[held, PAYLOAD])
+        assert report.tag == "#TEST"
+        self.wrote.assert_called_once_with(held)
+
+    def test_the_clipboard_is_put_back_even_when_nothing_was_copied(self) -> None:
+        """The failing path is the one where taking it and not giving it back would hurt most."""
+        with patch.object(commands, "CLIPBOARD_POLLS", 2):
+            self._export(clip="")
+        self.wrote.assert_called_once_with("")
+
+    def test_a_clipboard_holding_something_else_is_reported_rather_than_raised(self) -> None:
+        """The clipboard is the one input from outside: anything copied during
+        the poll is read as the payload, and a parse error reaching the top
+        would leave `result.json` unwritten.
+        """
+        report, _ = self._export(clip="just some text somebody copied")
+        assert "不是村莊資料" in report.message
+        assert not list(self.saved.glob("*.json"))
+
+    def test_the_settings_window_is_closed_even_when_the_export_failed(self) -> None:
+        """Every other command starts by assuming nothing is covering the village."""
+        self._export(more=False)
+        assert self.adb.tap.call_args_list[-1].args[:2] == commands.CLOSE_SETTINGS
+
+    def test_a_tag_off_the_clipboard_cannot_escape_the_export_directory(self) -> None:
+        """The tag is outside data: anything that parses as JSON can carry a slash."""
+        assert commands._export_path("#GOOD").parent == self.saved
+        assert commands._export_path("../../etc/passwd").name == "etcpasswd.json"
+        assert commands._export_path("").name == "UNKNOWN.json"
+
+    def test_reading_the_last_export_says_so_when_there_is_nothing_to_read(self) -> None:
+        assert "還沒有匯出過" in commands.export(last=True).message
+
+    def test_a_file_from_before_this_command_is_named_rather_than_read_as_empty(self) -> None:
+        """The old shape held the game's raw payload, which parses as a village with nothing in it."""
+        (self.saved / "#OLD.json").write_text(PAYLOAD, encoding="utf-8")
+        report = commands.export(last=True)
+        assert "不是這個指令存的格式" in report.message
+        assert report.entities == []
 
 
 class StorageCeilingTests(unittest.TestCase):

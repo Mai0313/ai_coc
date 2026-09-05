@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import os
 import sys
+import ctypes
+from ctypes import wintypes
 from pathlib import Path
 import tempfile
 import unittest
@@ -31,7 +33,7 @@ from ai_coc.models import (
 )
 from ai_coc.adapters import adb as adb_module
 from ai_coc.adapters import mumu as mumu_module
-from ai_coc.adapters import mapping, secrets
+from ai_coc.adapters import mapping, secrets, clipboard
 from ai_coc.constants import COC_PACKAGE
 from ai_coc.adapters.adb import AdbController, AdbControlError
 from ai_coc.adapters.mumu import MuMuError, MuMuAdapter
@@ -577,6 +579,62 @@ class EntityMappingDownloadTests(unittest.TestCase):
     def test_a_failed_download_with_nothing_cached_raises(self) -> None:
         with pytest.raises(OSError, match="offline"):
             self._download(OSError("offline"), cached=None)
+
+
+class ClipboardTests(unittest.TestCase):
+    """Against the real Windows clipboard, like the DPAPI round trip above.
+
+    This is where the game's village export arrives: the copy button writes to
+    the Android clipboard and MuMu mirrors it here, `cmd clipboard get` having
+    no shell implementation on the emulator to read it from the other side.
+    """
+
+    def test_a_clear_and_a_write_round_trip_against_the_real_clipboard(self) -> None:
+        """The round trip `export` relies on, run for real: empty is what says
+        nothing was copied, and the write is how the person's own clipboard
+        survives a command that had to empty it.
+        """
+        held = clipboard.read_clipboard()
+        self.addCleanup(clipboard.write_clipboard, held)
+        clipboard.clear_clipboard()
+        assert clipboard.read_clipboard() == ""
+        clipboard.write_clipboard("村莊資訊 round trip")
+        assert clipboard.read_clipboard() == "村莊資訊 round trip"
+
+    def test_the_handles_are_declared_wide_enough_for_a_64_bit_build(self) -> None:
+        """Left on the default `c_int` these truncate to 32 bits, which reads as
+        garbage rather than as a failure — the kind of bug that only shows as a
+        village export that will not parse.
+        """
+        assert clipboard._kernel32.GlobalLock.restype is ctypes.c_void_p
+        assert clipboard._user32.GetClipboardData.restype is wintypes.HANDLE
+
+    def test_clearing_empties_it_between_an_open_and_a_close(self) -> None:
+        """Patched rather than run: emptying it for real would eat whatever the
+        person running the tests had on their clipboard. What matters is that
+        the close happens, because Windows lets one process hold it at a time.
+        """
+        with patch.object(clipboard, "_user32") as user32:
+            user32.OpenClipboard.return_value = 1
+            clipboard.clear_clipboard()
+        assert [name for name, _, _ in user32.mock_calls] == [
+            # An owner window, because opening with NULL makes every later
+            # `SetClipboardData` fail — see `_opened`.
+            "GetDesktopWindow",
+            "OpenClipboard",
+            "EmptyClipboard",
+            "CloseClipboard",
+        ]
+
+    def test_a_clipboard_nobody_can_open_is_an_error_rather_than_an_empty_read(self) -> None:
+        """Empty means "nothing was copied" everywhere it is read, so a clipboard
+        that never opened must not answer the same way.
+        """
+        with patch.object(clipboard, "OPEN_GAP", 0), patch.object(clipboard, "_user32") as user32:
+            user32.OpenClipboard.return_value = 0
+            with pytest.raises(clipboard.ClipboardError, match="剪貼簿"):
+                clipboard.read_clipboard()
+        assert user32.OpenClipboard.call_count == clipboard.OPEN_TRIES
 
 
 if __name__ == "__main__":
