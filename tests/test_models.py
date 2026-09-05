@@ -128,20 +128,18 @@ class VillageDocumentTests(unittest.TestCase):
 
 
 class EntityMappingTests(unittest.TestCase):
-    def test_the_community_table_becomes_registry_rows_by_world_and_block(self) -> None:
+    def test_the_community_table_flattens_to_one_name_per_id(self) -> None:
+        """The groups separate the two villages, which is not what a caller asks."""
         mapping = EntityMapping.model_validate({
-            "th_buildings": {1000001: "Cannon"},
+            "th_buildings": {1000001: "Cannon", 28000000: "Barbarian King"},
             "bh_troops": {4000041: "Baby Dragon"},
-            "spells": {26000000: "Lightning"},
+            "heroes": {28000000: "Barbarian King"},
         })
-        rows = {row.name: row for row in mapping.registry_entries("https://example.invalid")}
-        assert (rows["Cannon"].world, rows["Cannon"].category) == ("home", "building")
-        assert (rows["Baby Dragon"].world, rows["Baby Dragon"].category) == (
-            "builder_base",
-            "troop",
-        )
-        assert rows["Lightning"].category == "spell"
-        assert rows["Cannon"].verification_status == "COMMUNITY"
+        assert mapping.names() == {
+            1000001: "Cannon",
+            28000000: "Barbarian King",
+            4000041: "Baby Dragon",
+        }
 
 
 class FrameTests(unittest.TestCase):

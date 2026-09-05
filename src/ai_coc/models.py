@@ -12,7 +12,6 @@ from pydantic import Field, BaseModel, RootModel, ConfigDict, AliasChoices, fiel
 from .constants import (
     LOG_DIR,
     DEFAULT_ADB_HOST,
-    ENTITY_CATEGORIES,
     DEFAULT_LITE_MODEL,
     DEFAULT_GEMINI_MODEL,
     FRAME_RETENTION_DAYS,
@@ -331,33 +330,26 @@ class VillageExport(BaseModel):
     message: str = ""
 
 
-class RegistryEntry(BaseModel):
-    model_config = TOLERANT
-
-    data_id: int
-    name: str
-    world: str
-    category: str
-    source_url: str | None = None
-    verification_status: str
-
-
 class EntityMapping(RootModel[dict[str, dict[int, str]]]):
     """The community data_id → name table, keyed by group such as `th_buildings`."""
 
-    def registry_entries(self, source_url: str) -> list[RegistryEntry]:
-        return [
-            RegistryEntry(
-                data_id=data_id,
-                name=name,
-                world="builder_base" if group.startswith("bh_") else "home",
-                category=ENTITY_CATEGORIES.get(data_id // 1_000_000, "other"),
-                source_url=source_url,
-                verification_status="COMMUNITY",
-            )
-            for group, entries in self.root.items()
-            for data_id, name in entries.items()
-        ]
+    def names(self) -> dict[int, str]:
+        """Every data_id the table has a name for, flattened across its groups.
+
+        The groups only separate the home village from the builder base, which
+        is not a question anything asks: the one caller wants a name for an id.
+        A few ids appear in two groups — the heroes are also under
+        `th_buildings` — with the same name in each, so flattening loses
+        nothing.
+
+        This used to build a `RegistryEntry` per row, carrying a world, a
+        category derived from the data_id block, a source URL and a
+        verification status. All four were read by the `id_registry` table and
+        the join it fed, and both went with the database.
+        """
+        return {
+            data_id: name for entries in self.root.values() for data_id, name in entries.items()
+        }
 
 
 class LootOffer(BaseModel):

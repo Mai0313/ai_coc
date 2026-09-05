@@ -899,7 +899,10 @@ class MainWindow(QMainWindow):
         starts a third on top of the one still going.
         """
         if self.job_running:
-            self.account_label.setText("正在跑別的工作,等它做完再按一次")
+            # The status bar rather than `account_label`: that label is now the
+            # only thing saying which account the table below belongs to, and a
+            # notice written over it stays there until the next export succeeds.
+            self.statusBar().showMessage("正在跑別的工作,等它做完再按一次", 7000)
             return
         self._run_job(
             "正在取得村莊資訊…",
