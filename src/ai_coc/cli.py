@@ -317,7 +317,16 @@ def _print_table(export: VillageExport) -> None:
             "—" if entity.level is None else str(entity.level),
             str(entity.count),
         )
-    Console().print(table)
+    console = Console()
+    if export.entities:
+        console.print(table)
+    # Always, and it is the whole output when there are no rows: an export that
+    # failed carries its only explanation here — nothing saved yet, a menu that
+    # did not open, a clipboard that stayed empty — and the JSON branch that
+    # would have shown it is the one `--table` replaced. `--last --table` on a
+    # machine that has never run this is exactly that case, and it is the line
+    # both skills tell a session to start with.
+    console.print(export.message)
 
 
 def _run_command(arguments: argparse.Namespace, run: RunLog) -> int:

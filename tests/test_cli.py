@@ -271,6 +271,19 @@ class DispatchTests(unittest.TestCase):
         assert "Town Hall" in out.getvalue()
         assert '"data_id"' not in out.getvalue()
 
+    def test_a_table_with_no_rows_still_says_why(self) -> None:
+        """`--last --table` on a machine that has never run this is the line both
+        skills open with, and the failure's only explanation is the message.
+        """
+        blank = VillageExport(tag="", exported_at="", message="還沒有匯出過任何村莊資訊")
+        with (
+            patch.object(commands, "export", return_value=blank),
+            patch.object(commands, "claim"),
+            patch("sys.stdout", new_callable=io.StringIO) as out,
+        ):
+            _run_command(_args("export", "--table", "--last"), self.run)
+        assert "還沒有匯出過任何村莊資訊" in out.getvalue()
+
     def test_reading_the_last_export_takes_no_claim_on_the_emulator(self) -> None:
         """`--last` reads one file. A claim there would overwrite a farming run's
         own record and release it as `idle` while a battle was still going on.

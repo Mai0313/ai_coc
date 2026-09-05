@@ -917,7 +917,19 @@ class MainWindow(QMainWindow):
         self.run_async("Capturing current MuMu frame…", lambda: m.screenshot(a), done)
 
     def run_export(self) -> None:
-        """Get the village out of the game, through the same call a terminal makes."""
+        """Get the village out of the game, through the same call a terminal makes.
+
+        **The only `_run_job` a widget can start**, and therefore the only one
+        that has to check `job_running` itself: the other five are reached from
+        `automation_cycle`, which returns early on that flag before it gets
+        here. Without this, pressing the button during an automation pass puts
+        two passes on one display — and the one that finishes first clears the
+        flag and points the log back at the window's own run, so the next tick
+        starts a third on top of the one still going.
+        """
+        if self.job_running:
+            self.account_summary.setPlainText("正在跑別的工作,等它做完再按一次")
+            return
         self._run_job(
             "正在取得村莊資訊…",
             "export",

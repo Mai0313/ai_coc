@@ -589,12 +589,17 @@ class ClipboardTests(unittest.TestCase):
     no shell implementation on the emulator to read it from the other side.
     """
 
-    def test_reading_the_real_clipboard_answers_text_rather_than_raising(self) -> None:
-        """The one call that runs for real. Whatever is on it belongs to whoever
-        is running the tests, so this reads and does not write: an empty
-        clipboard and a full one are both ordinary answers.
+    def test_a_clear_and_a_write_round_trip_against_the_real_clipboard(self) -> None:
+        """The round trip `export` relies on, run for real: empty is what says
+        nothing was copied, and the write is how the person's own clipboard
+        survives a command that had to empty it.
         """
-        assert isinstance(clipboard.read_clipboard(), str)
+        held = clipboard.read_clipboard()
+        self.addCleanup(clipboard.write_clipboard, held)
+        clipboard.clear_clipboard()
+        assert clipboard.read_clipboard() == ""
+        clipboard.write_clipboard("村莊資訊 round trip")
+        assert clipboard.read_clipboard() == "村莊資訊 round trip"
 
     def test_the_handles_are_declared_wide_enough_for_a_64_bit_build(self) -> None:
         """Left on the default `c_int` these truncate to 32 bits, which reads as
@@ -613,6 +618,9 @@ class ClipboardTests(unittest.TestCase):
             user32.OpenClipboard.return_value = 1
             clipboard.clear_clipboard()
         assert [name for name, _, _ in user32.mock_calls] == [
+            # An owner window, because opening with NULL makes every later
+            # `SetClipboardData` fail — see `_opened`.
+            "GetDesktopWindow",
             "OpenClipboard",
             "EmptyClipboard",
             "CloseClipboard",

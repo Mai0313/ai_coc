@@ -101,7 +101,7 @@ from ai_coc.adapters.secrets import SecretStore
 from ai_coc.parsers.boundary import PLAYFIELD, VILLAGE_CENTRE, village_box, boundary_reach
 from ai_coc.parsers.building import wall_menu, game_dialog, upgrade_sheet, upgrade_buttons
 from ai_coc.parsers.settings import export_row, settings_open, more_settings_open
-from ai_coc.adapters.clipboard import read_clipboard, clear_clipboard
+from ai_coc.adapters.clipboard import read_clipboard, clear_clipboard, write_clipboard
 
 from .ui.clan import ClanRunner
 from .ui.hero import HeroRunner
@@ -1447,7 +1447,10 @@ def _copy_village(adb: AdbController, display: DisplayTarget, frame_dir: Path | 
     The clipboard is emptied before the copy is tapped, so what is read
     afterwards is known to be new. Without that, a tap that missed reads back
     the payload from the last run and the whole command reports success on stale
-    data.
+    data. **And whatever was on it goes back afterwards**, because it belongs to
+    whoever is at the keyboard: this command is worth running while somebody is
+    in the middle of something else, and leaving 7 KB of village JSON where
+    their own copy used to be is a cost they did not agree to.
     """
 
     def look(label: str) -> bytes:
@@ -1472,16 +1475,20 @@ def _copy_village(adb: AdbController, display: DisplayTarget, frame_dir: Path | 
         time.sleep(PAGE_SETTLE)
     else:
         raise RuntimeError("捲到底了還是找不到「以 JSON 格式匯出村莊數據」那一列")
+    held = read_clipboard()
     clear_clipboard()
     adb.tap(*spot, display)
-    for _ in range(CLIPBOARD_POLLS):
-        time.sleep(CLIPBOARD_GAP)
-        if payload := read_clipboard():
-            return payload
-    look("nothing_copied")
-    raise RuntimeError(
-        "點了複製,但剪貼簿沒有東西。MuMu 的共用剪貼簿可能被關掉了,遊戲那一下也可能沒吃到"
-    )
+    try:
+        for _ in range(CLIPBOARD_POLLS):
+            time.sleep(CLIPBOARD_GAP)
+            if payload := read_clipboard():
+                return payload
+        look("nothing_copied")
+        raise RuntimeError(
+            "點了複製,但剪貼簿沒有東西。MuMu 的共用剪貼簿可能被關掉了,遊戲那一下也可能沒吃到"
+        )
+    finally:
+        write_clipboard(held)
 
 
 def export(frame_dir: Path | None = None, last: bool = False) -> VillageExport:
@@ -1516,13 +1523,24 @@ def export(frame_dir: Path | None = None, last: bool = False) -> VillageExport:
         frame_dir.mkdir(parents=True, exist_ok=True)
     try:
         payload = _copy_village(adb, display, frame_dir)
+        # Parsed inside the same guard, because the clipboard is the one input
+        # here that comes from outside: anything else copied during the poll is
+        # read as the payload, and a `ValidationError` reaching the top would
+        # leave `result.json` unwritten with only the log to reconstruct from.
+        snapshot = parse_village_text(payload)
     except RuntimeError as exc:
         return VillageExport(tag="", exported_at="", message=str(exc))
+    except ValueError as exc:
+        logger.warning("The clipboard payload was not a village: %s", exc)
+        return VillageExport(
+            tag="",
+            exported_at="",
+            message="剪貼簿裡的不是村莊資料,複製的當下可能被別的東西蓋過去了",
+        )
     finally:
         # Whatever happened, the settings window is left covering the village,
         # and every other command starts by assuming one is on screen.
         adb.tap(*CLOSE_SETTINGS, display)
-    snapshot = parse_village_text(payload)
     stamp = snapshot.raw.timestamp
     when = (
         datetime.fromtimestamp(stamp, UTC).isoformat() if stamp else datetime.now(UTC).isoformat()

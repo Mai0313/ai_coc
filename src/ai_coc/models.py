@@ -301,10 +301,11 @@ class NamedEntity(VillageEntity):
     """One entity with whatever the community mapping calls it.
 
     None rather than the number when the mapping has no entry, so the file stays
-    honest about which names are real: measured on one export, 40 of 201 have no
-    name, and they are the hero equipment plus one helper the gist does not
-    cover. Writing the data_id into `name` would hide which ones to revisit once
-    the mapping catches up, and the id is right there in its own field anyway.
+    honest about which names are real: measured on one real export, 65 of 226
+    have no name — 39 hero equipment, 7 house parts, 6 skins, 8 obstacles, 4
+    decorations and 1 helper, none of which the community gist covers. Writing
+    the data_id into `name` would hide which ones to revisit once the mapping
+    catches up, and the id is right there in its own field anyway.
     """
 
     name: str | None = None

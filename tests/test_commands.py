@@ -780,11 +780,16 @@ class ExportTests(unittest.TestCase):
             self.addCleanup(one.stop)
 
     def _export(self, **screens: object) -> tuple[object, MagicMock]:
+        # The clipboard is read once for what was already on it and then once
+        # per poll, so a `clip` given as a list is those reads in order.
+        clip = screens.get("clip", PAYLOAD)
+        reads = clip if isinstance(clip, list) else [clip] * (commands.CLIPBOARD_POLLS + 2)
         with (
             patch.object(commands, "settings_open", return_value=screens.get("settings", True)),
             patch.object(commands, "more_settings_open", return_value=screens.get("more", True)),
             patch.object(commands, "export_row", return_value=screens.get("row", (1131, 560))),
-            patch.object(commands, "read_clipboard", return_value=screens.get("clip", PAYLOAD)),
+            patch.object(commands, "read_clipboard", side_effect=reads),
+            patch.object(commands, "write_clipboard") as self.wrote,
             patch.object(commands, "clear_clipboard") as cleared,
         ):
             return commands.export(), cleared
@@ -840,6 +845,28 @@ class ExportTests(unittest.TestCase):
             report, cleared = self._export(clip="")
         assert "剪貼簿沒有東西" in report.message
         cleared.assert_called_once()
+        assert not list(self.saved.glob("*.json"))
+
+    def test_whatever_was_on_the_clipboard_goes_back_on_it(self) -> None:
+        """It belongs to whoever is at the keyboard, and this runs while they are working."""
+        held = "something the user was copying"
+        report, _ = self._export(clip=[held, PAYLOAD])
+        assert report.tag == "#TEST"
+        self.wrote.assert_called_once_with(held)
+
+    def test_the_clipboard_is_put_back_even_when_nothing_was_copied(self) -> None:
+        """The failing path is the one where taking it and not giving it back would hurt most."""
+        with patch.object(commands, "CLIPBOARD_POLLS", 2):
+            self._export(clip="")
+        self.wrote.assert_called_once_with("")
+
+    def test_a_clipboard_holding_something_else_is_reported_rather_than_raised(self) -> None:
+        """The clipboard is the one input from outside: anything copied during
+        the poll is read as the payload, and a parse error reaching the top
+        would leave `result.json` unwritten.
+        """
+        report, _ = self._export(clip="just some text somebody copied")
+        assert "不是村莊資料" in report.message
         assert not list(self.saved.glob("*.json"))
 
     def test_the_settings_window_is_closed_even_when_the_export_failed(self) -> None:
