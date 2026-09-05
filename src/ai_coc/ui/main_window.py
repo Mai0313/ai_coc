@@ -335,10 +335,6 @@ class MainWindow(QMainWindow):
         self.account_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
         self.account_table.horizontalHeader().setStretchLastSection(True)
         layout.addWidget(self.account_table)
-        self.account_summary = QPlainTextEdit()
-        self.account_summary.setReadOnly(True)
-        self.account_summary.setMaximumHeight(140)
-        layout.addWidget(self.account_summary)
         return page
 
     def _preview_switches(self, layout: QVBoxLayout) -> None:
@@ -928,7 +924,7 @@ class MainWindow(QMainWindow):
         starts a third on top of the one still going.
         """
         if self.job_running:
-            self.account_summary.setPlainText("正在跑別的工作,等它做完再按一次")
+            self.account_label.setText("正在跑別的工作,等它做完再按一次")
             return
         self._run_job(
             "正在取得村莊資訊…",
@@ -938,11 +934,20 @@ class MainWindow(QMainWindow):
         )
 
     def _show_export(self, export: VillageExport) -> None:
-        """Draw an export into the table, whether it was just taken or read off disk."""
+        """Draw an export into the table, whether it was just taken or read off disk.
+
+        The label carries the count when there is one and the export's own
+        message when there is not, which is what a failure has instead of rows:
+        no village on screen, a menu that did not open, nothing saved yet. It
+        used to have a box of its own below the table, repeating the count and
+        the path a line at a time; the count is here and the path is in the log.
+        """
         if export.tag:
             self.current_account_tag = export.tag
         self.account_label.setText(
-            f"帳號：{export.tag} — {len(export.entities)} 筆資料" if export.tag else "尚未匯入帳號"
+            f"帳號：{export.tag} — {len(export.entities)} 筆資料"
+            if export.tag
+            else export.message or "尚未匯入帳號"
         )
         self.account_table.setRowCount(len(export.entities))
         for index, entity in enumerate(export.entities):
@@ -951,7 +956,6 @@ class MainWindow(QMainWindow):
                 self.account_table.setItem(
                     index, column, QTableWidgetItem("—" if value is None else str(value))
                 )
-        self.account_summary.setPlainText(export.message)
         if export.tag:
             self._select_instance(self.instance_combo.currentIndex())
 
