@@ -149,7 +149,6 @@ from ai_coc.parsers.building import (
     upgrade_buttons,
 )
 from ai_coc.parsers.settings import export_row, settings_open, more_settings_open
-from ai_coc.adapters.database import Database
 
 FRAMES = Path(__file__).parent / "frames"
 
@@ -220,10 +219,10 @@ Logical Displays: size=3
 
 
 class CoreTests(unittest.TestCase):
-    def test_tolerant_village_and_join(self) -> None:
+    def test_a_village_keeps_what_this_release_does_not_understand(self) -> None:
+        """A section the game adds later, and a field on a row nobody declared."""
         with tempfile.TemporaryDirectory() as td:
-            root = Path(td)
-            source = root / "village.json"
+            source = Path(td) / "village.json"
             source.write_text(
                 json.dumps({
                     "tag": "#TEST",
@@ -235,10 +234,6 @@ class CoreTests(unittest.TestCase):
             snapshot = parse_village(source)
             assert snapshot.tag == "#TEST"
             assert snapshot.entities[0].count == 2
-            db = Database(path=root / "test.sqlite3")
-            db.save_account(snapshot)
-            rows = db.account_rows("#TEST")
-            assert rows[0].name == "Crusher"
 
     def test_village_entry_keeps_unknown_fields(self) -> None:
         with tempfile.TemporaryDirectory() as td:

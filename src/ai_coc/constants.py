@@ -8,11 +8,6 @@ APP_NAME = "AI CoC"
 ORGANISATION = "Mai0313"
 
 VERSION_LABEL = f"v{__version__}"
-# Bumped to 2 when the AI 助手 tab went and took the `knowledge` and `tasks`
-# tables with it. There is no migration tooling here, so what handles a database
-# that already has them is a `DROP TABLE IF EXISTS` in `Database._initialize`.
-SCHEMA_VERSION = "2"
-MASTER_DB_VERSION = "seed-2026-08-22"
 COC_PACKAGE = "com.supercell.clashofclans"
 DEFAULT_GEMINI_MODEL = "gemini-3.5-flash"
 # The cheap tier, for the one question the parsers provably cannot answer: which
@@ -30,7 +25,6 @@ def data_root() -> Path:
     return root
 
 
-DB_PATH = data_root() / "controller.sqlite3"
 ACCOUNT_JSON_DIR = data_root() / "account_json"
 ACCOUNT_JSON_DIR.mkdir(parents=True, exist_ok=True)
 LOG_DIR = data_root() / "logs"
@@ -71,15 +65,3 @@ STATE_PATH = data_root() / "state.json"
 # Without it every imported entity shows as UNKNOWN.
 ENTITY_MAPPING_URL = "https://gist.githubusercontent.com/rahulkhatri137/a8449943df45100c5f1e1359cd9ec67a/raw/cocMapping.json"
 ENTITY_MAPPING_PATH = data_root() / "cocMapping.json"
-
-# The mapping groups only separate home village from builder base, so the kind of
-# entity comes from the data_id block instead: 4000123 // 1_000_000 == 4, a troop.
-ENTITY_CATEGORIES = {
-    1: "building",
-    4: "troop",
-    12: "trap",
-    26: "spell",
-    28: "hero",
-    73: "pet",
-    93: "helper",
-}

@@ -15,22 +15,12 @@ from ctypes import wintypes
 from pathlib import Path
 import tempfile
 import unittest
-from contextlib import closing
 import subprocess
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from ai_coc.models import (
-    AdbEndpoint,
-    DisplayTarget,
-    RegistryEntry,
-    VillageEntity,
-    AccountSnapshot,
-    VillageDocument,
-    EmulatorInstance,
-    MuMuInstanceTable,
-)
+from ai_coc.models import AdbEndpoint, DisplayTarget, EmulatorInstance, MuMuInstanceTable
 from ai_coc.adapters import adb as adb_module
 from ai_coc.adapters import mumu as mumu_module
 from ai_coc.adapters import mapping, secrets, clipboard
@@ -38,7 +28,6 @@ from ai_coc.constants import COC_PACKAGE
 from ai_coc.adapters.adb import AdbController, AdbControlError
 from ai_coc.adapters.mumu import MuMuError, MuMuAdapter
 from ai_coc.adapters.secrets import SecretStore
-from ai_coc.adapters.database import Database
 
 DISPLAY = DisplayTarget(logical_id="2", physical_id="4619827767814508545")
 
@@ -483,70 +472,6 @@ class SecretStoreTests(unittest.TestCase):
                 patch.object(secrets, "dotenv_value", return_value=""),
             ):
                 assert store.load() == ""
-
-
-class DatabaseTests(unittest.TestCase):
-    def setUp(self) -> None:
-        folder = tempfile.TemporaryDirectory()
-        self.addCleanup(folder.cleanup)
-        self.db = Database(path=Path(folder.name) / "test.sqlite3")
-
-    def test_the_ai_assistants_two_tables_are_dropped_from_a_database_that_has_them(self) -> None:
-        """The one thing `_initialize` has to do that creating tables cannot.
-
-        There is no migration tooling here, so a table this script stops
-        creating survives on every database that already had it. Both of these
-        belonged to the AI 助手 tab and went with it.
-        """
-        with closing(self.db.connect()) as con, con:
-            con.executescript("""
-            CREATE TABLE knowledge(
-                id INTEGER PRIMARY KEY AUTOINCREMENT, emulator_id TEXT, frame_id TEXT,
-                statement TEXT NOT NULL, status TEXT NOT NULL, created_at TEXT NOT NULL
-            );
-            CREATE TABLE tasks(
-                id INTEGER PRIMARY KEY AUTOINCREMENT, instruction TEXT NOT NULL,
-                status TEXT NOT NULL DEFAULT 'PENDING', progress TEXT NOT NULL DEFAULT '',
-                created_at TEXT NOT NULL, updated_at TEXT NOT NULL
-            );
-            """)
-        Database(path=self.db.path)
-        with closing(self.db.connect()) as con:
-            names = {
-                row["name"]
-                for row in con.execute("SELECT name FROM sqlite_master WHERE type='table'")
-            }
-        assert not names & {"knowledge", "tasks"}
-        # The tables it does own are still there, so this drops rather than resets.
-        assert "id_registry" in names
-
-    def test_an_unknown_data_id_is_queued_rather_than_refused(self) -> None:
-        snapshot = AccountSnapshot(
-            tag="#T",
-            raw=VillageDocument.model_validate({"tag": "#T"}),
-            entities=[VillageEntity(data_id=999_999_999, level=1, section="buildings")],
-        )
-        self.db.save_account(snapshot)
-        assert self.db.lookup(999_999_999) is None
-        with closing(self.db.connect()) as con:
-            rows = con.execute("SELECT data_id, status FROM unknown_entities").fetchall()
-        assert [tuple(row) for row in rows] == [(999_999_999, "UNKNOWN")]
-        [row] = self.db.account_rows("#T")
-        assert row.name is None
-
-    def test_the_registry_answers_what_was_imported(self) -> None:
-        self.db.import_registry([
-            RegistryEntry(
-                data_id=1000001,
-                name="Cannon",
-                world="home",
-                category="building",
-                verification_status="COMMUNITY",
-            )
-        ])
-        found = self.db.lookup(1000001)
-        assert found is not None
-        assert found.name == "Cannon"
 
 
 class EntityMappingDownloadTests(unittest.TestCase):

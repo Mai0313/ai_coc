@@ -59,7 +59,7 @@ from ai_coc.models import (
     UpgradeOptions,
     StorageCapacity,
 )
-from ai_coc.constants import STATE_PATH, COC_PACKAGE, ACCOUNT_JSON_DIR, ENTITY_MAPPING_URL
+from ai_coc.constants import STATE_PATH, COC_PACKAGE, ACCOUNT_JSON_DIR
 from ai_coc.adapters.ai import GeminiClient
 
 # A runtime import rather than a TYPE_CHECKING one: `FrameTicker` declares it as
@@ -1511,10 +1511,7 @@ def export(frame_dir: Path | None = None, last: bool = False) -> VillageExport:
     # Fetched before the emulator is touched: it reaches the network, and a run
     # that fails on it after walking the menus has spent the taps and thrown the
     # answer away.
-    names = {
-        entry.data_id: entry.name
-        for entry in fetch_entity_mapping().registry_entries(ENTITY_MAPPING_URL)
-    }
+    names = fetch_entity_mapping().names()
     adb = _controller()
     display = _settle_game(adb, WORLD_SETTLE_POLLS)
     if display is None:
