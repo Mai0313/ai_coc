@@ -4,28 +4,39 @@ Clash of Clans writes its village JSON to the **Android** clipboard and offers n
 other way out. MuMu mirrors that clipboard onto Windows, so this is where the
 payload arrives.
 
-Reading it on the Android side was measured and rejected: `cmd clipboard get`
-answers `No shell command implementation.` on this emulator (Android 15) and
-`am get-clipboard` is gone, leaving only the binder service, which would have to
-be called by transaction id — a number that moves between Android releases and
-fails silently when it does.
+**Reading it over ADB is not a path that has closed; it is one that was never
+open.** `cmd clipboard get` answers `No shell command implementation.`, and that
+sentence is `Binder`'s own default for a service that does not implement
+`onShellCommand` — measured here, `cmd batterystats` answers it identically
+while `cmd package` refuses the argument instead, which is what a service with a
+shell interface does. `cmd -l` does list clipboard, but that is every registered
+service (247 of them on this emulator), not every service `cmd` can drive.
+`dumpsys clipboard` prints nothing and `am get-clipboard` is gone, which leaves
+the binder service, callable only by a transaction id that moves between Android
+releases and fails silently when it does: asked for `getPrimaryClip`'s id here,
+`service call clipboard 1` answered `Allocation of size 72090057 is above
+allowed`, having read the arguments as a length.
 
-**Worth revisiting if that command comes back, but not by trying it first and
-falling back to this.** Its refusal is a plain string rather than a non-zero
-exit, so "did it work" would be a comparison against text nobody has seen
-succeed. Three things have to be established before that path is more reliable
-than this one, and every one of them fails by returning a payload that parses:
+So there is no command to wait for. Were Android ever to add one — against the
+direction it has moved since 10, which was to restrict clipboard reads rather
+than open them — three things would have to hold before it beat the mirror
+below, and each of them fails by handing back a payload that still parses:
 
-- It has to answer while Clash of Clans is in the foreground and this process is
-  not, since Android 10 stopped background reads and an empty answer here means
-  "nothing was copied".
+- It has to answer while this process is not in the foreground. The game being
+  in the foreground does not help: the restriction is on who reads, and that is
+  the shell.
 - It has to carry all of a real export — 7 KB and growing — without `adb shell`
-  truncating it, because a village JSON cut in half still parses and still has a
-  tag on it.
-- Its failure has to be distinguishable from an empty clipboard.
+  truncating it, because a village JSON cut in half still parses and still
+  carries a tag.
+- Its failure has to be distinguishable from an empty clipboard, which is what
+  "nothing was copied" looks like here.
 
-Until then the mirror below is the measured path, and the cost of it is one
-Windows dependency this project already has.
+A helper pushed to `/data/local/tmp` and run under `app_process`, the way scrcpy
+syncs the clipboard, would clear the first of those by calling the framework API
+directly. It is a real option and it was measured as available on this emulator
+(`/data/local/tmp` writable, `app_process` and `dalvikvm` present, no root
+needed). What it costs is a Java toolchain in a pure-Python project: a dex to
+build in CI and to ship inside both the wheel and the PyInstaller bundle.
 
 Plain functions rather than a model, like `mapping.py`: there is no state to
 carry, and the ctypes structures a model could not hold anyway.

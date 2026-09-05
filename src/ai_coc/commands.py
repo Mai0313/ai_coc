@@ -1485,7 +1485,7 @@ def _copy_village(adb: AdbController, display: DisplayTarget, frame_dir: Path | 
                 return payload
         look("nothing_copied")
         raise RuntimeError(
-            "點了複製,但剪貼簿沒有東西。MuMu 的共用剪貼簿可能被關掉了,遊戲那一下也可能沒吃到"
+            "點了複製,但剪貼簿沒有東西。可能是遊戲沒吃到那一下,也可能是 MuMu 沒把 Android 的剪貼簿同步過來"
         )
     finally:
         write_clipboard(held)
