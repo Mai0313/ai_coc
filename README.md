@@ -35,7 +35,7 @@ Other Languages: [English](README.md) | [繁體中文](README.zh-TW.md) | [简�
 
 **Keeps your key out of plain settings.** The Gemini API key is stored through Windows DPAPI, never in the registry or a config file.
 
-Imported village exports keep unknown fields and unknown `data_id`s instead of failing on them.
+Village exports keep unknown fields and unknown `data_id`s instead of failing on them, and the sections are read off the document rather than from a written-down list.
 
 ## 📋 Requirements
 
@@ -137,6 +137,9 @@ ai_coc launch --restart emulator      # restart the emulator, then bring the gam
 ai_coc capture --count 30             # a burst off the live game, into this run's own folder
 ai_coc <any command> --label baseline # name this run's folder so it is findable later
 ai_coc read shot.png                  # what each reader makes of one frame
+ai_coc export                         # the whole village out of the game, named, as JSON
+ai_coc export --table                 # the same, drawn as a table for a person
+ai_coc export --last                  # the last one off the disk, without touching the game
 ai_coc view --zoom out                # put the camera back where every coordinate was measured
 ai_coc world                          # which of the two villages the game is on
 ai_coc world --go day                 # sail there; already being there does nothing
@@ -200,7 +203,7 @@ That is the whole file. **Nothing headless writes it** — a run that finds no f
 
 There are no ability or spell timings here any more. They were a table of per-hero constants, and editing them meant guessing how long an army takes to walk across a village nobody had looked at — which is the planner's job, done with the village on screen. Every clock lives on the plan now: see `plans/flat.json` for the shape, and `--plan-in` to replay one.
 
-Everything else lives in `~/.ai_coc`: the SQLite database, imported account JSON, the run logs, the DPAPI-protected key file, and `state.json` — which command is driving the emulator, its pid, and its log directory. It is kept after a run ends rather than removed, so the record says what the last run was instead of going blank; deleting it by hand asks whichever run wrote it to stand down, which is the way out when whatever started that run is gone.
+Everything else lives in `~/.ai_coc`: the SQLite database, the account JSON `ai_coc export` writes, the run logs, the DPAPI-protected key file, and `state.json` — which command is driving the emulator, its pid, and its log directory. It is kept after a run ends rather than removed, so the record says what the last run was instead of going blank; deleting it by hand asks whichever run wrote it to stand down, which is the way out when whatever started that run is gone.
 
 ## 🤝 Contributing
 

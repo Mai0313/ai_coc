@@ -137,7 +137,7 @@ from ai_coc.parsers.world import info_badges, current_world
 from ai_coc.parsers.glyphs import digits_from
 from ai_coc.ui.main_window import LIVE_INTERVAL, MainWindow
 from ai_coc.adapters.config import ConfigStore
-from ai_coc.parsers.village import parse_village
+from ai_coc.parsers.village import parse_village, parse_village_text
 from ai_coc.adapters.secrets import dotenv_value
 from ai_coc.parsers.boundary import DEPLOY_BOUND, fitted_line, village_box, boundary_reach
 from ai_coc.parsers.building import (
@@ -148,6 +148,7 @@ from ai_coc.parsers.building import (
     upgrade_sheet,
     upgrade_buttons,
 )
+from ai_coc.parsers.settings import export_row, settings_open, more_settings_open
 from ai_coc.adapters.database import Database
 
 FRAMES = Path(__file__).parent / "frames"
@@ -260,16 +261,48 @@ class CoreTests(unittest.TestCase):
             assert (entity.data_id, entity.level, entity.count) == (4000041, 3, 1)
             assert (entity.model_extra or {})["unreleased"] is True
 
-    def test_saved_snapshot_can_be_reimported(self) -> None:
-        with tempfile.TemporaryDirectory() as td:
-            source = Path(td) / "village.json"
-            source.write_text(
-                json.dumps({"tag": "#TEST", "buildings2": [{"data": 1000055, "lvl": 8}]}),
-                encoding="utf-8",
-            )
-            saved = Path(td) / "saved.json"
-            saved.write_text(parse_village(source).model_dump_json(), encoding="utf-8")
-            assert parse_village(saved).entities[0].data_id == 1000055
+    def test_every_section_is_read_rather_than_a_written_down_list(self) -> None:
+        """A list of twelve section names was dropping ten of the game's own.
+
+        Measured against a real export: `helpers`, `decos`, `obstacles`,
+        `skins`, `house_parts` and their builder-base twins never reached the
+        snapshot, including three helpers the community mapping does name.
+        """
+        snapshot = parse_village_text(
+            json.dumps({
+                "tag": "#TEST",
+                "buildings": [{"data": 1000001, "lvl": 16}],
+                "helpers": [{"data": 93000000, "lvl": 1, "helper_cooldown": 36772}],
+                "obstacles": [{"data": 8000009, "cnt": 7}],
+                "a_section_added_next_release": [{"data": 99000001, "lvl": 2}],
+            })
+        )
+        assert {entity.section for entity in snapshot.entities} == {
+            "buildings",
+            "helpers",
+            "obstacles",
+            "a_section_added_next_release",
+        }
+        # Whatever the row carried beyond the three declared fields is still on
+        # it, which is what makes "nothing is thrown away" true rather than a
+        # claim about the sections alone.
+        [helper] = [one for one in snapshot.entities if one.section == "helpers"]
+        assert (helper.model_extra or {})["helper_cooldown"] == 36772
+
+    def test_a_section_of_bare_ids_is_read_too(self) -> None:
+        """`skins` and `house_parts` are written as numbers, not objects."""
+        snapshot = parse_village_text(
+            json.dumps({"tag": "#TEST", "skins": [52000379], "house_parts": [82000000]})
+        )
+        assert sorted(entity.data_id for entity in snapshot.entities) == [52000379, 82000000]
+
+    def test_the_export_time_and_boosts_survive(self) -> None:
+        """Neither is a section, and both are read: the timestamp says which export this is."""
+        document = parse_village_text(
+            json.dumps({"tag": "#TEST", "timestamp": 1788624472, "boosts": {"clocktower": 77842}})
+        ).raw
+        assert document.timestamp == 1788624472
+        assert document.boosts == {"clocktower": 77842}
 
     def test_display_lookup_picks_the_game_over_the_launcher(self) -> None:
         logical = focused_display(WINDOW_DISPLAYS, "com.supercell.clashofclans")
@@ -282,6 +315,60 @@ class CoreTests(unittest.TestCase):
     def test_display_lookup_is_empty_when_the_package_has_no_window(self) -> None:
         assert focused_display(WINDOW_DISPLAYS, "com.example.absent") == ""
         assert physical_display(DISPLAY_DEVICES, "9") == ""
+
+
+class SettingsMenuTests(unittest.TestCase):
+    """The three screens the village export sits behind, on live frames of each.
+
+    Every step of `export` is a fixed coordinate, so these readers are what
+    stands between a menu that did not open and a tap landing wherever the
+    coordinate happens to point. On the scrolled page that is the 更高幀數
+    toggle, which flips a game setting and reports nothing.
+    """
+
+    def test_the_settings_window_needs_both_its_button_and_its_account_band(self) -> None:
+        """The button alone answers on a battle result screen, whose 回營 lands in the same box."""
+        assert settings_open((FRAMES / "settings_window.png").read_bytes())
+        assert not settings_open((FRAMES / "more_settings_top.png").read_bytes())
+        assert not settings_open((FRAMES / "battle_result.png").read_bytes())
+        assert not settings_open((FRAMES / "event_reward.png").read_bytes())
+
+    def test_the_more_settings_page_is_read_at_any_scroll_position(self) -> None:
+        """The back arrow, which is the one feature the settings window does not have."""
+        assert more_settings_open((FRAMES / "more_settings_top.png").read_bytes())
+        assert more_settings_open((FRAMES / "more_settings_export_row.png").read_bytes())
+        assert not more_settings_open((FRAMES / "settings_window.png").read_bytes())
+
+    def test_the_export_row_answers_only_where_the_copy_button_really_is(self) -> None:
+        assert export_row((FRAMES / "more_settings_export_row.png").read_bytes()) == (1131, 560)
+        # The top of the same page: the copy coordinate is over a settings
+        # toggle there, so this is the reading that must not be a tap.
+        assert export_row((FRAMES / "more_settings_top.png").read_bytes()) is None
+        # And the settings window, whose cream panel fills the box the white
+        # JSON label is looked for in — 0.938 white against the row's own 0.280.
+        # It is the green button test that rules this one out, which is why
+        # neither feature is read alone.
+        assert export_row((FRAMES / "settings_window.png").read_bytes()) is None
+
+    def test_no_other_recorded_screen_reads_as_one_of_these(self) -> None:
+        """Swept over every other committed frame: battles, villages, menus, dialogs.
+
+        A false positive here is worse than a false negative, because these
+        readers exist to authorise a tap.
+        """
+        others = sorted(
+            path
+            for path in FRAMES.glob("*.png")
+            if not path.name.startswith(("settings_window", "more_settings"))
+        )
+        assert len(others) > 50
+        for path in others:
+            png = path.read_bytes()
+            try:
+                readings = (settings_open(png), more_settings_open(png), export_row(png))
+            except ValueError:
+                continue  # a fixture masked to another size, not a screen
+            assert readings == (False, False, None), path.name
 
 
 class WorldTests(unittest.TestCase):
@@ -1704,17 +1791,11 @@ class PromptTests(unittest.TestCase):
         """Both directions: a missing file is a `KeyError` at the first call, and a
         file nothing asks for is a prompt somebody will keep rewording for nothing.
         """
-        assert set(PROMPTS) == {
-            "attack_plan",
-            "find_targets",
-            "locate_target",
-            "name_building",
-            "night_plan",
-        }
+        assert set(PROMPTS) == {"attack_plan", "find_targets", "name_building", "night_plan"}
 
     def test_a_prompt_fills_in_its_placeholders(self) -> None:
-        filled = render("locate_target", goal="設定齒輪")
-        assert "設定齒輪" in filled
+        filled = render("find_targets", what="城牆", notes="", count=12, floor=55)
+        assert "城牆" in filled
         assert "{" not in filled
 
     def test_the_attack_prompt_still_takes_its_spell_counts(self) -> None:

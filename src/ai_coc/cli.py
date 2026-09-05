@@ -7,6 +7,8 @@ from pathlib import Path
 import argparse
 from contextlib import nullcontext
 
+from rich.table import Table
+from rich.console import Console
 from PyQt5.QtWidgets import QApplication
 
 # PyInstaller runs this file as `__main__`, which has no package context, so these
@@ -22,6 +24,7 @@ from ai_coc.models import (
     AttackOptions,
     DonateOptions,
     LootOverrides,
+    VillageExport,
     UpgradeOptions,
 )
 from ai_coc.constants import APP_NAME
@@ -55,6 +58,7 @@ RECORDABLE = (
     "donate",
     "probe",
     "bounds",
+    "export",
 )
 
 # The two sub-commands that hold no claim on the emulator, listed the way round
@@ -68,6 +72,10 @@ RECORDABLE = (
 # later honest: forgotten here it claims, which costs two writes it did not
 # need, where a positive list forgotten would have it drive the emulator while
 # the file says nobody is.
+#
+# `export --last` is the same exception reached by a flag rather than by a name,
+# and `_claim_for` is where the two meet: the command drives the emulator, that
+# one invocation of it does not.
 WITHOUT_CLAIM = ("read", "stop")
 
 
@@ -199,6 +207,13 @@ def _parser() -> argparse.ArgumentParser:
     shot.add_argument("--gap", type=float, default=1.5)
     frame = sub.add_parser("read", help="把一張畫面丟給每個 parser,印出各自讀到什麼")
     frame.add_argument("png", type=Path)
+    # The game's own village export, which is the only complete account of what
+    # the village holds and far more than any screen reader can see.
+    village = sub.add_parser("export", help="從遊戲裡取得村莊資訊,對照名稱後存起來")
+    village.add_argument(
+        "--table", action="store_true", help="印成表格給人看,不給的話跟其他指令一樣吐 JSON"
+    )
+    village.add_argument("--last", action="store_true", help="不碰遊戲,直接讀上一次匯出的結果")
     for name in RECORDABLE:
         sub.choices[name].add_argument(
             "--record", action="store_true", help="把這次讀到的每一張畫面存進這次的紀錄資料夾"
@@ -279,8 +294,30 @@ def _answer(arguments: argparse.Namespace, run: RunLog) -> BaseModel | str:
             str(path) for path in commands.capture(run.frames, a.count, a.gap)
         ),
         "read": lambda: commands.read(a.png.read_bytes()),
+        "export": lambda: commands.export(run.frames, a.last),
     }
     return handlers[a.command]()
+
+
+def _print_table(export: VillageExport) -> None:
+    """The export as a table for a person, which is what `--table` asks for.
+
+    An entity the community mapping has no entry for shows `—` rather than its
+    number: the number is already in the column beside it, and this project's
+    rule is that a blank says "not known" where an invented value would not.
+    """
+    table = Table(title=f"{export.tag}  {len(export.entities)} 筆  {export.exported_at}")
+    for column in ("Section", "Data ID", "Name", "Level", "Count"):
+        table.add_column(column)
+    for entity in export.entities:
+        table.add_row(
+            entity.section,
+            str(entity.data_id),
+            entity.name or "—",
+            "—" if entity.level is None else str(entity.level),
+            str(entity.count),
+        )
+    Console().print(table)
 
 
 def _run_command(arguments: argparse.Namespace, run: RunLog) -> int:
@@ -291,24 +328,33 @@ def _run_command(arguments: argparse.Namespace, run: RunLog) -> int:
     well, so the answer and the log explaining it are found together instead of
     that depending on whoever started the run having redirected stdout.
     """
-    with _claim_for(arguments.command, run):
+    with _claim_for(arguments, run):
         answer = _answer(arguments, run)
     # Outside the claim: writing the answer down and printing it touch no
     # emulator, and holding the screen across them would say this run is still
     # driving when it has finished.
     result = answer if isinstance(answer, str) else answer.model_dump_json(indent=2)
     run.answer(result)
-    sys.stdout.write(f"{result}\n")
+    # `result.json` is the answer whatever the terminal is shown, so a run stays
+    # machine-readable after a `--table` that was only ever for a person.
+    if getattr(arguments, "table", False) and isinstance(answer, VillageExport):
+        _print_table(answer)
+    else:
+        sys.stdout.write(f"{result}\n")
     return 0
 
 
-def _claim_for(command: str, run: RunLog) -> AbstractContextManager[None]:
-    """Hold the emulator for this command, or nothing at all for the two that
-    never touch it.
+def _claim_for(arguments: argparse.Namespace, run: RunLog) -> AbstractContextManager[None]:
+    """Hold the emulator for this command, or nothing at all for one that never touches it.
+
+    Mostly that is a property of the command, but `export --last` only reads a
+    file this machine already has. A claim there would overwrite whatever a
+    farming run had written, and release it as `idle` — which reads from
+    outside as an emulator nobody is driving, while a battle is still going on.
     """
-    if command in WITHOUT_CLAIM:
+    if arguments.command in WITHOUT_CLAIM or getattr(arguments, "last", False):
         return nullcontext()
-    return commands.claim(command, run.directory)
+    return commands.claim(arguments.command, run.directory)
 
 
 def _spot(text: str) -> tuple[int, int]:

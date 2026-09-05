@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import time
 from typing import TYPE_CHECKING, Any, get_args
 import logging
 from contextlib import ExitStack
@@ -18,7 +17,6 @@ from PyQt5.QtWidgets import (
     QSplitter,
     QStatusBar,
     QTabWidget,
-    QFileDialog,
     QFormLayout,
     QHBoxLayout,
     QHeaderView,
@@ -26,7 +24,6 @@ from PyQt5.QtWidgets import (
     QMessageBox,
     QPushButton,
     QVBoxLayout,
-    QApplication,
     QTableWidget,
     QTextBrowser,
     QPlainTextEdit,
@@ -43,14 +40,12 @@ from ai_coc.models import (
     DisplayTarget,
     DonateOptions,
     GeminiSetting,
-    LocatedTarget,
     ThinkingLevel,
+    VillageExport,
     LootThresholds,
     UpgradeOptions,
-    AccountSnapshot,
     EmulatorInstance,
 )
-from ai_coc.prompts import render
 from ai_coc.constants import (
     LOG_DIR,
     APP_NAME,
@@ -58,7 +53,6 @@ from ai_coc.constants import (
     ORGANISATION,
     VERSION_LABEL,
     SCHEMA_VERSION,
-    ACCOUNT_JSON_DIR,
     MASTER_DB_VERSION,
     ENTITY_MAPPING_URL,
     DEFAULT_GEMINI_MODEL,
@@ -67,7 +61,6 @@ from ai_coc.adapters.ai import GeminiClient
 from ai_coc.adapters.mumu import MuMuAdapter
 from ai_coc.logging_setup import configure_logging
 from ai_coc.adapters.config import ConfigStore
-from ai_coc.parsers.village import parse_village, parse_village_text
 from ai_coc.adapters.mapping import fetch_entity_mapping
 from ai_coc.adapters.secrets import SecretStore
 from ai_coc.adapters.database import Database
@@ -155,6 +148,10 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage("Ready — 偵測 MuMu 以開始")
         self.refresh_instances()
         self.refresh_entity_mapping()
+        # Straight rather than through a worker: it reads one file this machine
+        # already has, and the table is worth having filled before the emulator
+        # has even been found.
+        self._show_export(commands.export(last=True))
         if self.live_view.isChecked():
             self.live_timer.start(LIVE_INTERVAL)
 
@@ -317,31 +314,23 @@ class MainWindow(QMainWindow):
         page = QWidget()
         layout = QVBoxLayout(page)
         row = QHBoxLayout()
-        button = QPushButton("AI 自動取得 JSON")
-        button.clicked.connect(self.ai_import_village)
-        paste = QPushButton("匯入剪貼簿 JSON")
-        paste.clicked.connect(self.import_clipboard_village)
-        file_button = QPushButton("選擇 JSON 檔案")
-        file_button.clicked.connect(self.import_village)
+        button = QPushButton("取得村莊資訊")
+        button.clicked.connect(self.run_export)
         self.account_label = QLabel("尚未匯入帳號")
         row.addWidget(button)
-        row.addWidget(paste)
-        row.addWidget(file_button)
         row.addWidget(self.account_label)
         row.addStretch()
         layout.addLayout(row)
-        self.account_table = QTableWidget(0, 10)
+        # The five the export actually carries. The other five this table used
+        # to have came from `entity_levels`, which is empty by a stated product
+        # decision and so drew `—` on every row it ever showed.
+        self.account_table = QTableWidget(0, 5)
         self.account_table.setHorizontalHeaderLabels([
             "Section",
             "Data ID",
             "Name",
-            "World",
-            "Category",
             "Level",
             "Count",
-            "Next",
-            "Cost",
-            "Time",
         ])
         self.account_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
         self.account_table.horizontalHeader().setStretchLastSection(True)
@@ -927,52 +916,32 @@ class MainWindow(QMainWindow):
 
         self.run_async("Capturing current MuMu frame…", lambda: m.screenshot(a), done)
 
-    def import_village(self) -> None:
-        path, _ = QFileDialog.getOpenFileName(
-            self, "Import Village JSON", "", "JSON (*.json);;All Files (*)"
+    def run_export(self) -> None:
+        """Get the village out of the game, through the same call a terminal makes."""
+        self._run_job(
+            "正在取得村莊資訊…",
+            "export",
+            lambda run: commands.export(run.frames),
+            self._show_export,
         )
-        if not path:
-            return
-        try:
-            self._apply_village_snapshot(parse_village(path))
-        except Exception as exc:
-            self._error("村莊 JSON 匯入失敗", str(exc))
 
-    def _apply_village_snapshot(self, snapshot: AccountSnapshot) -> None:
-        logger.info(
-            "Importing village snapshot %s (%d entities)", snapshot.tag, len(snapshot.entities)
+    def _show_export(self, export: VillageExport) -> None:
+        """Draw an export into the table, whether it was just taken or read off disk."""
+        if export.tag:
+            self.current_account_tag = export.tag
+        self.account_label.setText(
+            f"帳號：{export.tag} — {len(export.entities)} 筆資料" if export.tag else "尚未匯入帳號"
         )
-        self.db.save_account(snapshot)
-        safe_tag = "".join(ch for ch in snapshot.tag if ch.isalnum() or ch in "-_#") or "UNKNOWN"
-        saved_path = ACCOUNT_JSON_DIR / f"{safe_tag}.json"
-        saved_path.write_text(snapshot.model_dump_json(indent=2), encoding="utf-8")
-        self.current_account_tag = snapshot.tag
-        rows = self.db.account_rows(snapshot.tag)
-        self.account_label.setText(f"帳號：{snapshot.tag} — {len(rows)} 筆資料")
-        self.account_table.setRowCount(len(rows))
-        for row_index, row in enumerate(rows):
-            values = [
-                row.section,
-                row.data_id,
-                row.name or "UNKNOWN",
-                row.world or "—",
-                row.category or "—",
-                row.level,
-                row.count,
-                row.next_level,
-                row.upgrade_cost,
-                row.upgrade_seconds,
-            ]
+        self.account_table.setRowCount(len(export.entities))
+        for index, entity in enumerate(export.entities):
+            values = (entity.section, entity.data_id, entity.name, entity.level, entity.count)
             for column, value in enumerate(values):
                 self.account_table.setItem(
-                    row_index, column, QTableWidgetItem("—" if value is None else str(value))
+                    index, column, QTableWidgetItem("—" if value is None else str(value))
                 )
-        unknown = sum(1 for row in rows if not row.name)
-        self.account_summary.setPlainText(
-            f"已匯入村莊 JSON，共 {len(rows)} 筆，其中 {unknown} 筆是尚未收錄的 data_id。\n"
-            f"資料庫與 JSON 檔都已保存：{saved_path}"
-        )
-        self._select_instance(self.instance_combo.currentIndex())
+        self.account_summary.setPlainText(export.message)
+        if export.tag:
+            self._select_instance(self.instance_combo.currentIndex())
 
     def refresh_entity_mapping(self) -> None:
         def task() -> int:
@@ -984,52 +953,6 @@ class MainWindow(QMainWindow):
             logger.info("Entity registry now holds %d community names", count)
 
         self.run_async("正在更新實體名稱對照表…", task, done)
-
-    def import_clipboard_village(self) -> None:
-        try:
-            text = QApplication.clipboard().text().strip()
-            logger.info("Clipboard holds %d characters", len(text))
-            if not text:
-                raise ValueError("剪貼簿是空的")
-            self._apply_village_snapshot(parse_village_text(text))
-        except Exception as exc:
-            self._error("剪貼簿 JSON 匯入失敗", str(exc))
-
-    def ai_import_village(self) -> None:
-        m, a = self._require()
-        client = self.gemini_client()
-        self.account_summary.setPlainText("AI 正在尋找 JSON／複製按鈕，請稍候…")
-
-        def locate(png: bytes, goal: str) -> tuple[int, int]:
-            target = client.generate_structured(
-                render("locate_target", goal=goal), LocatedTarget, png
-            )
-            logger.info("AI located %s: %s", goal, target.model_dump())
-            if not target.found:
-                raise RuntimeError(f"AI 找不到{goal}：{target.reason}")
-            return int(target.x_pct * 16), int(target.y_pct * 9)
-
-        def task() -> None:
-            active = m.ensure_coc(a.index)
-            # 匯出村莊 JSON 藏在設定 → 更多設定底下，是這兩層都要點過才會出現的。
-            for goal in ("畫面右側直排圖示裡的設定齒輪按鈕", "設定視窗中的「更多設定」按鈕"):
-                png = m.screenshot(active)
-                x, y = locate(png, goal)
-                m.tap(active, x, y)
-                time.sleep(2)
-            # 「更多設定」開啟時停在列表最上面，數據匯出那一段在最底下，捲到底才看得到。
-            for _ in range(5):
-                m.swipe(active, (800, 650), (800, 250), 400)
-                time.sleep(1)
-            png = m.screenshot(active)
-            x, y = locate(png, "「以 JSON 格式匯出村莊數據」這一列右邊的「複製」按鈕")
-            m.tap(active, x, y)
-            time.sleep(2)
-
-        def done(_: None) -> None:
-            self.import_clipboard_village()
-
-        self.run_async("AI 正在取得村莊 JSON…", task, done)
 
     def gemini_client(self) -> GeminiClient:
         return GeminiClient(
