@@ -35,6 +35,7 @@ from ai_coc.ui.runner import ScreenRunner, restart_game
 from ai_coc.adapters.adb import ZOOM_PINCHES
 from ai_coc.parsers.field import view_shift
 from ai_coc.parsers.scout import (
+    in_battle,
     card_count,
     live_cards,
     read_scout,
@@ -1964,7 +1965,18 @@ class AttackRunner(ScreenRunner):
             # One reading for the whole row rather than one per card: `live_cards`
             # decodes the frame it is handed, so asking it per card decodes it
             # per card.
-            pending = list(live_cards(self._frame("cast"), pending))
+            after = self._frame("cast")
+            # **A card that will not empty and a battle that has gone look the
+            # same from here**, and the retries used to spend themselves on the
+            # second. Measured live on the 探礦者 sheet: the battle had ended,
+            # every attempt reported the bottles still in their cards, and each
+            # one tapped the panel again. The frame is already taken for
+            # `live_cards`, so this asks the question that separates them for
+            # nothing.
+            if not in_battle(after):
+                logger.info("The battle went while casting; %d card(s) keep theirs", len(pending))
+                return
+            pending = list(live_cards(after, pending))
             if pending:
                 logger.info("%d spell card(s) held on to their bottles", len(pending))
         for x in pending:
@@ -2031,6 +2043,22 @@ class AttackRunner(ScreenRunner):
         `_cast` pays for troops too, at 0.6 s once per card.
         """
         if not self._line:
+            return
+        # **`card_groups` off a frame that is not a battle invents cards, and
+        # this is the caller that then taps them.** Measured live: a battle that
+        # had already ended left the shop's 外觀 page on screen, its rows of
+        # skins for sale read back as spell cards at x 105 and x 1497 — neither
+        # of which is a card position at all — and each was tapped and then
+        # poured over twelve points along the drop line, which is what walked
+        # the shop from page to page. `Spell card at 105 held None, tapped 12`
+        # is the whole record of it. The same shape on another round read three
+        # cards off the 探礦者 sheet's row of builder portraits.
+        #
+        # The frame is already in hand, so asking costs nothing. It is asked
+        # here rather than trusted to `battle_over`, which answers only for the
+        # result screen and is False for every panel the game puts up.
+        if not in_battle(self._last):
+            logger.info("No battle on screen; nothing here is a card to empty")
             return
         live = [card for group in card_groups(self._last) for card in group]
         # An `xN` corner is what says a card still holds something to place;
