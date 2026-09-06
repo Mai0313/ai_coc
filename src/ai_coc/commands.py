@@ -106,7 +106,7 @@ from ai_coc.adapters.clipboard import read_clipboard, clear_clipboard, write_cli
 from .ui.clan import ClanRunner
 from .ui.hero import HeroRunner
 from .ui.walls import WallRunner
-from .ui.world import cross, collect_cart
+from .ui.world import cross, collect_cart, settled_world
 from .ui.attack import CARD_ROW_Y, DROP_SETTLE, SINGLE_DROP_DELAY, AttackRunner
 from .ui.runner import restart_game
 from .ui.upkeep import UpkeepRunner
@@ -784,7 +784,7 @@ def _pick_world(adb: AdbController, display: DisplayTarget, wanted: World | None
     that is a boat this run cannot find, and the runner has no better answer.
     """
     if wanted is None:
-        return current_world(adb.screenshot(display)) or "day"
+        return settled_world(adb, display) or "day"
     landed = cross(adb, display, wanted)
     if landed == wanted:
         return wanted
@@ -1213,7 +1213,7 @@ def collect(frame_dir: Path | None = None) -> CollectReport:
     # elixir is paid into that cart rather than into the storages, so this is
     # the same job on that village even though it shares none of the machinery:
     # one tap at a known spot rather than a colour-and-size search over the map.
-    if current_world(adb.screenshot(display)) == "night":
+    if settled_world(adb, display) == "night":
         gained = collect_cart(adb, display)
         return CollectReport(
             markers=1 if gained else 0,
@@ -1330,7 +1330,7 @@ def world(go: World | None = None) -> WorldReport:
     except AdbControlError:
         logger.warning("The game is not on a display yet; neither village can be confirmed")
         return WorldReport(found=None, world=None, message="遊戲還沒有畫面,無法判斷世界")
-    found = current_world(adb.screenshot(display))
+    found = settled_world(adb, display)
     if go is None or go == found:
         report = WorldReport(found=found, world=found, message=f"目前在{_WORLDS[found]}")
     else:

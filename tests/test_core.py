@@ -486,6 +486,7 @@ class WorldChoiceTests(unittest.TestCase):
         with (
             patch.object(commands, "_controller"),
             patch.object(commands, "_settle_game", return_value=None),
+            patch.object(commands, "settled_world", return_value=seen),
             patch.object(commands, "current_world", return_value=seen),
             patch.object(commands, "cross", return_value=crossed),
             patch.object(commands, "_planner", return_value=None),
@@ -1088,6 +1089,39 @@ class NightAttackTests(unittest.TestCase):
         assert (report.phases, deployed.call_count) == (0, 0)
 
 
+class SettledWorldTests(unittest.TestCase):
+    """Reading the world, looking twice only when the first frame cannot say."""
+
+    def _settled(self, seen: list[str | None]) -> tuple[MagicMock, str | None]:
+        adb = MagicMock()
+        with (
+            patch.object(world_ui.time, "sleep"),
+            patch.object(world_ui, "current_world", side_effect=seen),
+        ):
+            return adb, world_ui.settled_world(adb, DisplayTarget(logical_id="1", physical_id="2"))
+
+    def test_a_frame_that_places_itself_costs_one_capture(self) -> None:
+        """The ordinary path pays nothing for the retry, which is what lets every
+        caller use this instead of `current_world`.
+        """
+        adb, world = self._settled(["day"])
+        assert world == "day"
+        assert adb.screenshot.call_count == 1
+
+    def test_a_frame_that_cannot_be_placed_is_looked_at_again(self) -> None:
+        """A reward animation over the plate row leaves a village nobody can place,
+        and those animations move — so the second frame is usually enough.
+        """
+        adb, world = self._settled([None, "day"])
+        assert world == "day"
+        assert adb.screenshot.call_count == 2
+
+    def test_two_empty_looks_really_are_no_village(self) -> None:
+        adb, world = self._settled([None, None])
+        assert world is None
+        assert adb.screenshot.call_count == 2
+
+
 class CrossingTests(unittest.TestCase):
     """Sailing between the two villages, which is a tap the boat may or may not take."""
 
@@ -1144,7 +1178,8 @@ class CrossingTests(unittest.TestCase):
             "night",
             *["night"] * world_ui.SAIL_POLLS,
             None,  # the first spot opened a building rather than the boat
-            "night",  # and `back` got the village back
+            None,  # and the second look agrees, so it really is covered
+            "night",  # `back` got the village back
             "day",  # so the second spot could be tried at all
         ])
         assert landed == "day"
@@ -1153,8 +1188,23 @@ class CrossingTests(unittest.TestCase):
             world_ui.CROSSINGS["day"].spots[:2]
         )
 
+    def test_an_animation_over_the_plate_row_is_not_pressed_at(self) -> None:
+        """The frame that could not be placed is looked at again before `back`.
+
+        `back` on a village raises 確定退出遊戲嗎, and the frames that reach here
+        without a panel on them are the ones the game floated a reward animation
+        across — a village plainly on screen that the reader could not place.
+        Those animations move, so the second look usually settles it, and it
+        costs one capture to not press at a village.
+        """
+        adb, landed = self._cross([None, "day"])
+        assert landed == "day"
+        adb.back.assert_not_called()
+        assert adb.swipe.call_count == 0
+
     def test_a_covered_village_is_uncovered_rather_than_given_up_on(self) -> None:
-        adb, landed = self._cross([None, "night", "day"])
+        """Two empty looks before `back`, because one of them is as often an animation."""
+        adb, landed = self._cross([None, None, "night", "day"])
         assert landed == "day"
         assert adb.back.call_count == 1
         assert adb.swipe.call_count == world_ui.SWIPES
@@ -1165,7 +1215,10 @@ class CrossingTests(unittest.TestCase):
         `back` cannot hurry a game that is loading, which is what bounds the
         pressing rather than any risk in it.
         """
-        adb, landed = self._cross([None] * (world_ui.UNCOVER_TRIES + 1))
+        # Two readings per attempt now — the frame, then a second look before
+        # deciding it is not a village — plus the two `settled_world` takes at
+        # the end.
+        adb, landed = self._cross([None] * (world_ui.UNCOVER_TRIES * 2 + 2))
         assert landed is None
         assert adb.swipe.call_count == 0
         assert adb.back.call_count == world_ui.UNCOVER_TRIES
@@ -3365,6 +3418,7 @@ class RunnerStateTests(unittest.TestCase):
             with (
                 patch.object(commands, "STATE_PATH", state),
                 patch.object(commands, "_controller"),
+                patch.object(commands, "settled_world", return_value="day"),
                 patch.object(commands, "current_world", return_value="day"),
                 patch.object(commands, "WallRunner") as runner,
             ):
@@ -3388,6 +3442,7 @@ class RunnerStateTests(unittest.TestCase):
             with (
                 patch.object(commands, "STATE_PATH", state),
                 patch.object(commands, "_controller"),
+                patch.object(commands, "settled_world", return_value="day"),
                 patch.object(commands, "current_world", return_value="day"),
                 patch.object(commands, "WallRunner") as runner,
                 commands.claim("walls"),
@@ -3407,6 +3462,7 @@ class RunnerStateTests(unittest.TestCase):
             with (
                 patch.object(commands, "STATE_PATH", state),
                 patch.object(commands, "_controller"),
+                patch.object(commands, "settled_world", return_value="day"),
                 patch.object(commands, "current_world", return_value="day"),
                 patch.object(commands, "_planner", return_value=None),
                 patch.object(commands.ConfigStore, "load", return_value=AppConfig()),
@@ -3484,6 +3540,7 @@ class RestartEveryTests(unittest.TestCase):
         """Run the loop over a fixed list of rounds and hand back the restart mock."""
         with (
             patch.object(commands, "_controller"),
+            patch.object(commands, "settled_world", return_value="day"),
             patch.object(commands, "current_world", return_value="day"),
             patch.object(commands, "_planner", return_value=None),
             patch.object(
@@ -3580,6 +3637,7 @@ class RestartEveryTests(unittest.TestCase):
         """
         with (
             patch.object(commands, "_controller"),
+            patch.object(commands, "settled_world", return_value="day"),
             patch.object(commands, "current_world", return_value="day"),
             patch.object(commands, "_planner", return_value=None),
             patch.object(commands.ConfigStore, "load", return_value=AppConfig(restart_every=1)),
@@ -3606,6 +3664,7 @@ class RestartEveryTests(unittest.TestCase):
             # The village test rather than the storages: the game reopens on
             # whichever village it was closed on, and `read_stock` answers on
             # both, so it can say a village is up but never which one.
+            patch.object(commands, "settled_world", side_effect=[None, None, "day"]),
             patch.object(commands, "current_world", side_effect=[None, None, "day"]),
             patch.object(commands, "idle_disconnected", return_value=False),
             patch.object(commands, "loading_screen", return_value=False),
@@ -3635,6 +3694,7 @@ class RestartEveryTests(unittest.TestCase):
             patch.object(commands, "MuMuAdapter") as mumu,
             patch.object(commands.time, "sleep"),
             patch.object(commands, "stop_requested", return_value=False),
+            patch.object(commands, "settled_world", return_value="day"),
             patch.object(commands, "current_world", return_value="day"),
         ):
             mumu.return_value.controller.return_value = adb
@@ -3655,6 +3715,7 @@ class RestartEveryTests(unittest.TestCase):
             patch.object(commands, "MuMuAdapter") as mumu,
             patch.object(commands.time, "sleep"),
             patch.object(commands, "stop_requested", return_value=False),
+            patch.object(commands, "settled_world", return_value=None),
             patch.object(commands, "current_world", return_value=None),
             patch.object(commands, "idle_disconnected", return_value=False),
             patch.object(commands, "loading_screen", return_value=False),
@@ -3682,6 +3743,7 @@ class StopAtOverrideTests(unittest.TestCase):
         """Run one round and hand back the percentage the runner was built with."""
         with (
             patch.object(commands, "_controller"),
+            patch.object(commands, "settled_world", return_value="day"),
             patch.object(commands, "current_world", return_value="day"),
             patch.object(commands, "_planner", return_value=None),
             patch.object(commands.ConfigStore, "load", return_value=AppConfig(stop_at=85)),

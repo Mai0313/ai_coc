@@ -105,18 +105,22 @@ class WorldCommandTests(unittest.TestCase):
             adb.display_for.side_effect = AdbControlError("no window yet")
         with (
             patch.object(commands, "_controller", return_value=adb),
-            patch.object(commands, "current_world", return_value=seen),
+            patch.object(commands, "settled_world", return_value=seen),
             patch.object(commands, "cross", return_value=crossed) as sailed,
         ):
             report = commands.world(go)
         return adb, sailed, report
 
-    def test_reading_is_one_capture_and_nothing_else(self) -> None:
-        """No swipe, no tap and no pinch, which is what lets a session ask at any moment."""
+    def test_reading_moves_nothing(self) -> None:
+        """No swipe, no tap and no pinch, which is what lets a session ask at any moment.
+
+        The capture itself now happens inside `settled_world`, which takes one
+        and only looks again when the first cannot be placed; that count is held
+        by `SettledWorldTests`.
+        """
         adb, sailed, report = self._world("day")
         assert (report.found, report.world, report.crossed) == ("day", "day", False)
         assert "日世界" in report.message
-        assert adb.screenshot.call_count == 1
         adb.tap.assert_not_called()
         adb.swipe.assert_not_called()
         adb.zoom.assert_not_called()
@@ -155,7 +159,7 @@ class CollectCommandTests(unittest.TestCase):
         adb = _adb()
         with (
             patch.object(commands, "_controller", return_value=adb),
-            patch.object(commands, "current_world", return_value="night"),
+            patch.object(commands, "settled_world", return_value="night"),
             patch.object(commands, "collect_cart", return_value=300_000) as cart,
             patch.object(commands, "UpkeepRunner") as runner,
         ):
@@ -168,7 +172,7 @@ class CollectCommandTests(unittest.TestCase):
     def test_an_empty_cart_is_reported_as_nothing_rather_than_as_a_marker(self) -> None:
         with (
             patch.object(commands, "_controller", return_value=_adb()),
-            patch.object(commands, "current_world", return_value="night"),
+            patch.object(commands, "settled_world", return_value="night"),
             patch.object(commands, "collect_cart", return_value=0),
         ):
             report = commands.collect()
@@ -179,7 +183,7 @@ class CollectCommandTests(unittest.TestCase):
         with (
             tempfile.TemporaryDirectory() as folder,
             patch.object(commands, "_controller", return_value=_adb()),
-            patch.object(commands, "current_world", return_value="day"),
+            patch.object(commands, "settled_world", return_value="day"),
             patch.object(commands, "UpkeepRunner") as runner,
         ):
             runner.return_value.collect.return_value = CollectReport(markers=3, message="收了")

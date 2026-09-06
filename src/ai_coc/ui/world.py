@@ -80,6 +80,16 @@ SAIL_GAP = 1.5
 # none: `back` cannot hurry that, so more presses would only be more waiting.
 UNCOVER_TRIES = 3
 UNCOVER_SETTLE = 1.5
+# How long to wait before looking again at a frame that could not be placed.
+# **A frame answering None is not always a frame with no village on it**: the
+# game floats reward animations across the plate row, and one covering the wrong
+# badge leaves a village that is plainly there to the eye and not placeable by
+# the reader. Those animations move, so the second look is usually enough —
+# measured over one gem shower, the same village read three badges on some
+# frames, two on others and one on one. Long enough for the animation to have
+# drifted, short enough that nothing waits on it: a capture is 0.7 s on its own,
+# so this is about a second and a half of real time.
+WORLD_SECOND_LOOK = 0.8
 
 
 # The loot cart, moored on the grass beside the builder base's own boat and so
@@ -198,9 +208,33 @@ def uncovered(adb: AdbController, display: DisplayTarget) -> World | None:
         if card_groups(png) or battle_over(png):
             logger.info("A battle is on screen; there is nothing here to press back at")
             return None
+        # Look once more before deciding this is not a village. `back` on a
+        # village raises 確定退出遊戲嗎, and the frames that land here without a
+        # panel on them are the ones an animation drifted across — see
+        # `WORLD_SECOND_LOOK`. Costing one capture to not press at a village is
+        # the right way round.
+        time.sleep(WORLD_SECOND_LOOK)
+        if (here := current_world(adb.screenshot(display))) is not None:
+            logger.info("The village placed itself on a second look; nothing was covering it")
+            return here
         logger.info("Something is over the village; pressing back to get at it")
         adb.back(display)
         time.sleep(UNCOVER_SETTLE)
+    return settled_world(adb, display)
+
+
+def settled_world(adb: AdbController, display: DisplayTarget) -> World | None:
+    """Which village is up, looking twice before answering None.
+
+    The ordinary path costs exactly what it did: a frame that places itself is
+    returned on the first capture. The second look is only for the frame that
+    could not be placed, which is as often an animation over the plate row as it
+    is a screen with no village on it — and those two want opposite things from
+    every caller.
+    """
+    if (world := current_world(adb.screenshot(display))) is not None:
+        return world
+    time.sleep(WORLD_SECOND_LOOK)
     return current_world(adb.screenshot(display))
 
 
