@@ -2620,6 +2620,7 @@ class AttackTests(unittest.TestCase):
         runner._line = deploy_line(LINE_POINTS, *DEPLOY_LINES["top_left"])
         poured: list[list[int]] = []
         with (
+            patch.object(attack, "in_battle", return_value=True),
             patch.object(attack, "card_groups", return_value=[[171], [900], [939]]),
             # The `xN` corner: the newcomer and the spell carry one, the hero does not.
             patch.object(attack, "counted_cards", return_value=[171, 939]),
@@ -2639,10 +2640,29 @@ class AttackTests(unittest.TestCase):
         runner = self._runner()
         runner._line = deploy_line(LINE_POINTS, *DEPLOY_LINES["top_left"])
         with (
+            patch.object(attack, "in_battle", return_value=True),
             patch.object(attack, "card_groups", return_value=[[900]]),
             patch.object(attack, "counted_cards", return_value=[]),
             patch.object(AttackRunner, "_cast") as poured,
         ):
+            runner._dump_leftovers()
+        poured.assert_not_called()
+
+    def test_a_screen_that_is_not_a_battle_is_not_emptied_into(self) -> None:
+        """The measured one: the shop's own tiles came back as cards, and were tapped.
+
+        A battle that had already ended left the 外觀 page on screen, and
+        `card_groups` read it as a row — spell cards at x 105 and x 1497,
+        neither of which is a card position — so each was tapped and then poured
+        over twelve points along the drop line, which is what walked the shop
+        from page to page. Nothing downstream could catch it: `counted_cards`
+        agreed the tiles carried an `xN`, and `battle_over` is False for every
+        panel the game puts up.
+        """
+        runner = self._runner()
+        runner._line = deploy_line(LINE_POINTS, *DEPLOY_LINES["top_left"])
+        runner._last = (FRAMES / "shop_skins.png").read_bytes()
+        with patch.object(AttackRunner, "_cast") as poured:
             runner._dump_leftovers()
         poured.assert_not_called()
 
@@ -2938,6 +2958,7 @@ class AttackTests(unittest.TestCase):
         with (
             patch.object(attack.time, "sleep"),
             patch.object(AttackRunner, "_frame", return_value=b""),
+            patch.object(attack, "in_battle", return_value=True),
             patch.object(attack, "card_count", return_value=1),
             patch.object(attack, "live_cards", return_value=()),
             patch.object(AdbController, "tap") as tapped,
@@ -3059,13 +3080,14 @@ class AttackTests(unittest.TestCase):
         assert spaced(grid) == grid
         assert grid[1][0] - grid[0][0] == RAGE_SPAN[0]
 
-    def _casts(self, alive: list[list[int]]) -> int:
+    def _casts(self, alive: list[list[int]], fighting: bool = True) -> int:
         """How many passes `_cast` makes, given what the row reads after each one."""
         runner = self._runner()
         with (
             patch.object(AttackRunner, "_frame", return_value=b""),
             patch.object(AttackRunner, "_tap"),
             patch.object(type(runner.adb), "tap_many"),
+            patch.object(attack, "in_battle", return_value=fighting),
             patch.object(attack, "card_count", return_value=5),
             patch.object(attack, "live_cards", side_effect=alive) as reads,
             patch.object(attack.time, "sleep"),
@@ -3081,6 +3103,16 @@ class AttackTests(unittest.TestCase):
 
     def test_a_card_that_emptied_is_not_asked_twice(self) -> None:
         assert self._casts([[]]) == 1
+
+    def test_the_retries_stop_when_the_battle_does(self) -> None:
+        """A card that will not empty and a battle that has gone look the same from here.
+
+        Measured live on the 探礦者 sheet: the battle had ended, every attempt
+        reported the bottles still in their cards, and each one tapped the panel
+        again. The row is never read at all now, so the count is zero rather
+        than one.
+        """
+        assert self._casts([[1060], []], fighting=False) == 0
 
     def test_a_one_off_drop_keeps_pushing_out_while_that_moves_it(self) -> None:
         """The middle of the line first, then further from the village, as it always was."""
