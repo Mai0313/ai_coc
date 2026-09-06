@@ -1298,7 +1298,23 @@ class ScoutTests(unittest.TestCase):
         drawn above that would press `back` at a builder base battle.
         """
         assert in_battle((FRAMES / "battle_in_progress.png").read_bytes())
+        assert in_battle((FRAMES / "night_battle.png").read_bytes())
         assert in_battle((FRAMES / "night_stage2_cards.png").read_bytes())
+
+    def test_the_builder_base_countdown_carries_no_plate_yet(self) -> None:
+        """The one window this reads False over a live battle, pinned so it stays known.
+
+        The builder base draws nothing in that corner until 離戰鬥開始剩下 runs
+        out — measured across a recorded round, 40 s of it at 0.0000 with a full
+        card row, then 0.7539 to 0.7715 on every frame of the fighting. What that
+        costs was measured on the live game rather than reasoned about: `back`
+        pressed in that window raises 確認退出遊戲, the same dialog a clear
+        village raises rather than a surrender, and the countdown carried on
+        underneath. `uncovered` only ever presses `back`, so the window costs the
+        None it was already returning.
+        """
+        assert not in_battle((FRAMES / "night_countdown.png").read_bytes())
+        assert card_groups((FRAMES / "night_countdown.png").read_bytes())
 
     def test_a_screen_that_is_not_a_battle_carries_no_plate(self) -> None:
         for name in (

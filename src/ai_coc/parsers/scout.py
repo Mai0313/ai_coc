@@ -446,6 +446,16 @@ RETURN_HOME_GREEN = 0.23
 # 正在搜尋對手 reads nothing at all. Both answers are safe — the first leaves a
 # scout screen alone, which is what `_scout` wants, and the second presses
 # `back` at a search that has nothing to lose.
+#
+# **The builder base draws no plate at all until its countdown ends**, which is
+# the one place this reads False over a live battle: measured across a recorded
+# builder base round, the 40 s of 離戰鬥開始剩下 read 0.0000 with a full card row
+# and the fighting that followed read 0.7539 to 0.7715 on every frame. That
+# window was measured rather than reasoned about, by pressing `back` in it on
+# the live game: it raises 確認退出遊戲, the same dialog a clear village raises,
+# not a surrender — and the countdown carried on underneath. `uncovered` only
+# ever presses `back` and never answers a dialog, so the worst it costs there is
+# the None it already returned before any of this.
 ABANDON_BOX = (20, 636, 200, 660)
 ABANDON_RED = 0.45
 
