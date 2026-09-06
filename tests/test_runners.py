@@ -1064,6 +1064,7 @@ class DeploymentTests(unittest.TestCase):
             "rages": [900],
             "freezes": [1000],
             "rage_count": 2,
+            "freeze_count": 3,
             "frame": b"",
         }
         fields.update(kw)
@@ -1160,9 +1161,27 @@ class DeploymentTests(unittest.TestCase):
             runner._act(_step("freeze", (50, 46), (60, 46)), row, line)
         dropped.assert_called_once_with([400], (400, 243))
         poured.assert_called_once_with([100, 200], line, b"")
-        # Two bottles' worth of rage against three points asked for, one freeze.
+        # Two bottles' worth of rage against three points asked for, and a
+        # freeze card holding three against the two it was given.
         assert len(cast.call_args_list[0].args[1]) == 2
-        assert len(cast.call_args_list[1].args[1]) == 1
+        assert len(cast.call_args_list[1].args[1]) == 2
+
+    def test_a_freeze_card_spends_its_bottles_on_separate_points(self) -> None:
+        """One card holds three, and slicing to the card count stacked all three.
+
+        `wanted` counted the freeze *cards* where rage counted its bottles, so a
+        single card kept `targets[:1]` and `_cast`, which taps once per bottle,
+        put the whole cargo on that one spot — one spell's worth of effect for
+        three bottles. Measured over a day of recorded farming, `held 3, tapped
+        4` on 65 rounds against a tactic line reading `freeze x3` on each.
+        """
+        runner = self._runner()
+        line = deploy_line(LINE_POINTS, *DEPLOY_LINES["top_left"])
+        row = self._row(freezes=[1000], freeze_count=3)
+        with patch.object(runner, "_cast") as cast:
+            runner._act(_step("freeze", (25, 25), (50, 30), (70, 55)), row, line)
+        targets = cast.call_args.args[1]
+        assert len(set(targets)) == 3
 
     def test_a_one_off_drop_is_one_shell_round_trip_and_is_written_down(self) -> None:
         runner = self._runner()

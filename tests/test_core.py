@@ -2319,6 +2319,7 @@ class AttackTests(unittest.TestCase):
             "rages": [900],
             "freezes": [1000],
             "rage_count": 4,
+            "freeze_count": 3,
             "frame": b"",
         }
         fields.update(kw)

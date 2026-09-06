@@ -631,6 +631,15 @@ class BattleRow(BaseModel):
     # points a tactic may name: `_cast` cycles back over its targets, so asking
     # for more spots than there are bottles stacks two on one patch of ground.
     rage_count: int
+    # The same count for the freeze cards, and it is a count of bottles rather
+    # than of cards for the reason `rage_count` is. Slicing the freeze points to
+    # the number of *cards* is what the loop used to do, and one card holds
+    # three bottles: the planner was asked for three points, two were thrown
+    # away, and `_cast` then put all three bottles on the one that survived —
+    # which is one spell's worth of effect for the whole cargo. Measured over a
+    # day of recorded farming, `held 3, tapped 4` on 65 rounds against a tactic
+    # line reading `freeze x3` on every one of them.
+    freeze_count: int
     # The frame the row was read off. It travels with the classification
     # because everything downstream that reads a card — `card_count` for how
     # many taps it takes, `_cast` for the same — has to read the *opening*

@@ -1701,6 +1701,7 @@ class AttackRunner(ScreenRunner):
             rages=rages,
             freezes=freezes,
             rage_count=rage_count,
+            freeze_count=freeze_count,
             frame=frame,
         )
         logger.info(
@@ -1844,7 +1845,11 @@ class AttackRunner(ScreenRunner):
             self._pour(row.troops, line, row.frame)
         elif step.act in ("rage", "freeze"):
             cards = row.rages if step.act == "rage" else row.freezes
-            wanted = max(row.rage_count, 1) if step.act == "rage" else max(len(cards), 1)
+            # Bottles, not cards, and the same number the planner was asked to
+            # draw points for. Freeze counted its *cards* here, so one card of
+            # three bottles kept one of the three points it asked for and
+            # `_cast` stacked the whole cargo on it.
+            wanted = max(row.rage_count if step.act == "rage" else row.freeze_count, 1)
             # `spaced` can drop every point it could not clear, which is what
             # the fallback below covers — so `targets` is never empty, `wanted`
             # is at least one, and the slice always carries something.
