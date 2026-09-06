@@ -114,6 +114,7 @@ from ai_coc.parsers.scout import (
     ROW_BOUNDS,
     PANEL_RIGHT,
     LOOT_INK_BRIGHTNESS,
+    in_battle,
     card_count,
     live_cards,
     read_scout,
@@ -1103,6 +1104,7 @@ class CrossingTests(unittest.TestCase):
             patch.object(world_ui.time, "sleep"),
             patch.object(world_ui, "current_world", side_effect=seen),
             patch.object(world_ui, "card_groups", return_value=[[1]] if battle else []),
+            patch.object(world_ui, "in_battle", return_value=battle),
             patch.object(world_ui, "battle_over", return_value=False),
             patch.object(world_ui, "loading_screen", return_value=loading),
         ):
@@ -1230,6 +1232,45 @@ class CrossingTests(unittest.TestCase):
         assert adb.back.call_count == 0
         assert adb.swipe.call_count == 0
 
+    def test_a_panel_with_a_card_row_on_it_is_pressed_away(self) -> None:
+        """A card row alone is not a battle, and taking it for one was a deadlock.
+
+        `card_groups` answers wherever the bottom of the frame holds card-shaped
+        patches, which the game's own panels have as readily as a battle does:
+        the 探礦者 sheet reads three cards off its builder portraits and the
+        shop's 外觀 page reads a row off the skins on sale. Both were reported as
+        battles, so `back` was never pressed and nothing else clears them —
+        measured live, ten rounds on the first and twenty frames inside the shop
+        on the second. Nothing here is patched: these are the frames the loop
+        actually sat on.
+        """
+        for name in ("miner_panel.png", "shop_skins.png"):
+            png = (FRAMES / name).read_bytes()
+            assert card_groups(png), name
+            assert not in_battle(png), name
+        adb = MagicMock()
+        adb.screenshot.return_value = (FRAMES / "miner_panel.png").read_bytes()
+        with (
+            patch.object(world_ui.time, "sleep"),
+            patch.object(world_ui, "current_world", return_value=None),
+        ):
+            assert world_ui.uncovered(adb, DisplayTarget(logical_id="1", physical_id="2")) is None
+        assert adb.back.call_count == world_ui.UNCOVER_TRIES
+
+    def test_a_real_battle_still_stops_the_press(self) -> None:
+        """The other half of the pair, off a frame of a battle actually being fought."""
+        png = (FRAMES / "battle_in_progress.png").read_bytes()
+        assert card_groups(png)
+        assert in_battle(png)
+        adb = MagicMock()
+        adb.screenshot.return_value = png
+        with (
+            patch.object(world_ui.time, "sleep"),
+            patch.object(world_ui, "current_world", return_value=None),
+        ):
+            assert world_ui.uncovered(adb, DisplayTarget(logical_id="1", physical_id="2")) is None
+        assert adb.back.call_count == 0
+
     def test_the_camera_goes_back_to_the_far_zoom_either_way(self) -> None:
         """The swiping above parks it at a map corner, and every coordinate here wants it centred."""
         # The long one is every spot missing: one read to start, then each spot's
@@ -1247,6 +1288,54 @@ class ScoutTests(unittest.TestCase):
         assert view is not None
         assert (view.loot.gold, view.loot.elixir, view.loot.dark) == (625427, 631851, 7365)
         assert view.can_skip
+
+    def test_the_corner_plate_answers_in_both_villages(self) -> None:
+        """One box, because the two villages draw the button at different heights.
+
+        The home village's 放棄 sits at about y 645-690 and the builder base's
+        結束戰鬥 at about y 600-655, so a box cut to either one alone reads the
+        other at 0.2690 — and `uncovered` asks this in both worlds, so a line
+        drawn above that would press `back` at a builder base battle.
+        """
+        assert in_battle((FRAMES / "battle_in_progress.png").read_bytes())
+        assert in_battle((FRAMES / "night_battle.png").read_bytes())
+        assert in_battle((FRAMES / "night_stage2_cards.png").read_bytes())
+
+    def test_the_builder_base_countdown_carries_no_plate_yet(self) -> None:
+        """The one window this reads False over a live battle, pinned so it stays known.
+
+        The builder base draws nothing in that corner until 離戰鬥開始剩下 runs
+        out — measured across a recorded round, 40 s of it at 0.0000 with a full
+        card row, then 0.7539 to 0.7715 on every frame of the fighting. What that
+        costs was measured on the live game rather than reasoned about: `back`
+        pressed in that window raises 確認退出遊戲, the same dialog a clear
+        village raises rather than a surrender, and the countdown carried on
+        underneath. `uncovered` only ever presses `back`, so the window costs the
+        None it was already returning.
+        """
+        assert not in_battle((FRAMES / "night_countdown.png").read_bytes())
+        assert card_groups((FRAMES / "night_countdown.png").read_bytes())
+
+    def test_a_screen_that_is_not_a_battle_carries_no_plate(self) -> None:
+        """Only frames that still carry their own pixels where this reader looks.
+
+        Most fixtures here are masked down to the box the parser they were
+        committed for reads, and five of the obvious negatives — the plain
+        result screen, the event reward page, both village frames and the
+        loading screen — are blacked out over `ABANDON_BOX` entirely. Asserting
+        on those cannot fail whatever the threshold or the box later becomes,
+        which reads as coverage without being any. What is left is measured: the
+        two panels this change fixes, the lit result screen, the army screen and
+        the attack menu all keep real content there.
+        """
+        for name in (
+            "miner_panel.png",
+            "shop_skins.png",
+            "battle_result_lit.png",
+            "attack_menu.png",
+            "army_screen.png",
+        ):
+            assert not in_battle((FRAMES / name).read_bytes()), name
 
     def test_loot_is_read_over_stone(self) -> None:
         """Grey paving behind the digits is what a plain brightness threshold gets wrong."""

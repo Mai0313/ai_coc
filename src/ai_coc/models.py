@@ -1730,6 +1730,10 @@ class FrameReading(BaseModel):
     # `read_scout` answering None does not, and the two were confused once at
     # the cost of five rounds walking out of battles still being fought.
     battle_over: bool = False
+    # A battle actually being fought, which `card_groups` was standing in for
+    # and could not answer: the game's own panels carry a row of card-shaped
+    # patches too, so this is the field that separates one from the other.
+    in_battle: bool = False
     # The game's own yes/no panel, and both of its buttons. Which one to press
     # is never this reader's to say: 升級城牆 and 確定退出遊戲嗎 are the same
     # panel in the same pixels.
