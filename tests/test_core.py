@@ -2649,19 +2649,26 @@ class AttackTests(unittest.TestCase):
         poured.assert_not_called()
 
     def test_a_screen_that_is_not_a_battle_is_not_emptied_into(self) -> None:
-        """The measured one: the shop's own tiles came back as cards, and were tapped.
+        """The 探礦者 sheet, which reaches `_cast` on every reader below this one.
 
-        A battle that had already ended left the 外觀 page on screen, and
-        `card_groups` read it as a row — spell cards at x 105 and x 1497,
-        neither of which is a card position — so each was tapped and then poured
-        over twelve points along the drop line, which is what walked the shop
-        from page to page. Nothing downstream could catch it: `counted_cards`
-        agreed the tiles carried an `xN`, and `battle_over` is False for every
-        panel the game puts up.
+        A battle that had already ended left the sheet on screen, and
+        `card_groups` read its row of builder portraits as three cards; two of
+        them carry something in the corner, so `counted_cards` agrees they are
+        cards still holding, and `battle_over` is False for every panel the game
+        puts up. Nothing under this stops it: with the guard bypassed `_cast` is
+        called with 656 and 999 and pours them over twelve points along the drop
+        line, which on the shop page is what walked it from tab to tab.
+
+        The shop frame is the wrong one to assert on even though it is the more
+        vivid incident — `counted_cards` comes back empty on the page that was
+        captured, so `_dump_leftovers` already returned before the guard and the
+        test would pass with the guard deleted.
         """
         runner = self._runner()
         runner._line = deploy_line(LINE_POINTS, *DEPLOY_LINES["top_left"])
-        runner._last = (FRAMES / "shop_skins.png").read_bytes()
+        runner._last = (FRAMES / "miner_panel.png").read_bytes()
+        # The reading the guard has to beat: this is a row, and it is counted.
+        assert counted_cards(runner._last, [656, 999]) == [656, 999]
         with patch.object(AttackRunner, "_cast") as poured:
             runner._dump_leftovers()
         poured.assert_not_called()
