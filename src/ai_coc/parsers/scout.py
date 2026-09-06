@@ -416,6 +416,39 @@ CAPACITY_TOLERANCE = 15
 RETURN_HOME_BOX = (690, 738, 910, 796)
 RETURN_HOME_GREEN = 0.23
 
+# The 放棄 plate, which is what says a battle is still being fought. **A card row
+# is not that, and reading it as one is what left a loop tapping inside the
+# shop.** `card_groups` segments a band across the bottom of the frame into
+# card-shaped bright patches, so anything with a row of portraits or tiles there
+# answers it: measured, the 探礦者 panel reads three cards off its builder
+# portraits and the shop's 外觀 page reads a row off the skins it is selling.
+# Both were then taken for battles — the loop kept casting into them, and
+# `uncovered` refused to press `back` at what it thought was a battle, which is
+# a deadlock rather than a wasted round. One incident held a run for ten minutes
+# across ten rounds; another spent twenty frames browsing hero skins at $330.
+#
+# **The box is where the two villages overlap, not where either button is.** The
+# home village draws 放棄 at about y 645-690 and the builder base draws 結束戰鬥
+# higher, at about y 600-655, so a box cut to the home village's own button
+# reads the builder base at 0.2690 — and this is asked in both worlds, so a line
+# drawn above that would press `back` at a builder base battle, which is the one
+# thing the filter exists to prevent. The 24 px both buttons cross reads 0.6065
+# to 0.6153 over every recorded home battle and 0.7539 on the builder base
+# fixture, against 0.0000 for the two panels this fixes.
+#
+# Swept over every recorded frame this is ever asked about — `current_world`
+# naming no village, no result screen up — a battle never reads under 0.6065 and
+# the panels never read over 0.0000. The line goes at 0.45, which is a fifth of
+# the way down from the lowest battle and nowhere near anything else.
+#
+# A scout screen is the one thing that lands on both sides: its own 結束戰鬥 sits
+# where 放棄 does, so an opponent on offer reads 0.6065 like a battle while
+# 正在搜尋對手 reads nothing at all. Both answers are safe — the first leaves a
+# scout screen alone, which is what `_scout` wants, and the second presses
+# `back` at a search that has nothing to lose.
+ABANDON_BOX = (20, 636, 200, 660)
+ABANDON_RED = 0.45
+
 # 還在嗎 / 你因閒置過久而中斷連線. A loop that spends minutes waiting for barracks
 # will meet this, and nothing else clears it: the game stops responding to taps
 # until 重新登入遊戲 is pressed. Measured, its flat grey panel fills 0.97 of this
@@ -650,6 +683,18 @@ def loot_cart_open(png: bytes) -> bool:
     """
     image = open_frame(png)
     return _button_ratio(image, CART_COLLECT_BOX, "green") >= CART_COLLECT_GREEN
+
+
+def in_battle(png: bytes) -> bool:
+    """Whether a battle is on screen, by the red plate that leaves one.
+
+    The question `card_groups` was standing in for, and could not answer: a card
+    row says something card-shaped is along the bottom of the frame, which the
+    game's own panels have as readily as a battle does. The plate in the corner
+    — 放棄 in the home village, 結束戰鬥 in the builder base and on the scout
+    screen — is on screen for the whole of a battle and on none of those panels.
+    """
+    return _button_ratio(open_frame(png), ABANDON_BOX, "red") >= ABANDON_RED
 
 
 def searching_opponent(png: bytes) -> bool:

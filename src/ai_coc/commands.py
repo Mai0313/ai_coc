@@ -71,6 +71,7 @@ from ai_coc.parsers.hero import hero_cards
 from ai_coc.parsers.home import builder_jobs, free_builders, collect_bubbles
 from ai_coc.adapters.mumu import MuMuAdapter
 from ai_coc.parsers.scout import (
+    in_battle,
     card_count,
     live_cards,
     read_scout,
@@ -1606,6 +1607,7 @@ def read(png: bytes) -> FrameReading:
         searching=searching_opponent(png),
         loot_cart=loot_cart_open(png),
         battle_over=battle_over(png),
+        in_battle=in_battle(png),
         dialog=game_dialog(png),
         skip_offered=skip_offered(png),
         idle_dialog=idle_disconnected(png),

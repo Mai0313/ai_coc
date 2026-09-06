@@ -30,6 +30,7 @@ from ai_coc.models import Crossing
 from ai_coc.constants import COC_PACKAGE
 from ai_coc.adapters.adb import ZOOM_PINCHES
 from ai_coc.parsers.scout import (
+    in_battle,
     battle_over,
     card_groups,
     loading_screen,
@@ -179,6 +180,18 @@ def uncovered(adb: AdbController, display: DisplayTarget) -> World | None:
     itself — and this is not the one to make an exception of. A battle answers
     None, which every caller already handles as "nothing to work from".
 
+    **But a card row is not a battle, and taking it for one turned every panel
+    the loop tapped open into a deadlock.** `card_groups` answers wherever the
+    bottom of the frame holds card-shaped patches, which the game's own panels
+    do: the 探礦者 sheet reads three cards off its builder portraits, and the
+    shop's 外觀 page reads a row off the skins on sale. Both were reported here
+    as battles, so `back` was never pressed and nothing else clears them —
+    measured, ten rounds and ten minutes on the first, and a run that spent
+    twenty frames inside the shop on the second. `in_battle` is the feature that
+    was missing: the 放棄 plate is on screen for the whole of a battle and on
+    none of those, so the pair is what a battle is now, and either one alone is
+    not. The panels then get their `back` like any other cover.
+
     Otherwise `back` is safe for the reason `_home` gives: on a clear village it
     raises 確定退出遊戲嗎, so it is only ever pressed on a frame that is **not**
     one. A village that reads is handed straight back untouched.
@@ -195,7 +208,7 @@ def uncovered(adb: AdbController, display: DisplayTarget) -> World | None:
                 "The game is on its loading screen; there is nothing here to press back at"
             )
             return None
-        if card_groups(png) or battle_over(png):
+        if (card_groups(png) and in_battle(png)) or battle_over(png):
             logger.info("A battle is on screen; there is nothing here to press back at")
             return None
         logger.info("Something is over the village; pressing back to get at it")
