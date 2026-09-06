@@ -1317,17 +1317,23 @@ class ScoutTests(unittest.TestCase):
         assert card_groups((FRAMES / "night_countdown.png").read_bytes())
 
     def test_a_screen_that_is_not_a_battle_carries_no_plate(self) -> None:
+        """Only frames that still carry their own pixels where this reader looks.
+
+        Most fixtures here are masked down to the box the parser they were
+        committed for reads, and five of the obvious negatives — the plain
+        result screen, the event reward page, both village frames and the
+        loading screen — are blacked out over `ABANDON_BOX` entirely. Asserting
+        on those cannot fail whatever the threshold or the box later becomes,
+        which reads as coverage without being any. What is left is measured: the
+        two panels this change fixes, the lit result screen, the army screen and
+        the attack menu all keep real content there.
+        """
         for name in (
             "miner_panel.png",
             "shop_skins.png",
-            "battle_result.png",
             "battle_result_lit.png",
-            "event_reward.png",
-            "world_day.png",
-            "world_night.png",
             "attack_menu.png",
             "army_screen.png",
-            "loading_screen.png",
         ):
             assert not in_battle((FRAMES / name).read_bytes()), name
 

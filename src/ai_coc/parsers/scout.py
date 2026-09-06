@@ -702,7 +702,16 @@ def in_battle(png: bytes) -> bool:
     row says something card-shaped is along the bottom of the frame, which the
     game's own panels have as readily as a battle does. The plate in the corner
     — 放棄 in the home village, 結束戰鬥 in the builder base and on the scout
-    screen — is on screen for the whole of a battle and on none of those panels.
+    screen — is on none of those panels.
+
+    **False does not mean the battle is over**, and a caller reusing this on its
+    own has to know it: the game dims the whole screen behind its own popups,
+    which takes the plate under the red floor as readily as it takes the loot
+    digits (`battle_dimmed_by_popup.png`, a home battle at 66% with two minutes
+    left, reads 0.0000), and the builder base draws no plate at all until its
+    countdown ends. What this answers is "a battle is definitely on screen",
+    which is what a filter guarding a `back` press wants; "the battle has ended"
+    is `battle_over`'s question and stays with it.
     """
     return _button_ratio(open_frame(png), ABANDON_BOX, "red") >= ABANDON_RED
 
