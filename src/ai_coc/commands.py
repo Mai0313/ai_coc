@@ -107,7 +107,7 @@ from ai_coc.adapters.clipboard import read_clipboard, clear_clipboard, write_cli
 from .ui.clan import ClanRunner
 from .ui.hero import HeroRunner
 from .ui.walls import WallRunner
-from .ui.world import cross, collect_cart
+from .ui.world import cross, park_camera, collect_cart
 from .ui.attack import CARD_ROW_Y, DROP_SETTLE, SINGLE_DROP_DELAY, AttackRunner
 from .ui.runner import restart_game
 from .ui.upkeep import UpkeepRunner
@@ -1353,21 +1353,32 @@ _WORLDS: dict[World | None, str] = {"day": "日世界", "night": "夜世界", No
 
 
 def view(zoom: str = "out", times: int = 3) -> ViewReport:
-    """Zoom the village camera, with no window in the way.
+    """Put the village camera back where every coordinate here was measured.
 
     **The game has no zoom control to tap and reports no zoom level**, so this
     writes the two-finger gesture straight to the touch device — see
     `AdbController.pinch` for why `input` cannot. Zooming out past the far limit
-    does nothing at all, which is what makes `--zoom out` safe to run blind: it
-    is how a session that zoomed in to look at something gets back to the view
-    every coordinate in this project was measured against.
+    does nothing at all, which is what makes `--zoom out` safe to run blind.
 
     Measured live, one pinch covers the whole range: from fully zoomed in, a
     single gesture came back to the far limit and a second changed nothing.
+
+    **Scale is only half of it, and the half that was missing is the one that
+    breaks things.** This used to zoom and stop, on the documented understanding
+    that the far limit also centres the village. It does not: shove the camera
+    off centre, pinch, and the view has not moved at all. So the position is
+    settled separately, by running the camera into a map corner where it clamps —
+    see `park_camera` for the measurement. `--zoom` stays the knob for scale;
+    parking happens either way, because a command asked to put the camera back
+    is being asked for a view rather than for a gesture.
     """
     adb = _controller()
-    adb.zoom(zoom, times, COC_PACKAGE, adb.display_for(COC_PACKAGE))
-    report = ViewReport(message=f"鏡頭{'拉遠' if zoom == 'out' else '拉近'}了 {times} 次")
+    display = adb.display_for(COC_PACKAGE)
+    adb.zoom(zoom, times, COC_PACKAGE, display)
+    park_camera(adb, display)
+    report = ViewReport(
+        message=f"鏡頭{'拉遠' if zoom == 'out' else '拉近'}了 {times} 次，並停回定位"
+    )
     logger.info("View: %s", report.message)
     return report
 

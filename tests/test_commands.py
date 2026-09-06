@@ -20,6 +20,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from ai_coc import plans, commands
+from ai_coc.ui import world as world_ui
 from ai_coc.models import (
     MapEdge,
     ProbeRay,
@@ -638,6 +639,24 @@ class CaptureAndViewTests(unittest.TestCase):
         adb.zoom.assert_any_call("in", 2, COC_PACKAGE, DISPLAY)
         assert "拉近" in report.message
         assert "拉遠" in far.message
+
+    def test_view_parks_the_camera_as_well_as_zooming_it(self) -> None:
+        """Scale was only ever half of what a caller asking for the view wants.
+
+        The far zoom was documented as centring the village too, and measured it
+        does not move the camera at all — so a command that only pinched left
+        every map coordinate valid until the next thing that moved the camera.
+        Parking happens whichever way `--zoom` points, because a run asking to be
+        put back is asking for a view rather than for a gesture.
+        """
+        adb = _adb()
+        with patch.object(commands, "_controller", return_value=adb):
+            commands.view("in", 2)
+        assert adb.swipe.call_count == world_ui.PARK_SWIPES
+        crossing = world_ui.CROSSINGS["night"]
+        landing = (crossing.start[0] + crossing.drift[0], crossing.start[1] + crossing.drift[1])
+        for call in adb.swipe.call_args_list:
+            assert call.args[:2] == (crossing.start, landing)
 
 
 class SurveyRunnerTests(unittest.TestCase):

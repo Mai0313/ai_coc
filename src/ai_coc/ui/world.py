@@ -70,6 +70,54 @@ SWIPES = 5
 SWIPE_MS = 500
 SWIPE_SETTLE = 1.2
 
+# **A pinch does not put the camera anywhere in particular, and everything that
+# taps the map was built as though it did.** The far zoom was described here as
+# centring the village to within 20 px, on the reasoning that the map clamps the
+# camera at its own edges; measured, that is not what a pinch does at all. Shove
+# the camera off centre and pinch, and `view_shift` across the pinch reads
+# (0, 0) — it widens the view and leaves the middle exactly where it was pushed.
+# So every coordinate aimed at the map — the sweep grid, a remembered `--at`,
+# anything a session writes down — was only ever valid until something moved the
+# camera, which is silent and constant.
+#
+# What *is* reproducible is the clamp itself. Swiping into a map corner runs the
+# camera up against the edge and it stops: measured over three runs from three
+# scattered starting positions, the view stopped moving within two swipes
+# (shifts of (196, -98) then (0, 0); (0, 0) twice; (65, -33) then (0, 0)) and the
+# three frames it ended on aligned at `view_shift` (0, 0) with a mean absolute
+# pixel difference of 1.95 to 1.99 — water and flags, nothing else. The whole
+# village is on screen there, the diamond spanning about x 200-1400 by y 60-780.
+#
+# So the camera is parked rather than centred, and the same push the home
+# village's own crossing uses does it. Three swipes rather than the two measured,
+# for the reason `SWIPES` carries slack: a swipe at a clamped camera costs a
+# second and changes nothing, while one short of the clamp leaves every later
+# coordinate somewhere nobody measured.
+PARK_SWIPES = 3
+
+
+def park_camera(adb: AdbController, display: DisplayTarget) -> None:
+    """Run the camera into a map corner, where it stops somewhere reproducible.
+
+    Nothing is read and nothing is checked, because there is nothing to check
+    against: the game reports no camera position and no reader here can say
+    where the village is on a home village frame. What makes this safe to run
+    blind is the same property that makes it useful — a swipe at an already
+    clamped camera does nothing at all.
+
+    **Never during a battle.** A swipe with a card selected deploys troops along
+    its path rather than moving the camera, which is why this lives beside the
+    crossing rather than on the runner every loop shares: the battle loop has its
+    own `_settle_camera`, measured against the boundary the game draws, and it is
+    a different job from this one.
+    """
+    crossing = CROSSINGS["night"]
+    landing = (crossing.start[0] + crossing.drift[0], crossing.start[1] + crossing.drift[1])
+    for _ in range(PARK_SWIPES):
+        adb.swipe(crossing.start, landing, SWIPE_MS, display)
+        time.sleep(SWIPE_SETTLE)
+
+
 # The crossing plays an animation and reloads the other village. Measured, one
 # tap was answered four seconds later; this polls rather than sleeping the worst
 # case, since a crossing that already happened costs nothing to notice early.
