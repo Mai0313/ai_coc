@@ -180,6 +180,36 @@ class OpenedWalkTests(unittest.TestCase):
             assert runner._home() == STOCK
         tapped.assert_called_once_with(dialog.cancel)
 
+    def test_the_first_village_a_loop_sees_settles_the_scale_and_the_position(self) -> None:
+        """Two separate things, and the second one was missing.
+
+        The far zoom was documented as centring the village as well, so every
+        loop below this line aimed its taps at a map whose position nothing had
+        actually settled — measured, a pinch at a camera shoved off centre moves
+        the view by (0, 0). Parking runs it into a corner where it clamps, which
+        three runs from three scattered starts agreed on to the pixel.
+        """
+        runner = self._runner()
+        with (
+            patch.object(shared.time, "sleep"),
+            patch.object(runner, "_frame", return_value=b""),
+            patch.object(shared, "idle_disconnected", return_value=False),
+            patch.object(shared, "loading_screen", return_value=False),
+            patch.object(shared, "game_dialog", return_value=None),
+            patch.object(shared, "current_world", return_value="day"),
+            patch.object(shared, "read_stock", return_value=STOCK),
+            patch.object(AdbController, "zoom") as zoomed,
+            patch.object(shared, "park_camera") as parked,
+        ):
+            assert runner._home() == STOCK
+            # Once per run, hung off the first village that reads: a second call
+            # is the same loop still going rather than a new one starting.
+            assert runner._home() == STOCK
+        zoomed.assert_called_once()
+        # Always the home village: `_home` sails off the builder base long
+        # before it reaches the read that calls this.
+        parked.assert_called_once_with(runner.adb, runner.display, "day")
+
     def test_restarting_the_game_resolves_the_display_again(self) -> None:
         """MuMu opens the game on a display of its own choosing."""
         adb = MagicMock()

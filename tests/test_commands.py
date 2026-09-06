@@ -20,6 +20,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from ai_coc import plans, commands
+from ai_coc.ui import world as world_ui
 from ai_coc.models import (
     MapEdge,
     ProbeRay,
@@ -630,14 +631,64 @@ class CaptureAndViewTests(unittest.TestCase):
         # Between the two, and not after the last one.
         slept.assert_called_once_with(0.5)
 
-    def test_view_sends_the_pinch_at_the_games_own_display(self) -> None:
+    def _view(
+        self, seen: str | None, zoom: str = "in", times: int = 2
+    ) -> tuple[MagicMock, object]:
         adb = _adb()
-        with patch.object(commands, "_controller", return_value=adb):
-            report = commands.view("in", 2)
-            far = commands.view()
+        with (
+            patch.object(commands, "_controller", return_value=adb),
+            patch.object(commands, "current_world", return_value=seen),
+            patch.object(world_ui.time, "sleep"),
+        ):
+            return adb, commands.view(zoom, times)
+
+    def test_view_sends_the_pinch_at_the_games_own_display(self) -> None:
+        adb, report = self._view("day")
+        _, far = self._view("day", "out", 3)
         adb.zoom.assert_any_call("in", 2, COC_PACKAGE, DISPLAY)
         assert "拉近" in report.message
         assert "拉遠" in far.message
+
+    def test_view_parks_the_camera_as_well_as_zooming_it(self) -> None:
+        """Scale was only ever half of what a caller asking for the view wants.
+
+        The far zoom was documented as centring the village too, and measured it
+        does not move the camera at all — so a command that only pinched left
+        every map coordinate valid until the next thing that moved the camera.
+        """
+        adb, report = self._view("day")
+        assert adb.swipe.call_count == world_ui.SWIPES
+        crossing = world_ui.CROSSINGS["night"]
+        landing = (crossing.start[0] + crossing.drift[0], crossing.start[1] + crossing.drift[1])
+        for call in adb.swipe.call_args_list:
+            assert call.args[:2] == (crossing.start, landing)
+        assert "停回定位" in report.message
+
+    def test_the_builder_base_is_parked_into_its_own_corner(self) -> None:
+        """The two maps clamp in opposite corners, so one push cannot serve both.
+
+        Always pushing the home village's way would leave this village short of
+        any clamp, at a position that is neither measured nor reproducible —
+        which is the one thing the command now promises.
+        """
+        adb, _ = self._view("night")
+        crossing = world_ui.CROSSINGS["day"]
+        landing = (crossing.start[0] + crossing.drift[0], crossing.start[1] + crossing.drift[1])
+        assert adb.swipe.call_count == world_ui.SWIPES
+        for call in adb.swipe.call_args_list:
+            assert call.args[:2] == (crossing.start, landing)
+
+    def test_a_screen_that_is_not_a_village_keeps_the_zoom_and_nothing_else(self) -> None:
+        """A killed run leaves the game mid-battle, and that is when this gets reached for.
+
+        A swipe with a card selected deploys troops along its path rather than
+        panning, so the park is gated on the same capture that says which village
+        it is. The pinch is safe on any screen and still goes.
+        """
+        adb, report = self._view(None)
+        adb.zoom.assert_called_once()
+        adb.swipe.assert_not_called()
+        assert "沒有把鏡頭停回定位" in report.message
 
 
 class SurveyRunnerTests(unittest.TestCase):

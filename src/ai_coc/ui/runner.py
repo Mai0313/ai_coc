@@ -29,7 +29,7 @@ from ai_coc.parsers.scout import read_stock, loading_screen, idle_disconnected
 from ai_coc.parsers.world import current_world
 from ai_coc.parsers.building import game_dialog
 
-from .world import cross
+from .world import cross, park_camera
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Iterator
@@ -207,8 +207,20 @@ class GameRunner(ScreenRunner):
         moment the loop knows it is looking at the village and before it has
         tapped anything on it. A pinch between wall batches would only be
         spending three seconds to confirm what this one already settled.
+
+        **The pinch settles the scale and `park_camera` settles the position**,
+        which used to be one thing and was not: the far zoom was taken to centre
+        the village as well, and measured it does not move the camera at all.
+        Every coordinate below this line is aimed at the map, so without the park
+        they were valid only until something moved the camera — which is silent,
+        and which every crossing, every stray swipe and every session that looked
+        at something up close does.
         """
         self.adb.zoom("out", ZOOM_PINCHES, COC_PACKAGE, self.display)
+        # Always the home village: `_home` sails off the builder base before it
+        # ever reaches the read that calls this, so there is no other village
+        # this can be looking at.
+        park_camera(self.adb, self.display, "day")
 
     def _home(self) -> VillageStock | None:
         """The village's storages, once nothing is covering the village any more.

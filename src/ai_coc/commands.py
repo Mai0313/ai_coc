@@ -107,7 +107,7 @@ from ai_coc.adapters.clipboard import read_clipboard, clear_clipboard, write_cli
 from .ui.clan import ClanRunner
 from .ui.hero import HeroRunner
 from .ui.walls import WallRunner
-from .ui.world import cross, collect_cart
+from .ui.world import cross, park_camera, collect_cart
 from .ui.attack import CARD_ROW_Y, DROP_SETTLE, SINGLE_DROP_DELAY, AttackRunner
 from .ui.runner import restart_game
 from .ui.upkeep import UpkeepRunner
@@ -196,8 +196,9 @@ def launch(restart: RestartScope) -> LaunchReport:
     # nothing about whether it can be driven. Every command after this one aims
     # screen coordinates at it, and those were all measured against a village at
     # the far zoom — so this is where the game is brought to that state rather
-    # than in each of them. Zooming out is also what centres the village, since
-    # the map clamps the camera at its own edges.
+    # than in each of them. The position is settled there too, by parking the
+    # camera against a map edge — the pinch does not do it, whatever this used
+    # to say.
     settled = _settle_game(mumu.controller(instance.adb_serial), RESTART_POLLS)
     if restart == "none":
         # Which of these it was is the only thing this scope can report: it does
@@ -551,11 +552,13 @@ def _settle_game(
     the game's far zoom limit. A caller that has one without the other has a
     game that answers and misses everything it aims at.
 
-    **Zooming out is also how the village gets centred.** The map clamps the
-    camera at its own edges, so at the far limit the village diamond fills the
-    frame on its own — measured, its middle lands within about 20 px of the
-    screen's. There is nothing else to do, and nothing here has to find the
-    village to do it, which is what makes this safe on a frame nobody has read.
+    **Three steps, because zooming settles the scale and not the position.**
+    This file used to say the far limit centred the village too, on the
+    reasoning that the map clamps the camera at its own edges; measured, a pinch
+    does not move the camera at all. The clamp is real and the pinch simply
+    never reaches it, so `park_camera` runs the camera into a corner afterwards
+    — and the village this landed on is already read by then, which is what the
+    park needs to know, since the two maps clamp in opposite corners.
 
     None means the village never appeared. Whether that is worth giving up over
     is the caller's decision, not this one's.
@@ -592,8 +595,13 @@ def _settle_game(
             # row unreadable, which had `read_stock` call an ordinary village no
             # village at all.
             png = adb.screenshot(display)
-            if current_world(png) is not None:
+            if (world := current_world(png)) is not None:
                 adb.zoom("out", ZOOM_PINCHES, COC_PACKAGE, display)
+                # And the position, which the zoom does not settle. The village
+                # this landed on is already in hand, which is both things the
+                # park needs — that this is a village at all, and which of the
+                # two, since the maps clamp in opposite corners.
+                park_camera(adb, display, world)
                 return display
             # A session the server dropped would otherwise sit under its dialog
             # for the whole wait, since nothing else here answers one. Once,
@@ -1353,21 +1361,43 @@ _WORLDS: dict[World | None, str] = {"day": "日世界", "night": "夜世界", No
 
 
 def view(zoom: str = "out", times: int = 3) -> ViewReport:
-    """Zoom the village camera, with no window in the way.
+    """Put the village camera back where every coordinate here was measured.
 
     **The game has no zoom control to tap and reports no zoom level**, so this
     writes the two-finger gesture straight to the touch device — see
     `AdbController.pinch` for why `input` cannot. Zooming out past the far limit
-    does nothing at all, which is what makes `--zoom out` safe to run blind: it
-    is how a session that zoomed in to look at something gets back to the view
-    every coordinate in this project was measured against.
+    does nothing at all, which is what makes `--zoom out` safe to run blind.
 
     Measured live, one pinch covers the whole range: from fully zoomed in, a
     single gesture came back to the far limit and a second changed nothing.
+
+    **Scale is only half of it, and the half that was missing is the one that
+    breaks things.** This used to zoom and stop, on the documented understanding
+    that the far limit also centres the village. It does not: shove the camera
+    off centre, pinch, and the view has not moved at all. So the position is
+    settled separately, by running the camera into a map corner where it clamps —
+    see `park_camera` for the measurement. `--zoom` stays the knob for scale.
+
+    **The park is gated on a village and the pinch is not**, which is the
+    difference between a gesture that is safe on any screen and one that is not.
+    A swipe with a card selected deploys troops along its path instead of
+    panning, and this command's whole reputation is that it can be run blind at
+    whatever the game is showing — a killed run leaves the game mid-battle, and
+    that is exactly when somebody reaches for it. The one capture answers both
+    questions the park has: whether this is a village at all, and which of the
+    two, since the maps clamp in opposite corners. Anything else keeps the zoom
+    and says the camera was left where it was.
     """
     adb = _controller()
-    adb.zoom(zoom, times, COC_PACKAGE, adb.display_for(COC_PACKAGE))
-    report = ViewReport(message=f"鏡頭{'拉遠' if zoom == 'out' else '拉近'}了 {times} 次")
+    display = adb.display_for(COC_PACKAGE)
+    adb.zoom(zoom, times, COC_PACKAGE, display)
+    scaled = f"鏡頭{'拉遠' if zoom == 'out' else '拉近'}了 {times} 次"
+    world = current_world(adb.screenshot(display))
+    if world is None:
+        report = ViewReport(message=f"{scaled}，但畫面不是村莊，沒有把鏡頭停回定位")
+    else:
+        park_camera(adb, display, world)
+        report = ViewReport(message=f"{scaled}，並把鏡頭停回定位")
     logger.info("View: %s", report.message)
     return report
 

@@ -70,6 +70,59 @@ SWIPES = 5
 SWIPE_MS = 500
 SWIPE_SETTLE = 1.2
 
+# **A pinch does not put the camera anywhere in particular, and everything that
+# taps the map was built as though it did.** The far zoom was described here as
+# centring the village to within 20 px, on the reasoning that the map clamps the
+# camera at its own edges; measured, that is not what a pinch does at all. Shove
+# the camera off centre and pinch, and `view_shift` across the pinch reads
+# (0, 0) — it widens the view and leaves the middle exactly where it was pushed.
+# So every coordinate aimed at the map — the sweep grid, a remembered `--at`,
+# anything a session writes down — was only ever valid until something moved the
+# camera, which is silent and constant.
+#
+# What *is* reproducible is the clamp itself. Swiping into a map corner runs the
+# camera up against the edge and it stops: measured over three runs from three
+# scattered starting positions, the view stopped moving within two swipes
+# (shifts of (196, -98) then (0, 0); (0, 0) twice; (65, -33) then (0, 0)) and the
+# three frames it ended on aligned at `view_shift` (0, 0) with a mean absolute
+# pixel difference of 1.95 to 1.99 — water and flags, nothing else. The whole
+# village is on screen there, the diamond spanning about x 200-1400 by y 60-780.
+#
+# So the camera is parked rather than centred, and each village is pushed into
+# its own corner with its own crossing's swipe. **Which village it is on decides
+# both**: the two maps clamp in opposite corners, and the builder base needs four
+# swipes to the home village's two, which is what `SWIPES` was already sized for.
+# A park that always pushed the home village's way would leave the builder base
+# short of any clamp, at a position that is neither measured nor reproducible —
+# which is the one thing this is for.
+
+
+def park_camera(adb: AdbController, display: DisplayTarget, world: World) -> None:
+    """Run this village's camera into its own map corner, where it stops.
+
+    Nothing is read here and nothing is checked, because there is nothing to
+    check against: the game reports no camera position and no reader in this
+    project can say where a village sits on its own frame. What makes it safe to
+    run blind is the same property that makes it useful — a swipe at an already
+    clamped camera does nothing at all.
+
+    **The caller has to know which village this is, and that it is a village.**
+    A swipe with a card selected deploys troops along its path rather than
+    panning, so a park sent into a battle puts the army out along a line nobody
+    chose; and the two maps clamp in opposite corners, so the wrong village's
+    push walks away from the clamp instead of into it. Neither can be settled
+    from in here without a capture the callers have already taken, which is why
+    `world` is a parameter rather than something this reads for itself.
+    """
+    # Keyed by the village being sailed to, so the push away from the village
+    # being stood on is the other one's.
+    crossing = CROSSINGS["night" if world == "day" else "day"]
+    landing = (crossing.start[0] + crossing.drift[0], crossing.start[1] + crossing.drift[1])
+    for _ in range(SWIPES):
+        adb.swipe(crossing.start, landing, SWIPE_MS, display)
+        time.sleep(SWIPE_SETTLE)
+
+
 # The crossing plays an animation and reloads the other village. Measured, one
 # tap was answered four seconds later; this polls rather than sleeping the worst
 # case, since a crossing that already happened costs nothing to notice early.
@@ -147,7 +200,10 @@ def collect_cart(adb: AdbController, display: DisplayTarget) -> int:
     finally:
         # The swiping above leaves the camera at a map corner whether or not the
         # cart was found, and every coordinate in this project was measured at
-        # the far zoom. Zooming out puts it back and centres the village with it.
+        # the far zoom. Zooming out puts the scale back; the corner it is already
+        # in is where `park_camera` would have put it anyway, so there is nothing
+        # to undo — this used to say the pinch centred the village, and it does
+        # not move the camera at all.
         adb.zoom("out", ZOOM_PINCHES, COC_PACKAGE, display)
     if before is None or after is None:
         logger.warning("The storage bars would not read either side of the cart")
