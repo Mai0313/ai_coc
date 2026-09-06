@@ -9,10 +9,13 @@ uv run python - <<'PY'
 from pathlib import Path
 from ai_coc.commands import _controller
 from ai_coc.constants import COC_PACKAGE
+from ai_coc.ui.world import park_camera
+from ai_coc.parsers.world import current_world
 
 adb = _controller()
 display = adb.display_for(COC_PACKAGE)
 adb.zoom("out", 2, COC_PACKAGE, display)                # 先把鏡頭拉回最遠
+park_camera(adb, display, current_world(adb.screenshot(display)))  # 再把它停回定位
 
 Path("shot.png").write_bytes(adb.screenshot(display))   # 現在畫面
 adb.tap(800, 450, display)                              # 點一下
@@ -21,7 +24,11 @@ adb.back(display)                                       # BACK 鍵
 PY
 ```
 
-**量任何東西之前先把鏡頭拉回最遠.** 這個專案的每一個座標都是在遊戲最遠的 zoom 量出來的, 所以鏡頭停在別的地方的時候, 你量出來的常數全部是錯的 —— 而底下「把一個新畫面量成常數」那一整節的前提就是它. 拉回去不需要先知道現在在哪, 因為到了最遠處再往外縮什麼都不會發生, 所以這一行直接送出去就好, 遊戲自己也報不出目前的 zoom 給你檢查. 程式那邊 `commands.py` 的 `_settle_game` 跟 `ui/runner.py` 的 `GameRunner._settle_zoom` 每次開工都在做這件事, 手寫的探索腳本反而是唯一沒人幫你做的入口.
+**量任何東西之前先把鏡頭拉回最遠, 再把它停回定位.** 這個專案的每一個座標都是在遊戲最遠的 zoom 量出來的, 所以鏡頭停在別的地方的時候, 你量出來的常數全部是錯的 —— 而底下「把一個新畫面量成常數」那一整節的前提就是它. 拉回去不需要先知道現在在哪, 因為到了最遠處再往外縮什麼都不會發生, 遊戲自己也報不出目前的 zoom 給你檢查.
+
+**但 zoom 只管縮放, 不管位置, 這一點以前這裡寫錯了.** 實測: 把鏡頭推歪再 pinch, 視野位移是 (0, 0) —— pinch 完全不移動鏡頭. 所以只 pinch 不停鏡頭量出來的常數, 有效期只到下一件移動鏡頭的事為止, 而坐船、隨手一滑、任何一次湊近看東西都會移動它, 而且沒有任何跡象. 真正可重現的是**地圖邊緣把鏡頭夾住**: 滑到角落最多兩下就不再動, 三次從不同起點滑過去停在同一個畫面上. `park_camera` 就是在做這件事, 它要你告訴它是哪個村莊, 因為兩張地圖夾在相反的角落 —— 而**戰鬥畫面上絕對不能叫它**, 選著卡片時滑動會沿路把兵丟出去.
+
+程式那邊 `commands.py` 的 `_settle_game` 跟 `ui/runner.py` 的 `GameRunner._settle_zoom` 每次開工都會 pinch 加停鏡頭, 手寫的探索腳本反而是唯一沒人幫你做的入口 —— 所以上面那兩行要一起送.
 
 方法的完整清單在 `src/ai_coc/adapters/adb.py` 的 `AdbController`, 每個方法上面的 docstring 都值得讀一次, 尤其是 `tap_many`, 那裡面兩條規則各自是一場沒下出任何兵的戰鬥換來的.
 

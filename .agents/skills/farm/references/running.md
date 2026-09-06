@@ -119,7 +119,7 @@ jq '.[-1] | {world, stock_full, message}' ~/.ai_coc/logs/<run>/result.json
 
 那種時候 `uv run ai_coc launch --restart game` 重開遊戲而不動模擬器, `--restart emulator` 連模擬器一起重開.
 
-**`launch` 做的事比「確保遊戲在跑」多**, 三種 scope 都一樣: 它會一直輪詢到村莊真的畫出來 (最久三分鐘), 然後把鏡頭 pinch 回最遠, 而那個 pinch 順便會把村莊帶回螢幕中央. `LaunchReport.at_village` 就是在說村莊到底有沒有出現. 其他指令走的是 `_controller()`, 那只保證有一個 pid. 所以鏡頭被誰拉近了, 修法是 `launch` 而不是重跑原本那個指令. 遊戲卡在載入畫面則是另一回事: `launch` 一樣只等三分鐘, 放棄時 log 最後一行會說 `the game is on its loading screen`, 而那是伺服器的事, 攻擊迴圈自己會等 (最多 45 分鐘, 見 `farm` 的警覺樣態那節), 不要一直重跑 `launch`.
+**`launch` 做的事比「確保遊戲在跑」多**, 三種 scope 都一樣: 它會一直輪詢到村莊真的畫出來 (最久三分鐘), 然後把鏡頭 pinch 回最遠, **再把鏡頭滑到地圖角落停好**. 這是兩件事而不是一件: pinch 只管縮放, 實測它完全不移動鏡頭 —— 把鏡頭推歪再 pinch, 視野位移是 (0, 0). 會停下來的是地圖邊緣, 滑到角落最多兩下就夾住, 而且三次從不同起點滑過去停在同一個畫面上 (誤差 0 px). 這份文件以前寫 pinch 會順便置中, 那是錯的. `LaunchReport.at_village` 就是在說村莊到底有沒有出現. 其他指令走的是 `_controller()`, 那只保證有一個 pid. 所以鏡頭被誰拉近了, 修法是 `launch` 而不是重跑原本那個指令. 遊戲卡在載入畫面則是另一回事: `launch` 一樣只等三分鐘, 放棄時 log 最後一行會說 `the game is on its loading screen`, 而那是伺服器的事, 攻擊迴圈自己會等 (最多 45 分鐘, 見 `farm` 的警覺樣態那節), 不要一直重跑 `launch`.
 
 **三個都會把進行中的戰鬥打斷**, 所以跑之前先確認背景那輪真的停了.
 

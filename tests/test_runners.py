@@ -206,7 +206,9 @@ class OpenedWalkTests(unittest.TestCase):
             # is the same loop still going rather than a new one starting.
             assert runner._home() == STOCK
         zoomed.assert_called_once()
-        parked.assert_called_once_with(runner.adb, runner.display)
+        # Always the home village: `_home` sails off the builder base long
+        # before it reaches the read that calls this.
+        parked.assert_called_once_with(runner.adb, runner.display, "day")
 
     def test_restarting_the_game_resolves_the_display_again(self) -> None:
         """MuMu opens the game on a display of its own choosing."""

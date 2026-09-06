@@ -217,7 +217,10 @@ class GameRunner(ScreenRunner):
         at something up close does.
         """
         self.adb.zoom("out", ZOOM_PINCHES, COC_PACKAGE, self.display)
-        park_camera(self.adb, self.display)
+        # Always the home village: `_home` sails off the builder base before it
+        # ever reaches the read that calls this, so there is no other village
+        # this can be looking at.
+        park_camera(self.adb, self.display, "day")
 
     def _home(self) -> VillageStock | None:
         """The village's storages, once nothing is covering the village any more.
