@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import os
 import sys
+import base64
 import ctypes
 from ctypes import wintypes
 from pathlib import Path
@@ -218,7 +219,38 @@ class TouchNodeTests(unittest.TestCase):
         ):
             _controller().pinch(((1, 1), (2, 2)), ((3, 3), (4, 4)), steps=1)
         assert shell.call_count == 2
-        assert all("sendevent /dev/input/event" in call.args[0] for call in shell.call_args_list)
+        assert [call.args[0].rsplit(" > ", 1)[-1] for call in shell.call_args_list] == [
+            "/dev/input/event8",
+            "/dev/input/event9",
+        ]
+
+    def test_a_gesture_opens_its_node_once_and_paces_itself_between_reports(self) -> None:
+        """The open is what `sendevent` was really costing: 31 of the 33 ms an event took."""
+        script = adb_module.gesture_script(
+            adb_module.pinch_events(((0, 0), (10, 0)), ((100, 0), (90, 0)), steps=4),
+            "/dev/input/event8",
+            gap=0.02,
+        )
+        # One redirect for the whole gesture, and a pause between every report
+        # but never inside one: half a gesture's fingers is not a moment the
+        # game should ever be handed.
+        assert script.count("> /dev/input/event8") == 1
+        assert script.count("sleep 0.02") == script.count("base64 -d") - 1
+
+    def test_the_events_go_out_as_the_kernel_lays_them_out(self) -> None:
+        """24 bytes each, and what comes back out is what `pinch_events` asked for."""
+        events = adb_module.pinch_events(((0, 0), (10, 0)), ((100, 0), (90, 0)), steps=2)
+        script = adb_module.gesture_script(events, "/dev/input/event8", gap=0)
+        packed = b"".join(
+            base64.b64decode(part.split("echo ", 1)[1].split(" |", 1)[0])
+            for part in script.split(" ; ")
+            if "echo " in part
+        )
+        assert len(packed) == len(events) * 24
+        assert [
+            tuple(adb_module.INPUT_EVENT.unpack_from(packed, at)[2:])
+            for at in range(0, len(packed), 24)
+        ] == events
 
     def test_an_aimed_zoom_never_relaunches_the_game(self) -> None:
         """Nothing else saw the gesture, so there is nothing to bring back to the front."""

@@ -3,6 +3,8 @@ from __future__ import annotations
 import os
 import re
 import time
+import base64
+import struct
 from typing import TYPE_CHECKING
 import logging
 
@@ -51,9 +53,25 @@ BTN_TOUCH = 0x14A
 ABS_MT_SLOT, ABS_MT_POSITION_X, ABS_MT_POSITION_Y, ABS_MT_TRACKING_ID = 0x2F, 0x35, 0x36, 0x39
 # Any two ids the kernel is not already using for a live finger.
 FIRST_TRACKING_ID = 100
+# struct input_event as the 64-bit kernel lays it out: two 8-byte timeval fields,
+# then type, code and value. The kernel stamps the arrival time itself, so the
+# first two go out as zero.
+INPUT_EVENT = struct.Struct("<qqHHi")
 # How many moves the gesture is broken into. One jump from start to end reads as
 # a teleport and the game keeps the scale it started at.
-PINCH_STEPS = 16
+#
+# It was 16 while every event cost a `sendevent`, which put a step 225 ms and
+# 22 px apart — visibly a series of jumps rather than a drag, and MuMu draws a
+# dot under every touch it receives, so it is visible. `gesture_script` took the
+# same 48 steps from 3.6 s to 0.28 s, which is what makes three times the
+# resolution cheaper than the old sixteen rather than dearer.
+PINCH_STEPS = 48
+# What separates one step from the next. `gesture_script` writes a report in
+# about 6 ms on its own, so this is what puts a step on roughly a display frame
+# instead of three: measured, 48 steps come out at 0.66 s, which is a hand's
+# pace. It is not what makes the gesture *work* — the game reads the same zoom
+# at every gap from 0 to 0.02 — it is what makes it look like one.
+PINCH_GAP = 0.008
 # Where a pinch puts its two fingers, and how far they travel. Centred on the
 # playfield so the zoom keeps the village in view, and wide enough that the game
 # reads it as a gesture rather than as two taps.
@@ -63,14 +81,32 @@ PINCH_STEPS = 16
 # layer — a caller in `ui` reaching the other way would be a cycle.
 PINCH_NEAR, PINCH_FAR = 150, 500
 PINCH_ROW = 450
-# How long the camera takes to settle after one.
-PINCH_SETTLE = 1.5
-# How many pinches to spend putting the camera back at the far zoom. `view`
-# measured one gesture as covering the whole range and a second as changing
-# nothing, so this is that plus a spare: about three seconds, against a battle
-# of three minutes or a run that spends them sweeping the village. Every loop
-# that puts the camera back — before a battle, on the first village a runner
-# reads, after a crossing, after a restart — spends the same two.
+# How long the camera takes to settle after one. Swept from a camera zoomed
+# fully in, two `out` gestures reach the far limit at every settle from 1.5 s
+# down to none at all — 0.505 to 0.507 of bare ground in all five — so this is
+# not what makes the second gesture land. What it is for is the frame the caller
+# takes next: `_settle_zoom` hands its capture to `_settle_camera`, which
+# measures the village against the screen, and a frame taken mid-animation
+# measures a village that is still moving. 0.4 s is that margin, and it takes a
+# zoom out from 10.2 s to 2.6 s alongside the gesture below.
+PINCH_SETTLE = 0.4
+# What the game needs to come back to the front after the fallback relaunch
+# below, which is a different question from the camera's own animation and was
+# borrowing this one's number until the number moved.
+RELAUNCH_SETTLE = 1.5
+# How many pinches to spend putting the camera back at the far zoom. **Two is
+# needed rather than spare, and this said the opposite for a long time.** The
+# claim here was that one gesture covered the whole range; swept from a camera
+# zoomed fully in, one `out` takes the bare-ground share of the frame from 0.19
+# to 0.40 and a second to 0.507, where a third moves it by 0.002. Two thirds,
+# not all of it.
+#
+# **And a longer finger travel does not buy the rest**, which is the obvious
+# thing to try: at 150/500 one gesture reaches 0.404, at 150/550 0.426, at
+# 150/600 0.430 — and past that the game stops reading the gesture at all, with
+# 100/700 and 60/760 both leaving the camera exactly where it was. So the game
+# caps what one pinch may do rather than scaling it to the distance, and the way
+# to cover the range is to ask twice.
 ZOOM_PINCHES = 2
 
 
@@ -159,6 +195,44 @@ def pinch_events(
     events.append((EV_KEY, BTN_TOUCH, 0))
     events.append((EV_SYN, SYN_REPORT, 0))
     return events
+
+
+def gesture_script(events: list[tuple[int, int, int]], node: str, gap: float = PINCH_GAP) -> str:
+    """An event stream as one shell command writing it to a device node.
+
+    **The node is opened once for the whole gesture**, which is what this exists
+    for. `sendevent` opens it per event, and measured on this emulator that is
+    what a pinch was really paying: 40 `sendevent` cost 1.23 s against 0.08 s
+    for 40 `true`, so 31 of the 33 ms an event cost was the open. Even one
+    `> node` redirect per report still costs about 37 ms. Redirecting the whole
+    group takes a 48-step gesture from 3.6 s to 0.28 s.
+
+    **The pacing is the other half, and without it there is no gesture.** The
+    stream written in one go arrives with one timestamp and the game keeps the
+    scale it started at — measured, a batch that moved the camera not at all,
+    0.199 to 0.195. A `sleep` between reports is what makes it a drag, and the
+    game reads the same zoom at every gap from 0 up to 0.02, so `gap` buys how
+    it looks rather than whether it works: MuMu draws a dot under every touch it
+    receives, and a step every 14 ms at `PINCH_GAP` reads as a slide where one
+    every 225 ms read as a series of jumps. The 0.28 s above is the ungapped
+    figure, which is what the grouping bought; paced, the same gesture is 0.66 s.
+
+    Split at `SYN_REPORT`, because that is the boundary the kernel hands a
+    complete picture to the app at; pausing inside one would deliver half a
+    gesture's fingers.
+    """
+    parts: list[str] = []
+    report: list[tuple[int, int, int]] = []
+    for event in events:
+        report.append(event)
+        if event[0] != EV_SYN:
+            continue
+        blob = base64.b64encode(b"".join(INPUT_EVENT.pack(0, 0, *e) for e in report)).decode()
+        if parts and gap:
+            parts.append(f"sleep {gap}")
+        parts.append(f"echo {blob} | base64 -d")
+        report = []
+    return "{ " + " ; ".join(parts) + " ; } > " + node
 
 
 class AdbController(BaseModel):
@@ -265,8 +339,8 @@ class AdbController(BaseModel):
         """Every multi-touch input node this device exposes.
 
         `input` cannot do two fingers, so a pinch has to be written straight to
-        the kernel with `sendevent` — and that goes to a device node rather than
-        to a display, so nothing routes it the way `input -d` is routed.
+        the kernel — and that goes to a device node rather than to a display, so
+        nothing routes it the way `input -d` is routed.
 
         Which node belongs to which display is what `touch_device_for` answers;
         this is the fallback for when that cannot be worked out, and sending to
@@ -349,12 +423,7 @@ class AdbController(BaseModel):
         stream = pinch_events(first, second, steps)
         logger.info("Pinch %s %s and %s on %s", self.serial, first, second, nodes)
         for target in nodes:
-            self.shell(
-                " ; ".join(
-                    f"sendevent {target} {kind} {code} {value}" for kind, code, value in stream
-                ),
-                timeout=30,
-            )
+            self.shell(gesture_script(stream, target), timeout=30)
 
     def zoom(
         self,
@@ -395,7 +464,7 @@ class AdbController(BaseModel):
         # Skipped when the gesture was aimed, because then nothing else saw it.
         if package and node is None:
             self.launch_app(package)
-            time.sleep(PINCH_SETTLE)
+            time.sleep(RELAUNCH_SETTLE)
 
     def back(self, display: DisplayTarget) -> None:
         logger.info("Back key on %s display %s", self.serial, display.logical_id)
