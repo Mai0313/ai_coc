@@ -2882,6 +2882,91 @@ class AttackTests(unittest.TestCase):
         assert self._watched(opening, [None, None])[1]._seen is None
         assert self._watched(opening, [stuck, None])[1]._seen == opening
 
+    def test_an_army_that_landed_and_took_nothing_is_not_blamed_on_the_deployment(self) -> None:
+        """Loot that never moved says the attack took nothing, not why.
+
+        Measured on a live round, this reported 部隊可能沒有成功部署 for a
+        battle whose result screen read 戰敗, 32%, 你獲得了 0 — every troop card
+        had drained and three of three retried heroes had landed, and the army
+        had gone in on the side with no storages on it. Which of the two it was
+        decides who looks next: the loop, or the tactic.
+        """
+        runner = self._runner()
+        runner._seen = LootOffer(gold=1031321, elixir=420990, dark=2525)
+        runner._deployed = True
+        assert "部隊有出去" in runner._outcome("戰利品達標", took=False)
+        runner._deployed = False
+        assert "沒有成功部署" in runner._outcome("戰利品達標", took=False)
+
+    def test_a_panel_nobody_read_outranks_both_of_those(self) -> None:
+        """A round nobody could judge is not a round that failed, however it deployed."""
+        runner = self._runner()
+        runner._deployed = True
+        assert "無從判斷" in runner._outcome("戰利品達標", took=False)
+        assert runner._outcome("戰利品達標", took=True) == "戰利品達標，已進攻並回營"
+
+    def test_a_round_never_inherits_the_last_one_s_deployment(self) -> None:
+        """One runner plays every round, and `_deploy` can end before the tactic.
+
+        A battle row it cannot read at all returns before anything is placed, so
+        clearing the flag with the tactic's own state would leave the round
+        after a successful one reported as an army that went down.
+        """
+        runner = self._runner()
+        runner._deployed = True
+        with patch.object(AttackRunner, "_open_attack_menu", return_value=None):
+            runner._run_day()
+        assert runner._deployed is False
+
+    def test_a_troop_row_that_poured_is_what_says_the_army_left(self) -> None:
+        """The ordinary deployment, and the only place it is ever watched happening.
+
+        `_spread_troops` only runs on what the burst left over, so a row that
+        emptied cleanly never reaches it — and `_onfield` is the one-off cards
+        alone. Without this an army of nothing but troops reads as one that
+        never deployed.
+        """
+        runner = self._runner()
+        with (
+            patch.object(AttackRunner, "_frame", return_value=b""),
+            patch.object(AttackRunner, "_spread_troops", return_value=[]),
+            patch.object(attack, "field_units", return_value=[]),
+            patch.object(attack, "live_cards", return_value=[105]),
+        ):
+            runner._settle_drops([105, 269], [(0, 0)], DEPLOY_LINES["top_left"])
+        assert runner._deployed is True
+
+        stuck = self._runner()
+        with (
+            patch.object(AttackRunner, "_frame", return_value=b""),
+            patch.object(AttackRunner, "_spread_troops", return_value=[]),
+            patch.object(attack, "field_units", return_value=[]),
+            patch.object(attack, "live_cards", return_value=[105, 269]),
+        ):
+            stuck._settle_drops([105, 269], [(0, 0)], DEPLOY_LINES["top_left"])
+        assert stuck._deployed is False
+
+    def test_a_row_of_only_troops_still_gets_its_reading(self) -> None:
+        """An army with no siege machine and every hero in the laboratory is all troops.
+
+        `_settle_drops` used to be asked for only when a one-off card had been
+        sent, so that row was poured and never looked at again — no reading of
+        whether the army left, and nothing to hand `_spread_troops` a row that
+        stayed in its cards.
+        """
+        row = BattleRow(
+            troops=[105, 269],
+            machine=[],
+            heroes=[],
+            rages=[],
+            freezes=[],
+            rage_count=0,
+            freeze_count=0,
+            frame=b"",
+        )
+        acts, _ = self._played([_step("troops", (20.0, 20.0), (30.0, 30.0))], row)
+        assert "settle" in acts
+
     def _zoomed(
         self, box: tuple[int, int, int, int] | None, world: World = "day"
     ) -> tuple[MagicMock, list[str]]:
