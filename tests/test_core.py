@@ -112,8 +112,14 @@ from ai_coc.parsers.frame import open_frame
 from ai_coc.parsers.scout import (
     PANEL_LEFT,
     ROW_BOUNDS,
+    STOCK_LEFT,
     PANEL_RIGHT,
+    STOCK_RIGHT,
+    STOCK_DARK_LEFT,
+    STOCK_ROW_BOUNDS,
     LOOT_INK_BRIGHTNESS,
+    STOCK_DIGIT_TOLERANCE,
+    _read_row,
     in_battle,
     card_count,
     live_cards,
@@ -1663,6 +1669,34 @@ class ScoutTests(unittest.TestCase):
         corner = read_stock((FRAMES / "world_day_corner.png").read_bytes())
         assert corner == read_stock((FRAMES / "world_day.png").read_bytes())
         assert corner == VillageStock(gold=118475, elixir=1710564, dark=311298)
+
+    def test_a_screens_own_text_is_not_trimmed_into_a_reading(self) -> None:
+        """The trim drops the rule that kept these rows honest, so it has to pay it back.
+
+        A battle screen writes the attacker's name where a storage bar would be,
+        and its wide first letter trims as village: `Mai` left `ai`, which
+        matches `80` at 28 and 30 — both inside `STOCK_DIGIT_TOLERANCE`. What
+        used to stop that is the rule the trim removes, that one poor glyph
+        fails the whole row. `STOCK_TRIMMED_TOLERANCE` is what takes the job
+        back, and these are the five rows that measured it.
+
+        None of them reaches a caller on its own, since `read_stock` wants three
+        rows and `read_builder_stock` two, and only one row of each frame trims.
+        They are pinned at the row because that is the level the guard is at.
+        """
+        for frame, row in (
+            ("night_battle.png", 0),
+            ("night_countdown.png", 0),
+            ("world_night_battle.png", 0),
+            ("night_stage2_cards.png", 0),
+            ("clan_donate_high.png", 2),
+        ):
+            with self.subTest(frame=frame, row=row):
+                image = open_frame((FRAMES / frame).read_bytes())
+                left = STOCK_DARK_LEFT if row == 2 else STOCK_LEFT
+                top, bottom = STOCK_ROW_BOUNDS[row]
+                box = (left, top, STOCK_RIGHT, bottom)
+                assert _read_row(image, box, STOCK_DIGIT_TOLERANCE) is None
 
     def test_storages_are_none_away_from_the_home_screen(self) -> None:
         """Three readable rows is what says the home village is up; nothing else does."""

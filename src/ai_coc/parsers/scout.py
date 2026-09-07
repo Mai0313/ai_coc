@@ -359,6 +359,19 @@ STOCK_LEFT, STOCK_RIGHT = 1300, 1512
 STOCK_DARK_LEFT = 1348
 STOCK_ROW_BOUNDS = ((33, 72), (117, 156), (200, 239))
 STOCK_DIGIT_TOLERANCE = 30
+# **A row that needed the village trimmed off it has to read cleanly to be
+# believed**, which is a tighter bar than the one a row that read straight off
+# clears. Dropping the leading glyph is also dropping the rule that made
+# `STOCK_DIGIT_TOLERANCE` safe on screens that are not the home village — any
+# poor glyph failed the row — so something has to take that job back for the
+# rows this trims. Measured over every recorded frame, the rows where the trim
+# is real read a worst glyph of 7, 7 and 11, while the five where it is a
+# battle screen's own white text (the attacker's name, whose wide first letter
+# trims as village) all read exactly 30. The line goes in that gap.
+#
+# It can only ever hand a trimmed row back the answer it had before any of this
+# existed, which is None, so nothing that reads today can be reached from here.
+STOCK_TRIMMED_TOLERANCE = 20
 STOCK_INK_SATURATION = 45
 
 # 最大儲存量 on the tooltip a tapped storage bar drops open, which is the one
@@ -566,23 +579,32 @@ def _read_row(image: Image.Image, box: tuple[int, int, int, int], tolerance: int
     cannot read — and fails the row rather than being dropped, because dropping
     one there divides the reading by ten.
 
-    A dropped glyph is village rather than a badly drawn leading digit, and the
-    two do not overlap. Swept over every recorded frame, a real leading digit
-    lands within 12 of its template while the glyphs dropped here start at 31, so
-    `STOCK_DIGIT_TOLERANCE` sits inside that gap with room on both sides. The
-    only thing that settles it from a still frame is another frame of the same
-    village without the bleed on it, and both cases here have one:
+    **What is dropped is village and not a badly drawn leading digit**, and the
+    only thing that settles that from a still frame is another frame of the same
+    village without the bleed on it. Both cases here have one:
     `world_day_corner.png` reads what `world_day.png` reads, and the frame that
     prompted this reads what a capture of the same village two minutes earlier
     read, before the camera was parked.
+
+    **The trim is judged by what survives it, not by what it removed**, and
+    `STOCK_TRIMMED_TOLERANCE` is where that is measured. Going by the dropped
+    glyph alone does not hold up: a real leading digit lands within 12 of its
+    template and the glyphs dropped here start at 31, but the builder base's
+    gems bar puts its green `+` in the dark row at exactly 30 — one bit under
+    the line, and the reason `read_stock` reports the documented `dark=410152`
+    there. A bound drawn against that is a bound where one bit picks between two
+    numbers rather than between a number and no answer.
     """
     glyphs = list(row_glyphs(ink_mask(image.crop(box), saturation=STOCK_INK_SATURATION)))
+    trimmed = False
     while glyphs and glyphs[0][1] > tolerance:
         glyphs.pop(0)
-    if any(distance > tolerance for _, distance in glyphs):
+        trimmed = True
+    if trimmed:
+        tolerance = STOCK_TRIMMED_TOLERANCE
+    if not glyphs or any(distance > tolerance for _, distance in glyphs):
         return None
-    digits = "".join(digit for digit, _ in glyphs)
-    return int(digits) if digits else None
+    return int("".join(digit for digit, _ in glyphs))
 
 
 def _read_loot_row(image: Image.Image, box: tuple[int, int, int, int]) -> int | None:
