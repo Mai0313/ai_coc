@@ -210,6 +210,19 @@ DEPLOY_LINES = {
 }
 DEPLOY_START, DEPLOY_END = DEPLOY_LINES["top_left"]
 LINE_POINTS = 12
+# How many lines the builder base spreads its army over, each a `PUSH_STEP`
+# further out than the last. One is what the home village uses and what this
+# used to do, and on a base it puts the whole army in single file: measured on a
+# recorded round, six troop cards emptied onto the twelve points of one 458 px
+# flank, about two troops a point and every one of them within a splash radius
+# of its neighbour. Three lanes turn that line into a 140 px band over the same
+# ground, which is 36 places to stand rather than 12.
+#
+# Outwards rather than inwards, because inwards is the base: a drop inside the
+# boundary is refused, and a refused tap does not spend the troop — so a lane
+# the base has grown over costs the next tap rather than the unit, and the card
+# empties into whichever lanes the game will take.
+NIGHT_LANES = 3
 
 # One bottle's own footprint, which is what tells two of them apart. Rage covers
 # 5 tiles, and the 44x44 map spans about 1040x605 px here, so a tile is roughly
@@ -737,6 +750,27 @@ def drop_points(
             y += round((ny - y) / (laps + 1))
         spots.append((x, y))
     return spots
+
+
+def night_drops(
+    lanes: list[list[tuple[int, int]]], seed: int, taps: int = DROPS_PER_PASS
+) -> list[tuple[int, int]]:
+    """One card's worth of drops, walking across the lanes as well as along them.
+
+    The home village pours a card down one line, and on the builder base that
+    line is the whole army: measured on a recorded round, six troop cards
+    emptied onto twelve points of one 458 px flank, which puts the whole army in
+    a single file about two troops to a point. Every piece of splash the base
+    has — the multi mortar, the air bomb, the roaster — is then one shot for
+    several troops.
+
+    Consecutive taps change lane as well as position, so a card that runs dry
+    partway through has still spread over the band rather than filled the lane
+    it started on — the same reason `DROP_STRIDE` orders a circuit the way it
+    does, applied to the other axis.
+    """
+    spread = [drop_points(lane, seed, taps) for lane in lanes]
+    return [spread[tap % len(spread)][tap] for tap in range(taps)]
 
 
 PLAN_PROMPT = PROMPTS["attack_plan"]
@@ -2381,10 +2415,24 @@ class AttackRunner(ScreenRunner):
         logger.warning("The preselected machine never left its card")
         return False
 
+    def _lanes(
+        self, anchors: tuple[tuple[int, int], ...], pushed: int
+    ) -> list[list[tuple[int, int]]]:
+        """The flank as a band of lines, each one `PUSH_STEP` further out than the last."""
+        return [
+            deploy_line(LINE_POINTS, *push_line(anchors, pushed + lane, self._middle))
+            for lane in range(NIGHT_LANES)
+        ]
+
     def _spread_night(
         self, troops: list[int], anchors: tuple[tuple[int, int], ...], pushed: int
     ) -> list[tuple[int, int]] | None:
-        """Empty the troop cards along the flank; returns the line they went down on.
+        """Empty the troop cards over the flank's band; returns the innermost lane.
+
+        **The band is `NIGHT_LANES` lines rather than one**, which is the
+        difference between an army in single file and one with a footprint —
+        see `night_drops` for the round that measured the file, and the constant
+        for why the lanes only ever go outwards.
 
         **`live_cards` does not hold in the builder base, and that is what this
         exists for.** In the home village a card goes greyscale the moment it is
@@ -2415,12 +2463,12 @@ class AttackRunner(ScreenRunner):
         landed, because a round that deployed no troops is not a round that
         fought and `commands.attack` counts it.
         """
-        line = deploy_line(LINE_POINTS, *push_line(anchors, pushed, self._middle))
+        lanes = self._lanes(anchors, pushed)
         shot = self._frame("before-pass")
         landed = False
         for index in range(DEPLOY_PASSES):
             for card, slot in enumerate(troops):
-                drops = drop_points(line, index * len(troops) + card, DROPS_PER_PASS)
+                drops = night_drops(lanes, index * len(troops) + card, DROPS_PER_PASS)
                 self.adb.tap_many([(slot, CARD_ROW_Y), *drops], self.display)
             time.sleep(DROP_SETTLE)
             before, shot = shot, self._frame("pass")
@@ -2433,10 +2481,10 @@ class AttackRunner(ScreenRunner):
                 break
             pushed += 1
             logger.info("Nothing has landed yet; flank pushed out to %d", pushed)
-            line = deploy_line(LINE_POINTS, *push_line(anchors, pushed, self._middle))
+            lanes = self._lanes(anchors, pushed)
         if not landed:
             logger.warning("The flank took nothing at any push; the troops stay in their cards")
-        return line if landed else None
+        return lanes[0] if landed else None
 
     def _wait_out_night(self, machines: list[int], troops: list[int]) -> None:
         """Sit through the battle, offering every machine its ability every second.
