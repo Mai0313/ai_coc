@@ -1368,8 +1368,11 @@ def view(zoom: str = "out", times: int = 3) -> ViewReport:
     `AdbController.pinch` for why `input` cannot. Zooming out past the far limit
     does nothing at all, which is what makes `--zoom out` safe to run blind.
 
-    Measured live, one pinch covers the whole range: from fully zoomed in, a
-    single gesture came back to the far limit and a second changed nothing.
+    **One pinch does not cover the whole range, and this said it did.** Swept
+    from a camera zoomed fully in, one `out` takes the bare-ground share of the
+    frame from 0.19 to 0.40 and a second to 0.507, where a third moves it by
+    0.002 — and a longer finger travel does not buy the difference either; see
+    `ZOOM_PINCHES`. So `--times` defaults to what it takes rather than to one.
 
     **Scale is only half of it, and the half that was missing is the one that
     breaks things.** This used to zoom and stop, on the documented understanding

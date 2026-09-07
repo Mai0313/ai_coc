@@ -716,6 +716,22 @@ class NightAttackTests(unittest.TestCase):
             runner._spread_night([307], ((600, 110), (230, 380)), 0)
         assert tapped.call_count == attack.DEPLOY_PASSES
 
+    def test_the_army_spreads_across_the_lanes_as_well_as_along_them(self) -> None:
+        """One line puts the whole builder-base army in single file.
+
+        Measured on a recorded round, six troop cards emptied onto the twelve
+        points of one 458 px flank — about two troops a point, and every one of
+        them inside a splash radius of its neighbour. Consecutive taps change
+        lane so a card that runs dry partway through has still crossed the band.
+        """
+        lanes = [
+            [(x, 100 * lane) for x in range(0, 1200, 100)] for lane in range(attack.NIGHT_LANES)
+        ]
+        drops = attack.night_drops(lanes, 0, 6)
+        assert [y for _, y in drops] == [0, 100, 200, 0, 100, 200]
+        # And still walks the line, rather than stacking the band on one point.
+        assert len({x for x, _ in drops}) == 6
+
     def test_a_round_that_put_nothing_down_reports_no_phase(self) -> None:
         """Counted, such a round says 已進攻並回營 for a battle nothing was played in.
 
@@ -753,11 +769,13 @@ class NightAttackTests(unittest.TestCase):
             patch.object(attack, "deploy_line", return_value=[(600, 110)]) as drawn,
         ):
             runner._spread_night([307], ((600, 110), (230, 380)), 0)
-        # Once for the opening line and once for the pushed one, and no third:
-        # the pass after the one that landed is an empty row, not a bad flank.
+        # One band for the opening line and one for the pushed one, and no
+        # third: the pass after the one that landed is an empty row, not a bad
+        # flank. Each band is `NIGHT_LANES` lines, so the whole of it moves.
         assert [call.args[1:] for call in drawn.call_args_list] == [
-            tuple(push_line(((600, 110), (230, 380)), step, attack.SCREEN_CENTRE))
+            tuple(push_line(((600, 110), (230, 380)), step + lane, attack.SCREEN_CENTRE))
             for step in (0, 1)
+            for lane in range(attack.NIGHT_LANES)
         ]
 
     def test_a_result_screen_that_will_not_close_gets_back_pressed_at_it(self) -> None:
@@ -892,8 +910,9 @@ class NightAttackTests(unittest.TestCase):
             assert runner._spread_night([307], ((600, 110), (230, 380)), 0) is not None
         # Pushed twice before anything landed, and not again once it had.
         assert [call.args[1:] for call in drawn.call_args_list] == [
-            tuple(push_line(((600, 110), (230, 380)), step, attack.SCREEN_CENTRE))
+            tuple(push_line(((600, 110), (230, 380)), step + lane, attack.SCREEN_CENTRE))
             for step in (0, 1, 2)
+            for lane in range(attack.NIGHT_LANES)
         ]
 
     def test_a_flank_that_never_takes_a_troop_is_not_a_deployment(self) -> None:
