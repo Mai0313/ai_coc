@@ -30,7 +30,6 @@ from ai_coc.parsers.glyphs import (
     ink_mask,
     signature,
     row_glyphs,
-    digits_from,
     glyph_columns,
     split_numbers,
 )
@@ -344,13 +343,19 @@ STOCK_LEFT, STOCK_RIGHT = 1300, 1512
 # same edge **cannot** be given to the other two rows: tried, and a village
 # holding 14 000 000 gold read back 4 000 000, the leading digit cut off.
 #
-# Two other answers were measured and neither works. Dropping a poor match off
-# the left end, the way `_read_loot_row` drops one off the right, turns a
-# genuinely unreadable row into a truncated number — on a map-corner frame the
-# dark row's leading two glyphs read 31 and 66 off their templates, and dropping
-# those divides the reading by a hundred. And a gap threshold does not separate
-# either, because a real number carries gaps of up to 85 px between its digit
-# groups, wider than the 41 px that separated this marker from its row.
+# A gap threshold does not separate the marker from the row, because a real
+# number carries gaps of up to 85 px between its digit groups, wider than the
+# 41 px that separated this marker from its row.
+#
+# **This edge is no longer the only thing holding the row up**, and it is kept
+# because it is free rather than because it is sufficient. `_read_row` drops the
+# village off the left end now, which is what this comment used to say could not
+# be done: the reading it named as the cost — a map-corner frame whose dark row
+# led with a glyph 66 off its template — turns out to be village bleed and not a
+# digit at all, because `world_day.png` is the same village away from the corner
+# and reads back the same 311 298 without it. What forced the question is that
+# the camera is now parked in that corner on purpose, so a bar this edge does not
+# happen to clear stopped reading on every frame rather than on some.
 STOCK_DARK_LEFT = 1348
 STOCK_ROW_BOUNDS = ((33, 72), (117, 156), (200, 239))
 STOCK_DIGIT_TOLERANCE = 30
@@ -546,15 +551,38 @@ def loading_screen(png: bytes) -> bool:
     )
 
 
-def _read_row(
-    image: Image.Image, box: tuple[int, int, int, int], tolerance: int | None = None
-) -> int | None:
+def _read_row(image: Image.Image, box: tuple[int, int, int, int], tolerance: int) -> int | None:
     """One storage bar's number, read off the bar the game paints it on.
 
     The tighter saturation ceiling belongs to those bars rather than to rows in
     general; see `STOCK_INK_SATURATION` for what it is holding back.
+
+    **The village shows through to the left of the digits, so that is the one end
+    a poor match is dropped from.** This is `_read_loot_row` mirrored, and the
+    mirror is the bar itself: the unfilled part of a storage bar is translucent
+    and the number is right-aligned against the bar's far end, so whatever the
+    camera leaves behind that track lands to the left of every digit. A poor
+    match with digits still to its left is a different thing — a digit this frame
+    cannot read — and fails the row rather than being dropped, because dropping
+    one there divides the reading by ten.
+
+    A dropped glyph is village rather than a badly drawn leading digit, and the
+    two do not overlap. Swept over every recorded frame, a real leading digit
+    lands within 12 of its template while the glyphs dropped here start at 31, so
+    `STOCK_DIGIT_TOLERANCE` sits inside that gap with room on both sides. The
+    only thing that settles it from a still frame is another frame of the same
+    village without the bleed on it, and both cases here have one:
+    `world_day_corner.png` reads what `world_day.png` reads, and the frame that
+    prompted this reads what a capture of the same village two minutes earlier
+    read, before the camera was parked.
     """
-    return digits_from(ink_mask(image.crop(box), saturation=STOCK_INK_SATURATION), tolerance)
+    glyphs = list(row_glyphs(ink_mask(image.crop(box), saturation=STOCK_INK_SATURATION)))
+    while glyphs and glyphs[0][1] > tolerance:
+        glyphs.pop(0)
+    if any(distance > tolerance for _, distance in glyphs):
+        return None
+    digits = "".join(digit for digit, _ in glyphs)
+    return int(digits) if digits else None
 
 
 def _read_loot_row(image: Image.Image, box: tuple[int, int, int, int]) -> int | None:
