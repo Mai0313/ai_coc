@@ -19,6 +19,7 @@ from ai_coc.ui import hero, walls, attack, upkeep
 from ai_coc.ui import world as world_ui
 from ai_coc.ui import runner as shared
 from ai_coc.models import (
+    World,
     RunLog,
     HeroCard,
     ProbeRay,
@@ -2881,9 +2882,12 @@ class AttackTests(unittest.TestCase):
         assert self._watched(opening, [None, None])[1]._seen is None
         assert self._watched(opening, [stuck, None])[1]._seen == opening
 
-    def _zoomed(self, box: tuple[int, int, int, int] | None) -> tuple[MagicMock, list[str]]:
+    def _zoomed(
+        self, box: tuple[int, int, int, int] | None, world: World = "day"
+    ) -> tuple[MagicMock, list[str]]:
         """Run the pre-battle zoom against a village measured at `box`."""
         runner = self._runner()
+        runner.world = world
         runner.adb = MagicMock()
         with (
             patch.object(attack, "village_box", return_value=box),
@@ -2922,6 +2926,20 @@ class AttackTests(unittest.TestCase):
         assert not self._zoomed((54, 114, 1562, 667))[1]
         clipped = self._zoomed((85, 135, 1566, 546))[1]
         assert any("far zoom" in line for line in clipped)
+
+    def test_the_builder_base_is_never_measured_against_the_home_floor(self) -> None:
+        """It is a smaller map, so it reads under that floor on every healthy frame.
+
+        Swept over 47 recorded night rounds, 50 of 50 readings tripped it, at
+        305 to 466 px, against one trip in 22 home rounds the same day. The two
+        boxes here are the extremes of that night sweep. The pinch still goes
+        out, since asking for the far zoom costs nothing wherever it is asked.
+        """
+        for box in ((85, 135, 1566, 440), (85, 135, 1566, 601)):
+            with self.subTest(height=box[3] - box[1]):
+                adb, warned = self._zoomed(box, "night")
+                assert not warned
+                adb.zoom.assert_called_once()
 
     def _settled(self, box: tuple[int, int, int, int]) -> list[tuple[int, int]]:
         """Every drag `_settle_camera` asks for, given a village measured at `box`."""

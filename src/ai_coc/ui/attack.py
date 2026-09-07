@@ -326,6 +326,11 @@ CAMERA_ATTEMPTS = 2
 # nothing measured 411 — a village grown too big for the screen and clipped at
 # top and bottom. 470 sits between them with room on both sides. This is only
 # ever reported, never acted on: the pinch has already happened.
+#
+# **It is the home village's number and it is only asked there.** The builder
+# base is a smaller map, so at the same far zoom it reads shorter than this on
+# every frame; see `_settle_zoom` for the sweep and for why a second constant
+# would not work either.
 ZOOM_CLIPPED = 470
 # A camera drag starts from the middle of the screen, so neither end of it
 # lands on the game's own button columns.
@@ -1555,10 +1560,28 @@ class AttackRunner(ScreenRunner):
 
         An unreadable frame reports nothing rather than guessing. The pinch has
         already happened by then, so the correction never depends on it.
+
+        **The report is the home village's alone, because the number is.** The
+        builder base is a smaller map, so its boundary is shorter at the same far
+        zoom and every stage of every night round read under the floor: swept
+        over 47 recorded rounds, 50 of 50 readings warned, at 305 to 466 px,
+        while the same day's 22 home rounds warned once, at 440. A check that
+        fires on everything is worth less than no check, because it is what
+        teaches a reader to skip the line that will matter.
+
+        **A second constant is not the fix, and the spread is why.** Those
+        healthy night readings run 161 px wide, which is already wider than the
+        89 px between a healthy home village and the clipped one this floor was
+        drawn from — so a clipped builder base would land inside the range of
+        healthy ones and no pixel floor could separate them. Giving the night
+        path its own number would only move the wrong answer. What it would take
+        is a reading off a builder base that really is zoomed in, and nothing
+        recorded here has one: the loop pinches out before every battle, so the
+        camera is never left off the limit for a frame anyone kept.
         """
         before = village_box(frame)
         self.adb.zoom("out", ZOOM_PINCHES, COC_PACKAGE, self.display)
-        if before is not None and before[3] - before[1] < ZOOM_CLIPPED:
+        if self.world == "day" and before is not None and before[3] - before[1] < ZOOM_CLIPPED:
             logger.warning(
                 "The camera was not at the far zoom: the village measured %d tall before the "
                 "pinch, against %d for one that fits on screen",
