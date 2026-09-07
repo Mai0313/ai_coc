@@ -210,13 +210,24 @@ BADGE_BRIGHTNESS = 175
 BADGE_LIT = 0.05
 
 # Troop and spell cards carry an `xN` count in their top-right corner; hero and
-# siege cards do not. Measured, that corner reads 0.21 of its pixels as white or
-# more on a counted card and at most 0.03 on an uncounted one. Reading the number
-# itself is not reliable — on a card over a pale illustration the count merges
-# into the artwork — but its presence is.
+# siege cards do not. Reading the number itself is not reliable — on a card over
+# a pale illustration the count merges into the artwork — but its presence is.
+#
+# **What is white here is the count's own text, and a hero's artwork can be
+# white too.** The ratio was 0.10, drawn between a counted card's 0.21 and the
+# 0.03 an uncounted one read on the frames available then. 飛龍公爵's card
+# breaks that upper figure on its own: its horns and teeth land squarely in this
+# box and read 0.1386 — measured on `battle_in_progress.png` and again live on a
+# battle where the loop then poured four rounds of twelve taps into that hero
+# card, 56 seconds of a battle that had already deployed everything. Every card
+# that really is counted stays far above it: swept over every committed frame,
+# the 24 whose number `card_count` resolves read 0.2067 or more, and the builder
+# base's troop cards, whose `4x` this reader will not resolve, read 0.2059 or
+# more. So the line goes at 0.17, roughly midway across that gap rather than
+# beside either edge, and the reading it now refuses is a hero's face.
 COUNT_TOP, COUNT_BOTTOM = 748, 772
 COUNT_LEFT, COUNT_RIGHT = 6, 58
-COUNT_WHITE_RATIO = 0.10
+COUNT_WHITE_RATIO = 0.17
 # The count itself is readable on a card with a dark, saturated illustration and
 # not on a pale one, so `card_count` reports a failed read rather than a guess.
 # It needs a higher floor than the loot panel: the card art is brighter than a

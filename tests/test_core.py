@@ -2735,12 +2735,12 @@ class AttackTests(unittest.TestCase):
         """The 探礦者 sheet, which reaches `_cast` on every reader below this one.
 
         A battle that had already ended left the sheet on screen, and
-        `card_groups` read its row of builder portraits as three cards; two of
-        them carry something in the corner, so `counted_cards` agrees they are
-        cards still holding, and `battle_over` is False for every panel the game
+        `card_groups` read its row of builder portraits as three cards; one of
+        them carries something in the corner, so `counted_cards` agrees it is a
+        card still holding, and `battle_over` is False for every panel the game
         puts up. Nothing under this stops it: with the guard bypassed `_cast` is
-        called with 656 and 999 and pours them over twelve points along the drop
-        line, which on the shop page is what walked it from tab to tab.
+        called and pours that card over twelve points along the drop line, which
+        on the shop page is what walked it from tab to tab.
 
         The shop frame is the wrong one to assert on even though it is the more
         vivid incident — `counted_cards` comes back empty on the page that was
@@ -2751,7 +2751,9 @@ class AttackTests(unittest.TestCase):
         runner._line = deploy_line(LINE_POINTS, *DEPLOY_LINES["top_left"])
         runner._last = (FRAMES / "miner_panel.png").read_bytes()
         # The reading the guard has to beat: this is a row, and it is counted.
-        assert counted_cards(runner._last, [656, 999]) == [656, 999]
+        # 999 reads 0.1442 and no longer clears `COUNT_WHITE_RATIO`; 656 is
+        # 0.2917 and does, which is all this needs to reach `_cast`.
+        assert counted_cards(runner._last, [656, 999]) == [656]
         with patch.object(AttackRunner, "_cast") as poured:
             runner._dump_leftovers()
         poured.assert_not_called()
@@ -3435,6 +3437,28 @@ class AttackTests(unittest.TestCase):
         """Spells carry an xN in the corner; heroes and the siege machine do not."""
         frame = (FRAMES / "cards_full.png").read_bytes()
         assert counted_cards(frame, [678, 815, 925, 1046, 1167, 1302, 1423]) == [1302, 1423]
+
+    def test_a_heros_own_white_artwork_is_not_a_count(self) -> None:
+        """飛龍公爵's horns land in the count box and used to read as an `xN`.
+
+        Which made `_dump_leftovers` treat a hero standing on the field as a
+        card still holding something: measured live, four rounds of twelve taps
+        poured into that hero card, 56 seconds of a battle whose army was
+        already down. The reading is 0.1386, well over the 0.10 the line used to
+        sit at and nowhere near the 0.2059 the lowest real count reads.
+        """
+        assert counted_cards((FRAMES / "battle_in_progress.png").read_bytes(), [804]) == []
+
+    def test_the_lowest_real_count_still_reads_as_one(self) -> None:
+        """The other side of that line: the closest counted card must survive it.
+
+        The builder base's countdown draws the faintest `xN` of every committed
+        frame at 0.2059, so it is what says the ratio was not raised past what a
+        real count reads.
+        """
+        frame = (FRAMES / "night_countdown.png").read_bytes()
+        slots = [304, 430, 557, 683, 810, 937]
+        assert counted_cards(frame, slots) == slots
 
     def test_a_spell_card_reports_how_many_it_holds(self) -> None:
         frame = (FRAMES / "cards_full.png").read_bytes()
