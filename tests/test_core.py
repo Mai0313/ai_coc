@@ -3444,20 +3444,24 @@ class AttackTests(unittest.TestCase):
         Which made `_dump_leftovers` treat a hero standing on the field as a
         card still holding something: measured live, four rounds of twelve taps
         poured into that hero card, 56 seconds of a battle whose army was
-        already down. The reading is 0.1386, well over the 0.10 the line used to
-        sit at and nowhere near the 0.2059 the lowest real count reads.
+        already down. The reading is 0.1386, over the 0.10 the line used to sit
+        at and under the 0.1835 of the faintest real count.
         """
         assert counted_cards((FRAMES / "battle_in_progress.png").read_bytes(), [804]) == []
 
-    def test_the_lowest_real_count_still_reads_as_one(self) -> None:
-        """The other side of that line: the closest counted card must survive it.
+    def test_the_faintest_real_count_still_reads_as_one(self) -> None:
+        """The other side of that line, and the frame that sets it.
 
-        The builder base's countdown draws the faintest `xN` of every committed
-        frame at 0.2059, so it is what says the ratio was not raised past what a
-        real count reads.
+        A builder base second stage draws the faintest `xN` of every committed
+        frame — 0.1835 at slot 686, against 0.2059 for the countdown and 0.2067
+        for the lowest home village card. It is also where losing one costs the
+        most, since `_run_night` reads an uncounted card as a machine. So this
+        is the guard on the ratio being raised, and it has to be this frame:
+        picked off any other, a nudge upward would pass it and still lose a
+        second stage.
         """
-        frame = (FRAMES / "night_countdown.png").read_bytes()
-        slots = [304, 430, 557, 683, 810, 937]
+        frame = (FRAMES / "night_stage2_cards.png").read_bytes()
+        slots = [307, 433, 560, 686, 813, 939]
         assert counted_cards(frame, slots) == slots
 
     def test_a_spell_card_reports_how_many_it_holds(self) -> None:

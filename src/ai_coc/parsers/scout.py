@@ -219,15 +219,20 @@ BADGE_LIT = 0.05
 # breaks that upper figure on its own: its horns and teeth land squarely in this
 # box and read 0.1386 — measured on `battle_in_progress.png` and again live on a
 # battle where the loop then poured four rounds of twelve taps into that hero
-# card, 56 seconds of a battle that had already deployed everything. Every card
-# that really is counted stays far above it: swept over every committed frame,
-# the 24 whose number `card_count` resolves read 0.2067 or more, and the builder
-# base's troop cards, whose `4x` this reader will not resolve, read 0.2059 or
-# more. So the line goes at 0.17, roughly midway across that gap rather than
+# card, 56 seconds of a battle that had already deployed everything.
+#
+# **The floor is a builder base second stage rather than anything in the home
+# village**, and it is much lower than the home village's own: swept over every
+# committed frame, the 24 cards whose number `card_count` resolves read 0.2067
+# or more, but `night_stage2_cards.png`, whose six troop cards
+# `test_a_selected_machine_card_is_still_a_card` already asserts are counted,
+# reads down to 0.1835. That is the number this line has to clear, because a
+# troop card lost there is read as a machine and can take the whole stage with
+# it. So the line goes at 0.16, midway across 0.1386 to 0.1835 rather than
 # beside either edge, and the reading it now refuses is a hero's face.
 COUNT_TOP, COUNT_BOTTOM = 748, 772
 COUNT_LEFT, COUNT_RIGHT = 6, 58
-COUNT_WHITE_RATIO = 0.17
+COUNT_WHITE_RATIO = 0.16
 # The count itself is readable on a card with a dark, saturated illustration and
 # not on a pale one, so `card_count` reports a failed read rather than a guess.
 # It needs a higher floor than the loot panel: the card art is brighter than a
