@@ -817,6 +817,12 @@ class AttackRunner(ScreenRunner):
     # reading, and an `ability` step after one still has to know which heroes
     # are out there to fire.
     _onfield: list[int] = PrivateAttr(default_factory=list)
+    # Whether anything at all left a card this battle, which is a different
+    # question from `_onfield` and the one `_outcome` needs: that list is the
+    # one-off cards alone, so an army whose heroes are all being upgraded fills
+    # nothing into it however many troops went out. Set wherever the loop
+    # actually watched a card give something up, never inferred from a tap.
+    _deployed: bool = PrivateAttr(default=False)
     # Which card each named hero was sent to, so its own `ability` step can find
     # it again. The row itself says nothing about who is on which card.
     _named: dict[str, int] = PrivateAttr(default_factory=dict)
@@ -1355,7 +1361,9 @@ class AttackRunner(ScreenRunner):
                 self.adb.tap_many([(x, CARD_ROW_Y), *drops], self.display)
             time.sleep(DROP_SETTLE)
             before, shot = shot, self._frame("pass")
-            if not card_drained(before, shot, remaining) and pushed + 1 < DEPLOY_ATTEMPTS:
+            drained = card_drained(before, shot, remaining)
+            self._deployed |= bool(drained)
+            if not drained and pushed + 1 < DEPLOY_ATTEMPTS:
                 pushed += 1
                 logger.info("The whole pass landed nothing; flank pushed out to %d", pushed)
                 line = deploy_line(LINE_POINTS, *push_line(anchors, pushed, self._middle))
@@ -1786,6 +1794,7 @@ class AttackRunner(ScreenRunner):
         steps = merged(plan.steps)
         self._sending, self._unsent, self._onfield = {}, list(row.heroes), []
         self._named = {}
+        self._deployed = False
         opened = done = time.monotonic()
         for step in steps:
             if step.act == "wait":
@@ -1933,6 +1942,7 @@ class AttackRunner(ScreenRunner):
         self._sending = {}
         on_field = field_units(after, sent)
         self._onfield += on_field
+        self._deployed |= bool(on_field)
         missing = [card for card in sent if card not in on_field]
         holding = list(live_cards(after, troops))
         logger.info(
@@ -1946,6 +1956,7 @@ class AttackRunner(ScreenRunner):
         if missing:
             again, _ = self._drop_singles(missing, line, "retry")
             self._onfield += again
+            self._deployed |= bool(again)
 
     def _cast(self, cards: list[int], targets: tuple[tuple[int, int], ...], frame: bytes) -> None:
         """Empty every spell card over `targets`, and say so when one would not go.
@@ -2097,17 +2108,35 @@ class AttackRunner(ScreenRunner):
     def _outcome(self, reason: str, took: bool) -> str:
         """How a battle that was actually fought is reported.
 
-        Three answers rather than two, and the third is the whole point: see
+        Four answers rather than two, and the two extra ones are the point: see
         `_wait_out_battle` for why a panel nobody could read is not the same
-        thing as an army that never landed.
+        thing as an army that never landed, and `_deployed` for why an army that
+        landed and took nothing is not that either.
+
+        **Loot that never moved says the attack took nothing; it does not say
+        why**, and the difference is where the next person looks. An army that
+        never left its cards is this loop's problem — a drop line off the map, a
+        camera left somewhere else. An army that went down and came home empty
+        is the tactic's, and belongs to `tune-attack`. Measured on a live round,
+        the loop reported 部隊可能沒有成功部署 for a battle whose result screen
+        read 戰敗, 32%, 你獲得了 0: every troop card had drained and three of
+        three retried heroes had landed, and the army had simply gone in on the
+        side with no storages on it. `_deployed` is what the loop already
+        watched happen, so the message can say which of the two it was instead
+        of naming the one it did not check.
         """
         if took:
             return f"{reason}，已進攻並回營"
         if self._seen is None:
             logger.warning("Nothing ever read the loot panel; this round cannot be judged")
             return f"{reason}，已進攻並回營，但整場都讀不到戰利品面板，成果無從判斷"
-        logger.warning("The whole battle passed without any loot moving")
-        return f"{reason}，但整場戰利品沒有變化，部隊可能沒有成功部署"
+        if self._deployed:
+            logger.warning(
+                "The army went down and the battle took nothing; the tactic came up short"
+            )
+            return f"{reason}，已進攻並回營，但整場戰利品沒有變化，部隊有出去而這一場沒搶到東西"
+        logger.warning("The whole battle passed without any loot moving, and nothing left a card")
+        return f"{reason}，但整場戰利品沒有變化，而且沒有任何一張卡片出得去，部隊沒有成功部署"
 
     def _find_opponent(self) -> bytes | None:
         """Hold the matchmaker open until a battle opens, restarting it if it drags.
