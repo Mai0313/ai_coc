@@ -30,7 +30,6 @@ from ai_coc.parsers.glyphs import (
     ink_mask,
     signature,
     row_glyphs,
-    digits_from,
     glyph_columns,
     split_numbers,
 )
@@ -344,16 +343,35 @@ STOCK_LEFT, STOCK_RIGHT = 1300, 1512
 # same edge **cannot** be given to the other two rows: tried, and a village
 # holding 14 000 000 gold read back 4 000 000, the leading digit cut off.
 #
-# Two other answers were measured and neither works. Dropping a poor match off
-# the left end, the way `_read_loot_row` drops one off the right, turns a
-# genuinely unreadable row into a truncated number — on a map-corner frame the
-# dark row's leading two glyphs read 31 and 66 off their templates, and dropping
-# those divides the reading by a hundred. And a gap threshold does not separate
-# either, because a real number carries gaps of up to 85 px between its digit
-# groups, wider than the 41 px that separated this marker from its row.
+# A gap threshold does not separate the marker from the row, because a real
+# number carries gaps of up to 85 px between its digit groups, wider than the
+# 41 px that separated this marker from its row.
+#
+# **This edge is no longer the only thing holding the row up**, and it is kept
+# because it is free rather than because it is sufficient. `_read_row` drops the
+# village off the left end now, which is what this comment used to say could not
+# be done: the reading it named as the cost — a map-corner frame whose dark row
+# led with a glyph 66 off its template — turns out to be village bleed and not a
+# digit at all, because `world_day.png` is the same village away from the corner
+# and reads back the same 311 298 without it. What forced the question is that
+# the camera is now parked in that corner on purpose, so a bar this edge does not
+# happen to clear stopped reading on every frame rather than on some.
 STOCK_DARK_LEFT = 1348
 STOCK_ROW_BOUNDS = ((33, 72), (117, 156), (200, 239))
 STOCK_DIGIT_TOLERANCE = 30
+# **A row that needed the village trimmed off it has to read cleanly to be
+# believed**, which is a tighter bar than the one a row that read straight off
+# clears. Dropping the leading glyph is also dropping the rule that made
+# `STOCK_DIGIT_TOLERANCE` safe on screens that are not the home village — any
+# poor glyph failed the row — so something has to take that job back for the
+# rows this trims. Measured over every recorded frame, the rows where the trim
+# is real read a worst glyph of 7, 7 and 11, while the five where it is a
+# battle screen's own white text (the attacker's name, whose wide first letter
+# trims as village) all read exactly 30. The line goes in that gap.
+#
+# It can only ever hand a trimmed row back the answer it had before any of this
+# existed, which is None, so nothing that reads today can be reached from here.
+STOCK_TRIMMED_TOLERANCE = 20
 STOCK_INK_SATURATION = 45
 
 # 最大儲存量 on the tooltip a tapped storage bar drops open, which is the one
@@ -546,15 +564,47 @@ def loading_screen(png: bytes) -> bool:
     )
 
 
-def _read_row(
-    image: Image.Image, box: tuple[int, int, int, int], tolerance: int | None = None
-) -> int | None:
+def _read_row(image: Image.Image, box: tuple[int, int, int, int], tolerance: int) -> int | None:
     """One storage bar's number, read off the bar the game paints it on.
 
     The tighter saturation ceiling belongs to those bars rather than to rows in
     general; see `STOCK_INK_SATURATION` for what it is holding back.
+
+    **The village shows through to the left of the digits, so that is the one end
+    a poor match is dropped from.** This is `_read_loot_row` mirrored, and the
+    mirror is the bar itself: the unfilled part of a storage bar is translucent
+    and the number is right-aligned against the bar's far end, so whatever the
+    camera leaves behind that track lands to the left of every digit. A poor
+    match with digits still to its left is a different thing — a digit this frame
+    cannot read — and fails the row rather than being dropped, because dropping
+    one there divides the reading by ten.
+
+    **What is dropped is village and not a badly drawn leading digit**, and the
+    only thing that settles that from a still frame is another frame of the same
+    village without the bleed on it. Both cases here have one:
+    `world_day_corner.png` reads what `world_day.png` reads, and the frame that
+    prompted this reads what a capture of the same village two minutes earlier
+    read, before the camera was parked.
+
+    **The trim is judged by what survives it, not by what it removed**, and
+    `STOCK_TRIMMED_TOLERANCE` is where that is measured. Going by the dropped
+    glyph alone does not hold up: a real leading digit lands within 12 of its
+    template and the glyphs dropped here start at 31, but the builder base's
+    gems bar puts its green `+` in the dark row at exactly 30 — one bit under
+    the line, and the reason `read_stock` reports the documented `dark=410152`
+    there. A bound drawn against that is a bound where one bit picks between two
+    numbers rather than between a number and no answer.
     """
-    return digits_from(ink_mask(image.crop(box), saturation=STOCK_INK_SATURATION), tolerance)
+    glyphs = list(row_glyphs(ink_mask(image.crop(box), saturation=STOCK_INK_SATURATION)))
+    trimmed = False
+    while glyphs and glyphs[0][1] > tolerance:
+        glyphs.pop(0)
+        trimmed = True
+    if trimmed:
+        tolerance = STOCK_TRIMMED_TOLERANCE
+    if not glyphs or any(distance > tolerance for _, distance in glyphs):
+        return None
+    return int("".join(digit for digit, _ in glyphs))
 
 
 def _read_loot_row(image: Image.Image, box: tuple[int, int, int, int]) -> int | None:

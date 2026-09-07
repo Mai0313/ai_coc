@@ -112,8 +112,14 @@ from ai_coc.parsers.frame import open_frame
 from ai_coc.parsers.scout import (
     PANEL_LEFT,
     ROW_BOUNDS,
+    STOCK_LEFT,
     PANEL_RIGHT,
+    STOCK_RIGHT,
+    STOCK_DARK_LEFT,
+    STOCK_ROW_BOUNDS,
     LOOT_INK_BRIGHTNESS,
+    STOCK_DIGIT_TOLERANCE,
+    _read_row,
     in_battle,
     card_count,
     live_cards,
@@ -441,16 +447,16 @@ class WorldTests(unittest.TestCase):
         assert stock is not None
         assert (stock.gold, stock.elixir, stock.dark) == (14000000, 17254813, 460500)
 
-    def test_a_village_reads_where_its_storage_bars_do_not(self) -> None:
-        """Which is the whole reason this replaced `read_stock` as the village test.
+    def test_a_village_at_a_map_corner_still_reads_as_one(self) -> None:
+        """The plate row is untouched by where the camera is, which the bars were not.
 
-        The camera at a map corner leaves the home village's dark elixir row
-        unreadable, so `read_stock` calls a perfectly ordinary village no village
-        at all. The plate row is untouched by where the camera is.
+        This frame is why the plate row replaced `read_stock` as the village
+        test: the camera at a map corner used to leave the dark elixir row
+        unreadable, so an ordinary village read as no village at all. The bars
+        survive it now — see `_read_row` — and the plate row never depended on
+        the camera in the first place.
         """
-        frame = (FRAMES / "world_day_corner.png").read_bytes()
-        assert read_stock(frame) is None
-        assert current_world(frame) == "day"
+        assert current_world((FRAMES / "world_day_corner.png").read_bytes()) == "day"
 
     def test_a_battle_is_neither_village(self) -> None:
         """None is a third answer: nothing about a battle says which village is under it."""
@@ -1634,6 +1640,63 @@ class ScoutTests(unittest.TestCase):
         assert read_stock((FRAMES / "home_storage_gloss.png").read_bytes()) == VillageStock(
             gold=447824, elixir=5141375, dark=130480
         )
+
+    def test_the_village_behind_a_bar_does_not_fail_its_row(self) -> None:
+        """A collector's marker sat behind the dark bar, past that row's own edge.
+
+        The bar's unfilled track is translucent, so the camera decides what is
+        behind it — and the camera is parked in one corner on purpose now, which
+        turned this from a frame that happened to fail into every frame failing.
+        `read_stock` failing is how `_home` decides it is not on the home
+        village, so `collect` walked a village plainly on screen and reported it
+        could never get back to one.
+
+        The marker lays 32 px of ink from x 1374, which is inside the digits'
+        own range and so past anything `STOCK_DARK_LEFT` can exclude.
+        """
+        assert read_stock(
+            (FRAMES / "home_marker_past_dark_edge.png").read_bytes()
+        ) == VillageStock(gold=2724174, elixir=3172112, dark=291992)
+
+    def test_a_map_corner_reads_what_the_same_village_reads_off_it(self) -> None:
+        """The pair is the evidence: one village, two cameras, one reading.
+
+        `world_day_corner.png` leads its dark row with a glyph 66 off its
+        template, which is the village showing through the bar rather than a
+        digit — and the only way to know that from a still frame is another
+        frame of the same village that does not have it.
+        """
+        corner = read_stock((FRAMES / "world_day_corner.png").read_bytes())
+        assert corner == read_stock((FRAMES / "world_day.png").read_bytes())
+        assert corner == VillageStock(gold=118475, elixir=1710564, dark=311298)
+
+    def test_a_screens_own_text_is_not_trimmed_into_a_reading(self) -> None:
+        """The trim drops the rule that kept these rows honest, so it has to pay it back.
+
+        A battle screen writes the attacker's name where a storage bar would be,
+        and its wide first letter trims as village: `Mai` left `ai`, which
+        matches `80` at 28 and 30 — both inside `STOCK_DIGIT_TOLERANCE`. What
+        used to stop that is the rule the trim removes, that one poor glyph
+        fails the whole row. `STOCK_TRIMMED_TOLERANCE` is what takes the job
+        back, and these are the five rows that measured it.
+
+        None of them reaches a caller on its own, since `read_stock` wants three
+        rows and `read_builder_stock` two, and only one row of each frame trims.
+        They are pinned at the row because that is the level the guard is at.
+        """
+        for frame, row in (
+            ("night_battle.png", 0),
+            ("night_countdown.png", 0),
+            ("world_night_battle.png", 0),
+            ("night_stage2_cards.png", 0),
+            ("clan_donate_high.png", 2),
+        ):
+            with self.subTest(frame=frame, row=row):
+                image = open_frame((FRAMES / frame).read_bytes())
+                left = STOCK_DARK_LEFT if row == 2 else STOCK_LEFT
+                top, bottom = STOCK_ROW_BOUNDS[row]
+                box = (left, top, STOCK_RIGHT, bottom)
+                assert _read_row(image, box, STOCK_DIGIT_TOLERANCE) is None
 
     def test_storages_are_none_away_from_the_home_screen(self) -> None:
         """Three readable rows is what says the home village is up; nothing else does."""
