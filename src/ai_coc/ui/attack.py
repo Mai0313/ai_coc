@@ -2174,7 +2174,7 @@ class AttackRunner(ScreenRunner):
         why**, and the difference is where the next person looks. An army that
         never left its cards is this loop's problem — a drop line off the map, a
         camera left somewhere else. An army that went down and came home empty
-        is the tactic's, and belongs to `tune-attack`. Measured on a live round,
+        is the tactic's, and belongs to `watch-and-fix`. Measured on a live round,
         the loop reported 部隊可能沒有成功部署 for a battle whose result screen
         read 戰敗, 32%, 你獲得了 0: every troop card had drained and three of
         three retried heroes had landed, and the army had simply gone in on the
