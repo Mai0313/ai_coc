@@ -4478,16 +4478,19 @@ class HomeTests(unittest.TestCase):
             patch.object(shared, "game_dialog", return_value=None),
             patch.object(shared, "read_stock", side_effect=reads),
             # Asked one frame earlier than the storages and about a different
-            # thing: which of the two villages this is. Kept in step with the
-            # answers above, since a frame whose storages read is a village.
+            # thing: which of the two villages this is. A frame whose storages
+            # read is a village, and one whose storages do not can be a village
+            # too — that pair is what the case below this class is about. Here
+            # the two are kept in step, because these cases are about `back`.
             patch.object(
                 shared, "current_world", side_effect=["day" if seen else None for seen in reads]
             ),
-            # The first village that reads pinches the camera back out, which
-            # wants a real emulator. What these cases are about is `back`.
+            # Put back already, so the camera step does not consume an answer
+            # from either list. It wants a real emulator and has its own case.
             patch.object(shared.GameRunner, "_settle_zoom"),
             patch.object(AdbController, "back") as back,
         ):
+            run._settled = True
             run._home()
         return back.call_count
 
@@ -4522,6 +4525,48 @@ class HomeTests(unittest.TestCase):
         assert self._backs(run, [held]) == 0
         assert self._backs(run, [held], loading=[True, True, False]) == 0
 
+    def test_a_camera_that_hides_the_storages_is_put_back_rather_than_pressed_at(self) -> None:
+        """The storages are one of the things a drifted camera breaks, so it cannot gate the fix.
+
+        The bars are translucent where they are not full, so a bright enough
+        background bleeds through and fills the gaps between the digits.
+        Measured on the home village at a zoomed-in camera, one of seven pan
+        positions put the map's shoreline behind an elixir bar standing at 45%
+        and the 779 of 10 779 278 came through as one 55 px span: too wide to
+        be a glyph, so the row answered NOT_A_GLYPH and `read_stock` answered
+        None on a frame whose three numbers were perfectly legible to the eye.
+        `current_world` answered day on that very frame, which is what this
+        leans on — it reads the plate row along the top, and that is UI at a
+        fixed place.
+
+        Hung off a successful read, the pinch is the one step that would have
+        fixed that camera and the only step that never runs on it: `_home`
+        answers None with `back`, a clear village answers `back` with the exit
+        prompt, the dialog gets 取消, and the run spends every attempt going
+        round that circle.
+        """
+        held = VillageStock(gold=1, elixir=1, dark=1)
+        run = self._runner()
+        put_back: list[bool] = []
+        with (
+            patch.object(shared.time, "sleep"),
+            patch.object(run, "_frame", return_value=b""),
+            patch.object(shared, "idle_disconnected", return_value=False),
+            patch.object(shared, "loading_screen", return_value=False),
+            patch.object(shared, "game_dialog", return_value=None),
+            patch.object(shared, "current_world", return_value="day"),
+            patch.object(
+                shared, "read_stock", side_effect=lambda _png: held if put_back else None
+            ),
+            patch.object(
+                shared.GameRunner, "_settle_zoom", side_effect=lambda: put_back.append(True)
+            ) as settle,
+            patch.object(AdbController, "back") as back,
+        ):
+            assert run._home() == held
+        assert settle.call_count == 1
+        assert back.call_count == 0
+
     def _sailing(self, run: shared.GameRunner, seen: list[str], landed: str) -> MagicMock:
         """Walk `_home` over these worlds with the crossing answering `landed`."""
         with (
@@ -4537,6 +4582,7 @@ class HomeTests(unittest.TestCase):
             patch.object(shared.GameRunner, "_settle_zoom"),
             patch.object(shared, "cross", return_value=landed) as sailed,
         ):
+            run._settled = True
             run._home()
         return sailed
 
@@ -4567,11 +4613,16 @@ class HomeTests(unittest.TestCase):
             patch.object(shared.time, "sleep"),
             patch.object(run, "_frame", return_value=b""),
             # Dropped on the first frame, then a launch nothing may press at.
-            patch.object(shared, "idle_disconnected", side_effect=[True, False, False, False]),
+            # The restart puts the camera back on the list of things this run
+            # has not done yet, so the village that finally reads is a frame
+            # later than the one that named it.
+            patch.object(
+                shared, "idle_disconnected", side_effect=[True, False, False, False, False]
+            ),
             patch.object(shared, "loading_screen", return_value=False),
             patch.object(shared, "game_dialog", return_value=None),
             patch.object(shared, "read_stock", side_effect=[None, None, held]),
-            patch.object(shared, "current_world", side_effect=[None, None, "day"]),
+            patch.object(shared, "current_world", side_effect=[None, None, "day", "day"]),
             patch.object(shared, "restart_game", return_value=run.display),
             patch.object(shared.GameRunner, "_settle_zoom"),
             patch.object(AdbController, "back") as back,

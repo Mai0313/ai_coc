@@ -171,7 +171,9 @@ class OpenedWalkTests(unittest.TestCase):
             patch.object(runner, "_frame", return_value=b""),
             patch.object(shared, "idle_disconnected", return_value=False),
             patch.object(shared, "loading_screen", return_value=False),
-            patch.object(shared, "game_dialog", side_effect=[dialog, None]),
+            # A frame for the dialog, one for the camera being put back, and one
+            # for the village that then reads.
+            patch.object(shared, "game_dialog", side_effect=[dialog, None, None]),
             patch.object(shared, "current_world", return_value="day"),
             patch.object(shared, "read_stock", return_value=STOCK),
             patch.object(GameRunner, "_settle_zoom"),
@@ -202,8 +204,10 @@ class OpenedWalkTests(unittest.TestCase):
             patch.object(shared, "park_camera") as parked,
         ):
             assert runner._home() == STOCK
-            # Once per run, hung off the first village that reads: a second call
-            # is the same loop still going rather than a new one starting.
+            # Once per run, hung off the first frame the plate row names as a
+            # village — before the storages are read rather than after, since a
+            # camera bad enough to hide them is exactly the one this fixes. A
+            # second call is the same loop still going rather than a new one.
             assert runner._home() == STOCK
         zoomed.assert_called_once()
         # Always the home village: `_home` sails off the builder base long
