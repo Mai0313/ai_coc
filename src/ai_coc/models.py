@@ -1091,6 +1091,34 @@ class BuilderReport(BaseModel):
     message: str = ""
 
 
+class StockReport(BaseModel):
+    """What the village on screen is holding, against what its storages take when full.
+
+    **The question nothing could answer without starting a run.** The storages
+    are read on the way past by every loop that farms or spends, and the numbers
+    reached a caller only as a line in that run's log — so a session that wanted
+    to know where a village stood had to start something that drives the game
+    for minutes, or capture a frame and read it by hand at whatever camera
+    happened to be up. Both are how a session ends up telling somebody a village
+    is full when its loot was spent an hour ago.
+
+    Read-only and about the village that is on screen: `world` says which one
+    that turned out to be rather than promising either, because crossing is
+    `ai_coc world`'s job and a status check that sails a boat is no longer one.
+
+    `filled` carries the share of each ceiling that has been read, which is the
+    form every decision here is actually made in — `stop_at` is a percentage,
+    and a caller working it out from two numbers is a caller that can get it
+    wrong.
+    """
+
+    world: World | None = None
+    held: VillageStock | None = None
+    capacity: StorageCapacity = StorageCapacity()
+    filled: dict[str, int] = Field(default_factory=dict)
+    message: str = ""
+
+
 class BuildingName(BaseModel):
     """What the game says is selected, read off the label rather than the artwork.
 

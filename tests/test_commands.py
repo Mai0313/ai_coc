@@ -47,6 +47,7 @@ from ai_coc.models import (
     StorageCapacity,
 )
 from ai_coc.constants import COC_PACKAGE
+from ai_coc.ui.runner import ScreenRunner
 from ai_coc.adapters.adb import ZOOM_PINCHES, AdbController, AdbControlError
 
 FRAMES = Path(__file__).parent / "frames"
@@ -148,6 +149,92 @@ class WorldCommandTests(unittest.TestCase):
         _, sailed, report = self._world("day", go="night", display=False)
         assert (report.found, report.world) == (None, None)
         assert "還沒有畫面" in report.message
+        sailed.assert_not_called()
+
+
+class StockCommandTests(unittest.TestCase):
+    """The read-only status check, which is about the village on screen and does not cross."""
+
+    def _stock(
+        self,
+        seen: str | None,
+        held: VillageStock | None = None,
+        ceilings: StorageCapacity | None = None,
+        under: str | None = None,
+    ) -> tuple[MagicMock, MagicMock, object]:
+        """A real controller, because `ScreenRunner` validates the one it is given.
+
+        `under` is what `uncovered` finds once it has pressed a panel away, which
+        is only reached when the first look found no village at all.
+        """
+        reads = [(seen, held), (under, held)]
+        with (
+            patch.object(commands, "_controller", return_value=_controller()),
+            patch.object(commands, "_settle_game", return_value=DISPLAY),
+            patch.object(ScreenRunner, "read_storages", side_effect=reads),
+            patch.object(ScreenRunner, "read_ceilings", return_value=ceilings) as ceiling_reader,
+            patch.object(commands, "uncovered", return_value=under) as pressed,
+        ):
+            report = commands.stock()
+        return pressed, ceiling_reader, report
+
+    def test_the_home_village_answers_a_share_of_each_ceiling(self) -> None:
+        """The form every decision here is made in: `stop_at` is a percentage."""
+        _, _, report = self._stock(
+            "day",
+            VillageStock(gold=12_750_000, elixir=6_125_000, dark=400_000),
+            StorageCapacity(gold=25_500_000, elixir=24_500_000, dark=400_000),
+        )
+        assert report.world == "day"
+        assert report.filled == {"gold": 50, "elixir": 25, "dark": 100}
+        assert "主村" in report.message
+
+    def test_a_resource_with_no_ceiling_is_left_out_rather_than_guessed(self) -> None:
+        """The builder base has no dark elixir bar, so it has no share to report."""
+        _, _, report = self._stock(
+            "night",
+            VillageStock(gold=2_050_000, elixir=0, dark=0),
+            StorageCapacity(gold=4_100_000, elixir=3_450_000),
+        )
+        assert report.world == "night"
+        assert report.filled == {"gold": 50, "elixir": 0}
+        assert "建築大師基地" in report.message
+
+    def test_a_village_whose_ceilings_will_not_read_still_reports_what_it_holds(self) -> None:
+        """A partial ceiling read comes back None, and the water level is the useful half."""
+        _, _, report = self._stock("day", VillageStock(gold=1, elixir=2, dark=3), None)
+        assert report.held == VillageStock(gold=1, elixir=2, dark=3)
+        assert report.filled == {}
+        assert "讀不到任何容量" in report.message
+
+    def test_a_screen_that_is_not_a_village_says_so_and_taps_nothing(self) -> None:
+        pressed, ceiling_reader, report = self._stock(None)
+        assert (report.world, report.held) == (None, None)
+        assert "不是村莊" in report.message
+        # The ceilings are what cost six taps and three captures, so what this
+        # is really about is that a frame with no village on it never spends
+        # them. Asserting on `_tap` could not fail: it is only reachable through
+        # the two readers this harness patches out.
+        ceiling_reader.assert_not_called()
+        pressed.assert_called_once()
+
+    def test_a_panel_over_the_village_is_pressed_away_rather_than_given_up_on(self) -> None:
+        """The ordinary way to arrive here, now that the skills ask for this before every run.
+
+        Nothing above this clears a panel: `ScreenRunner` has no `_home` and
+        `_settle_game` only waits, so without this the command would spend its
+        whole wait reading None off a screen the last command left behind.
+        """
+        _, _, report = self._stock(
+            None, VillageStock(gold=1, elixir=1, dark=1), StorageCapacity(gold=4), under="day"
+        )
+        assert report.world == "day"
+        assert report.filled == {"gold": 25}
+
+    def test_it_never_crosses_to_the_other_village(self) -> None:
+        """Sailing is `world --go`, and a status check that moves the game is not one."""
+        with patch.object(commands, "cross") as sailed:
+            self._stock("night", VillageStock(gold=1, elixir=1, dark=0), StorageCapacity(gold=2))
         sailed.assert_not_called()
 
 

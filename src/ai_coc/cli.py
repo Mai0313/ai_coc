@@ -53,6 +53,7 @@ RECORDABLE = (
     "walls",
     "collect",
     "builders",
+    "stock",
     "upgrade",
     "hero",
     "donate",
@@ -127,7 +128,19 @@ def _parser() -> argparse.ArgumentParser:
     # Its own command rather than a flag on `attack`, because the run being
     # stopped is a different process: whatever put that one in the background
     # cannot send it a Ctrl-C, and killing it leaves the game mid-battle.
-    sub.add_parser("stop", help="請正在跑的進攻迴圈打完這一場就收工")
+    # The ones that take nothing of their own beyond the shared flags below, as
+    # a table rather than a statement each: `stock` is deliberately among them,
+    # since crossing is `world --go` and a status check that sails a boat is no
+    # longer a status check — the two compose.
+    for name, note in (
+        ("stop", "請正在跑的進攻迴圈打完這一場就收工"),
+        ("collect", "把採集器裡的資源全部收起來"),
+        ("builders", "每個工人在蓋什麼、還要多久"),
+        ("stock", "現在這個世界的倉庫水位跟容量,不切世界"),
+        ("probe", "花一場戰鬥實測邊界，對照判讀器說的"),
+        ("bounds", "花一場戰鬥實測地圖邊緣，回推村莊範圍"),
+    ):
+        sub.add_parser(name, help=note)
     upgrade = sub.add_parser("walls", help="把儲量拿去升級城牆")
     upgrade.add_argument("--keep-gold", type=int, default=0, help="留下這麼多金幣不要花")
     upgrade.add_argument("--keep-elixir", type=int, default=0, help="留下這麼多聖水不要花")
@@ -138,8 +151,6 @@ def _parser() -> argparse.ArgumentParser:
         action="append",
         help="這個座標上的城牆是候選之一,跳過整個村莊的掃描;可以給很多次,最便宜的那片先買",
     )
-    sub.add_parser("collect", help="把採集器裡的資源全部收起來")
-    sub.add_parser("builders", help="每個工人在蓋什麼、還要多久")
     build = sub.add_parser("upgrade", help="把閒著的工人派去升級建築")
     build.add_argument("--keep-gold", type=int, default=0, help="留下這麼多金幣不要花")
     build.add_argument("--keep-elixir", type=int, default=0, help="留下這麼多聖水不要花")
@@ -197,8 +208,6 @@ def _parser() -> argparse.ArgumentParser:
         "--dry-run", action="store_true", help="走完流程但不真的捐,只回報畫面上能捐什麼"
     )
     give.add_argument("--rounds", type=int, default=0, help="最多捐幾次,0 代表捐到不能捐為止")
-    sub.add_parser("probe", help="花一場戰鬥實測邊界，對照判讀器說的")
-    sub.add_parser("bounds", help="花一場戰鬥實測地圖邊緣，回推村莊範圍")
     # No directory argument: it writes into this run's own `frames/` like every
     # other command that saves what it saw. Whoever ran it used to invent a
     # path, and `--label` is what that need becomes.
@@ -267,6 +276,7 @@ def _answer(arguments: argparse.Namespace, run: RunLog) -> BaseModel | str:
         ),
         "collect": lambda: commands.collect(run.frames),
         "builders": lambda: commands.builders(run.frames),
+        "stock": lambda: commands.stock(run.frames),
         "upgrade": lambda: commands.upgrade(
             UpgradeOptions(
                 frame_dir=run.frames,

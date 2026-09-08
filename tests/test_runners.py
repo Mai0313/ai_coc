@@ -52,7 +52,7 @@ from ai_coc.ui.attack import (
     AttackRunner,
     deploy_line,
 )
-from ai_coc.ui.runner import GameRunner
+from ai_coc.ui.runner import GameRunner, ScreenRunner
 from ai_coc.ui.upkeep import UpkeepRunner
 from ai_coc.adapters.ai import GeminiClient
 from ai_coc.adapters.adb import AdbController, AdbControlError
@@ -85,6 +85,43 @@ def _duke(price: int | None = 56_000) -> HeroCard:
         resource=None if price is None else "dark",
         upgradable=price is not None,
     )
+
+
+class ReadStoragesTests(unittest.TestCase):
+    """One capture, and which reader it goes to depends on which village it caught."""
+
+    def _read(self, seen: str | None) -> tuple[object, object, MagicMock, MagicMock]:
+        runner = ScreenRunner(adb=_adb(), display=DISPLAY)
+        night = VillageStock(gold=2, elixir=2, dark=0)
+        with (
+            patch.object(ScreenRunner, "_frame", return_value=b""),
+            patch.object(shared, "current_world", return_value=seen),
+            patch.object(shared, "read_stock", return_value=STOCK) as day_reader,
+            patch.object(shared, "read_builder_stock", return_value=night) as night_reader,
+        ):
+            world, held = runner.read_storages()
+        return world, held, day_reader, night_reader
+
+    def test_the_builder_base_goes_to_its_own_reader(self) -> None:
+        """`read_stock` reports that village's gems bar as dark elixir — 10 152 gems as 410 152."""
+        world, held, day_reader, night_reader = self._read("night")
+        assert world == "night"
+        assert held == VillageStock(gold=2, elixir=2, dark=0)
+        day_reader.assert_not_called()
+        night_reader.assert_called_once()
+
+    def test_the_home_village_goes_to_the_three_row_reader(self) -> None:
+        world, held, day_reader, night_reader = self._read("day")
+        assert (world, held) == ("day", STOCK)
+        night_reader.assert_not_called()
+        day_reader.assert_called_once()
+
+    def test_a_frame_that_is_no_village_asks_neither_reader(self) -> None:
+        """A different answer from a village whose bars this frame could not resolve."""
+        world, held, day_reader, night_reader = self._read(None)
+        assert (world, held) == (None, None)
+        day_reader.assert_not_called()
+        night_reader.assert_not_called()
 
 
 class OpenedWalkTests(unittest.TestCase):
