@@ -187,7 +187,6 @@ class StockCommandTests(unittest.TestCase):
         )
         assert report.world == "day"
         assert report.filled == {"gold": "50%", "elixir": "25%", "dark": "100%"}
-        assert report.message == "主村"
 
     def test_a_resource_with_no_ceiling_is_left_out_rather_than_guessed(self) -> None:
         """The builder base has no dark elixir bar, so it has no share to report."""
@@ -197,21 +196,19 @@ class StockCommandTests(unittest.TestCase):
             StorageCapacity(gold=4_100_000, elixir=3_450_000),
         )
         assert report.world == "night"
+        # Absent rather than 0%, which would read as an empty storage.
         assert report.filled == {"gold": "50%", "elixir": "0%"}
-        # Named, because absent from `filled` alone does not say which.
-        assert report.message == "建築大師基地，dark 讀不到容量"
+        assert "dark" not in report.filled
 
     def test_a_village_whose_ceilings_will_not_read_still_reports_what_it_holds(self) -> None:
         """A partial ceiling read comes back None, and the water level is the useful half."""
         _, _, report = self._stock("day", VillageStock(gold=1, elixir=2, dark=3), None)
         assert report.held == VillageStock(gold=1, elixir=2, dark=3)
         assert report.filled == {}
-        assert report.message == "主村，gold、elixir、dark 讀不到容量"
 
     def test_a_screen_that_is_not_a_village_says_so_and_taps_nothing(self) -> None:
         pressed, ceiling_reader, report = self._stock(None)
         assert (report.world, report.held) == (None, None)
-        assert "不是村莊" in report.message
         # The ceilings are what cost six taps and three captures, so what this
         # is really about is that a frame with no village on it never spends
         # them. Asserting on `_tap` could not fail: it is only reachable through

@@ -1248,14 +1248,16 @@ def stock(frame_dir: Path | None = None) -> StockReport:
         world = uncovered(adb, display)
         if world is not None:
             world, held = runner.read_storages()
+    # The log line is built here rather than carried on the model, because a
+    # person reading `run.log` wants a sentence and a caller reading the report
+    # wants fields — and the sentence is derivable from the fields, which is
+    # what made it a duplicate when the model held one.
     if world is None:
-        report = StockReport(message="畫面不是村莊，看不到儲量條")
-        logger.info("Stock: %s", report.message)
-        return report
+        logger.info("Stock: the screen is not a village, so there are no bars to read")
+        return StockReport()
     if held is None:
-        report = StockReport(world=world, message="在村莊上，但這一格讀不出儲量條")
-        logger.info("Stock: %s", report.message)
-        return report
+        logger.info("Stock: on %s, but this frame would not resolve the bars", world)
+        return StockReport(world=world)
     capacity = runner.read_ceilings(world) or StorageCapacity()
     rows = (
         ("gold", capacity.gold, held.gold),
@@ -1263,19 +1265,13 @@ def stock(frame_dir: Path | None = None) -> StockReport:
         ("dark", capacity.dark, held.dark),
     )
     filled = {name: f"{now * 100 // ceiling}%" for name, ceiling, now in rows if ceiling}
-    where = "主村" if world == "day" else "建築大師基地"
-    # The shares are a field rather than a sentence, so this says only what no
-    # field does: which village, and which resource has no ceiling to be judged
-    # against. Repeating the percentages here was the same numbers twice.
-    missing = [name for name, ceiling, _ in rows if not ceiling]
-    report = StockReport(
-        world=world,
-        held=held,
-        capacity=capacity,
-        filled=filled,
-        message=f"{where}，{'、'.join(missing)} 讀不到容量" if missing else where,
+    report = StockReport(world=world, held=held, capacity=capacity, filled=filled)
+    logger.info(
+        "Stock: %s holds %s of %s",
+        world,
+        filled or "an unknown share",
+        capacity.model_dump(exclude_none=True) or "ceilings that would not read",
     )
-    logger.info("Stock: %s %s", report.message, report.filled)
     return report
 
 
