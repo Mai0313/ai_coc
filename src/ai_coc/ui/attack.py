@@ -43,6 +43,7 @@ from ai_coc.parsers.scout import (
     battle_over,
     card_groups,
     field_units,
+    panel_drawn,
     card_drained,
     freeze_cards,
     skip_offered,
@@ -1290,8 +1291,17 @@ class AttackRunner(ScreenRunner):
         give up on, and `_offered` is what says so. The timeout used to land on a
         countdown that had already expired; now it can land on an opponent that
         arrived seconds ago with most of its own still to run, so the caller has
-        to leave through 結束戰鬥 rather than walk away — which is only safe
-        while 下一個 is up, and that is exactly what this last read answers.
+        to leave through 結束戰鬥 rather than walk away. **What that flag means
+        is an opponent on screen rather than a button that has painted**: the
+        two came apart once a frame could be refused for still fading, and it
+        is the countdown that makes leaving unsafe, not the button.
+
+        **And the first frame that answers is not the first frame with an
+        opponent on it**, which is what `panel_drawn` is here for. The game
+        fades the whole screen up around a new opponent, and a frame caught in
+        that fade reads as an opponent that cannot be skipped — the caller's
+        signal for a countdown that has expired, which it answers by attacking
+        whatever the loot says. See `panel_drawn` for what that cost.
         """
         deadline = time.monotonic() + timeout
         unread = 0
@@ -1299,13 +1309,28 @@ class AttackRunner(ScreenRunner):
             png = self._frame("scout")
             view = read_scout(png)
             if view:
-                return view, png
-            self._offered = skip_offered(png)
+                # Said out loud, because `read_scout` has already logged the
+                # numbers this is about to throw away and a silent refusal
+                # leaves a log showing a reading that was believed. Only
+                # `--record` would answer it afterwards, and that is off by
+                # default, so an ordinary farming run would have nothing left.
+                if panel_drawn(png):
+                    return view, png
+                logger.info("The scout screen is still fading in; this reading is not believed")
+            # **A frame refused for still fading is an opponent all the same**,
+            # and `_offered` is what stops the caller walking away from one. The
+            # button has not painted, so `skip_offered` says no on exactly the
+            # frames this now declines to act on — and a timeout landing there
+            # would leave a live countdown to start the battle without an army,
+            # which is what this flag exists to prevent. A panel that resolved
+            # is an opponent on screen whether or not it has finished painting.
+            self._offered = skip_offered(png) or view is not None
             unread = unread + 1 if self._offered else 0
             if unread >= UNREADABLE_SKIPS:
                 logger.warning(
-                    "An opponent is on screen but %d frames running would not read its loot; "
-                    "asking for another rather than letting the countdown start the battle",
+                    "An opponent is on screen but %d frames running would not read its loot, "
+                    "or would not finish painting; asking for another rather than letting the "
+                    "countdown start the battle",
                     unread,
                 )
                 self._tap(NEXT_TARGET)
