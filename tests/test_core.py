@@ -1551,8 +1551,10 @@ class ScoutTests(unittest.TestCase):
         judge — measured live, 1 round in 23 that day.
 
         Everything outside the panel is blacked out in this frame; the stadium
-        village behind it is megabytes of PNG on its own and no reader here
-        looks past x 400 or y 280.
+        village behind it is megabytes of PNG on its own. **That takes the
+        下一個 button with it**, so this frame answers `can_skip=False` for what
+        was a live skippable screen — assert the button on `scout_faint_panel`,
+        which keeps it, rather than here.
         """
         view = read_scout((FRAMES / "scout_bright_theme.png").read_bytes())
         assert view is not None
