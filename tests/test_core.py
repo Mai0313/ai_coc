@@ -54,6 +54,7 @@ from ai_coc.models import (
     LootThresholds,
     StorageCapacity,
 )
+from ai_coc.parsers import scout as scout_parser
 from ai_coc.prompts import PROMPTS, PROMPT_DIR, render
 from ai_coc.ui.hero import HeroRunner
 from ai_coc.ui.walls import WallRunner
@@ -122,6 +123,7 @@ from ai_coc.parsers.scout import (
     STOCK_DIGIT_TOLERANCE,
     _read_row,
     in_battle,
+    _lit_floor,
     card_count,
     live_cards,
     read_scout,
@@ -1456,8 +1458,19 @@ class ScoutTests(unittest.TestCase):
         it. The fixture reproduces that on the 0 of 1 746 707, five digits into
         seven: skipped, the row reads 174 677. A row the caller can re-read on
         the next frame is worth more than one that is quietly wrong.
+
+        **This frame's own smudge no longer defeats the reader.** `_lit_floor`
+        raises its floor past the speckle that broke that 0, so the row now
+        reads correctly and the frame cannot exercise the guard on its own —
+        which is asserted below it. The guard is therefore run at the fixed
+        floor this frame was captured against.
         """
-        assert read_scout((FRAMES / "scout_smudged_digit.png").read_bytes()) is None
+        smudged = (FRAMES / "scout_smudged_digit.png").read_bytes()
+        with patch.object(scout_parser, "_lit_floor", return_value=LOOT_INK_BRIGHTNESS):
+            assert read_scout(smudged) is None
+        view = read_scout(smudged)
+        assert view is not None
+        assert view.loot == LootOffer(gold=1746707, elixir=1705910, dark=16361)
 
     def test_speckle_beside_a_digit_does_not_fail_the_row(self) -> None:
         """Two lit pixels under the 9 of 297 906 cost a whole battle its loot reading.
@@ -1527,6 +1540,43 @@ class ScoutTests(unittest.TestCase):
                 assert all(floor is not None and floor < LOOT_INK_BRIGHTNESS for floor in floors)
             else:
                 assert floors == [None, None, None], name
+
+    def test_a_bright_village_theme_does_not_bleed_into_the_panel(self) -> None:
+        """A football-stadium opponent filled the gaps between the digits.
+
+        Its gold row's thousands space came through inked, so `02 9` segmented
+        as one 58 px span that no cut leaves two digits of, and its elixir row
+        picked up an extra glyph at the *left* end, which nothing trims. The
+        whole panel read as no opponent for a battle the loop then could not
+        judge — measured live, 1 round in 23 that day.
+
+        Everything outside the panel is blacked out in this frame; the stadium
+        village behind it is megabytes of PNG on its own and no reader here
+        looks past x 400 or y 280.
+        """
+        view = read_scout((FRAMES / "scout_bright_theme.png").read_bytes())
+        assert view is not None
+        assert (view.loot.gold, view.loot.elixir, view.loot.dark) == (602913, 196820, 0)
+
+    def test_the_lit_floor_only_ever_raises(self) -> None:
+        """The half of this that keeps every dim frame reading as it did.
+
+        Scaling in both directions reads a transition frame's half-drawn gold
+        row as 1289 where the number is 1 289 828. Raising only, a row that
+        never reaches the fixed floor is handed exactly that floor, so the
+        popup-dimmed panel below still falls through to `_dimmed_floor`.
+        """
+        for name, raised in (
+            ("scout_bright_theme.png", True),
+            ("battle_dimmed_by_popup.png", False),
+        ):
+            image = open_frame((FRAMES / name).read_bytes())
+            floors = [
+                _lit_floor(image.crop((PANEL_LEFT, top, PANEL_RIGHT, bottom)))
+                for top, bottom in ROW_BOUNDS
+            ]
+            assert all(floor >= LOOT_INK_BRIGHTNESS for floor in floors), name
+            assert any(floor > LOOT_INK_BRIGHTNESS for floor in floors) is raised, name
 
     def test_the_attack_menu_is_recognised_before_the_run_commits(self) -> None:
         assert attack_menu_open((FRAMES / "attack_menu.png").read_bytes())
@@ -2815,11 +2865,16 @@ class AttackTests(unittest.TestCase):
 
         `read_scout` answers None for both of these, so nothing else on either
         screen can say which one a run is looking at.
+
+        The second is a scout screen caught while its panel was still painting
+        in — its rows peak at 196 to 205 where a finished one reaches 235 — so
+        `_lit_floor` hands it the fixed floor unchanged and it still fails,
+        which is the half of that mechanism that keeps dim frames as they were.
         """
         assert skip_offered((FRAMES / "searching.png").read_bytes()) is False
-        smudged = (FRAMES / "scout_smudged_digit.png").read_bytes()
-        assert read_scout(smudged) is None
-        assert skip_offered(smudged) is True
+        faint = (FRAMES / "scout_faint_panel.png").read_bytes()
+        assert read_scout(faint) is None
+        assert skip_offered(faint) is True
 
     def test_a_search_given_up_on_is_left_through_the_button(self) -> None:
         """Walking away leaves a live countdown to start the battle without an army.
