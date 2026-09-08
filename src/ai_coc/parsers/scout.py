@@ -626,8 +626,12 @@ def _read_row(image: Image.Image, box: tuple[int, int, int, int], tolerance: int
 def _read_loot_row(image: Image.Image, box: tuple[int, int, int, int]) -> int | None:
     """One row of the loot panel, with the village showing through it dropped.
 
-    The village only shows through to the right of the digits, so that is the one
-    end a poor match can be dropped from. Dropping it there rather than failing
+    The right of the digits is the one end a poor match can be dropped from,
+    because it is the only end with room to spare: loot runs to seven figures and
+    the leftmost of those starts at the box's own edge, so a left-end intruder
+    cannot be told from the first digit by position. It is not that the village
+    never bleeds in there — `_lit_floor` was written for a theme that does — only
+    that nothing here can trim it. Dropping a right-end match rather than failing
     the row is the opposite of `_read_row` and deliberately so: `read_scout`
     returning None means "no opponent on screen", so one speckle of village would
     leave the loop waiting out a search it had already paid for.
@@ -640,7 +644,7 @@ def _read_loot_row(image: Image.Image, box: tuple[int, int, int, int]) -> int | 
     fails instead, and the caller reads the next frame.
     """
     crop = image.crop(box)
-    for floor in (LOOT_INK_BRIGHTNESS, _dimmed_floor(crop)):
+    for floor in (_lit_floor(crop), _dimmed_floor(crop)):
         if floor is None:
             break
         glyphs = list(row_glyphs(ink_mask(crop, floor)))
@@ -651,6 +655,51 @@ def _read_loot_row(image: Image.Image, box: tuple[int, int, int, int]) -> int | 
         if digits := "".join(digit for digit, _ in glyphs):
             return int(digits)
     return None
+
+
+def _lit_floor(crop: Image.Image) -> int:
+    """The fixed floor, raised where this row is bright enough to need it.
+
+    **A bright village theme bleeds into the panel from both ends**, and the
+    fixed floor is what lets it. Measured on a football-stadium opponent, the
+    gold row's thousands space filled in so `02 9` came through as one 58 px
+    span — no cut leaves two halves the size of a digit, so it read
+    `NOT_A_GLYPH` — while the elixir row picked up an extra glyph at its *left*
+    end, which nothing can trim: a seven-figure reading starts at the box's own
+    edge, so `PANEL_LEFT` cannot move right. The whole panel then read as no
+    opponent for an entire battle, and `_wait_out_battle` could only report that
+    it had no idea how the round went.
+
+    The digits are the brightest thing in their row and what bleeds in is not,
+    so the same ratio `_dimmed_floor` already scales by separates them here —
+    this is that mechanism pointed the other way. **It only ever raises**, which
+    is what keeps every dim frame reading exactly as it did: a row peaking below
+    `LOOT_INK_BRIGHTNESS / DIM_INK_RATIO` gets the fixed floor unchanged, so a
+    popup's dimmed panel and a half-painted one in a transition are untouched.
+
+    Scaling in both directions was measured and is not safe. Always scaling
+    reads a transition frame's half-drawn gold row — peaking at 168 where its
+    neighbours reach 195 — as 1289 where the number is 1 289 828, which a
+    threshold then skips as poor. Swept over 4 700 frames, raise-only at this
+    ratio reads 87 rows that failed outright and leaves every other reading
+    identical; at 0.90 it starts truncating (1 660 000 as 166 000) and drops
+    `scout_dim_dark`, and at 0.80 it recovers 39.
+
+    **What the sweep cannot say is whether a row it gained is right**, since
+    there was no prior reading to compare one against. Most of the 87 are
+    consecutive frames of one battle whose numbers fall monotonically as the
+    loot drains, which no speckle produces; two were checked against the digits
+    visible on the frame and are the fixtures behind this. The one direction it
+    does settle outright is the builder base, where this box is battlefield: 0
+    of 3 214 frames gained anything.
+
+    **This replaces the fixed attempt rather than adding one**, so a bright row
+    whose digits sit between the fixed floor and the raised one is lost rather
+    than retried. Nothing in the corpus does, and the alternative is worse: a
+    row that failed at the raised floor failed with the bleed already excluded,
+    so dropping back to the fixed floor could only re-admit it.
+    """
+    return max(LOOT_INK_BRIGHTNESS, int(max(crop.tobytes()) * DIM_INK_RATIO))
 
 
 def _dimmed_floor(crop: Image.Image) -> int | None:
