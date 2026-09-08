@@ -2920,6 +2920,25 @@ class AttackTests(unittest.TestCase):
         assert view is not None
         assert (view.loot.elixir, view.loot.dark, view.can_skip) == (4, 62, False)
 
+    def test_the_line_sits_between_the_dimmest_drawn_panel_and_the_brightest_fading_one(
+        self,
+    ) -> None:
+        """Both edges pinned, because a first pass put the line 7 off one of them.
+
+        That pass read the drawn frames as 246 to 247 and claimed 26 of margin.
+        `scout_dim_dark` is a dark-themed village whose panel peaks at 227 and
+        whose three rows all read, so it is the floor rather than one of them —
+        the same shape of mistake `card_count` records, a margin a third of what
+        the prose claimed with the guard test watching the wrong frame.
+
+        The population that matters is the frames `read_scout` answers on, which
+        is all its one caller asks about: `scout_faint_panel` peaks at 200 and
+        sits above the line, and costs nothing, because it resolves to None
+        either way.
+        """
+        assert panel_drawn((FRAMES / "scout_dim_dark.png").read_bytes()) is True
+        assert panel_drawn((FRAMES / "scout_fading_in.png").read_bytes()) is False
+
     def test_a_settled_panel_that_cannot_be_skipped_is_left_alone(self) -> None:
         """The reading the fade check must not catch: a countdown that really has expired.
 
@@ -2986,6 +3005,30 @@ class AttackTests(unittest.TestCase):
             scouted = runner._scout(timeout=60)
         assert scouted is not None
         assert scouted[0] == settled
+
+    def test_a_search_that_ran_out_on_a_fading_frame_still_leaves_through_the_button(self) -> None:
+        """A frame refused for still fading is an opponent all the same.
+
+        Reachable the ordinary way: `unread` reaches its limit late in the
+        window, the loop taps for another opponent, and the next frame is that
+        opponent fading in. Its button has not painted, so `skip_offered` says
+        no on exactly the frames the fade check declines to act on — and a
+        caller that believes that walks away from a live countdown, which then
+        starts the battle with the army still in hand.
+        """
+        runner = self._runner()
+        fading = ScoutView(loot=LootOffer(gold=481212, elixir=4, dark=62), can_skip=False)
+        with (
+            patch.object(AttackRunner, "_frame", return_value=b""),
+            patch.object(AttackRunner, "_tap"),
+            patch.object(attack, "panel_drawn", return_value=False),
+            patch.object(attack, "read_scout", return_value=fading),
+            patch.object(attack, "skip_offered", return_value=False),
+            patch.object(attack.time, "sleep"),
+            patch.object(attack.time, "monotonic", side_effect=[0, *range(0, 200, 7)]),
+        ):
+            assert runner._scout() is None
+        assert runner._offered is True
 
     def test_a_search_given_up_on_is_left_through_the_button(self) -> None:
         """Walking away leaves a live countdown to start the battle without an army.

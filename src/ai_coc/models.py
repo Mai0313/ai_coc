@@ -1742,6 +1742,12 @@ class FrameReading(BaseModel):
     # None both for 正在搜尋對手 and for an opponent whose loot will not read,
     # and this is what tells a run debugging the second one which it is looking at.
     skip_offered: bool = False
+    # Whether the scout screen has finished fading in, which is the other thing
+    # `scout` cannot say: it answers on a half-painted panel with numbers that
+    # are wrong and a `can_skip` that reads like an expired countdown, and the
+    # search loop refuses exactly those. Without this a frame the loop declined
+    # is reported here as an ordinary reading with nothing marking it.
+    panel_drawn: bool = False
     idle_dialog: bool = False
     # 正在載入, which every other reader answers None on; this is what says a
     # run that reported no village was in fact waiting on the server.

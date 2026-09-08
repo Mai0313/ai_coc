@@ -1305,15 +1305,23 @@ class AttackRunner(ScreenRunner):
         unread = 0
         while time.monotonic() < deadline:
             png = self._frame("scout")
-            view = read_scout(png) if panel_drawn(png) else None
-            if view:
+            view = read_scout(png)
+            if view and panel_drawn(png):
                 return view, png
-            self._offered = skip_offered(png)
+            # **A frame refused for still fading is an opponent all the same**,
+            # and `_offered` is what stops the caller walking away from one. The
+            # button has not painted, so `skip_offered` says no on exactly the
+            # frames this now declines to act on — and a timeout landing there
+            # would leave a live countdown to start the battle without an army,
+            # which is what this flag exists to prevent. A panel that resolved
+            # is an opponent on screen whether or not it has finished painting.
+            self._offered = skip_offered(png) or view is not None
             unread = unread + 1 if self._offered else 0
             if unread >= UNREADABLE_SKIPS:
                 logger.warning(
-                    "An opponent is on screen but %d frames running would not read its loot; "
-                    "asking for another rather than letting the countdown start the battle",
+                    "An opponent is on screen but %d frames running would not read its loot, "
+                    "or would not finish painting; asking for another rather than letting the "
+                    "countdown start the battle",
                     unread,
                 )
                 self._tap(NEXT_TARGET)
