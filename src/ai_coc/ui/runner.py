@@ -229,11 +229,14 @@ class GameRunner(ScreenRunner):
         ours to choose. This camera is, so what is fixed is the view rather
         than the reader.
 
-        **So the village test here is `current_world` and not the storages.**
-        It reads the plate row along the top, which is UI at a fixed place and
-        does not care where the camera is: on that same frame it answered day.
-        `_settle_game` already opens the attack loop this way, which is why the
-        five commands that skip it are the ones that could not recover.
+        **So the village test here is `current_world` as well as the storages,
+        and widening it is the point rather than swapping it.** The plate row
+        along the top is UI at a fixed place and does not care where the camera
+        is, so it answered day on that very frame; but it misses villages of
+        its own, a gem shower drifting over a plate among them, and those the
+        storages read. Either reading is a village, and a village is where this
+        runs. `_settle_game` already opens the attack loop off the plate row,
+        which is why the five commands that skip it could not recover.
 
         A pinch between wall batches would only be spending three seconds to
         confirm what this one already settled.
@@ -251,6 +254,24 @@ class GameRunner(ScreenRunner):
         # ever reaches the read that calls this, so there is no other village
         # this can be looking at.
         park_camera(self.adb, self.display, "day")
+
+    def _put_camera_back(self) -> None:
+        """The settle, once a run, off whichever reading recognised the village.
+
+        **Two callers because either reading can be the one that recognises
+        it.** The plate row is the one that survives a drifted camera, which is
+        why `_home` asks it first — but it misses villages of its own, a gem
+        shower drifting over a plate among them, and those the storages read.
+        Gated on the plate row alone, such a frame hands its caller a stock
+        with the camera never put back, and every caller reads a returned stock
+        as the measured coordinates being valid now. The settle would then land
+        at whatever `_home` came next — usually `_opened` backing out partway
+        through a walk — moving the map after the points that walk is spending
+        were already chosen.
+        """
+        if not self._settled:
+            self._settle_zoom()
+            self._settled = True
 
     def _home(self) -> VillageStock | None:
         """The village's storages, once nothing is covering the village any more.
@@ -332,11 +353,11 @@ class GameRunner(ScreenRunner):
             # camera that makes the storages unreadable and for why nothing
             # below this line can recover from one.
             if world is not None and not self._settled:
-                self._settle_zoom()
-                self._settled = True
+                self._put_camera_back()
                 continue
             stock = read_stock(png)
             if stock is not None:
+                self._put_camera_back()
                 self._seen_village = True
                 return stock
             if not self._seen_village and attempt < LOADING_PATIENCE:
