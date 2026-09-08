@@ -1550,13 +1550,14 @@ class ScoutTests(unittest.TestCase):
         whole panel read as no opponent for a battle the loop then could not
         judge — measured live, 1 round in 23 that day.
 
-        Everything outside the panel is blacked out in this frame; the stadium
-        village behind it is megabytes of PNG on its own. **That takes the
-        下一個 button with it**, so this frame answers `can_skip=False` for what
-        was a live skippable screen — assert the button on `scout_faint_panel`,
-        which keeps it, rather than here.
+        **Cut from a frame taken mid-battle, not off the scout screen**, which
+        is where the bleed is worst: the same opponent's scout frames read at
+        the fixed floor. Everything outside the panel is blacked out; the
+        stadium village behind it is megabytes of PNG on its own. **That takes
+        the 下一個 button with it**, so this frame answers `can_skip=False` —
+        assert the button on `scout_faint_panel`, which keeps it, not here.
         """
-        view = read_scout((FRAMES / "scout_bright_theme.png").read_bytes())
+        view = read_scout((FRAMES / "battle_bright_theme.png").read_bytes())
         assert view is not None
         assert (view.loot.gold, view.loot.elixir, view.loot.dark) == (602913, 196820, 0)
 
@@ -1569,7 +1570,7 @@ class ScoutTests(unittest.TestCase):
         popup-dimmed panel below still falls through to `_dimmed_floor`.
         """
         for name, raised in (
-            ("scout_bright_theme.png", True),
+            ("battle_bright_theme.png", True),
             ("battle_dimmed_by_popup.png", False),
         ):
             image = open_frame((FRAMES / name).read_bytes())
