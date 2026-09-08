@@ -5131,6 +5131,66 @@ class HomeHudTests(unittest.TestCase):
         # same icons a few hundred pixels to the right.
         assert all(940 <= x <= 1420 and 180 <= y <= 470 for x, y in (m.point for m in markers))
 
+    def test_a_dark_marker_on_the_pale_plate_is_found_too(self) -> None:
+        """The same village, the same collectors, and the plate is a different colour.
+
+        `MARKERS` carries one plate for the dark marker, an orange one, because
+        its icon is nearly black and cannot be found the way gold and elixir
+        are. Measured on this frame the three dark bubbles sit on the pale plate
+        every other bubble uses, so that written-down colour finds none of them
+        — which is every dark marker on this account today, and dark elixir's
+        drills are its only steady source.
+
+        The pale plate is learned rather than listed: gold and elixir are found
+        by their own icons whatever their plate is painted, so their plate is
+        this frame's answer. On this frame a dark icon standing on it matches
+        0.42 to 0.51 of its own ring against at most 0.03 for the twelve other
+        dark shapes the village offers.
+        """
+        markers = collect_bubbles((FRAMES / "home_markers_pale_plate.png").read_bytes())
+        assert [marker.resource for marker in markers].count("dark") == 3
+        assert len(markers) == 5
+
+    def test_the_orange_plate_is_still_what_finds_the_other_kind(self) -> None:
+        """Both plates, because two frames cannot say which state either one means."""
+        markers = collect_bubbles((FRAMES / "home_markers.png").read_bytes())
+        assert [marker.resource for marker in markers].count("dark") == 3
+        assert len(markers) == 11
+
+    def test_one_frame_carries_both_plates_at_once(self) -> None:
+        """Which is why the colour is learned per bubble rather than pooled per frame.
+
+        Measured on this frame, seven gold bubbles sit on an orange plate at
+        (221, 92, 33) and seven elixir bubbles on the pale one at
+        (184, 189, 131). A single median of the two comes out (213, 131, 66),
+        near neither, and the dark icons here score 0.38 against it where they
+        score 0.75 against the plate they are really on.
+
+        The three real dark bubbles are on the orange plate here, so the listed
+        entry finds them and the learned pass finds them again — the count holds
+        because the two readings of one bubble are three pixels apart against a
+        `DARK_APART` of thirty. The fourth is a gold bubble's own orange plate,
+        which the listed entry has always reported as a dark marker on a frame
+        where the gold bubbles are orange; unchanged here, and harmless, since
+        the point is still a bubble worth tapping and the gains are read off the
+        storage bars rather than counted off the markers.
+        """
+        markers = collect_bubbles((FRAMES / "home_builders_busy.png").read_bytes())
+        assert [marker.resource for marker in markers].count("dark") == 4
+
+    def test_a_boulder_in_the_foliage_is_not_a_dark_marker(self) -> None:
+        """The floor the share line sits above, on the frame that sets it.
+
+        A grey boulder in dark foliage: the pale stone is close enough to the
+        pale plate and the shadow beside it is the icon-shaped patch, which
+        together score 0.192 — the highest anything that is not a marker reaches
+        over every committed frame, against 0.570 for the poorest real one. A
+        first pass put the line at 0.20 and cleared this by 0.008, having
+        measured only the two frames the change was written from.
+        """
+        markers = collect_bubbles((FRAMES / "home_marker_over_bars.png").read_bytes())
+        assert not [marker for marker in markers if marker.resource == "dark"]
+
     def test_the_builder_counter_is_split_on_its_slash(self) -> None:
         """Idle over total. The slash is not a digit and is found by matching badly."""
         assert free_builders((FRAMES / "home_markers.png").read_bytes()) == (1, 5)
