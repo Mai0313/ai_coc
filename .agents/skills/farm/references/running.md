@@ -1,6 +1,6 @@
 # 讓一輪在背景跑, 並且盯得住它
 
-`farm`, `tune-attack`, `build-feature`, `spend-loot` 四個 skill 共用這一份. 從別的 skill 過來的話, 路徑是 `.agents/skills/farm/references/running.md`.
+`farm`, `watch-and-fix`, `build-feature`, `spend-loot` 四個 skill 共用這一份. 從別的 skill 過來的話, 路徑是 `.agents/skills/farm/references/running.md`.
 
 ## 為什麼一定要背景跑
 
