@@ -43,6 +43,7 @@ from ai_coc.parsers.scout import (
     battle_over,
     card_groups,
     field_units,
+    panel_drawn,
     card_drained,
     freeze_cards,
     skip_offered,
@@ -1292,12 +1293,19 @@ class AttackRunner(ScreenRunner):
         arrived seconds ago with most of its own still to run, so the caller has
         to leave through 結束戰鬥 rather than walk away — which is only safe
         while 下一個 is up, and that is exactly what this last read answers.
+
+        **And the first frame that answers is not the first frame with an
+        opponent on it**, which is what `panel_drawn` is here for. The game
+        fades the whole screen up around a new opponent, and a frame caught in
+        that fade reads as an opponent that cannot be skipped — the caller's
+        signal for a countdown that has expired, which it answers by attacking
+        whatever the loot says. See `panel_drawn` for what that cost.
         """
         deadline = time.monotonic() + timeout
         unread = 0
         while time.monotonic() < deadline:
             png = self._frame("scout")
-            view = read_scout(png)
+            view = read_scout(png) if panel_drawn(png) else None
             if view:
                 return view, png
             self._offered = skip_offered(png)

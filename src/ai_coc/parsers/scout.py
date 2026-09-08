@@ -85,6 +85,23 @@ LOOT_INK_BRIGHTNESS = 190
 # this unsafe, not lowering the floor further.
 DIM_INK_RATIO = 0.85
 
+# How bright the loot panel is once the scout screen has finished fading in. The
+# game fades the whole screen up when it puts a new opponent on it, and a frame
+# caught in that fade carries the panel and the button at partial opacity —
+# **which is a different thing from a panel a popup has dimmed**, the case
+# `DIM_INK_RATIO` exists for, because there the numbers are settled underneath
+# and here they are still arriving. Scaled to a half-drawn row, that retry
+# answers rather than failing, and what it answers is wrong: measured on one
+# such frame, elixir came back 4 and dark 62 against the 262 884 and 7 962 the
+# same opponent read seconds later.
+#
+# Swept over 56 recorded scout frames the panel's own peak separates the two
+# states with nothing in between: every frame drawn in full reads 246 or 247 and
+# carries its 下一個 button at 0.666 orange, while every frame still fading
+# reads 194 or less and none of them reaches 0.062 of button. So the line goes
+# midway across that gap rather than beside either edge.
+PANEL_DRAWN_BRIGHTNESS = 220
+
 # The game paints these buttons in one saturated orange that nothing behind them
 # comes close to, so a box around either doubles as a check on which screen is
 # up: measured, the button's own screen reads 0.49 and 0.63, every other 0.004.
@@ -742,6 +759,32 @@ def skip_offered(png: bytes) -> bool:
     """
     image = open_frame(png)
     return _orange_ratio(image, NEXT_BUTTON_BOX) >= BUTTON_ORANGE
+
+
+def panel_drawn(png: bytes) -> bool:
+    """Whether the scout screen has finished fading in, read off the loot panel's own peak.
+
+    **`can_skip` means two opposite things on a frame that has not**, and only
+    one of them is safe to act on. The 下一個 button being absent is how the
+    countdown having expired is recognised, and a caller reads that as a battle
+    it has no choice but to play; a button that has simply not painted yet reads
+    exactly the same. Measured over 56 recorded scout frames, every reading of
+    `can_skip=False` came from the second kind, and two rounds of one evening
+    sent an army at an opponent nobody had evaluated because of it.
+
+    Only the search loop asks this. `_wait_out_battle` polls the same panel
+    through `read_scout` while a battle runs, and there a dim panel is an event
+    popup over settled numbers — which `DIM_INK_RATIO` is built to read and this
+    would refuse.
+    """
+    image = open_frame(png)
+    return (
+        max(
+            max(image.crop((PANEL_LEFT, top, PANEL_RIGHT, bottom)).convert("L").tobytes())
+            for top, bottom in ROW_BOUNDS
+        )
+        >= PANEL_DRAWN_BRIGHTNESS
+    )
 
 
 def attack_menu_open(png: bytes) -> bool:

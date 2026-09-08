@@ -131,6 +131,7 @@ from ai_coc.parsers.scout import (
     battle_over,
     card_groups,
     field_units,
+    panel_drawn,
     card_drained,
     freeze_cards,
     skip_offered,
@@ -2863,6 +2864,9 @@ class AttackTests(unittest.TestCase):
             patch.object(AttackRunner, "_tap") as tapped,
             patch.object(attack, "read_scout", side_effect=readings),
             patch.object(attack, "skip_offered", side_effect=offered),
+            # Drawn all the way through: these cases are about the swap, and
+            # the fade has its own below.
+            patch.object(attack, "panel_drawn", return_value=True),
             patch.object(attack.time, "sleep"),
         ):
             runner._scout(timeout=60)
@@ -2899,6 +2903,90 @@ class AttackTests(unittest.TestCase):
         assert read_scout(faint) is None
         assert skip_offered(faint) is True
 
+    def test_a_panel_still_fading_in_answers_and_what_it_answers_is_wrong(self) -> None:
+        """Why the search loop asks whether the screen is drawn before it believes a reading.
+
+        The game fades the whole screen up around a new opponent. On this frame
+        the eye reads 481 212 / 262 884 / 7 962 with a 30 second countdown and
+        下一個 plainly drawn, and the same opponent read exactly that seconds
+        later — but the panel is at partial opacity, so the dimmed-floor retry
+        scales to a half-drawn row and rescues it into a number rather than
+        failing. `can_skip` goes the same way: an unpainted button is an absent
+        one, which is how a countdown that has expired is recognised.
+        """
+        fading = (FRAMES / "scout_fading_in.png").read_bytes()
+        assert panel_drawn(fading) is False
+        view = read_scout(fading)
+        assert view is not None
+        assert (view.loot.elixir, view.loot.dark, view.can_skip) == (4, 62, False)
+
+    def test_a_settled_panel_that_cannot_be_skipped_is_left_alone(self) -> None:
+        """The reading the fade check must not catch: a countdown that really has expired.
+
+        The panel stays on screen after the countdown and only the button goes,
+        so this frame is the one whose `can_skip=False` a caller is meant to act
+        on. None of the recorded frames from the evening this was measured held
+        one, which is what the committed fixtures are for.
+        """
+        expired = (FRAMES / "scout_bright_backdrop.png").read_bytes()
+        assert panel_drawn(expired) is True
+        view = read_scout(expired)
+        assert view is not None
+        assert view.can_skip is False
+
+    def test_a_panel_a_popup_dimmed_is_read_rather_than_refused(self) -> None:
+        """Which is why the fade check lives in the search loop and not in the reader.
+
+        `_wait_out_battle` polls this same panel through `read_scout` while a
+        battle runs, and an event popup dims the whole screen over numbers that
+        are settled underneath — the case `DIM_INK_RATIO` exists for. It reads
+        correctly here and is not drawn by the measure above, so a check inside
+        the reader would have taken the battle poll with it.
+        """
+        dimmed = (FRAMES / "battle_dimmed_by_popup.png").read_bytes()
+        assert panel_drawn(dimmed) is False
+        view = read_scout(dimmed)
+        assert view is not None
+        assert (view.loot.gold, view.loot.elixir, view.loot.dark) == (289806, 363829, 2437)
+
+    def test_a_screen_still_fading_in_is_not_an_opponent_yet(self) -> None:
+        """The first frame that answers is not the first frame with an opponent on it.
+
+        The game fades the whole screen up around a new opponent, and a frame
+        caught in that fade carries the panel and the button at partial
+        opacity. `read_scout` answers on it anyway — the dimmed-floor retry
+        scales to the row's own peak and rescues half-drawn digits into
+        numbers — and the button not being painted reads as `can_skip=False`,
+        which the caller answers by attacking whatever the loot says.
+
+        Measured live: one such frame reported gold 481 212, elixir 4 and dark
+        62 where the same opponent read 481 212 / 262 884 / 7 962 seconds
+        later, and the round it committed took almost nothing.
+        """
+        runner = self._runner()
+        fading = ScoutView(loot=LootOffer(gold=481212, elixir=4, dark=62), can_skip=False)
+        settled = ScoutView(loot=LootOffer(gold=481212, elixir=262884, dark=7962), can_skip=True)
+        canned = [(False, fading), (True, settled)]
+        polls = {"n": 0}
+
+        def frame(_self: AttackRunner, _label: str) -> bytes:
+            polls["n"] += 1
+            return b""
+
+        with (
+            patch.object(AttackRunner, "_frame", frame),
+            patch.object(AttackRunner, "_tap"),
+            patch.object(
+                attack, "panel_drawn", side_effect=lambda _png: canned[polls["n"] - 1][0]
+            ),
+            patch.object(attack, "read_scout", side_effect=lambda _png: canned[polls["n"] - 1][1]),
+            patch.object(attack, "skip_offered", return_value=False),
+            patch.object(attack.time, "sleep"),
+        ):
+            scouted = runner._scout(timeout=60)
+        assert scouted is not None
+        assert scouted[0] == settled
+
     def test_a_search_given_up_on_is_left_through_the_button(self) -> None:
         """Walking away leaves a live countdown to start the battle without an army.
 
@@ -2916,6 +3004,8 @@ class AttackTests(unittest.TestCase):
             patch.object(attack, "army_strength", return_value=None),
             patch.object(attack, "read_scout", return_value=None),
             patch.object(attack, "skip_offered", return_value=True),
+            # An opponent that is on screen and drawn, whose loot will not read.
+            patch.object(attack, "panel_drawn", return_value=True),
             patch.object(attack.time, "sleep"),
             # The deadline as well as the sleeps, or the poll spins for a real
             # thirty seconds: the first reading sets it and the rest walk past it.
