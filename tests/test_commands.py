@@ -186,8 +186,7 @@ class StockCommandTests(unittest.TestCase):
             StorageCapacity(gold=25_500_000, elixir=24_500_000, dark=400_000),
         )
         assert report.world == "day"
-        assert report.filled == {"gold": 50, "elixir": 25, "dark": 100}
-        assert "主村" in report.message
+        assert report.filled == {"gold": "50%", "elixir": "25%", "dark": "100%"}
 
     def test_a_resource_with_no_ceiling_is_left_out_rather_than_guessed(self) -> None:
         """The builder base has no dark elixir bar, so it has no share to report."""
@@ -197,20 +196,20 @@ class StockCommandTests(unittest.TestCase):
             StorageCapacity(gold=4_100_000, elixir=3_450_000),
         )
         assert report.world == "night"
-        assert report.filled == {"gold": 50, "elixir": 0}
-        assert "建築大師基地" in report.message
+        assert report.filled == {"gold": "50%", "elixir": "0%"}
+        # Absent rather than 0%: nothing is known about how full it is, and a
+        # zero would read as empty. The elixir above really is at zero.
+        assert "dark" not in report.filled
 
     def test_a_village_whose_ceilings_will_not_read_still_reports_what_it_holds(self) -> None:
         """A partial ceiling read comes back None, and the water level is the useful half."""
         _, _, report = self._stock("day", VillageStock(gold=1, elixir=2, dark=3), None)
         assert report.held == VillageStock(gold=1, elixir=2, dark=3)
         assert report.filled == {}
-        assert "讀不到任何容量" in report.message
 
     def test_a_screen_that_is_not_a_village_says_so_and_taps_nothing(self) -> None:
         pressed, ceiling_reader, report = self._stock(None)
         assert (report.world, report.held) == (None, None)
-        assert "不是村莊" in report.message
         # The ceilings are what cost six taps and three captures, so what this
         # is really about is that a frame with no village on it never spends
         # them. Asserting on `_tap` could not fail: it is only reachable through
@@ -229,7 +228,7 @@ class StockCommandTests(unittest.TestCase):
             None, VillageStock(gold=1, elixir=1, dark=1), StorageCapacity(gold=4), under="day"
         )
         assert report.world == "day"
-        assert report.filled == {"gold": 25}
+        assert report.filled == {"gold": "25%"}
 
     def test_it_never_crosses_to_the_other_village(self) -> None:
         """Sailing is `world --go`, and a status check that moves the game is not one."""

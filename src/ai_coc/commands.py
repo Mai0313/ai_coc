@@ -1248,33 +1248,30 @@ def stock(frame_dir: Path | None = None) -> StockReport:
         world = uncovered(adb, display)
         if world is not None:
             world, held = runner.read_storages()
+    # The log line is built here rather than carried on the model, because a
+    # person reading `run.log` wants a sentence and a caller reading the report
+    # wants fields — and the sentence is derivable from the fields, which is
+    # what made it a duplicate when the model held one.
     if world is None:
-        report = StockReport(message="畫面不是村莊，看不到儲量條")
-        logger.info("Stock: %s", report.message)
-        return report
+        logger.info("Stock: the screen is not a village, so there are no bars to read")
+        return StockReport()
     if held is None:
-        report = StockReport(world=world, message="在村莊上，但這一格讀不出儲量條")
-        logger.info("Stock: %s", report.message)
-        return report
+        logger.info("Stock: on %s, but this frame would not resolve the bars", world)
+        return StockReport(world=world)
     capacity = runner.read_ceilings(world) or StorageCapacity()
     rows = (
-        ("gold", "金幣", capacity.gold, held.gold),
-        ("elixir", "聖水", capacity.elixir, held.elixir),
-        ("dark", "黑水", capacity.dark, held.dark),
+        ("gold", capacity.gold, held.gold),
+        ("elixir", capacity.elixir, held.elixir),
+        ("dark", capacity.dark, held.dark),
     )
-    filled = {name: now * 100 // ceiling for name, _, ceiling, now in rows if ceiling}
-    where = "主村" if world == "day" else "建築大師基地"
-    # Named in Chinese here and by their field names in `filled`: the message is
-    # read by a person and the model is read by a caller.
-    shares = "、".join(f"{label} {filled[name]}%" for name, label, ceiling, _ in rows if ceiling)
-    report = StockReport(
-        world=world,
-        held=held,
-        capacity=capacity,
-        filled=filled,
-        message=f"{where}：{shares}" if shares else f"{where}：讀不到任何容量，只有水位",
+    filled = {name: f"{now * 100 // ceiling}%" for name, ceiling, now in rows if ceiling}
+    report = StockReport(world=world, held=held, capacity=capacity, filled=filled)
+    logger.info(
+        "Stock: %s holds %s of %s",
+        world,
+        filled or "an unknown share",
+        capacity.model_dump(exclude_none=True) or "ceilings that would not read",
     )
-    logger.info("Stock: %s", report.message)
     return report
 
 

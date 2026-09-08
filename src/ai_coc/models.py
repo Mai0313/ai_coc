@@ -1110,13 +1110,24 @@ class StockReport(BaseModel):
     form every decision here is actually made in — `stop_at` is a percentage,
     and a caller working it out from two numbers is a caller that can get it
     wrong.
+
+    **The only report here with no `message`, because it has no outcome to
+    narrate.** The others report something that happened — 收了 8 個採集器,
+    每一個位置都沒有買成 — and a sentence is the honest shape for that. This
+    reports three numbers, and every state it can be in is already readable off
+    the fields: no `world` is a screen that is not a village, a `world` with no
+    `held` is a village whose bars this frame could not resolve, and a name
+    missing from `filled` is a ceiling that would not read. A sentence saying
+    any of that again is the same answer twice, which is what it was doing.
     """
 
     world: World | None = None
     held: VillageStock | None = None
     capacity: StorageCapacity = StorageCapacity()
-    filled: dict[str, int] = Field(default_factory=dict)
-    message: str = ""
+    # Written with its sign, because the one thing a reader does with this is
+    # read it. A resource whose ceiling would not read is absent rather than
+    # zero: nothing is known about how full it is, and a 0 there reads as empty.
+    filled: dict[str, str] = Field(default_factory=dict)
 
 
 class BuildingName(BaseModel):
