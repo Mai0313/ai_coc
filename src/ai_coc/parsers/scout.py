@@ -100,18 +100,19 @@ DIM_INK_RATIO = 0.85
 # answered None takes the same path whatever this says. Among those, over 56
 # recorded scout frames and every committed fixture, fading tops out at 191 and
 # drawn bottoms out at 227, so the line goes midway across that gap rather than
-# beside either edge. The whole spread is wider than it looks in either
-# direction: most drawn panels read 247, but `scout_dim_dark` is a dark-themed
-# village at 227, and `scout_faint_panel` is a fading one reaching 200 — that
-# last one sits above this line and costs nothing, because it is one of the
-# frames `read_scout` refuses anyway.
+# beside either edge. The spread is wider than it looks at either end: most
+# drawn panels read 247, but `scout_dim_dark` is a dark-themed village at 227,
+# and the brightest fading fixture is `scout_faint_panel` at 200, nine below
+# this line.
 #
 # So the margin is 18 either side rather than the 26 a first pass claimed by
 # reading the drawn frames as 246 to 247 and missing the dark theme. The panel
 # is transparent, so its peak carries some of the village behind it and a theme
 # darker than any measured here would read as still fading: that costs the
 # opponent, which is skipped and honestly reported, rather than the army the
-# other direction costs.
+# other direction costs. A popup over the scout screen rather than over a
+# battle is refused for the whole window for the same reason, and is the one
+# dim state this treats as always a fade.
 PANEL_DRAWN_BRIGHTNESS = 209
 
 # The game paints these buttons in one saturated orange that nothing behind them

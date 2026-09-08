@@ -1291,8 +1291,10 @@ class AttackRunner(ScreenRunner):
         give up on, and `_offered` is what says so. The timeout used to land on a
         countdown that had already expired; now it can land on an opponent that
         arrived seconds ago with most of its own still to run, so the caller has
-        to leave through 結束戰鬥 rather than walk away — which is only safe
-        while 下一個 is up, and that is exactly what this last read answers.
+        to leave through 結束戰鬥 rather than walk away. **What that flag means
+        is an opponent on screen rather than a button that has painted**: the
+        two came apart once a frame could be refused for still fading, and it
+        is the countdown that makes leaving unsafe, not the button.
 
         **And the first frame that answers is not the first frame with an
         opponent on it**, which is what `panel_drawn` is here for. The game
@@ -1306,8 +1308,15 @@ class AttackRunner(ScreenRunner):
         while time.monotonic() < deadline:
             png = self._frame("scout")
             view = read_scout(png)
-            if view and panel_drawn(png):
-                return view, png
+            if view:
+                # Said out loud, because `read_scout` has already logged the
+                # numbers this is about to throw away and a silent refusal
+                # leaves a log showing a reading that was believed. Only
+                # `--record` would answer it afterwards, and that is off by
+                # default, so an ordinary farming run would have nothing left.
+                if panel_drawn(png):
+                    return view, png
+                logger.info("The scout screen is still fading in; this reading is not believed")
             # **A frame refused for still fading is an opponent all the same**,
             # and `_offered` is what stops the caller walking away from one. The
             # button has not painted, so `skip_offered` says no on exactly the

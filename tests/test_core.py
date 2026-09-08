@@ -2931,13 +2931,15 @@ class AttackTests(unittest.TestCase):
         the same shape of mistake `card_count` records, a margin a third of what
         the prose claimed with the guard test watching the wrong frame.
 
-        The population that matters is the frames `read_scout` answers on, which
-        is all its one caller asks about: `scout_faint_panel` peaks at 200 and
-        sits above the line, and costs nothing, because it resolves to None
-        either way.
+        Both fading fixtures are asserted, because the one the change was built
+        from is not the brightest: `scout_fading_in` peaks at 173 and
+        `scout_faint_panel` at 200, which is the edge the line actually has to
+        clear. That second one costs nothing either way — `read_scout` resolves
+        it to None, and the population this separates is the frames that answer.
         """
         assert panel_drawn((FRAMES / "scout_dim_dark.png").read_bytes()) is True
         assert panel_drawn((FRAMES / "scout_fading_in.png").read_bytes()) is False
+        assert panel_drawn((FRAMES / "scout_faint_panel.png").read_bytes()) is False
 
     def test_a_settled_panel_that_cannot_be_skipped_is_left_alone(self) -> None:
         """The reading the fade check must not catch: a countdown that really has expired.
