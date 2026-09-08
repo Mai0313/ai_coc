@@ -66,8 +66,10 @@ uv run ai_coc world --go day      # 坐船切過去, 已經在那邊就什麼都
 ## 開跑的旗標
 
 ```bash
-uv run ai_coc attack --repeat 5 --record --shot-every 5
+uv run ai_coc attack --world day --repeat 0 --record --shot-every 5
 ```
+
+**`--world` 一定要寫出來, 而 `--repeat 0` 才是主線的形狀.** 不給 `--world` 打的是遊戲當下停著的那個村莊, 而遊戲會開在上次離開的那一個, 所以少了它就可能整晚在打夜世界而你以為在打主村. `--repeat 0` 不是無限, 是「打到倉庫滿了自己收工」, 正好是主線要的語義; 固定輪數是做對照的時候才用的, 見下面「對照要怎麼做」.
 
 `--record` 存的是迴圈自己讀的畫面, 檔名帶著它當下在問什麼問題; `--shot-every` 存的是另一種視角, 檔名帶著跑到第幾秒. **要分辨「判讀器讀錯」跟「點下去沒生效」只有畫面辦得到**, 而那兩種在 log 上一模一樣, 所以查這一類的時候兩種都要開. 理由跟怎麼讀在 `references/evidence.md`; 什麼時候值得開在上面「誰在跑那個迴圈」那節.
 
