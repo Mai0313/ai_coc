@@ -382,17 +382,20 @@ FLANK_ROOM = 110
 # ordinary reply, which is why nobody noticed the guard had not held;
 # `GeminiClient` says so out loud now.
 #
-# **The number is therefore a trade rather than a ceiling, and 20 is the wrong
-# side of it on what has been measured.** Swept over 37 recorded planning calls,
-# five ran past 20 s: 20.3, 20.5, 20.6, 21.2 and the 145.2. At 20 those first
-# four stop returning a plan at all — they abort, retry to about 83 s, and play
-# flat, which is a longer stall inside the same countdown than the 21 s answer
-# they replace — while the one call that matters is still not caught. At 30 only
-# the 145.2 misses. Closing it needs the retries bounded rather than the
-# deadline lowered, and that is a client-wide setting shared with the target
-# finder, whose own fallback is a two-and-a-half-minute sweep. That decision is
-# the user's; 20 is their number and this says what it costs.
-PLAN_TIMEOUT = 20
+# **The number is therefore a trade rather than a ceiling, and lowering it was
+# measured and rejected.** Swept over 37 recorded planning calls, five ran past
+# 20 s: 20.3, 20.5, 20.6, 21.2 and the 145.2. At 20 the first four stop
+# returning a plan at all — they abort, retry to about 83 s, and play flat,
+# which is a longer stall inside the same countdown than the 21 s answer they
+# replace — while the one call that matters is still not caught. At 30 only the
+# 145.2 misses, and it would miss 20 as well.
+#
+# So the way to close it is to bound the retries rather than the deadline, and
+# that is a client-wide setting (`HttpOptions.retry_options`) shared with the
+# target finder, whose own fallback is a two-and-a-half-minute sweep. Nothing
+# here measures how often a call fails transiently, which is what a retry buys,
+# so that trade is not one this file can settle.
+PLAN_TIMEOUT = 30
 
 # How many frames in a row may show an opponent whose loot will not read before
 # the loop stops waiting on it and asks for a different one. Measured over 72
