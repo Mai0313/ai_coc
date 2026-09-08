@@ -5131,6 +5131,32 @@ class HomeHudTests(unittest.TestCase):
         # same icons a few hundred pixels to the right.
         assert all(940 <= x <= 1420 and 180 <= y <= 470 for x, y in (m.point for m in markers))
 
+    def test_a_dark_marker_on_the_pale_plate_is_found_too(self) -> None:
+        """The same village, the same collectors, and the plate is a different colour.
+
+        `MARKERS` carries one plate for the dark marker, an orange one, because
+        its icon is nearly black and cannot be found the way gold and elixir
+        are. Measured on this frame the three dark bubbles sit on the pale plate
+        every other bubble uses, so that written-down colour finds none of them
+        — which is every dark marker on this account today, and dark elixir's
+        drills are its only steady source.
+
+        The pale plate is learned rather than listed: gold and elixir are found
+        by their own icons whatever their plate is painted, so their plate is
+        this frame's answer. On this frame a dark icon standing on it matches
+        0.42 to 0.51 of its own ring against at most 0.03 for the twelve other
+        dark shapes the village offers.
+        """
+        markers = collect_bubbles((FRAMES / "home_markers_pale_plate.png").read_bytes())
+        assert [marker.resource for marker in markers].count("dark") == 3
+        assert len(markers) == 5
+
+    def test_the_orange_plate_is_still_what_finds_the_other_kind(self) -> None:
+        """Both plates, because two frames cannot say which state either one means."""
+        markers = collect_bubbles((FRAMES / "home_markers.png").read_bytes())
+        assert [marker.resource for marker in markers].count("dark") == 3
+        assert len(markers) == 11
+
     def test_the_builder_counter_is_split_on_its_slash(self) -> None:
         """Idle over total. The slash is not a digit and is found by matching badly."""
         assert free_builders((FRAMES / "home_markers.png").read_bytes()) == (1, 5)

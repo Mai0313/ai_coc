@@ -9,16 +9,25 @@ standing on and wherever that happens to be.
 The markers are found by colour and then held to a size, which is what separates
 them from the village. Two of the three are the icon itself, because a gold coin
 and an elixir drop are both far more saturated than anything the ground is
-painted in; dark elixir's is nearly black, so what is measured there is the
-bubble's own orange plate instead, which nothing else on the map matches either.
+painted in.
+
+Dark elixir's is nearly black, so it cannot be, and **the plate it sits on is
+not one colour**: measured on two frames of the same village with the same
+collectors in the same places, the dark bubbles are drawn on an orange plate in
+one and on the pale plate every other bubble uses in the other. So one of those
+plates is written down and the other is learned from the frame — gold and elixir
+are found whatever their plate is painted, which makes their plate this frame's
+answer. `_dark_bubbles` carries the measurement and says why a miss here is
+allowed to be quiet.
 """
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
 import logging
+from statistics import median
 
-from ai_coc.models import BuildQueue, ResourceBubble
+from ai_coc.models import Patch, BuildQueue, ResourceBubble
 from ai_coc.parsers.frame import open_frame
 
 # The digit reader and the mask it wants; nothing here is worth a second copy of
@@ -28,6 +37,8 @@ from ai_coc.parsers.glyphs import nearest, ink_mask, signature, glyph_columns, s
 from ai_coc.parsers.regions import mask, patches
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
+
     from PIL import Image
 
 logger = logging.getLogger(__name__)
@@ -59,6 +70,30 @@ MARKERS = (
     ("elixir", ((196, 255), (0, 114), (176, 255)), (16, 22), (21, 28), 0.50),
     ("dark", ((201, 255), (56, 129), (0, 74)), (35, 41), (37, 45), 0.38),
 )
+
+# The dark marker's other plate, and how it is recognised without being written
+# down. The icon itself is what is found — nearly black, and measured at 24 to
+# 25 across by 27 to 28 down on both frames that carry one — and what separates
+# it from the twelve other dark shapes a village offers is the plate it is
+# sitting on. See `_dark_bubbles` for why that colour is learned per frame
+# instead of listed above.
+#
+# The ring is sampled tight, because the plate is only a few pixels wider than
+# the icon: at 4 px and beyond it lands on the village behind the bubble, which
+# measured takes the gap between a marker and the noise from 0.42-vs-0.03 down
+# to nothing separable. The learning pass is allowed further out because it is
+# sampling a plate it already knows is there.
+DARK_ICON = ((0, 60), (0, 60), (0, 60))
+DARK_ICON_ACROSS = (20, 30)
+DARK_ICON_DOWN = (22, 34)
+DARK_ICON_FILL = 0.30
+PLATE_RING_PADS = (2, 3)
+PLATE_LEARN_PADS = (3, 5)
+PLATE_MATCH = 28
+PLATE_SHARE = 0.20
+# Two readings of one bubble, since the orange plate and the icon inside it are
+# found by different passes and their middles sit a few pixels apart.
+DARK_APART = 30
 
 # 1/5 beside the builder's head, in the same white the storage bars use. The
 # slash between the two numbers is not a digit and that is how it is found:
@@ -136,6 +171,98 @@ def _in_storage_bars(point: tuple[int, int]) -> bool:
     return left <= point[0] <= right and top <= point[1] <= bottom
 
 
+def _ring(
+    village: bytes, size: tuple[int, int], patch: Patch, pads: tuple[int, ...]
+) -> list[tuple[int, int, int]]:
+    """The pixels just outside a patch, which for an icon in a bubble is its plate.
+
+    Raw bytes rather than `getpixel`, three per RGB pixel and typed as integers,
+    which is how every other reader in this package walks an image.
+    """
+    width, height = size
+    out: list[tuple[int, int, int]] = []
+    for pad in pads:
+        edges = [
+            (x, y)
+            for x in range(patch.left - pad, patch.right + pad + 1, 2)
+            for y in (patch.top - pad, patch.bottom + pad)
+        ]
+        edges += [
+            (x, y)
+            for y in range(patch.top - pad, patch.bottom + pad + 1, 2)
+            for x in (patch.left - pad, patch.right + pad)
+        ]
+        for x, y in edges:
+            if 0 <= x < width and 0 <= y < height:
+                at = (y * width + x) * 3
+                out.append((village[at], village[at + 1], village[at + 2]))
+    return out
+
+
+def _plate_colour(
+    village: bytes, size: tuple[int, int], lit: list[Patch]
+) -> tuple[int, int, int] | None:
+    """What this frame draws a bubble's plate in, learned from the ones already found.
+
+    None when no gold or elixir marker is on screen to learn from, which is an
+    ordinary answer and not an error — see `_dark_bubbles`.
+    """
+    samples = [c for patch in lit for c in _ring(village, size, patch, PLATE_LEARN_PADS)]
+    if not samples:
+        return None
+    red, green, blue = (round(median(pixel[band] for pixel in samples)) for band in range(3))
+    return red, green, blue
+
+
+def _dark_bubbles(image: Image.Image, lit: list[Patch]) -> Iterator[Patch]:
+    """Dark elixir markers, found by their icon and the plate it is sitting on.
+
+    **The plate is not one colour, which is what this exists for.** The dark
+    marker's own icon is nearly black, so unlike gold and elixir it cannot be
+    found by the icon alone — the village is full of dark shapes — and the
+    reader keyed on the plate instead, in the one orange `MARKERS` carries.
+    Measured on two frames of this same village, taken weeks apart with the same
+    collectors in the same places, the three dark bubbles are drawn on an orange
+    plate in one and on the pale plate every other bubble uses in the other. Two
+    frames cannot say what the game means by that — full against merely worth
+    collecting is the obvious guess and is only a guess — but they are enough to
+    say the one written-down colour finds one of the two states and misses the
+    other, which is every dark marker on this account today.
+
+    So the pale one is learned from the frame rather than written down: gold and
+    elixir are found by their own icons, whatever their plate is painted, and
+    their plate is this frame's answer. Measured over both frames, a dark icon
+    on that plate matches 0.42 to 0.51 of its own ring against at most 0.03 for
+    the twelve other dark shapes the village offers, so the line has room.
+
+    **Nothing here fails loudly, and that is deliberate.** A frame with no gold
+    or elixir marker on it has nothing to learn from and this yields nothing;
+    so does a plate in some third colour. What that costs is a collector left
+    standing until the next pass, which is a few minutes of one collector's
+    production — far less than a reader that guesses would cost.
+    """
+    size = image.size
+    village = image.tobytes()
+    plate = _plate_colour(village, size, lit)
+    if plate is None:
+        logger.warning(
+            "No gold or elixir marker on this frame to learn the bubble plate from, "
+            "so any dark elixir marker on a plate this reader has not been told about "
+            "is left for the next pass"
+        )
+        return
+    for patch in patches(mask(image, DARK_ICON), *size):
+        if not patch.sized(DARK_ICON_ACROSS, DARK_ICON_DOWN, DARK_ICON_FILL):
+            continue
+        ring = _ring(village, size, patch, PLATE_RING_PADS)
+        near = sum(
+            all(abs(pixel[band] - plate[band]) <= PLATE_MATCH for band in range(3))
+            for pixel in ring
+        )
+        if ring and near / len(ring) >= PLATE_SHARE:
+            yield patch
+
+
 def collect_bubbles(png: bytes) -> list[ResourceBubble]:
     """Every collector marker standing on this frame, in reading order.
 
@@ -148,13 +275,27 @@ def collect_bubbles(png: bytes) -> list[ResourceBubble]:
     village = image.crop(VILLAGE_AREA)
     width, height = right - left, bottom - top
     found: list[ResourceBubble] = []
+    lit: list[Patch] = []
     for resource, ranges, across, down, fill in MARKERS:
         for patch in patches(mask(village, ranges), width, height):
             if not patch.sized(across, down, fill):
                 continue
             middle = (patch.middle[0] + left, patch.middle[1] + top)
-            if not _in_storage_bars(middle):
-                found.append(ResourceBubble(resource=resource, point=middle))
+            if _in_storage_bars(middle):
+                continue
+            if resource != "dark":
+                lit.append(patch)
+            found.append(ResourceBubble(resource=resource, point=middle))
+    # After the loop, because it is the gold and elixir markers above that say
+    # what a plate looks like on this frame.
+    taken = {bubble.point for bubble in found}
+    for patch in _dark_bubbles(village, lit):
+        middle = (patch.middle[0] + left, patch.middle[1] + top)
+        if _in_storage_bars(middle) or any(
+            abs(middle[0] - x) < DARK_APART and abs(middle[1] - y) < DARK_APART for x, y in taken
+        ):
+            continue
+        found.append(ResourceBubble(resource="dark", point=middle))
     return sorted(found, key=lambda bubble: (bubble.point[1], bubble.point[0]))
 
 
