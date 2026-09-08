@@ -1258,23 +1258,24 @@ def stock(frame_dir: Path | None = None) -> StockReport:
         return report
     capacity = runner.read_ceilings(world) or StorageCapacity()
     rows = (
-        ("gold", "金幣", capacity.gold, held.gold),
-        ("elixir", "聖水", capacity.elixir, held.elixir),
-        ("dark", "黑水", capacity.dark, held.dark),
+        ("gold", capacity.gold, held.gold),
+        ("elixir", capacity.elixir, held.elixir),
+        ("dark", capacity.dark, held.dark),
     )
-    filled = {name: now * 100 // ceiling for name, _, ceiling, now in rows if ceiling}
+    filled = {name: f"{now * 100 // ceiling}%" for name, ceiling, now in rows if ceiling}
     where = "主村" if world == "day" else "建築大師基地"
-    # Named in Chinese here and by their field names in `filled`: the message is
-    # read by a person and the model is read by a caller.
-    shares = "、".join(f"{label} {filled[name]}%" for name, label, ceiling, _ in rows if ceiling)
+    # The shares are a field rather than a sentence, so this says only what no
+    # field does: which village, and which resource has no ceiling to be judged
+    # against. Repeating the percentages here was the same numbers twice.
+    missing = [name for name, ceiling, _ in rows if not ceiling]
     report = StockReport(
         world=world,
         held=held,
         capacity=capacity,
         filled=filled,
-        message=f"{where}：{shares}" if shares else f"{where}：讀不到任何容量，只有水位",
+        message=f"{where}，{'、'.join(missing)} 讀不到容量" if missing else where,
     )
-    logger.info("Stock: %s", report.message)
+    logger.info("Stock: %s %s", report.message, report.filled)
     return report
 
 

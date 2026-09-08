@@ -1115,7 +1115,13 @@ class StockReport(BaseModel):
     world: World | None = None
     held: VillageStock | None = None
     capacity: StorageCapacity = StorageCapacity()
-    filled: dict[str, int] = Field(default_factory=dict)
+    # Written with its sign, because the one thing a reader does with this is
+    # read it. A resource whose ceiling would not read is absent rather than
+    # zero: nothing is known about how full it is, and a 0 there reads as empty.
+    filled: dict[str, str] = Field(default_factory=dict)
+    # What the fields above cannot say, and nothing they already do. It used to
+    # restate every share in a sentence, which is the same numbers twice — this
+    # is a model a caller reads, not a line somebody has to parse.
     message: str = ""
 
 

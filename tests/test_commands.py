@@ -186,8 +186,8 @@ class StockCommandTests(unittest.TestCase):
             StorageCapacity(gold=25_500_000, elixir=24_500_000, dark=400_000),
         )
         assert report.world == "day"
-        assert report.filled == {"gold": 50, "elixir": 25, "dark": 100}
-        assert "主村" in report.message
+        assert report.filled == {"gold": "50%", "elixir": "25%", "dark": "100%"}
+        assert report.message == "主村"
 
     def test_a_resource_with_no_ceiling_is_left_out_rather_than_guessed(self) -> None:
         """The builder base has no dark elixir bar, so it has no share to report."""
@@ -197,15 +197,16 @@ class StockCommandTests(unittest.TestCase):
             StorageCapacity(gold=4_100_000, elixir=3_450_000),
         )
         assert report.world == "night"
-        assert report.filled == {"gold": 50, "elixir": 0}
-        assert "建築大師基地" in report.message
+        assert report.filled == {"gold": "50%", "elixir": "0%"}
+        # Named, because absent from `filled` alone does not say which.
+        assert report.message == "建築大師基地，dark 讀不到容量"
 
     def test_a_village_whose_ceilings_will_not_read_still_reports_what_it_holds(self) -> None:
         """A partial ceiling read comes back None, and the water level is the useful half."""
         _, _, report = self._stock("day", VillageStock(gold=1, elixir=2, dark=3), None)
         assert report.held == VillageStock(gold=1, elixir=2, dark=3)
         assert report.filled == {}
-        assert "讀不到任何容量" in report.message
+        assert report.message == "主村，gold、elixir、dark 讀不到容量"
 
     def test_a_screen_that_is_not_a_village_says_so_and_taps_nothing(self) -> None:
         pressed, ceiling_reader, report = self._stock(None)
@@ -229,7 +230,7 @@ class StockCommandTests(unittest.TestCase):
             None, VillageStock(gold=1, elixir=1, dark=1), StorageCapacity(gold=4), under="day"
         )
         assert report.world == "day"
-        assert report.filled == {"gold": 25}
+        assert report.filled == {"gold": "25%"}
 
     def test_it_never_crosses_to_the_other_village(self) -> None:
         """Sailing is `world --go`, and a status check that moves the game is not one."""
