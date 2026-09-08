@@ -774,6 +774,21 @@ def skip_offered(png: bytes) -> bool:
     return _orange_ratio(image, NEXT_BUTTON_BOX) >= BUTTON_ORANGE
 
 
+def panel_peak(png: bytes) -> int:
+    """How bright the brightest pixel of the loot panel is, over its three rows.
+
+    The measurement `panel_drawn` decides on, handed back as the number so a
+    caller can put it in the log. A refusal that says only that it refused
+    leaves whoever reads the run unable to tell a screen caught mid-fade from
+    one this threshold is wrong about.
+    """
+    image = open_frame(png)
+    return max(
+        max(image.crop((PANEL_LEFT, top, PANEL_RIGHT, bottom)).convert("L").tobytes())
+        for top, bottom in ROW_BOUNDS
+    )
+
+
 def panel_drawn(png: bytes) -> bool:
     """Whether the scout screen has finished fading in, read off the loot panel's own peak.
 
@@ -791,14 +806,7 @@ def panel_drawn(png: bytes) -> bool:
     settled numbers — which `DIM_INK_RATIO` is built to read and this would
     refuse.
     """
-    image = open_frame(png)
-    return (
-        max(
-            max(image.crop((PANEL_LEFT, top, PANEL_RIGHT, bottom)).convert("L").tobytes())
-            for top, bottom in ROW_BOUNDS
-        )
-        >= PANEL_DRAWN_BRIGHTNESS
-    )
+    return panel_peak(png) >= PANEL_DRAWN_BRIGHTNESS
 
 
 def attack_menu_open(png: bytes) -> bool:

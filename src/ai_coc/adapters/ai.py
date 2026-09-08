@@ -117,12 +117,29 @@ class GeminiClient(BaseModel):
             logger.exception("Gemini request failed on model %s", self.settings.model)
             raise RuntimeError(f"Gemini 請求失敗（{self.settings.model}）：{exc}") from exc
         text = (interaction.output_text or "").strip()
+        spent = time.monotonic() - started
         logger.info(
             "Gemini replied in %.1fs with %d chars (status=%s)",
-            time.monotonic() - started,
+            spent,
             len(text),
             interaction.status,
         )
+        # **A deadline that did not hold has to say so.** The one below is per
+        # attempt and the SDK retries four times by default, so a call can
+        # return successfully at several times the number it was given — and it
+        # comes back as an ordinary reply, indistinguishable from a fast one.
+        # Measured, one planning call returned after 145.2 s against a 30 s
+        # deadline, and the battle it was planning had been running unattended
+        # for nearly two minutes; the only record of it was a line that read
+        # like every other. Whoever is watching a run cannot be expected to
+        # divide by hand.
+        if timeout is not None and spent > timeout:
+            logger.warning(
+                "That reply took %.1fs against a %.1fs deadline, which bounds one attempt "
+                "rather than the call: the retries went past whatever was waiting on it",
+                spent,
+                timeout,
+            )
         logger.debug("Gemini reply: %s", text)
         if not text:
             raise RuntimeError(f"Gemini 沒有回傳內容，status={interaction.status}")

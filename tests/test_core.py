@@ -2866,7 +2866,7 @@ class AttackTests(unittest.TestCase):
             patch.object(attack, "skip_offered", side_effect=offered),
             # Drawn all the way through: these cases are about the swap, and
             # the fade has its own below.
-            patch.object(attack, "panel_drawn", return_value=True),
+            patch.object(attack, "panel_peak", return_value=247),
             patch.object(attack.time, "sleep"),
         ):
             runner._scout(timeout=60)
@@ -2987,7 +2987,7 @@ class AttackTests(unittest.TestCase):
         runner = self._runner()
         fading = ScoutView(loot=LootOffer(gold=481212, elixir=4, dark=62), can_skip=False)
         settled = ScoutView(loot=LootOffer(gold=481212, elixir=262884, dark=7962), can_skip=True)
-        canned = [(False, fading), (True, settled)]
+        canned = [(173, fading), (247, settled)]
         polls = {"n": 0}
 
         def frame(_self: AttackRunner, _label: str) -> bytes:
@@ -2997,9 +2997,7 @@ class AttackTests(unittest.TestCase):
         with (
             patch.object(AttackRunner, "_frame", frame),
             patch.object(AttackRunner, "_tap"),
-            patch.object(
-                attack, "panel_drawn", side_effect=lambda _png: canned[polls["n"] - 1][0]
-            ),
+            patch.object(attack, "panel_peak", side_effect=lambda _png: canned[polls["n"] - 1][0]),
             patch.object(attack, "read_scout", side_effect=lambda _png: canned[polls["n"] - 1][1]),
             patch.object(attack, "skip_offered", return_value=False),
             patch.object(attack.time, "sleep"),
@@ -3023,7 +3021,7 @@ class AttackTests(unittest.TestCase):
         with (
             patch.object(AttackRunner, "_frame", return_value=b""),
             patch.object(AttackRunner, "_tap"),
-            patch.object(attack, "panel_drawn", return_value=False),
+            patch.object(attack, "panel_peak", return_value=173),
             patch.object(attack, "read_scout", return_value=fading),
             patch.object(attack, "skip_offered", return_value=False),
             patch.object(attack.time, "sleep"),
@@ -3050,7 +3048,7 @@ class AttackTests(unittest.TestCase):
             patch.object(attack, "read_scout", return_value=None),
             patch.object(attack, "skip_offered", return_value=True),
             # An opponent that is on screen and drawn, whose loot will not read.
-            patch.object(attack, "panel_drawn", return_value=True),
+            patch.object(attack, "panel_peak", return_value=247),
             patch.object(attack.time, "sleep"),
             # The deadline as well as the sleeps, or the poll spins for a real
             # thirty seconds: the first reading sets it and the rest walk past it.

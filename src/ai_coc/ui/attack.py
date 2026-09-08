@@ -35,15 +35,16 @@ from ai_coc.ui.runner import ScreenRunner, restart_game
 from ai_coc.adapters.adb import ZOOM_PINCHES
 from ai_coc.parsers.field import view_shift
 from ai_coc.parsers.scout import (
+    PANEL_DRAWN_BRIGHTNESS,
     in_battle,
     card_count,
     live_cards,
+    panel_peak,
     read_scout,
     read_stock,
     battle_over,
     card_groups,
     field_units,
-    panel_drawn,
     card_drained,
     freeze_cards,
     skip_offered,
@@ -366,13 +367,34 @@ CAMERA_SETTLE = 1.5
 FLANK_ROOM = 110
 
 # How long the planner gets before the loop stops waiting and plays the flat
-# plan instead. It is the scout countdown, because the call starts at the top of
-# one — measured on a recorded run, the opponent is read at 20:21:02 and the
-# countdown ends at 20:21:31 — so a reply that arrives after it has already
-# missed the window it was for. Thirty also clears every call measured so far,
-# thirteen of them running 11.2 to 25.6 s, so it cuts none of them off. Without
-# it one call took 180.7 s and then failed validation, by which point the
-# three-minute battle it was planning was over and the army was spent on nothing.
+# plan instead. The window it is measured against is the scout countdown,
+# because the call starts at the top of one — measured on a recorded run, the
+# opponent is read at 20:21:02 and the countdown ends at 20:21:31 — so a reply
+# that arrives after it has already missed what it was for.
+#
+# **It bounds one attempt and not the call**, which is the thing to know before
+# reading any number here as a deadline. `google-genai` allows three retries by
+# default through tenacity, backing off about 1, 2 and 4 s, so the wall clock
+# this permits is roughly four times itself and a timed-out call does not fail
+# fast — it fails slowly and then plays the flat plan. Measured with this at 30:
+# one call returned successfully after 145.2 s, by which point the battle it was
+# planning had been running unattended for nearly two minutes. It logged as an
+# ordinary reply, which is why nobody noticed the guard had not held;
+# `GeminiClient` says so out loud now.
+#
+# **The number is therefore a trade rather than a ceiling, and lowering it was
+# measured and rejected.** Swept over 37 recorded planning calls, five ran past
+# 20 s: 20.3, 20.5, 20.6, 21.2 and the 145.2. At 20 the first four stop
+# returning a plan at all — they abort, retry to about 83 s, and play flat,
+# which is a longer stall inside the same countdown than the 21 s answer they
+# replace — while the one call that matters is still not caught. At 30 only the
+# 145.2 misses, and it would miss 20 as well.
+#
+# So the way to close it is to bound the retries rather than the deadline, and
+# that is a client-wide setting (`HttpOptions.retry_options`) shared with the
+# target finder, whose own fallback is a two-and-a-half-minute sweep. Nothing
+# here measures how often a call fails transiently, which is what a retry buys,
+# so that trade is not one this file can settle.
 PLAN_TIMEOUT = 30
 
 # How many frames in a row may show an opponent whose loot will not read before
@@ -1309,14 +1331,36 @@ class AttackRunner(ScreenRunner):
             png = self._frame("scout")
             view = read_scout(png)
             if view:
-                # Said out loud, because `read_scout` has already logged the
-                # numbers this is about to throw away and a silent refusal
-                # leaves a log showing a reading that was believed. Only
-                # `--record` would answer it afterwards, and that is off by
-                # default, so an ordinary farming run would have nothing left.
-                if panel_drawn(png):
+                # Said out loud and with its number, because `read_scout` has
+                # already logged the loot this is about to throw away and a
+                # silent refusal leaves a log showing a reading that was
+                # believed. Only `--record` would answer it afterwards, and
+                # that is off by default. The peak is what makes the line worth
+                # more than the fact: a run whose refusals all sit near the
+                # line is a threshold to argue with, one at 120 is a fade.
+                peak = panel_peak(png)
+                if peak >= PANEL_DRAWN_BRIGHTNESS:
+                    # **The one observation that separates the two meanings of
+                    # an absent 下一個**, said where it was made. A countdown
+                    # that has really ended and a screen that has not finished
+                    # painting both take the button away, and the caller
+                    # answers the first by attacking whatever the loot says.
+                    # Its own line cannot carry this: `can_skip` is what the
+                    # reason there is derived from, so printing it beside the
+                    # reason is one bit twice.
+                    if not view.can_skip:
+                        logger.info(
+                            "下一個 is not on screen and the panel is drawn at %d, "
+                            "so this opponent's countdown really has ended",
+                            peak,
+                        )
                     return view, png
-                logger.info("The scout screen is still fading in; this reading is not believed")
+                logger.info(
+                    "The scout screen is still fading in (panel peak %d, drawn is %d); "
+                    "that reading is not believed",
+                    peak,
+                    PANEL_DRAWN_BRIGHTNESS,
+                )
             # **A frame refused for still fading is an opponent all the same**,
             # and `_offered` is what stops the caller walking away from one. The
             # button has not painted, so `skip_offered` says no on exactly the
@@ -2686,6 +2730,13 @@ class AttackRunner(ScreenRunner):
                 logger.info("Stop pressed; leaving the search after %d skip(s)", skipped)
             if not stopping and (forced or self.thresholds.accepts(view.loot)):
                 reason = "倒數結束被強制開戰" if forced else "戰利品達標"
+                # The forced half of that reason is an inference from an absent
+                # 下一個 rather than something the loop can see, and a line
+                # carrying only the inference is what let six rounds of one
+                # evening read as the game's doing. What separates the two is
+                # whether the panel had finished painting, and `_scout` says
+                # that where it measured it — restating `can_skip` here would
+                # be the same bit printed twice.
                 logger.info("Attacking after %d skips (%s)", skipped, reason)
                 self._deploy(frame)
                 took = self._wait_out_battle(view.loot)
