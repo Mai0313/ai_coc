@@ -196,8 +196,9 @@ class StockCommandTests(unittest.TestCase):
             StorageCapacity(gold=4_100_000, elixir=3_450_000),
         )
         assert report.world == "night"
-        # Absent rather than 0%, which would read as an empty storage.
         assert report.filled == {"gold": "50%", "elixir": "0%"}
+        # Absent rather than 0%: nothing is known about how full it is, and a
+        # zero would read as empty. The elixir above really is at zero.
         assert "dark" not in report.filled
 
     def test_a_village_whose_ceilings_will_not_read_still_reports_what_it_holds(self) -> None:
