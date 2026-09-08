@@ -181,6 +181,10 @@ class GameRunner(ScreenRunner):
     # has finished starting. Cleared when the game is restarted, since that is the
     # one moment a cold launch can be under way again.
     _seen_village: bool = PrivateAttr(default=False)
+    # Whether the camera has been put back this run. Cleared alongside the flag
+    # above and for the same reason: a restarted game does not come back at the
+    # zoom everything was measured at.
+    _settled: bool = PrivateAttr(default=False)
 
     def _after_tap(self, point: tuple[int, int], label: str) -> bytes:
         self._tap(point)
@@ -203,10 +207,39 @@ class GameRunner(ScreenRunner):
         defeated twice, while zooming out past the limit costs nothing. So this
         asks rather than checks.
 
-        Once per run, hung off the first village that reads, because that is the
-        moment the loop knows it is looking at the village and before it has
-        tapped anything on it. A pinch between wall batches would only be
-        spending three seconds to confirm what this one already settled.
+        Once per run, and **before the first storage read rather than after
+        it**, because the storages are one of the things a drifted camera
+        breaks. The bars are translucent where they are not full, so a bright
+        enough background bleeds through and fills the gaps *between* the
+        digits: measured on the home village at a zoomed-in camera, one of
+        seven pan positions put the map's shoreline behind an elixir bar
+        standing at 45%, and the 779 of 10 779 278 came through as a single
+        55 px span — too wide to be a glyph, so the row answered NOT_A_GLYPH
+        and `read_stock` answered None on a frame whose three numbers were
+        perfectly legible to the eye. Hung off a successful read, this is the
+        one step that would have fixed that camera and the only step that never
+        runs on it — `_home` answers None with `back`, a clear village answers
+        `back` with 確定退出遊戲嗎, the dialog gets 取消, and the run spends
+        `HOME_TRIES` going round that circle before reporting a village it
+        could not get back to.
+
+        **It is the loot panel's bright-theme failure arriving from the other
+        side, and it does not get the same answer.** There the ink floor had to
+        be raised (`_lit_floor`), because an opponent's village theme is not
+        ours to choose. This camera is, so what is fixed is the view rather
+        than the reader.
+
+        **So the village test here is `current_world` as well as the storages,
+        and widening it is the point rather than swapping it.** The plate row
+        along the top is UI at a fixed place and does not care where the camera
+        is, so it answered day on that very frame; but it misses villages of
+        its own, a gem shower drifting over a plate among them, and those the
+        storages read. Either reading is a village, and a village is where this
+        runs. `_settle_game` already opens the attack loop off the plate row,
+        which is why the five commands that skip it could not recover.
+
+        A pinch between wall batches would only be spending three seconds to
+        confirm what this one already settled.
 
         **The pinch settles the scale and `park_camera` settles the position**,
         which used to be one thing and was not: the far zoom was taken to centre
@@ -221,6 +254,24 @@ class GameRunner(ScreenRunner):
         # ever reaches the read that calls this, so there is no other village
         # this can be looking at.
         park_camera(self.adb, self.display, "day")
+
+    def _put_camera_back(self) -> None:
+        """The settle, once a run, off whichever reading recognised the village.
+
+        **Two callers because either reading can be the one that recognises
+        it.** The plate row is the one that survives a drifted camera, which is
+        why `_home` asks it first — but it misses villages of its own, a gem
+        shower drifting over a plate among them, and those the storages read.
+        Gated on the plate row alone, such a frame hands its caller a stock
+        with the camera never put back, and every caller reads a returned stock
+        as the measured coordinates being valid now. The settle would then land
+        at whatever `_home` came next — usually `_opened` backing out partway
+        through a walk — moving the map after the points that walk is spending
+        were already chosen.
+        """
+        if not self._settled:
+            self._settle_zoom()
+            self._settled = True
 
     def _home(self) -> VillageStock | None:
         """The village's storages, once nothing is covering the village any more.
@@ -258,6 +309,7 @@ class GameRunner(ScreenRunner):
                 logger.info("The session was dropped for idling; restarting the game")
                 self.display = restart_game(self.adb, self.display)
                 self._seen_village = False
+                self._settled = False
                 continue
             dialog = game_dialog(png)
             if dialog is not None:
@@ -290,16 +342,22 @@ class GameRunner(ScreenRunner):
             # crossing — twenty minutes against about fifty seconds for the
             # worst path here before this, and none of it interruptible, since
             # `_home` never reads the state file.
-            if current_world(png) == "night":
+            world = current_world(png)
+            if world == "night":
                 logger.warning("The game came up on the builder base; sailing home first")
                 if cross(self.adb, self.display, "day") == "day":
                     continue
                 logger.warning("The crossing never landed; there is no home village to work on")
                 return None
+            # Before the read and not after it: see `_settle_zoom` for the
+            # camera that makes the storages unreadable and for why nothing
+            # below this line can recover from one.
+            if world is not None and not self._settled:
+                self._put_camera_back()
+                continue
             stock = read_stock(png)
             if stock is not None:
-                if not self._seen_village:
-                    self._settle_zoom()
+                self._put_camera_back()
                 self._seen_village = True
                 return stock
             if not self._seen_village and attempt < LOADING_PATIENCE:
