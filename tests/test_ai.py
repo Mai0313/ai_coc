@@ -1,10 +1,12 @@
 import base64
 from typing import Any
 import unittest
+from unittest.mock import patch
 
 import pytest
 
 from ai_coc.models import BuildingName, GeminiSetting
+from ai_coc.adapters import ai
 from ai_coc.adapters.ai import GeminiClient
 
 
@@ -52,6 +54,36 @@ class RequestTests(unittest.TestCase):
         assert image["type"] == "image"
         assert base64.b64decode(image["data"]) == b"PNGDATA"
         assert image["mime_type"] == "image/png"
+
+    def test_a_reply_that_outlasted_its_deadline_says_so(self) -> None:
+        """The deadline bounds one attempt and the SDK retries four times by default.
+
+        So a call can come back successfully at several times the number it was
+        given, and it comes back looking like any other reply. Measured, one
+        planning call returned after 145.2 s against a 30 s deadline, with the
+        battle it was planning already two minutes old — and the only trace was
+        a line indistinguishable from a fast one, which is why the guard was
+        taken for one that had held.
+        """
+        interactions = FakeInteractions(output_text="遲到了")
+        client = _client(interactions)
+        clock = iter([0.0, 91.0])
+        with (
+            patch.object(ai.time, "monotonic", side_effect=lambda: next(clock)),
+            self.assertLogs("ai_coc.adapters.ai", level="WARNING") as logged,
+        ):
+            assert client._create("在嗎", None, timeout=20) == "遲到了"
+        assert "91.0s against a 20.0s deadline" in "\n".join(logged.output)
+
+    def test_a_reply_inside_its_deadline_says_nothing_extra(self) -> None:
+        interactions = FakeInteractions(output_text="準時")
+        client = _client(interactions)
+        clock = iter([0.0, 11.0])
+        with (
+            patch.object(ai.time, "monotonic", side_effect=lambda: next(clock)),
+            self.assertNoLogs("ai_coc.adapters.ai", level="WARNING"),
+        ):
+            assert client._create("在嗎", None, timeout=20) == "準時"
 
     def test_an_empty_reply_is_an_error_rather_than_an_empty_string(self) -> None:
         with pytest.raises(RuntimeError):
