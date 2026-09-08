@@ -41,7 +41,7 @@ make gen-docs                        # rebuild docs/ from the READMEs and the so
 
 Run the app with `uv run ai_coc`, which takes no flags of its own: the two that existed, `--live-test` and `--agent-command`, were smoke tests against the AI 助手 tab and went with it. What replaced them is that **the window runs the sub-commands below rather than anything of its own**, so a smoke test against the live game is one of them run from a terminal.
 
-Sixteen sub-commands run headless instead, and they are how the game is worked on:
+Seventeen sub-commands run headless instead, and they are how the game is worked on:
 
 ```bash
 uv run ai_coc attack --record            # one attack pass, every frame it reads kept

@@ -90,7 +90,7 @@ uv run ai_coc hero --upgrade duke         # 真的派一個工人去升這一個
 
 **但沒工人的時候這一步只能用眼睛做.** `ai_coc upgrade` 在零個閒置工人的時候直接返回 —— `ui/upkeep.py` 讀到 `builders[0] == 0` 就回「N 個工人都在忙，沒有可以派的」, 連 finder 都還沒跑, 一個價格都讀不到. 所以那是換成自己看的第五種情況.
 
-錢跟工人怎麼讀: `uv run ai_coc builders` 說閒著幾個以及最快的一個還要多久; 資源就截一張村莊畫面看右上角三條, 或者 `uv run ai_coc read <png>` 讀 `stock`.
+錢跟工人怎麼讀: `uv run ai_coc builders` 說閒著幾個以及最快的一個還要多久; 資源是 `uv run ai_coc stock`, 它答當下這個世界的水位、容量跟百分比, 而且鏡頭是它自己放好的. 手上已經有一張圖才用 `uv run ai_coc read <png>` 讀 `stock`, 那條路的鏡頭是碰運氣的.
 
 ## 什麼時候換成你自己看
 

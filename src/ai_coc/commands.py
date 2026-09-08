@@ -109,7 +109,7 @@ from ai_coc.adapters.clipboard import read_clipboard, clear_clipboard, write_cli
 from .ui.clan import ClanRunner
 from .ui.hero import HeroRunner
 from .ui.walls import WallRunner
-from .ui.world import cross, park_camera, collect_cart
+from .ui.world import cross, uncovered, park_camera, collect_cart
 from .ui.attack import CARD_ROW_Y, DROP_SETTLE, SINGLE_DROP_DELAY, AttackRunner
 from .ui.runner import ScreenRunner, restart_game
 from .ui.upkeep import UpkeepRunner
@@ -1238,6 +1238,17 @@ def stock(frame_dir: Path | None = None) -> StockReport:
     runner = ScreenRunner(adb=adb, display=display, frame_dir=frame_dir)
     world, held = runner.read_storages()
     if world is None:
+        # **A panel over the village is the ordinary way to arrive here**, and
+        # nothing above this line clears one: `ScreenRunner` has no `_home`, and
+        # `_settle_game` only waits. The skills now ask for this command before
+        # every run, which makes it the one most likely to land on a screen the
+        # last command left behind — measured elsewhere, a `collect` run leaves
+        # an 8級聖水收集器 panel up. `uncovered` is the crossing's own answer to
+        # exactly that, and it refuses to press at a battle.
+        world = uncovered(adb, display)
+        if world is not None:
+            world, held = runner.read_storages()
+    if world is None:
         report = StockReport(message="畫面不是村莊，看不到儲量條")
         logger.info("Stock: %s", report.message)
         return report
@@ -1246,17 +1257,16 @@ def stock(frame_dir: Path | None = None) -> StockReport:
         logger.info("Stock: %s", report.message)
         return report
     capacity = runner.read_ceilings(world) or StorageCapacity()
-    filled = {
-        name: held_now * 100 // ceiling
-        for name, ceiling, held_now in (
-            ("gold", capacity.gold, held.gold),
-            ("elixir", capacity.elixir, held.elixir),
-            ("dark", capacity.dark, held.dark),
-        )
-        if ceiling
-    }
+    rows = (
+        ("gold", "金幣", capacity.gold, held.gold),
+        ("elixir", "聖水", capacity.elixir, held.elixir),
+        ("dark", "黑水", capacity.dark, held.dark),
+    )
+    filled = {name: now * 100 // ceiling for name, _, ceiling, now in rows if ceiling}
     where = "主村" if world == "day" else "建築大師基地"
-    shares = "、".join(f"{name} {share}%" for name, share in filled.items())
+    # Named in Chinese here and by their field names in `filled`: the message is
+    # read by a person and the model is read by a caller.
+    shares = "、".join(f"{label} {filled[name]}%" for name, label, ceiling, _ in rows if ceiling)
     report = StockReport(
         world=world,
         held=held,
