@@ -1822,8 +1822,8 @@ class CeilingReadTests(unittest.TestCase):
         with (
             patch.object(AttackRunner, "_tap", lambda _, point: taps.append(point)),
             patch.object(AttackRunner, "_frame", return_value=b""),
-            patch.object(attack, "storage_capacity", side_effect=answers),
-            patch.object(attack.time, "sleep"),
+            patch.object(shared, "storage_capacity", side_effect=answers),
+            patch.object(shared.time, "sleep"),
         ):
             runner._settle_ceilings()
         return taps
@@ -1857,12 +1857,12 @@ class CeilingReadTests(unittest.TestCase):
         runner = self._runner(world="night")
         taps = self._read(runner, [2_050_000, 2_550_000])
         assert runner._ceiling == StorageCapacity(gold=2_050_000, elixir=2_550_000)
-        assert {y for _, y in taps} == {attack.STOCK_BAR_Y[0], attack.STOCK_BAR_Y[1]}
+        assert {y for _, y in taps} == {shared.STOCK_BAR_Y[0], shared.STOCK_BAR_Y[1]}
 
     def test_a_row_that_reads_is_tapped_shut_behind_itself(self) -> None:
         """An open tooltip covers the rows under it, so it does not outlive the read."""
         taps = self._read(self._runner(), [24_000_000, 24_000_000, 370_000])
-        assert taps == [(attack.STOCK_BAR_X, y) for y in attack.STOCK_BAR_Y for _ in range(2)]
+        assert taps == [(shared.STOCK_BAR_X, y) for y in shared.STOCK_BAR_Y for _ in range(2)]
 
 
 class StorageTipTests(unittest.TestCase):

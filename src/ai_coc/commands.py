@@ -39,6 +39,7 @@ from ai_coc.models import (
     HeroOptions,
     NamedEntity,
     RunnerState,
+    StockReport,
     WallOptions,
     WorldReport,
     AttackReport,
@@ -110,7 +111,7 @@ from .ui.hero import HeroRunner
 from .ui.walls import WallRunner
 from .ui.world import cross, park_camera, collect_cart
 from .ui.attack import CARD_ROW_Y, DROP_SETTLE, SINGLE_DROP_DELAY, AttackRunner
-from .ui.runner import restart_game
+from .ui.runner import ScreenRunner, restart_game
 from .ui.upkeep import UpkeepRunner
 
 if TYPE_CHECKING:
@@ -1208,6 +1209,62 @@ def builders(frame_dir: Path | None = None) -> BuilderReport:
     adb, display = _session(frame_dir)
     report = UpkeepRunner(adb=adb, display=display, frame_dir=frame_dir).builders()
     logger.info("Builders: %s", report.message)
+    return report
+
+
+def stock(frame_dir: Path | None = None) -> StockReport:
+    """What the village on screen is holding, and how close that is to full.
+
+    **The one thing nothing here could answer without starting a run.** Every
+    loop that farms or spends reads the storages on its way past, but those
+    numbers only ever reached a caller as a line in that run's log — so a
+    session that wanted to know where a village stood had to start something
+    that drives the game for minutes, or take a capture and read it by hand at
+    whatever camera happened to be up. That is how a session ends up saying a
+    village is full when its loot was spent an hour ago.
+
+    **About the village on screen, and it does not cross.** `world` reports
+    which one that turned out to be rather than promising either; sailing is
+    `ai_coc world --go` and belongs to whoever asked, since a status check that
+    moves the game is no longer one. The two are meant to be used together.
+
+    The ceilings cost six taps and three captures, which is what makes the
+    answer a percentage rather than a number nobody can size. That is the form
+    every decision here is made in: `stop_at` is a share, and the storages grow
+    when a builder finishes one, so reading them beats writing them down.
+    """
+    adb = _controller()
+    display = _settle_game(adb, WORLD_SETTLE_POLLS) or adb.display_for(COC_PACKAGE)
+    runner = ScreenRunner(adb=adb, display=display, frame_dir=frame_dir)
+    world, held = runner.read_storages()
+    if world is None:
+        report = StockReport(message="畫面不是村莊，看不到儲量條")
+        logger.info("Stock: %s", report.message)
+        return report
+    if held is None:
+        report = StockReport(world=world, message="在村莊上，但這一格讀不出儲量條")
+        logger.info("Stock: %s", report.message)
+        return report
+    capacity = runner.read_ceilings(world) or StorageCapacity()
+    filled = {
+        name: held_now * 100 // ceiling
+        for name, ceiling, held_now in (
+            ("gold", capacity.gold, held.gold),
+            ("elixir", capacity.elixir, held.elixir),
+            ("dark", capacity.dark, held.dark),
+        )
+        if ceiling
+    }
+    where = "主村" if world == "day" else "建築大師基地"
+    shares = "、".join(f"{name} {share}%" for name, share in filled.items())
+    report = StockReport(
+        world=world,
+        held=held,
+        capacity=capacity,
+        filled=filled,
+        message=f"{where}：{shares}" if shares else f"{where}：讀不到任何容量，只有水位",
+    )
+    logger.info("Stock: %s", report.message)
     return report
 
 

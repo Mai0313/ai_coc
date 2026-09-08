@@ -46,6 +46,7 @@ MINIMAL: dict[str, list[str]] = {
     "walls": [],
     "collect": [],
     "builders": [],
+    "stock": [],
     "upgrade": [],
     "hero": [],
     "world": [],

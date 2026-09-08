@@ -20,12 +20,18 @@ from collections.abc import Callable
 
 from pydantic import BaseModel, PrivateAttr
 
-from ai_coc.models import ScreenSpots, VillageStock, DisplayTarget
+from ai_coc.models import World, ScreenSpots, VillageStock, DisplayTarget, StorageCapacity
 from ai_coc.prompts import render
 from ai_coc.constants import COC_PACKAGE
 from ai_coc.adapters.ai import GeminiClient
 from ai_coc.adapters.adb import ZOOM_PINCHES, AdbController, AdbControlError
-from ai_coc.parsers.scout import read_stock, loading_screen, idle_disconnected
+from ai_coc.parsers.scout import (
+    read_stock,
+    loading_screen,
+    storage_capacity,
+    idle_disconnected,
+    read_builder_stock,
+)
 from ai_coc.parsers.world import current_world
 from ai_coc.parsers.building import game_dialog
 
@@ -102,6 +108,22 @@ RESTART_SETTLE = 2.0
 RELOAD_WAIT = 15.0
 
 
+# Where to tap to drop a storage bar's 最大儲存量 tooltip open, one per bar down
+# the corner. The x sits inside the bar and well right of the builder base's
+# gems row, whose green + spans 1345 to 1385 and opens the shop — the one thing
+# on any of these rows that a stray tap must not reach. The y is each bar's own
+# middle, the same rows `read_stock` reads its digits from.
+#
+# The tooltip takes a moment to animate in and is a toggle rather than a popup,
+# so a capture taken too early reads the frame before it opened and costs the
+# whole row: `CAPACITY_TRIES` is what pays for that, and for a tooltip somebody
+# left open before the run started.
+STOCK_BAR_X = 1400
+STOCK_BAR_Y = (52, 136, 219)
+TOOLTIP_SETTLE = 1.0
+CAPACITY_TRIES = 2
+
+
 def restart_game(adb: AdbController, display: DisplayTarget) -> DisplayTarget:
     """Close the game and open it again, and say which display it came back on.
 
@@ -172,6 +194,78 @@ class ScreenRunner(BaseModel):
             self._captures += 1
             (self.frame_dir / f"{self._captures:04d}_{label}.png").write_bytes(png)
         return png
+
+    def read_storages(self) -> tuple[World | None, VillageStock | None]:
+        """Which village is on screen and what its storages hold, in one capture.
+
+        Both halves in one place because the second depends on the first: the
+        two villages read through different readers, and `read_stock` on the
+        builder base reports its gems bar as dark elixir. None for the world is
+        a frame that is not a village at all, which is a different answer from a
+        village whose bars this frame could not resolve.
+        """
+        png = self._frame("stock")
+        world = current_world(png)
+        if world is None:
+            return None, None
+        return world, (read_stock if world == "day" else read_builder_stock)(png)
+
+    def read_ceilings(self, world: World) -> StorageCapacity | None:
+        """What this village's storages hold when full, read off their own tooltips.
+
+        **A partial read is thrown away rather than kept**, which is the whole
+        reason this is a method and not a loop at the call site. Every one of
+        these taps can be swallowed — a tooltip still animating in, a panel over
+        the bars, a village the game had not finished painting — and a
+        `StorageCapacity` holding some of its rows is worse than none in both
+        directions. Empty, it watches nothing, so an overnight run farms straight
+        past full storages and throws the loot away. Partial is worse still: gold
+        and elixir failing while dark reads its 370 000 leaves a run standing
+        down the moment dark passes 90% with the two big storages nearly empty.
+
+        **The builder base's third row is never tapped.** That village has no
+        dark elixir; what sits at that y is its gems bar, and the green + beside
+        the number opens the shop. Two rows there is not a limitation — a
+        resource with no ceiling is left out of every comparison, which is
+        exactly right for one that does not exist.
+
+        The tooltip is a toggle, so a row that reads nothing is left alone rather
+        than tapped shut: the one way to read nothing on a village that has the
+        bar is to have closed a tooltip that was already open, and the next
+        attempt then opens it.
+
+        **A row that fails both tries can leave its own tooltip up, and that is
+        measured to be harmless.** The panel hangs *under* the bar that opened
+        it, so it covers the rows below rather than its own — and only the last
+        row read has nothing after it to close it, since the next row's first tap
+        closes whatever is open. Measured on the fixtures: with the dark tooltip
+        up `read_stock` still reads all three rows, and with the builder base's
+        elixir tooltip up `read_builder_stock` still reads both, which is exactly
+        the last row in each village. Closing on failure instead was tried and is
+        worse — with the tooltip starting closed, which is the ordinary case, a
+        row that fails twice would then end on an opening tap and leave the
+        **gold** panel up, and that one does cover the rows under it.
+        """
+        rows = ("gold", "elixir", "dark") if world == "day" else ("gold", "elixir")
+        found: dict[str, int] = {}
+        for row, name in enumerate(rows):
+            for _ in range(CAPACITY_TRIES):
+                self._tap((STOCK_BAR_X, STOCK_BAR_Y[row]))
+                time.sleep(TOOLTIP_SETTLE)
+                held = storage_capacity(self._frame(f"capacity-{name}"), row)
+                if held is None:
+                    continue
+                found[name] = held
+                self._tap((STOCK_BAR_X, STOCK_BAR_Y[row]))
+                time.sleep(TOOLTIP_SETTLE)
+                break
+        if len(found) < len(rows):
+            logger.warning(
+                "Only %d of %d storage ceilings read (%s)", len(found), len(rows), found or "none"
+            )
+            return None
+        logger.info("Storage ceilings read as %s", found)
+        return StorageCapacity(**found)
 
 
 class GameRunner(ScreenRunner):
