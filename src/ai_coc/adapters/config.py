@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import json
 from pathlib import Path
 
@@ -40,4 +41,20 @@ class ConfigStore(BaseModel):
         return config
 
     def save(self, config: AppConfig) -> None:
-        self.path.write_text(config.model_dump_json(indent=2), encoding="utf-8")
+        """Replace the file rather than rewrite it, so no reader sees it half-built.
+
+        The same reasoning as `_write_state`, and it became reachable for the
+        same reason that one did: `write_text` truncates before it writes, and
+        this file is read from a worker thread — every `commands.*` that farms
+        or spends opens it — while the window's own preview switches now write
+        it. A read landing in that window gets zero bytes, which `load` answers
+        with a `ValidationError` on a file that was never broken, and `load`
+        raises by design, so that ends the pass.
+
+        The scratch name carries this process's pid because the writers really
+        are concurrent: `load` itself rewrites a file whose keys have moved, so
+        a headless run started while the window is open is a second writer.
+        """
+        scratch = self.path.with_name(f"{self.path.name}.{os.getpid()}.tmp")
+        scratch.write_text(config.model_dump_json(indent=2), encoding="utf-8")
+        os.replace(scratch, self.path)

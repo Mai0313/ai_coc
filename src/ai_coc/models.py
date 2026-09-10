@@ -730,6 +730,50 @@ class GeminiSettings(BaseModel):
     lite: GeminiSetting = GeminiSetting(model=DEFAULT_LITE_MODEL)
 
 
+class UiJobs(BaseModel):
+    """Which of the five commands the window's cycle round-robins.
+
+    The field names are the sub-command names, deliberately: each one is a
+    `commands.*` function that `cli.py` dispatches to and that the window's own
+    `run_*` calls, so the file says what a pass will do in the same words a
+    terminal would. The registry's names — `auto_collect` and its four siblings
+    — said nothing the checkbox label did not, and matched nothing.
+    """
+
+    collect: bool = False
+    donate: bool = False
+    upgrade: bool = False
+    walls: bool = False
+    attack: bool = False
+
+
+class UiSettings(BaseModel):
+    """What only the window reads, in the file both sides already share.
+
+    These lived in `QSettings`, which is the Windows registry, on the rule that
+    a setting no terminal command asks for has no business in the shared file.
+    What that rule actually bought was a second place for settings to live, one
+    no editor opens and nothing outside the window can read: knowing which jobs
+    the window would run meant opening `regedit`. Being read by one side is not
+    a reason to be stored somewhere only that side can reach.
+    """
+
+    jobs: UiJobs = UiJobs()
+    # Only ever paces a cycle that found nothing to do: a finished job queues
+    # the next pass straight away, `NEXT_CYCLE_DELAY` later.
+    #
+    # Bounded to what the spin box takes, because the two disagreeing is the
+    # `timings` failure again: a file saying 0 is clamped to 1 by the widget,
+    # run as 1, and written back as 1 — a key that looks read and is not. Out
+    # of range it raises on load instead, which is what this file does with a
+    # value it cannot honour.
+    cycle_minutes: int = Field(default=10, ge=1, le=120)
+    live_view: bool = True
+    # Off by default because it is not free — a PNG encode on the emulator for
+    # every frame a loop reads, and a `frames/` under every run to hold them.
+    record_frames: bool = False
+
+
 class AppConfig(BaseModel):
     """Everything a run needs that the window and the terminal both read.
 
@@ -741,8 +785,11 @@ class AppConfig(BaseModel):
     The model picker had the same split, quietly sending every headless call to
     `DEFAULT_GEMINI_MODEL` whatever the settings tab said.
 
-    What is here is what both sides use. Which checkboxes are ticked and whether
-    the live preview is on stay in QSettings, because no terminal command asks.
+    What is here is everything either side reads. The five automation
+    checkboxes, the two preview switches and the retry interval were the last
+    thing left in the registry, kept there on the rule that a setting no
+    terminal command asks for does not belong in a shared file — which is how
+    they ended up somewhere no editor opens.
     """
 
     # The defaults are the ones the window has always shown, not the field
@@ -786,6 +833,10 @@ class AppConfig(BaseModel):
     # More usefully, a tier *is* a `GeminiSetting`, so building a client stopped
     # being four lines of copying one field name onto another.
     gemini: GeminiSettings = GeminiSettings()
+    # Nested for the reason `gemini` is, and for one more: a block says which
+    # keys are the window's without a prefix on each of them, so the five job
+    # names underneath can be the sub-command names and nothing else.
+    ui: UiSettings = UiSettings()
 
 
 class AttackPlan(BaseModel):

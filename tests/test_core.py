@@ -18,9 +18,11 @@ from ai_coc import plans, models, commands, logging_setup
 from ai_coc.ui import hero, walls, attack, upkeep
 from ai_coc.ui import world as world_ui
 from ai_coc.ui import runner as shared
+from ai_coc.cli import _parser
 from ai_coc.models import (
     World,
     RunLog,
+    UiJobs,
     HeroCard,
     ProbeRay,
     WallMenu,
@@ -33,6 +35,7 @@ from ai_coc.models import (
     AttackStep,
     HeroReport,
     PlayedPlan,
+    UiSettings,
     AdbEndpoint,
     RunnerState,
     ScreenPoint,
@@ -2012,9 +2015,92 @@ class ConfigTests(unittest.TestCase):
             saved = AppConfig(
                 thresholds=LootThresholds(min_gold=1, min_elixir=2, min_dark=3),
                 gemini=GeminiSettings(main=GeminiSetting(model="gemini-not-the-default")),
+                ui=UiSettings(jobs=UiJobs(walls=True), cycle_minutes=42, live_view=False),
             )
             store.save(saved)
             assert store.load() == saved
+
+    def test_the_window_block_defaults_to_what_the_window_has_always_shown(self) -> None:
+        """Nothing carries the old `QSettings` values over, on this project's own
+        rule that a migration left in place is a code path nobody exercises.
+
+        What made dropping them safe was that every key that registry held was
+        already one of these, measured before they went. That half cannot be
+        asserted — the registry is gone and so are the window's old defaults —
+        so what is pinned here is the numbers a machine falls back to.
+        """
+        ui = AppConfig().ui
+        assert ui.jobs.model_dump() == dict.fromkeys(UiJobs.model_fields, False)
+        assert ui.cycle_minutes == 10
+        assert ui.live_view
+        assert not ui.record_frames
+
+    def test_a_save_merges_into_what_is_on_disk_rather_than_a_snapshot(self) -> None:
+        """Every write here puts the whole file back, so a field the window has
+        no widget for goes to disk from whatever copy the window is holding —
+        and `restart_every` is exactly that field, the one number here that
+        belongs to whoever is watching the frame rate. Editing this file by hand
+        is what it is for, so a preview checkbox must not undo it.
+        """
+        with tempfile.TemporaryDirectory() as td:
+            store = ConfigStore(path=Path(td) / "config.json")
+            store.save(AppConfig(restart_every=7))
+            window = MagicMock()
+            # What the window read when it opened, which can be hours ago.
+            window.config = AppConfig(restart_every=99)
+            with patch("ai_coc.ui.main_window.ConfigStore", lambda: store):
+                MainWindow._save_config(window, stop_at=55)
+            written = store.load()
+        assert written.restart_every == 7
+        assert written.stop_at == 55
+
+    def test_saving_the_automation_reads_every_switch_off_its_own_widget(self) -> None:
+        """A whole `ui=` block built from the window's own copy would override
+        `_save_config`'s fresh read one level down, putting back the two fields
+        this method does not otherwise set. The window has a widget for all
+        four, so each is read off its own and none is carried over.
+        """
+        with tempfile.TemporaryDirectory() as td:
+            store = ConfigStore(path=Path(td) / "config.json")
+            store.save(AppConfig(ui=UiSettings(live_view=True, record_frames=True)))
+            window = MagicMock()
+            # The copy the window opened with, which the switches have since
+            # moved away from.
+            window.config = AppConfig(ui=UiSettings(live_view=True, record_frames=True))
+            window._job_boxes.return_value = {}
+            window.live_view.isChecked.return_value = False
+            window.record_frames.isChecked.return_value = False
+            window.cycle_minutes.value.return_value = 30
+            with patch("ai_coc.ui.main_window.ConfigStore", lambda: store):
+                MainWindow.save_automation(window)
+            saved = window._save_config.call_args.kwargs["ui"]
+        assert not saved.live_view
+        assert not saved.record_frames
+        assert saved.cycle_minutes == 30
+
+    def test_the_settings_scratch_file_belongs_to_one_process(self) -> None:
+        """A worker thread reads this file while the window writes it, and
+        `load` raises on a short read by design — so a truncating write ends the
+        pass that was reading. The same answer as `state.json`, and pid-scoped
+        for the same reason: `load` itself rewrites a file whose keys have
+        moved, so a headless run started beside the window is a second writer.
+        """
+        with tempfile.TemporaryDirectory() as td:
+            with patch("ai_coc.adapters.config.os.replace"):
+                ConfigStore(path=Path(td) / "config.json").save(AppConfig())
+            assert [path.name for path in Path(td).iterdir()] == [f"config.json.{os.getpid()}.tmp"]
+
+    def test_a_retry_interval_the_window_could_not_show_raises(self) -> None:
+        """The spin box clamps 0 to 1 and writes 1 back on the next save, so a
+        file saying 0 is a key that looks honoured and is not — `timings` again,
+        one field along. Out of range it fails on load, like every other value
+        this file cannot run as written.
+        """
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "config.json"
+            path.write_text(json.dumps({"ui": {"cycle_minutes": 0}}), encoding="utf-8")
+            with pytest.raises(ValidationError):
+                ConfigStore(path=path).load()
 
     def test_a_setting_nothing_reads_any_more_is_dropped_from_the_file(self) -> None:
         """A key left behind reads as one still being honoured, and is not.
@@ -4511,15 +4597,12 @@ class WindowToggleTests(unittest.TestCase):
         window = MagicMock()
         MainWindow._toggle_live_view(window, True)
         assert window.mock_calls == [
-            call.settings.setValue("live_view", True),
+            call._save_ui(live_view=True),
             call.live_timer.start(LIVE_INTERVAL),
         ]
         window.reset_mock()
         MainWindow._toggle_live_view(window, False)
-        assert window.mock_calls == [
-            call.settings.setValue("live_view", False),
-            call.live_timer.stop(),
-        ]
+        assert window.mock_calls == [call._save_ui(live_view=False), call.live_timer.stop()]
 
     def test_the_recording_toggle_touches_nothing_but_its_setting(self) -> None:
         """What reads it is `run_attack`, when it opens the run. A round already
@@ -4531,7 +4614,31 @@ class WindowToggleTests(unittest.TestCase):
         # The whole call list, not a list of things it did not do: the
         # regression this class exists for was a branch appearing where none
         # belonged, and naming `live_timer` alone would miss the next one.
-        assert window.mock_calls == [call.settings.setValue("record_frames", True)]
+        assert window.mock_calls == [call._save_ui(record_frames=True)]
+
+
+class UiJobNameTests(unittest.TestCase):
+    """The five job names, which have to line up in three places at once.
+
+    They are fields of `UiJobs`, checkboxes on the window, and sub-commands of
+    the CLI, and nothing but a name connects the three. A rename that reaches
+    two of them costs a job that quietly stops being run — the cycle skips it
+    and says nothing, because a missing checkbox is indistinguishable from an
+    unticked one.
+    """
+
+    def test_every_job_names_a_sub_command_a_terminal_could_run(self) -> None:
+        """Parsed rather than compared against a written-down list, so this asks
+        `cli.py` itself: a second list here would be one more copy to drift.
+        """
+        for name in UiJobs.model_fields:
+            assert _parser().parse_args([name]).command == name
+
+    def test_the_window_has_a_box_for_every_job_and_no_others(self) -> None:
+        """`_job_boxes` is where the widgets and the settings file are lined up,
+        so a field added to one and not the other has to fail here.
+        """
+        assert set(MainWindow._job_boxes(MagicMock())) == set(UiJobs.model_fields)
 
 
 def _menu(price: int, gold: int = 887) -> WallMenu:
