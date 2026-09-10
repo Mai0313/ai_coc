@@ -698,11 +698,12 @@ class MainWindow(QMainWindow):
                 return
             logger.info("進攻巡檢結束(跳過 %d 個對手):%s", report.skipped, report.message)
 
-        # One round per pass, because the cycle is what decides what comes next:
-        # `commands.attack` would otherwise keep playing and the collectors,
-        # the builders and the walls would never get their turn. Thresholds,
-        # the storage share and the planner all come out of the shared config
-        # file in there, which is what `save_automation` writes on the way in.
+        # One round per pass, which is `AttackOptions`' own default rather than
+        # a bound this has to impose — an unbounded series is what `--repeat 0`
+        # asks for. Passed anyway so the cycle's intent reads the same here as
+        # on the walls, where the bound is real. Thresholds, the storage share
+        # and the planner all come out of the shared config file in there,
+        # which is what `save_automation` writes on the way in.
         self._run_job(
             "AI 正在搜尋對手並進攻…",
             "attack",

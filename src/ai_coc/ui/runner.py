@@ -157,7 +157,7 @@ class ScreenRunner(BaseModel):
     back to a village has to cope with a result screen, a matchmaker and a
     village it may have to sail to — but it declared these five fields with the
     same names, types and defaults, and both methods with the same bodies. The
-    frame naming in particular (`0006_probe`, `0010_pass`) is written down in
+    frame naming in particular (`0006_scout`, `0010_pass`) is written down in
     `CLAUDE.md` and in two of the project's skills, and a convention documented
     in three places and implemented in two is the drift `AGENTS.md` is a symlink
     to avoid.
@@ -330,7 +330,7 @@ class GameRunner(ScreenRunner):
         its own, a gem shower drifting over a plate among them, and those the
         storages read. Either reading is a village, and a village is where this
         runs. `_settle_game` already opens the attack loop off the plate row,
-        which is why the five commands that skip it could not recover.
+        which is why the six commands that skip it could not recover.
 
         A pinch between wall batches would only be spending three seconds to
         confirm what this one already settled.
