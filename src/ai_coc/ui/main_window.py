@@ -5,7 +5,7 @@ import logging
 from contextlib import ExitStack
 
 from PyQt5.QtGui import QPixmap, QDesktopServices
-from PyQt5.QtCore import Qt, QUrl, QTimer, QSettings, QThreadPool
+from PyQt5.QtCore import Qt, QUrl, QTimer, QThreadPool
 from PyQt5.QtWidgets import (
     QLabel,
     QWidget,
@@ -33,6 +33,7 @@ from ai_coc import commands
 from ai_coc.models import (
     Frame,
     RunLog,
+    UiJobs,
     WallOptions,
     AttackSeries,
     AttackOptions,
@@ -45,14 +46,7 @@ from ai_coc.models import (
     UpgradeOptions,
     EmulatorInstance,
 )
-from ai_coc.constants import (
-    LOG_DIR,
-    APP_NAME,
-    COC_PACKAGE,
-    ORGANISATION,
-    VERSION_LABEL,
-    DEFAULT_GEMINI_MODEL,
-)
+from ai_coc.constants import LOG_DIR, APP_NAME, COC_PACKAGE, VERSION_LABEL, DEFAULT_GEMINI_MODEL
 from ai_coc.adapters.ai import GeminiClient
 from ai_coc.adapters.mumu import MuMuAdapter
 from ai_coc.logging_setup import configure_logging
@@ -96,7 +90,6 @@ class MainWindow(QMainWindow):
         self.resize(1260, 820)
         self.pool = QThreadPool.globalInstance()
         self.secrets = SecretStore()
-        self.settings = QSettings(ORGANISATION, "CoCAIController")
         self.config = ConfigStore().load()
         self.mumu: MuMuAdapter | None = None
         self.instances: list[EmulatorInstance] = []
@@ -329,7 +322,7 @@ class MainWindow(QMainWindow):
         """
         self.live_view = QCheckBox("即時畫面")
         self.live_view.setToolTip("每半秒抓一張 CoC 畫面；關掉之後這裡只會顯示手動擷取的截圖")
-        self.live_view.setChecked(str(self.settings.value("live_view", "true")).lower() == "true")
+        self.live_view.setChecked(self.config.ui.live_view)
         self.live_view.toggled.connect(self._toggle_live_view)
         layout.addWidget(self.live_view)
         # Off by default, and for a different reason than 即時畫面: this one keeps
@@ -341,9 +334,7 @@ class MainWindow(QMainWindow):
             "把每一輪讀到的畫面存進 ~/.ai_coc/logs 底下這次執行的資料夾，"
             "事後可以逐張看它當時看到什麼；會多花一些硬碟跟模擬器的時間"
         )
-        self.record_frames.setChecked(
-            str(self.settings.value("record_frames", "false")).lower() == "true"
-        )
+        self.record_frames.setChecked(self.config.ui.record_frames)
         self.record_frames.toggled.connect(self._toggle_record_frames)
         layout.addWidget(self.record_frames)
 
@@ -355,16 +346,27 @@ class MainWindow(QMainWindow):
         self.auto_upgrade = QCheckBox("自主安排並執行建築升級")
         self.auto_walls = QCheckBox("自主刷牆")
         self.auto_attack = QCheckBox("自主搜尋對手並打資源")
-        for key, widget in (
-            ("auto_collect", self.auto_collect),
-            ("auto_donate", self.auto_donate),
-            ("auto_upgrade", self.auto_upgrade),
-            ("auto_walls", self.auto_walls),
-            ("auto_attack", self.auto_attack),
-        ):
-            widget.setChecked(str(self.settings.value(key, "false")).lower() == "true")
+        for name, widget in self._job_boxes().items():
+            widget.setChecked(getattr(self.config.ui.jobs, name))
             form.addRow(widget)
         return behavior
+
+    def _job_boxes(self) -> dict[str, QCheckBox]:
+        """The five checkboxes, under the names the settings file saves them by.
+
+        Which are the sub-command names, so this is also the one place a name
+        and a widget are lined up. That pairing used to be written out by hand
+        wherever either was read — twice, once to load them and once to save
+        them — and `automation_cycle` still writes out its own, pairing each
+        widget with the `run_*` it calls rather than with a name.
+        """
+        return {
+            "collect": self.auto_collect,
+            "donate": self.auto_donate,
+            "upgrade": self.auto_upgrade,
+            "walls": self.auto_walls,
+            "attack": self.auto_attack,
+        }
 
     def _automation_battle_group(self) -> QGroupBox:
         battle = QGroupBox("進攻與資源門檻")
@@ -396,8 +398,7 @@ class MainWindow(QMainWindow):
             (self.min_elixir, self.config.thresholds.min_elixir),
             (self.min_dark, self.config.thresholds.min_dark),
             (self.stop_at, self.config.stop_at),
-            # Only the window ever waits, so this one stays in the registry.
-            (self.cycle_minutes, int(self.settings.value("cycle_minutes", 10))),
+            (self.cycle_minutes, self.config.ui.cycle_minutes),
         ):
             widget.setValue(value)
         battle_form.addRow("對手金幣", self.min_gold)
@@ -408,16 +409,30 @@ class MainWindow(QMainWindow):
         return battle
 
     def save_automation(self) -> None:
-        for key, widget in (
-            ("auto_collect", self.auto_collect),
-            ("auto_donate", self.auto_donate),
-            ("auto_upgrade", self.auto_upgrade),
-            ("auto_walls", self.auto_walls),
-            ("auto_attack", self.auto_attack),
-        ):
-            self.settings.setValue(key, widget.isChecked())
-        self.settings.setValue("cycle_minutes", self.cycle_minutes.value())
-        self._save_config(thresholds=self._thresholds(), stop_at=self.stop_at.value())
+        # One write rather than one per group: `_save_config` puts the whole
+        # file back, so splitting this would rewrite it three times over.
+        #
+        # Onto a fresh block for the reason `_save_config` reads one, which a
+        # whole `ui=` built here would have overridden a level down: the window
+        # has a widget for all four of these, so every one is read off its own
+        # rather than carried over, and a field added later without a widget
+        # survives instead of being reset to its default.
+        self._save_config(
+            thresholds=self._thresholds(),
+            stop_at=self.stop_at.value(),
+            ui=ConfigStore()
+            .load()
+            .ui.model_copy(
+                update={
+                    "jobs": UiJobs(**{
+                        name: box.isChecked() for name, box in self._job_boxes().items()
+                    }),
+                    "cycle_minutes": self.cycle_minutes.value(),
+                    "live_view": self.live_view.isChecked(),
+                    "record_frames": self.record_frames.isChecked(),
+                }
+            ),
+        )
         logger.info("Automation settings saved")
 
     def _save_config(self, **changes: object) -> None:
@@ -426,9 +441,23 @@ class MainWindow(QMainWindow):
         The window keeps reading its own widgets while it runs, so this is only
         about what the next run finds — including the next one started from a
         terminal, which has nowhere else to look.
+
+        **Merged into a fresh read rather than into the copy this window opened
+        with**, because every write here puts the *whole* file back: a field
+        this call never touched would go to disk from a snapshot that can be
+        hours old. `restart_every` is the one that costs: no widget anywhere
+        sets it, so its only source is somebody editing the file — which is
+        what these settings living in a file is for. That only became worth
+        guarding when the preview switches started writing here, since the two
+        save buttons are moments where somebody means to store what is on
+        screen and a checkbox is not.
         """
-        self.config = self.config.model_copy(update=changes)
+        self.config = ConfigStore().load().model_copy(update=changes)
         ConfigStore().save(self.config)
+
+    def _save_ui(self, **changes: object) -> None:
+        """The same, for one field of the window's own block."""
+        self._save_config(ui=ConfigStore().load().ui.model_copy(update=changes))
 
     def toggle_automation(self) -> None:
         if self.automation_active:
@@ -824,7 +853,7 @@ class MainWindow(QMainWindow):
         )
 
     def _toggle_live_view(self, on: bool) -> None:
-        self.settings.setValue("live_view", on)
+        self._save_ui(live_view=on)
         if on:
             self.live_timer.start(LIVE_INTERVAL)
         else:
@@ -833,7 +862,7 @@ class MainWindow(QMainWindow):
     def _toggle_record_frames(self, on: bool) -> None:
         # Nothing but the setting: what reads it is `run_attack`, when it opens
         # the run. A round already under way keeps whatever it started with.
-        self.settings.setValue("record_frames", on)
+        self._save_ui(record_frames=on)
 
     def _live_tick(self) -> None:
         """Put one fresh frame in the preview, unless the last one is still in flight.

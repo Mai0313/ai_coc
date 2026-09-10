@@ -3,8 +3,8 @@ from pathlib import Path
 from ai_coc import __version__
 
 APP_NAME = "AI CoC"
-# Also the QSettings organisation, so the registry key and the executable's file
-# properties cannot drift apart.
+# The company name in the executable's Windows file properties, which is the
+# whole of what it is for now that no setting lives in the registry.
 ORGANISATION = "Mai0313"
 
 VERSION_LABEL = f"v{__version__}"
