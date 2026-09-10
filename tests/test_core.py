@@ -1354,7 +1354,9 @@ class ScoutTests(unittest.TestCase):
         assert in_battle((FRAMES / "night_stage2_cards.png").read_bytes())
 
     def test_the_builder_base_countdown_carries_no_plate_yet(self) -> None:
-        """The one window this reads False over a live battle, pinned so it stays known.
+        """One of the two windows this reads False over a live battle, pinned so it
+        stays known — the other is a popup dimming the whole screen, which takes the
+        plate with it exactly as it takes the loot digits.
 
         The builder base draws nothing in that corner until 離戰鬥開始剩下 runs
         out — measured across a recorded round, 40 s of it at 0.0000 with a full
