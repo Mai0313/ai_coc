@@ -154,6 +154,16 @@ class AdbConnectionTests(unittest.TestCase):
         assert isinstance(command, str)
         assert command == "input -d 2 tap 1 2;sleep 0.1;input -d 2 tap 3 4"
 
+    def test_a_burst_of_no_taps_sends_nothing_at_all(self) -> None:
+        """An empty join is `adb shell ""`, an interactive shell that never returns.
+
+        Seven recorded `attack` runs died on this, each 15 seconds after its own
+        `Tapping 0 points` line, taking the whole series and its `result.json`.
+        """
+        with patch.object(AdbController, "shell") as shell:
+            _controller().tap_many([], DISPLAY)
+        shell.assert_not_called()
+
     def test_the_display_is_found_through_both_id_schemes(self) -> None:
         with patch.object(AdbController, "shell", side_effect=[WINDOW_DISPLAYS, DISPLAY_DEVICES]):
             assert _controller().display_for(COC_PACKAGE) == DISPLAY

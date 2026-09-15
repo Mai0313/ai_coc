@@ -317,10 +317,32 @@ class AdbController(BaseModel):
 
         The sleeps between them were the other half of that story and are gone;
         see `TAP_GAP` for what replaced the reasoning behind them.
+
+        **No points is a no-op, and it used to be fatal.** Joining an empty list
+        gives the empty string, so the call became `adb shell ""` — an
+        interactive shell that never returns — while the timeout below evaluates
+        to exactly its 15 second floor. Swept over every run recorded on this
+        machine, seven `attack` runs died that way between 2026-09-13 and
+        2026-09-15, each one 15 seconds after its own `Tapping 0 points` line,
+        and each took the whole `--repeat 0` series with it: the exception
+        escapes as `AdbControlError` with nothing above it to catch one, so
+        `result.json` was never written and the rounds already played were
+        countable only out of `run.log`. One of them had just won 100%.
+
+        **The guard belongs here rather than at the call sites**, because
+        arriving with nothing is legitimate: every recorded traceback came from
+        `AttackRunner._act`'s `ability` step, which taps the card of each named
+        hero that is actually on the field and so yields nothing at all when
+        none of them landed. That is a round with no ability to fire, not a
+        round that went wrong, and the same shape is reachable from other
+        callers that build their list by filtering. The log line stays ahead of
+        the return so `Tapping 0 points` survives as the signature to grep for.
         """
         logger.info(
             "Tapping %d points on %s display %s", len(points), self.serial, display.logical_id
         )
+        if not points:
+            return
         taps = [f"input -d {display.logical_id} tap {int(x)} {int(y)}" for x, y in points]
         self.shell(f";sleep {gap};".join(taps), timeout=len(points) * (gap + 0.5) + 15)
 
