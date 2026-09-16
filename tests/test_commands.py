@@ -33,6 +33,7 @@ from ai_coc.models import (
     BuildReport,
     HeroOptions,
     WallOptions,
+    AttackReport,
     DonateReport,
     VillageStock,
     AttackOptions,
@@ -434,6 +435,77 @@ class AttackSeriesStopTests(unittest.TestCase):
         built, rounds = self._series(button)
         assert built.call_args.kwargs["should_stop"] is button
         assert len(rounds) == 1
+
+
+class AttackSeriesAdapterFailureTests(unittest.TestCase):
+    """An emulator error ends the series rather than the process.
+
+    Nothing above `main()` catches an `AdbControlError`, so one raised mid-round
+    used to kill the run outright: `result.json` was never written and the rounds
+    already played were countable only out of `run.log`. Seven runs died that way
+    in three days, one of them on a round it had just won outright.
+    """
+
+    def _series(self, played: list, rounds: int = 0) -> list:
+        runner = MagicMock(name="AttackRunner")
+        runner.run.side_effect = played
+        # The count lives on the runner, because one runner plays one series.
+        runner.lost = 0
+        runner.world = "day"
+        with (
+            patch.object(commands, "_controller", return_value=_adb()),
+            patch.object(commands.ConfigStore, "load", return_value=AppConfig()),
+            patch.object(commands, "_planner", return_value=None),
+            patch.object(commands, "_settle_game", return_value=DISPLAY),
+            patch.object(commands, "_pick_world", return_value="day"),
+            patch.object(commands, "FrameTicker"),
+            patch.object(commands, "AttackRunner", return_value=runner),
+            patch.object(commands, "_rest", return_value=False),
+        ):
+            series = commands.attack(AttackOptions(rounds=rounds), MagicMock(return_value=False))
+        return series.root
+
+    def test_a_round_lost_to_the_emulator_is_recorded_and_the_series_carries_on(self) -> None:
+        """One timeout is a blip, and an overnight run should survive it."""
+        rounds = self._series([
+            AdbControlError("ADB 指令失敗：adb read timeout"),
+            AttackReport(stock_full=True, message="倉庫滿了"),
+        ])
+        assert len(rounds) == 2
+        assert "模擬器沒有回應" in rounds[0].message
+        assert rounds[-1].stock_full
+
+    def test_three_in_a_row_ends_the_series_holding_what_it_played(self) -> None:
+        """An emulator that answers nothing is not worth aiming more rounds at.
+
+        The rounds already played still come back, which is the whole point:
+        before this they went down with the process.
+        """
+        rounds = self._series([
+            AttackReport(message="已進攻並回營"),
+            *[AdbControlError("adb read timeout")] * 4,
+        ])
+        assert len(rounds) == 4
+        assert rounds[0].message == "已進攻並回營"
+        assert all("模擬器沒有回應" in report.message for report in rounds[1:])
+
+    def test_a_round_that_came_back_clears_the_count(self) -> None:
+        """Consecutive, not total: three blips spread over a run are not a dead emulator.
+
+        Three of them, because two do not separate the two readings — the count
+        reaches 2 either way and never trips. Counting them as a total instead
+        ends this series on the third error, at five rounds.
+        """
+        rounds = self._series([
+            AdbControlError("adb read timeout"),
+            AttackReport(message="已進攻並回營"),
+            AdbControlError("adb read timeout"),
+            AttackReport(message="已進攻並回營"),
+            AdbControlError("adb read timeout"),
+            AttackReport(stock_full=True, message="倉庫滿了"),
+        ])
+        assert len(rounds) == 6
+        assert rounds[-1].stock_full
 
 
 class SettleGameTests(unittest.TestCase):

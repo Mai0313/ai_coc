@@ -885,6 +885,11 @@ class AttackRunner(ScreenRunner):
     # than 畫面不在主村: a loading screen that outlasted `SERVER_POLLS`, or a
     # stop that landed during that wait. Empty is the ordinary failure.
     _stuck: str = PrivateAttr(default="")
+    # Rounds this runner has lost to the emulator back to back, which is what
+    # tells a blip from an emulator that has gone. Consecutive rather than
+    # total, and kept here because one runner plays one series: the series is
+    # the scope the count is about. `commands._round` owns both ends of it.
+    lost: int = 0
 
     @property
     def played(self) -> AttackPlan | NightPlan | None:

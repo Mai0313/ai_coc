@@ -312,6 +312,13 @@ CART_EVERY = 3
 # most of it, which reads as a stop that did nothing.
 STOP_POLL = 2.0
 
+# How many rounds in a row may die on the emulator before the series gives up.
+# One is a blip an overnight run should survive; three in a row is an emulator
+# that has gone, and there is nothing to gain by aiming more rounds at it. Three
+# is the line `farm` already draws for whoever is reading the log, rather than a
+# number measured here.
+ADAPTER_FAILURES = 3
+
 
 # The claim this process wrote, or None while it holds none. Two things need it.
 #
@@ -716,7 +723,19 @@ def _restarted(
     if not every or fought < every:
         return fought
     logger.info("%d battle(s) fought; restarting the emulator", fought)
-    if _restart_emulator(runner, ticker, should_stop):
+    # **The restart is the other place an adapter error can take the series
+    # down with the process**, and it is not covered by the guard around the
+    # round itself: `_restart_emulator` guards the launch, while the
+    # `_settle_game` that follows captures, pinches and parks, and any of those
+    # can raise. Ending the series is already what this function says with
+    # None, so the error needs no new answer — only somewhere to be caught, so
+    # that `result.json` is still written with the rounds already played.
+    try:
+        restarted = _restart_emulator(runner, ticker, should_stop)
+    except AdbControlError as exc:
+        logger.error("The emulator did not come back: %s", exc)
+        return None
+    if restarted:
         return 0
     # The series ends either way, but only one of these is an alarm: a stop
     # asked for mid-restart comes back the same False as an emulator that never
@@ -814,8 +833,90 @@ def _empty_cart(world: World, battles: int, adb: AdbController, display: Display
     battles rather than every one: the cart accumulates — measured, it holds a
     million — while emptying it costs a camera drag to the far corner and back.
     """
-    if world == "night" and battles and battles % CART_EVERY == 0:
+    if world != "night" or not battles or battles % CART_EVERY:
+        return
+    # **A failed trip to the cart is not a reason to lose the series.** It is a
+    # side errand between rounds, and it opens with a capture of its own, so an
+    # adapter error here used to unwind all the way out of `attack` with
+    # `result.json` unwritten — measured twice, at 17 and 14 battles played and
+    # countable only out of `run.log`. The elixir stays in the cart, which
+    # holds a million and is emptied every few battles anyway, so the next trip
+    # collects what this one did not.
+    try:
         collect_cart(adb, display)
+    except AdbControlError as exc:
+        logger.warning("The loot cart could not be emptied this time: %s", exc)
+
+
+def _round(runner: AttackRunner, series: AttackSeries) -> AttackReport | None:
+    """One round, with both of the ways it can end badly folded in. None ends the series.
+
+    The two are not the same kind of thing and they are here together because
+    the caller does the same thing with either: a `KeyboardInterrupt` is a
+    person asking for the run to stop, while an `AdbControlError` is the
+    emulator having stopped answering. What they share is that neither may
+    reach `main()`, because nothing up there catches one and the series and its
+    `result.json` go down with the process.
+    """
+    try:
+        report = runner.run()
+    except KeyboardInterrupt:
+        logger.info("Interrupted; stopping after %d round(s)", len(series.root))
+        return None
+    except AdbControlError as exc:
+        return _lost_round(runner, series, exc)
+    runner.lost = 0
+    return report
+
+
+def _lost_round(
+    runner: AttackRunner, series: AttackSeries, exc: AdbControlError
+) -> AttackReport | None:
+    """Record a round that died on the emulator, or None once the series should end.
+
+    **An adapter error used to end the process rather than the series, and
+    losing the record was the expensive half.** Nothing above `main()` catches
+    one, so `result.json` was never written and the rounds already played were
+    countable only out of `run.log`: seven runs died that way between 2026-09-13
+    and 2026-09-15, one of them on a round it had just won outright. The trigger
+    behind those seven is guarded now, inside `tap_many`, but the next one will
+    have a different cause — a screencap that timed out, a display the game was
+    moved off — so what is worth fixing is the loss rather than any one cause.
+    The round goes into the series as a round that happened and failed, which is
+    what a reader counting rounds afterwards needs it to be.
+
+    **Three in a row rather than one.** A single timeout is a blip an overnight
+    run should survive, and the next round opens with `_settle_game`, which is
+    built to pick a game up from wherever the last one left it. An emulator that
+    has really gone answers nothing, and there is no reason to keep aiming
+    rounds at it. Three is the line `farm` already draws for whoever is reading
+    the log rather than a number measured here, so the code draws it in the same
+    place.
+    """
+    runner.lost += 1
+    logger.error(
+        "Round %d died on the emulator (%d in a row): %s", len(series.root) + 1, runner.lost, exc
+    )
+    report = AttackReport(world=runner.world, message=f"模擬器沒有回應：{exc}")
+    if runner.lost >= ADAPTER_FAILURES:
+        # Recorded here rather than handed back, because the caller records
+        # what it is given and this one ends the series instead of reaching it.
+        # It is still a round that happened, and leaving it out would take one
+        # round off the count this whole function exists to preserve.
+        series.root.append(report)
+        # The caller breaks before its own `Attack finished:` line, and
+        # `references/running.md` tells a session there is one of those per
+        # round — so without this the last round is in `result.json` and
+        # missing from the log, an undercount of exactly what this preserves.
+        logger.info("Attack finished: %s", report.message)
+        logger.error("The emulator has not answered for %d rounds; ending the series", runner.lost)
+        return None
+    # Handed back as an ordinary round that fought nothing, which is what it
+    # was. The caller then records it, rests the barracks wait, and comes round
+    # again — and that rest is worth more here than anywhere else, since an
+    # emulator that just refused a command is the last thing to fire another
+    # one at immediately.
+    return report
 
 
 def attack(
@@ -919,10 +1020,8 @@ def attack(
                 break
             fought = carried
             logger.info("Round %d of %s", len(series.root) + 1, rounds or "no limit")
-            try:
-                report = runner.run()
-            except KeyboardInterrupt:
-                logger.info("Interrupted; stopping after %d round(s)", len(series.root))
+            report = _round(runner, series)
+            if report is None:
                 break
             # **A restart moves the game to a display of MuMu's choosing, and
             # this function is the last to hear about it.** `AttackRunner`
