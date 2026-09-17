@@ -73,7 +73,7 @@ DEBUG 會把送給 Gemini 的完整 prompt 跟它的回覆印出來. 只在懷�
 
 下面是一條夠用的路徑, 不是規定. 覺得直接從心跳畫面翻起比較快就翻:
 
-1. `result.json` 裡這一輪的 `AttackReport`: 有沒有開打, 搶到多少, message 說什麼
+1. `result.json` 裡這一輪的 `AttackReport`: 有沒有開打, 對手**擺出**多少 (`attacked` 是偵察畫面讀的可搶量, 不是帶回家的量), message 說什麼
 2. `run.log` 這一輪的那一段: 迴圈走到哪一步, 哪一步發了 WARNING
 3. 那一步對應的畫面, 用檔名找
 4. 那張畫面丟進 `ai_coc read`, 看 parser 到底讀到什麼
