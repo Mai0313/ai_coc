@@ -70,7 +70,7 @@ from ai_coc.adapters.ai import GeminiClient
 # A runtime import rather than a TYPE_CHECKING one: `FrameTicker` declares it as
 # a field, and a model whose field type is only importable to a type checker
 # cannot be built at all.
-from ai_coc.adapters.adb import ZOOM_PINCHES, AdbController, AdbControlError
+from ai_coc.adapters.adb import AdbController, AdbControlError
 from ai_coc.parsers.clan import donatable_cards
 from ai_coc.parsers.hero import hero_cards
 from ai_coc.parsers.home import builder_jobs, free_builders, collect_bubbles
@@ -566,13 +566,15 @@ def _settle_game(
     the game's far zoom limit. A caller that has one without the other has a
     game that answers and misses everything it aims at.
 
-    **Three steps, because zooming settles the scale and not the position.**
-    This file used to say the far limit centred the village too, on the
+    **The scale and the position are two different things, and the park owns
+    both.** This file used to say the far limit centred the village too, on the
     reasoning that the map clamps the camera at its own edges; measured, a pinch
     does not move the camera at all. The clamp is real and the pinch simply
-    never reaches it, so `park_camera` runs the camera into a corner afterwards
-    — and the village this landed on is already read by then, which is what the
-    park needs to know, since the two maps clamp in opposite corners.
+    never reaches it, so `park_camera` runs the camera into a corner as well —
+    and it pinches on the way in rather than leaving that here, because its own
+    walk can only be read at the far zoom. The village this landed on is already
+    read by then, which is what the park needs to know, since the two maps clamp
+    in opposite corners.
 
     None means the village never appeared. Whether that is worth giving up over
     is the caller's decision, not this one's.
@@ -610,11 +612,13 @@ def _settle_game(
             # village at all.
             png = adb.screenshot(display)
             if (world := current_world(png)) is not None:
-                adb.zoom("out", ZOOM_PINCHES, COC_PACKAGE, display)
-                # And the position, which the zoom does not settle. The village
-                # this landed on is already in hand, which is both things the
-                # park needs — that this is a village at all, and which of the
-                # two, since the maps clamp in opposite corners.
+                # The scale and the position together, and the pinch that used
+                # to be written here is inside the park now: the walk it does is
+                # only bounded at the far zoom, so it establishes that itself
+                # rather than trusting whoever called it. The village this
+                # landed on is already in hand, which is both things the park
+                # needs — that this is a village at all, and which of the two,
+                # since the maps clamp in opposite corners.
                 #
                 # **Its answer is deliberately not acted on here.** None from
                 # this function means no village appeared, and `attack` ends the
@@ -1679,22 +1683,38 @@ def view(zoom: str = "out", times: int = 3) -> ViewReport:
     settled separately, by running the camera into a map corner where it clamps —
     see `park_camera` for the measurement. `--zoom` stays the knob for scale.
 
-    **The park is gated on a village and the pinch is not**, which is the
-    difference between a gesture that is safe on any screen and one that is not.
-    A swipe with a card selected deploys troops along its path instead of
-    panning, and this command's whole reputation is that it can be run blind at
-    whatever the game is showing — a killed run leaves the game mid-battle, and
-    that is exactly when somebody reaches for it. The one capture answers both
-    questions the park has: whether this is a village at all, and which of the
-    two, since the maps clamp in opposite corners. Anything else keeps the zoom
-    and says the camera was left where it was.
+    **The park is gated on a village and this command's own pinch is not**,
+    which is the difference between a gesture that is safe on any screen and one
+    that is not. A swipe with a card selected deploys troops along its path
+    instead of panning, and this command's whole reputation is that it can be run
+    blind at whatever the game is showing — a killed run leaves the game
+    mid-battle, and that is exactly when somebody reaches for it. The one capture
+    answers both questions the park has: whether this is a village at all, and
+    which of the two, since the maps clamp in opposite corners. Anything else
+    keeps the zoom and says the camera was left where it was.
+
+    **And `--zoom in` is refused a park before the capture is even taken**, for
+    the reason `park_camera` pinches at all: its walk is only bounded at the far
+    zoom, and measured two pinches in the camera runs off the village and was
+    still moving after fourteen swipes. So a park asked for there would undo the
+    zoom just requested and then claim a position it never reached. The cost on
+    the ordinary path is that `--zoom out` pinches twice — `--times` here and
+    `ZOOM_PINCHES` inside the park — which past the far limit does nothing at
+    all and is why the flag is still the knob it says it is.
     """
     adb = _controller()
     display = adb.display_for(COC_PACKAGE)
     adb.zoom(zoom, times, COC_PACKAGE, display)
     scaled = f"鏡頭{'拉遠' if zoom == 'out' else '拉近'}了 {times} 次"
-    world = current_world(adb.screenshot(display))
-    if world is None:
+    if zoom != "out":
+        # **A camera that has just been zoomed in cannot be parked**, so asking
+        # would undo the thing that was asked for and claim a position it never
+        # reached. Measured two pinches in, the camera runs off the village into
+        # the map's dark border and was still walking hundreds of pixels per
+        # swipe after fourteen of them; `park_camera` pinches back out for
+        # exactly that reason, which on this path is the opposite of the request.
+        report = ViewReport(message=f"{scaled}，拉近的鏡頭停不住，沒有把鏡頭停回定位")
+    elif (world := current_world(adb.screenshot(display))) is None:
         report = ViewReport(message=f"{scaled}，但畫面不是村莊，沒有把鏡頭停回定位")
     elif park_camera(adb, display, world):
         report = ViewReport(message=f"{scaled}，並把鏡頭停回定位")

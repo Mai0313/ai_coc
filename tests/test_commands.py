@@ -49,7 +49,7 @@ from ai_coc.models import (
 )
 from ai_coc.constants import COC_PACKAGE
 from ai_coc.ui.runner import ScreenRunner
-from ai_coc.adapters.adb import ZOOM_PINCHES, AdbController, AdbControlError
+from ai_coc.adapters.adb import AdbController, AdbControlError
 
 FRAMES = Path(__file__).parent / "frames"
 DISPLAY = DisplayTarget(logical_id="2", physical_id="9")
@@ -535,25 +535,28 @@ class SettleGameTests(unittest.TestCase):
             patch.object(commands, "restart_game", return_value=DISPLAY) as restarted,
             # `_settle_game` parks, and the park reads its own frames now.
             # None of these tests is about the park itself.
-            patch.object(commands, "park_camera", return_value=True),
+            patch.object(commands, "park_camera", return_value=True) as parked,
         ):
             adb.restarted = restarted
+            adb.parked = parked
             return adb, commands._settle_game(adb, polls, lambda: stop)
 
     def test_either_village_ends_the_wait_and_the_camera_goes_out(self) -> None:
+        """The park carries the pinch now, so one call settles both scale and position."""
         adb, display = self._settle([None, "night"])
         assert display == DISPLAY
         assert adb.screenshot.call_count == 2
-        adb.zoom.assert_called_once_with("out", ZOOM_PINCHES, COC_PACKAGE, DISPLAY)
+        adb.parked.assert_called_once_with(adb, DISPLAY, "night")
 
     def test_a_game_with_no_window_yet_is_waited_on(self) -> None:
         adb, display = self._settle(["day"], displays=[AdbControlError("not yet"), DISPLAY])
         assert display == DISPLAY
         assert adb.display_for.call_count == 2
 
-    def test_a_village_that_never_paints_gives_up_without_a_pinch(self) -> None:
+    def test_a_village_that_never_paints_gives_up_without_touching_the_camera(self) -> None:
         adb, display = self._settle([None, None, None], polls=3)
         assert display is None
+        adb.parked.assert_not_called()
         adb.zoom.assert_not_called()
 
     def test_a_stop_ends_the_wait_before_the_first_capture(self) -> None:
@@ -793,7 +796,7 @@ class CaptureAndViewTests(unittest.TestCase):
         slept.assert_called_once_with(0.5)
 
     def _view(
-        self, seen: str | None, zoom: str = "in", times: int = 2
+        self, seen: str | None, zoom: str = "out", times: int = 2
     ) -> tuple[MagicMock, object]:
         adb = _adb()
         with (
@@ -807,11 +810,27 @@ class CaptureAndViewTests(unittest.TestCase):
             return adb, commands.view(zoom, times)
 
     def test_view_sends_the_pinch_at_the_games_own_display(self) -> None:
-        adb, report = self._view("day")
+        adb, report = self._view("day", "in")
         _, far = self._view("day", "out", 3)
         adb.zoom.assert_any_call("in", 2, COC_PACKAGE, DISPLAY)
         assert "拉近" in report.message
         assert "拉遠" in far.message
+
+    def test_zooming_in_does_not_claim_a_park(self) -> None:
+        """The walk is only bounded at the far zoom, so there is none to make here.
+
+        Measured two pinches in, the camera pans off the village into the map's
+        dark border and was still moving after fourteen swipes. Parking anyway
+        would undo the zoom that was just asked for and report a position it
+        never reached, which is the one thing this command is trusted for.
+        """
+        adb, report = self._view("day", "in")
+        adb.swipe.assert_not_called()
+        # Refused before the capture, not after it: the village reading is only
+        # there to tell the park which corner to push into, and this path has no
+        # park to aim. Asking anyway is 0.7 s a run spends on nothing.
+        adb.screenshot.assert_not_called()
+        assert "沒有把鏡頭停回定位" in report.message
 
     def test_view_parks_the_camera_as_well_as_zooming_it(self) -> None:
         """Scale was only ever half of what a caller asking for the view wants.
@@ -821,7 +840,7 @@ class CaptureAndViewTests(unittest.TestCase):
         every map coordinate valid until the next thing that moved the camera.
         """
         adb, report = self._view("day")
-        assert adb.swipe.call_count == world_ui.PARK_BLIND + world_ui.PARK_STILL
+        assert adb.swipe.call_count == world_ui.PARK_STILL
         crossing = world_ui.CROSSINGS["night"]
         landing = (crossing.start[0] + crossing.drift[0], crossing.start[1] + crossing.drift[1])
         for call in adb.swipe.call_args_list:
@@ -838,7 +857,7 @@ class CaptureAndViewTests(unittest.TestCase):
         adb, _ = self._view("night")
         crossing = world_ui.CROSSINGS["day"]
         landing = (crossing.start[0] + crossing.drift[0], crossing.start[1] + crossing.drift[1])
-        assert adb.swipe.call_count == world_ui.PARK_BLIND + world_ui.PARK_STILL
+        assert adb.swipe.call_count == world_ui.PARK_STILL
         for call in adb.swipe.call_args_list:
             assert call.args[:2] == (crossing.start, landing)
 
