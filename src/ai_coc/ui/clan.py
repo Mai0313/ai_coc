@@ -61,20 +61,20 @@ class ClanRunner(GameRunner):
 
     def donate(self) -> DonateReport:
         """Give what the village can to the first request in the clan chat."""
-        report = DonateReport()
+        report = DonateReport(outcome="nothing_given")
         if self._home() is None:
-            report.message = "畫面沒辦法回到村莊，捐兵沒有開始"
+            report.outcome = "no_village"
             return report
         button = reinforce_button(self._after_tap(CHAT_TAB, "chat"))
         if button is None:
             self._leave()
-            report.message = "部落聊天裡目前沒有人在請求增援"
+            report.outcome = "nobody_asking"
             return report
         logger.info("A request is asking; 增援 is at (%d, %d)", *button)
         png = self._after_tap(button, "panel")
         if not donation_panel(png):
             self._leave()
-            report.message = "點了增援，但捐贈畫面沒有打開"
+            report.outcome = "panel_shut"
             return report
         limit = self.rounds if self.rounds > 0 else MAX_GIFTS
         while len(report.gifts) < limit:
@@ -84,6 +84,7 @@ class ClanRunner(GameRunner):
             report.offered = max(report.offered, len(cards))
             if self.dry_run:
                 logger.info("Dry run: %d card(s) could be given, giving none", len(cards))
+                report.outcome = "dry_run"
                 break
             # Leftmost first, which is cheapest first: the panel lays troops out
             # in unlock order. This is the seam a planner would replace, since
@@ -102,9 +103,6 @@ class ClanRunner(GameRunner):
             report.gifts.append(cards[0])
             png = after
         self._leave()
-        report.message = (
-            f"捐了 {len(report.gifts)} 次"
-            if report.gifts
-            else f"有人在請求，但沒有捐出去（畫面上有 {report.offered} 種可捐）"
-        )
+        if report.gifts:
+            report.outcome = "donated"
         return report

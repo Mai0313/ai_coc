@@ -25,7 +25,7 @@ import time
 from typing import TYPE_CHECKING
 import logging
 
-from ai_coc.models import HeroCard, HeroKind, HeroReport, VillageStock
+from ai_coc.models import HeroCard, HeroKind, HeroReport, HeroOutcome, VillageStock
 from ai_coc.ui.runner import BUY_SETTLE, BACK_SETTLE, MENU_SETTLE, SWEEP_STAGGER, GameRunner
 from ai_coc.parsers.hero import SCROLL_LEFT, SCROLL_RIGHT, can_scroll, hero_cards, hall_buttons
 from ai_coc.parsers.home import free_builders
@@ -263,14 +263,14 @@ class HeroRunner(GameRunner):
 
     def run(self) -> HeroReport:
         """Read the hall, and put a builder on the hero this run was given."""
-        report = HeroReport()
+        report = HeroReport(hero=self.hero, outcome="read")
         stock = self._home()
         if stock is None:
-            report.message = "畫面沒辦法回到村莊，英雄升級沒有開始"
+            report.outcome = "no_village"
             return report
         builders = free_builders(self._frame("builders"))
         if builders is None:
-            report.message = "讀不到工人數量，先停下來"
+            report.outcome = "count_unread"
             return report
         logger.info("%d of %d builder(s) are free", builders[0], builders[1])
         # A run that was asked to spend and has no builder to spend with is
@@ -282,10 +282,10 @@ class HeroRunner(GameRunner):
         # Reading the hall still runs, because that costs nothing to be wrong
         # about and is the half worth having when nothing can be started.
         if self.hero is not None and builders[0] == 0:
-            report.message = f"{builders[1]} 個工人都在忙，{self.hero} 現在派不出去"
+            report.outcome = "builders_busy"
             return report
         if self._open() is None:
-            report.message = "掃過村莊都沒有找到英雄殿堂"
+            report.outcome = "hall_not_found"
             return report
         cards = self._walk()
         report.cards = list(cards.values())
@@ -296,14 +296,12 @@ class HeroRunner(GameRunner):
                 for card in report.cards
             ),
         )
-        if self.hero is None:
-            report.message = f"英雄殿堂裡讀到 {len(report.cards)} 個英雄"
-        else:
-            report.message = self._raise(report, cards, stock)
+        if self.hero is not None:
+            report.outcome = self._raise(report, cards, stock)
         self._close()
         return report
 
-    def _blocked(self, card: HeroCard, stock: VillageStock) -> str | None:
+    def _blocked(self, card: HeroCard, stock: VillageStock) -> HeroOutcome | None:
         """Why this hero cannot be raised now, or None with nothing in the way.
 
         Both are answered off what the walk already read, so a run that stops
@@ -312,49 +310,49 @@ class HeroRunner(GameRunner):
         before anything has been looked for.
         """
         if card.price is None:
-            return f"{self.hero} 現在沒有升級按鈕，多半正在升級中"
+            return "already_upgrading"
         # Before the affordability check, because this one is not about money:
         # the village can be holding exactly what the card asks for and the
         # button still be dead. Measured live, 飛龍公爵 at 15 asked for 220 000
         # dark against a village holding 220 000, and the game answered the tap
         # with a red line saying to raise the Hero Hall to 11 first.
         if not card.upgradable:
-            return (
-                f"{self.hero} 的升級按鈕是停用的，"
-                f"多半是英雄殿堂的等級擋住了（要 {card.price} {card.resource}）"
-            )
+            return "button_dead"
         if not self._affordable(card, stock):
-            return f"資源不夠，{self.hero} 要 {card.price} {card.resource}"
+            return "cannot_afford"
         return None
 
-    def _purchase(self, card: HeroCard, stock: VillageStock) -> tuple[HeroCard | None, str]:
-        """Buy this level, and say both what was started and what happened."""
+    def _purchase(
+        self, card: HeroCard, stock: VillageStock
+    ) -> tuple[HeroCard | None, HeroOutcome]:
+        """Buy this level, and say both what was started and how it ended."""
         here = self._bring_on(card.hero)
         if here is None or here.price is None or here.price != card.price:
-            return None, f"{self.hero} 不在畫面上了，這一輪先不動它"
+            return None, "card_moved"
         if not self._start(here):
-            return None, f"點了 {self.hero} 的升級，但沒有出現確認畫面"
+            return None, "no_confirmation"
         self._close()
         paid = self._home()
         if paid is None:
-            return None, f"開始升級 {self.hero} 之後讀不到村莊，先停下來"
+            return None, "village_lost"
         # The storage having really moved is what separates an upgrade from a
         # report of one. A swallowed tap raises nothing at all, and the sheet
         # closing looks the same either way.
         spent = stock.elixir - paid.elixir if here.resource == "elixir" else stock.dark - paid.dark
         if spent < here.price:
-            return None, f"確認了 {self.hero} 的升級，但{here.resource}只少了 {spent}"
-        return here, f"{self.hero} 開始升級，花了 {here.price} {here.resource}"
+            logger.warning("Confirmed %s but %s only moved by %d", self.hero, here.resource, spent)
+            return None, "undercharged"
+        return here, "started"
 
     def _raise(
         self, report: HeroReport, cards: dict[HeroKind, HeroCard], stock: VillageStock
-    ) -> str:
-        """Start the upgrade this run was asked for, and say what came of it."""
+    ) -> HeroOutcome:
+        """Start the upgrade this run was asked for, and name how it ended."""
         card = cards.get(self.hero) if self.hero is not None else None
         if card is None:
-            return f"英雄殿堂裡沒有看到 {self.hero}"
+            return "hero_absent"
         blocked = self._blocked(card, stock)
         if blocked is not None:
             return blocked
-        report.started, message = self._purchase(card, stock)
-        return message
+        report.started, outcome = self._purchase(card, stock)
+        return outcome

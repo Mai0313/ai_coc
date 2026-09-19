@@ -318,6 +318,25 @@ class NamedEntity(VillageEntity):
     name: str | None = None
 
 
+# How one `export` ended. `read_back` is `--last`, off the disk without touching
+# the emulator, and it is a success rather than a lesser one. The four in the
+# middle are the walk through the settings menus, one per step, because a menu
+# that did not open and a copy the clipboard never received send whoever is
+# reading to different places.
+ExportOutcome = Literal[
+    "exported",
+    "read_back",
+    "never_exported",
+    "wrong_format",
+    "no_village",
+    "settings_shut",
+    "more_settings_shut",
+    "row_not_found",
+    "nothing_copied",
+    "not_a_village",
+]
+
+
 class VillageExport(BaseModel):
     """What `ai_coc export` answers with, and what it writes to `account_json/`.
 
@@ -335,7 +354,11 @@ class VillageExport(BaseModel):
     timestamp: int | None = None
     entities: list[NamedEntity] = Field(default_factory=list)
     boosts: dict[str, int] = Field(default_factory=dict)
-    message: str = ""
+    # Required, and an export written before this field existed therefore reads
+    # back as `wrong_format` rather than as one that cannot say how it ended.
+    # Re-running the command is a few taps, which is cheaper than a file that
+    # looks current and is not.
+    outcome: ExportOutcome
 
 
 class EntityMapping(RootModel[dict[str, dict[int, str]]]):
@@ -1173,6 +1196,14 @@ class ResourceBubble(BaseModel):
     point: tuple[int, int]
 
 
+# How one `collect` run ended on the **home village**. The builder base has no
+# collectors at all and one cart instead, which is why `cart` is its own answer
+# rather than five more values here: what happened there is `CartReport`'s to
+# say, and duplicating its seven outcomes would be the same answer in two
+# vocabularies.
+CollectOutcome = Literal["collected", "nothing_to_collect", "no_village", "stock_unread", "cart"]
+
+
 class CollectReport(BaseModel):
     """What one sweep of the collectors picked up.
 
@@ -1180,13 +1211,19 @@ class CollectReport(BaseModel):
     markers promised, because a storage already full takes none of it and a
     marker tapped twice pays once. `markers` is what was tapped, so the two
     disagreeing is the interesting case rather than an inconsistency.
+
+    **The two villages do different jobs under one command**, so the builder
+    base's trip comes back whole in `cart` rather than squeezed into fields
+    named for collector markers — which is what it used to be, with `markers=1`
+    standing in for "the cart paid something".
     """
 
     markers: int = 0
     gold: int = 0
     elixir: int = 0
     dark: int = 0
-    message: str = ""
+    outcome: CollectOutcome
+    cart: CartReport | None = None
 
 
 # How a trip to the builder base's 聖水車 ended. `collected` and `empty` are both
@@ -1251,13 +1288,20 @@ class BuildQueue(BaseModel):
     remaining: list[int] = Field(default_factory=list)
 
 
+# How one `builders` reading ended. The same five states `PlateOutcome` names
+# minus the badge, because this one taps a button at a fixed place rather than
+# finding a plate: `idle` is inferred from the counter the way it is there, and
+# `panel_shut` is the honest answer when the counter would not read either.
+BuilderOutcome = Literal["read", "idle", "no_village", "count_unread", "panel_shut"]
+
+
 class BuilderReport(BaseModel):
     """Who is busy and for how long, for a run deciding whether to wait."""
 
     free: int = 0
     total: int = 0
     queue: BuildQueue = BuildQueue()
-    message: str = ""
+    outcome: BuilderOutcome
 
 
 class ShieldState(BaseModel):
@@ -1390,12 +1434,12 @@ class StockReport(BaseModel):
     village, a `world` with no `held` is a village whose bars this frame could
     not resolve, and a name missing from `filled` is a ceiling that would not
     read. A sentence saying any of that again is the same answer twice, which is
-    what it was doing. What the others need instead, where their fields really
-    cannot say which branch a run came back from, is a named outcome rather than
-    prose — see `PlateOutcome`: a wording nobody can match on is what made a
-    sentence worse than a field rather than merely redundant. **The rest of the
-    reports here still carry a `message` and are being worked through**, so this
-    is the pattern rather than the state of the file.
+    what it was doing. Where a report's fields really cannot say which branch a
+    run came back from it carries a named outcome instead of prose — see
+    `PlateOutcome`: a wording nobody can match on is what made a sentence worse
+    than a field rather than merely redundant. No report here carries a
+    `message` any more, and the Chinese a person reads is built from the outcome
+    at the edge, in `commands.py`.
     """
 
     world: World | None = None
@@ -1476,28 +1520,71 @@ class BuildCandidate(BaseModel):
     building: BuildingName = BuildingName()
 
 
+# How one `upgrade` run ended. `started` says what it put builders on; this says
+# why it stopped putting them on things. **`builders_busy` and `cannot_afford`
+# are the two that mean "come back later"** and `nothing_found` is the one that
+# means the finder came up empty, which is a different thing to go and look at.
+BuildOutcome = Literal[
+    "started",
+    "nothing_found",
+    "cannot_afford",
+    "only_no_match",
+    "builders_busy",
+    "count_unread",
+    "no_village",
+    "village_lost",
+]
+
+
 class BuildReport(BaseModel):
     """What one `upgrade` run put the idle builders on."""
 
     started: list[BuildCandidate] = Field(default_factory=list)
-    message: str = ""
+    outcome: BuildOutcome
+    # What the cheapest upgrade on offer would have cost, on a run that could
+    # not pay for any of them. "Come back later" is only useful with how much
+    # later on it, and this is the number the sentence used to carry. **Only
+    # ever set on `cannot_afford`**: the `--only` refusal is about a name rather
+    # than about money, and the cheapest of every offer there is a price for
+    # buildings the filter had already thrown away.
+    cheapest: int | None = None
+    # The `--only` substring this run was given. Nothing else records it —
+    # `cli.py` logs the run directory and not the arguments — and it is the
+    # whole subject of an `only_no_match`.
+    only: str = ""
 
     def paid(self, resource: str) -> int:
         return sum(job.price for job in self.started if job.resource == resource)
 
 
-class ViewReport(BaseModel):
-    """What one `view` command asked of the camera.
+# How one `view` command left the camera. `parked` is the whole job done;
+# `not_a_village` is a screen the park may not be aimed at, since a swipe with a
+# card selected deploys troops along its path; `zoomed_in` is `--zoom in`, where
+# the park would undo the request and could not settle anyway; and
+# `never_settled` is a camera that would not stop moving, which leaves every
+# remembered coordinate off by however far it was short.
+ViewOutcome = Literal["parked", "not_a_village", "zoomed_in", "never_settled"]
 
-    There is nothing to read back. The game exposes no zoom level and the scale
-    is not written anywhere on screen, so this says what was sent rather than
-    what the camera ended up at — and a zoom the camera was already at is a
-    no-op rather than an error.
+
+class ViewReport(BaseModel):
+    """What one `view` command asked of the camera, and what it settled.
+
+    There is nothing to read back for the scale. The game exposes no zoom level
+    and it is not written anywhere on screen, so `zoom` and `times` say what was
+    sent rather than what the camera ended up at — and a zoom the camera was
+    already at is a no-op rather than an error. The **position** is different:
+    the park answers whether it arrived, and `outcome` is that answer.
+
+    **This model was one `message` and nothing else**, which is why it gained
+    four fields rather than losing one: everything it said was in the sentence.
     """
 
     model_config = ConfigDict(frozen=True)
 
-    message: str = ""
+    zoom: Literal["in", "out"] = "out"
+    times: int = 0
+    world: World | None = None
+    outcome: ViewOutcome
 
 
 RunnerStatus = Literal["running", "stopping", "idle"]
@@ -1751,6 +1838,14 @@ class Crossing(BaseModel):
     spots: tuple[tuple[int, int], ...]
 
 
+# How one `world` command ended. `here` is a read, or a crossing already at its
+# destination; `crossed` and `crossing_failed` are the two halves of a sail.
+# **`no_village` and `no_display` are separated because the answer differs**:
+# one is a screen to clear or wait out, the other is a game with no window yet,
+# which `ai_coc launch` is the command for.
+WorldOutcome = Literal["here", "crossed", "crossing_failed", "no_village", "no_display"]
+
+
 class WorldReport(BaseModel):
     """Which village one `world` command found, and which one it left the game on.
 
@@ -1767,7 +1862,7 @@ class WorldReport(BaseModel):
     found: World | None
     world: World | None
     crossed: bool = False
-    message: str = ""
+    outcome: WorldOutcome
 
 
 class LaunchReport(BaseModel):
@@ -1786,12 +1881,15 @@ class LaunchReport(BaseModel):
     index: int
     serial: str
     was_running: bool
+    # Which scope was asked for, which nothing else on the report says and the
+    # sentence used to: "已重開部落衝突" against "已重開模擬器與部落衝突" is the
+    # difference between a game restarted under a live emulator and both.
+    restart: RestartScope = "none"
     # Whether the village really came up and the camera was put back at the far
     # zoom, which is a different question from whether the process is running:
     # `ensure_coc` is satisfied by a pid, and a game still on its loading screen
     # answers every command by silently missing whatever it aimed at.
     at_village: bool = False
-    message: str = ""
 
 
 class HeroCard(BaseModel):
@@ -1826,6 +1924,30 @@ class HeroCard(BaseModel):
     upgradable: bool = False
 
 
+# How one `hero` run ended. **`read` is the read-only half and a success**: the
+# command answers what each hero's next level costs unless it is told to spend.
+# Of the refusals, `already_upgrading` / `button_dead` / `cannot_afford` are the
+# card's own three and they are not interchangeable — a hero the hall's level has
+# capped keeps its price and loses its button, which a run going by the price
+# alone reported as a swallowed tap.
+HeroOutcome = Literal[
+    "read",
+    "started",
+    "hall_not_found",
+    "hero_absent",
+    "already_upgrading",
+    "button_dead",
+    "cannot_afford",
+    "builders_busy",
+    "count_unread",
+    "card_moved",
+    "no_confirmation",
+    "undercharged",
+    "no_village",
+    "village_lost",
+]
+
+
 class HeroReport(BaseModel):
     """What one `hero` run saw in the hall, and which upgrade it started.
 
@@ -1834,9 +1956,20 @@ class HeroReport(BaseModel):
     what each hero costs next is the number a player decides against.
     """
 
+    # Which hero this run was asked to raise, or None for a read. Nothing else
+    # on the report says it, and every refusal is about that one hero.
+    hero: HeroKind | None = None
     cards: list[HeroCard] = Field(default_factory=list)
     started: HeroCard | None = None
-    message: str = ""
+    outcome: HeroOutcome
+
+
+# How one `donate` run ended. `nobody_asking` is the ordinary one and costs
+# almost nothing, which is what this loop is written to be: donating cannot be
+# done on demand, somebody else has to ask first.
+DonateOutcome = Literal[
+    "donated", "dry_run", "nobody_asking", "nothing_given", "panel_shut", "no_village"
+]
 
 
 class DonateReport(BaseModel):
@@ -1849,7 +1982,7 @@ class DonateReport(BaseModel):
 
     gifts: list[tuple[int, int]] = Field(default_factory=list)
     offered: int = 0
-    message: str = ""
+    outcome: DonateOutcome
 
 
 class UpgradeButton(BaseModel):

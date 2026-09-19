@@ -255,10 +255,11 @@ class ReportArithmeticTests(unittest.TestCase):
         assert walls.walls == 5
         assert (walls.paid("gold"), walls.paid("elixir")) == (4_800_000, 3_200_000)
         build = BuildReport(
+            outcome="started",
             started=[
                 BuildCandidate(point=(1, 1), resource="gold", price=100),
                 BuildCandidate(point=(2, 2), resource="elixir", price=250),
-            ]
+            ],
         )
         assert (build.paid("gold"), build.paid("elixir"), build.paid("dark")) == (100, 250, 0)
 

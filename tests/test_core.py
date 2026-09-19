@@ -4868,7 +4868,7 @@ class LaunchTests(unittest.TestCase):
         with patch.object(commands, "MuMuAdapter", return_value=mumu):
             report = commands.launch("none")
         assert not report.at_village
-        assert "村莊沒有出現" in report.message
+        assert "村莊沒有出現" in commands.launch_line(report)
 
     def test_the_ordinary_case_restarts_nothing(self) -> None:
         mumu = self._mumu()
@@ -4885,7 +4885,7 @@ class LaunchTests(unittest.TestCase):
         with patch.object(commands, "MuMuAdapter", return_value=mumu):
             report = commands.launch("none")
         assert not report.was_running
-        assert "開起來" in report.message
+        assert "開起來" in commands.launch_line(report)
 
     def test_restarting_the_game_leaves_the_emulator_alone(self) -> None:
         mumu = self._mumu()
@@ -6250,7 +6250,7 @@ class HeroGemButtonTests(unittest.TestCase):
         }
         blocked = runner._blocked(cards["warden"], VillageStock(gold=0, elixir=0, dark=999_999))
         assert blocked is not None
-        assert "升級中" in blocked
+        assert blocked == "already_upgrading"
 
 
 class HeroHallTests(unittest.TestCase):
@@ -6580,15 +6580,15 @@ class HeroRunnerTests(unittest.TestCase):
         as "no confirmation sheet came up", which reads as a swallowed tap.
         """
         runner = self._runner(hero="duke")
-        report = HeroReport()
+        report = HeroReport(hero="duke", outcome="read")
         with patch.object(runner, "_bring_on") as brought:
-            message = runner._raise(
+            outcome = runner._raise(
                 report,
                 {"duke": self._duke(upgradable=False)},
                 VillageStock(gold=0, elixir=0, dark=999_999),
             )
         brought.assert_not_called()
-        assert "停用" in message
+        assert outcome == "button_dead"
         assert report.started is None
 
     def test_an_upgrade_the_village_cannot_pay_for_is_never_tapped(self) -> None:
@@ -6597,12 +6597,12 @@ class HeroRunnerTests(unittest.TestCase):
         would stop a loop walking into one.
         """
         runner = self._runner(hero="duke")
-        report = HeroReport()
+        report = HeroReport(hero="duke", outcome="read")
         with patch.object(AdbController, "tap") as tapped:
-            message = runner._raise(
+            outcome = runner._raise(
                 report, {"duke": self._duke()}, VillageStock(gold=0, elixir=0, dark=55_999)
             )
-        assert "資源不夠" in message
+        assert outcome == "cannot_afford"
         assert report.started is None
         tapped.assert_not_called()
 
@@ -6619,7 +6619,7 @@ class HeroRunnerTests(unittest.TestCase):
             patch.object(runner, "_open") as opened,
         ):
             report = runner.run()
-        assert "都在忙" in report.message
+        assert report.outcome == "builders_busy"
         opened.assert_not_called()
 
     def test_a_run_that_only_reads_still_opens_the_hall_with_no_builder_free(self) -> None:
@@ -6644,14 +6644,14 @@ class HeroRunnerTests(unittest.TestCase):
         out of it.
         """
         runner = self._runner(hero="duke")
-        report = HeroReport()
+        report = HeroReport(hero="duke", outcome="read")
         with patch.object(AdbController, "tap") as tapped:
-            message = runner._raise(
+            outcome = runner._raise(
                 report,
                 {"duke": HeroCard(hero="duke", point=(1407, 648))},
                 VillageStock(gold=0, elixir=0, dark=200_000),
             )
-        assert "正在升級中" in message
+        assert outcome == "already_upgrading"
         tapped.assert_not_called()
 
     def test_a_storage_that_never_moved_is_not_an_upgrade(self) -> None:
@@ -6659,7 +6659,7 @@ class HeroRunnerTests(unittest.TestCase):
         nothing at all, and the sheet closes the same way either way.
         """
         runner = self._runner(hero="duke")
-        report = HeroReport()
+        report = HeroReport(hero="duke", outcome="read")
         held = VillageStock(gold=0, elixir=0, dark=200_000)
         with (
             patch.object(hero, "hero_cards", return_value=[self._duke()]),
@@ -6668,9 +6668,9 @@ class HeroRunnerTests(unittest.TestCase):
             patch.object(runner, "_close"),
             patch.object(runner, "_home", return_value=held),
         ):
-            message = runner._raise(report, {"duke": self._duke()}, held)
+            outcome = runner._raise(report, {"duke": self._duke()}, held)
         assert report.started is None
-        assert "只少了 0" in message
+        assert outcome == "undercharged"
 
     def test_the_hall_is_read_again_before_the_button_is_tapped(self) -> None:
         """The walk ends wherever the row ran out, which is not where it was when
@@ -6678,16 +6678,16 @@ class HeroRunnerTests(unittest.TestCase):
         card has slid into that place.
         """
         runner = self._runner(hero="duke")
-        report = HeroReport()
+        report = HeroReport(hero="duke", outcome="read")
         with (
             patch.object(hero, "hero_cards", return_value=[]),
             patch.object(runner, "_frame", return_value=b""),
             patch.object(AdbController, "tap") as tapped,
         ):
-            message = runner._raise(
+            outcome = runner._raise(
                 report, {"duke": self._duke()}, VillageStock(gold=0, elixir=0, dark=200_000)
             )
-        assert "不在畫面上" in message
+        assert outcome == "card_moved"
         tapped.assert_not_called()
 
 

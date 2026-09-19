@@ -32,7 +32,7 @@ from ai_coc.models import (
     BuildCandidate,
 )
 from ai_coc.prompts import render
-from ai_coc.ui.runner import BUY_SETTLE, MENU_SETTLE, SPOT_TIMEOUT, GameRunner, spell_out
+from ai_coc.ui.runner import BUY_SETTLE, MENU_SETTLE, SPOT_TIMEOUT, GameRunner
 from ai_coc.adapters.ai import GeminiClient
 from ai_coc.parsers.home import BUILDER_BUTTON, builder_jobs, free_builders, collect_bubbles
 from ai_coc.parsers.building import (
@@ -98,10 +98,10 @@ class UpkeepRunner(GameRunner):
         disappears. The gains come from the storage bars for the same reason —
         counting markers would report a full storage as a haul.
         """
-        report = CollectReport()
+        report = CollectReport(outcome="nothing_to_collect")
         before = self._home()
         if before is None:
-            report.message = "畫面沒辦法回到村莊，收集沒有開始"
+            report.outcome = "no_village"
             return report
         # The set of markers the last pass tapped. A pass that finds the same set
         # again made no progress, which is what a full storage looks like: the
@@ -134,17 +134,13 @@ class UpkeepRunner(GameRunner):
         # well as what reads the storages.
         after = self._home()
         if after is None:
-            report.message = f"點了 {report.markers} 個採集標記，但收完之後讀不到儲量"
+            report.outcome = "stock_unread"
             return report
         report.gold = after.gold - before.gold
         report.elixir = after.elixir - before.elixir
         report.dark = after.dark - before.dark
-        report.message = (
-            f"收了 {report.markers} 個採集器，"
-            f"金幣 +{report.gold}／聖水 +{report.elixir}／黑水 +{report.dark}"
-            if report.markers
-            else "沒有採集器等著收"
-        )
+        if report.markers:
+            report.outcome = "collected"
         return report
 
     def _buildings(self) -> list[BuildCandidate]:
@@ -318,20 +314,20 @@ class UpkeepRunner(GameRunner):
         before it is called a failure. The last tap shuts it again, because the
         panel covers the middle of the village and the next loop along taps there.
         """
-        report = BuilderReport()
+        report = BuilderReport(outcome="read")
         if self._home() is None:
-            report.message = "畫面沒辦法回到村莊，讀不到工人"
+            report.outcome = "no_village"
             return report
         counted = free_builders(self._frame("builders"))
         if counted is None:
-            report.message = "讀不到工人數量，先停下來"
+            report.outcome = "count_unread"
             return report
         report.free, report.total = counted
         queue = builder_jobs(self._after_tap(BUILDER_BUTTON, "panel"))
         if queue is None:
             queue = builder_jobs(self._after_tap(BUILDER_BUTTON, "panel"))
         if queue is None:
-            report.message = f"工人 {report.free}/{report.total}，但工人面板打不開"
+            report.outcome = "panel_shut"
             return report
         report.queue = queue
         self._tap(BUILDER_BUTTON)
@@ -343,43 +339,38 @@ class UpkeepRunner(GameRunner):
             queue.running,
         )
         if not queue.remaining:
-            report.message = f"工人 {report.free}/{report.total}，沒有在跑的升級"
-            return report
-        report.message = (
-            f"工人 {report.free}/{report.total}，{queue.running} 個升級在跑，"
-            f"最快的還要 {spell_out(queue.remaining[0])}"
-        )
+            report.outcome = "idle"
         return report
 
     def upgrade(self) -> BuildReport:
         """Put every idle builder on the dearest upgrade the village can pay for."""
-        report = BuildReport()
+        report = BuildReport(outcome="started", only=self.only)
         stock = self._home()
         if stock is None:
-            report.message = "畫面沒辦法回到村莊，建築升級沒有開始"
+            report.outcome = "no_village"
             return report
         builders = free_builders(self._frame("builders"))
         if builders is None:
-            report.message = "讀不到工人數量，先停下來"
+            report.outcome = "count_unread"
             return report
         logger.info("%d of %d builder(s) are free", builders[0], builders[1])
         if builders[0] == 0:
-            report.message = f"{builders[1]} 個工人都在忙，沒有可以派的"
+            report.outcome = "builders_busy"
             return report
         offers = self._buildings()
         if not offers:
-            report.message = "掃過村莊都沒有找到可以升級的建築"
+            report.outcome = "nothing_found"
             return report
         while offers and len(report.started) < builders[0]:
             offer = self._pick(
                 offers, stock.gold - self.keep_gold, stock.elixir - self.keep_elixir
             )
             if offer is None:
-                report.message = (
-                    f"沒有找到名字含「{self.only}」而且買得起的建築"
-                    if self.only
-                    else f"剩下的資源買不起任何升級，最便宜的要 {min(o.price for o in offers)}"
-                )
+                if self.only:
+                    report.outcome = "only_no_match"
+                else:
+                    report.outcome = "cannot_afford"
+                    report.cheapest = min(other.price for other in offers)
                 break
             if self._start(offer, stock):
                 report.started.append(offer)
@@ -388,16 +379,7 @@ class UpkeepRunner(GameRunner):
             offers = [other for other in offers if other.point != offer.point]
             after = self._home()
             if after is None:
-                report.message = "升級之後讀不到村莊，先停下來"
+                report.outcome = "village_lost"
                 break
             stock = after
-
-        # Named where a name was read, because "開始了 1 個升級" says nothing
-        # about which builder went where — and that is the whole point of asking.
-        started = "、".join(str(job.building) for job in report.started if job.building.name)
-        report.message = report.message or (
-            f"開始了 {len(report.started)} 個升級：{started}"
-            if started
-            else f"開始了 {len(report.started)} 個升級"
-        )
         return report

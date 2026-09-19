@@ -39,30 +39,38 @@ from ai_coc.models import (
     BuildReport,
     CartOutcome,
     HeroOptions,
+    HeroOutcome,
     NamedEntity,
     PlateReport,
     RunnerState,
     ShieldState,
     StockReport,
+    ViewOutcome,
     WallOptions,
     WallOutcome,
     WorldReport,
     AttackReport,
     AttackSeries,
+    BuildOutcome,
     DonateReport,
     FrameReading,
     LaunchReport,
     RestartScope,
     StatusReport,
+    WorldOutcome,
     AttackOptions,
     AttackOutcome,
     BuilderReport,
     CollectReport,
     DisplayTarget,
     DonateOptions,
+    DonateOutcome,
+    ExportOutcome,
     VillageEntity,
     VillageExport,
     BoundarySurvey,
+    BuilderOutcome,
+    CollectOutcome,
     LootThresholds,
     UpgradeOptions,
     StorageCapacity,
@@ -176,6 +184,26 @@ def _await_shutdown(mumu: MuMuAdapter, index: int) -> None:
     logger.warning("MuMu instance %s never went down; bringing the game up anyway", index)
 
 
+# What this call did, for the two scopes that say it outright. `none` is left
+# out because it reads off `was_running` instead, which is the only thing that
+# scope can report: it does the same work either way, and on a cold machine that
+# work is the whole job rather than the no-op the name suggests.
+LAUNCH_LINES: dict[RestartScope, str] = {
+    "game": "已重開部落衝突",
+    "emulator": "已重開模擬器與部落衝突",
+}
+
+
+def launch_line(report: LaunchReport) -> str:
+    """The one line a person reads off a launch."""
+    did = LAUNCH_LINES.get(report.restart) or (
+        "部落衝突已經在跑" if report.was_running else "已把部落衝突開起來"
+    )
+    if not report.at_village:
+        did = f"{did},但村莊沒有出現,畫面可能還在載入"
+    return f"{did},模擬器 {report.index} ({report.serial})"
+
+
 def launch(restart: RestartScope) -> LaunchReport:
     """Bring the game up on the first MuMu instance, tearing down as much as asked.
 
@@ -211,26 +239,18 @@ def launch(restart: RestartScope) -> LaunchReport:
     # camera against a map edge — the pinch does not do it, whatever this used
     # to say.
     settled = _settle_game(mumu.controller(instance.adb_serial), RESTART_POLLS)
-    if restart == "none":
-        # Which of these it was is the only thing this scope can report: it does
-        # the same work either way, and on a cold machine that work is the whole
-        # job rather than the no-op the name suggests.
-        did = "部落衝突已經在跑" if was_running else "已把部落衝突開起來"
-    else:
-        did = "已重開部落衝突" if restart == "game" else "已重開模擬器與部落衝突"
-    logger.info("%s on instance %s (%s)", did, instance.index, instance.adb_serial)
     # A game whose village never painted is reported rather than raised: the
     # process is up, so the caller may still have something to do with it, and
     # the one thing it must not do is assume the screen is ready.
-    if settled is None:
-        did = f"{did}，但村莊沒有出現，畫面可能還在載入"
-    return LaunchReport(
+    report = LaunchReport(
         index=instance.index,
         serial=instance.adb_serial,
         was_running=was_running,
+        restart=restart,
         at_village=settled is not None,
-        message=f"{did},模擬器 {instance.index} ({instance.adb_serial})",
     )
+    logger.info("Launch: %s", launch_line(report))
+    return report
 
 
 def _planner(config: AppConfig, tier: Literal["main", "lite"] = "main") -> GeminiClient | None:
@@ -1396,6 +1416,26 @@ def walls(options: WallOptions, should_stop: Callable[[], bool] = stop_requested
     return report
 
 
+BUILDER_LINES: dict[BuilderOutcome, str] = {
+    "read": "工人 {free}/{total},{running} 個升級在跑,最快的還要 {soonest}",
+    "idle": "工人 {free}/{total},沒有在跑的升級",
+    "no_village": "畫面沒辦法回到村莊,讀不到工人",
+    "count_unread": "讀不到工人數量,先停下來",
+    "panel_shut": "工人 {free}/{total},但工人面板打不開",
+}
+
+
+def builder_line(report: BuilderReport) -> str:
+    """The one line a person reads off a builder panel."""
+    remaining = report.queue.remaining
+    return BUILDER_LINES[report.outcome].format(
+        free=report.free,
+        total=report.total,
+        running=report.queue.running,
+        soonest=spell_out(remaining[0]) if remaining else "",
+    )
+
+
 def builders(frame_dir: Path | None = None) -> BuilderReport:
     """Say who is building what and how much longer, with no window in the way.
 
@@ -1406,7 +1446,7 @@ def builders(frame_dir: Path | None = None) -> BuilderReport:
     """
     adb, display = _session(frame_dir)
     report = UpkeepRunner(adb=adb, display=display, frame_dir=frame_dir).builders()
-    logger.info("Builders: %s", report.message)
+    logger.info("Builders: %s", builder_line(report))
     return report
 
 
@@ -1651,6 +1691,28 @@ CART_LINES: dict[CartOutcome, str] = {
 }
 
 
+COLLECT_LINES: dict[CollectOutcome, str] = {
+    "collected": "收了 {markers} 個採集器,金幣 +{gold}／聖水 +{elixir}／黑水 +{dark}",
+    "nothing_to_collect": "沒有採集器等著收",
+    "no_village": "畫面沒辦法回到村莊,收集沒有開始",
+    "stock_unread": "點了 {markers} 個採集標記,但收完之後讀不到儲量",
+}
+
+
+def collect_line(report: CollectReport) -> str:
+    """The one line a person reads, from whichever village the run was on.
+
+    The builder base's trip has its own seven answers and they are not a subset
+    of these, so the cart speaks for itself rather than being flattened into a
+    vocabulary of collector markers.
+    """
+    if report.cart is not None:
+        return CART_LINES[report.cart.outcome].format(elixir=report.cart.elixir)
+    return COLLECT_LINES[report.outcome].format(
+        markers=report.markers, gold=report.gold, elixir=report.elixir, dark=report.dark
+    )
+
+
 def collect(frame_dir: Path | None = None) -> CollectReport:
     """Tap every collector the village has left standing, with no window in the way.
 
@@ -1669,15 +1731,37 @@ def collect(frame_dir: Path | None = None) -> CollectReport:
     # one tap at a known spot rather than a colour-and-size search over the map.
     if current_world(adb.screenshot(display)) == "night":
         cart = collect_cart(adb, display)
-        logger.info("Collect: %s", CART_LINES[cart.outcome].format(elixir=cart.elixir))
-        return CollectReport(
-            markers=1 if cart.outcome == "collected" else 0,
-            elixir=cart.elixir,
-            message=CART_LINES[cart.outcome].format(elixir=cart.elixir),
-        )
-    report = UpkeepRunner(adb=adb, display=display, frame_dir=frame_dir).collect()
-    logger.info("Collect: %s", report.message)
+        report = CollectReport(outcome="cart", elixir=cart.elixir, cart=cart)
+    else:
+        report = UpkeepRunner(adb=adb, display=display, frame_dir=frame_dir).collect()
+    logger.info("Collect: %s", collect_line(report))
     return report
+
+
+# What stopped the run putting builders on things. `started` adds nothing,
+# because the count and the names are the line's own opening either way.
+BUILD_LINES: dict[BuildOutcome, str] = {
+    "started": "",
+    "nothing_found": "掃過村莊都沒有找到可以升級的建築",
+    "cannot_afford": "剩下的資源買不起任何升級,最便宜的要 {cheapest}",
+    "only_no_match": "沒有找到名字含「{only}」而且買得起的建築",
+    "builders_busy": "工人都在忙,沒有可以派的",
+    "count_unread": "讀不到工人數量,先停下來",
+    "no_village": "畫面沒辦法回到村莊,建築升級沒有開始",
+    "village_lost": "升級之後讀不到村莊,先停下來",
+}
+
+
+def build_line(report: BuildReport) -> str:
+    """What one `upgrade` run started, and what stopped it starting more.
+
+    Named where a name was read, because "開始了 1 個升級" says nothing about
+    which builder went where — and that is the whole point of asking.
+    """
+    named = "、".join(str(job.building) for job in report.started if job.building.name)
+    did = f"開始了 {len(report.started)} 個升級" + (f":{named}" if named else "")
+    reason = BUILD_LINES[report.outcome].format(cheapest=report.cheapest, only=report.only)
+    return f"{did};{reason}" if reason else did
 
 
 def upgrade(
@@ -1714,8 +1798,42 @@ def upgrade(
         namer=_planner(config, "lite"),
         only=options.only,
     ).upgrade()
-    logger.info("Upgrade: %s", report.message)
+    logger.info("Upgrade: %s", build_line(report))
     return report
+
+
+HERO_LINES: dict[HeroOutcome, str] = {
+    "read": "英雄殿堂裡讀到 {count} 個英雄",
+    "started": "{hero} 開始升級,花了 {price} {resource}",
+    "hall_not_found": "掃過村莊都沒有找到英雄殿堂",
+    "hero_absent": "英雄殿堂裡沒有看到 {hero}",
+    "already_upgrading": "{hero} 現在沒有升級按鈕,多半正在升級中",
+    "button_dead": "{hero} 的升級按鈕是停用的,多半是英雄殿堂的等級擋住了(要 {price} {resource})",
+    "cannot_afford": "資源不夠,{hero} 要 {price} {resource}",
+    "builders_busy": "工人都在忙,{hero} 現在派不出去",
+    "count_unread": "讀不到工人數量,先停下來",
+    "card_moved": "{hero} 不在畫面上了,這一輪先不動它",
+    "no_confirmation": "點了 {hero} 的升級,但沒有出現確認畫面",
+    "undercharged": "確認了 {hero} 的升級,但儲量沒有少那麼多",
+    "no_village": "畫面沒辦法回到村莊,英雄升級沒有開始",
+    "village_lost": "開始升級 {hero} 之後讀不到村莊,先停下來",
+}
+
+
+def hero_line(report: HeroReport) -> str:
+    """The one line a person reads off a hall reading or a hero upgrade.
+
+    The price comes off whichever card this run was about — the one it started
+    where it started something, and the one it read where it refused — because
+    every refusal that names a number is naming that card's own.
+    """
+    card = report.started or next((one for one in report.cards if one.hero == report.hero), None)
+    return HERO_LINES[report.outcome].format(
+        count=len(report.cards),
+        hero=report.hero,
+        price=card.price if card else "",
+        resource=card.resource if card else "",
+    )
 
 
 def hero(options: HeroOptions) -> HeroReport:
@@ -1739,8 +1857,18 @@ def hero(options: HeroOptions) -> HeroReport:
         hero=options.upgrade,
         at=options.at,
     ).run()
-    logger.info("Hero: %s", report.message)
+    logger.info("Hero: %s", hero_line(report))
     return report
+
+
+DONATE_LINES: dict[DonateOutcome, str] = {
+    "donated": "捐了 {gifts} 次",
+    "dry_run": "試跑,畫面上有 {offered} 種可以捐,一種都沒有捐出去",
+    "nothing_given": "有人在請求,但沒有捐出去(畫面上有 {offered} 種可捐)",
+    "nobody_asking": "部落聊天裡目前沒有人在請求增援",
+    "panel_shut": "點了增援,但捐贈畫面沒有打開",
+    "no_village": "畫面沒辦法回到村莊,捐兵沒有開始",
+}
 
 
 def donate(options: DonateOptions) -> DonateReport:
@@ -1758,7 +1886,10 @@ def donate(options: DonateOptions) -> DonateReport:
         dry_run=options.dry_run,
         rounds=options.rounds,
     ).donate()
-    logger.info("Donate: %s", report.message)
+    logger.info(
+        "Donate: %s",
+        DONATE_LINES[report.outcome].format(gifts=len(report.gifts), offered=report.offered),
+    )
     return report
 
 
@@ -1784,26 +1915,55 @@ def world(go: World | None = None) -> WorldReport:
         display = adb.display_for(COC_PACKAGE)
     except AdbControlError:
         logger.warning("The game is not on a display yet; neither village can be confirmed")
-        return WorldReport(found=None, world=None, message="遊戲還沒有畫面,無法判斷世界")
+        return WorldReport(found=None, world=None, outcome="no_display")
     found = current_world(adb.screenshot(display))
     if go is None or go == found:
-        report = WorldReport(found=found, world=found, message=f"目前在{_WORLDS[found]}")
+        report = WorldReport(found=found, world=found, outcome="here" if found else "no_village")
     else:
+        landed = cross(adb, display, go)
         report = WorldReport(
             found=found,
-            world=(landed := cross(adb, display, go)),
+            world=landed,
             crossed=landed == go,
-            message=f"從{_WORLDS[found]}切到{_WORLDS[landed]}"
-            if landed == go
-            else f"想切到{_WORLDS[go]},但畫面還停在{_WORLDS[landed]}",
+            outcome="crossed" if landed == go else "crossing_failed",
         )
-    logger.info("World: %s", report.message)
+    logger.info("World: %s", world_line(report))
     return report
 
 
-# Only ever used to build a message, which is why it is here rather than beside
-# the type: nothing in the loops cares what these are called in Chinese.
+# Only ever used to build a line somebody reads, which is why these are here
+# rather than beside the type: nothing in the loops cares what the two villages
+# are called in Chinese.
 _WORLDS: dict[World | None, str] = {"day": "日世界", "night": "夜世界", None: "不明的畫面"}
+
+WORLD_LINES: dict[WorldOutcome, str] = {
+    "here": "目前在{world}",
+    "crossed": "從{found}切到{world}",
+    "crossing_failed": "想切過去,但畫面還停在{world}",
+    "no_village": "畫面不是村莊,無法判斷世界",
+    "no_display": "遊戲還沒有畫面,無法判斷世界",
+}
+
+
+def world_line(report: WorldReport) -> str:
+    """The one line a person reads off a world check or a crossing."""
+    return WORLD_LINES[report.outcome].format(
+        found=_WORLDS[report.found], world=_WORLDS[report.world]
+    )
+
+
+VIEW_LINES: dict[ViewOutcome, str] = {
+    "parked": "並把鏡頭停回定位",
+    "not_a_village": "但畫面不是村莊,沒有把鏡頭停回定位",
+    "zoomed_in": "拉近的鏡頭停不住,沒有把鏡頭停回定位",
+    "never_settled": "但鏡頭一直沒有停下來,定位失敗",
+}
+
+
+def view_line(report: ViewReport) -> str:
+    """What this command asked of the camera, and what it settled."""
+    scaled = f"鏡頭{'拉遠' if report.zoom == 'out' else '拉近'}了 {report.times} 次"
+    return f"{scaled},{VIEW_LINES[report.outcome]}"
 
 
 def view(zoom: str = "out", times: int = 3) -> ViewReport:
@@ -1849,7 +2009,8 @@ def view(zoom: str = "out", times: int = 3) -> ViewReport:
     adb = _controller()
     display = adb.display_for(COC_PACKAGE)
     adb.zoom(zoom, times, COC_PACKAGE, display)
-    scaled = f"鏡頭{'拉遠' if zoom == 'out' else '拉近'}了 {times} 次"
+    asked: Literal["in", "out"] = "out" if zoom == "out" else "in"
+    world = None
     if zoom != "out":
         # **A camera that has just been zoomed in cannot be parked**, so asking
         # would undo the thing that was asked for and claim a position it never
@@ -1857,18 +2018,19 @@ def view(zoom: str = "out", times: int = 3) -> ViewReport:
         # the map's dark border and was still walking hundreds of pixels per
         # swipe after fourteen of them; `park_camera` pinches back out for
         # exactly that reason, which on this path is the opposite of the request.
-        report = ViewReport(message=f"{scaled}，拉近的鏡頭停不住，沒有把鏡頭停回定位")
+        outcome: ViewOutcome = "zoomed_in"
     elif (world := current_world(adb.screenshot(display))) is None:
-        report = ViewReport(message=f"{scaled}，但畫面不是村莊，沒有把鏡頭停回定位")
+        outcome = "not_a_village"
     elif park_camera(adb, display, world):
-        report = ViewReport(message=f"{scaled}，並把鏡頭停回定位")
+        outcome = "parked"
     else:
-        # The one message that used to be a claim rather than a reading. A park
+        # The one answer that used to be a claim rather than a reading. A park
         # that never arrived leaves every remembered coordinate off by however
         # far it was short, and this is the command somebody runs precisely to
         # put those back.
-        report = ViewReport(message=f"{scaled}，但鏡頭一直沒有停下來，定位失敗")
-    logger.info("View: %s", report.message)
+        outcome = "never_settled"
+    report = ViewReport(zoom=asked, times=times, world=world, outcome=outcome)
+    logger.info("View: %s", view_line(report))
     return report
 
 
@@ -1923,21 +2085,19 @@ def _last_export() -> VillageExport:
     """
     saved = sorted(ACCOUNT_JSON_DIR.glob("*.json"), key=lambda one: one.stat().st_mtime)
     if not saved:
-        return VillageExport(tag="", exported_at="", message="還沒有匯出過任何村莊資訊")
+        return VillageExport(tag="", exported_at="", outcome="never_exported")
     try:
         export = VillageExport.model_validate_json(saved[-1].read_text(encoding="utf-8"))
     except ValueError:
-        return VillageExport(
-            tag="",
-            exported_at="",
-            message=f"{saved[-1].name} 不是這個指令存的格式,請重新執行一次 ai_coc export",
-        )
-    return export.model_copy(
-        update={"message": f"{export.tag} 共 {len(export.entities)} 筆,讀自 {saved[-1]}"}
-    )
+        logger.warning("%s does not read back as an export", saved[-1])
+        return VillageExport(tag="", exported_at="", outcome="wrong_format")
+    logger.info("Read %s back off %s", export.tag, saved[-1])
+    return export.model_copy(update={"outcome": "read_back"})
 
 
-def _copy_village(adb: AdbController, display: DisplayTarget, frame_dir: Path | None) -> str:
+def _copy_village(
+    adb: AdbController, display: DisplayTarget, frame_dir: Path | None
+) -> tuple[str, ExportOutcome]:
     """Walk the settings menus and come back with whatever the game copied.
 
     Every step is verified before the next tap, because these are fixed
@@ -1963,11 +2123,11 @@ def _copy_village(adb: AdbController, display: DisplayTarget, frame_dir: Path | 
     adb.tap(*SETTINGS_GEAR, display)
     time.sleep(PAGE_SETTLE)
     if not settings_open(look("settings")):
-        raise RuntimeError("點了設定齒輪,但設定視窗沒有打開")
+        return "", "settings_shut"
     adb.tap(*MORE_SETTINGS, display)
     time.sleep(PAGE_SETTLE)
     if not more_settings_open(look("more_settings")):
-        raise RuntimeError("點了更多設定,但那一頁沒有打開")
+        return "", "more_settings_shut"
     for attempt in range(SCROLL_TRIES):
         spot = export_row(look(f"scroll_{attempt}"))
         if spot is not None:
@@ -1975,7 +2135,7 @@ def _copy_village(adb: AdbController, display: DisplayTarget, frame_dir: Path | 
         adb.swipe(*SETTINGS_SCROLL, SCROLL_MS, display)
         time.sleep(PAGE_SETTLE)
     else:
-        raise RuntimeError("捲到底了還是找不到「以 JSON 格式匯出村莊數據」那一列")
+        return "", "row_not_found"
     held = read_clipboard()
     clear_clipboard()
     adb.tap(*spot, display)
@@ -1983,13 +2143,33 @@ def _copy_village(adb: AdbController, display: DisplayTarget, frame_dir: Path | 
         for _ in range(CLIPBOARD_POLLS):
             time.sleep(CLIPBOARD_GAP)
             if payload := read_clipboard():
-                return payload
+                return payload, "exported"
         look("nothing_copied")
-        raise RuntimeError(
-            "點了複製,但剪貼簿沒有東西。可能是遊戲沒吃到那一下,也可能是 MuMu 沒把 Android 的剪貼簿同步過來"
-        )
+        return "", "nothing_copied"
     finally:
         write_clipboard(held)
+
+
+EXPORT_LINES: dict[ExportOutcome, str] = {
+    "exported": "{tag} 共 {count} 筆,剛從遊戲裡匯出",
+    "read_back": "{tag} 共 {count} 筆,讀自上一次匯出",
+    "never_exported": "還沒有匯出過任何村莊資訊",
+    "wrong_format": "存檔讀不成村莊匯出,請重新執行一次 ai_coc export",
+    "no_village": "遊戲沒有回到村莊畫面,沒有匯出",
+    "settings_shut": "點了設定齒輪,但設定視窗沒有打開",
+    "more_settings_shut": "點了更多設定,但那一頁沒有打開",
+    "row_not_found": "捲到底了還是找不到「以 JSON 格式匯出村莊數據」那一列",
+    "nothing_copied": (
+        "點了複製,但剪貼簿沒有東西。"
+        "可能是遊戲沒吃到那一下,也可能是 MuMu 沒把 Android 的剪貼簿同步過來"
+    ),
+    "not_a_village": "剪貼簿裡的不是村莊資料,複製的當下可能被別的東西蓋過去了",
+}
+
+
+def export_line(export: VillageExport) -> str:
+    """The one line a person reads off an export, whether it was taken or read back."""
+    return EXPORT_LINES[export.outcome].format(tag=export.tag, count=len(export.entities))
 
 
 def export(frame_dir: Path | None = None, last: bool = False) -> VillageExport:
@@ -2016,25 +2196,21 @@ def export(frame_dir: Path | None = None, last: bool = False) -> VillageExport:
     adb = _controller()
     display = _settle_game(adb, WORLD_SETTLE_POLLS)
     if display is None:
-        return VillageExport(tag="", exported_at="", message="遊戲沒有回到村莊畫面,沒有匯出")
+        return VillageExport(tag="", exported_at="", outcome="no_village")
     if frame_dir is not None:
         frame_dir.mkdir(parents=True, exist_ok=True)
     try:
-        payload = _copy_village(adb, display, frame_dir)
+        payload, copied = _copy_village(adb, display, frame_dir)
+        if copied != "exported":
+            return VillageExport(tag="", exported_at="", outcome=copied)
         # Parsed inside the same guard, because the clipboard is the one input
         # here that comes from outside: anything else copied during the poll is
         # read as the payload, and a `ValidationError` reaching the top would
         # leave `result.json` unwritten with only the log to reconstruct from.
         snapshot = parse_village_text(payload)
-    except RuntimeError as exc:
-        return VillageExport(tag="", exported_at="", message=str(exc))
     except ValueError as exc:
         logger.warning("The clipboard payload was not a village: %s", exc)
-        return VillageExport(
-            tag="",
-            exported_at="",
-            message="剪貼簿裡的不是村莊資料,複製的當下可能被別的東西蓋過去了",
-        )
+        return VillageExport(tag="", exported_at="", outcome="not_a_village")
     finally:
         # Whatever happened, the settings window is left covering the village,
         # and every other command starts by assuming one is on screen.
@@ -2052,10 +2228,10 @@ def export(frame_dir: Path | None = None, last: bool = False) -> VillageExport:
         timestamp=stamp,
         entities=named,
         boosts=snapshot.raw.boosts,
-        message=f"{snapshot.tag} 共 {len(named)} 筆,其中 {unnamed} 筆還沒有名字,存到 {path}",
+        outcome="exported",
     )
     path.write_text(result.model_dump_json(indent=2), encoding="utf-8")
-    logger.info("Export: %s", result.message)
+    logger.info("Export: %s,其中 %d 筆還沒有名字,存到 %s", export_line(result), unnamed, path)
     return result
 
 

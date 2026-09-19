@@ -226,11 +226,11 @@ class DispatchTests(unittest.TestCase):
 
     def test_a_model_is_written_out_as_indented_json(self) -> None:
         with (
-            patch.object(commands, "view", return_value=ViewReport(message="拉遠了")),
+            patch.object(commands, "view", return_value=ViewReport(outcome="parked")),
             patch("sys.stdout", new_callable=io.StringIO) as out,
         ):
             assert _run_command(_args("view"), self.run) == 0
-        expected = ViewReport(message="拉遠了").model_dump_json(indent=2)
+        expected = ViewReport(outcome="parked").model_dump_json(indent=2)
         assert (self.run.directory / "result.json").read_text(encoding="utf-8") == expected
         assert out.getvalue() == f"{expected}\n"
 
@@ -261,7 +261,7 @@ class DispatchTests(unittest.TestCase):
             entities=[
                 NamedEntity(section="buildings", data_id=1000001, level=16, name="Town Hall")
             ],
-            message="ok",
+            outcome="exported",
         )
         with (
             patch.object(commands, "export", return_value=export),
@@ -277,9 +277,9 @@ class DispatchTests(unittest.TestCase):
 
     def test_a_table_with_no_rows_still_says_why(self) -> None:
         """`--last --table` on a machine that has never run this is the line both
-        skills open with, and the failure's only explanation is the message.
+        skills open with, and its outcome is the failure's only explanation.
         """
-        blank = VillageExport(tag="", exported_at="", message="還沒有匯出過任何村莊資訊")
+        blank = VillageExport(tag="", exported_at="", outcome="never_exported")
         with (
             patch.object(commands, "export", return_value=blank),
             patch.object(commands, "claim"),
@@ -292,7 +292,7 @@ class DispatchTests(unittest.TestCase):
         """`--last` reads one file. A claim there would overwrite a farming run's
         own record and release it as `idle` while a battle was still going on.
         """
-        blank = VillageExport(tag="", exported_at="", message="還沒有匯出過任何村莊資訊")
+        blank = VillageExport(tag="", exported_at="", outcome="never_exported")
         with (
             patch.object(commands, "export", return_value=blank) as exported,
             patch.object(commands, "claim") as claimed,
@@ -333,7 +333,9 @@ class DispatchTests(unittest.TestCase):
 
     def test_collect_answers_through_the_same_path(self) -> None:
         with (
-            patch.object(commands, "collect", return_value=CollectReport(markers=2)),
+            patch.object(
+                commands, "collect", return_value=CollectReport(markers=2, outcome="collected")
+            ),
             patch("sys.stdout", new_callable=io.StringIO),
         ):
             _run_command(_args("collect"), self.run)

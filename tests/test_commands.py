@@ -36,20 +36,30 @@ from ai_coc.models import (
     BuildReport,
     CartOutcome,
     HeroOptions,
+    HeroOutcome,
     PlateReport,
+    ViewOutcome,
     WallOptions,
     WallOutcome,
     AttackReport,
+    BuildOutcome,
     DonateReport,
+    LaunchReport,
+    RestartScope,
     VillageStock,
+    WorldOutcome,
     AttackOptions,
     AttackOutcome,
     BuilderReport,
     CollectReport,
     DisplayTarget,
     DonateOptions,
+    DonateOutcome,
     EntityMapping,
+    ExportOutcome,
     VillageExport,
+    BuilderOutcome,
+    CollectOutcome,
     LootThresholds,
     UpgradeOptions,
     StorageCapacity,
@@ -125,7 +135,7 @@ class WorldCommandTests(unittest.TestCase):
         """No swipe, no tap and no pinch, which is what lets a session ask at any moment."""
         adb, sailed, report = self._world("day")
         assert (report.found, report.world, report.crossed) == ("day", "day", False)
-        assert "日世界" in report.message
+        assert report.outcome == "here"
         assert adb.screenshot.call_count == 1
         adb.tap.assert_not_called()
         adb.swipe.assert_not_called()
@@ -141,22 +151,22 @@ class WorldCommandTests(unittest.TestCase):
     def test_a_crossing_that_lands_says_where_it_came_from(self) -> None:
         _, sailed, report = self._world("day", go="night", crossed="night")
         assert (report.found, report.world, report.crossed) == ("day", "night", True)
-        assert report.message == "從日世界切到夜世界"
+        assert commands.world_line(report) == "從日世界切到夜世界"
         sailed.assert_called_once()
         assert sailed.call_args.args[2] == "night"
 
     def test_a_crossing_that_did_not_land_says_where_the_game_stayed(self) -> None:
         _, _, report = self._world("day", go="night", crossed="day")
         assert (report.world, report.crossed) == ("day", False)
-        assert report.message == "想切到夜世界,但畫面還停在日世界"
+        assert report.outcome == "crossing_failed"
         _, _, lost = self._world("day", go="night", crossed=None)
         assert lost.world is None
-        assert "不明的畫面" in lost.message
+        assert "不明的畫面" in commands.world_line(lost)
 
     def test_a_game_with_no_window_yet_confirms_neither_village(self) -> None:
         _, sailed, report = self._world("day", go="night", display=False)
         assert (report.found, report.world) == (None, None)
-        assert "還沒有畫面" in report.message
+        assert report.outcome == "no_display"
         sailed.assert_not_called()
 
 
@@ -378,15 +388,18 @@ class CollectCommandTests(unittest.TestCase):
 
     def test_the_builder_base_empties_its_cart_instead_of_sweeping(self) -> None:
         adb, cart, runner, report = self._cart(CartReport(outcome="collected", elixir=300_000))
-        assert (report.markers, report.elixir) == (1, 300_000)
-        assert "300000" in report.message
+        # No collector was tapped, because that village has none: the cart comes
+        # back whole rather than as a marker count standing in for one.
+        assert (report.markers, report.elixir) == (0, 300_000)
+        assert (report.outcome, report.cart.outcome) == ("cart", "collected")
+        assert "300000" in commands.collect_line(report)
         cart.assert_called_once_with(adb, DISPLAY)
         runner.assert_not_called()
 
     def test_an_empty_cart_is_reported_as_nothing_rather_than_as_a_marker(self) -> None:
         *_, report = self._cart(CartReport(outcome="empty"))
         assert (report.markers, report.elixir) == (0, 0)
-        assert "推車應該是空的" in report.message
+        assert "推車應該是空的" in commands.collect_line(report)
 
     def test_a_locked_cart_is_not_reported_as_an_empty_one(self) -> None:
         """The opposite instruction: the cart is standing full and cannot be opened.
@@ -397,8 +410,7 @@ class CollectCommandTests(unittest.TestCase):
         """
         *_, report = self._cart(CartReport(outcome="locked"))
         assert (report.markers, report.elixir) == (0, 0)
-        assert report.message != "推車裡沒有東西可以收"
-        assert "收集鈕是灰的" in report.message
+        assert "收集鈕是灰的" in commands.collect_line(report)
 
     def test_every_way_the_cart_can_end_has_a_line_of_its_own(self) -> None:
         """One sentence per outcome, and each one says the thing only it means.
@@ -433,7 +445,9 @@ class CollectCommandTests(unittest.TestCase):
             patch.object(commands, "current_world", return_value="day"),
             patch.object(commands, "UpkeepRunner") as runner,
         ):
-            runner.return_value.collect.return_value = CollectReport(markers=3, message="收了")
+            runner.return_value.collect.return_value = CollectReport(
+                markers=3, outcome="collected"
+            )
             frames = Path(folder) / "frames"
             report = commands.collect(frames)
             assert runner.call_args.kwargs["frame_dir"] == frames
@@ -465,13 +479,13 @@ class LoopCommandTests(unittest.TestCase):
             patch.object(commands, "_controller", return_value=_adb()),
             patch.object(commands, "UpkeepRunner") as runner,
         ):
-            runner.return_value.upgrade.return_value = BuildReport(message="開始了")
+            runner.return_value.upgrade.return_value = BuildReport(outcome="started")
             report = commands.upgrade(UpgradeOptions(keep_gold=5, keep_elixir=7, only="金礦"))
         kwargs = runner.call_args.kwargs
         assert (kwargs["keep_gold"], kwargs["keep_elixir"], kwargs["only"]) == (5, 7, "金礦")
         assert kwargs["ai"] is main
         assert kwargs["namer"] is lite
-        assert report.message == "開始了"
+        assert report.outcome == "started"
 
     def test_a_named_building_skips_the_finder_but_keeps_the_namer(self) -> None:
         """The whole point of asking is to find them; a caller who named them already looked."""
@@ -480,7 +494,7 @@ class LoopCommandTests(unittest.TestCase):
             patch.object(commands, "_controller", return_value=_adb()),
             patch.object(commands, "UpkeepRunner") as runner,
         ):
-            runner.return_value.upgrade.return_value = BuildReport()
+            runner.return_value.upgrade.return_value = BuildReport(outcome="started")
             commands.upgrade(UpgradeOptions(at=[(900, 430)]))
         kwargs = runner.call_args.kwargs
         assert kwargs["ai"] is None
@@ -493,23 +507,23 @@ class LoopCommandTests(unittest.TestCase):
             patch.object(commands, "_controller", return_value=_adb()),
             patch.object(commands, "HeroRunner") as runner,
         ):
-            runner.return_value.run.return_value = HeroReport(message="讀到")
+            runner.return_value.run.return_value = HeroReport(outcome="read")
             report = commands.hero(HeroOptions(upgrade="duke", at=(990, 430)))
         kwargs = runner.call_args.kwargs
         assert (kwargs["hero"], kwargs["at"]) == ("duke", (990, 430))
         assert kwargs["ai"] is main
-        assert report.message == "讀到"
+        assert report.outcome == "read"
 
     def test_donate_passes_the_dry_run_and_the_round_limit(self) -> None:
         with (
             patch.object(commands, "_controller", return_value=_adb()),
             patch.object(commands, "ClanRunner") as runner,
         ):
-            runner.return_value.donate.return_value = DonateReport(message="捐了")
+            runner.return_value.donate.return_value = DonateReport(outcome="donated")
             report = commands.donate(DonateOptions(dry_run=True, rounds=2))
         kwargs = runner.call_args.kwargs
         assert (kwargs["dry_run"], kwargs["rounds"]) == (True, 2)
-        assert report.message == "捐了"
+        assert report.outcome == "donated"
 
     def test_walls_skips_the_finder_when_told_where_the_walls_are(self) -> None:
         main, _ = self._planners()
@@ -533,7 +547,9 @@ class LoopCommandTests(unittest.TestCase):
             patch.object(commands, "_controller", return_value=_adb()),
             patch.object(commands, "UpkeepRunner") as runner,
         ):
-            runner.return_value.builders.return_value = BuilderReport(free=1, total=5)
+            runner.return_value.builders.return_value = BuilderReport(
+                free=1, total=5, outcome="read"
+            )
             report = commands.builders()
         assert (report.free, report.total) == (1, 5)
 
@@ -588,6 +604,167 @@ class WallLineTests(unittest.TestCase):
                 commands.WALL_LINES[other].format(walls=3) for other in own if other != outcome
             ]
             assert not any(fragment in other for other in others), outcome
+
+
+class UpkeepLineTests(unittest.TestCase):
+    """One log line per outcome for the seven reports that gained one.
+
+    The same guard as `WallLineTests`, and for the reason that made it worth
+    writing there: counting distinct strings lets two of them swap and still
+    pass, so each fragment has to belong to its own outcome and to no other. A
+    table missing a value is worse again — a `KeyError` on the one path nobody
+    exercised, raised from inside the command that was reporting a failure.
+    """
+
+    def _each(self, table: dict[str, str], own: dict[str, str], outcomes: tuple[str, ...]) -> None:
+        assert set(own) == set(outcomes)
+        for outcome, fragment in own.items():
+            assert fragment in table[outcome], outcome
+            others = [table[other] for other in own if other != outcome]
+            assert not any(fragment in other for other in others), outcome
+
+    def test_every_collect_outcome_has_a_line_of_its_own(self) -> None:
+        """Minus `cart`, which is the builder base's trip and answers through `CartReport`."""
+        self._each(
+            commands.COLLECT_LINES,
+            {
+                "collected": "收了",
+                "nothing_to_collect": "沒有採集器等著收",
+                "no_village": "收集沒有開始",
+                "stock_unread": "讀不到儲量",
+            },
+            tuple(one for one in get_args(CollectOutcome) if one != "cart"),
+        )
+
+    def test_every_builder_outcome_has_a_line_of_its_own(self) -> None:
+        self._each(
+            commands.BUILDER_LINES,
+            {
+                "read": "個升級在跑",
+                "idle": "沒有在跑的升級",
+                "no_village": "畫面沒辦法回到村莊",
+                "count_unread": "讀不到工人數量",
+                "panel_shut": "工人面板打不開",
+            },
+            get_args(BuilderOutcome),
+        )
+
+    def test_every_upgrade_outcome_has_a_line_of_its_own(self) -> None:
+        """`started` is the empty one: the count and the names are the line's own opening."""
+        self._each(
+            commands.BUILD_LINES,
+            {
+                "nothing_found": "沒有找到可以升級的建築",
+                "cannot_afford": "最便宜的要",
+                "only_no_match": "而且買得起的建築",
+                "builders_busy": "工人都在忙",
+                "count_unread": "讀不到工人數量",
+                "no_village": "建築升級沒有開始",
+                "village_lost": "升級之後讀不到村莊",
+            },
+            tuple(one for one in get_args(BuildOutcome) if one != "started"),
+        )
+        assert commands.BUILD_LINES["started"] == ""
+
+    def test_every_hero_outcome_has_a_line_of_its_own(self) -> None:
+        self._each(
+            commands.HERO_LINES,
+            {
+                "read": "個英雄",
+                "started": "開始升級,花了",
+                "hall_not_found": "沒有找到英雄殿堂",
+                "hero_absent": "沒有看到",
+                "already_upgrading": "多半正在升級中",
+                "button_dead": "升級按鈕是停用的",
+                "cannot_afford": "資源不夠",
+                "builders_busy": "現在派不出去",
+                "count_unread": "讀不到工人數量",
+                "card_moved": "不在畫面上了",
+                "no_confirmation": "沒有出現確認畫面",
+                "undercharged": "儲量沒有少那麼多",
+                "no_village": "英雄升級沒有開始",
+                "village_lost": "之後讀不到村莊",
+            },
+            get_args(HeroOutcome),
+        )
+
+    def test_every_donate_outcome_has_a_line_of_its_own(self) -> None:
+        self._each(
+            commands.DONATE_LINES,
+            {
+                "donated": "捐了",
+                "dry_run": "試跑",
+                "nothing_given": "但沒有捐出去",
+                "nobody_asking": "沒有人在請求增援",
+                "panel_shut": "捐贈畫面沒有打開",
+                "no_village": "捐兵沒有開始",
+            },
+            get_args(DonateOutcome),
+        )
+
+    def test_every_world_outcome_has_a_line_of_its_own(self) -> None:
+        self._each(
+            commands.WORLD_LINES,
+            {
+                "here": "目前在",
+                "crossed": "切到",
+                "crossing_failed": "畫面還停在",
+                "no_village": "畫面不是村莊",
+                "no_display": "遊戲還沒有畫面",
+            },
+            get_args(WorldOutcome),
+        )
+
+    def test_every_view_outcome_has_a_line_of_its_own(self) -> None:
+        self._each(
+            commands.VIEW_LINES,
+            {
+                "parked": "並把鏡頭停回定位",
+                "not_a_village": "畫面不是村莊",
+                "zoomed_in": "拉近的鏡頭停不住",
+                "never_settled": "鏡頭一直沒有停下來",
+            },
+            get_args(ViewOutcome),
+        )
+
+    def test_every_export_outcome_has_a_line_of_its_own(self) -> None:
+        self._each(
+            commands.EXPORT_LINES,
+            {
+                "exported": "剛從遊戲裡匯出",
+                "read_back": "讀自上一次匯出",
+                "never_exported": "還沒有匯出過",
+                "wrong_format": "存檔讀不成村莊匯出",
+                "no_village": "沒有回到村莊畫面",
+                "settings_shut": "設定視窗沒有打開",
+                "more_settings_shut": "那一頁沒有打開",
+                "row_not_found": "捲到底了",
+                "nothing_copied": "剪貼簿沒有東西",
+                "not_a_village": "不是村莊資料",
+            },
+            get_args(ExportOutcome),
+        )
+
+    def test_a_launch_says_which_of_the_four_things_it_did(self) -> None:
+        """`none` reads off `was_running` instead, which is all that scope can report."""
+
+        def line(restart: RestartScope, was_running: bool = True, at_village: bool = True) -> str:
+            return commands.launch_line(
+                LaunchReport(
+                    index=0,
+                    serial="127.0.0.1:16384",
+                    was_running=was_running,
+                    restart=restart,
+                    at_village=at_village,
+                )
+            )
+
+        assert "已經在跑" in line("none")
+        assert "開起來" in line("none", was_running=False)
+        assert line("game").startswith("已重開部落衝突")
+        assert line("emulator").startswith("已重開模擬器與部落衝突")
+        # Orthogonal to all four, the way the attack's counts are to its outcome.
+        assert "村莊沒有出現" in line("none", at_village=False)
 
 
 class RoundLineTests(unittest.TestCase):
@@ -1062,8 +1239,8 @@ class CaptureAndViewTests(unittest.TestCase):
         adb, report = self._view("day", "in")
         _, far = self._view("day", "out", 3)
         adb.zoom.assert_any_call("in", 2, COC_PACKAGE, DISPLAY)
-        assert "拉近" in report.message
-        assert "拉遠" in far.message
+        assert (report.zoom, report.times) == ("in", 2)
+        assert (far.zoom, far.times) == ("out", 3)
 
     def test_zooming_in_does_not_claim_a_park(self) -> None:
         """The walk is only bounded at the far zoom, so there is none to make here.
@@ -1079,7 +1256,7 @@ class CaptureAndViewTests(unittest.TestCase):
         # there to tell the park which corner to push into, and this path has no
         # park to aim. Asking anyway is 0.7 s a run spends on nothing.
         adb.screenshot.assert_not_called()
-        assert "沒有把鏡頭停回定位" in report.message
+        assert report.outcome == "zoomed_in"
 
     def test_view_parks_the_camera_as_well_as_zooming_it(self) -> None:
         """Scale was only ever half of what a caller asking for the view wants.
@@ -1094,7 +1271,7 @@ class CaptureAndViewTests(unittest.TestCase):
         landing = (crossing.start[0] + crossing.drift[0], crossing.start[1] + crossing.drift[1])
         for call in adb.swipe.call_args_list:
             assert call.args[:2] == (crossing.start, landing)
-        assert "停回定位" in report.message
+        assert (report.outcome, report.world) == ("parked", "day")
 
     def test_the_builder_base_is_parked_into_its_own_corner(self) -> None:
         """The two maps clamp in opposite corners, so one push cannot serve both.
@@ -1120,7 +1297,7 @@ class CaptureAndViewTests(unittest.TestCase):
         adb, report = self._view(None)
         adb.zoom.assert_called_once()
         adb.swipe.assert_not_called()
-        assert "沒有把鏡頭停回定位" in report.message
+        assert (report.outcome, report.world) == ("not_a_village", None)
 
 
 class SurveyRunnerTests(unittest.TestCase):
@@ -1299,14 +1476,14 @@ class ExportTests(unittest.TestCase):
         """
         with patch.object(commands, "_settle_game", return_value=None):
             report = commands.export()
-        assert "沒有回到村莊畫面" in report.message
+        assert report.outcome == "no_village"
         self.adb.tap.assert_not_called()
         self.adb.swipe.assert_not_called()
 
     def test_a_menu_that_did_not_open_stops_before_the_next_tap(self) -> None:
         """The whole point of reading: the second tap is a fixed coordinate."""
         report, _ = self._export(settings=False)
-        assert "設定視窗沒有打開" in report.message
+        assert report.outcome == "settings_shut"
         assert report.entities == []
         # The gear, and then the close — never 更多設定 at a screen nobody confirmed.
         assert [call.args[:2] for call in self.adb.tap.call_args_list] == [
@@ -1317,7 +1494,7 @@ class ExportTests(unittest.TestCase):
     def test_a_list_that_never_reaches_the_row_is_never_tapped(self) -> None:
         """A missed scroll leaves the copy coordinate over a settings toggle."""
         report, cleared = self._export(row=None)
-        assert "找不到" in report.message
+        assert report.outcome == "row_not_found"
         cleared.assert_not_called()
         assert self.adb.swipe.call_count == commands.SCROLL_TRIES
         assert (1131, 560) not in [call.args[:2] for call in self.adb.tap.call_args_list]
@@ -1326,7 +1503,7 @@ class ExportTests(unittest.TestCase):
         """Cleared first, so nothing arriving really is nothing copied."""
         with patch.object(commands, "CLIPBOARD_POLLS", 2):
             report, cleared = self._export(clip="")
-        assert "剪貼簿沒有東西" in report.message
+        assert report.outcome == "nothing_copied"
         cleared.assert_called_once()
         assert not list(self.saved.glob("*.json"))
 
@@ -1349,7 +1526,7 @@ class ExportTests(unittest.TestCase):
         would leave `result.json` unwritten.
         """
         report, _ = self._export(clip="just some text somebody copied")
-        assert "不是村莊資料" in report.message
+        assert report.outcome == "not_a_village"
         assert not list(self.saved.glob("*.json"))
 
     def test_the_settings_window_is_closed_even_when_the_export_failed(self) -> None:
@@ -1364,13 +1541,13 @@ class ExportTests(unittest.TestCase):
         assert commands._export_path("").name == "UNKNOWN.json"
 
     def test_reading_the_last_export_says_so_when_there_is_nothing_to_read(self) -> None:
-        assert "還沒有匯出過" in commands.export(last=True).message
+        assert commands.export(last=True).outcome == "never_exported"
 
     def test_a_file_from_before_this_command_is_named_rather_than_read_as_empty(self) -> None:
         """The old shape held the game's raw payload, which parses as a village with nothing in it."""
         (self.saved / "#OLD.json").write_text(PAYLOAD, encoding="utf-8")
         report = commands.export(last=True)
-        assert "不是這個指令存的格式" in report.message
+        assert report.outcome == "wrong_format"
         assert report.entities == []
 
 

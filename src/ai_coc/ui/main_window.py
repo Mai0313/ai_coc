@@ -591,8 +591,9 @@ class MainWindow(QMainWindow):
 
         `RunLog.open` and `configure_logging` are called here rather than inside
         the worker because both belong on the thread that owns the widgets this
-        reads. `done` defaults to printing the report's own message, which is
-        what four of the five jobs want.
+        reads. `done` is only for the attack, which stands the automation down
+        on a full storage: every `commands.*` function logs its own one-line
+        answer, so a pass needs nothing said about it here.
         """
         run = RunLog.open(what, recording=self.record_frames.isChecked())
         configure_logging(run)
@@ -604,10 +605,6 @@ class MainWindow(QMainWindow):
             run.answer(report.model_dump_json(indent=2))
             if done:
                 done(report)
-            else:
-                # The message alone, because `label` is already the line above
-                # it: together they read 正在收取採集器… 收了 8 個採集器.
-                logger.info("%s", report.message)
 
         def finished() -> None:
             self.job_running = False
@@ -945,18 +942,18 @@ class MainWindow(QMainWindow):
     def _show_export(self, export: VillageExport) -> None:
         """Draw an export into the table, whether it was just taken or read off disk.
 
-        The label carries the count when there is one and the export's own
-        message when there is not, which is what a failure has instead of rows:
-        no village on screen, a menu that did not open, nothing saved yet. It
-        used to have a box of its own below the table, repeating the count and
-        the path a line at a time; the count is here and the path is in the log.
+        The label carries the count when there is one and the step the export
+        stopped at when there is not, which is what a failure has instead of
+        rows: no village on screen, a menu that did not open, nothing saved yet.
+        It used to have a box of its own below the table, repeating the count
+        and the path a line at a time; the count is here, the path is in the log.
         """
         if export.tag:
             self.current_account_tag = export.tag
         self.account_label.setText(
             f"帳號：{export.tag} — {len(export.entities)} 筆資料"
             if export.tag
-            else export.message or "尚未匯入帳號"
+            else commands.export_line(export)
         )
         self.account_table.setRowCount(len(export.entities))
         for index, entity in enumerate(export.entities):
