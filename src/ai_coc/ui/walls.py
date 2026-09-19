@@ -34,7 +34,15 @@ import logging
 
 from pydantic import Field
 
-from ai_coc.models import WallMenu, WallBatch, WallReport, WallUpgrade, VillageStock, WallCandidate
+from ai_coc.models import (
+    WallMenu,
+    WallBatch,
+    WallReport,
+    WallOutcome,
+    WallUpgrade,
+    VillageStock,
+    WallCandidate,
+)
 from ai_coc.ui.runner import BUY_SETTLE, MENU_SETTLE, GameRunner
 from ai_coc.parsers.home import free_builders
 from ai_coc.parsers.building import wall_menu, game_dialog
@@ -357,17 +365,16 @@ class WallRunner(GameRunner):
         storage bars read straight through it, and a tap on 攻擊 opens the attack
         menu with the wall menu gone.
         """
-        report = WallReport()
+        # **Built with the answer for a run that walks its whole list**, so the
+        # exits below each name their own reason and the end of the loop needs
+        # no flag to know nothing did.
+        report = WallReport(outcome="nothing_bought")
         if self._home() is None:
-            report.message = "畫面沒辦法回到村莊，城牆升級沒有開始"
+            report.outcome = "no_village"
             return report
         walls = self._candidates()
         if not walls:
-            report.message = (
-                "收到停止要求，城牆升級沒有開始"
-                if self.should_stop()
-                else "掃過村莊都沒有找到城牆"
-            )
+            report.outcome = "stopped" if self.should_stop() else "no_walls_found"
             return report
         logger.info("%d wall(s) to choose from", len(walls))
         # Every wall the run may still spend on, against what its menu last
@@ -390,11 +397,12 @@ class WallRunner(GameRunner):
             # those had bought one wall out of the six it could afford.
             stock = self._home()
             if stock is None:
-                report.message = "看不到村莊的儲量，先停下來"
+                report.outcome = "no_stock"
                 break
             cheapest = min(prices.values())
             if max(stock.gold - self.keep_gold, stock.elixir - self.keep_elixir) < cheapest:
-                report.message = f"剩下的資源買不起下一批城牆，最便宜的一批要 {cheapest}"
+                logger.info("The cheapest batch left costs %d, which is out of reach", cheapest)
+                report.outcome = "cannot_afford"
                 break
             point = self._pick(prices)
             bought = self._buy(point, stock)
@@ -410,10 +418,10 @@ class WallRunner(GameRunner):
                 # forty seconds a wall.
                 counted = free_builders(self._frame("builders"))
                 if counted is not None and counted[0] == 0:
-                    report.message = (
-                        f"{counted[1]} 個工人都在忙，遊戲不讓升級城牆；"
-                        "跑 ai_coc builders 看最快的還要多久"
+                    logger.info(
+                        "All %d builders are busy; the game refuses every batch", counted[1]
                     )
+                    report.outcome = "builders_busy"
                     break
                 # This point is spent as far as this run is concerned. Dropping
                 # it rather than retrying is what keeps a wall the game will not
@@ -433,10 +441,19 @@ class WallRunner(GameRunner):
                 del prices[point]
             else:
                 prices[point] = latest.price
-        if not report.message:
-            report.message = (
-                f"升級了 {report.walls} 面城牆"
-                if report.upgrades
-                else "每一個位置都沒有買成，紀錄裡有各自停在哪一步"
-            )
+        report.outcome = self._ended(report)
         return report
+
+    def _ended(self, report: WallReport) -> WallOutcome:
+        """What to call a run whose loop condition ran out rather than breaking.
+
+        **Only when nothing above named a reason**, which is what the value the
+        report was built with means: reaching here with `nothing_bought` still on
+        it says the loop walked its whole list, so this is a stop, a full list
+        bought, or the one case the loop cannot explain.
+        """
+        if report.outcome != "nothing_bought":
+            return report.outcome
+        if self.should_stop():
+            return "stopped"
+        return "bought" if report.upgrades else "nothing_bought"

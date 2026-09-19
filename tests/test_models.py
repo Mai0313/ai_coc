@@ -246,10 +246,11 @@ class ReportArithmeticTests(unittest.TestCase):
 
     def test_wall_and_build_reports_add_up_what_was_paid(self) -> None:
         walls = WallReport(
+            outcome="bought",
             upgrades=[
                 WallUpgrade(unit=1_600_000, count=3, resource="gold"),
                 WallUpgrade(unit=1_600_000, count=2, resource="elixir"),
-            ]
+            ],
         )
         assert walls.walls == 5
         assert (walls.paid("gold"), walls.paid("elixir")) == (4_800_000, 3_200_000)

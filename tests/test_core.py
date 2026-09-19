@@ -36,6 +36,7 @@ from ai_coc.models import (
     HeroReport,
     PlayedPlan,
     UiSettings,
+    WallReport,
     AdbEndpoint,
     RunnerState,
     ScreenPoint,
@@ -4227,7 +4228,7 @@ class RunnerStateTests(unittest.TestCase):
         """One file for every long loop rather than a mechanism each."""
         with tempfile.TemporaryDirectory() as folder:
             state = Path(folder) / "state.json"
-            report = MagicMock(message="")
+            report = MagicMock(outcome="nothing_bought", walls=0)
             report.paid.return_value = 0
             with (
                 patch.object(commands, "STATE_PATH", state),
@@ -4240,15 +4241,19 @@ class RunnerStateTests(unittest.TestCase):
             assert runner.call_args.kwargs["should_stop"] is commands.stop_requested
 
     def test_a_stopped_wall_run_says_so_and_keeps_what_it_bought(self) -> None:
-        """The runner counts batches; whether this call was stopped is the
-        command's own fact, so the prefix goes on here rather than in the loop.
+        """The runner names the stop itself, so the command adds nothing.
+
+        This used to prefix 已停止 onto whatever sentence the loop had written,
+        and needed an exception for a run stopped before it bought anything —
+        whose own fallback reads as a verdict on positions it never tried. That
+        is the ambiguity `WallOutcome` removes.
         """
         with tempfile.TemporaryDirectory() as folder:
             state = Path(folder) / "state.json"
 
             def asked_mid_run() -> MagicMock:
                 commands.stop()
-                report = MagicMock(message="升級了 3 面城牆")
+                report = MagicMock(outcome="stopped", walls=3)
                 report.paid.return_value = 0
                 return report
 
@@ -4261,7 +4266,7 @@ class RunnerStateTests(unittest.TestCase):
             ):
                 runner.return_value.run.side_effect = asked_mid_run
                 result = commands.walls(WallOptions())
-            assert result.message == "已停止，升級了 3 面城牆"
+            assert result.outcome == "stopped"
 
     def test_a_headless_run_hands_the_state_to_the_runner(self) -> None:
         """The interface was there all along; only the window ever passed it.
@@ -5160,6 +5165,101 @@ class HomeTests(unittest.TestCase):
         # at the zoom everything was measured at, and the run above had
         # already settled it once.
         assert settle.call_count == 1
+
+
+class WallOutcomeTests(unittest.TestCase):
+    """Why a wall run stopped, which was a sentence and is now a name.
+
+    **Three of these used to be told apart by their wording**, and a project
+    skill instructed its reader to do exactly that — so nothing here was
+    guarding the distinction a rewording would have broken.
+    """
+
+    HELD = VillageStock(gold=9_000_000, elixir=9_000_000, dark=100_000)
+
+    def _run(
+        self,
+        *,
+        homes: list[VillageStock | None],
+        candidates: list[WallCandidate] | None = None,
+        bought: list[WallUpgrade | None] | None = None,
+        builders: tuple[int, int] | None = (1, 5),
+        stop_after: int | None = None,
+    ) -> WallReport:
+        found = candidates if candidates is not None else [WallCandidate(point=(1, 1), price=100)]
+        # A stop that arrives after that many readings, so 0 is one asked for
+        # before the run and None is one nobody asked for. Anything above 0 is
+        # the only way to reach the exit where a run was stopped *and* had
+        # already bought something.
+        asked = iter(range(10_000))
+        runner = WallRunner(
+            adb=AdbController(endpoint=AdbEndpoint(port=16384)),
+            display=DisplayTarget(logical_id="1", physical_id="2"),
+            should_stop=lambda: stop_after is not None and next(asked) >= stop_after,
+        )
+        with (
+            patch.object(walls.time, "sleep"),
+            patch.object(runner, "_frame", return_value=b""),
+            patch.object(runner, "_home", side_effect=homes),
+            patch.object(runner, "_candidates", return_value=found),
+            patch.object(runner, "_buy", side_effect=bought or [None]),
+            patch.object(walls, "free_builders", return_value=builders),
+            patch.object(walls, "wall_menu", return_value=None),
+        ):
+            return runner.run()
+
+    def test_a_village_nobody_could_get_back_to(self) -> None:
+        assert self._run(homes=[None]).outcome == "no_village"
+
+    def test_a_sweep_that_found_no_walls(self) -> None:
+        assert self._run(homes=[self.HELD], candidates=[]).outcome == "no_walls_found"
+
+    def test_a_stop_before_the_scan_is_not_a_village_without_walls(self) -> None:
+        """The pair a reader has already misread once, in the expensive direction."""
+        assert self._run(homes=[self.HELD], candidates=[], stop_after=0).outcome == "stopped"
+
+    def test_a_stop_after_the_scan_is_not_a_village_the_game_refused(self) -> None:
+        """**The exit nothing was guarding**, and the one a stop normally takes.
+
+        A stop that arrives once the walls are priced leaves the loop's own
+        condition to end the run, so nothing on the way out names a reason —
+        and read as `nothing_bought` it becomes the skills' instruction to stop
+        running `walls` for the rest of the trip, on a village that was simply
+        asked to stand down.
+        """
+        assert self._run(homes=[self.HELD], stop_after=0).outcome == "stopped"
+
+    def test_a_stop_that_arrives_after_a_batch_still_keeps_what_it_bought(self) -> None:
+        upgrade = WallUpgrade(unit=100, count=2, resource="gold")
+        report = self._run(homes=[self.HELD] * 3, bought=[upgrade, None], stop_after=1)
+        assert (report.outcome, report.walls) == ("stopped", 2)
+
+    def test_storages_that_stopped_reading_between_batches(self) -> None:
+        assert self._run(homes=[self.HELD, None]).outcome == "no_stock"
+
+    def test_a_purse_that_will_not_stretch_to_the_cheapest_batch(self) -> None:
+        poor = VillageStock(gold=50, elixir=50, dark=0)
+        assert self._run(homes=[poor, poor]).outcome == "cannot_afford"
+
+    def test_every_builder_busy_is_the_game_refusing_rather_than_the_purse(self) -> None:
+        """Measured at 0/5: one wall at 1 600 000 refused exactly as eight at 12 800 000."""
+        assert self._run(homes=[self.HELD, self.HELD], builders=(0, 5)).outcome == "builders_busy"
+
+    def test_a_batch_the_game_would_not_sell_with_builders_to_spare(self) -> None:
+        """**The one the loop cannot explain**, and the one read as "walls are done".
+
+        Every candidate was tried and none was bought, with a builder standing
+        idle — so the refusal is neither the purse nor the workmen, and the
+        likeliest reason is the town hall capping every wall found. That is a
+        decision for the player, which is why it may not read like a failure to
+        retry.
+        """
+        assert self._run(homes=[self.HELD, self.HELD]).outcome == "nothing_bought"
+
+    def test_a_batch_that_went_through(self) -> None:
+        upgrade = WallUpgrade(unit=100, count=2, resource="gold")
+        report = self._run(homes=[self.HELD, self.HELD, self.HELD], bought=[upgrade, None])
+        assert (report.outcome, report.walls) == ("bought", 2)
 
 
 class WallRunnerTests(unittest.TestCase):

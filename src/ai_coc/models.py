@@ -1852,11 +1852,46 @@ class WallUpgrade(BaseModel):
         return self.unit * self.count
 
 
+# Why a `walls` run stopped, which is the whole of what a caller has to decide
+# on and was a sentence for three releases. **The three that used to be told
+# apart by wording are the reason this exists**: a skill reads them to pick what
+# happens next, and `每一個位置都沒有買成` has been read as "the walls are
+# finished" and taken for it.
+#
+# `bought` and `nothing_bought` are both a run that walked its whole list —
+# `upgrades` says which. `cannot_afford` means go and farm; `builders_busy`
+# means the game refuses every batch until one workman is idle, which
+# `ai_coc builders` dates; `nothing_bought` is the one where the loop cannot say
+# why, and the likeliest reason is the town hall capping every wall it found,
+# which is a decision for the player rather than for the loop. The rest are the
+# run not getting started: `no_walls_found` found none — swept, or verified the
+# spots a caller named, which does not sweep at all — `no_village`
+# never got back to one, `no_stock` lost the storage bars between batches, and
+# `stopped` is somebody asking it to stand down.
+WallOutcome = Literal[
+    "bought",
+    "nothing_bought",
+    "cannot_afford",
+    "builders_busy",
+    "no_walls_found",
+    "no_village",
+    "no_stock",
+    "stopped",
+]
+
+
 class WallReport(BaseModel):
-    """What one `walls` run bought, and what stopped it."""
+    """What one `walls` run bought, and what stopped it.
+
+    **`outcome` is a name rather than a sentence, and that is not a tidy-up.**
+    Three of its values used to be separated only by their wording, and a
+    project skill told its reader to tell them apart that way — so a reworded
+    line would have silently changed what the next session did, with nothing to
+    catch it. `upgrades` already says what was bought; this says why it stopped.
+    """
 
     upgrades: list[WallUpgrade] = Field(default_factory=list)
-    message: str = ""
+    outcome: WallOutcome
 
     @property
     def walls(self) -> int:
