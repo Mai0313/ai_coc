@@ -615,6 +615,14 @@ def _settle_game(
                 # this landed on is already in hand, which is both things the
                 # park needs — that this is a village at all, and which of the
                 # two, since the maps clamp in opposite corners.
+                #
+                # **Its answer is deliberately not acted on here.** None from
+                # this function means no village appeared, and `attack` ends the
+                # whole series on it; a park that fell short is a worse view
+                # rather than no village, and nothing this hands back depends on
+                # it — the attack menu is a fixed screen corner and the battle
+                # camera is measured per battle by `_settle_camera`. The park
+                # logs its own warning, which is where that belongs.
                 park_camera(adb, display, world)
                 return display
             # A session the server dropped would otherwise sit under its dialog
@@ -1512,6 +1520,8 @@ def collect(frame_dir: Path | None = None) -> CollectReport:
     # one tap at a known spot rather than a colour-and-size search over the map.
     if current_world(adb.screenshot(display)) == "night":
         gained = collect_cart(adb, display)
+        if gained is None:
+            return CollectReport(message="鏡頭沒辦法停回定位,這一趟沒有去找聖水車")
         return CollectReport(
             markers=1 if gained else 0,
             elixir=gained,
@@ -1686,9 +1696,14 @@ def view(zoom: str = "out", times: int = 3) -> ViewReport:
     world = current_world(adb.screenshot(display))
     if world is None:
         report = ViewReport(message=f"{scaled}，但畫面不是村莊，沒有把鏡頭停回定位")
-    else:
-        park_camera(adb, display, world)
+    elif park_camera(adb, display, world):
         report = ViewReport(message=f"{scaled}，並把鏡頭停回定位")
+    else:
+        # The one message that used to be a claim rather than a reading. A park
+        # that never arrived leaves every remembered coordinate off by however
+        # far it was short, and this is the command somebody runs precisely to
+        # put those back.
+        report = ViewReport(message=f"{scaled}，但鏡頭一直沒有停下來，定位失敗")
     logger.info("View: %s", report.message)
     return report
 

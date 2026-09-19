@@ -533,6 +533,9 @@ class SettleGameTests(unittest.TestCase):
                 commands, "loading_screen", side_effect=screens.get("loading") or [False] * 9
             ),
             patch.object(commands, "restart_game", return_value=DISPLAY) as restarted,
+            # `_settle_game` parks, and the park reads its own frames now.
+            # None of these tests is about the park itself.
+            patch.object(commands, "park_camera", return_value=True),
         ):
             adb.restarted = restarted
             return adb, commands._settle_game(adb, polls, lambda: stop)
@@ -797,6 +800,9 @@ class CaptureAndViewTests(unittest.TestCase):
             patch.object(commands, "_controller", return_value=adb),
             patch.object(commands, "current_world", return_value=seen),
             patch.object(world_ui.time, "sleep"),
+            # The park reads its own frames now; a still one is what says it
+            # arrived, and `PARK_STILL` of them is what it swipes for.
+            patch.object(world_ui, "view_shift", return_value=(0, 0)),
         ):
             return adb, commands.view(zoom, times)
 
@@ -815,7 +821,7 @@ class CaptureAndViewTests(unittest.TestCase):
         every map coordinate valid until the next thing that moved the camera.
         """
         adb, report = self._view("day")
-        assert adb.swipe.call_count == world_ui.SWIPES
+        assert adb.swipe.call_count == world_ui.PARK_BLIND + world_ui.PARK_STILL
         crossing = world_ui.CROSSINGS["night"]
         landing = (crossing.start[0] + crossing.drift[0], crossing.start[1] + crossing.drift[1])
         for call in adb.swipe.call_args_list:
@@ -832,7 +838,7 @@ class CaptureAndViewTests(unittest.TestCase):
         adb, _ = self._view("night")
         crossing = world_ui.CROSSINGS["day"]
         landing = (crossing.start[0] + crossing.drift[0], crossing.start[1] + crossing.drift[1])
-        assert adb.swipe.call_count == world_ui.SWIPES
+        assert adb.swipe.call_count == world_ui.PARK_BLIND + world_ui.PARK_STILL
         for call in adb.swipe.call_args_list:
             assert call.args[:2] == (crossing.start, landing)
 

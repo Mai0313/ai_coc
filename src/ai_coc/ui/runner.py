@@ -360,6 +360,13 @@ class GameRunner(ScreenRunner):
         # Always the home village: `_home` sails off the builder base before it
         # ever reaches the read that calls this, so there is no other village
         # this can be looking at.
+        #
+        # **The answer is not acted on, and `_settled` is set either way.** A
+        # park that fell short leaves the sweep grid worse rather than unusable,
+        # and `_home` re-enters this on every one of its `HOME_TRIES` while
+        # `_settled` is False — so returning here without setting it would spend
+        # twenty full parks, minutes of swiping, on the one path that cannot
+        # check a stop. The warning is in the log where a reader will find it.
         park_camera(self.adb, self.display, "day")
 
     def _put_camera_back(self) -> None:
