@@ -45,6 +45,7 @@ from ai_coc.models import (
     ShieldState,
     StockReport,
     WallOptions,
+    WallOutcome,
     WorldReport,
     AttackReport,
     AttackSeries,
@@ -1278,6 +1279,27 @@ def bounds(frame_dir: Path | None = None) -> MapSurvey:
     return runner.survey
 
 
+# Only ever used to build a log line; `WallReport.outcome` is what a caller
+# reads. **`nothing_bought` is the one that must not name a cause**, because it
+# is by definition the one the loop cannot explain — and it has two routes, not
+# one. The town hall capping every wall found is the likeliest, and the other is
+# a builder counter that would not read: `WallRunner` only takes the
+# builders-busy exit on a count it could resolve, so an unread one drops every
+# candidate and lands here. Those two want opposite next steps — wait for a
+# workman against stop running `walls` at all — so the line points at the record
+# rather than at a reason.
+WALL_LINES: dict[WallOutcome, str] = {
+    "bought": "升級了 {walls} 面城牆",
+    "nothing_bought": "每一個位置都沒有買成,而這個迴圈說不出原因;紀錄裡有各自停在哪一步",
+    "cannot_afford": "剩下的資源買不起下一批城牆",
+    "builders_busy": "工人都在忙,遊戲不讓升級城牆;跑 ai_coc builders 看最快的還要多久",
+    "no_walls_found": "找不到任何城牆",
+    "no_village": "畫面沒辦法回到村莊,城牆升級沒有開始",
+    "no_stock": "看不到村莊的儲量,先停下來",
+    "stopped": "收到停止要求,已經買成 {walls} 面城牆",
+}
+
+
 def walls(options: WallOptions, should_stop: Callable[[], bool] = stop_requested) -> WallReport:
     """Spend the storages on wall upgrades, with no window in the way.
 
@@ -1309,17 +1331,16 @@ def walls(options: WallOptions, should_stop: Callable[[], bool] = stop_requested
         frame_dir=options.frame_dir,
     )
     report = runner.run()
-    # Said here rather than inside the loop: what the runner knows is how many
-    # batches it bought, and "已停止" is a fact about this call rather than about
-    # the walls. A run stopped before it bought anything is the exception — its
-    # own fallback message is a verdict on positions it never tried, and that
-    # sentence has been read as "the walls are finished" and taken for it.
-    if should_stop():
-        report.message = (
-            f"已停止，{report.message}" if report.upgrades else "已停止，還沒買成任何一批"
-        )
+    # **The runner names the stop itself now**, which is what took a rewrite
+    # out of here: this used to prefix 已停止 onto whatever sentence the loop had
+    # written, and the exception it needed — a run stopped before it bought
+    # anything, whose own fallback reads as a verdict on positions it never
+    # tried — is exactly the ambiguity `WallOutcome` exists to remove.
     logger.info(
-        "Walls: %s (金幣 %d／聖水 %d)", report.message, report.paid("gold"), report.paid("elixir")
+        "Walls: %s (金幣 %d／聖水 %d)",
+        WALL_LINES[report.outcome].format(walls=report.walls),
+        report.paid("gold"),
+        report.paid("elixir"),
     )
     return report
 

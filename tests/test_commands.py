@@ -38,6 +38,7 @@ from ai_coc.models import (
     HeroOptions,
     PlateReport,
     WallOptions,
+    WallOutcome,
     AttackReport,
     DonateReport,
     VillageStock,
@@ -515,7 +516,9 @@ class LoopCommandTests(unittest.TestCase):
             patch.object(commands, "_controller", return_value=_adb()),
             patch.object(commands, "WallRunner") as runner,
         ):
-            runner.return_value.run.return_value = MagicMock(message="", upgrades=[])
+            runner.return_value.run.return_value = MagicMock(
+                outcome="nothing_bought", upgrades=[], walls=0
+            )
             runner.return_value.run.return_value.paid.return_value = 0
             commands.walls(WallOptions(at=[(1, 2)]))
             named = runner.call_args.kwargs
@@ -536,10 +539,10 @@ class LoopCommandTests(unittest.TestCase):
     def test_a_caller_with_its_own_stop_reaches_the_wall_runner_and_the_report(self) -> None:
         """What lets the window run this function: it has a button, not a terminal.
 
-        Both halves matter. The runner reads it during the opening scan, which
-        is the longest unguarded stretch a wall run has, and the message is the
-        one place a stopped run is told apart from a village with no walls left
-        — a distinction that has already been misread once.
+        The runner reads it during the opening scan, which is the longest
+        unguarded stretch a wall run has — and it is the runner that names the
+        stop now, which is why this asserts the flag reached it rather than
+        checking a sentence this command used to prefix.
         """
         self._planners()
         button = MagicMock(return_value=True)
@@ -547,13 +550,43 @@ class LoopCommandTests(unittest.TestCase):
             patch.object(commands, "_controller", return_value=_adb()),
             patch.object(commands, "WallRunner") as runner,
         ):
-            runner.return_value.run.return_value = MagicMock(message="每一個位置都沒有買成")
+            runner.return_value.run.return_value = MagicMock(outcome="nothing_bought", walls=0)
             runner.return_value.run.return_value.upgrades = []
             report = commands.walls(WallOptions(), button)
         assert runner.call_args.kwargs["should_stop"] is button
         # The flag was never written, so this is the caller's condition alone.
         assert not commands.stop_requested()
-        assert report.message == "已停止，還沒買成任何一批"
+        # Named by the runner rather than rewritten here; the mock stands in for
+        # a loop that never reached its own stop check.
+        assert report.outcome == "nothing_bought"
+
+
+class WallLineTests(unittest.TestCase):
+    """One log line per wall outcome, each saying the thing only it means.
+
+    The three a project skill used to tell apart by wording are the reason:
+    counting distinct strings would let two of them swap and still pass.
+    """
+
+    def test_every_way_a_wall_run_can_stop_has_a_line_of_its_own(self) -> None:
+        own = {
+            "bought": "升級了",
+            "nothing_bought": "說不出原因",
+            "cannot_afford": "買不起",
+            "builders_busy": "工人都在忙",
+            "no_walls_found": "找不到任何城牆",
+            "no_village": "沒辦法回到村莊",
+            "no_stock": "看不到村莊的儲量",
+            "stopped": "收到停止要求",
+        }
+        assert set(own) == set(get_args(WallOutcome))
+        for outcome, fragment in own.items():
+            line = commands.WALL_LINES[outcome].format(walls=3)
+            assert fragment in line, outcome
+            others = [
+                commands.WALL_LINES[other].format(walls=3) for other in own if other != outcome
+            ]
+            assert not any(fragment in other for other in others), outcome
 
 
 class AttackSeriesStopTests(unittest.TestCase):
