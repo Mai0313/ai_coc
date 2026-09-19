@@ -1149,6 +1149,56 @@ class NightAttackTests(unittest.TestCase):
         assert (report.phases, deployed.call_count) == (0, 0)
 
 
+class ParkCameraTests(unittest.TestCase):
+    """Running the camera into the map corner every remembered coordinate was measured from."""
+
+    def _park(self, shifts: list[tuple[int, int]], world: str = "day") -> tuple[MagicMock, bool]:
+        adb = MagicMock()
+        with (
+            patch.object(world_ui.time, "sleep"),
+            patch.object(world_ui, "view_shift", side_effect=shifts),
+        ):
+            parked = world_ui.park_camera(
+                adb, DisplayTarget(logical_id="1", physical_id="2"), world
+            )
+        return adb, parked
+
+    def test_the_swipes_stop_when_the_picture_does(self) -> None:
+        """A fixed count was the bug: five was half what this account needed.
+
+        Measured live, a home village parked once still moved (131, -65) when
+        parked again, and the boat sat 130 px below every candidate spot for it.
+        """
+        adb, parked = self._park([(131, -65), (65, -33), (0, 0), (0, 0)])
+        assert parked is True
+        assert adb.swipe.call_count == world_ui.PARK_BLIND + 4
+
+    def test_one_still_reading_is_not_a_clamp(self) -> None:
+        """A swipe the game swallowed looks exactly like a camera that has arrived."""
+        adb, parked = self._park([(0, 0), (65, -33), (0, 0), (0, 0)])
+        assert parked is True
+        assert adb.swipe.call_count == world_ui.PARK_BLIND + 4
+
+    def test_a_camera_that_never_settles_is_reported_rather_than_trusted(self) -> None:
+        """False is what the callers act on; pressing past it taps water for four minutes."""
+        adb, parked = self._park([(65, -33)] * world_ui.PARK_SWIPES)
+        assert parked is False
+        assert adb.swipe.call_count == world_ui.PARK_SWIPES
+
+    def test_each_village_is_pushed_into_its_own_corner(self) -> None:
+        """The two maps clamp in opposite corners, so one push cannot serve both."""
+        for world, other in (("day", "night"), ("night", "day")):
+            adb, _ = self._park([(0, 0), (0, 0)], world)
+            crossing = world_ui.CROSSINGS[other]
+            landing = (
+                crossing.start[0] + crossing.drift[0],
+                crossing.start[1] + crossing.drift[1],
+            )
+            assert [call.args[:2] for call in adb.swipe.call_args_list] == [
+                (crossing.start, landing)
+            ] * (world_ui.PARK_BLIND + 2), world
+
+
 class CrossingTests(unittest.TestCase):
     """Sailing between the two villages, which is a tap the boat may or may not take."""
 
@@ -1158,6 +1208,7 @@ class CrossingTests(unittest.TestCase):
         want: str = "day",
         battle: bool = False,
         loading: bool = False,
+        parked: bool = True,
     ) -> tuple[MagicMock, str | None]:
         adb = MagicMock()
         with (
@@ -1167,6 +1218,11 @@ class CrossingTests(unittest.TestCase):
             patch.object(world_ui, "in_battle", return_value=battle),
             patch.object(world_ui, "battle_over", return_value=False),
             patch.object(world_ui, "loading_screen", return_value=loading),
+            # A still frame is how the park knows it arrived; without this the
+            # crossing never gets as far as its candidate spots. A camera that
+            # keeps moving is the other half of that, and the boat is not where
+            # it is remembered then.
+            patch.object(world_ui, "view_shift", return_value=(0, 0) if parked else (65, -33)),
         ):
             landed = world_ui.cross(adb, DisplayTarget(logical_id="1", physical_id="2"), want)
         return adb, landed
@@ -1181,7 +1237,7 @@ class CrossingTests(unittest.TestCase):
     def test_the_first_spot_that_sails_ends_it(self) -> None:
         adb, landed = self._cross(["night", "day"])
         assert landed == "day"
-        assert adb.swipe.call_count == world_ui.SWIPES
+        assert adb.swipe.call_count == world_ui.PARK_BLIND + world_ui.PARK_STILL
         adb.tap.assert_called_once_with(*world_ui.CROSSINGS["day"].spots[0], ANY)
 
     def test_a_tap_that_missed_the_boat_tries_the_next_spot(self) -> None:
@@ -1219,7 +1275,7 @@ class CrossingTests(unittest.TestCase):
         adb, landed = self._cross([None, "night", "day"])
         assert landed == "day"
         assert adb.back.call_count == 1
-        assert adb.swipe.call_count == world_ui.SWIPES
+        assert adb.swipe.call_count == world_ui.PARK_BLIND + world_ui.PARK_STILL
 
     def test_no_village_is_not_a_failed_crossing(self) -> None:
         """A loading screen has no boat on it and nothing to sail from; the caller waits.
@@ -1251,6 +1307,7 @@ class CrossingTests(unittest.TestCase):
         with (
             patch.object(world_ui.time, "sleep"),
             patch.object(world_ui, "current_world", return_value="night"),
+            patch.object(world_ui, "view_shift", return_value=(0, 0)),
             patch.object(world_ui, "loot_cart_open", return_value=True),
             patch.object(
                 world_ui,
@@ -1271,6 +1328,7 @@ class CrossingTests(unittest.TestCase):
         with (
             patch.object(world_ui.time, "sleep"),
             patch.object(world_ui, "current_world", return_value="night"),
+            patch.object(world_ui, "view_shift", return_value=(0, 0)),
             patch.object(world_ui, "loot_cart_open", return_value=False),
             patch.object(world_ui, "read_builder_stock", return_value=None) as read,
         ):
@@ -1278,6 +1336,39 @@ class CrossingTests(unittest.TestCase):
         assert gained == 0
         # The one before the taps, and none after: it gave up before collecting.
         assert read.call_count == 1
+
+    def test_a_cart_whose_camera_never_parked_is_not_tapped_at(self) -> None:
+        """The cart is found from the parked view, so an unparked one is grass.
+
+        It shares the crossing's own push, which is why both broke together and
+        why both give up on the same reading.
+        """
+        adb = MagicMock()
+        with (
+            patch.object(world_ui.time, "sleep"),
+            patch.object(world_ui, "current_world", return_value="night"),
+            patch.object(world_ui, "view_shift", return_value=(65, -33)),
+            patch.object(world_ui, "read_builder_stock") as read,
+        ):
+            gained = world_ui.collect_cart(adb, DisplayTarget(logical_id="1", physical_id="2"))
+        # None rather than 0: a cart nobody went looking for is not an empty one,
+        # and `commands.collect` writes a different sentence for each.
+        assert gained is None
+        assert adb.tap.call_count == 0
+        read.assert_not_called()
+
+    def test_a_camera_that_never_parked_does_not_spend_the_candidate_spots(self) -> None:
+        """Three spots, about three minutes between them, and none of them is the boat.
+
+        Measured live, a home village 130 px short of its clamp put all three
+        candidates above the boat; the crossing tapped water three times and then
+        reported that there was no boat, which is the wrong thing to go looking
+        for next.
+        """
+        adb, landed = self._cross(["night"], parked=False)
+        assert landed == "night"
+        assert adb.tap.call_count == 0
+        assert adb.swipe.call_count == world_ui.PARK_SWIPES
 
     def test_a_battle_on_screen_is_never_pressed_at(self) -> None:
         """`back` there is aimed at 放棄, and a killed run leaves exactly this state.
@@ -2405,6 +2496,44 @@ class FieldTests(unittest.TestCase):
 
     def test_a_drag_the_game_never_took_reads_as_none_of_it(self) -> None:
         assert view_shift(self._village(0), self._village(0), (0, 98)) == (0, 0)
+
+    def _panned(self, across: int, down: int) -> bytes:
+        """The same texture moved both ways, which is how a park's drag moves it."""
+        image = Image.new("RGB", (1600, 900), (60, 120, 40))
+        painter = ImageDraw.Draw(image)
+        for row in range(9):
+            for column in range(14):
+                left, top = 120 + column * 110 + across, 100 + row * 80 + down
+                painter.rectangle(
+                    (left, top, left + 50 + column * 2, top + 34 + row * 3),
+                    fill=(40 + column * 14, 80 + row * 8, 200 - row * 18),
+                )
+        buffer = io.BytesIO()
+        image.save(buffer, format="PNG")
+        return buffer.getvalue()
+
+    def test_a_move_the_size_of_one_swipe_is_bigger_than_this_can_see(self) -> None:
+        """**This is what `PARK_BLIND` exists for, and nothing else pins it.**
+
+        `view_shift` slides a 700 px box that starts 450 px from either screen
+        edge, so past about that the window runs off the frame and the true
+        offset can never win. A park that checked from its very first swipe
+        would therefore read a camera crossing the map at full travel as one
+        that had arrived — the same `(0, 0)` that means clamped — which is the
+        original bug with a bool on top. The first swipes go unchecked so that
+        what is left is inside what this can see.
+        """
+        drift = world_ui.CROSSINGS["day"].drift
+        still = self._panned(0, 0)
+        # Well inside the window: the largest move any live park was measured at
+        # once its first swipes were behind it.
+        near = view_shift(still, self._panned(-261, 131), drift)
+        assert near != (0, 0)
+        assert abs(near[0]) >= 200
+        # One swipe's full travel. The answer is not the truth, and on some
+        # frames it is exactly the answer that means "arrived".
+        far = view_shift(still, self._panned(*drift), drift)
+        assert abs(far[0]) <= abs(drift[0]) - 200
 
 
 class AttackTests(unittest.TestCase):
@@ -4063,6 +4192,7 @@ class RunnerStateTests(unittest.TestCase):
                 patch.object(commands, "STATE_PATH", state),
                 patch.object(commands, "_controller"),
                 patch.object(commands, "current_world", return_value="day"),
+                patch.object(commands, "park_camera", return_value=True),
                 patch.object(commands, "_planner", return_value=None),
                 patch.object(commands.ConfigStore, "load", return_value=AppConfig()),
                 patch.object(commands, "FrameTicker"),
@@ -4140,6 +4270,9 @@ class RestartEveryTests(unittest.TestCase):
         with (
             patch.object(commands, "_controller"),
             patch.object(commands, "current_world", return_value="day"),
+            # `_settle_game` parks, and the park reads its own frames now.
+            # None of these tests is about the park itself.
+            patch.object(commands, "park_camera", return_value=True),
             patch.object(commands, "_planner", return_value=None),
             patch.object(
                 commands.ConfigStore, "load", return_value=AppConfig(restart_every=every)
@@ -4236,6 +4369,9 @@ class RestartEveryTests(unittest.TestCase):
         with (
             patch.object(commands, "_controller"),
             patch.object(commands, "current_world", return_value="day"),
+            # `_settle_game` parks, and the park reads its own frames now.
+            # None of these tests is about the park itself.
+            patch.object(commands, "park_camera", return_value=True),
             patch.object(commands, "_planner", return_value=None),
             patch.object(commands.ConfigStore, "load", return_value=AppConfig(restart_every=1)),
             patch.object(commands, "FrameTicker"),
@@ -4262,6 +4398,7 @@ class RestartEveryTests(unittest.TestCase):
             # whichever village it was closed on, and `read_stock` answers on
             # both, so it can say a village is up but never which one.
             patch.object(commands, "current_world", side_effect=[None, None, "day"]),
+            patch.object(commands, "park_camera", return_value=True),
             patch.object(commands, "idle_disconnected", return_value=False),
             patch.object(commands, "loading_screen", return_value=False),
         ):
@@ -4291,6 +4428,7 @@ class RestartEveryTests(unittest.TestCase):
             patch.object(commands.time, "sleep"),
             patch.object(commands, "stop_requested", return_value=False),
             patch.object(commands, "current_world", return_value="day"),
+            patch.object(commands, "park_camera", return_value=True),
         ):
             mumu.return_value.controller.return_value = adb
             assert commands._restart_emulator(MagicMock(), MagicMock())
@@ -4338,6 +4476,9 @@ class StopAtOverrideTests(unittest.TestCase):
         with (
             patch.object(commands, "_controller"),
             patch.object(commands, "current_world", return_value="day"),
+            # `_settle_game` parks, and the park reads its own frames now.
+            # None of these tests is about the park itself.
+            patch.object(commands, "park_camera", return_value=True),
             patch.object(commands, "_planner", return_value=None),
             patch.object(commands.ConfigStore, "load", return_value=AppConfig(stop_at=85)),
             patch.object(commands, "FrameTicker"),
