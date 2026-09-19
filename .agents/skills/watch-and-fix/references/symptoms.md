@@ -8,7 +8,7 @@
 
 ## 遊戲起不來, 或者重開之後沒回來
 
-**症狀**: `run.log` 裡出現 `The village never came back after the restart`, 或者一輪連攻擊選單都還沒碰到就結束. 那一句是 `logger.error` 而**不是**報告上的 `message`: 那條路徑直接把整個序列收掉, 不會再往 `result.json` 追加一輪, 所以 `jq` 撈不到它, 只能 grep log.
+**症狀**: `run.log` 裡出現 `The village never came back after the restart`, 或者一輪連攻擊選單都還沒碰到就結束. 那一句是 `logger.error` 而**不是**報告上的任何欄位: 那條路徑直接把整個序列收掉, 不會再往 `result.json` 追加一輪, 所以 `jq` 撈不到它, 只能 grep log.
 
 `ai_coc launch` 的收工條件是**站在村莊上而且鏡頭在最遠處**, 不是拿到一個 pid. `ensure_coc` 只看得到 `pidof`, 而那個 pid 在村莊畫出來之前好幾秒就存在了, 所以能不能開始下一步要看 `LaunchReport.at_village`. 三種重開範圍 (`none` / `game` / `emulator`) 的差別在 `CLAUDE.md` 搜 `RestartScope`; 要注意 `emulator` 那條得先**等實例真的倒下** (`_await_shutdown`), 因為 `control restart` 送出請求就回來了, 而從清單裡暫時消失的實例不算倒下.
 
@@ -20,15 +20,15 @@
 
 ## 開不了攻擊選單
 
-**症狀**: message 說畫面不在主村, 這一輪什麼都沒做.
+**症狀**: 那一輪的 `AttackReport.outcome` 是 `no_attack_menu`, 這一輪什麼都沒做.
 
 看 `_open_attack_menu`, `attack_menu_open`, 以及 `ui/runner.py` 的 `_home`. `_home` 是所有迴圈共用的回家路徑, 它要分辨四種擋路的東西: 遊戲還在載入, 開著的面板, 對話框, 掉線. `CLAUDE.md` 搜 `back` 跟 `確定退出遊戲嗎`, 那一段解釋為什麼在乾淨的村莊上按 back 是災難.
 
-掉線的話 `idle_disconnected` 會認出來 (閒置那張跟 連線已中斷 那張都算), `restart_game` 會重開遊戲並**重新解析 display**. 還在載入的話 `loading_screen` 會認出來, `_open_attack_menu` 會等它 (`_wait_out_loading`, 每次載入一次, 最多 45 分鐘), message 會說「遊戲卡在載入畫面」而不是「畫面不在主村」; 所以看到這一句的話, 原因也不是伺服器.
+掉線的話 `idle_disconnected` 會認出來 (閒置那張跟 連線已中斷 那張都算), `restart_game` 會重開遊戲並**重新解析 display**. 還在載入的話 `loading_screen` 會認出來, `_open_attack_menu` 會等它 (`_wait_out_loading`, 每次載入一次, 最多 45 分鐘), `outcome` 會是 `server_loading` 或 `server_flapping` 而不是 `no_attack_menu`; 所以看到 `no_attack_menu` 的話, 原因也不是伺服器.
 
-**第五種擋路的是站錯村莊**, 而它以前就是報這一句. 遊戲會開在上次離開的那一張地圖, 而夜世界 (建築大師基地) 的攻擊按鈕在同一個角落, 開出來的卻是另一個對話框 —— `attack_menu_open` 認不得它, 於是整輪的重試都花在那裡, 最後報「畫面不在主村」, 讀起來像遊戲卡住而不是像走錯地方. 現在 `_open_attack_menu` 會先問 `current_world`, 是夜世界就坐船回來再打, log 裡是 `sailing home before attacking`. 所以現在還看到這一句的話, 原因就不是這個.
+**第五種擋路的是站錯村莊**, 而它以前就是報這個 outcome. 遊戲會開在上次離開的那一張地圖, 而夜世界 (建築大師基地) 的攻擊按鈕在同一個角落, 開出來的卻是另一個對話框 —— `attack_menu_open` 認不得它, 於是整輪的重試都花在那裡, 最後報 `no_attack_menu`, 讀起來像遊戲卡住而不是像走錯地方. 現在 `_open_attack_menu` 會先問 `current_world`, 是夜世界就坐船回來再打, log 裡是 `sailing home before attacking`. 所以現在還看到這個 outcome 的話, 原因就不是這個.
 
-**第六種是遊戲自己蓋上來的全螢幕彈窗** (活動獎勵、賽季通行證那類), 而它是最貴的一種, 因為那顆攻擊按鈕整個被蓋住, 五次重試全部點在彈窗上. 實測一次「周期挑戰獎勵之路已完成」卡了 40 分鐘 —— 18 輪, 每輪都報這一句, 而底下有一場已經配對成功的戰鬥就這樣跑完了. 那種頁面只能用它自己右上角的紅色 X 關, 點 回營 的位置完全沒有反應. 現在 `current_world` 讀不出東西的時候會走 `uncovered` 按 back, log 裡是 `Something is over the village; pressing back to get at it`. 沒看到那一行就表示彈窗被誤讀成別的東西了, 而**它有兩種形狀, 量錯地方就白費一輪**.
+**第六種是遊戲自己蓋上來的全螢幕彈窗** (活動獎勵、賽季通行證那類), 而它是最貴的一種, 因為那顆攻擊按鈕整個被蓋住, 五次重試全部點在彈窗上. 實測一次「周期挑戰獎勵之路已完成」卡了 40 分鐘 —— 18 輪, 每輪都報這個 outcome, 而底下有一場已經配對成功的戰鬥就這樣跑完了. 那種頁面只能用它自己右上角的紅色 X 關, 點 回營 的位置完全沒有反應. 現在 `current_world` 讀不出東西的時候會走 `uncovered` 按 back, log 裡是 `Something is over the village; pressing back to get at it`. 沒看到那一行就表示彈窗被誤讀成別的東西了, 而**它有兩種形狀, 量錯地方就白費一輪**.
 
 第一種是被讀成結算畫面: 量那張圖在 `RETURN_HOME_BOX` 的綠色比例 (活動獎勵頁 0.2009, 真結算畫面 0.3283).
 
@@ -90,10 +90,10 @@
 
 **症狀**: 打完一場但幾乎沒搶到東西, 或者 `_wait_out_battle` 說整場戰利品沒動過.
 
-**先看那句話說的是哪一種.** 戰利品沒動只說這場沒搶到, 沒說為什麼, 而兩種原因要往完全相反的方向查:
+**先看 outcome 說的是哪一種.** 戰利品沒動只說這場沒搶到, 沒說為什麼, 而兩種原因要往完全相反的方向查:
 
-- `部隊沒有成功部署` —— 沒有任何一張卡片出得去. 這是迴圈的問題, 下面這一整節就是在講它
-- `部隊有出去而這一場沒搶到東西` —— 兵確實下去了, 是打的位置不對. 那是**戰術**的問題, 跳到下面「搶到的東西很少」跟 `plans.jsonl`, 不要在這節浪費時間. 實測過一場: 戰敗、32%、`你獲得了 0`, 兵卡全部清空、三個重試的英雄全部落地, army 只是打進了沒有倉庫的那一側
+- `outcome` 是 `nothing_deployed` —— 沒有任何一張卡片出得去. 這是迴圈的問題, 下面這一整節就是在講它
+- `outcome` 是 `no_loot` —— 兵確實下去了, 是打的位置不對. 那是**戰術**的問題, 跳到下面「搶到的東西很少」跟 `plans.jsonl`, 不要在這節浪費時間. 實測過一場: 戰敗、32%、`你獲得了 0`, 兵卡全部清空、三個重試的英雄全部落地, army 只是打進了沒有倉庫的那一側
 
 這是最常見也最貴的一類. 依序看:
 

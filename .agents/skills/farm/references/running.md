@@ -47,7 +47,7 @@ uv run ai_coc attack --world day --repeat 0 --record
 **`result.json` 是一個陣列, 不是一個物件.** `attack` 寫的是 `AttackSeries`: 一輪一個 `AttackReport`, 照跑的順序排, 頂層沒有 `stock_full` 這種欄位. 「這個世界打完了沒」看的是**最後一個元素**:
 
 ```bash
-jq '.[-1] | {world, stock_full, message}' ~/.ai_coc/logs/<run>/result.json
+jq '.[-1] | {world, outcome, stock_full, attacked}' ~/.ai_coc/logs/<run>/result.json
 ```
 
 頂層根本沒有這個欄位: `jq '.stock_full'` 對陣列直接報錯 (`Cannot index array with string`), 別的讀法多半拿到一個不是 `true` 的東西, 而那讀起來像「還沒滿」, 一個已經打滿的世界看起來就像還在跑. 其他指令 (`walls`, `collect`, `world` ...) 寫的是單一個物件, 只有 `attack` 是陣列, 因為只有它會跑很多輪.
@@ -61,7 +61,7 @@ jq '.[-1] | {world, stock_full, message}' ~/.ai_coc/logs/<run>/result.json
 `run.log` 是純文字, 用 Grep 抓有意義的行, 不要整份 Read 進來, 一小時的跑會有幾千行:
 
 - `Round \d+ of` 這種行說現在第幾輪
-- `Attack finished:` 每輪一行, 後面接 `AttackReport.message`
+- `Attack finished:` 每輪一行, 後面那句話是照 `AttackReport.outcome` 組出來的 —— 要下判斷讀 `result.json` 的 `outcome`, 不要比對這裡的字
 - `WARNING` 跟 `ERROR` 是真的要看的
 
 **幾分鐘看一次就好.** 一輪四五分鐘, 每三十秒去讀一次只是在浪費 context, 而且中間本來就沒有新東西. 背景指令跑完的時候會通知你, 那才是必須處理的時刻.
@@ -73,8 +73,8 @@ jq '.[-1] | {world, stock_full, message}' ~/.ai_coc/logs/<run>/result.json
 - `stock_full` 是 `true`: 這個世界打滿了. **那是接縫不是終點** —— 兩個世界都要打的話換另一個世界; 只剩日世界要花的話照 `farm` 的「倉庫滿了」那節. 不要回頭問使用者要不要繼續
 - `run.log` 結尾有 `Stop requested`: 有人下了 `ai_coc stop`. 停在回合之間跟停在練兵的空檔都會留這一行. 誰停的看 log, 現在還有沒有人在跑看 `~/.ai_coc/state.json` —— 收工的時候它會被寫回 `idle`, 所以兩份看的是不同的問題. 不是你下的就不要自己開回去, 見「中止」
 - 使用者指定了 `--repeat N` 而輪數跑完: 照他的交辦接下去或收工
-- 有幾輪的 `message` 是 `模擬器沒有回應：…`: 那幾輪是模擬器當下不理人, 迴圈把它當成打不成的一輪記下來、休息一下再來. **一兩輪夾在中間不是事**, 後面照常打就對了. 但 `run.log` 結尾如果是 `The emulator has not answered for 3 rounds; ending the series`, 那是連續三輪都這樣, 整個 series 收工 —— 那時候先去看模擬器還活著沒有, 不要直接開下一個. 這種結束**有完整的 `result.json`**, 所以不要跟下面那種被砍掉的搞混
-- 都不是的話就是迴圈自己放棄了, `message` 跟最後一條 WARNING / ERROR 會說原因: 排程重開模擬器之後村莊沒回來 (`The village never came back after the restart`), 或者 `--world` 指定的村莊切不過去 (`沒辦法切到…`, 整個陣列只有一個元素). 這幾種是 `farm` 的「其他停手的理由」那節在管的, 先把遊戲弄回村莊再說, 不要直接開下一個
+- 有幾輪的 `outcome` 是 `emulator_silent`: 那幾輪是模擬器當下不理人, 迴圈把它當成打不成的一輪記下來、休息一下再來. **一兩輪夾在中間不是事**, 後面照常打就對了. 但 `run.log` 結尾如果是 `The emulator has not answered for 3 rounds; ending the series`, 那是連續三輪都這樣, 整個 series 收工 —— 那時候先去看模擬器還活著沒有, 不要直接開下一個. 這種結束**有完整的 `result.json`**, 所以不要跟下面那種被砍掉的搞混
+- 都不是的話就是迴圈自己放棄了, `outcome` 跟最後一條 WARNING / ERROR 會說原因: 排程重開模擬器之後村莊沒回來 (`The village never came back after the restart`), 或者 `--world` 指定的村莊切不過去 (`outcome` 是 `world_unreachable`, 整個陣列只有一個元素, 而 `world` 說的就是切不過去的那一邊). 這幾種是 `farm` 的「其他停手的理由」那節在管的, 先把遊戲弄回村莊再說, 不要直接開下一個
 
 一個 run 結束而你什麼都沒接, 就是上面那次實測的樣子: 模擬器閒著, 使用者以為還在打.
 

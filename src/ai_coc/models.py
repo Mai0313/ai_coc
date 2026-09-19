@@ -7,7 +7,15 @@ from typing import Any, Literal
 from pathlib import Path
 from datetime import UTC, datetime, timedelta
 
-from pydantic import Field, BaseModel, RootModel, ConfigDict, AliasChoices, field_validator
+from pydantic import (
+    Field,
+    BaseModel,
+    RootModel,
+    ConfigDict,
+    AliasChoices,
+    computed_field,
+    field_validator,
+)
 
 from .constants import (
     LOG_DIR,
@@ -941,6 +949,53 @@ class NightPlan(BaseModel):
     reason: str = ""
 
 
+# How one round of the attack loop ended, which is the field a farming session
+# actually decides on and was a sentence for the whole of this project's life.
+#
+# **Five of these are one battle that was fought, told apart by what came of
+# it**, and the difference is where the next reader goes: `took_loot` is the
+# ordinary win; `loot_unread` means nothing ever resolved the loot panel on a
+# village that has one, so the round cannot be judged; `no_loot` means the army
+# went down and came home empty, which is the tactic's problem; and
+# `nothing_deployed` means not one card left the row, which is the loop's.
+# Reporting the last two as one sentence sent readers to the wrong half more
+# than once.
+#
+# **`deployed` is the builder base's own success and says less on purpose.**
+# Nothing on that village reads loot at all — its elixir goes into a cart rather
+# than the storages, and the box the home village's panel is read from is
+# battlefield there — so what a night round can honestly claim is that troops
+# went out. Sharing `took_loot` would put two meanings under one name on the two
+# villages, which is the whole thing this replaced.
+#
+# The rest never reached a battle. `army_short` and `stock_full` are the two
+# deliberate stand-downs, both before the search fee. `no_opponent` is a
+# matchmaker or a scout screen that never produced one, `all_skipped` is every
+# candidate under the thresholds, and `stopped` is somebody asking for the run
+# to end — including during the server wait. `no_attack_menu` is a screen the
+# round could not open the menu on; `server_loading` is that screen outlasting
+# the whole 45-minute wait and `server_flapping` is it loading and dropping
+# back. `emulator_silent` is ADB not answering, and `world_unreachable` is a
+# named village the game could not be put on.
+AttackOutcome = Literal[
+    "took_loot",
+    "deployed",
+    "loot_unread",
+    "no_loot",
+    "nothing_deployed",
+    "army_short",
+    "stock_full",
+    "no_opponent",
+    "all_skipped",
+    "stopped",
+    "no_attack_menu",
+    "server_loading",
+    "server_flapping",
+    "emulator_silent",
+    "world_unreachable",
+]
+
+
 class AttackReport(BaseModel):
     """What one run of the attack loop did, for the automation log."""
 
@@ -966,10 +1021,27 @@ class AttackReport(BaseModel):
     # difference between two `read_stock` readings and nothing else: a full
     # storage takes none of what it is handed, and the star bonus pays on top.
     attacked: LootOffer | None = None
-    message: str = ""
-    # Farming has met its goal, so the automation is meant to stop rather than
-    # come round again: the next pass would only read the same full storage.
-    stock_full: bool = False
+    outcome: AttackOutcome
+    # Whether the scout countdown forced this battle rather than the loot
+    # clearing the thresholds, which is only meaningful on a round that fought.
+    # It is its own field rather than two more outcomes because it is orthogonal
+    # to how the battle went: a forced opponent can take loot or deploy nothing
+    # exactly as a chosen one can, and `can_skip` — the reading it comes from —
+    # is not on the report.
+    forced: bool = False
+
+    @computed_field
+    @property
+    def stock_full(self) -> bool:
+        """Farming has met its goal, so the automation is meant to stop.
+
+        **Derived rather than stored**, because it was the one thing the old
+        sentence said that a field also said, and two places to look is how they
+        drift. Kept under its own name because `farm` owns where it leads and
+        both that skill and the window read it — and computed rather than plain
+        so `result.json` carries it exactly as it did.
+        """
+        return self.outcome == "stock_full"
 
 
 class AttackOptions(BaseModel):

@@ -54,6 +54,7 @@ from ai_coc.models import (
     RestartScope,
     StatusReport,
     AttackOptions,
+    AttackOutcome,
     BuilderReport,
     CollectReport,
     DisplayTarget,
@@ -875,6 +876,49 @@ def _empty_cart(world: World, battles: int, adb: AdbController, display: Display
         logger.warning("The loot cart could not be emptied this time: %s", exc)
 
 
+# Only ever used to build the `Attack finished:` line a person reads; the field
+# a caller decides on is `AttackReport.outcome`. **The four that fought are kept
+# distinguishable in the wording too**, because `run.log` is where a farming
+# session looks first and the two that used to read alike sent readers to
+# opposite halves of the code.
+ROUND_LINES: dict[AttackOutcome, str] = {
+    "took_loot": "已進攻並回營",
+    "deployed": "兵出去了並回營;這個世界沒有戰利品面板可以判斷搶到多少",
+    "loot_unread": "打完回營了,但整場都讀不到戰利品面板,成果無從判斷",
+    "no_loot": "打完回營了,但整場戰利品沒有變化 —— 部隊有出去,這一場沒搶到東西",
+    "nothing_deployed": "沒有任何一張卡片出得去,部隊沒有成功部署",
+    "army_short": "兵力不足,沒付搜尋費就退出來",
+    "stock_full": "倉庫都滿過設定的百分比,停止刷資源",
+    "no_opponent": "等不到對手,已放棄這一輪搜尋",
+    "all_skipped": "跳過的對手都未達門檻,已結束搜尋",
+    "stopped": "收到停止要求,未開打就離開",
+    "no_attack_menu": "沒有開啟攻擊選單就停手",
+    "server_loading": "遊戲卡在載入畫面,伺服器可能連不上,這一輪停手",
+    "server_flapping": "遊戲又回到載入畫面,伺服器可能還連不上,這一輪停手",
+    "emulator_silent": "模擬器沒有回應",
+    "world_unreachable": "沒辦法切到指定的世界,沒有開打",
+}
+
+
+def round_line(report: AttackReport) -> str:
+    """One round as a line for a person, built from the report's own fields.
+
+    Here rather than carried on the model, for the reason `stock_of` gives. The
+    numbers are appended rather than written into each sentence because they are
+    orthogonal to how the round ended: a forced battle can take loot or deploy
+    nothing, and a round that skipped forty opponents can still end any of the
+    fourteen ways.
+    """
+    line = ROUND_LINES[report.outcome]
+    if report.forced:
+        line = f"倒數結束被強制開戰,{line}"
+    if report.skipped:
+        line = f"{line}(跳過 {report.skipped} 個對手)"
+    if report.phases > 1:
+        line = f"{line}(共出兵 {report.phases} 次)"
+    return line
+
+
 def _round(runner: AttackRunner, series: AttackSeries) -> AttackReport | None:
     """One round, with both of the ways it can end badly folded in. None ends the series.
 
@@ -924,7 +968,7 @@ def _lost_round(
     logger.error(
         "Round %d died on the emulator (%d in a row): %s", len(series.root) + 1, runner.lost, exc
     )
-    report = AttackReport(world=runner.world, message=f"模擬器沒有回應：{exc}")
+    report = AttackReport(world=runner.world, outcome="emulator_silent")
     if runner.lost >= ADAPTER_FAILURES:
         # Recorded here rather than handed back, because the caller records
         # what it is given and this one ends the series instead of reaching it.
@@ -935,7 +979,7 @@ def _lost_round(
         # `references/running.md` tells a session there is one of those per
         # round — so without this the last round is in `result.json` and
         # missing from the log, an undercount of exactly what this preserves.
-        logger.info("Attack finished: %s", report.message)
+        logger.info("Attack finished: %s", round_line(report))
         logger.error("The emulator has not answered for %d rounds; ending the series", runner.lost)
         return None
     # Handed back as an ordinary round that fought nothing, which is what it
@@ -988,10 +1032,17 @@ def attack(
     # one. This is the same wait a restart already does, and it leaves the camera
     # at the far zoom on the way past, which every coordinate below wants anyway.
     display = _settle_game(adb, WORLD_SETTLE_POLLS, should_stop) or adb.display_for(COC_PACKAGE)
-    world = _pick_world(adb, display, options.world)
+    wanted = options.world
+    world = _pick_world(adb, display, wanted)
     if world is None:
+        # **The village that was asked for rather than the default**, which says
+        # "day" and would otherwise be the only world named on a run that could
+        # not reach the other one. `_pick_world` answers None only when one was
+        # named, so the fallback below is unreachable; it is written out because
+        # the type says `wanted` may be None and an assertion nobody reads is
+        # worse than an `or` that says so.
         return AttackSeries(
-            root=[AttackReport(message=f"沒辦法切到{_WORLDS[options.world]},沒有開打")]
+            root=[AttackReport(world=wanted or "day", outcome="world_unreachable")]
         )
     logger.info("Playing the %s village", world)
     runner = AttackRunner(
@@ -1090,7 +1141,7 @@ def attack(
                 # matched nobody would pay for the whole trip again against a
                 # cart emptied moments earlier.
                 _empty_cart(world, battles, adb, display)
-            logger.info("Attack finished: %s", report.message)
+            logger.info("Attack finished: %s", round_line(report))
             _write_plan(options.plan_out, runner.played)
             _log_plan(options.plan_log, len(series.root), runner.played)
             if report.stock_full:
