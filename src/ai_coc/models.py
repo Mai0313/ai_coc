@@ -1541,10 +1541,17 @@ class BuildReport(BaseModel):
 
     started: list[BuildCandidate] = Field(default_factory=list)
     outcome: BuildOutcome
-    # What the dearest affordable upgrade would have cost, on a run that could
-    # not pay for one. "Come back later" is only useful with how much later on
-    # it, and this is the number the sentence used to carry.
+    # What the cheapest upgrade on offer would have cost, on a run that could
+    # not pay for any of them. "Come back later" is only useful with how much
+    # later on it, and this is the number the sentence used to carry. **Only
+    # ever set on `cannot_afford`**: the `--only` refusal is about a name rather
+    # than about money, and the cheapest of every offer there is a price for
+    # buildings the filter had already thrown away.
     cheapest: int | None = None
+    # The `--only` substring this run was given. Nothing else records it —
+    # `cli.py` logs the run directory and not the arguments — and it is the
+    # whole subject of an `only_no_match`.
+    only: str = ""
 
     def paid(self, resource: str) -> int:
         return sum(job.price for job in self.started if job.resource == resource)

@@ -344,7 +344,7 @@ class UpkeepRunner(GameRunner):
 
     def upgrade(self) -> BuildReport:
         """Put every idle builder on the dearest upgrade the village can pay for."""
-        report = BuildReport(outcome="started")
+        report = BuildReport(outcome="started", only=self.only)
         stock = self._home()
         if stock is None:
             report.outcome = "no_village"
@@ -366,8 +366,11 @@ class UpkeepRunner(GameRunner):
                 offers, stock.gold - self.keep_gold, stock.elixir - self.keep_elixir
             )
             if offer is None:
-                report.outcome = "only_no_match" if self.only else "cannot_afford"
-                report.cheapest = min(other.price for other in offers)
+                if self.only:
+                    report.outcome = "only_no_match"
+                else:
+                    report.outcome = "cannot_afford"
+                    report.cheapest = min(other.price for other in offers)
                 break
             if self._start(offer, stock):
                 report.started.append(offer)

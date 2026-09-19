@@ -1744,7 +1744,7 @@ BUILD_LINES: dict[BuildOutcome, str] = {
     "started": "",
     "nothing_found": "掃過村莊都沒有找到可以升級的建築",
     "cannot_afford": "剩下的資源買不起任何升級,最便宜的要 {cheapest}",
-    "only_no_match": "沒有找到名字符合 --only 而且買得起的建築",
+    "only_no_match": "沒有找到名字含「{only}」而且買得起的建築",
     "builders_busy": "工人都在忙,沒有可以派的",
     "count_unread": "讀不到工人數量,先停下來",
     "no_village": "畫面沒辦法回到村莊,建築升級沒有開始",
@@ -1760,7 +1760,7 @@ def build_line(report: BuildReport) -> str:
     """
     named = "、".join(str(job.building) for job in report.started if job.building.name)
     did = f"開始了 {len(report.started)} 個升級" + (f":{named}" if named else "")
-    reason = BUILD_LINES[report.outcome].format(cheapest=report.cheapest)
+    reason = BUILD_LINES[report.outcome].format(cheapest=report.cheapest, only=report.only)
     return f"{did};{reason}" if reason else did
 
 

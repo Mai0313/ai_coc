@@ -486,6 +486,22 @@ class UpgradeTests(unittest.TestCase):
             report = runner.upgrade()
         assert (report.outcome, report.cheapest) == ("cannot_afford", 720_000)
 
+    def test_a_named_building_that_never_turned_up_is_not_a_price(self) -> None:
+        """`--only` is refused on a name, so the cheapest of what it filtered out
+        is a price for buildings the run never considered. What it does record is
+        the name asked for, which nothing else on this machine does.
+        """
+        runner = self._runner(only="實驗室")
+        with (
+            patch.object(runner, "_home", return_value=STOCK),
+            patch.object(runner, "_frame", return_value=b""),
+            patch.object(upkeep, "free_builders", return_value=(1, 5)),
+            patch.object(runner, "_buildings", return_value=[self._offer(price=100)]),
+        ):
+            report = runner.upgrade()
+        assert (report.outcome, report.cheapest, report.only) == ("only_no_match", None, "實驗室")
+        assert "實驗室" in commands.build_line(report)
+
     def test_no_free_builder_ends_the_run_before_anything_is_looked_for(self) -> None:
         runner = self._runner()
         with (

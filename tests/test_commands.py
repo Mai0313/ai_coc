@@ -656,7 +656,7 @@ class UpkeepLineTests(unittest.TestCase):
             {
                 "nothing_found": "沒有找到可以升級的建築",
                 "cannot_afford": "最便宜的要",
-                "only_no_match": "--only",
+                "only_no_match": "而且買得起的建築",
                 "builders_busy": "工人都在忙",
                 "count_unread": "讀不到工人數量",
                 "no_village": "建築升級沒有開始",
