@@ -5706,6 +5706,20 @@ class HomeHudTests(unittest.TestCase):
         assert held.up is True
         assert held.remaining == 6 * 3600 + 8 * 60
 
+    def test_a_plate_under_a_panel_says_nothing_rather_than_claiming_a_shield(self) -> None:
+        """Which is why an unreadable countdown is None and not `up=True`.
+
+        A full-screen panel leaves the badge row readable above it and the plate
+        itself unreadable, so the two look identical from here: both write
+        enough in that box to clear 無's two glyphs and neither resolves. Reading
+        that as a shield would have this frame claim one on a screen that says no
+        such thing, and `remaining=None` on a live shield is a state nothing
+        produces for the same reason.
+        """
+        for frame in ("hero_hall_menu.png", "day_village_shield.png"):
+            png = (FRAMES / frame).read_bytes()
+            assert shield_state(png, plate_badges(png)["shield"]) is None, frame
+
     def test_the_builder_base_has_no_shield_plate_to_read(self) -> None:
         """Structurally, not incidentally: it is matchmaking against a live player."""
         assert "shield" not in plate_badges((FRAMES / "world_night.png").read_bytes())

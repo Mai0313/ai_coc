@@ -25,7 +25,7 @@ import logging
 
 from ai_coc.models import PlateJob, PlateReport, PlateJobNames
 from ai_coc.prompts import render
-from ai_coc.ui.runner import MENU_SETTLE, SPOT_TIMEOUT, ScreenRunner, spell_out
+from ai_coc.ui.runner import MENU_SETTLE, SPOT_TIMEOUT, ScreenRunner
 from ai_coc.adapters.ai import GeminiClient
 from ai_coc.parsers.home import (
     jobs_strip,
@@ -46,10 +46,6 @@ logger = logging.getLogger(__name__)
 # toggles, so a panel somebody left open closes on the first tap and opens on
 # the second; `UpkeepRunner.builders` has paid for this one already.
 PANEL_TRIES = 2
-
-# Only ever used to build a message. The parsers read none of these — they are
-# what a person reads in a report.
-PLATE_NAMES: dict[str, str] = {"lab": "實驗室", "builder": "建築工人", "shield": "護盾"}
 
 
 class PlateRunner(ScreenRunner):
@@ -76,14 +72,17 @@ class PlateRunner(ScreenRunner):
         png = self._frame("plates")
         world = current_world(png)
         if world is None:
-            return PlateReport(role=role, message="畫面不在村莊,讀不到上排的牌子")
+            return PlateReport(role=role, outcome="not_a_village")
         badges = plate_badges(png)
         centre = badges.get(role)
         if centre is None:
-            return PlateReport(
-                world=world, role=role, message=f"這個畫面上看不到{PLATE_NAMES[role]}的牌子"
-            )
-        report = PlateReport(world=world, role=role)
+            return PlateReport(world=world, role=role, outcome="no_badge")
+        # **`panel_shut` is what every path that returns before the panel reads
+        # means**, so it is what the report is built with rather than a success
+        # overwritten later: the count below and the taps after it can each end
+        # the read, and a report that started out claiming `read` would be one
+        # value away from saying so.
+        report = PlateReport(world=world, role=role, outcome="panel_shut")
         if (counted := plate_count(png, centre)) is not None:
             report.free, report.total = counted
         rows: list[int | None] | None = None
@@ -104,13 +103,10 @@ class PlateRunner(ScreenRunner):
             # screen: the panel never opened, or it opened with nothing running
             # behind it. The plate's own count separates them for nothing —
             # every slot idle is exactly the village with nothing to show — and
-            # a count that would not read leaves the honest answer, which is
-            # that nobody can say.
-            report.message = (
-                f"{PLATE_NAMES[role]} {report.free}/{report.total},沒有在跑的項目"
-                if report.free is not None and report.free == report.total
-                else f"{PLATE_NAMES[role]}的面板打不開,只讀到牌子上的數字"
-            )
+            # a count that would not read leaves `panel_shut`, which is the
+            # honest answer that nobody can say.
+            if report.free is not None and report.free == report.total:
+                report.outcome = "idle"
             return report
         self._tap(plate_button(centre))
         time.sleep(MENU_SETTLE)
@@ -119,8 +115,11 @@ class PlateRunner(ScreenRunner):
             PlateJob(name=named[index] if index < len(named) else "", remaining=seconds)
             for index, seconds in enumerate(rows)
         ]
+        # Unconditional, because `panel_rows` has no empty answer: a band with no
+        # bars in it comes back None and is handled above, so reaching here is a
+        # panel with at least one row on it.
+        report.outcome = "read"
         logger.info("%s: %s/%s with %d running", role, report.free, report.total, len(report.jobs))
-        report.message = self._sentence(report)
         return report
 
     def _names(self, png: bytes, world: World, role: PlateRole) -> list[str]:
@@ -156,19 +155,3 @@ class PlateRunner(ScreenRunner):
         png = self._frame("shield")
         centre = plate_badges(png).get("shield")
         return None if centre is None else shield_state(png, centre)
-
-    def _sentence(self, report: PlateReport) -> str:
-        """The report as a line for a person, built from the fields rather than kept on one."""
-        held = PLATE_NAMES[report.role]
-        # Only the plate's own count, because the running count is on every line
-        # below this one — carrying it here as well printed it twice.
-        counted = f"{report.free}/{report.total}" if report.free is not None else "數字讀不到"
-        timed = [job for job in report.jobs if job.remaining is not None]
-        if not timed:
-            return f"{held} {counted},{len(report.jobs)} 個在跑,但每一個的倒數都讀不到"
-        next_up = min(timed, key=lambda job: job.remaining or 0)
-        named = f"是{next_up.name}," if next_up.name else ""
-        return (
-            f"{held} {counted},{len(report.jobs)} 個在跑,"
-            f"最快的{named}還要 {spell_out(next_up.remaining or 0)}"
-        )

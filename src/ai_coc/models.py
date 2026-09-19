@@ -1152,10 +1152,20 @@ class ShieldState(BaseModel):
     instructions — one says the village is being farmed by other people right
     now, the other says to look again.
 
-    `remaining` is therefore None in one case only: a shield is up and this frame
-    would not resolve its countdown. The plate being absent altogether is not a
-    state here — the builder base has no shield plate, so its callers get no
-    `ShieldState` rather than one saying False.
+    **`remaining` is None exactly when `up` is False**, which is not what this
+    said and is worth being exact about: 無 carries no countdown to read, and a
+    shield that is up but whose countdown will not resolve is reported as no
+    `ShieldState` at all rather than as one with an empty countdown. That is
+    because it cannot be told apart from the plate being covered — swept over
+    every committed frame, a full-screen panel over the village leaves the badge
+    readable and the plate under it unreadable, so `hero_hall_menu.png` would
+    otherwise claim a shield is up on a frame that says no such thing.
+
+    The plate being absent altogether is not a state here — the builder base has
+    no shield plate, so its callers get no `ShieldState` rather than one saying
+    False. **Which of those two a None is comes off the world**: on the builder
+    base it is structural and needs no following up, and on the home village it
+    is a reading to take again.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -1205,6 +1215,22 @@ class PlateReport(BaseModel):
     resolve — the plate is translucent, so the camera decides. That costs less
     than it looks: the number a caller waiting on a builder actually wants is
     `soonest`, which comes off the panel rather than off the plate.
+
+    **`outcome` names the branch this came back from, and there is no sentence.**
+    `StockReport` argues the whole case already: a reading has no outcome to
+    narrate, and every state it can be in is readable off its own fields. What
+    earns a field here rather than a sentence is one pair the fields genuinely
+    cannot separate — a plate whose badge was not on the frame, against a panel
+    that would not open **on a frame whose count would not read either**. Both
+    leave a village, no counts and no rows. Read off an enum they are two
+    different things to do next; read off prose they are two wordings nobody can
+    match on. The commoner shape of that second one keeps its count, so those
+    two really are told apart by the fields — the pair is narrow, and it is
+    still the reason.
+
+    **It has no default**, because every path through the reader knows how it
+    ended and a report that quietly claimed one of them would be wrong for four
+    of the five.
     """
 
     world: World | None = None
@@ -1212,7 +1238,7 @@ class PlateReport(BaseModel):
     free: int | None = None
     total: int | None = None
     jobs: list[PlateJob] = Field(default_factory=list)
-    message: str = ""
+    outcome: PlateOutcome
 
     def soonest(self) -> int | None:
         """Seconds until the next one finishes, or None if no row's countdown read."""
@@ -1240,14 +1266,18 @@ class StockReport(BaseModel):
     and a caller working it out from two numbers is a caller that can get it
     wrong.
 
-    **The only report here with no `message`, because it has no outcome to
-    narrate.** The others report something that happened — 收了 8 個採集器,
-    每一個位置都沒有買成 — and a sentence is the honest shape for that. This
-    reports three numbers, and every state it can be in is already readable off
-    the fields: no `world` is a screen that is not a village, a `world` with no
-    `held` is a village whose bars this frame could not resolve, and a name
-    missing from `filled` is a ceiling that would not read. A sentence saying
-    any of that again is the same answer twice, which is what it was doing.
+    **The first report here with no `message`, and the argument it made is now
+    the house rule.** This reports three numbers, and every state it can be in
+    is already readable off the fields: no `world` is a screen that is not a
+    village, a `world` with no `held` is a village whose bars this frame could
+    not resolve, and a name missing from `filled` is a ceiling that would not
+    read. A sentence saying any of that again is the same answer twice, which is
+    what it was doing. What the others need instead, where their fields really
+    cannot say which branch a run came back from, is a named outcome rather than
+    prose — see `PlateOutcome`: a wording nobody can match on is what made a
+    sentence worse than a field rather than merely redundant. **The rest of the
+    reports here still carry a `message` and are being worked through**, so this
+    is the pattern rather than the state of the file.
     """
 
     world: World | None = None
@@ -1266,19 +1296,27 @@ class StatusReport(BaseModel):
     who is building, what is being researched, and how full the storages are —
     taken off one village in one pass rather than three commands and three
     settles.
+
+    **Nothing of its own to report, so no field of its own beyond the world.**
+    Each part already says how it went, and the sentence that used to sit here
+    was those parts' own sentences joined with a semicolon — the same answer
+    twice, in a form nothing could read back.
     """
 
     # Built on demand rather than at class definition: an annotation resolves
     # later but a default is evaluated where it is written, and `World` is
     # defined further down this file than any of these.
     world: World | None = None
-    builder: PlateReport = Field(default_factory=lambda: PlateReport(role="builder"))
-    lab: PlateReport = Field(default_factory=lambda: PlateReport(role="lab"))
+    builder: PlateReport = Field(
+        default_factory=lambda: PlateReport(role="builder", outcome="not_a_village")
+    )
+    lab: PlateReport = Field(
+        default_factory=lambda: PlateReport(role="lab", outcome="not_a_village")
+    )
     stock: StockReport = Field(default_factory=StockReport)
     # None on the builder base, which has no shield plate at all rather than one
     # saying there is no shield.
     shield: ShieldState | None = None
-    message: str = ""
 
 
 class BuildingName(BaseModel):
@@ -1560,6 +1598,22 @@ World = Literal["day", "night"]
 # alone: the builder base is real-time matchmaking against a live player, so a
 # shield there would contradict the mode's own design.
 PlateRole = Literal["lab", "builder", "shield"]
+
+# How a plate reading ended, which is the one thing about it the fields cannot
+# say. `read` is the only one that saw the panel: it opened and had at least one
+# row on it, which is the only thing `panel_rows` ever answers with — a band with
+# no bars comes back as nothing at all rather than as an empty list.
+#
+# **`idle` is inferred rather than observed**, and that is worth knowing before
+# leaning on it: it is the no-bars case where the plate's own count says every
+# slot is free, so it is a panel nobody watched open. A count that disagrees or
+# will not read leaves `panel_shut` instead, which is the honest answer that
+# nobody can say. The remaining two are failures a caller answers differently:
+# `not_a_village` is a screen to clear or wait out, and it is the only one whose
+# `world` is None; `no_badge` is a plate not on this frame, which on the home
+# village is worth another capture and on the builder base's missing shield is
+# structural and never will be.
+PlateOutcome = Literal["read", "idle", "no_badge", "panel_shut", "not_a_village"]
 
 
 class Crossing(BaseModel):

@@ -1344,7 +1344,7 @@ class PlateRunnerTests(unittest.TestCase):
         report, opened, tapped = self._read("builder", counted=(1, 3), panels=[[600, 7200]])
         assert (report.world, report.free, report.total) == ("night", 1, 3)
         assert [job.remaining for job in report.jobs] == [600, 7200]
-        assert "最快的還要 10 分鐘" in report.message
+        assert report.outcome == "read"
         opened.assert_called_once()
         tapped.assert_called_once_with(plates.plate_button(846))
 
@@ -1352,7 +1352,7 @@ class PlateRunnerTests(unittest.TestCase):
         """A panel left open by an earlier command closes on the first tap."""
         report, opened, _ = self._read("builder", panels=[None, [90_000]])
         assert opened.call_count == 2
-        assert "1 天 1 小時" in report.message
+        assert (report.outcome, [job.remaining for job in report.jobs]) == ("read", [90_000])
 
     def test_a_plate_with_nothing_running_is_not_tapped_a_third_time(self) -> None:
         """**The closing tap would open it**, and an open panel hides the badge row.
@@ -1366,32 +1366,54 @@ class PlateRunnerTests(unittest.TestCase):
         report, opened, tapped = self._read("builder", counted=(3, 3), panels=[None, None])
         assert opened.call_count == 2
         tapped.assert_not_called()
-        assert report.message == "建築工人 3/3,沒有在跑的項目"
+        assert (report.outcome, report.free, report.total) == ("idle", 3, 3)
 
     def test_a_panel_that_will_not_open_says_so_rather_than_claiming_it_is_empty(self) -> None:
         """Every slot busy and no bars is a panel that failed, not a plate at rest."""
         report, _, tapped = self._read("builder", counted=(0, 3), panels=[None, None])
         tapped.assert_not_called()
-        assert "打不開" in report.message
+        assert (report.outcome, report.free, report.total) == ("panel_shut", 0, 3)
+
+    def test_a_shut_panel_on_an_unreadable_count_is_the_one_state_the_fields_cannot_say(
+        self,
+    ) -> None:
+        """**The pair `outcome` exists for**, and the only one it is needed for.
+
+        A `panel_shut` that kept its count is told apart from `no_badge` by the
+        count alone, since `no_badge` returns before the plate is ever read. It
+        is when the count will not read either that the two leave the same
+        report — a village, no numbers, no rows — and the enum is the only thing
+        left pointing at two different things to do next.
+        """
+        shut, _, _ = self._read("builder", counted=None, panels=[None, None])
+        missing, _, _ = self._read("shield", counted=None)
+        assert (shut.world, shut.free, shut.total, shut.jobs) == (
+            missing.world,
+            missing.free,
+            missing.total,
+            missing.jobs,
+        )
+        assert (shut.outcome, missing.outcome) == ("panel_shut", "no_badge")
 
     def test_a_count_that_will_not_read_still_reports_what_is_running(self) -> None:
-        """And says it once: the running total used to be printed twice on this path."""
         report, _, _ = self._read("builder", counted=None, panels=[[600, 7200]])
         assert (report.free, report.total) == (None, None)
-        assert report.message.count("個在跑") == 1
-        assert "數字讀不到" in report.message
+        assert (report.outcome, len(report.jobs)) == ("read", 2)
 
     def test_a_frame_that_is_no_village_reads_no_plate(self) -> None:
         report, opened, tapped = self._read("builder", world=None)
-        assert report.world is None
-        assert "不在村莊" in report.message
+        assert (report.world, report.outcome) == (None, "not_a_village")
         opened.assert_not_called()
         tapped.assert_not_called()
 
     def test_a_plate_this_village_does_not_have_is_said_rather_than_tapped(self) -> None:
-        """The builder base has no shield plate at all."""
+        """The builder base has no shield plate at all.
+
+        Distinct from a panel that would not open, which is the pair `outcome`
+        exists for: this one is a plate that was never there to tap.
+        """
         report, opened, _ = self._read("shield")
-        assert "看不到護盾的牌子" in report.message
+        assert report.outcome == "no_badge"
         opened.assert_not_called()
 
     def test_a_name_is_matched_to_the_row_it_was_read_beside(self) -> None:
@@ -1404,4 +1426,3 @@ class PlateRunnerTests(unittest.TestCase):
             ("X連弩", 600),
             ("", None),
         ]
-        assert "最快的是X連弩" in report.message
