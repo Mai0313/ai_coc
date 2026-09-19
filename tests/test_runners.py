@@ -825,7 +825,7 @@ class OpenAttackMenuTests(unittest.TestCase):
         """The wait reads the screen itself, so the third answer is the attempt after it."""
         got, seen = self._open("day", ["day"], loading=[True, False, False])
         assert got == b"home"
-        assert seen["runner"]._stuck == ""
+        assert seen["runner"]._stuck is None
         seen["cleared"].assert_not_called()
         seen["restarted"].assert_not_called()
 
@@ -833,7 +833,7 @@ class OpenAttackMenuTests(unittest.TestCase):
         """One wait per load: a game that loaded and dropped back is a server not staying up."""
         got, seen = self._open("day", [], loading=[True, False, True])
         assert got is None
-        assert "又回到載入畫面" in seen["runner"]._stuck
+        assert seen["runner"]._stuck == "server_flapping"
         seen["tapped"].assert_not_called()
 
     def test_a_restart_boots_through_the_loading_screen_and_that_is_a_fresh_wait(self) -> None:
@@ -851,7 +851,7 @@ class OpenAttackMenuTests(unittest.TestCase):
             loading=[True, False, True, False, False],
         )
         assert got == b"home"
-        assert seen["runner"]._stuck == ""
+        assert seen["runner"]._stuck is None
         seen["restarted"].assert_called_once()
 
 
@@ -883,7 +883,7 @@ class WaitOutLoadingTests(unittest.TestCase):
     def test_the_wait_ends_when_the_screen_changes(self) -> None:
         went, runner, shot = self._wait([True, True, False])
         assert went
-        assert runner._stuck == ""
+        assert runner._stuck is None
         assert shot.call_count == 3
         assert shot.slept.call_count == 3
 
@@ -891,30 +891,36 @@ class WaitOutLoadingTests(unittest.TestCase):
         with patch.object(attack, "SERVER_POLLS", 3):
             went, runner, shot = self._wait([True] * 3)
         assert not went
-        assert "載入畫面" in runner._stuck
+        assert runner._stuck == "server_loading"
         assert shot.call_count == 3
 
     def test_a_stop_ends_the_wait_and_says_so_rather_than_blaming_the_server(self) -> None:
         went, runner, shot = self._wait([], stop=True)
         assert not went
-        assert "停止" in runner._stuck
+        assert runner._stuck == "stopped"
         assert shot.call_count == 0
 
     def test_a_second_wait_in_one_round_is_refused_without_a_capture(self) -> None:
         went, runner, shot = self._wait([], again=True)
         assert not went
-        assert "又回到載入畫面" in runner._stuck
+        assert runner._stuck == "server_flapping"
         assert shot.call_count == 0
 
     def test_the_reason_reaches_the_report_on_both_villages(self) -> None:
-        for world, fallback in (("day", "畫面不在主村"), ("night", "畫面不在建築大師基地")):
+        """A server that never answered is not a round that could not find a menu.
+
+        Both villages take the same two exits, and the one the wait names has to
+        survive onto the report — it is the only place a farming session can
+        tell an outage from a screen the round was simply lost on.
+        """
+        for world in ("day", "night"):
             runner = AttackRunner(
                 adb=_adb(), display=DISPLAY, world=world, thresholds=LootThresholds()
             )
             with patch.object(AttackRunner, "_open_attack_menu", return_value=None):
-                assert fallback in runner.run().message
-                runner._stuck = "遊戲卡在載入畫面 45 分鐘"
-                assert runner.run().message == "遊戲卡在載入畫面 45 分鐘"
+                assert runner.run().outcome == "no_attack_menu"
+                runner._stuck = "server_loading"
+                assert runner.run().outcome == "server_loading"
 
 
 class StoodDownTests(unittest.TestCase):
@@ -937,8 +943,7 @@ class StoodDownTests(unittest.TestCase):
         ):
             report = runner._stood_down(b"")
         assert report is not None
-        assert (report.world, report.stock_full) == ("day", True)
-        assert "黑水 95" in report.message
+        assert (report.world, report.outcome, report.stock_full) == ("day", "stock_full", True)
         back.assert_called_once()
 
     def test_a_full_builder_base_reads_its_own_two_rows(self) -> None:
@@ -951,8 +956,7 @@ class StoodDownTests(unittest.TestCase):
         ):
             report = runner._stood_down(b"")
         assert report is not None
-        assert report.world == "night"
-        assert "黑水" not in report.message
+        assert (report.world, report.outcome) == ("night", "stock_full")
 
     def test_a_village_short_of_the_line_or_unreadable_carries_on(self) -> None:
         runner = self._runner("day")
@@ -1009,45 +1013,45 @@ class DayRoundTests(unittest.TestCase):
         report, taps, deployed, _ = self._round([POOR, RICH])
         assert report.attacked == RICH.loot
         assert report.skipped == 1
-        assert report.message == "戰利品達標，已進攻並回營"
+        assert (report.outcome, report.forced) == ("took_loot", False)
         deployed.assert_called_once_with(b"scout")
         assert taps == [attack.FIND_MATCH, attack.ARMY_ATTACK, attack.NEXT_TARGET]
 
     def test_a_half_trained_army_backs_out_before_the_fee(self) -> None:
         report, taps, deployed, back = self._round([RICH], strength=(100, 305))
         assert report.attacked is None
-        assert "兵力只有 100/305" in report.message
+        assert report.outcome == "army_short"
         deployed.assert_not_called()
         back.assert_called_once()
         assert taps == [attack.FIND_MATCH]
 
     def test_too_many_skips_ends_the_search_through_the_button(self) -> None:
         report, taps, deployed, _ = self._round([POOR, POOR], max_skips=1)
-        assert "連續跳過 1 個對手" in report.message
+        assert (report.outcome, report.skipped) == ("all_skipped", 1)
         assert taps[-1] == END_BATTLE
         deployed.assert_not_called()
 
     def test_a_stop_leaves_a_skippable_opponent_without_attacking(self) -> None:
         report, taps, deployed, _ = self._round([RICH], stop=True)
-        assert report.message == "已停止，未開打就離開搜尋"
+        assert report.outcome == "stopped"
         assert taps[-1] == END_BATTLE
         deployed.assert_not_called()
 
     def test_a_forced_battle_is_played_whatever_the_loot_and_the_stop(self) -> None:
         report, _, deployed, _ = self._round([FORCED], stop=True)
         assert report.attacked == POOR.loot
-        assert report.message == "倒數結束被強制開戰，已進攻並回營"
+        assert (report.outcome, report.forced) == ("took_loot", True)
         deployed.assert_called_once()
 
     def test_a_battle_nobody_could_read_is_not_called_a_failure(self) -> None:
         report, _, _, _ = self._round([RICH], took=False)
-        assert "無從判斷" in report.message
+        assert report.outcome == "loot_unread"
 
     def test_no_opponent_at_all_is_reported_and_left_through_the_button_only_if_one_is_up(
         self,
     ) -> None:
         report, taps, _, _ = self._round([None])
-        assert "等不到對手畫面" in report.message
+        assert report.outcome == "no_opponent"
         assert END_BATTLE not in taps
 
 
@@ -1302,10 +1306,12 @@ class DeploymentTests(unittest.TestCase):
 
     def test_an_outcome_tells_a_battle_nobody_read_from_one_that_never_landed(self) -> None:
         runner = self._runner()
-        assert runner._outcome("戰利品達標", True) == "戰利品達標，已進攻並回營"
-        assert "無從判斷" in runner._outcome("戰利品達標", False)
+        assert runner._outcome(True) == "took_loot"
+        assert runner._outcome(False) == "loot_unread"
         runner._seen = POOR.loot
-        assert "沒有變化" in runner._outcome("戰利品達標", False)
+        assert runner._outcome(False) == "nothing_deployed"
+        runner._deployed = True
+        assert runner._outcome(False) == "no_loot"
 
 
 if __name__ == "__main__":

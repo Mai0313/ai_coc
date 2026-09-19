@@ -688,15 +688,16 @@ class MainWindow(QMainWindow):
                 return
             report = series.root[-1]
             # The storage is full, so the next pass would only read it again and
-            # come back here. Stopping is the whole point of the threshold. The
-            # skip count is left out of this one: it returns before any opponent
-            # is scouted, and this is the only line saying why the automation
-            # switched itself off.
+            # come back here. Stopping is the whole point of the threshold, and
+            # this is the only line saying why the automation switched itself
+            # off — so it is the outcome's own sentence without the counts
+            # `round_line` appends, which that round has none of anyway: it
+            # returns before any opponent is scouted.
             if report.stock_full:
-                logger.info("%s", report.message)
+                logger.info("%s", commands.ROUND_LINES[report.outcome])
                 self.stop_automation()
                 return
-            logger.info("進攻巡檢結束(跳過 %d 個對手):%s", report.skipped, report.message)
+            logger.info("進攻巡檢結束:%s", commands.round_line(report))
 
         # One round per pass, which is `AttackOptions`' own default rather than
         # a bound this has to impose — an unbounded series is what `--repeat 0`

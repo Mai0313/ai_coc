@@ -25,6 +25,7 @@ from ai_coc.models import (
     AttackStep,
     ScreenPoint,
     AttackReport,
+    AttackOutcome,
     LootThresholds,
     StorageCapacity,
 )
@@ -882,9 +883,10 @@ class AttackRunner(ScreenRunner):
     # days apart, against six taps and three captures to ask again every round.
     _capacity: StorageCapacity | None = PrivateAttr(default=None)
     # Why the last `_open_attack_menu` gave up, when the reason is worth more
-    # than 畫面不在主村: a loading screen that outlasted `SERVER_POLLS`, or a
-    # stop that landed during that wait. Empty is the ordinary failure.
-    _stuck: str = PrivateAttr(default="")
+    # than the round simply not finding its menu: a loading screen that
+    # outlasted `SERVER_POLLS`, one that came back after a wait, or a stop that
+    # landed during it. None is the ordinary failure.
+    _stuck: AttackOutcome | None = PrivateAttr(default=None)
     # Rounds this runner has lost to the emulator back to back, which is what
     # tells a blip from an emulator that has gone. Consecutive rather than
     # total, and kept here because one runner plays one series: the series is
@@ -1003,7 +1005,7 @@ class AttackRunner(ScreenRunner):
         """
         other: World = "night" if self.world == "day" else "day"
         opened = attack_menu_open if self.world == "day" else night_attack_menu
-        self._stuck = ""
+        self._stuck = None
         waited = False
         for _ in range(HOME_ATTEMPTS):
             home = self._frame("home")
@@ -1091,7 +1093,7 @@ class AttackRunner(ScreenRunner):
         """
         if again:
             logger.warning("The loading screen is back; the server is not staying up")
-            self._stuck = "遊戲又回到載入畫面，伺服器可能還連不上，這一輪停手"
+            self._stuck = "server_flapping"
             return False
         logger.warning(
             "The game is on its loading screen; waiting for the server rather than tapping"
@@ -1099,7 +1101,7 @@ class AttackRunner(ScreenRunner):
         for poll in range(1, SERVER_POLLS + 1):
             if self.should_stop():
                 logger.info("Stop requested while waiting for the game to load")
-                self._stuck = "等待載入時收到停止要求，這一輪沒有開打"
+                self._stuck = "stopped"
                 return False
             time.sleep(SERVER_POLL)
             if not loading_screen(self.adb.screenshot(self.display)):
@@ -1110,7 +1112,7 @@ class AttackRunner(ScreenRunner):
             "Still on the loading screen after %.0f minutes; the server may be unreachable",
             minutes,
         )
-        self._stuck = f"遊戲卡在載入畫面 {minutes:.0f} 分鐘，伺服器可能連不上，這一輪停手"
+        self._stuck = "server_loading"
         return False
 
     def _stood_down(self, home: bytes) -> AttackReport | None:
@@ -1141,11 +1143,7 @@ class AttackRunner(ScreenRunner):
             held += f"／黑水 {stock.dark}"
         logger.info("Storage limit reached (%s); farming stops with %s", "/".join(full), held)
         self.adb.back(self.display)
-        return AttackReport(
-            world=self.world,
-            stock_full=True,
-            message=f"{'、'.join(full)}都滿過 {self.stop_at}%（{held}），停止刷資源",
-        )
+        return AttackReport(world=self.world, outcome="stock_full")
 
     def _leave_result(self) -> None:
         """Tap 回營 until the result screen has actually gone.
@@ -2165,7 +2163,7 @@ class AttackRunner(ScreenRunner):
         logger.info("%d card(s) still hold something; emptying them", len(extra))
         self._cast(extra, tuple(self._line), self._last)
 
-    def _outcome(self, reason: str, took: bool) -> str:
+    def _outcome(self, took: bool) -> AttackOutcome:
         """How a battle that was actually fought is reported.
 
         Four answers rather than two, and the two extra ones are the point: see
@@ -2182,21 +2180,25 @@ class AttackRunner(ScreenRunner):
         read 戰敗, 32%, 你獲得了 0: every troop card had drained and three of
         three retried heroes had landed, and the army had simply gone in on the
         side with no storages on it. `_deployed` is what the loop already
-        watched happen, so the message can say which of the two it was instead
+        watched happen, so the report can say which of the two it was instead
         of naming the one it did not check.
+
+        **Whether the countdown forced the battle is not one of these**, which
+        is why it left this function: it is orthogonal to how the fighting went,
+        and `AttackReport.forced` carries it alongside.
         """
         if took:
-            return f"{reason}，已進攻並回營"
+            return "took_loot"
         if self._seen is None:
             logger.warning("Nothing ever read the loot panel; this round cannot be judged")
-            return f"{reason}，已進攻並回營，但整場都讀不到戰利品面板，成果無從判斷"
+            return "loot_unread"
         if self._deployed:
             logger.warning(
                 "The army went down and the battle took nothing; the tactic came up short"
             )
-            return f"{reason}，已進攻並回營，但整場戰利品沒有變化，部隊有出去而這一場沒搶到東西"
+            return "no_loot"
         logger.warning("The whole battle passed without any loot moving, and nothing left a card")
-        return f"{reason}，但整場戰利品沒有變化，而且沒有任何一張卡片出得去，部隊沒有成功部署"
+        return "nothing_deployed"
 
     def _find_opponent(self) -> bytes | None:
         """Hold the matchmaker open until a battle opens, restarting it if it drags.
@@ -2560,15 +2562,16 @@ class AttackRunner(ScreenRunner):
                 "The builder base's attack dialog never opened: %s",
                 self._stuck or "the game is not on the builder base",
             )
-            return AttackReport(
-                world="night",
-                message=self._stuck or "畫面不在建築大師基地，沒有開啟攻擊選單就停手",
-            )
+            return AttackReport(world="night", outcome=self._stuck or "no_attack_menu")
         if (full := self._stood_down(home)) is not None:
             return full
         battle = self._find_opponent()
         if battle is None:
-            return AttackReport(world="night", message="等不到對手，已放棄這一輪搜尋")
+            # `_find_opponent` answers None for a stop as readily as for a
+            # matchmaker that never matched, and those are not the same news:
+            # `farm` treats a run of `no_opponent` as worth reporting upwards.
+            stopped = self.should_stop()
+            return AttackReport(world="night", outcome="stopped" if stopped else "no_opponent")
         played = 0
         for stage in range(NIGHT_PHASES):
             deployed = self._deploy_night(battle, stage)
@@ -2580,10 +2583,12 @@ class AttackRunner(ScreenRunner):
             if following is None:
                 break
             battle = following
+        # `deployed` rather than `took_loot`, because nothing here read any
+        # loot: this village pays its elixir into a cart, and the box the home
+        # village's panel is read from is battlefield here. What a night round
+        # can honestly claim is that troops went out.
         return AttackReport(
-            world="night",
-            phases=played,
-            message=f"已進攻並回營，共出兵 {played} 次" if played else "沒有成功部署任何部隊",
+            world="night", phases=played, outcome="deployed" if played else "nothing_deployed"
         )
 
     def run(self) -> AttackReport:
@@ -2628,7 +2633,7 @@ class AttackRunner(ScreenRunner):
                 "The attack menu did not open: %s",
                 self._stuck or "the game is not on the home village",
             )
-            return AttackReport(message=self._stuck or "畫面不在主村，沒有開啟攻擊選單就停手")
+            return AttackReport(outcome=self._stuck or "no_attack_menu")
         # Before the search fee, like the army check below.
         if (full := self._stood_down(home)) is not None:
             return full
@@ -2638,7 +2643,7 @@ class AttackRunner(ScreenRunner):
         if strength and strength[0] < strength[1] * MIN_ARMY_RATIO:
             logger.info("Army is only %d/%d; backing out before the search fee", *strength)
             self.adb.back(self.display)
-            return AttackReport(message=f"兵力只有 {strength[0]}/{strength[1]}，等練好再打")
+            return AttackReport(outcome="army_short")
         self._tap(ARMY_ATTACK)
         skipped = 0
         while True:
@@ -2650,9 +2655,7 @@ class AttackRunner(ScreenRunner):
                 if self._offered:
                     logger.info("Leaving through 結束戰鬥 rather than letting the countdown run")
                     self._tap(END_BATTLE)
-                return AttackReport(
-                    skipped=skipped + self._swapped, message="等不到對手畫面，已放棄這一輪搜尋"
-                )
+                return AttackReport(skipped=skipped + self._swapped, outcome="no_opponent")
             view, frame = scouted
             forced = not view.can_skip
             # Leaving is only safe on an opponent that can still be skipped: 結束
@@ -2663,29 +2666,26 @@ class AttackRunner(ScreenRunner):
             if stopping:
                 logger.info("Stop pressed; leaving the search after %d skip(s)", skipped)
             if not stopping and (forced or self.thresholds.accepts(view.loot)):
-                reason = "倒數結束被強制開戰" if forced else "戰利品達標"
-                # The forced half of that reason is an inference from an absent
-                # 下一個 rather than something the loop can see, and a line
-                # carrying only the inference is what let six rounds of one
-                # evening read as the game's doing. What separates the two is
-                # whether the panel had finished painting, and `_scout` says
-                # that where it measured it — restating `can_skip` here would
-                # be the same bit printed twice.
-                logger.info("Attacking after %d skips (%s)", skipped, reason)
+                # `forced` is an inference from an absent 下一個 rather than
+                # something the loop can see, and a report carrying only the
+                # inference is what let six rounds of one evening read as the
+                # game's doing. What separates the two is whether the panel had
+                # finished painting, and `_scout` says that where it measured
+                # it — restating `can_skip` here would be the same bit twice.
+                logger.info("Attacking after %d skips (forced=%s)", skipped, forced)
                 self._deploy(frame)
                 took = self._wait_out_battle(view.loot)
                 return AttackReport(
                     skipped=skipped + self._swapped,
                     attacked=view.loot,
-                    message=self._outcome(reason, took),
+                    forced=forced,
+                    outcome=self._outcome(took),
                 )
             if stopping or skipped >= self.max_skips:
                 self._tap(END_BATTLE)
                 return AttackReport(
                     skipped=skipped + self._swapped,
-                    message="已停止，未開打就離開搜尋"
-                    if stopping
-                    else f"連續跳過 {skipped} 個對手都未達門檻，已結束搜尋",
+                    outcome="stopped" if stopping else "all_skipped",
                 )
             skipped += 1
             self._tap(NEXT_TARGET)

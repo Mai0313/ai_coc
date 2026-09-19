@@ -44,6 +44,7 @@ from ai_coc.models import (
     ScreenSpots,
     WallOptions,
     WallUpgrade,
+    AttackReport,
     AttackSeries,
     BuildingName,
     VillageStock,
@@ -547,7 +548,12 @@ class WorldChoiceTests(unittest.TestCase):
             patch.object(commands, "_restart_emulator", return_value=True),
         ):
             runner.return_value.run.return_value = MagicMock(
-                stock_full=True, attacked=None, phases=0, message=""
+                stock_full=True,
+                attacked=None,
+                phases=0,
+                skipped=0,
+                forced=False,
+                outcome="stock_full",
             )
             runner.return_value.played = None
             series = commands.attack(AttackOptions(world=world, rounds=1))
@@ -567,7 +573,9 @@ class WorldChoiceTests(unittest.TestCase):
         """Here the caller said which one, so playing the other is not a fallback."""
         series, runner = self._series("night", None, crossed="day")
         assert runner.return_value.run.call_count == 0
-        assert "沒辦法切到夜世界" in series.root[0].message
+        # The world it could not reach, not the default: that field is the only
+        # place a reader learns which crossing failed.
+        assert (series.root[0].outcome, series.root[0].world) == ("world_unreachable", "night")
 
     def test_a_named_village_the_game_is_already_on_costs_no_crossing(self) -> None:
         _, runner = self._series("night", "night", crossed="night")
@@ -793,7 +801,39 @@ class NightAttackTests(unittest.TestCase):
         ):
             report = runner.run()
         assert (report.phases, waited.call_count) == (0, 0)
-        assert report.message == "沒有成功部署任何部隊"
+        assert report.outcome == "nothing_deployed"
+
+    def test_a_night_round_that_deployed_claims_no_loot_it_never_read(self) -> None:
+        """**`deployed`, not `took_loot`**, and the difference is measured.
+
+        Nothing on this village reads loot: its elixir is paid into a cart, and
+        the box the home village's panel is read from is battlefield here — 0
+        readings gained across 3 214 recorded builder base frames. So a round
+        that put troops out can say that and no more, and sharing the home
+        village's name for it would put two meanings under one outcome.
+        """
+        runner = self._runner()
+        with (
+            patch.object(AttackRunner, "_open_attack_menu", return_value=b""),
+            patch.object(attack, "read_builder_stock", return_value=None),
+            patch.object(AttackRunner, "_find_opponent", return_value=b""),
+            patch.object(AttackRunner, "_deploy_night", return_value=([], b"")),
+            patch.object(AttackRunner, "_wait_out_night"),
+            patch.object(AttackRunner, "_next_stage", return_value=None),
+        ):
+            report = runner.run()
+        assert (report.outcome, report.phases) == ("deployed", 1)
+
+    def test_a_stop_during_the_matchmaker_is_not_a_village_with_nobody_queueing(self) -> None:
+        """`_find_opponent` answers None for both, and `farm` acts on them differently."""
+        runner = self._runner()
+        runner.should_stop = lambda: True
+        with (
+            patch.object(AttackRunner, "_open_attack_menu", return_value=b""),
+            patch.object(attack, "read_builder_stock", return_value=None),
+            patch.object(AttackRunner, "_find_opponent", return_value=None),
+        ):
+            assert runner.run().outcome == "stopped"
 
     def test_an_opening_pass_that_landed_nothing_pushes_the_flank_out(self) -> None:
         """Nothing probes the line any more, so the first pass is what tests it.
@@ -3528,7 +3568,7 @@ class AttackTests(unittest.TestCase):
             patch.object(attack.time, "monotonic", side_effect=[0, *range(0, 200, 7)]),
         ):
             report = runner.run()
-        assert "等不到對手畫面" in report.message
+        assert report.outcome == "no_opponent"
         assert tapped.call_args_list[-1].args[0] == END_BATTLE
 
     def _verdict(self, opening: LootOffer, readings: list[ScoutView | None]) -> bool:
@@ -3599,16 +3639,16 @@ class AttackTests(unittest.TestCase):
         runner = self._runner()
         runner._seen = LootOffer(gold=1031321, elixir=420990, dark=2525)
         runner._deployed = True
-        assert "部隊有出去" in runner._outcome("戰利品達標", took=False)
+        assert runner._outcome(took=False) == "no_loot"
         runner._deployed = False
-        assert "沒有成功部署" in runner._outcome("戰利品達標", took=False)
+        assert runner._outcome(took=False) == "nothing_deployed"
 
     def test_a_panel_nobody_read_outranks_both_of_those(self) -> None:
         """A round nobody could judge is not a round that failed, however it deployed."""
         runner = self._runner()
         runner._deployed = True
-        assert "無從判斷" in runner._outcome("戰利品達標", took=False)
-        assert runner._outcome("戰利品達標", took=True) == "戰利品達標，已進攻並回營"
+        assert runner._outcome(took=False) == "loot_unread"
+        assert runner._outcome(took=True) == "took_loot"
 
     def test_a_round_never_inherits_the_last_one_s_deployment(self) -> None:
         """One runner plays every round, and `_deploy` can end before the tactic.
@@ -4444,6 +4484,8 @@ class RunnerStateTests(unittest.TestCase):
                 patch.object(commands, "FrameTicker"),
                 patch.object(commands, "AttackRunner") as runner,
             ):
+                runner.return_value.run.return_value = AttackReport(outcome="no_opponent")
+                runner.return_value.played = None
                 commands.attack(AttackOptions(rounds=1))
             assert runner.call_args.kwargs["should_stop"] is commands.stop_requested
 
@@ -4473,7 +4515,12 @@ class InRoundRestartTests(unittest.TestCase):
             patch.object(commands, "_empty_cart") as cart,
         ):
             runner.return_value.run.return_value = MagicMock(
-                stock_full=False, attacked=None, phases=1
+                stock_full=False,
+                attacked=None,
+                phases=1,
+                skipped=0,
+                forced=False,
+                outcome="took_loot",
             )
             runner.return_value.played = None
             runner.return_value.adb = controller
@@ -4499,11 +4546,25 @@ class RestartEveryTests(unittest.TestCase):
 
     @staticmethod
     def _fought() -> MagicMock:
-        return MagicMock(stock_full=False, attacked=MagicMock(), phases=0)
+        return MagicMock(
+            stock_full=False,
+            attacked=MagicMock(),
+            phases=0,
+            skipped=0,
+            forced=False,
+            outcome="took_loot",
+        )
 
     @staticmethod
     def _idle() -> MagicMock:
-        return MagicMock(stock_full=False, attacked=None, phases=0)
+        return MagicMock(
+            stock_full=False,
+            attacked=None,
+            phases=0,
+            skipped=0,
+            forced=False,
+            outcome="no_opponent",
+        )
 
     def _play(
         self,
@@ -4731,7 +4792,12 @@ class StopAtOverrideTests(unittest.TestCase):
             patch.object(commands, "AttackRunner") as runner,
         ):
             runner.return_value.run.return_value = MagicMock(
-                stock_full=False, attacked=MagicMock(), phases=0
+                stock_full=False,
+                attacked=MagicMock(),
+                phases=0,
+                skipped=0,
+                forced=False,
+                outcome="took_loot",
             )
             commands.attack(options)
         return runner.call_args.kwargs["stop_at"]

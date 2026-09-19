@@ -53,7 +53,7 @@ description: >-
 uv run ai_coc attack --world night --repeat 0
 ```
 
-**一次只跑一個世界, 跑完再跑下一個.** 兩個指令同時開會搶同一個畫面, 兩邊都會壞掉. 判斷「這個世界打完了」看**最後一輪**的 `AttackReport.stock_full` —— `result.json` 是一個陣列, 最後一輪就是最後一個元素, 讀法在 `references/running.md`: 那是 `true` 的時候 series 自己就結束了, 訊息會說哪幾種資源都滿過設定的百分比. 那一刻就換下一個世界, 指令一模一樣只是 `--world` 換掉, 它會自己坐船過去.
+**一次只跑一個世界, 跑完再跑下一個.** 兩個指令同時開會搶同一個畫面, 兩邊都會壞掉. 判斷「這個世界打完了」看**最後一輪**的 `AttackReport.stock_full` —— `result.json` 是一個陣列, 最後一輪就是最後一個元素, 讀法在 `references/running.md`: 那是 `true` 的時候 series 自己就結束了. **哪幾種資源滿了、水位多少不在報告上**, 那在 `run.log` 的 `Storage limit reached (gold/elixir); farming stops with 金幣 …／聖水 …` 那一行; 要寫進回報就去 grep 它, 不要從 `attacked` 推. 那一刻就換下一個世界, 指令一模一樣只是 `--world` 換掉, 它會自己坐船過去.
 
 **「兩邊都打滿」是一個你要接的序列, 不是一個指令.** 第一個世界的 run 結束只是走完一半: 通知進來, 讀最後一輪, 確認是 `stock_full`, 開第二個世界, 等它也 `stock_full`, 這樣才算達成 (日世界那半還要接下面「倉庫滿了」那節). 實測一次, 一個 session 打完夜世界之後就停在原地: 它用 shell 層的 detach 開指令, harness 根本不知道有這個 run, 所以 run 結束的時候沒有任何東西叫醒它. 怎麼開才會被叫醒, 以及通知進來要看什麼, 都在 `references/running.md` 的「開跑」跟「盯」兩節.
 
@@ -104,15 +104,21 @@ uv run ai_coc attack --world night --repeat 0
 
 **盯的頻率**: 一輪四五分鐘, 所以幾分鐘看一次就夠, 不要每幾秒去讀一次, 也不要掛一個東西在 log 上等新行進來 (為什麼不行見 `references/running.md` 的「盯」那節). 中間的空檔拿去做別的事.
 
-**每一輪結束會有一行 `Attack finished: <message>`.** 那個 message 就是 `AttackReport.message`, 它自己會講清楚這輪發生什麼事. 常見的幾種語義:
+**每一輪結束會有一行 `Attack finished:`**, 而要判斷發生了什麼事看 `result.json` 裡那一輪的 **`AttackReport.outcome`**, 不要去比對 log 裡的句子 —— 那些字會改, outcome 不會. 十四種, 分成兩組.
 
-- 打完回營了, 附帶搶到的三種資源
-- 兵力不足, 沒付搜尋費就退出來. 這是設計好的行為, 不是錯誤
-- 倉庫都滿過設定的百分比, 整個 series 到此為止
-- 畫面不在主村, 沒開成攻擊選單. 這輪什麼都沒做
-- 等不到對手畫面
+**打了一場的四種**, 而它們的差別就是下一步往哪走:
 
-不要去背這些字串, 它們會改. 要判斷一輪算不算成功就看 `AttackReport.attacked` 是不是 `None`.
+- `took_loot` —— 打完回營而且倉庫真的動了. 正常的一輪, **只有主村會出現**
+- `deployed` —— **夜世界的正常一輪**: 兵出去了並回營, 而那邊沒有戰利品面板可以判斷搶到多少 (聖水進推車, 而主村讀面板的那個框在夜世界是戰場). 所以它不保證倉庫動了, 要看進帳就比對前後的 `stock`
+- `loot_unread` —— 打完了, 但整場都沒有一格畫面讀得出戰利品面板, 所以這一輪**無從判斷**. 不是失敗也不是成功
+- `no_loot` —— 兵確實出去了而倉庫沒動. 那是**戰術**的問題 (打進了沒有倉庫的那一側之類), 歸 watch-and-fix
+- `nothing_deployed` —— 一張卡片都沒出得去. 那是**迴圈**的問題, 也歸 watch-and-fix, 但要查的是完全不同的地方
+
+**沒打到的十種**: `army_short` (兵力不足, 沒付搜尋費就退出來 —— 設計好的行為不是錯誤) / `stock_full` (倉庫都滿過設定的百分比, 整個 series 到此為止) / `no_opponent` / `all_skipped` (跳過的都未達門檻) / `stopped` / `no_attack_menu` / `server_loading` 跟 `server_flapping` (伺服器那邊的事, 見下面警覺樣態那節) / `emulator_silent` / `world_unreachable`.
+
+另外兩個欄位跟 outcome 無關而是疊在上面的: `forced` 是這一場被倒數逼開的而不是戰利品達標, `skipped` 是這一輪跳過幾個對手.
+
+要判斷一輪算不算真的開打, 最穩的還是看 `AttackReport.attacked` 是不是 `None` (夜世界看 `phases`), 因為那是「有沒有對手」而不是「怎麼結束」.
 
 **值得警覺的樣態**, 不是單一輪而是連續幾輪:
 
@@ -120,7 +126,7 @@ uv run ai_coc attack --world night --repeat 0
 - 連續打完但每輪 `skipped` 都是幾十: 門檻對現在的獎盃區間來說太高了, 值得跟使用者提一句
 - 打完了但**入庫的進帳遠小於 `attacked`**: 進攻打不動人家, 這是 watch-and-fix 的題目, 這裡只負責報告. 看的是這個落差而不是 `attacked` 自己大不大 —— 那個數字只說對手**擺出**多少 (見下面「數字從哪來, 不准編」), 所以它小可能只是配到一串窮對手, 或者門檻設得太低
 - log 裡出現重新登入 / 重開遊戲 (`The session was dropped`): `ui/runner.py` 的 `restart_game` 自己會處理, 會回到村莊, 不用管. 閒置斷線跟 連線已中斷 兩張對話框都走這條. 但如果一直重複發生, 那是要查的
-- log 裡出現 `waiting for the server rather than tapping`: 遊戲卡在載入畫面, 通常是伺服器那邊的事. 迴圈自己會等, 最多 45 分鐘, 每次載入只等一次 (重開遊戲算新的載入), 等到了就接著打; 等不到的那一輪 message 會說「遊戲卡在載入畫面 45 分鐘」或「又回到載入畫面」. 這時候**不要**去重開遊戲或模擬器: 實測兩次都是它自己回來的, 重開沒有縮短過任何一次. 連續兩輪都是這句再停下來講
+- log 裡出現 `waiting for the server rather than tapping`: 遊戲卡在載入畫面, 通常是伺服器那邊的事. 迴圈自己會等, 最多 45 分鐘, 每次載入只等一次 (重開遊戲算新的載入), 等到了就接著打; 等不到的那一輪 `outcome` 是 `server_loading` (等滿 45 分鐘) 或 `server_flapping` (載入完又掉回去). 這時候**不要**去重開遊戲或模擬器: 實測兩次都是它自己回來的, 重開沒有縮短過任何一次. 連續兩輪都是這兩種之一再停下來講
 - log 裡出現 `The camera was not at the far zoom`: 那一輪多半是白打的, 因為這個專案每一個座標都是在最遠的 zoom 量的, 鏡頭飄掉就全部落空. 迴圈每場自己會 pinch 回去, 所以偶爾一條不用管, 連著出現就去看畫面. 手動修法是 `ai_coc view --zoom out`, 但要先把迴圈停掉. **這條只在主村會出現**: 那個高度是拿主村量的, 建築大師基地地圖比較小, 在同一個 zoom 下每一張都讀得比它短, 所以夜世界不做這個判斷 —— 夜世界沒有這條, 不代表那邊的鏡頭一定是對的
 
 ## 倉庫滿了: 預設就收工, 他開口才花
@@ -273,7 +279,7 @@ uv run ai_coc attack --world night --repeat 0
 
     真正入庫的只有前後兩次 `stock` 的差額, 沒有第二個來源. 兩個都列出來, 差很多本身就是資訊. **差額存在是正常的, 不要當成查不出原因的怪事寫進報告** (實測 2026-09-16 就有一趟是這樣報的), 但**差額比平常大得多是要往上報的訊號** —— 那是進攻打不動人家, 見上面「值得警覺的樣態」, 而這份 skill 只負責報告
 
-- **輪數 / 開打 / 空手 / 跳過**: `AttackSeries` 數出來, 空手的理由看那一輪的 `message`
+- **輪數 / 開打 / 空手 / 跳過**: `AttackSeries` 數出來, 空手的理由看那一輪的 `outcome`
 
 - **刷牆**: `WallReport.walls` 跟 `paid("gold")` / `paid("elixir")` 說買了多少, `WallReport.outcome` 說為什麼停 —— 那才是「發生了什麼」的欄位, 見上面停手那節
 

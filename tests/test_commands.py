@@ -43,6 +43,7 @@ from ai_coc.models import (
     DonateReport,
     VillageStock,
     AttackOptions,
+    AttackOutcome,
     BuilderReport,
     CollectReport,
     DisplayTarget,
@@ -589,6 +590,56 @@ class WallLineTests(unittest.TestCase):
             assert not any(fragment in other for other in others), outcome
 
 
+class RoundLineTests(unittest.TestCase):
+    """One log line per attack outcome, plus the counts that are orthogonal to it.
+
+    `run.log` is where a farming session looks first, and the two outcomes that
+    used to read alike — an army that never left its cards against one that went
+    down and came home empty — sent readers to opposite halves of the code.
+    """
+
+    def test_every_way_a_round_can_end_has_a_line_of_its_own(self) -> None:
+        own = {
+            "took_loot": "已進攻並回營",
+            "deployed": "沒有戰利品面板可以判斷",
+            "loot_unread": "讀不到戰利品面板",
+            "no_loot": "部隊有出去",
+            "nothing_deployed": "沒有任何一張卡片",
+            "army_short": "兵力不足",
+            "stock_full": "倉庫都滿過",
+            "no_opponent": "等不到對手",
+            "all_skipped": "都未達門檻",
+            "stopped": "收到停止要求",
+            "no_attack_menu": "沒有開啟攻擊選單",
+            "server_loading": "卡在載入畫面",
+            "server_flapping": "又回到載入畫面",
+            "emulator_silent": "模擬器沒有回應",
+            "world_unreachable": "沒辦法切到指定的世界",
+        }
+        assert set(own) == set(get_args(AttackOutcome))
+        for outcome, fragment in own.items():
+            line = commands.ROUND_LINES[outcome]
+            assert fragment in line, outcome
+            others = [commands.ROUND_LINES[other] for other in own if other != outcome]
+            assert not any(fragment in other for other in others), outcome
+
+    def test_the_counts_are_appended_rather_than_written_into_each_sentence(self) -> None:
+        """Because they are orthogonal: a forced battle can end any of four ways."""
+        plain = commands.round_line(AttackReport(outcome="took_loot"))
+        assert plain == commands.ROUND_LINES["took_loot"]
+        forced = commands.round_line(AttackReport(outcome="took_loot", forced=True))
+        assert forced.startswith("倒數結束被強制開戰")
+        assert commands.ROUND_LINES["took_loot"] in forced
+        skipped = commands.round_line(AttackReport(outcome="all_skipped", skipped=7))
+        assert "跳過 7 個對手" in skipped
+        staged = commands.round_line(AttackReport(outcome="took_loot", world="night", phases=2))
+        assert "共出兵 2 次" in staged
+        # One phase is the ordinary battle, so it is not worth a clause.
+        assert "共出兵" not in commands.round_line(
+            AttackReport(outcome="took_loot", world="night", phases=1)
+        )
+
+
 class AttackSeriesStopTests(unittest.TestCase):
     """The series answers whoever started it, which is what lets the window run it.
 
@@ -600,6 +651,8 @@ class AttackSeriesStopTests(unittest.TestCase):
 
     def _series(self, should_stop: MagicMock) -> tuple[MagicMock, list]:
         runner = MagicMock(name="AttackRunner")
+        runner.run.return_value = AttackReport(outcome="no_opponent")
+        runner.played = None
         with (
             patch.object(commands, "_controller", return_value=_adb()),
             patch.object(commands.ConfigStore, "load", return_value=AppConfig()),
@@ -663,10 +716,10 @@ class AttackSeriesAdapterFailureTests(unittest.TestCase):
         """One timeout is a blip, and an overnight run should survive it."""
         rounds = self._series([
             AdbControlError("ADB 指令失敗：adb read timeout"),
-            AttackReport(stock_full=True, message="倉庫滿了"),
+            AttackReport(outcome="stock_full"),
         ])
         assert len(rounds) == 2
-        assert "模擬器沒有回應" in rounds[0].message
+        assert rounds[0].outcome == "emulator_silent"
         assert rounds[-1].stock_full
 
     def test_three_in_a_row_ends_the_series_holding_what_it_played(self) -> None:
@@ -676,12 +729,12 @@ class AttackSeriesAdapterFailureTests(unittest.TestCase):
         before this they went down with the process.
         """
         rounds = self._series([
-            AttackReport(message="已進攻並回營"),
+            AttackReport(outcome="took_loot"),
             *[AdbControlError("adb read timeout")] * 4,
         ])
         assert len(rounds) == 4
-        assert rounds[0].message == "已進攻並回營"
-        assert all("模擬器沒有回應" in report.message for report in rounds[1:])
+        assert rounds[0].outcome == "took_loot"
+        assert all(report.outcome == "emulator_silent" for report in rounds[1:])
 
     def test_a_round_that_came_back_clears_the_count(self) -> None:
         """Consecutive, not total: three blips spread over a run are not a dead emulator.
@@ -692,11 +745,11 @@ class AttackSeriesAdapterFailureTests(unittest.TestCase):
         """
         rounds = self._series([
             AdbControlError("adb read timeout"),
-            AttackReport(message="已進攻並回營"),
+            AttackReport(outcome="took_loot"),
             AdbControlError("adb read timeout"),
-            AttackReport(message="已進攻並回營"),
+            AttackReport(outcome="took_loot"),
             AdbControlError("adb read timeout"),
-            AttackReport(stock_full=True, message="倉庫滿了"),
+            AttackReport(outcome="stock_full"),
         ])
         assert len(rounds) == 6
         assert rounds[-1].stock_full
