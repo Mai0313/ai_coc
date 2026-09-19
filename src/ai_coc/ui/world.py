@@ -27,7 +27,7 @@ import time
 from typing import TYPE_CHECKING
 import logging
 
-from ai_coc.models import Crossing
+from ai_coc.models import Crossing, CartReport
 from ai_coc.constants import COC_PACKAGE
 from ai_coc.adapters.adb import ZOOM_PINCHES
 from ai_coc.parsers.field import view_shift
@@ -37,6 +37,7 @@ from ai_coc.parsers.scout import (
     card_groups,
     loading_screen,
     loot_cart_open,
+    loot_cart_ready,
     read_builder_stock,
 )
 from ai_coc.parsers.world import current_world
@@ -252,21 +253,39 @@ UNCOVER_SETTLE = 1.5
 # went for: the tap landed, the 聖水車 sheet came up, and the storage bars
 # afterwards said nothing had been paid. What has to be pressed is its own 收集,
 # and then the sheet closed again, because it covers the middle of the village.
-# The first one this opened was holding 300 000 of a 1 000 000 ceiling.
+# The first one this opened was holding 300 000 of what was then a 1 000 000
+# ceiling; `night_cart_locked.png` writes 135 843 / 1 600 000, so it grows.
 CART_SPOTS = ((1240, 610), (1218, 596), (1262, 624))
 CART_COLLECT = (1176, 760)
 CART_CLOSE = (1338, 89)
 CART_SETTLE = 1.5
 
 
-def collect_cart(adb: AdbController, display: DisplayTarget) -> int | None:
-    """Empty the builder base's loot cart; answers the elixir it actually paid.
+def collect_cart(adb: AdbController, display: DisplayTarget) -> CartReport:
+    """Empty the builder base's loot cart, and say what really happened there.
 
     Judged on the storage bar rather than on the cart, for the reason `collect`
     judges its markers that way: a full storage takes none of what it is handed,
     and a tap the game swallowed leaves the cart looking exactly like one that
     has just been emptied. Both readings are taken with the sheet down, since it
     covers the bars while it is up.
+
+    **A locked 收集 is the state this could not see, and it is the ordinary one
+    on a farmed village.** The game greys that button — measured live, a flat
+    (178, 178, 178) with both storages exactly at capacity and 135 843 elixir
+    waiting — and the sheet used to be recognised by the button's green, so a
+    locked cart read as no cart at all: every candidate spot was reported as a
+    miss, the trip answered 0, and **the sheet was left standing over the
+    village** for whatever ran next to tap into. `loot_cart_open` reads the
+    sheet's own plank now and `loot_cart_ready` reads the button.
+
+    **The sheet is closed on every path that recognised it**, which is the half
+    of that failure nobody would have noticed from the report. A sheet the
+    reader missed is a different matter and gets the crossing's own answer: the
+    spots are places on the map, so a miss opens whatever building was standing
+    there, and `uncovered` presses that away before this gives up — measured,
+    `night_cart_locked.png` reads as no village at all, so a sheet left standing
+    was itself a way to send the next `collect` to the wrong village.
 
     **`read_builder_stock`, because this only ever runs on the builder base.**
     `read_stock` reads a third row that village does not have: what sits at that
@@ -279,8 +298,13 @@ def collect_cart(adb: AdbController, display: DisplayTarget) -> int | None:
     villages apart in a log.
     """
     if current_world(adb.screenshot(display)) != "night":
+        # **Its own outcome and not `not_found`**, because nothing was tapped
+        # here: the caller read the world before it called, so arriving is the
+        # two readings disagreeing — a gem shower over the badge row does it,
+        # which this project has recorded three times — and a sentence about
+        # three candidate spots would be describing taps that never happened.
         logger.info("The loot cart is the builder base's; there is none here")
-        return 0
+        return CartReport(outcome="wrong_world")
     # The cart is moored beside this village's own boat, so the view that finds
     # it is the parked one — the same push `park_camera` makes, which is why
     # this asks for it rather than repeating the swipes. **Nothing puts the zoom
@@ -291,34 +315,59 @@ def collect_cart(adb: AdbController, display: DisplayTarget) -> int | None:
     # handed, and it explained itself as undoing the swiping — which never
     # touched the zoom in the first place.
     if not park_camera(adb, display, "night"):
-        # **None rather than 0**, because the two are opposite news and the
-        # caller writes a sentence from them: 0 is a cart that was found and had
-        # nothing in it, and this is a cart nobody went looking for. Reported as
-        # the first, it reads as an empty cart on a village whose elixir is all
-        # still sitting in one.
+        # **Its own outcome rather than an empty cart**, because the two are
+        # opposite news: `empty` is a cart that was found and had nothing in it,
+        # and this is a cart nobody went looking for. Reported as the first, it
+        # reads as an empty cart on a village whose elixir is all still in one.
         logger.warning("The camera never parked; the cart's spots are somewhere else entirely")
-        return None
+        return CartReport(outcome="not_parked")
     before = read_builder_stock(adb.screenshot(display))
     for spot in CART_SPOTS:
         adb.tap(spot[0], spot[1], display)
         time.sleep(CART_SETTLE)
-        if loot_cart_open(adb.screenshot(display)):
-            adb.tap(*CART_COLLECT, display)
-            time.sleep(CART_SETTLE)
-            adb.tap(*CART_CLOSE, display)
-            time.sleep(CART_SETTLE)
+        sheet = adb.screenshot(display)
+        if loot_cart_open(sheet):
             break
         logger.info("The tap at %s did not open the cart; trying the next spot", spot)
     else:
         logger.warning("None of the %d candidate spots found the cart", len(CART_SPOTS))
-        return 0
+        # **Every one of those taps was a place on the map**, so a miss opened
+        # whichever building was standing there — and a full-screen panel left
+        # behind is what `commands.collect` then reads as no village at all,
+        # which sends a builder base run home on a boat nobody asked for.
+        # `uncovered` is the same step the crossing takes and is safe for the
+        # same reason: never on a village, never on a battle.
+        uncovered(adb, display)
+        return CartReport(outcome="not_found")
+    # **Read again before calling it locked**, because that answer reads as a
+    # conclusion about the village rather than about this frame: the sheet is
+    # still painting its button on the capture that recognised it, and this is
+    # the path that is giving up anyway, so a second look costs one capture on a
+    # trip that has already spent four.
+    ready = loot_cart_ready(sheet) or loot_cart_ready(adb.screenshot(display))
+    if ready:
+        adb.tap(*CART_COLLECT, display)
+        time.sleep(CART_SETTLE)
+    # **Outside the `if`**, because the sheet covers the middle of the village
+    # whether or not anything was collectable, and the run that found that out
+    # left it there for the next command to tap into.
+    adb.tap(*CART_CLOSE, display)
+    time.sleep(CART_SETTLE)
+    if not ready:
+        logger.warning("The cart is open but its 收集 is greyed; nothing here can be collected")
+        return CartReport(outcome="locked")
     after = read_builder_stock(adb.screenshot(display))
     if before is None or after is None:
         logger.warning("The storage bars would not read either side of the cart")
-        return 0
+        return CartReport(outcome="unreadable")
     gained = after.elixir - before.elixir
     logger.info("The loot cart paid %d elixir", gained)
-    return gained
+    # **Greater than zero rather than truthy**, because the storage can also go
+    # down between the two readings — the builder base loses loot when somebody
+    # raids it, which is what that village's whole defence reward is about — and
+    # a negative difference reported as `collected` prints 收到聖水 -100000 and
+    # counts a marker for it.
+    return CartReport(outcome="collected" if gained > 0 else "empty", elixir=gained)
 
 
 def uncovered(adb: AdbController, display: DisplayTarget) -> World | None:

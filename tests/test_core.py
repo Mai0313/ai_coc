@@ -33,6 +33,7 @@ from ai_coc.models import (
     WallBatch,
     AttackPlan,
     AttackStep,
+    CartReport,
     HeroReport,
     PlayedPlan,
     UiSettings,
@@ -123,13 +124,17 @@ from ai_coc.logging_setup import _attach_run, configure_logging
 from ai_coc.parsers.field import view_shift
 from ai_coc.parsers.frame import open_frame
 from ai_coc.parsers.scout import (
+    CART_PLANK,
     PANEL_LEFT,
     ROW_BOUNDS,
     STOCK_LEFT,
     PANEL_RIGHT,
     STOCK_RIGHT,
     STOCK_DARK_LEFT,
+    CART_COLLECT_BOX,
+    CART_PLANK_ABOVE,
     STOCK_ROW_BOUNDS,
+    CART_PLANK_BESIDE,
     LOOT_INK_BRIGHTNESS,
     STOCK_DIGIT_TOLERANCE,
     _read_row,
@@ -143,6 +148,7 @@ from ai_coc.parsers.scout import (
     card_groups,
     field_units,
     panel_drawn,
+    _plank_ratio,
     card_drained,
     freeze_cards,
     skip_offered,
@@ -150,7 +156,9 @@ from ai_coc.parsers.scout import (
     army_strength,
     counted_cards,
     loading_screen,
+    loot_cart_open,
     selected_cards,
+    loot_cart_ready,
     attack_menu_open,
     storage_capacity,
     idle_disconnected,
@@ -1346,43 +1354,124 @@ class CrossingTests(unittest.TestCase):
         for `read_stock` to answer anything, so a gems row that will not read
         would lose the whole trip. The numbers are one real trip's own.
         """
-        adb = MagicMock()
-        with (
-            patch.object(world_ui.time, "sleep"),
-            patch.object(world_ui, "current_world", return_value="night"),
-            patch.object(world_ui, "view_shift", return_value=(0, 0)),
-            patch.object(world_ui, "loot_cart_open", return_value=True),
-            patch.object(
-                world_ui,
-                "read_builder_stock",
-                side_effect=[
-                    VillageStock(gold=1584654, elixir=726429, dark=0),
-                    VillageStock(gold=1584654, elixir=842429, dark=0),
-                ],
-            ) as read,
-        ):
-            gained = world_ui.collect_cart(adb, DisplayTarget(logical_id="1", physical_id="2"))
-        assert gained == 116_000
+        adb, report, read = self._cart([
+            VillageStock(gold=1584654, elixir=726429, dark=0),
+            VillageStock(gold=1584654, elixir=842429, dark=0),
+        ])
+        assert report == CartReport(outcome="collected", elixir=116_000)
         assert read.call_count == 2
         # The park's own, and the only scale this trip gets: a pinch used to sit
         # in a `finally` after every tap, which is far too late to help the
         # coordinates those taps were aimed at.
         assert adb.zoom.call_count == 1
 
+    def _cart(
+        self,
+        stocks: list[VillageStock] | None,
+        *,
+        opens: bool = True,
+        ready: bool = True,
+        parked: bool = True,
+    ) -> tuple[MagicMock, object, MagicMock]:
+        adb = MagicMock()
+        with (
+            patch.object(world_ui.time, "sleep"),
+            patch.object(world_ui, "current_world", return_value="night"),
+            patch.object(world_ui, "view_shift", return_value=(0, 0) if parked else (65, -33)),
+            patch.object(world_ui, "loot_cart_open", return_value=opens),
+            patch.object(world_ui, "loot_cart_ready", return_value=ready),
+            patch.object(
+                world_ui, "read_builder_stock", side_effect=stocks, return_value=None
+            ) as read,
+        ):
+            report = world_ui.collect_cart(adb, DisplayTarget(logical_id="1", physical_id="2"))
+        return adb, report, read
+
     def test_a_cart_that_never_opened_pays_nothing(self) -> None:
         """A tap the game swallowed leaves the cart looking exactly like an emptied one."""
+        adb, report, read = self._cart(None, opens=False)
+        assert report == CartReport(outcome="not_found")
+        # The one before the taps, and none after: it gave up before collecting.
+        assert read.call_count == 1
+        # And nothing was pressed at, because nothing came up to press.
+        assert world_ui.CART_CLOSE not in [call.args[:2] for call in adb.tap.call_args_list]
+
+    def test_a_cart_the_game_has_locked_is_not_an_empty_one(self) -> None:
+        """**The state that was reported as 推車裡沒有東西可以收 for a full cart.**
+
+        Measured live with both builder base storages exactly at capacity, the
+        game draws 收集 a flat (178, 178, 178) over 135 843 elixir — and the
+        sheet used to be recognised by that button's green, so the whole trip
+        answered that none of its three spots had found a cart.
+        """
+        adb, report, read = self._cart(None, ready=False)
+        assert report == CartReport(outcome="locked")
+        # Nothing was collected, so nothing is read afterwards either.
+        assert read.call_count == 1
+        assert world_ui.CART_COLLECT not in [call.args[:2] for call in adb.tap.call_args_list]
+
+    def test_a_sheet_that_opened_is_shut_again_even_when_nothing_could_be_taken(self) -> None:
+        """It covers the middle of the village, and the next command taps there.
+
+        The run that found the locked button left the sheet standing, which is
+        the half of that failure the report said nothing about.
+        """
+        for ready in (True, False):
+            adb, _, _ = self._cart(None, ready=ready)
+            assert world_ui.CART_CLOSE in [call.args[:2] for call in adb.tap.call_args_list], ready
+
+    def test_a_cart_collected_against_unreadable_bars_says_so(self) -> None:
+        """Different news from an empty cart: the elixir went somewhere unread."""
+        _, report, _ = self._cart(None)
+        assert report == CartReport(outcome="unreadable")
+
+    def test_a_storage_that_did_not_move_is_an_empty_cart(self) -> None:
+        held = VillageStock(gold=215901, elixir=7741, dark=0)
+        _, report, _ = self._cart([held, held])
+        assert report == CartReport(outcome="empty")
+
+    def test_a_storage_that_went_down_is_not_a_collection(self) -> None:
+        """**The builder base loses loot when somebody raids it**, so this happens.
+
+        Reported as a collection it prints 收到聖水 -100000 and counts a marker
+        for it, which is a number a caller adds to a night's total.
+        """
+        _, report, _ = self._cart([
+            VillageStock(gold=215901, elixir=500_000, dark=0),
+            VillageStock(gold=215901, elixir=400_000, dark=0),
+        ])
+        assert report == CartReport(outcome="empty", elixir=-100_000)
+
+    def test_a_village_that_is_not_the_builder_base_taps_nothing(self) -> None:
+        """Its own outcome: the sentence for `not_found` says three spots were tapped."""
+        adb = MagicMock()
+        with (
+            patch.object(world_ui.time, "sleep"),
+            patch.object(world_ui, "current_world", return_value="day"),
+        ):
+            report = world_ui.collect_cart(adb, DisplayTarget(logical_id="1", physical_id="2"))
+        assert report == CartReport(outcome="wrong_world")
+        adb.tap.assert_not_called()
+        adb.swipe.assert_not_called()
+
+    def test_a_missed_tap_that_opened_a_building_is_pressed_away(self) -> None:
+        """Every candidate spot is a place on the map, so a miss opens something.
+
+        A full-screen panel left over the village is how the next `collect`
+        reads no village at all and sails a builder base run home.
+        """
         adb = MagicMock()
         with (
             patch.object(world_ui.time, "sleep"),
             patch.object(world_ui, "current_world", return_value="night"),
             patch.object(world_ui, "view_shift", return_value=(0, 0)),
             patch.object(world_ui, "loot_cart_open", return_value=False),
-            patch.object(world_ui, "read_builder_stock", return_value=None) as read,
+            patch.object(world_ui, "read_builder_stock", return_value=None),
+            patch.object(world_ui, "uncovered") as pressed,
         ):
-            gained = world_ui.collect_cart(adb, DisplayTarget(logical_id="1", physical_id="2"))
-        assert gained == 0
-        # The one before the taps, and none after: it gave up before collecting.
-        assert read.call_count == 1
+            report = world_ui.collect_cart(adb, DisplayTarget(logical_id="1", physical_id="2"))
+        assert report == CartReport(outcome="not_found")
+        pressed.assert_called_once()
 
     def test_a_cart_whose_camera_never_parked_is_not_tapped_at(self) -> None:
         """The cart is found from the parked view, so an unparked one is grass.
@@ -1390,17 +1479,10 @@ class CrossingTests(unittest.TestCase):
         It shares the crossing's own push, which is why both broke together and
         why both give up on the same reading.
         """
-        adb = MagicMock()
-        with (
-            patch.object(world_ui.time, "sleep"),
-            patch.object(world_ui, "current_world", return_value="night"),
-            patch.object(world_ui, "view_shift", return_value=(65, -33)),
-            patch.object(world_ui, "read_builder_stock") as read,
-        ):
-            gained = world_ui.collect_cart(adb, DisplayTarget(logical_id="1", physical_id="2"))
-        # None rather than 0: a cart nobody went looking for is not an empty one,
-        # and `commands.collect` writes a different sentence for each.
-        assert gained is None
+        adb, report, read = self._cart(None, parked=False)
+        # Its own outcome rather than an empty cart: a cart nobody went looking
+        # for is not one that was found holding nothing.
+        assert report == CartReport(outcome="not_parked")
         assert adb.tap.call_count == 0
         read.assert_not_called()
 
@@ -2617,6 +2699,82 @@ class FieldTests(unittest.TestCase):
         # frames it is exactly the answer that means "arrived".
         far = view_shift(still, self._panned(*drift), drift)
         assert abs(far[0]) <= abs(drift[0]) - 200
+
+
+class LootCartTests(unittest.TestCase):
+    """The builder base's 聖水車 sheet, which had no committed frame at all until now."""
+
+    def test_a_sheet_whose_button_the_game_locked_is_still_a_sheet(self) -> None:
+        """**The reading that reported a full cart as no cart.**
+
+        The sheet used to be recognised by its 收集 button's green, and the game
+        greys that button: measured live with both builder base storages exactly
+        at capacity, it comes back a flat (178, 178, 178) with 0.0000 of button
+        green over a cart holding 135 843 elixir. So the trip answered that none
+        of its three candidate spots had found a cart, on a frame where the
+        sheet was plainly open — and left it standing over the village.
+        """
+        png = (FRAMES / "night_cart_locked.png").read_bytes()
+        assert loot_cart_open(png) is True
+        assert loot_cart_ready(png) is False
+
+    def test_a_live_button_on_the_same_sheet_still_reads_as_collectable(self) -> None:
+        """**The half no recorded frame can pin**, because every one was locked.
+
+        Swept over 4 182 recordings, nothing puts more than 0.0354 of button
+        green in that box — a live cart has never been captured, and one cannot
+        be made while the storages are at capacity. So the button's own colour
+        is painted into the committed frame instead, the way `view_shift` is
+        measured against synthetic pans: without this, `loot_cart_ready`
+        answering False for everything passes the whole suite, and the run would
+        report a locked cart for the rest of the account's life.
+        """
+        image = open_frame((FRAMES / "night_cart_locked.png").read_bytes())
+        ImageDraw.Draw(image).rectangle(CART_COLLECT_BOX, fill=(60, 200, 60))
+        buffer = io.BytesIO()
+        image.save(buffer, format="PNG")
+        lit = buffer.getvalue()
+        assert loot_cart_ready(lit) is True
+        # And the sheet is still the sheet: the plank is what says so.
+        assert loot_cart_open(lit) is True
+
+    def test_the_plank_boxes_keep_clear_of_the_button_the_game_redraws(self) -> None:
+        """**The clearance, and the reason for it is written in this repo already.**
+
+        The game draws a lit button taller and bordered: 回營 reads 0.2488 lit
+        against 0.3283 plain, and 20 of 21 result screens went unrecognised with
+        the tests green because the only committed frame was the plain kind. The
+        only frame of this sheet is the greyed kind, and the box above the button
+        was flush against its plate — so a lit button any taller would answer
+        "no sheet" on the one state with elixir in it, which is the bug this
+        reader exists to fix.
+
+        **How much taller is not measured**, so what is pinned is the margin
+        rather than a guess at the button: where the plate starts is found off
+        the frame, and the box has to stop short of it.
+        """
+        image = open_frame((FRAMES / "night_cart_locked.png").read_bytes())
+        rows = range(CART_PLANK_ABOVE[1], CART_COLLECT_BOX[3])
+        plate = next(y for y in rows if _plank_ratio(image, (1075, y, 1290, y + 1)) < CART_PLANK)
+        # The dark border of the 收集 plate, and the white edge two rows under it.
+        assert plate == 718
+        assert CART_PLANK_ABOVE[3] <= plate - 5
+        # The other box has the same margin at its own edge, where the sheet's
+        # grey body ends and the plank begins.
+        assert CART_PLANK_BESIDE[1] >= 685
+
+    def test_no_other_recorded_screen_reads_as_the_cart(self) -> None:
+        """Two boxes rather than one, because a village is not short of brown.
+
+        Swept over 4 181 recorded frames the sheet reads 1.0000 in both while
+        the highest anything else reaches on the weaker of them is 0.1502 — and
+        one home battle reads 0.4141 on the box above the button against 0.1453
+        on the one beside the bar, which is what the second box is for.
+        """
+        for frame in sorted(FRAMES.glob("*.png")):
+            if frame.name == "night_cart_locked.png":
+                continue
+            assert loot_cart_open(frame.read_bytes()) is False, frame.name
 
 
 class AttackTests(unittest.TestCase):
