@@ -91,11 +91,29 @@ class PlateRunner(ScreenRunner):
             opened = self._after_tap(plate_button(centre), f"{role}_panel")
             if (rows := panel_rows(opened, world, role)) is not None:
                 break
+        if rows is None:
+            # **Before the closing tap, not after it.** Two taps have already
+            # left the panel however it was found — open, closed, open, or
+            # closed, open, closed — and a third would open it. That matters
+            # beyond a dirty screen: the panel covers the badge row, so the
+            # next plate `status` reads answers 畫面不在村莊 on a village that
+            # is plainly there. `UpkeepRunner.builders` returns here for the
+            # same reason.
+            #
+            # **And no bars means one of two things**, which look identical on
+            # screen: the panel never opened, or it opened with nothing running
+            # behind it. The plate's own count separates them for nothing —
+            # every slot idle is exactly the village with nothing to show — and
+            # a count that would not read leaves the honest answer, which is
+            # that nobody can say.
+            report.message = (
+                f"{PLATE_NAMES[role]} {report.free}/{report.total},沒有在跑的項目"
+                if report.free is not None and report.free == report.total
+                else f"{PLATE_NAMES[role]}的面板打不開,只讀到牌子上的數字"
+            )
+            return report
         self._tap(plate_button(centre))
         time.sleep(MENU_SETTLE)
-        if rows is None:
-            report.message = f"{PLATE_NAMES[role]}的面板打不開,只讀到牌子上的數字"
-            return report
         named = self._names(opened, world, role)
         report.jobs = [
             PlateJob(name=named[index] if index < len(named) else "", remaining=seconds)
@@ -142,13 +160,9 @@ class PlateRunner(ScreenRunner):
     def _sentence(self, report: PlateReport) -> str:
         """The report as a line for a person, built from the fields rather than kept on one."""
         held = PLATE_NAMES[report.role]
-        counted = (
-            f"{report.free}/{report.total}"
-            if report.free is not None
-            else f"數字讀不到,{len(report.jobs)} 個在跑"
-        )
-        if not report.jobs:
-            return f"{held} {counted},沒有在跑的項目"
+        # Only the plate's own count, because the running count is on every line
+        # below this one — carrying it here as well printed it twice.
+        counted = f"{report.free}/{report.total}" if report.free is not None else "數字讀不到"
         timed = [job for job in report.jobs if job.remaining is not None]
         if not timed:
             return f"{held} {counted},{len(report.jobs)} 個在跑,但每一個的倒數都讀不到"
