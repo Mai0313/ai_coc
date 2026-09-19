@@ -1142,6 +1142,28 @@ class BuilderReport(BaseModel):
     message: str = ""
 
 
+class ShieldState(BaseModel):
+    """Whether a shield is up over the home village, and for how much longer.
+
+    **`up` is read separately from `remaining`, because the plate has a state
+    that carries no countdown at all**: with no shield the game writes 無 there
+    beside a green +, and a reader that only looked for digits would report that
+    exactly as it reports a frame it could not make out. Those are opposite
+    instructions — one says the village is being farmed by other people right
+    now, the other says to look again.
+
+    `remaining` is therefore None in one case only: a shield is up and this frame
+    would not resolve its countdown. The plate being absent altogether is not a
+    state here — the builder base has no shield plate, so its callers get no
+    `ShieldState` rather than one saying False.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    up: bool
+    remaining: int | None = None
+
+
 class StockReport(BaseModel):
     """What the village on screen is holding, against what its storages take when full.
 
@@ -1452,6 +1474,14 @@ RestartScope = Literal["none", "game", "emulator"]
 # builders` reads the panel saying which of the five are free, and a
 # `--world builder` standing next to it would be read as belonging to that.
 World = Literal["day", "night"]
+
+
+# The plates along the top of either village, named for what each one counts.
+# `lab` is the research slots — the laboratory and, on the home village, the pet
+# house alongside it — and `builder` the workmen. `shield` is the home village's
+# alone: the builder base is real-time matchmaking against a live player, so a
+# shield there would contradict the mode's own design.
+PlateRole = Literal["lab", "builder", "shield"]
 
 
 class Crossing(BaseModel):
