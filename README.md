@@ -117,6 +117,9 @@ A wall upgrade needs a free builder and hands it straight back, so `walls` stops
 ```bash
 ai_coc collect                        # empty every collector that has something waiting
 ai_coc builders                       # what each builder is on, and how long is left
+ai_coc worker                         # the same for whichever village is up, without sailing
+ai_coc lab                            # what that village is researching, and how long is left
+ai_coc status                         # worker, lab, storages and the shield in one pass
 ai_coc donate                         # give troops to whoever in the clan is asking
 ai_coc donate --dry-run               # walk the whole path and stop before giving anything
 ```
