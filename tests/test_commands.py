@@ -23,6 +23,7 @@ from ai_coc import plans, commands
 from ai_coc.ui import world as world_ui
 from ai_coc.models import (
     MapEdge,
+    PlateJob,
     ProbeRay,
     AppConfig,
     NightPlan,
@@ -32,6 +33,7 @@ from ai_coc.models import (
     AdbEndpoint,
     BuildReport,
     HeroOptions,
+    PlateReport,
     WallOptions,
     AttackReport,
     DonateReport,
@@ -236,6 +238,126 @@ class StockCommandTests(unittest.TestCase):
         with patch.object(commands, "cross") as sailed:
             self._stock("night", VillageStock(gold=1, elixir=1, dark=0), StorageCapacity(gold=2))
         sailed.assert_not_called()
+
+
+class PlateLineTests(unittest.TestCase):
+    """The plate readings as a line for a person, built where the log is written.
+
+    The report itself carries fields and an `outcome` and no prose, which is
+    `StockReport`'s bargain applied to the two commands that were still keeping
+    a sentence of their own. The sentence is still worth having — it is what a
+    person reads in `run.log` — it just is not a field.
+    """
+
+    def _line(self, role: str = "builder", **fields: object) -> str:
+        return commands._plate_line(PlateReport(role=role, **fields))
+
+    def test_a_plate_with_work_on_it_names_the_soonest(self) -> None:
+        assert (
+            self._line(
+                world="night",
+                outcome="read",
+                free=1,
+                total=3,
+                jobs=[PlateJob(name="X連弩", remaining=600), PlateJob(remaining=7200)],
+            )
+            == "建築工人 1/3,2 個在跑,最快的是X連弩,還要 10 分鐘"
+        )
+
+    def test_a_row_with_no_name_still_reports_its_countdown(self) -> None:
+        line = self._line(
+            world="day", outcome="read", free=0, total=6, jobs=[PlateJob(remaining=90_000)]
+        )
+        assert "1 天 1 小時" in line
+        assert "最快的還要" in line
+
+    def test_a_count_that_will_not_read_says_so_once(self) -> None:
+        """The running total used to be printed twice on this path."""
+        line = self._line(world="day", outcome="read", jobs=[PlateJob(remaining=600)])
+        assert "數字讀不到" in line
+        assert line.count("個在跑") == 1
+
+    def test_every_countdown_unreadable_is_not_an_empty_plate(self) -> None:
+        line = self._line(world="day", outcome="read", free=0, total=6, jobs=[PlateJob()])
+        assert "每一個的倒數都讀不到" in line
+
+    def test_the_three_failures_read_as_three_different_things(self) -> None:
+        """Which is the whole reason `outcome` is a field: the rest are identical.
+
+        An idle plate, a panel that would not open and a badge that was not on
+        the frame all leave a village, a count that may or may not have read,
+        and no rows.
+        """
+        assert (
+            self._line(world="day", outcome="idle", free=3, total=3)
+            == "建築工人 3/3,沒有在跑的項目"
+        )
+        assert "打不開" in self._line(world="day", outcome="panel_shut", free=0, total=3)
+        assert "看不到護盾的牌子" in self._line("shield", world="day", outcome="no_badge")
+        assert "不在村莊" in self._line(outcome="not_a_village")
+
+
+class StatusCommandTests(unittest.TestCase):
+    """The four readings taken off one village in one pass, and never the other one.
+
+    Untested until the sentence came off the model: what `status` contributes of
+    its own is the composition and the one retry, and both used to be checked
+    only by whatever the joined message happened to read.
+    """
+
+    def _status(
+        self, plates: list[PlateReport], under: str | None = None
+    ) -> tuple[MagicMock, object]:
+        with (
+            # A real controller, because `ScreenRunner` validates the one it is given.
+            patch.object(commands, "_controller", return_value=_controller()),
+            patch.object(commands, "_settle_game", return_value=DISPLAY),
+            patch.object(commands, "_namer", return_value=None),
+            patch.object(commands.PlateRunner, "read", side_effect=plates),
+            patch.object(commands.PlateRunner, "shield", return_value=None),
+            patch.object(commands, "stock_of", return_value=commands.StockReport(world="night")),
+            patch.object(commands, "uncovered", return_value=under) as pressed,
+        ):
+            return pressed, commands.status()
+
+    def _plate(self, role: str, world: str | None, outcome: str) -> PlateReport:
+        return PlateReport(role=role, world=world, outcome=outcome)
+
+    def test_the_four_readings_come_back_on_one_report(self) -> None:
+        pressed, report = self._status([
+            self._plate("builder", "night", "idle"),
+            self._plate("lab", "night", "read"),
+        ])
+        assert (report.world, report.builder.outcome, report.lab.outcome) == (
+            "night",
+            "idle",
+            "read",
+        )
+        assert report.stock.world == "night"
+        assert report.shield is None
+        pressed.assert_not_called()
+
+    def test_a_panel_over_the_village_is_cleared_once_and_the_plate_read_again(self) -> None:
+        """The first reading is the check, so a covered village costs a retry and no capture."""
+        pressed, report = self._status(
+            [
+                self._plate("builder", None, "not_a_village"),
+                self._plate("builder", "day", "read"),
+                self._plate("lab", "day", "read"),
+            ],
+            under="day",
+        )
+        assert (report.world, report.builder.outcome) == ("day", "read")
+        pressed.assert_called_once()
+
+    def test_the_world_falls_back_through_whichever_reading_found_one(self) -> None:
+        """No plate placing itself is not the same as no village: the bars may still say."""
+        _, report = self._status([
+            self._plate("builder", None, "not_a_village"),
+            self._plate("lab", None, "not_a_village"),
+        ])
+        # `stock_of` read the builder base even though neither plate did.
+        assert report.world == "night"
 
 
 class CollectCommandTests(unittest.TestCase):
