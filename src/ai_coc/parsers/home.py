@@ -276,9 +276,12 @@ TIME_DIGIT_TOLERANCE = 25
 # 小 and 分 each lead a two-character unit, and the second unit on a row is
 # always the next step down the ladder rather than something to be read.
 #
-# Measured across every recorded panel, one unit's own readings land within 16
-# bits of each other while the nearest other unit is 49 away and the nearest
-# digit 54, so the same 30 the digits use separates these too.
+# Measured across every recorded panel, one unit that resolves at all lands
+# within 15 of its own template while the nearest other unit is 49 away, so
+# `TIME_DIGIT_TOLERANCE` separates these as well as it separates the digits.
+# **That tolerance moved to 25 and this went with it**: the figures here used to
+# say every unit missed a digit by 49 or more, which is what the block above
+# measured and disproved — over a live panel 小 lands exactly 30 from `0`.
 UNIT_TEMPLATES = {
     86400: 694176028518715082074175994823591921588995,
     3600: 1362459995062295920913326796806252659743,

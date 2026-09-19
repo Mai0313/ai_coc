@@ -1451,13 +1451,16 @@ def status(frame_dir: Path | None = None) -> StatusReport:
     adb = _controller()
     display = _settle_game(adb, WORLD_SETTLE_POLLS) or adb.display_for(COC_PACKAGE)
     runner = PlateRunner(adb=adb, display=display, frame_dir=frame_dir, namer=_namer())
-    # Once, before any of the four rather than inside each: they all read the
-    # same screen, so a panel left over from the last command is cleared here or
-    # it defeats every one of them.
-    if current_world(adb.screenshot(display)) is None:
-        uncovered(adb, display)
+    # **The first reading is the check**, so there is no capture to take ahead
+    # of it: `read` already answers `world=None` for a panel over the village,
+    # and clearing one then costs one retry rather than a capture on every run.
+    # It only has to happen once — whatever was covering the village is gone by
+    # the time the other three look.
+    builder = runner.read("builder")
+    if builder.world is None and uncovered(adb, display) is not None:
+        builder = runner.read("builder")
     report = StatusReport(
-        builder=runner.read("builder"),
+        builder=builder,
         lab=runner.read("lab"),
         stock=stock_of(runner, adb, display),
         shield=runner.shield(),
@@ -1466,22 +1469,28 @@ def status(frame_dir: Path | None = None) -> StatusReport:
     report.message = "；".join([
         report.builder.message,
         report.lab.message,
-        _shield_line(report.shield),
+        _shield_line(report.shield, report.world),
     ])
     logger.info("Status: %s", report.message)
     return report
 
 
-def _shield_line(shield: ShieldState | None) -> str:
+def _shield_line(shield: ShieldState | None, world: World | None) -> str:
     """What the shield plate is worth saying, including that there is none to say.
 
     **No shield is the loud answer rather than the quiet one**: it means the
     village is open to being raided right now, which is the state a full one
-    should never be left in. The builder base has no such plate at all, so it
-    gets a line saying so rather than one saying there is no shield.
+    should never be left in.
+
+    **`world` is here because the runner's None covers two things and they are
+    not the same news.** The builder base has no shield plate at all, which is
+    structural and needs no following up; a home village whose plate this frame
+    could not place is a reading to take again, and reported as the first it
+    would stop a session watching the one countdown that costs loot when it
+    lapses.
     """
     if shield is None:
-        return "這個世界沒有護盾"
+        return "這個世界沒有護盾" if world == "night" else "護盾的牌子讀不到,沒辦法說還剩多久"
     if not shield.up:
         return "**沒有護盾**,村莊現在可以被打"
     if shield.remaining is None:
