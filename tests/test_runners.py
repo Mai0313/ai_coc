@@ -11,7 +11,7 @@ from __future__ import annotations
 import unittest
 from unittest.mock import MagicMock, patch
 
-from ai_coc import plans
+from ai_coc import plans, commands
 from ai_coc.ui import clan as clan_ui
 from ai_coc.ui import hero as hero_ui
 from ai_coc.ui import attack, plates, upkeep
@@ -292,28 +292,30 @@ class ClanRunnerTests(unittest.TestCase):
 
     def test_nobody_asking_costs_a_look_and_the_way_back_out(self) -> None:
         report, back = self._donate(self._runner(), button=None)
-        assert report.message == "部落聊天裡目前沒有人在請求增援"
+        assert report.outcome == "nobody_asking"
         assert report.gifts == []
         # The chat tab was opened, so it is closed again.
         assert back.call_count == 2
 
     def test_a_panel_that_did_not_open_gives_nothing(self) -> None:
         report, _ = self._donate(self._runner(), button=(477, 440), panel=False)
-        assert "沒有打開" in report.message
+        assert report.outcome == "panel_shut"
 
     def test_a_dry_run_counts_what_it_could_give_and_gives_none_of_it(self) -> None:
         report, _ = self._donate(
             self._runner(dry_run=True), button=(477, 440), cards=[[(700, 300), (814, 300)]]
         )
         assert (report.offered, report.gifts) == (2, [])
-        assert "沒有捐出去" in report.message
+        # Its own outcome rather than `nothing_given`, which is a run that meant
+        # to give and could not.
+        assert report.outcome == "dry_run"
 
     def test_gifts_are_given_leftmost_first_until_the_cards_run_out(self) -> None:
         report, _ = self._donate(
             self._runner(), button=(477, 440), cards=[[(700, 300), (814, 300)], [(814, 300)], []]
         )
         assert report.gifts == [(700, 300), (814, 300)]
-        assert report.message == "捐了 2 次"
+        assert report.outcome == "donated"
 
     def test_a_tap_the_panel_did_not_answer_ends_the_giving(self) -> None:
         """The cards themselves cannot say a gift landed, so the panel repainting is the evidence."""
@@ -321,6 +323,7 @@ class ClanRunnerTests(unittest.TestCase):
             self._runner(), button=(477, 440), cards=[[(700, 300)], [(700, 300)]], moved=0
         )
         assert report.gifts == []
+        assert report.outcome == "nothing_given"
 
     def test_the_round_limit_holds(self) -> None:
         report, _ = self._donate(
@@ -332,7 +335,7 @@ class ClanRunnerTests(unittest.TestCase):
         runner = self._runner()
         with patch.object(runner, "_home", return_value=None):
             report = runner.donate()
-        assert "沒辦法回到村莊" in report.message
+        assert report.outcome == "no_village"
 
 
 class CollectTests(unittest.TestCase):
@@ -360,7 +363,7 @@ class CollectTests(unittest.TestCase):
         report, tapped = self._collect([before, after, after], [[coin, drop], []])
         assert tapped.call_args_list[0].args[0] == [(1000, 300), (1100, 320)]
         assert (report.markers, report.gold, report.elixir, report.dark) == (2, 50, 30, 0)
-        assert "收了 2 個採集器" in report.message
+        assert report.outcome == "collected"
 
     def test_markers_that_are_still_standing_end_the_passes(self) -> None:
         """A full storage takes none of what it is handed, so the marker never leaves."""
@@ -372,7 +375,7 @@ class CollectTests(unittest.TestCase):
     def test_nothing_waiting_is_said_rather_than_reported_as_a_haul(self) -> None:
         report, tapped = self._collect([STOCK, STOCK], [[]])
         tapped.assert_not_called()
-        assert report.message == "沒有採集器等著收"
+        assert report.outcome == "nothing_to_collect"
 
     def test_a_village_lost_after_the_taps_still_reports_them(self) -> None:
         """Measured, a run walked into the idle-disconnect dialog between two passes."""
@@ -380,7 +383,7 @@ class CollectTests(unittest.TestCase):
         # Read once before, once at the top of the second pass, once after.
         report, _ = self._collect([STOCK, None, None], [[coin]])
         assert report.markers == 1
-        assert "讀不到儲量" in report.message
+        assert report.outcome == "stock_unread"
 
 
 class BuildersTests(unittest.TestCase):
@@ -406,7 +409,7 @@ class BuildersTests(unittest.TestCase):
         queue = BuildQueue(running=2, remaining=[600, 7200])
         report, opened, tapped = self._builders((1, 5), [queue])
         assert (report.free, report.total, report.queue) == (1, 5, queue)
-        assert "最快的還要 10 分鐘" in report.message
+        assert report.outcome == "read"
         opened.assert_called_once()
         tapped.assert_called_once_with(upkeep.BUILDER_BUTTON)
 
@@ -415,17 +418,17 @@ class BuildersTests(unittest.TestCase):
         queue = BuildQueue(running=1, remaining=[90_000])
         report, opened, _ = self._builders((0, 5), [None, queue])
         assert opened.call_count == 2
-        assert "1 天 1 小時" in report.message
+        assert report.queue == queue
 
     def test_a_panel_that_will_not_open_and_a_counter_that_will_not_read_both_say_so(self) -> None:
         report, _, _ = self._builders((0, 5), [None, None])
-        assert "打不開" in report.message
+        assert report.outcome == "panel_shut"
         report, _, _ = self._builders(None, [])
-        assert "讀不到工人數量" in report.message
+        assert report.outcome == "count_unread"
 
-    def test_no_upgrade_running_is_its_own_message(self) -> None:
+    def test_no_upgrade_running_is_its_own_outcome(self) -> None:
         report, _, _ = self._builders((5, 5), [BuildQueue()])
-        assert report.message == "工人 5/5，沒有在跑的升級"
+        assert report.outcome == "idle"
 
     def test_a_countdown_is_spelt_the_way_the_game_writes_it(self) -> None:
         assert shared.spell_out(90_000) == "1 天 1 小時"
@@ -455,7 +458,8 @@ class UpgradeTests(unittest.TestCase):
             report = runner.upgrade()
         assert [call.args[0] for call in started.call_args_list] == [dear, cheap]
         assert report.started == [dear, cheap]
-        assert report.message == "開始了 2 個升級：金礦(12級)、金礦(12級)"
+        assert report.outcome == "started"
+        assert commands.build_line(report) == "開始了 2 個升級:金礦(12級)、金礦(12級)"
 
     def test_a_refused_upgrade_is_not_asked_about_again(self) -> None:
         runner = self._runner()
@@ -480,7 +484,7 @@ class UpgradeTests(unittest.TestCase):
             patch.object(runner, "_buildings", return_value=[self._offer(price=720_000)]),
         ):
             report = runner.upgrade()
-        assert "最便宜的要 720000" in report.message
+        assert (report.outcome, report.cheapest) == ("cannot_afford", 720_000)
 
     def test_no_free_builder_ends_the_run_before_anything_is_looked_for(self) -> None:
         runner = self._runner()
@@ -492,7 +496,7 @@ class UpgradeTests(unittest.TestCase):
         ):
             report = runner.upgrade()
         looked.assert_not_called()
-        assert "都在忙" in report.message
+        assert report.outcome == "builders_busy"
 
     def _start(
         self,
@@ -699,9 +703,9 @@ class HeroRunnerTests(unittest.TestCase):
                 runner, "_home", return_value=VillageStock(gold=0, elixir=0, dark=144_000)
             ),
         ):
-            started, message = runner._purchase(_duke(), before)
+            started, outcome = runner._purchase(_duke(), before)
         assert started == _duke()
-        assert "開始升級" in message
+        assert outcome == "started"
 
     def test_a_read_only_run_reports_the_hall_and_touches_nothing(self) -> None:
         runner = self._runner()
@@ -716,7 +720,7 @@ class HeroRunnerTests(unittest.TestCase):
             report = runner.run()
         assert report.cards == [_duke()]
         assert report.started is None
-        assert report.message == "英雄殿堂裡讀到 1 個英雄"
+        assert report.outcome == "read"
         closed.assert_called_once()
 
     def test_a_hall_nobody_could_find_says_so(self) -> None:
@@ -728,7 +732,7 @@ class HeroRunnerTests(unittest.TestCase):
             patch.object(runner, "_open", return_value=None),
         ):
             report = runner.run()
-        assert report.message == "掃過村莊都沒有找到英雄殿堂"
+        assert report.outcome == "hall_not_found"
 
 
 class OpenAttackMenuTests(unittest.TestCase):
