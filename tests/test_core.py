@@ -110,7 +110,15 @@ from ai_coc.adapters.adb import (
 )
 from ai_coc.parsers.clan import panel_top, donatable_cards, reinforce_button
 from ai_coc.parsers.hero import SCROLL_LEFT, SCROLL_RIGHT, can_scroll, hero_cards, hall_buttons
-from ai_coc.parsers.home import builder_jobs, free_builders, collect_bubbles
+from ai_coc.parsers.home import (
+    panel_jobs,
+    plate_count,
+    builder_jobs,
+    plate_badges,
+    shield_state,
+    free_builders,
+    collect_bubbles,
+)
 from ai_coc.logging_setup import _attach_run, configure_logging
 from ai_coc.parsers.field import view_shift
 from ai_coc.parsers.frame import open_frame
@@ -2179,7 +2187,13 @@ class PromptTests(unittest.TestCase):
         """Both directions: a missing file is a `KeyError` at the first call, and a
         file nothing asks for is a prompt somebody will keep rewording for nothing.
         """
-        assert set(PROMPTS) == {"attack_plan", "find_targets", "name_building", "night_plan"}
+        assert set(PROMPTS) == {
+            "attack_plan",
+            "find_targets",
+            "name_building",
+            "night_plan",
+            "read_plate_jobs",
+        }
 
     def test_a_prompt_fills_in_its_placeholders(self) -> None:
         filled = render("find_targets", what="城牆", notes="", count=12, floor=55)
@@ -5329,10 +5343,149 @@ class HomeHudTests(unittest.TestCase):
         assert queue.running == 4
         assert queue.remaining == [33780, 69120, 77880, 147600]
 
+    def test_a_unit_character_is_not_read_as_a_digit(self) -> None:
+        """1天16小時 and 4天23小時, which the old tolerance read as 7天 and 13天.
+
+        The panel is translucent, so what is behind it decides whether 小's two
+        short outer strokes reach the ink mask. Over the flat grass of
+        `builder_panel.png` they do; over this village's wall lattice only the
+        middle stroke survives, and a bare vertical bar sits exactly 30 from the
+        template for `0` — which the old line of 30 admitted with `<=`, turning
+        16小時 into 160小時. Nothing about that is visible on a masked fixture,
+        so this one is the whole live frame.
+
+        The first row is 7小時52分鐘 and does not resolve at all; it is absent
+        from the times while still counted in `running`, which is the disagreement
+        `BuildQueue` carries both numbers to show.
+        """
+        queue = builder_jobs((FRAMES / "day_builder_panel.png").read_bytes())
+        assert queue is not None
+        assert queue.running == 6
+        assert queue.remaining == [144000, 176400, 176400, 352800, 428400]
+
     def test_a_village_with_no_panel_up_has_no_queue(self) -> None:
         """The button toggles, so "no panel" is what a second tap is for."""
         assert builder_jobs((FRAMES / "home_markers.png").read_bytes()) is None
         assert builder_jobs((FRAMES / "home_storages.png").read_bytes()) is None
+
+    def test_a_plate_is_found_by_where_it_sits_not_by_its_place_in_the_row(self) -> None:
+        """A gem shower covers plates, so the first badge is not always the laboratory.
+
+        On the first of these only the shield's badge is visible and on the
+        second the shield's is the one missing. Read by index, the first would
+        open the shield as the laboratory and the second would raise.
+        """
+        shield_only = plate_badges((FRAMES / "world_day_shield_only.png").read_bytes())
+        assert shield_only == {"shield": 933}
+        occluded = plate_badges((FRAMES / "world_day_occluded.png").read_bytes())
+        assert occluded == {"lab": 516, "builder": 719}
+
+    def test_the_two_villages_lay_the_same_plates_out_differently(self) -> None:
+        """The row is centred and the home village has one plate more, so every x moves.
+
+        The builder base is here twice because its own row moves between frames
+        — measured at 628/830 and at 644/846 — which is why nothing downstream
+        may write a plate's position down.
+        """
+        assert plate_badges((FRAMES / "world_day.png").read_bytes()) == {
+            "lab": 516,
+            "builder": 719,
+            "shield": 933,
+        }
+        assert plate_badges((FRAMES / "world_night.png").read_bytes()) == {
+            "lab": 644,
+            "builder": 846,
+        }
+        assert plate_badges((FRAMES / "world_night_corner.png").read_bytes()) == {
+            "lab": 628,
+            "builder": 830,
+        }
+
+    def test_a_plate_count_is_read_from_its_own_badge(self) -> None:
+        """0/2 and 0/6 on the home village, 0/1 and 0/3 on the builder base.
+
+        One offset from the badge serves all four, which is what lets a command
+        read either village without knowing where the row happens to be.
+        """
+        for frame, wanted in (
+            ("day_lab_panel.png", {"lab": (0, 2), "builder": (0, 6)}),
+            ("night_lab_panel.png", {"lab": (0, 1), "builder": (0, 3)}),
+        ):
+            png = (FRAMES / frame).read_bytes()
+            badges = plate_badges(png)
+            counts = {
+                role: plate_count(png, at) for role, at in badges.items() if role != "shield"
+            }
+            assert counts == wanted, frame
+
+    def test_a_count_that_will_not_resolve_is_left_unread(self) -> None:
+        """The plate is translucent, so the camera decides whether the digits read.
+
+        This village shows 0/5 and the 5 lands 24 from its template against a
+        tolerance of 19 — the pair 24/25 is the coin flip the tolerance was drawn
+        under, so the honest answer is nothing rather than the 0/9 a looser line
+        would give.
+        """
+        png = (FRAMES / "world_day.png").read_bytes()
+        assert plate_count(png, plate_badges(png)["builder"]) is None
+
+    def test_every_plate_opens_a_panel_read_through_its_own_band(self) -> None:
+        """Four panels, one template, four different places on screen.
+
+        The offset from each plate's badge to its own bars runs +147 to +172
+        against a bar 115 px wide, so these are measured rather than derived.
+        """
+        for frame, world, role, running, times in (
+            ("day_lab_panel.png", "day", "lab", 2, [108000, 201600]),
+            ("night_lab_panel.png", "night", "lab", 1, [327600]),
+            ("night_builder_panel.png", "night", "builder", 3, [29220, 219600, 306000]),
+        ):
+            queue = panel_jobs((FRAMES / frame).read_bytes(), world, role)
+            assert queue is not None, frame
+            assert queue.running == running, frame
+            assert queue.remaining == times, frame
+
+    def test_the_bars_agree_with_the_plate_that_opened_them(self) -> None:
+        """Busy builders and running bars are the same number, counted two ways.
+
+        The plate says how many of the workmen are idle and the panel draws one
+        bar per job, so a reader that has both gets a check on itself for free.
+        """
+        for frame, world, role in (
+            ("day_lab_panel.png", "day", "lab"),
+            ("day_builder_panel.png", "day", "builder"),
+            ("night_lab_panel.png", "night", "lab"),
+            ("night_builder_panel.png", "night", "builder"),
+        ):
+            png = (FRAMES / frame).read_bytes()
+            counted = plate_count(png, plate_badges(png)[role])
+            queue = panel_jobs(png, world, role)
+            assert counted is not None, frame
+            assert queue is not None, frame
+            assert queue.running == counted[1] - counted[0], frame
+
+    def test_the_shield_plate_tells_no_shield_apart_from_an_unread_one(self) -> None:
+        """無 is a state, not a failure, and it is the opposite instruction.
+
+        A village with no shield is being farmed by other people right now; a
+        frame whose countdown will not resolve only wants looking at again. The
+        two are separated by how much is written on the plate — two glyphs
+        against six — rather than by matching the character.
+        """
+        for frame, wanted in (("world_day.png", False), ("home_builders_busy.png", False)):
+            png = (FRAMES / frame).read_bytes()
+            state = shield_state(png, plate_badges(png)["shield"])
+            assert state is not None, frame
+            assert state.up is wanted, frame
+        png = (FRAMES / "day_lab_panel.png").read_bytes()
+        held = shield_state(png, plate_badges(png)["shield"])
+        assert held is not None
+        assert held.up is True
+        assert held.remaining == 6 * 3600 + 8 * 60
+
+    def test_the_builder_base_has_no_shield_plate_to_read(self) -> None:
+        """Structurally, not incidentally: it is matchmaking against a live player."""
+        assert "shield" not in plate_badges((FRAMES / "world_night.png").read_bytes())
 
 
 class BuildingUpgradeTests(unittest.TestCase):

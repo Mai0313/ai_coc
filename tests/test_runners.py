@@ -14,7 +14,7 @@ from unittest.mock import MagicMock, patch
 from ai_coc import plans
 from ai_coc.ui import clan as clan_ui
 from ai_coc.ui import hero as hero_ui
-from ai_coc.ui import attack, upkeep
+from ai_coc.ui import attack, plates, upkeep
 from ai_coc.ui import runner as shared
 from ai_coc.models import (
     HeroCard,
@@ -428,9 +428,9 @@ class BuildersTests(unittest.TestCase):
         assert report.message == "工人 5/5，沒有在跑的升級"
 
     def test_a_countdown_is_spelt_the_way_the_game_writes_it(self) -> None:
-        assert upkeep._spell_out(90_000) == "1 天 1 小時"
-        assert upkeep._spell_out(3_660) == "1 小時 1 分鐘"
-        assert upkeep._spell_out(120) == "2 分鐘"
+        assert shared.spell_out(90_000) == "1 天 1 小時"
+        assert shared.spell_out(3_660) == "1 小時 1 分鐘"
+        assert shared.spell_out(120) == "2 分鐘"
 
 
 class UpgradeTests(unittest.TestCase):
@@ -1310,3 +1310,98 @@ class DeploymentTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PlateRunnerTests(unittest.TestCase):
+    """The plates along the top, on whichever village is up and without sailing."""
+
+    def _read(
+        self,
+        role: str,
+        *,
+        world: str | None = "night",
+        counted: tuple[int, int] | None = (0, 3),
+        panels: list[list[int | None] | None] | None = None,
+        names: list[str] | None = None,
+    ) -> tuple[object, MagicMock, MagicMock]:
+        runner = plates.PlateRunner(adb=_adb(), display=DISPLAY)
+        # The builder base's own row: two plates, and no shield plate at all.
+        found = {"lab": 644, "builder": 846}
+        with (
+            patch.object(plates.time, "sleep"),
+            patch.object(runner, "_frame", return_value=b""),
+            patch.object(runner, "_after_tap", return_value=b"") as opened,
+            patch.object(runner, "_tap") as tapped,
+            patch.object(runner, "_names", return_value=names or []),
+            patch.object(plates, "current_world", return_value=world),
+            patch.object(plates, "plate_badges", return_value=found),
+            patch.object(plates, "plate_count", return_value=counted),
+            patch.object(plates, "panel_rows", side_effect=panels or [[600, 7200]]),
+        ):
+            return runner.read(role), opened, tapped
+
+    def test_the_panel_is_read_and_shut_again_behind_the_run(self) -> None:
+        report, opened, tapped = self._read("builder", counted=(1, 3), panels=[[600, 7200]])
+        assert (report.world, report.free, report.total) == ("night", 1, 3)
+        assert [job.remaining for job in report.jobs] == [600, 7200]
+        assert "最快的還要 10 分鐘" in report.message
+        opened.assert_called_once()
+        tapped.assert_called_once_with(plates.plate_button(846))
+
+    def test_a_button_that_toggles_is_worth_a_second_tap(self) -> None:
+        """A panel left open by an earlier command closes on the first tap."""
+        report, opened, _ = self._read("builder", panels=[None, [90_000]])
+        assert opened.call_count == 2
+        assert "1 天 1 小時" in report.message
+
+    def test_a_plate_with_nothing_running_is_not_tapped_a_third_time(self) -> None:
+        """**The closing tap would open it**, and an open panel hides the badge row.
+
+        No bars means the panel never opened or opened empty, and the two are the
+        same picture — but two taps have already left it however it was found, so
+        a third is what leaves it covering the village. `status` reads the next
+        plate straight afterwards and would answer 畫面不在村莊 on a village that
+        is plainly there.
+        """
+        report, opened, tapped = self._read("builder", counted=(3, 3), panels=[None, None])
+        assert opened.call_count == 2
+        tapped.assert_not_called()
+        assert report.message == "建築工人 3/3,沒有在跑的項目"
+
+    def test_a_panel_that_will_not_open_says_so_rather_than_claiming_it_is_empty(self) -> None:
+        """Every slot busy and no bars is a panel that failed, not a plate at rest."""
+        report, _, tapped = self._read("builder", counted=(0, 3), panels=[None, None])
+        tapped.assert_not_called()
+        assert "打不開" in report.message
+
+    def test_a_count_that_will_not_read_still_reports_what_is_running(self) -> None:
+        """And says it once: the running total used to be printed twice on this path."""
+        report, _, _ = self._read("builder", counted=None, panels=[[600, 7200]])
+        assert (report.free, report.total) == (None, None)
+        assert report.message.count("個在跑") == 1
+        assert "數字讀不到" in report.message
+
+    def test_a_frame_that_is_no_village_reads_no_plate(self) -> None:
+        report, opened, tapped = self._read("builder", world=None)
+        assert report.world is None
+        assert "不在村莊" in report.message
+        opened.assert_not_called()
+        tapped.assert_not_called()
+
+    def test_a_plate_this_village_does_not_have_is_said_rather_than_tapped(self) -> None:
+        """The builder base has no shield plate at all."""
+        report, opened, _ = self._read("shield")
+        assert "看不到護盾的牌子" in report.message
+        opened.assert_not_called()
+
+    def test_a_name_is_matched_to_the_row_it_was_read_beside(self) -> None:
+        """Order, not sorting: a short answer leaves later rows unnamed."""
+        report, _, _ = self._read(
+            "builder", panels=[[7200, 600, None]], names=["奧托哨所", "X連弩"]
+        )
+        assert [(job.name, job.remaining) for job in report.jobs] == [
+            ("奧托哨所", 7200),
+            ("X連弩", 600),
+            ("", None),
+        ]
+        assert "最快的是X連弩" in report.message
