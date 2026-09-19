@@ -30,6 +30,7 @@ from ai_coc.models import (
     AppConfig,
     MapSurvey,
     NightPlan,
+    PlateRole,
     AttackPlan,
     HeroReport,
     PlayedPlan,
@@ -38,7 +39,9 @@ from ai_coc.models import (
     BuildReport,
     HeroOptions,
     NamedEntity,
+    PlateReport,
     RunnerState,
+    ShieldState,
     StockReport,
     WallOptions,
     WorldReport,
@@ -48,6 +51,7 @@ from ai_coc.models import (
     FrameReading,
     LaunchReport,
     RestartScope,
+    StatusReport,
     AttackOptions,
     BuilderReport,
     CollectReport,
@@ -111,7 +115,8 @@ from .ui.hero import HeroRunner
 from .ui.walls import WallRunner
 from .ui.world import cross, uncovered, park_camera, collect_cart
 from .ui.attack import CARD_ROW_Y, DROP_SETTLE, SINGLE_DROP_DELAY, AttackRunner
-from .ui.runner import ScreenRunner, restart_game
+from .ui.plates import PlateRunner
+from .ui.runner import ScreenRunner, spell_out, restart_game
 from .ui.upkeep import UpkeepRunner
 
 if TYPE_CHECKING:
@@ -1334,7 +1339,15 @@ def stock(frame_dir: Path | None = None) -> StockReport:
     """
     adb = _controller()
     display = _settle_game(adb, WORLD_SETTLE_POLLS) or adb.display_for(COC_PACKAGE)
-    runner = ScreenRunner(adb=adb, display=display, frame_dir=frame_dir)
+    return stock_of(ScreenRunner(adb=adb, display=display, frame_dir=frame_dir), adb, display)
+
+
+def stock_of(runner: ScreenRunner, adb: AdbController, display: DisplayTarget) -> StockReport:
+    """The storage half of `stock`, for a caller that already has a runner going.
+
+    `status` asks three things of one village, and settling the game once for
+    all three is the whole of what it saves over running the three commands.
+    """
     world, held = runner.read_storages()
     if world is None:
         # **A panel over the village is the ordinary way to arrive here**, and
@@ -1372,6 +1385,97 @@ def stock(frame_dir: Path | None = None) -> StockReport:
         capacity.model_dump(exclude_none=True) or "ceilings that would not read",
     )
     return report
+
+
+def _plate(role: PlateRole, frame_dir: Path | None) -> PlateReport:
+    """One plate on whichever village is up, and never the other one.
+
+    Same shape as `stock` and for the same reason: crossing is `ai_coc world
+    --go`, so a status check that sails a boat is no longer one. `uncovered` is
+    what clears a panel the last command left standing, which the skills now make
+    the ordinary way to arrive here.
+    """
+    adb = _controller()
+    display = _settle_game(adb, WORLD_SETTLE_POLLS) or adb.display_for(COC_PACKAGE)
+    runner = PlateRunner(adb=adb, display=display, frame_dir=frame_dir)
+    report = runner.read(role)
+    if report.world is None and uncovered(adb, display) is not None:
+        report = runner.read(role)
+    logger.info("Plate %s: %s", role, report.message)
+    return report
+
+
+def worker(frame_dir: Path | None = None) -> PlateReport:
+    """Who is building what on the village that is up, and how long each has left.
+
+    **`ai_coc builders` is the home village's own version of this and stays
+    that way.** It goes through `GameRunner._home`, which sails to the day
+    village the moment it finds the builder base — so asking it about the
+    builder base spends a boat trip and leaves the game on the other village,
+    which is a thing the `farm` skill has to warn every session about. This one
+    reads whichever village is on screen and reports which that turned out to be.
+    """
+    return _plate("builder", frame_dir)
+
+
+def lab(frame_dir: Path | None = None) -> PlateReport:
+    """What is being researched on the village that is up, and how long it has left.
+
+    The home village counts two slots on this plate — the laboratory and the pet
+    house beside it — and the builder base one. Both open the same panel as the
+    builders' plate does, so this is `worker` pointed one plate to the left.
+    """
+    return _plate("lab", frame_dir)
+
+
+def status(frame_dir: Path | None = None) -> StatusReport:
+    """Everything one village says about itself, in one pass and without crossing.
+
+    The three readings a session takes before deciding anything — who is
+    building, what is being researched, how full the storages are — plus the
+    shield, which is the one countdown here that costs something when it runs
+    out. Settling the game once for all four is the whole of what this saves
+    over running the commands separately.
+    """
+    adb = _controller()
+    display = _settle_game(adb, WORLD_SETTLE_POLLS) or adb.display_for(COC_PACKAGE)
+    runner = PlateRunner(adb=adb, display=display, frame_dir=frame_dir)
+    # Once, before any of the four rather than inside each: they all read the
+    # same screen, so a panel left over from the last command is cleared here or
+    # it defeats every one of them.
+    if current_world(adb.screenshot(display)) is None:
+        uncovered(adb, display)
+    report = StatusReport(
+        builder=runner.read("builder"),
+        lab=runner.read("lab"),
+        stock=stock_of(runner, adb, display),
+        shield=runner.shield(),
+    )
+    report.world = report.builder.world or report.lab.world or report.stock.world
+    report.message = "；".join([
+        report.builder.message,
+        report.lab.message,
+        _shield_line(report.shield),
+    ])
+    logger.info("Status: %s", report.message)
+    return report
+
+
+def _shield_line(shield: ShieldState | None) -> str:
+    """What the shield plate is worth saying, including that there is none to say.
+
+    **No shield is the loud answer rather than the quiet one**: it means the
+    village is open to being raided right now, which is the state a full one
+    should never be left in. The builder base has no such plate at all, so it
+    gets a line saying so rather than one saying there is no shield.
+    """
+    if shield is None:
+        return "這個世界沒有護盾"
+    if not shield.up:
+        return "**沒有護盾**,村莊現在可以被打"
+    if shield.remaining is None:
+        return "有護盾,但倒數讀不到"
+    return f"護盾還有 {spell_out(shield.remaining)}"
 
 
 def collect(frame_dir: Path | None = None) -> CollectReport:

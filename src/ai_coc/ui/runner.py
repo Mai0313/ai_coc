@@ -124,6 +124,18 @@ TOOLTIP_SETTLE = 1.0
 CAPACITY_TRIES = 2
 
 
+def spell_out(seconds: int) -> str:
+    """A countdown as the game writes it, for a message a person reads."""
+    days, rest = divmod(seconds, 86400)
+    hours, rest = divmod(rest, 3600)
+    minutes = rest // 60
+    if days:
+        return f"{days} 天 {hours} 小時"
+    if hours:
+        return f"{hours} 小時 {minutes} 分鐘"
+    return f"{minutes} 分鐘"
+
+
 def restart_game(adb: AdbController, display: DisplayTarget) -> DisplayTarget:
     """Close the game and open it again, and say which display it came back on.
 
@@ -180,6 +192,12 @@ class ScreenRunner(BaseModel):
 
     def _tap(self, point: tuple[int, int]) -> None:
         self.adb.tap(point[0], point[1], self.display)
+
+    def _after_tap(self, point: tuple[int, int], label: str) -> bytes:
+        """Tap, let whatever it opens finish opening, and hand back what is there."""
+        self._tap(point)
+        time.sleep(MENU_SETTLE)
+        return self._frame(label)
 
     def _frame(self, label: str) -> bytes:
         """One capture, kept on disk when the run is being recorded.
@@ -279,11 +297,6 @@ class GameRunner(ScreenRunner):
     # above and for the same reason: a restarted game does not come back at the
     # zoom everything was measured at.
     _settled: bool = PrivateAttr(default=False)
-
-    def _after_tap(self, point: tuple[int, int], label: str) -> bytes:
-        self._tap(point)
-        time.sleep(MENU_SETTLE)
-        return self._frame(label)
 
     def _settle_zoom(self) -> None:
         """Put the camera back at the far zoom, once per village these loops see.

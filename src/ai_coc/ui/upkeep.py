@@ -32,7 +32,7 @@ from ai_coc.models import (
     BuildCandidate,
 )
 from ai_coc.prompts import render
-from ai_coc.ui.runner import BUY_SETTLE, MENU_SETTLE, SPOT_TIMEOUT, GameRunner
+from ai_coc.ui.runner import BUY_SETTLE, MENU_SETTLE, SPOT_TIMEOUT, GameRunner, spell_out
 from ai_coc.adapters.ai import GeminiClient
 from ai_coc.parsers.home import BUILDER_BUTTON, builder_jobs, free_builders, collect_bubbles
 from ai_coc.parsers.building import (
@@ -44,18 +44,6 @@ from ai_coc.parsers.building import (
 )
 
 logger = logging.getLogger(__name__)
-
-
-def _spell_out(seconds: int) -> str:
-    """A countdown as the game writes it, for a message a person reads."""
-    days, rest = divmod(seconds, 86400)
-    hours, rest = divmod(rest, 3600)
-    minutes = rest // 60
-    if days:
-        return f"{days} 天 {hours} 小時"
-    if hours:
-        return f"{hours} 小時 {minutes} 分鐘"
-    return f"{minutes} 分鐘"
 
 
 # How far apart the taps go, and how long to leave the game to swallow them
@@ -359,7 +347,7 @@ class UpkeepRunner(GameRunner):
             return report
         report.message = (
             f"工人 {report.free}/{report.total}，{queue.running} 個升級在跑，"
-            f"最快的還要 {_spell_out(queue.remaining[0])}"
+            f"最快的還要 {spell_out(queue.remaining[0])}"
         )
         return report
 

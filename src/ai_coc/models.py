@@ -1164,6 +1164,48 @@ class ShieldState(BaseModel):
     remaining: int | None = None
 
 
+class PlateJob(BaseModel):
+    """One row of a plate's panel: what is being raised, and how long it has left.
+
+    `remaining` is None for a row whose countdown would not resolve, which is
+    counted all the same — the row is there and something is in it, so dropping
+    it would report a plate as emptier than it is. `name` is empty without a
+    model to read it with, since it is Chinese and no parser here reads any.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    name: str = ""
+    remaining: int | None = None
+
+
+class PlateReport(BaseModel):
+    """What one plate says, and what the panel behind it is running.
+
+    **About the village on screen, and it never sails.** `world` says which one
+    that turned out to be, the way `StockReport` does and for the same reason:
+    crossing is `ai_coc world --go`, and a status check that moves the game is
+    no longer one.
+
+    `free` and `total` are None together for a plate whose count would not
+    resolve — the plate is translucent, so the camera decides. That costs less
+    than it looks: the number a caller waiting on a builder actually wants is
+    `soonest`, which comes off the panel rather than off the plate.
+    """
+
+    world: World | None = None
+    role: PlateRole = "builder"
+    free: int | None = None
+    total: int | None = None
+    jobs: list[PlateJob] = Field(default_factory=list)
+    message: str = ""
+
+    def soonest(self) -> int | None:
+        """Seconds until the next one finishes, or None if no row's countdown read."""
+        times = [job.remaining for job in self.jobs if job.remaining is not None]
+        return min(times) if times else None
+
+
 class StockReport(BaseModel):
     """What the village on screen is holding, against what its storages take when full.
 
@@ -1201,6 +1243,28 @@ class StockReport(BaseModel):
     # read it. A resource whose ceiling would not read is absent rather than
     # zero: nothing is known about how full it is, and a 0 there reads as empty.
     filled: dict[str, str] = Field(default_factory=dict)
+
+
+class StatusReport(BaseModel):
+    """Everything one village says about itself, without touching the other one.
+
+    The three readings a session actually asks for before deciding anything —
+    who is building, what is being researched, and how full the storages are —
+    taken off one village in one pass rather than three commands and three
+    settles.
+    """
+
+    # Built on demand rather than at class definition: an annotation resolves
+    # later but a default is evaluated where it is written, and `World` is
+    # defined further down this file than any of these.
+    world: World | None = None
+    builder: PlateReport = Field(default_factory=lambda: PlateReport(role="builder"))
+    lab: PlateReport = Field(default_factory=lambda: PlateReport(role="lab"))
+    stock: StockReport = Field(default_factory=StockReport)
+    # None on the builder base, which has no shield plate at all rather than one
+    # saying there is no shield.
+    shield: ShieldState | None = None
+    message: str = ""
 
 
 class BuildingName(BaseModel):

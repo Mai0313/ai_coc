@@ -54,6 +54,9 @@ RECORDABLE = (
     "collect",
     "builders",
     "stock",
+    "worker",
+    "lab",
+    "status",
     "upgrade",
     "hero",
     "donate",
@@ -137,6 +140,9 @@ def _parser() -> argparse.ArgumentParser:
         ("collect", "把採集器裡的資源全部收起來"),
         ("builders", "每個工人在蓋什麼、還要多久"),
         ("stock", "現在這個世界的倉庫水位跟容量,不切世界"),
+        ("worker", "現在這個世界的工人在蓋什麼、還要多久,不切世界"),
+        ("lab", "現在這個世界的實驗室在研究什麼、還要多久,不切世界"),
+        ("status", "現在這個世界的工人、實驗室、倉庫跟護盾,一次讀完,不切世界"),
         ("probe", "花一場戰鬥實測邊界，對照判讀器說的"),
         ("bounds", "花一場戰鬥實測地圖邊緣，回推村莊範圍"),
     ):
@@ -277,6 +283,9 @@ def _answer(arguments: argparse.Namespace, run: RunLog) -> BaseModel | str:
         "collect": lambda: commands.collect(run.frames),
         "builders": lambda: commands.builders(run.frames),
         "stock": lambda: commands.stock(run.frames),
+        "worker": lambda: commands.worker(run.frames),
+        "lab": lambda: commands.lab(run.frames),
+        "status": lambda: commands.status(run.frames),
         "upgrade": lambda: commands.upgrade(
             UpgradeOptions(
                 frame_dir=run.frames,

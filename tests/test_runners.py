@@ -428,9 +428,9 @@ class BuildersTests(unittest.TestCase):
         assert report.message == "工人 5/5，沒有在跑的升級"
 
     def test_a_countdown_is_spelt_the_way_the_game_writes_it(self) -> None:
-        assert upkeep._spell_out(90_000) == "1 天 1 小時"
-        assert upkeep._spell_out(3_660) == "1 小時 1 分鐘"
-        assert upkeep._spell_out(120) == "2 分鐘"
+        assert shared.spell_out(90_000) == "1 天 1 小時"
+        assert shared.spell_out(3_660) == "1 小時 1 分鐘"
+        assert shared.spell_out(120) == "2 分鐘"
 
 
 class UpgradeTests(unittest.TestCase):

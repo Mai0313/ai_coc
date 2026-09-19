@@ -182,10 +182,19 @@ NIGHT_ROW_SPLIT = 740
 # rather than at either edge of it.
 BUILDER_TOLERANCE = 19
 
-# Tapping that counter opens the panel listing every upgrade the village has
-# running, and tapping it again closes it — the button toggles rather than
-# opens, which is why the runner reads the panel before deciding it failed.
-BUILDER_BUTTON = (745, 48)
+# Tapping a plate opens the panel listing what it is counting, and tapping it
+# again closes it — the button toggles rather than opens, which is why the
+# runner reads the panel before deciding it failed. Measured from the badge, the
+# same way the digit box is and for the same reason: the row moves.
+PLATE_BUTTON = (26, 48)
+
+
+def plate_button(centre: int) -> tuple[int, int]:
+    """Where to tap to open one plate's panel, given where its badge sits."""
+    return centre + PLATE_BUTTON[0], PLATE_BUTTON[1]
+
+
+BUILDER_BUTTON = plate_button(719)
 
 # Each running upgrade gets a progress bar with its remaining time drawn over
 # it, and **the bar is the only thing that says which rows those are**. The panel
@@ -504,16 +513,18 @@ def _seconds_from(ink: list[list[bool]]) -> int | None:
     return numbers[0] * scale + (numbers[1] * below if len(numbers) > 1 else 0)
 
 
-def panel_jobs(png: bytes, world: World, role: PlateRole) -> BuildQueue | None:
-    """What one plate's panel says is running, soonest first.
+def panel_rows(png: bytes, world: World, role: PlateRole) -> list[int | None] | None:
+    """Each running row's countdown, **in the order the panel draws them**.
 
-    None means that panel is not on screen at all, which is what a caller that
-    tapped a button that toggles needs to be told apart from a plate with
-    nothing running behind it.
+    None for the whole list means that panel is not on screen at all, which is
+    what a caller that tapped a button that toggles needs to be told apart from
+    a plate with nothing running behind it. None for one row is a countdown that
+    would not resolve; the row is kept, because something is in it and dropping
+    it would report the plate as emptier than it is.
 
-    A row whose time will not read is counted but left out of the times rather
-    than guessed at, which is why both numbers are reported: the two disagreeing
-    is worth seeing rather than hiding.
+    The order is what separates this from `panel_jobs`: the names beside these
+    rows are read left to right by a model, so anything matching one to a row
+    needs them as drawn rather than sorted.
     """
     band = PANEL_BANDS.get((world, role))
     if band is None:
@@ -522,8 +533,20 @@ def panel_jobs(png: bytes, world: World, role: PlateRole) -> BuildQueue | None:
     tops = _bar_tops(image, band)
     if not tops:
         return None
-    found = [_remaining(image, top, band) for top in tops]
-    return BuildQueue(running=len(tops), remaining=sorted(s for s in found if s is not None))
+    return [_remaining(image, top, band) for top in tops]
+
+
+def panel_jobs(png: bytes, world: World, role: PlateRole) -> BuildQueue | None:
+    """What one plate's panel says is running, soonest first.
+
+    A row whose time will not read is counted but left out of the times rather
+    than guessed at, which is why both numbers are reported: the two disagreeing
+    is worth seeing rather than hiding.
+    """
+    rows = panel_rows(png, world, role)
+    if rows is None:
+        return None
+    return BuildQueue(running=len(rows), remaining=sorted(s for s in rows if s is not None))
 
 
 def builder_jobs(png: bytes) -> BuildQueue | None:
