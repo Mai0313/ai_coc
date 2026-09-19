@@ -5329,6 +5329,26 @@ class HomeHudTests(unittest.TestCase):
         assert queue.running == 4
         assert queue.remaining == [33780, 69120, 77880, 147600]
 
+    def test_a_unit_character_is_not_read_as_a_digit(self) -> None:
+        """1天16小時 and 4天23小時, which the old tolerance read as 7天 and 13天.
+
+        The panel is translucent, so what is behind it decides whether 小's two
+        short outer strokes reach the ink mask. Over the flat grass of
+        `builder_panel.png` they do; over this village's wall lattice only the
+        middle stroke survives, and a bare vertical bar sits exactly 30 from the
+        template for `0` — which the old line of 30 admitted with `<=`, turning
+        16小時 into 160小時. Nothing about that is visible on a masked fixture,
+        so this one is the whole live frame.
+
+        The first row is 7小時52分鐘 and does not resolve at all; it is absent
+        from the times while still counted in `running`, which is the disagreement
+        `BuildQueue` carries both numbers to show.
+        """
+        queue = builder_jobs((FRAMES / "day_builder_panel.png").read_bytes())
+        assert queue is not None
+        assert queue.running == 6
+        assert queue.remaining == [144000, 176400, 176400, 352800, 428400]
+
     def test_a_village_with_no_panel_up_has_no_queue(self) -> None:
         """The button toggles, so "no panel" is what a second tap is for."""
         assert builder_jobs((FRAMES / "home_markers.png").read_bytes()) is None

@@ -156,9 +156,25 @@ PANEL_TOP, PANEL_BOTTOM = 150, 700
 # The time sits in the band directly above its own bar, right-aligned.
 TIME_BOX = (860, 1015)
 TIME_HEIGHT = 26
-# A digit here matches its template within 16 while every unit character misses
-# by 49 or more, so this line only has to sit between the two.
-TIME_DIGIT_TOLERANCE = 30
+# Midway between the worst digit that resolves and the nearest thing that is not
+# one. This said the gap was 16 against 49 and it is not: swept over 15 rows
+# across five panels, a digit lands within **19** while 小 comes back **exactly
+# 30** from the template for `0` — so at the old line of 30 the `<=` took it for
+# one, and 6小時 was read as 60小時.
+#
+# **It only misses on a live panel, which is why a fixture could not show it.**
+# The panel is translucent, so the village behind it decides whether 小's two
+# short outer strokes reach the ink mask; on `builder_panel.png`, shot over
+# flat grass, they do and the character reads 83 to 86 from any digit, while
+# over a wall's dense lattice only the middle stroke survives and what is left
+# is a bare vertical bar. Every unit that does resolve lands within 15, so one
+# line still separates both questions.
+#
+# Measured against 15 countdowns whose values were read off the frames by eye:
+# at 30, 8 right and **6 wrong**; at 25, 14 right and none wrong, with all four
+# of the committed fixture's rows unchanged. A wrong countdown is the dangerous
+# kind, because 1天16小時 arriving as 7天16小時 is a number a caller believes.
+TIME_DIGIT_TOLERANCE = 25
 
 # 天, 小時 and 分鐘, as the seconds one of each is worth. Only the **first**
 # character of a unit is matched, which is what keeps this to three templates:
