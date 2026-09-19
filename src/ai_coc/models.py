@@ -1179,6 +1179,20 @@ class PlateJob(BaseModel):
     remaining: int | None = None
 
 
+class PlateJobNames(BaseModel):
+    """What a model read off the 升級中 rows, in the order the panel draws them.
+
+    One call per panel rather than one per row, so the order is what matches a
+    name to its countdown. A row it could not make out comes back as an empty
+    string and still takes its place, since a short list would shift every name
+    after it onto the wrong row.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    names: list[str] = Field(default_factory=list)
+
+
 class PlateReport(BaseModel):
     """What one plate says, and what the panel behind it is running.
 

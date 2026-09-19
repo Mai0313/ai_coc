@@ -2187,7 +2187,13 @@ class PromptTests(unittest.TestCase):
         """Both directions: a missing file is a `KeyError` at the first call, and a
         file nothing asks for is a prompt somebody will keep rewording for nothing.
         """
-        assert set(PROMPTS) == {"attack_plan", "find_targets", "name_building", "night_plan"}
+        assert set(PROMPTS) == {
+            "attack_plan",
+            "find_targets",
+            "name_building",
+            "night_plan",
+            "read_plate_jobs",
+        }
 
     def test_a_prompt_fills_in_its_placeholders(self) -> None:
         filled = render("find_targets", what="城牆", notes="", count=12, floor=55)

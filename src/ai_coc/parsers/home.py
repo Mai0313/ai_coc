@@ -23,6 +23,7 @@ allowed to be quiet.
 
 from __future__ import annotations
 
+import io
 from typing import TYPE_CHECKING
 import logging
 from statistics import median
@@ -240,6 +241,16 @@ PANEL_BANDS = {
 # the leading glyph and the reading loses a place.
 TIME_PAD = (-32, 7)
 TIME_HEIGHT = 26
+
+# How far around the bars to crop when handing the 升級中 block to a model. The
+# names run to the left of every bar and the panel's own left edge moves with the
+# longest of them, so this reaches further than any measured panel does rather
+# than trying to find it: the narrowest gap between a bar and its panel edge was
+# about 226 px. Whatever village comes with it is not a problem for a model
+# reading a label, where a name cut in half would be.
+NAMES_LEFT = 300
+NAMES_ABOVE = 40
+NAMES_BELOW = 20
 # Midway between the worst digit that resolves and the nearest thing that is not
 # one. This said the gap was 16 against 49 and it is not: swept over 15 rows
 # across five panels, a digit lands within **19** while 小 comes back **exactly
@@ -534,6 +545,32 @@ def panel_rows(png: bytes, world: World, role: PlateRole) -> list[int | None] | 
     if not tops:
         return None
     return [_remaining(image, top, band) for top in tops]
+
+
+def jobs_strip(png: bytes, world: World, role: PlateRole) -> bytes | None:
+    """The 升級中 block as its own PNG, for a model to read the names off.
+
+    Cropped rather than read, the same bargain `parsers.building.name_strip`
+    makes: what is being raised is written in Chinese, no parser here reads any,
+    and a strip is what a cheap model is actually for.
+
+    **One crop for the whole block rather than one per row**, because the rows
+    are contiguous and a call each would be one per running upgrade where this
+    is one per panel. The left edge is generous on purpose — the panel's own
+    width is not measured and varies with the longest name on it — so some
+    village comes with it, which a model reading a label has no trouble with.
+    """
+    band = PANEL_BANDS.get((world, role))
+    if band is None:
+        return None
+    image = open_frame(png)
+    tops = _bar_tops(image, band)
+    if not tops:
+        return None
+    box = (band[0] - NAMES_LEFT, tops[0] - NAMES_ABOVE, band[1], tops[-1] + NAMES_BELOW)
+    out = io.BytesIO()
+    image.crop(box).save(out, format="PNG")
+    return out.getvalue()
 
 
 def panel_jobs(png: bytes, world: World, role: PlateRole) -> BuildQueue | None:

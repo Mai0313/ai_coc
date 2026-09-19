@@ -1387,6 +1387,17 @@ def stock_of(runner: ScreenRunner, adb: AdbController, display: DisplayTarget) -
     return report
 
 
+def _namer() -> GeminiClient | None:
+    """Who reads what is being raised, or nothing where there is no key.
+
+    The lite tier, for the reason `upgrade` uses it: this is a label off a crop
+    rather than a judgement about a whole screen. Without one the countdowns
+    still read and the names come back blank, which every caller treats as the
+    ordinary answer it is.
+    """
+    return _planner(ConfigStore().load(), "lite")
+
+
 def _plate(role: PlateRole, frame_dir: Path | None) -> PlateReport:
     """One plate on whichever village is up, and never the other one.
 
@@ -1397,7 +1408,7 @@ def _plate(role: PlateRole, frame_dir: Path | None) -> PlateReport:
     """
     adb = _controller()
     display = _settle_game(adb, WORLD_SETTLE_POLLS) or adb.display_for(COC_PACKAGE)
-    runner = PlateRunner(adb=adb, display=display, frame_dir=frame_dir)
+    runner = PlateRunner(adb=adb, display=display, frame_dir=frame_dir, namer=_namer())
     report = runner.read(role)
     if report.world is None and uncovered(adb, display) is not None:
         report = runner.read(role)
@@ -1439,7 +1450,7 @@ def status(frame_dir: Path | None = None) -> StatusReport:
     """
     adb = _controller()
     display = _settle_game(adb, WORLD_SETTLE_POLLS) or adb.display_for(COC_PACKAGE)
-    runner = PlateRunner(adb=adb, display=display, frame_dir=frame_dir)
+    runner = PlateRunner(adb=adb, display=display, frame_dir=frame_dir, namer=_namer())
     # Once, before any of the four rather than inside each: they all read the
     # same screen, so a panel left over from the last command is cleared here or
     # it defeats every one of them.

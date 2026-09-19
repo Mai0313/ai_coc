@@ -23,13 +23,22 @@ import time
 from typing import TYPE_CHECKING
 import logging
 
-from ai_coc.models import PlateJob, PlateReport
-from ai_coc.ui.runner import MENU_SETTLE, ScreenRunner, spell_out
-from ai_coc.parsers.home import panel_rows, plate_count, plate_badges, plate_button, shield_state
+from ai_coc.models import PlateJob, PlateReport, PlateJobNames
+from ai_coc.prompts import render
+from ai_coc.ui.runner import MENU_SETTLE, SPOT_TIMEOUT, ScreenRunner, spell_out
+from ai_coc.adapters.ai import GeminiClient
+from ai_coc.parsers.home import (
+    jobs_strip,
+    panel_rows,
+    plate_count,
+    plate_badges,
+    plate_button,
+    shield_state,
+)
 from ai_coc.parsers.world import current_world
 
 if TYPE_CHECKING:
-    from ai_coc.models import PlateRole, ShieldState
+    from ai_coc.models import World, PlateRole, ShieldState
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +54,13 @@ PLATE_NAMES: dict[str, str] = {"lab": "實驗室", "builder": "建築工人", "s
 
 class PlateRunner(ScreenRunner):
     """One plate and the panel behind it, on whatever village is already up."""
+
+    # Who to ask what is being raised. A different tier from `ai` because it is a
+    # different kind of call: a label off a crop, not a judgement about a whole
+    # screen. None is an ordinary answer — the countdowns are what a caller
+    # waiting on a builder needs, and the names are what makes the report
+    # readable.
+    namer: GeminiClient | None = None
 
     def read(self, role: PlateRole) -> PlateReport:
         """What this plate counts, and what its panel says is running.
@@ -80,10 +96,37 @@ class PlateRunner(ScreenRunner):
         if rows is None:
             report.message = f"{PLATE_NAMES[role]}的面板打不開,只讀到牌子上的數字"
             return report
-        report.jobs = [PlateJob(remaining=seconds) for seconds in rows]
+        named = self._names(opened, world, role)
+        report.jobs = [
+            PlateJob(name=named[index] if index < len(named) else "", remaining=seconds)
+            for index, seconds in enumerate(rows)
+        ]
         logger.info("%s: %s/%s with %d running", role, report.free, report.total, len(report.jobs))
         report.message = self._sentence(report)
         return report
+
+    def _names(self, png: bytes, world: World, role: PlateRole) -> list[str]:
+        """What each running row is, or nothing at all without a model to ask.
+
+        Empty is an ordinary answer and every caller treats it as one: the names
+        are what makes a report readable, and the countdowns underneath them are
+        what a caller waiting on a builder actually acts on. A miscount is worse
+        than a blank, so a short answer leaves the rows after it unnamed rather
+        than shifting the ones it did read onto the wrong countdowns.
+        """
+        if self.namer is None:
+            return []
+        strip = jobs_strip(png, world, role)
+        if strip is None:
+            return []
+        try:
+            answer = self.namer.generate_structured(
+                render("read_plate_jobs"), PlateJobNames, strip, SPOT_TIMEOUT
+            )
+        except Exception:
+            logger.warning("The names on the %s panel could not be read", role, exc_info=True)
+            return []
+        return answer.names
 
     def shield(self) -> ShieldState | None:
         """Whether a shield is up, for the village on screen.
@@ -106,7 +149,12 @@ class PlateRunner(ScreenRunner):
         )
         if not report.jobs:
             return f"{held} {counted},沒有在跑的項目"
-        soonest = report.soonest()
-        if soonest is None:
+        timed = [job for job in report.jobs if job.remaining is not None]
+        if not timed:
             return f"{held} {counted},{len(report.jobs)} 個在跑,但每一個的倒數都讀不到"
-        return f"{held} {counted},{len(report.jobs)} 個在跑,最快的還要 {spell_out(soonest)}"
+        next_up = min(timed, key=lambda job: job.remaining or 0)
+        named = f"是{next_up.name}," if next_up.name else ""
+        return (
+            f"{held} {counted},{len(report.jobs)} 個在跑,"
+            f"最快的{named}還要 {spell_out(next_up.remaining or 0)}"
+        )
