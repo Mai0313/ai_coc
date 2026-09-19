@@ -1171,13 +1171,56 @@ class ParkCameraTests(unittest.TestCase):
         """
         adb, parked = self._park([(131, -65), (65, -33), (0, 0), (0, 0)])
         assert parked is True
-        assert adb.swipe.call_count == world_ui.PARK_BLIND + 4
+        assert adb.swipe.call_count == 4
 
     def test_one_still_reading_is_not_a_clamp(self) -> None:
         """A swipe the game swallowed looks exactly like a camera that has arrived."""
         adb, parked = self._park([(0, 0), (65, -33), (0, 0), (0, 0)])
         assert parked is True
-        assert adb.swipe.call_count == world_ui.PARK_BLIND + 4
+        assert adb.swipe.call_count == 4
+
+    def test_the_camera_is_pinched_out_before_a_single_swipe_is_read(self) -> None:
+        """The walk is only bounded at the far zoom, so the park establishes it itself.
+
+        Measured at the far limit, the home village crosses its whole 352 px
+        range in one swipe and the builder base does not measurably pan at all.
+        Measured two pinches in, the camera runs off the village into the map's
+        dark border, was still moving after fourteen swipes, and `view_shift`
+        read a real 221 px move as (0, 0) — the answer that means *arrived*. So
+        every reading below depends on the pinch having happened first.
+        """
+        adb, parked = self._park([(0, 0), (0, 0)])
+        assert parked is True
+        # The very first thing it does, rather than merely somewhere in the
+        # call: a pinch after the walk settles the scale for the next caller and
+        # leaves this one's own readings taken at whatever zoom it was handed.
+        #
+        # Every argument pinned, because each one is load-bearing and none of
+        # them is asserted anywhere else: one pinch covers two thirds of the
+        # range rather than all of it, and a gesture with no display named goes
+        # to every touch node, where MuMu's launcher takes two fingers as a
+        # switch away from the game.
+        assert adb.mock_calls[0] == call.zoom(
+            "out",
+            world_ui.ZOOM_PINCHES,
+            world_ui.COC_PACKAGE,
+            DisplayTarget(logical_id="1", physical_id="2"),
+        )
+
+    def test_a_walk_full_of_spoilt_readings_still_has_room_to_finish(self) -> None:
+        """What `PARK_SWIPES`' slack is for, and nothing else was pinning it.
+
+        The real walk is one swipe and two confirmations, so three would cover
+        both villages — but a camera that has already stopped still reads
+        non-zero sometimes (`view_shift` answers in steps of 65 px and the
+        builder base animates; measured live, a parked home village spent three
+        swipes where two would have done), and each of those resets the count.
+        A ceiling sized to the measured walk turns that into a False, which
+        `GameRunner._home` reads as there being no village to work on.
+        """
+        adb, parked = self._park([(65, -33)] * 7 + [(0, 0), (0, 0)])
+        assert parked is True
+        assert adb.swipe.call_count == 9
 
     def test_a_camera_that_never_settles_is_reported_rather_than_trusted(self) -> None:
         """False is what the callers act on; pressing past it taps water for four minutes."""
@@ -1196,7 +1239,7 @@ class ParkCameraTests(unittest.TestCase):
             )
             assert [call.args[:2] for call in adb.swipe.call_args_list] == [
                 (crossing.start, landing)
-            ] * (world_ui.PARK_BLIND + 2), world
+            ] * world_ui.PARK_STILL, world
 
 
 class CrossingTests(unittest.TestCase):
@@ -1237,7 +1280,7 @@ class CrossingTests(unittest.TestCase):
     def test_the_first_spot_that_sails_ends_it(self) -> None:
         adb, landed = self._cross(["night", "day"])
         assert landed == "day"
-        assert adb.swipe.call_count == world_ui.PARK_BLIND + world_ui.PARK_STILL
+        assert adb.swipe.call_count == world_ui.PARK_STILL
         adb.tap.assert_called_once_with(*world_ui.CROSSINGS["day"].spots[0], ANY)
 
     def test_a_tap_that_missed_the_boat_tries_the_next_spot(self) -> None:
@@ -1275,7 +1318,7 @@ class CrossingTests(unittest.TestCase):
         adb, landed = self._cross([None, "night", "day"])
         assert landed == "day"
         assert adb.back.call_count == 1
-        assert adb.swipe.call_count == world_ui.PARK_BLIND + world_ui.PARK_STILL
+        assert adb.swipe.call_count == world_ui.PARK_STILL
 
     def test_no_village_is_not_a_failed_crossing(self) -> None:
         """A loading screen has no boat on it and nothing to sail from; the caller waits.
@@ -1321,6 +1364,10 @@ class CrossingTests(unittest.TestCase):
             gained = world_ui.collect_cart(adb, DisplayTarget(logical_id="1", physical_id="2"))
         assert gained == 116_000
         assert read.call_count == 2
+        # The park's own, and the only scale this trip gets: a pinch used to sit
+        # in a `finally` after every tap, which is far too late to help the
+        # coordinates those taps were aimed at.
+        assert adb.zoom.call_count == 1
 
     def test_a_cart_that_never_opened_pays_nothing(self) -> None:
         """A tap the game swallowed leaves the cart looking exactly like an emptied one."""
@@ -1422,8 +1469,15 @@ class CrossingTests(unittest.TestCase):
             assert world_ui.uncovered(adb, DisplayTarget(logical_id="1", physical_id="2")) is None
         assert adb.back.call_count == 0
 
-    def test_the_camera_goes_back_to_the_far_zoom_either_way(self) -> None:
-        """The swiping above parks it at a map corner, and every coordinate here wants it centred."""
+    def test_the_crossing_pinches_once_and_it_is_the_parks_own(self) -> None:
+        """One pinch, for the village being sailed *from*, and none on landing.
+
+        A second used to sit in a `finally` for the village the boat arrives on.
+        Nothing needs it: every caller that goes on to tap the map pinches again
+        first, and `GameRunner._home` — which looks like the counter-example —
+        only ever sets `_settled` after the branch that sails, so it comes back
+        into this crossing's caller with the pinch still owed and makes it.
+        """
         # The long one is every spot missing: one read to start, then each spot's
         # polls plus the read that checks it opened nothing, then the final one.
         for seen in (["night", "day"], ["night"] * (world_ui.SAIL_POLLS * 3 + 5)):
@@ -2497,6 +2551,30 @@ class FieldTests(unittest.TestCase):
     def test_a_drag_the_game_never_took_reads_as_none_of_it(self) -> None:
         assert view_shift(self._village(0), self._village(0), (0, 98)) == (0, 0)
 
+    def _flat(self, shade: int) -> bytes:
+        """A frame with nothing in the comparison box to line up."""
+        buffer = io.BytesIO()
+        Image.new("RGB", (1600, 900), (shade, shade, shade)).save(buffer, format="PNG")
+        return buffer.getvalue()
+
+    def test_an_empty_box_reads_as_arrived_on_one_village_and_never_on_the_other(self) -> None:
+        """**This is what the park's pinch is really for, and it is a trap.**
+
+        Scores that tie are settled by `min` on the offset, and every offset
+        along the home village's drag is positive — so a pair with no texture in
+        the box comes back as exactly (0, 0), which is the answer that means
+        clamped. The builder base's drag is the mirror and fails the opposite
+        way, reporting a camera that never stops.
+
+        What empties the box is the camera leaving the village, which is what a
+        zoomed-in one does: measured live two pinches in, a real 221 px move read
+        (0, 0) with the view out on the map's dark border. The far zoom keeps the
+        box over the village, where there is something to compare.
+        """
+        empty = (self._flat(30), self._flat(30))
+        assert view_shift(*empty, world_ui.CROSSINGS["night"].drift) == (0, 0)
+        assert view_shift(*empty, world_ui.CROSSINGS["day"].drift) != (0, 0)
+
     def _panned(self, across: int, down: int) -> bytes:
         """The same texture moved both ways, which is how a park's drag moves it."""
         image = Image.new("RGB", (1600, 900), (60, 120, 40))
@@ -2513,21 +2591,26 @@ class FieldTests(unittest.TestCase):
         return buffer.getvalue()
 
     def test_a_move_the_size_of_one_swipe_is_bigger_than_this_can_see(self) -> None:
-        """**This is what `PARK_BLIND` exists for, and nothing else pins it.**
+        """**This is why the park pinches out first, and nothing else pins it.**
 
         `view_shift` slides a 700 px box that starts 450 px from either screen
         edge, so past about that the window runs off the frame and the true
-        offset can never win. A park that checked from its very first swipe
-        would therefore read a camera crossing the map at full travel as one
-        that had arrived — the same `(0, 0)` that means clamped — which is the
-        original bug with a bool on top. The first swipes go unchecked so that
-        what is left is inside what this can see.
+        offset can never win. What comes back instead is not the truth, and
+        which way it is wrong decides the cost: over this synthetic pan it
+        saturates at a wrong non-zero, which only buys another swipe, while
+        measured live at a zoomed-in camera a real 221 px move came back
+        `(0, 0)` — the answer that means clamped. Whether a swipe can out-run it
+        at all is a question about how far the map can travel, which is a
+        question about the zoom: measured at the far limit the home village's
+        whole range is 352 px, while two pinches in the camera was still walking
+        after fourteen swipes. So `park_camera` establishes the scale rather than
+        assuming it, and every reading it takes afterwards is inside this window.
         """
         drift = world_ui.CROSSINGS["day"].drift
         still = self._panned(0, 0)
-        # Well inside the window: the largest move any live park was measured at
-        # once its first swipes were behind it.
-        near = view_shift(still, self._panned(-261, 131), drift)
+        # The worst a park at the far zoom can be asked for: the home village's
+        # whole range along this drift, which the first swipe crosses.
+        near = view_shift(still, self._panned(-352, 176), drift)
         assert near != (0, 0)
         assert abs(near[0]) >= 200
         # One swipe's full travel. The answer is not the truth, and on some
@@ -4398,7 +4481,7 @@ class RestartEveryTests(unittest.TestCase):
             # whichever village it was closed on, and `read_stock` answers on
             # both, so it can say a village is up but never which one.
             patch.object(commands, "current_world", side_effect=[None, None, "day"]),
-            patch.object(commands, "park_camera", return_value=True),
+            patch.object(commands, "park_camera", return_value=True) as parked,
             patch.object(commands, "idle_disconnected", return_value=False),
             patch.object(commands, "loading_screen", return_value=False),
         ):
@@ -4411,10 +4494,9 @@ class RestartEveryTests(unittest.TestCase):
         assert (ticker.adb, ticker.display) == (adb, adb.display_for.return_value)
         # A restarted game comes back zoomed in, and every coordinate in this
         # project was measured at the far limit — without this the run keeps
-        # going and deploys nothing for the rest of the night.
-        adb.zoom.assert_called_once_with(
-            "out", commands.ZOOM_PINCHES, commands.COC_PACKAGE, adb.display_for.return_value
-        )
+        # going and deploys nothing for the rest of the night. The pinch is the
+        # park's own first act, so asking for the park is asking for both.
+        parked.assert_called_once_with(adb, adb.display_for.return_value, "day")
 
     def test_a_game_with_no_window_yet_is_waited_out_rather_than_given_up_on(self) -> None:
         """`display_for` raises while the game has no focused window, which is

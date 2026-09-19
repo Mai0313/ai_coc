@@ -24,7 +24,7 @@ from ai_coc.models import World, ScreenSpots, VillageStock, DisplayTarget, Stora
 from ai_coc.prompts import render
 from ai_coc.constants import COC_PACKAGE
 from ai_coc.adapters.ai import GeminiClient
-from ai_coc.adapters.adb import ZOOM_PINCHES, AdbController, AdbControlError
+from ai_coc.adapters.adb import AdbController, AdbControlError
 from ai_coc.parsers.scout import (
     read_stock,
     loading_screen,
@@ -348,15 +348,16 @@ class GameRunner(ScreenRunner):
         A pinch between wall batches would only be spending three seconds to
         confirm what this one already settled.
 
-        **The pinch settles the scale and `park_camera` settles the position**,
-        which used to be one thing and was not: the far zoom was taken to centre
-        the village as well, and measured it does not move the camera at all.
-        Every coordinate below this line is aimed at the map, so without the park
-        they were valid only until something moved the camera — which is silent,
-        and which every crossing, every stray swipe and every session that looked
-        at something up close does.
+        **The pinch settles the scale and the park settles the position**, which
+        used to be one thing and was not: the far zoom was taken to centre the
+        village as well, and measured it does not move the camera at all. Every
+        coordinate below this line is aimed at the map, so without the park they
+        were valid only until something moved the camera — which is silent, and
+        which every crossing, every stray swipe and every session that looked at
+        something up close does. **Both are `park_camera`'s now**, because its
+        own walk is only bounded at the far zoom and it is the one that has to
+        know that.
         """
-        self.adb.zoom("out", ZOOM_PINCHES, COC_PACKAGE, self.display)
         # Always the home village: `_home` sails off the builder base before it
         # ever reaches the read that calls this, so there is no other village
         # this can be looking at.

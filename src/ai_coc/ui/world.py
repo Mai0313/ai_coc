@@ -65,35 +65,46 @@ CROSSINGS: dict[World, Crossing] = {
         start=(1100, 300), drift=(-700, 350), spots=((1440, 545), (1415, 555), (1432, 522))
     ),
 }
-# **A fixed count was the bug, and five was half of what this account needs.**
-# The count stood in for the clamp: swipe enough times and the camera must be
-# against the map edge, so every coordinate measured from that view is valid
-# again. Measured live, a home village parked once still moved (131, -65) when
-# parked a second time, and took about ten swipes before it stopped — and that
-# 130 px is exactly how far below the crossing's candidate spots the boat was
-# sitting. The builder base needed four more from where a crossing leaves it.
-# Both were twice what this allowed, and the whole failure is silent: the taps
-# land on water, and the run spends three minutes finding that out — measured
-# live, three spots took 80, 87 and 18 seconds before it reported no boat.
+# **A fixed count was the bug.** The count stood in for the clamp: swipe enough
+# times and the camera must be against the map edge, so every coordinate
+# measured from that view is valid again. Measured live, a home village parked
+# once still moved (131, -65) when parked a second time — and that 130 px is
+# exactly how far below the crossing's candidate spots the boat was sitting. The
+# whole failure is silent: the taps land on water, and the run spends three
+# minutes finding that out, measured live at 80, 87 and 18 seconds for the three
+# spots before it reported no boat.
+#
+# **What `SWIPES = 5` was really short of was the pinch, not four more swipes.**
+# That reading of "about ten" was taken at whatever camera the park was handed,
+# and the zoom is what decides how far the map is able to travel at all — see
+# `park_camera`, which pinches out before it counts anything now.
 #
 # So the swipes are counted against the picture instead. `PARK_SWIPES` is only a
-# ceiling — twice the worst walk measured — and reaching it is a failure worth
-# reporting rather than a park worth trusting.
-PARK_SWIPES = 16
+# ceiling, and reaching it is a failure worth reporting rather than a park worth
+# trusting.
+#
+# **The walk is one swipe and the rest of this number is slack, deliberately.**
+# Measured at the far zoom, the home village crosses its whole range on the
+# first swipe and the builder base is already there, so three would cover both.
+# What the rest are for is a reading that came back non-zero on a camera that
+# had already stopped: `view_shift` answers in steps of about 65 px and the
+# builder base animates, and measured live an already-parked home village spent
+# three swipes where two would have done. Every such reading resets `still`, and
+# **a spurious False is expensive** — `cross` returns without tapping, and
+# `GameRunner._home` reads a failed crossing as there being no village to work
+# on, which ends a whole `walls` or `collect` run. What ten buys depends on where
+# the bad readings fall: seven in a row still leave a clean pair at the end,
+# while five alternating with zeros leave no adjacent pair at all.
+#
+# **A frame caught mid-zoom is not one of those, and it fails the other way.**
+# The opening frame is taken one `PINCH_SETTLE` after the pinch, so it can
+# compare two scales rather than two positions — and measured, a pure scale
+# change of up to 10% reads (0, 0) rather than non-zero. It spends no slack; it
+# risks a premature *arrived*, which is what `PARK_STILL` is for.
+PARK_SWIPES = 10
 # Two readings rather than one, because a single swipe the game swallowed looks
 # exactly like a camera that has arrived.
 PARK_STILL = 2
-# **The first few swipes are not checked, and that is what makes the check
-# trustworthy.** `view_shift` slides a 700 px box that starts 450 px from either
-# screen edge, so it cannot see a move larger than about that: measured against
-# synthetic pans of a committed frame, 455 px reads correctly, 560 comes back
-# short, and **700 — a single swipe's full travel — reads (0, 0)**, which is
-# exactly the answer that means "arrived". A camera far from its clamp would
-# therefore stop on the very move proving it is still walking. Swiping blind
-# first spends that distance where nothing is being asked, and what is left is
-# inside what the reader can see: every live park measured here moved 261 px or
-# less per swipe once the first few were behind it.
-PARK_BLIND = 5
 SWIPE_MS = 500
 SWIPE_SETTLE = 1.2
 
@@ -157,17 +168,44 @@ def park_camera(adb: AdbController, display: DisplayTarget, world: World) -> boo
     walking reports 65, 131 or 261 and a clamped one reports 0, so what a real
     clamp has to survive is one reading it could have earned by creeping 30 px.
     Two consecutive readings are what make that unlikely rather than one.
+
+    **The pinch belongs to this function, and what it really buys is something
+    for the reader to look at.** `view_shift` compares a fixed box in the middle
+    of the screen, and **what breaks it is an empty box rather than a long
+    move**: on a tie it takes the smallest offset it tried, and every offset
+    along the home village's drag is positive, so a pair with no texture in that
+    box reads exactly (0, 0) — the answer that means *arrived*. Measured, two
+    frames of two different villages read (0, 0) that way. The builder base's
+    drag is the mirror of it and fails the other way, reporting a camera that
+    never stops. This said the failure was distance, which does not hold up:
+    over synthetic pans a move past the box's reach saturates at a wrong
+    non-zero, which only costs another swipe.
+
+    So the far zoom is what keeps that box on the village. Measured two pinches
+    in, the camera runs off the map into the dark border, the box lands on
+    nothing, and a real 221 px move came back (0, 0) — it was still walking
+    after fourteen swipes. At the far limit the box is over the village and the
+    whole walk is short: the home village's range along its crossing is
+    **352 px**, one swipe crosses all of it and thirteen more move nothing, while
+    the builder base does not measurably pan at all and has its boat and loot
+    cart on screen from the start. **Five unchecked swipes were the old answer
+    and bought neither end.**
+
+    **It buys nothing against a full-screen panel**, which is the one village
+    this cannot see through: the plate row stays readable above one, so a caller
+    hands this a frame that is a village by every test here, the panel swallows
+    the pinch and the swipes alike, and the empty box then reads arrived. That
+    is not new and is not fixed here; it is why the callers that can clear a
+    panel do so first.
     """
+    adb.zoom("out", ZOOM_PINCHES, COC_PACKAGE, display)
     # Keyed by the village being sailed to, so the push away from the village
     # being stood on is the other one's.
     crossing = CROSSINGS["night" if world == "day" else "day"]
     landing = (crossing.start[0] + crossing.drift[0], crossing.start[1] + crossing.drift[1])
-    for _ in range(PARK_BLIND):
-        adb.swipe(crossing.start, landing, SWIPE_MS, display)
-        time.sleep(SWIPE_SETTLE)
     before = adb.screenshot(display)
     still = 0
-    for swipe in range(PARK_BLIND + 1, PARK_SWIPES + 1):
+    for swipe in range(1, PARK_SWIPES + 1):
         adb.swipe(crossing.start, landing, SWIPE_MS, display)
         time.sleep(SWIPE_SETTLE)
         after = adb.screenshot(display)
@@ -243,43 +281,38 @@ def collect_cart(adb: AdbController, display: DisplayTarget) -> int | None:
     if current_world(adb.screenshot(display)) != "night":
         logger.info("The loot cart is the builder base's; there is none here")
         return 0
-    try:
-        # The cart is moored beside this village's own boat, so the view that
-        # finds it is the parked one — the same push `park_camera` makes, which
-        # is why this asks for it rather than repeating the swipes. Inside the
-        # `try` so a park that never arrived still leaves the zoom where every
-        # other coordinate here expects it.
-        if not park_camera(adb, display, "night"):
-            # **None rather than 0**, because the two are opposite news and the
-            # caller writes a sentence from them: 0 is a cart that was found and
-            # had nothing in it, and this is a cart nobody went looking for.
-            # Reported as the first, it reads as an empty cart on a village
-            # whose elixir is all still sitting in one.
-            logger.warning("The camera never parked; the cart's spots are somewhere else entirely")
-            return None
-        before = read_builder_stock(adb.screenshot(display))
-        for spot in CART_SPOTS:
-            adb.tap(spot[0], spot[1], display)
+    # The cart is moored beside this village's own boat, so the view that finds
+    # it is the parked one — the same push `park_camera` makes, which is why
+    # this asks for it rather than repeating the swipes. **Nothing puts the zoom
+    # back afterwards any more**, and nothing needs to: the park pinches out
+    # before it swipes, this never leaves the village it started on, and neither
+    # a tap nor a swipe changes the scale. The pinch that used to sit in a
+    # `finally` here was written for a park that ran at whatever camera it was
+    # handed, and it explained itself as undoing the swiping — which never
+    # touched the zoom in the first place.
+    if not park_camera(adb, display, "night"):
+        # **None rather than 0**, because the two are opposite news and the
+        # caller writes a sentence from them: 0 is a cart that was found and had
+        # nothing in it, and this is a cart nobody went looking for. Reported as
+        # the first, it reads as an empty cart on a village whose elixir is all
+        # still sitting in one.
+        logger.warning("The camera never parked; the cart's spots are somewhere else entirely")
+        return None
+    before = read_builder_stock(adb.screenshot(display))
+    for spot in CART_SPOTS:
+        adb.tap(spot[0], spot[1], display)
+        time.sleep(CART_SETTLE)
+        if loot_cart_open(adb.screenshot(display)):
+            adb.tap(*CART_COLLECT, display)
             time.sleep(CART_SETTLE)
-            if loot_cart_open(adb.screenshot(display)):
-                adb.tap(*CART_COLLECT, display)
-                time.sleep(CART_SETTLE)
-                adb.tap(*CART_CLOSE, display)
-                time.sleep(CART_SETTLE)
-                break
-            logger.info("The tap at %s did not open the cart; trying the next spot", spot)
-        else:
-            logger.warning("None of the %d candidate spots found the cart", len(CART_SPOTS))
-            return 0
-        after = read_builder_stock(adb.screenshot(display))
-    finally:
-        # The swiping above leaves the camera at a map corner whether or not the
-        # cart was found, and every coordinate in this project was measured at
-        # the far zoom. Zooming out puts the scale back; the corner it is already
-        # in is where `park_camera` would have put it anyway, so there is nothing
-        # to undo — this used to say the pinch centred the village, and it does
-        # not move the camera at all.
-        adb.zoom("out", ZOOM_PINCHES, COC_PACKAGE, display)
+            adb.tap(*CART_CLOSE, display)
+            time.sleep(CART_SETTLE)
+            break
+        logger.info("The tap at %s did not open the cart; trying the next spot", spot)
+    else:
+        logger.warning("None of the %d candidate spots found the cart", len(CART_SPOTS))
+        return 0
+    after = read_builder_stock(adb.screenshot(display))
     if before is None or after is None:
         logger.warning("The storage bars would not read either side of the cart")
         return 0
@@ -364,40 +397,46 @@ def cross(adb: AdbController, display: DisplayTarget, want: World) -> World | No
         return None
     logger.info("On the %s village and the %s one was asked for; sailing", here, want)
     crossing = CROSSINGS[want]
-    try:
-        # `park_camera` keyed on the village being stood on pushes toward the
-        # one being sailed to, which is this crossing's own drag — the two agree
-        # by construction, and asking for it is what makes the boat's spot mean
-        # anything. Without the clamp those spots are water: measured, a camera
-        # 130 px short put every one of them above the boat, and the three taps
-        # spent about three minutes between them before the run reported that
-        # there was no boat.
-        if not park_camera(adb, display, here):
-            logger.warning("The camera never parked, so the boat is not where it is remembered")
-            return here
-        # What the village last read as, so a crossing with nothing to try
-        # answers where it started rather than nothing at all.
-        cleared = here
-        for spot in crossing.spots:
-            adb.tap(spot[0], spot[1], display)
-            for _ in range(SAIL_POLLS):
-                time.sleep(SAIL_GAP)
-                if (arrived := current_world(adb.screenshot(display))) == want:
-                    logger.info("Landed on the %s village from the boat at %s", want, spot)
-                    return arrived
-            logger.info("The tap at %s did not sail; trying the next spot", spot)
-            # A tap that opened a building instead of the boat leaves its panel
-            # over the map, and every candidate after it lands on that panel
-            # rather than on the ground. Clearing it is what makes the remaining
-            # spots worth trying at all.
-            if (cleared := uncovered(adb, display)) is None:
-                logger.warning("The village never came back; giving up on the crossing")
-                return None
-        logger.warning("None of the %d candidate spots found the boat", len(crossing.spots))
-        # What the last spot's own check already read, rather than a capture
-        # asking the same question again: one of those is 0.6-0.8 s here.
-        return cleared
-    finally:
-        # On both paths, for the reason `collect_cart` gives: the swiping parks
-        # the camera at a corner whether or not the boat was found.
-        adb.zoom("out", ZOOM_PINCHES, COC_PACKAGE, display)
+    # **Nothing here settles the landed village's camera, and nothing needs
+    # to.** A pinch used to sit in a `finally` for it, on the reasoning that the
+    # village the boat arrives on comes up at whatever camera the game gives it
+    # — true, and beside the point, because every caller that goes on to tap the
+    # map pinches again before it does. `GameRunner._home` is the one that looks
+    # like a counter-example and is not: `_settled` is only ever set inside
+    # `_put_camera_back`, which both of its call sites reach *after* the branch
+    # that sails, so the crossing always returns into a `_home` that still has
+    # it False and pinches for the new village itself. The attack loop pinches
+    # per battle, and `commands.world` taps no map coordinate at all.
+    #
+    # `park_camera` keyed on the village being stood on pushes toward the one
+    # being sailed to, which is this crossing's own drag — the two agree by
+    # construction, and asking for it is what makes the boat's spot mean
+    # anything. Without the clamp those spots are water: measured, a camera
+    # 130 px short put every one of them above the boat, and the three taps
+    # spent about three minutes between them before the run reported that there
+    # was no boat.
+    if not park_camera(adb, display, here):
+        logger.warning("The camera never parked, so the boat is not where it is remembered")
+        return here
+    # What the village last read as, so a crossing with nothing to try answers
+    # where it started rather than nothing at all.
+    cleared = here
+    for spot in crossing.spots:
+        adb.tap(spot[0], spot[1], display)
+        for _ in range(SAIL_POLLS):
+            time.sleep(SAIL_GAP)
+            if (arrived := current_world(adb.screenshot(display))) == want:
+                logger.info("Landed on the %s village from the boat at %s", want, spot)
+                return arrived
+        logger.info("The tap at %s did not sail; trying the next spot", spot)
+        # A tap that opened a building instead of the boat leaves its panel over
+        # the map, and every candidate after it lands on that panel rather than
+        # on the ground. Clearing it is what makes the remaining spots worth
+        # trying at all.
+        if (cleared := uncovered(adb, display)) is None:
+            logger.warning("The village never came back; giving up on the crossing")
+            return None
+    logger.warning("None of the %d candidate spots found the boat", len(crossing.spots))
+    # What the last spot's own check already read, rather than a capture asking
+    # the same question again: one of those is 0.6-0.8 s here.
+    return cleared

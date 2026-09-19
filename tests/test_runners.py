@@ -237,7 +237,6 @@ class OpenedWalkTests(unittest.TestCase):
             patch.object(shared, "game_dialog", return_value=None),
             patch.object(shared, "current_world", return_value="day"),
             patch.object(shared, "read_stock", return_value=STOCK),
-            patch.object(AdbController, "zoom") as zoomed,
             patch.object(shared, "park_camera") as parked,
         ):
             assert runner._home() == STOCK
@@ -246,9 +245,10 @@ class OpenedWalkTests(unittest.TestCase):
             # camera bad enough to hide them is exactly the one this fixes. A
             # second call is the same loop still going rather than a new one.
             assert runner._home() == STOCK
-        zoomed.assert_called_once()
-        # Always the home village: `_home` sails off the builder base long
-        # before it reaches the read that calls this.
+        # One call for both, because the pinch is the park's own first act: its
+        # walk can only be read at the far zoom, so it stopped trusting callers
+        # to have got there. Always the home village — `_home` sails off the
+        # builder base long before it reaches the read that calls this.
         parked.assert_called_once_with(runner.adb, runner.display, "day")
 
     def test_restarting_the_game_resolves_the_display_again(self) -> None:
