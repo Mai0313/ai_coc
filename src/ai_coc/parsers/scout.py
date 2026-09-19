@@ -153,8 +153,49 @@ NIGHT_PANEL_PALE = 0.8
 # it is not a collect-on-tap marker like the home village's collectors. The
 # elixir sits in it until its 收集 is pressed, and the bar beside that button
 # says how full it is; measured on the first one this loop opened, 300 000 of a
-# 1 000 000 ceiling. One box does it: that button reads 0.82 of button green,
-# against at most 0.07 over 4300 recorded frames of both villages.
+# 1 000 000 ceiling — and the sheet this commits a frame of writes
+# 135 843 / 1 600 000, so that ceiling has grown since.
+#
+# **The sheet was read off that button's green, and a button the game has greyed
+# then read as no sheet at all.** Measured live with both builder base storages
+# exactly at capacity, 收集 comes back a flat (178, 178, 178) with 0.0000 of
+# button green over a cart holding 135 843 — so the run reported that none of
+# its three candidate spots had found the cart, on a frame where the sheet was
+# plainly open, and left it covering the village. That is the same shape as the
+# hero hall's own lesson: a price is not permission, and the button says which.
+#
+# So the sheet is recognised by its own furniture — the orange plank the button
+# sits on, which is there whatever the button is doing.
+#
+# **Two boxes, and neither would do on its own.** The plank is wood and a
+# village is not short of brown: measured, `shop_skins.png` reads **0.5649** in
+# the box above the button — past this threshold — against 0.0000 in the one
+# beside the bar, and one recorded home battle reads 0.4141 above against 0.1453
+# beside. What the pair buys is the `min`, and that is where the margin is:
+# swept over 4 181 recorded frames and all 90 committed ones, the sheet reads
+# 1.0000 in both while the highest anything else reaches is 0.1955
+# (`hero_hall_menu.png`) among the fixtures and 0.1502 among the recordings.
+#
+# **Both boxes are held clear of the one thing on this sheet that changes, and
+# the first pass was flush against it.** Measured row by row, the plank is wood
+# from y 680 to y 717 and the 收集 plate's own dark border starts at 718 with
+# its white edge at 720 — and the box's exclusive bottom edge was 718 exactly,
+# nought pixels of clearance. **This project has already paid for that**: the
+# game draws a lit button taller and bordered, 回營 reads 0.2488 lit against
+# 0.3283 plain, and 20 of 21 result screens went unrecognised with the tests
+# green throughout because the only committed frame was the plain kind. The only
+# frame here is the *grey* kind, so a lit button a dozen pixels taller would
+# drag this box under the line and answer "no sheet" on the one state that has
+# elixir in it — the bug being fixed, through the other reader. Six pixels of
+# margin at each edge, and both boxes still read 1.0000.
+CART_PLANK_ABOVE = (1075, 686, 1290, 712)
+CART_PLANK_BESIDE = (575, 686, 1020, 704)
+CART_PLANK = 0.55
+# **The green is the same test and the same number it has always been**, and the
+# measurement behind it belongs here rather than in the history: that button
+# reads 0.82 of button green over 4 300 recorded frames of both villages where
+# nothing else reaches 0.07. What is new is only that this no longer decides
+# whether the sheet is up.
 CART_COLLECT_BOX = (1110, 740, 1245, 782)
 CART_COLLECT_GREEN = 0.4
 
@@ -864,15 +905,65 @@ def night_attack_menu(png: bytes) -> bool:
     )
 
 
+def _plank_ratio(image: Image.Image, box: tuple[int, int, int, int]) -> float:
+    """How much of this box is the 聖水車 sheet's own orange plank.
+
+    Wood rather than grass: red well ahead of blue with green in between, which
+    the game's greens and blues fail outright. **It does not separate the plank
+    from every orange the game draws** — the wall highlight at (255, 71, 0) and
+    a fire at (255, 140, 24) both satisfy all four conditions — and it is not
+    asked to: what excludes those is where the boxes are, and the pair of them
+    is what makes that hold. See the constants for the frames that get closest.
+    """
+    data = image.crop(box).tobytes()
+    wood = sum(
+        data[i] > 120
+        and data[i] - data[i + 2] > 70
+        and data[i] - data[i + 1] > 25
+        and data[i + 1] > data[i + 2]
+        for i in range(0, len(data), 3)
+    )
+    return wood / (len(data) // 3)
+
+
 def loot_cart_open(png: bytes) -> bool:
-    """Whether the builder base's 聖水車 panel is up with its 收集 button.
+    """Whether the builder base's 聖水車 sheet is up, whatever its button says.
 
     Tapping the cart opens this rather than collecting outright, so a caller
     that stopped at the tap has collected nothing at all — which is what the
     storage bars said the first time this was tried.
+
+    **Read off the sheet rather than off its 收集 button**, because the game
+    greys that button and a grey one used to read as no sheet at all: the run
+    then reported that it could not find the cart and left the sheet standing
+    over the village. `loot_cart_ready` is the button's own question.
     """
     image = open_frame(png)
-    return _button_ratio(image, CART_COLLECT_BOX, "green") >= CART_COLLECT_GREEN
+    return (
+        _plank_ratio(image, CART_PLANK_ABOVE) >= CART_PLANK
+        and _plank_ratio(image, CART_PLANK_BESIDE) >= CART_PLANK
+    )
+
+
+def loot_cart_ready(png: bytes) -> bool:
+    """Whether that sheet's 收集 is live, which is not the same as the sheet being up.
+
+    Measured live, a builder base with both storages exactly at capacity draws
+    it a flat (178, 178, 178) — no button green at all — over a cart holding
+    135 843 elixir.
+
+    **Nothing here knows why the game locked it, and the sheet offers two
+    reasons at once.** That frame's own body reads 暫無新的防禦獎勵, so a cart
+    with nothing new in it is as good a candidate as a storage with no room —
+    and a cart the loop emptied minutes ago is the commoner of the two. So this
+    answers whether pressing it would buy anything and stops there; **`empty`
+    and `locked` are not reliably separated today**, and what would separate
+    them is on the sheet: it writes `135843 / 1600000` beside the button, and
+    `split_numbers` already lifts the 1 600 000 out cleanly. The held number
+    lands over the plank and the purple bar and comes apart, which needs an ink
+    rule of its own and a frame of an empty cart to measure against.
+    """
+    return _button_ratio(open_frame(png), CART_COLLECT_BOX, "green") >= CART_COLLECT_GREEN
 
 
 def in_battle(png: bytes) -> bool:

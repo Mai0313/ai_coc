@@ -37,6 +37,7 @@ from ai_coc.models import (
     ViewReport,
     WallReport,
     BuildReport,
+    CartOutcome,
     HeroOptions,
     NamedEntity,
     PlateReport,
@@ -93,6 +94,7 @@ from ai_coc.parsers.scout import (
     loading_screen,
     loot_cart_open,
     selected_cards,
+    loot_cart_ready,
     attack_menu_open,
     storage_capacity,
     idle_disconnected,
@@ -857,10 +859,18 @@ def _empty_cart(world: World, battles: int, adb: AdbController, display: Display
     # adapter error here used to unwind all the way out of `attack` with
     # `result.json` unwritten — measured twice, at 17 and 14 battles played and
     # countable only out of `run.log`. The elixir stays in the cart, which
-    # holds a million and is emptied every few battles anyway, so the next trip
+    # holds over a million and is emptied every few battles anyway, so the next trip
     # collects what this one did not.
     try:
-        collect_cart(adb, display)
+        # **Logged rather than carried onto the round's report**, which is the
+        # honest limit of it: this is a side errand between battles and
+        # `AttackReport` has no field for one, so the six outcomes reach
+        # `run.log` and not `result.json`. Saying which it was there is still
+        # worth the line, because this is the only path that empties the cart
+        # automatically and a locked one used to be indistinguishable from a
+        # trip that found nothing.
+        cart = collect_cart(adb, display)
+        logger.info("Loot cart: %s", CART_LINES[cart.outcome].format(elixir=cart.elixir))
     except AdbControlError as exc:
         logger.warning("The loot cart could not be emptied this time: %s", exc)
 
@@ -1553,12 +1563,32 @@ def _shield_line(shield: ShieldState | None, world: World | None) -> str:
     return f"護盾還有 {spell_out(shield.remaining)}"
 
 
+# Only ever used to build a line for a person; `CartReport.outcome` is what a
+# caller reads. **`locked` is the one worth spelling out**, because it is the
+# ordinary state of a farmed village and it reads nothing like the
+# 推車裡沒有東西可以收 this reported for it: the cart is standing full and the
+# game will not open its gate.
+CART_LINES: dict[CartOutcome, str] = {
+    "collected": "建築大師基地的推車收到聖水 {elixir}",
+    "empty": "按了收集,但儲量沒有變,推車應該是空的",
+    "locked": "推車是開的,但收集鈕是灰的,按下去收不到東西 —— 去看聖水倉庫還有沒有空位",
+    "not_found": "三個候選點都沒有打開推車",
+    "not_parked": "鏡頭沒辦法停回定位,這一趟沒有去找聖水車",
+    "wrong_world": "現在不在建築大師基地,沒有推車可以收",
+    "unreadable": "按了收集,但有一邊的儲量條讀不到,不知道進帳多少",
+}
+
+
 def collect(frame_dir: Path | None = None) -> CollectReport:
     """Tap every collector the village has left standing, with no window in the way.
 
     Collectors stop once they are full, so a village nobody has emptied has spent
     most of its time doing nothing. This is the cheapest thing in the project to
     run and the one worth running most often.
+
+    **The builder base's cart has six answers and this used to give it two.**
+    See `CartReport`: a cart the game had locked was reported as an empty one,
+    which is the opposite instruction.
     """
     adb, display = _session(frame_dir)
     # **The builder base has no collectors to sweep and one cart instead.** Its
@@ -1566,13 +1596,12 @@ def collect(frame_dir: Path | None = None) -> CollectReport:
     # the same job on that village even though it shares none of the machinery:
     # one tap at a known spot rather than a colour-and-size search over the map.
     if current_world(adb.screenshot(display)) == "night":
-        gained = collect_cart(adb, display)
-        if gained is None:
-            return CollectReport(message="鏡頭沒辦法停回定位,這一趟沒有去找聖水車")
+        cart = collect_cart(adb, display)
+        logger.info("Collect: %s", CART_LINES[cart.outcome].format(elixir=cart.elixir))
         return CollectReport(
-            markers=1 if gained else 0,
-            elixir=gained,
-            message=f"建築大師基地的推車收到聖水 {gained}" if gained else "推車裡沒有東西可以收",
+            markers=1 if cart.outcome == "collected" else 0,
+            elixir=cart.elixir,
+            message=CART_LINES[cart.outcome].format(elixir=cart.elixir),
         )
     report = UpkeepRunner(adb=adb, display=display, frame_dir=frame_dir).collect()
     logger.info("Collect: %s", report.message)
@@ -2005,6 +2034,7 @@ def read(png: bytes) -> FrameReading:
         night_menu=night_attack_menu(png),
         searching=searching_opponent(png),
         loot_cart=loot_cart_open(png),
+        cart_ready=loot_cart_ready(png),
         battle_over=battle_over(png),
         in_battle=in_battle(png),
         dialog=game_dialog(png),

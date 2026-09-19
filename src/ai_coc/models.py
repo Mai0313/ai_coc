@@ -1117,6 +1117,52 @@ class CollectReport(BaseModel):
     message: str = ""
 
 
+# How a trip to the builder base's 聖水車 ended. `collected` and `empty` are both
+# a cart that was opened and pressed, told apart by whether the storage moved;
+# `locked` is a cart that was opened and whose 收集 the game had greyed, which is
+# the one the loop used to report as an empty cart.
+#
+# **`locked` says what the button looks like and not why**, and the difference
+# matters because the sheet offers two reasons at once: its body reads
+# 暫無新的防禦獎勵 while the storages behind it may be at capacity. So it means
+# "pressing this would buy nothing" and a caller that wants the reason reads the
+# storage share. See `loot_cart_ready` for what would separate the two and what
+# it needs first.
+#
+# The rest are failures: `not_parked` never went looking, `wrong_world` was not
+# on the builder base at all, `not_found` tapped every candidate spot without
+# opening anything, and `unreadable` collected against a storage bar that would
+# not resolve on one side or the other.
+CartOutcome = Literal[
+    "collected", "empty", "locked", "not_found", "not_parked", "wrong_world", "unreadable"
+]
+
+
+class CartReport(BaseModel):
+    """What one trip to the builder base's loot cart did.
+
+    **Seven answers because the old two were wrong about five of them.** This
+    used to be an `int | None`, where None meant the camera never parked and 0
+    meant everything else — an empty cart, a cart nobody found, a village that
+    was not the builder base, a cart whose sheet would not read, and a cart
+    behind a button the game had locked. Measured live, that last one is the
+    ordinary state of a village that has been farmed: both storages at capacity,
+    135 843 elixir of a 1 600 000 cart, and a report saying 推車裡沒有東西可以收.
+    **The cart was 8% full rather than standing full**, which is worth being
+    exact about — `locked` is what the button looks like, and the reason is the
+    caller's to read off the storage share.
+
+    `elixir` is what the storage really gained rather than what the cart
+    promised, for the reason `collect` judges its markers that way: a full
+    storage takes none of what it is handed.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    outcome: CartOutcome
+    elixir: int = 0
+
+
 class BuildQueue(BaseModel):
     """What the builder panel shows running, read off the progress bars.
 
@@ -1978,6 +2024,12 @@ class FrameReading(BaseModel):
     night_menu: bool = False
     searching: bool = False
     loot_cart: bool = False
+    # **The cart's sheet and the cart's button are two questions now**, and the
+    # second one is the one a session comes here to ask: `loot_cart` says the
+    # sheet is up, which it used to be able to say only when its 收集 was live.
+    # Without this the frame that the trip gave up on — sheet open, button
+    # greyed — answers every question except why it collected nothing.
+    cart_ready: bool = False
     # The result screen, which is what ends a battle for every loop here —
     # `read_scout` answering None does not, and the two were confused once at
     # the cost of five rounds walking out of battles still being fought.

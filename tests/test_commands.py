@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import math
 import time
+from typing import get_args
 from pathlib import Path
 from datetime import UTC, datetime
 import tempfile
@@ -28,10 +29,12 @@ from ai_coc.models import (
     AppConfig,
     NightPlan,
     AttackPlan,
+    CartReport,
     HeroReport,
     PlayedPlan,
     AdbEndpoint,
     BuildReport,
+    CartOutcome,
     HeroOptions,
     PlateReport,
     WallOptions,
@@ -361,29 +364,65 @@ class StatusCommandTests(unittest.TestCase):
 
 
 class CollectCommandTests(unittest.TestCase):
-    def test_the_builder_base_empties_its_cart_instead_of_sweeping(self) -> None:
+    def _cart(self, report: CartReport) -> tuple[MagicMock, MagicMock, MagicMock, object]:
         adb = _adb()
         with (
             patch.object(commands, "_controller", return_value=adb),
             patch.object(commands, "current_world", return_value="night"),
-            patch.object(commands, "collect_cart", return_value=300_000) as cart,
+            patch.object(commands, "collect_cart", return_value=report) as cart,
             patch.object(commands, "UpkeepRunner") as runner,
         ):
-            report = commands.collect()
-        assert report == CollectReport(markers=1, elixir=300_000, message=report.message)
+            return adb, cart, runner, commands.collect()
+
+    def test_the_builder_base_empties_its_cart_instead_of_sweeping(self) -> None:
+        adb, cart, runner, report = self._cart(CartReport(outcome="collected", elixir=300_000))
+        assert (report.markers, report.elixir) == (1, 300_000)
         assert "300000" in report.message
         cart.assert_called_once_with(adb, DISPLAY)
         runner.assert_not_called()
 
     def test_an_empty_cart_is_reported_as_nothing_rather_than_as_a_marker(self) -> None:
-        with (
-            patch.object(commands, "_controller", return_value=_adb()),
-            patch.object(commands, "current_world", return_value="night"),
-            patch.object(commands, "collect_cart", return_value=0),
-        ):
-            report = commands.collect()
+        *_, report = self._cart(CartReport(outcome="empty"))
         assert (report.markers, report.elixir) == (0, 0)
-        assert report.message == "推車裡沒有東西可以收"
+        assert "推車應該是空的" in report.message
+
+    def test_a_locked_cart_is_not_reported_as_an_empty_one(self) -> None:
+        """The opposite instruction: the cart is standing full and cannot be opened.
+
+        Measured live on a builder base whose storages were both exactly at
+        capacity, with 135 843 elixir in the cart. Reported as empty, it reads
+        as a village with nothing left to fetch.
+        """
+        *_, report = self._cart(CartReport(outcome="locked"))
+        assert (report.markers, report.elixir) == (0, 0)
+        assert report.message != "推車裡沒有東西可以收"
+        assert "收集鈕是灰的" in report.message
+
+    def test_every_way_the_cart_can_end_has_a_line_of_its_own(self) -> None:
+        """One sentence per outcome, and each one says the thing only it means.
+
+        Counting distinct strings is not enough: two of them could be swapped
+        and still be distinct, which is how `not_found` came to claim three
+        candidate spots had been tapped on a path that tapped none.
+        """
+        # A fragment that belongs to that outcome and to no other.
+        own = {
+            "collected": "收到聖水",
+            "empty": "儲量沒有變",
+            "locked": "收集鈕是灰的",
+            "not_found": "三個候選點",
+            "not_parked": "鏡頭沒辦法停回定位",
+            "wrong_world": "不在建築大師基地",
+            "unreadable": "有一邊的儲量條讀不到",
+        }
+        assert set(own) == set(get_args(CartOutcome))
+        for outcome, fragment in own.items():
+            line = commands.CART_LINES[outcome].format(elixir=1)
+            assert fragment in line, outcome
+            others = [
+                commands.CART_LINES[other].format(elixir=1) for other in own if other != outcome
+            ]
+            assert not any(fragment in line for line in others), outcome
 
     def test_the_home_village_hands_over_to_the_upkeep_runner(self) -> None:
         with (
@@ -783,7 +822,9 @@ class RunPlumbingTests(unittest.TestCase):
         self,
     ) -> None:
         adb = _adb()
-        with patch.object(commands, "collect_cart") as cart:
+        with patch.object(
+            commands, "collect_cart", return_value=CartReport(outcome="empty")
+        ) as cart:
             for battles in range(1, 2 * commands.CART_EVERY + 1):
                 commands._empty_cart("night", battles, adb, DISPLAY)
             emptied = cart.call_count
