@@ -2681,14 +2681,21 @@ class FieldTests(unittest.TestCase):
         Image.new("RGB", (1600, 900), (shade, shade, shade)).save(buffer, format="PNG")
         return buffer.getvalue()
 
-    def test_an_empty_box_reads_as_arrived_on_one_village_and_never_on_the_other(self) -> None:
-        """**This is what the park's pinch is really for, and it is a trap.**
+    def test_an_empty_box_is_unread_rather_than_answered_either_way(self) -> None:
+        """**This is what the park's pinch is really for, and it used to be a trap.**
 
-        Scores that tie are settled by `min` on the offset, and every offset
-        along the home village's drag is positive — so a pair with no texture in
-        the box comes back as exactly (0, 0), which is the answer that means
-        clamped. The builder base's drag is the mirror and fails the opposite
-        way, reporting a camera that never stops.
+        With nothing in the box to compare, every offset scores the same. The
+        tie-break settled that by `min` on the offset, so the pick came off the
+        sign of the drag — and the two villages hand mirrored drags in. The same
+        nothing therefore read as (0, 0) on the home village, which means
+        clamped, and as a long step on the builder base, which means never
+        stops. Measured on this pair: (0, 0) and (-392, 196), and on a flat
+        black box the far end instead, (-980, 490), since there the padding
+        matches what is being compared.
+
+        **Both directions are asserted, because either alone lets the other
+        through**: reverting the tie test leaves one of them reading correctly
+        by luck.
 
         What empties the box is the camera leaving the village, which is what a
         zoomed-in one does: measured live two pinches in, a real 221 px move read
@@ -2696,8 +2703,39 @@ class FieldTests(unittest.TestCase):
         box over the village, where there is something to compare.
         """
         empty = (self._flat(30), self._flat(30))
-        assert view_shift(*empty, world_ui.CROSSINGS["night"].drift) == (0, 0)
-        assert view_shift(*empty, world_ui.CROSSINGS["day"].drift) != (0, 0)
+        assert view_shift(*empty, world_ui.CROSSINGS["night"].drift) is None
+        assert view_shift(*empty, world_ui.CROSSINGS["day"].drift) is None
+
+    def test_a_village_that_really_has_not_moved_still_reads_as_arrived(self) -> None:
+        """The other half: None must not swallow a genuine clamp.
+
+        This is the reading the park stops on, so a reader too eager to answer
+        None would walk the full `PARK_SWIPES` on a camera already against the
+        map edge and then report that it never arrived — which `cross` reads as
+        there being no village, ending a whole run. Both villages, because the
+        builder base's clamp is the one that reads this way from the start.
+        """
+        for frame in ("home_builders_busy.png", "night_builder_panel.png"):
+            png = (FRAMES / frame).read_bytes()
+            for world in ("day", "night"):
+                drift = world_ui.CROSSINGS[world].drift
+                assert view_shift(png, png, drift) == (0, 0), (frame, world)
+
+    def test_a_drag_smaller_than_one_search_step_is_still_a_number(self) -> None:
+        """Offsets are scored once each, not once per step.
+
+        A drift of 5 rounds sixteen steps onto eight offsets, so the winner is
+        reached twice. Keyed by offset that collapses; collected as a list of
+        `(score, offset)` pairs the tie test would see the winner twice and call
+        a perfectly good reading unreadable. Measured against that shape, 1, 3
+        and 5 px answered None while 8 and 11 came back correctly, which is why
+        this sits at 5: a test any higher would pass against it.
+
+        `_clear_flank` really does ask for drags this small — its `wanted` is
+        `min(0, PLAYFIELD[3] - box[3] - FLANK_ROOM)`, and only exactly 0 is
+        skipped.
+        """
+        assert view_shift(self._village(0), self._village(5), (0, 5)) == (0, 5)
 
     def _panned(self, across: int, down: int) -> bytes:
         """The same texture moved both ways, which is how a park's drag moves it."""
@@ -3860,6 +3898,27 @@ class AttackTests(unittest.TestCase):
         """Measured live, a drag of 98 px was taken as 100 and one of 81 as 72."""
         _, runner = self._cleared(DEPLOY_LINES["top_right"], self.FULL_VILLAGE, taken=0.6)
         assert runner._panned == (0, 60)
+
+    def test_a_drag_nobody_could_measure_leaves_the_record_alone(self) -> None:
+        """Unread is not the same as unmoved, and folding it in as nothing says it is.
+
+        A box with nothing in it cannot say whether the game took the drag, so
+        both answers are guesses. Leaving the record alone bounds the error by
+        the drag the loop itself asked for; believing the old tie-break's pick
+        put it 1.4x the drag out, since `_clear_flank` drags downward and every
+        offset along that drift is negative — measured, (0, -110) came back as
+        (0, -154) while only its upward mirror happened to answer (0, 0).
+        """
+        runner = self._runner()
+        with (
+            patch.object(AttackRunner, "_frame", return_value=b""),
+            patch.object(attack, "village_box", return_value=self.FULL_VILLAGE),
+            patch.object(attack, "view_shift", return_value=None),
+            patch.object(attack.time, "sleep"),
+            patch.object(type(runner.adb), "swipe", lambda *_args: None),
+        ):
+            runner._clear_flank(b"", DEPLOY_LINES["bottom_left"])
+        assert runner._panned == (0, 0)
 
     def test_the_rage_goes_where_the_plan_drew_it(self) -> None:
         """It used to be slid onto the fighting, and that reading arrived too late to use.

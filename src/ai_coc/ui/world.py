@@ -173,14 +173,14 @@ def park_camera(adb: AdbController, display: DisplayTarget, world: World) -> boo
     **The pinch belongs to this function, and what it really buys is something
     for the reader to look at.** `view_shift` compares a fixed box in the middle
     of the screen, and **what breaks it is an empty box rather than a long
-    move**: on a tie it takes the smallest offset it tried, and every offset
-    along the home village's drag is positive, so a pair with no texture in that
-    box reads exactly (0, 0) — the answer that means *arrived*. Measured, two
-    frames of two different villages read (0, 0) that way. The builder base's
-    drag is the mirror of it and fails the other way, reporting a camera that
-    never stops. This said the failure was distance, which does not hold up:
-    over synthetic pans a move past the box's reach saturates at a wrong
-    non-zero, which only costs another swipe.
+    move**: with nothing in it to compare, every offset scores the same. That
+    used to be resolved by the tie-break rather than reported, and the tie-break
+    picked by the sign of the drag — so the same nothing read as (0, 0) on the
+    home village, which means *arrived*, and as a long step on the builder base,
+    which means never stops. It answers None now and this walk carries on, which
+    is the right move for both. This said the failure was distance, which does
+    not hold up: over synthetic pans a move past the box's reach saturates at a
+    wrong non-zero, which only costs another swipe.
 
     So the far zoom is what keeps that box on the village. Measured two pinches
     in, the camera runs off the map into the dark border, the box lands on
@@ -212,6 +212,9 @@ def park_camera(adb: AdbController, display: DisplayTarget, world: World) -> boo
         after = adb.screenshot(display)
         moved = view_shift(before, after, crossing.drift)
         before = after
+        # None as well as a real move: a pair the reader could not make out is
+        # not a camera that has stopped, and the walk going on is what this
+        # caller wants out of both. `view_shift`'s own warning names which.
         if moved != (0, 0):
             still = 0
             continue
