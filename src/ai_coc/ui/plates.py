@@ -61,10 +61,14 @@ class PlateRunner(ScreenRunner):
     def read(self, role: PlateRole) -> PlateReport:
         """What this plate counts, and what its panel says is running.
 
-        **The count comes off the frame taken before the tap.** Opening the
-        panel covers the row that was just read — measured, `info_badges` finds
-        nothing at all on a frame with one up — so the two readings cannot come
-        from the same capture, and the one that places the plate has to be first.
+        **The count comes off the frame taken before the tap**, which costs
+        nothing and is where it already was. The reason written here used to be
+        that the panel covers the badge row, and the committed frames say
+        otherwise: `info_badges` returns the full row on all four of them,
+        identical to a clean frame of the same village, and `plate_count` reads
+        through one as well. That is the whole premise `park_camera`'s panel
+        check rests on — a panel is a village by every test the loops have,
+        which is why nothing else can clear it.
 
         The panel is left closed whether or not it read, because it covers the
         middle of the village and the next command along taps there.
@@ -94,10 +98,13 @@ class PlateRunner(ScreenRunner):
             # **Before the closing tap, not after it.** Two taps have already
             # left the panel however it was found — open, closed, open, or
             # closed, open, closed — and a third would open it. That matters
-            # beyond a dirty screen: the panel covers the badge row, so the
-            # next plate `status` reads answers 畫面不在村莊 on a village that
-            # is plainly there. `UpkeepRunner.builders` returns here for the
-            # same reason.
+            # beyond a dirty screen: the panel sits over the middle of the map,
+            # so it pins `view_shift` at no-move-at-all and every park under one
+            # reports a camera that never started. `UpkeepRunner.builders`
+            # returns here for the same reason. It does **not** hide the badge
+            # row — measured on all four panel frames, that reads through — so
+            # the next `status` finds the village and parks under the panel
+            # rather than failing loudly.
             #
             # **And no bars means one of two things**, which look identical on
             # screen: the panel never opened, or it opened with nothing running

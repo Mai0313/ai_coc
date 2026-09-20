@@ -119,9 +119,11 @@ from ai_coc.parsers.home import (
     plate_count,
     builder_jobs,
     plate_badges,
+    plate_button,
     shield_state,
     free_builders,
     collect_bubbles,
+    plate_panel_open,
 )
 from ai_coc.logging_setup import _attach_run, configure_logging
 from ai_coc.parsers.field import view_shift
@@ -1207,11 +1209,62 @@ class ParkCameraTests(unittest.TestCase):
         with (
             patch.object(world_ui.time, "sleep"),
             patch.object(world_ui, "view_shift", side_effect=shifts),
+            patch.object(world_ui, "plate_panel_open", return_value=None),
         ):
             parked = world_ui.park_camera(
                 adb, DisplayTarget(logical_id="1", physical_id="2"), world
             )
         return adb, parked
+
+    def _panelled(self, captures: list[str], world: str = "day") -> tuple[MagicMock, bool]:
+        """Park against real frames, so the panel check reads pixels rather than a stub."""
+        adb = MagicMock()
+        frames = [(FRAMES / name).read_bytes() for name in captures]
+        # The walk takes as many captures as it takes; the last frame stands for
+        # every one after the list runs out.
+        adb.screenshot.side_effect = lambda *_args: frames.pop(0) if len(frames) > 1 else frames[0]
+        with (
+            patch.object(world_ui.time, "sleep"),
+            patch.object(world_ui, "view_shift", return_value=(0, 0)),
+        ):
+            parked = world_ui.park_camera(
+                adb, DisplayTarget(logical_id="1", physical_id="2"), world
+            )
+        return adb, parked
+
+    def test_a_plate_panel_is_pressed_shut_before_the_camera_is_read(self) -> None:
+        """It is a village by every test the callers have, and nothing else clears it.
+
+        `ai_coc worker`, `lab` and `status` each open one and shut it again, so
+        what leaves one standing is a run that died in between. `uncovered`
+        cannot help: the frame reads as a village, so it hands it straight back.
+        """
+        adb, parked = self._panelled(["day_builder_panel.png", "world_day.png"])
+        assert parked is True
+        button = plate_button(
+            plate_badges((FRAMES / "day_builder_panel.png").read_bytes())["builder"]
+        )
+        adb.tap.assert_called_once_with(*button, DisplayTarget(logical_id="1", physical_id="2"))
+        # Shut before either gesture: a park that is going to stand down should
+        # not spend 2.6 s pinching first.
+        names = [c[0] for c in adb.mock_calls]
+        assert names.index("tap") < names.index("zoom") < names.index("swipe")
+
+    def test_a_panel_that_will_not_shut_stands_the_park_down(self) -> None:
+        """Rather than swiping under it and reporting the camera parked.
+
+        **Two taps, not three**, so a false positive on village grass leaves the
+        screen as it was found: an odd count would end with a panel this opened
+        standing over the village, which is worse than what is being fixed.
+        """
+        adb, parked = self._panelled(["day_builder_panel.png"])
+        assert parked is False
+        assert adb.tap.call_count == world_ui.PANEL_TAPS
+        # The parity itself, not just the bound: tracking the constant would let
+        # it be raised to an odd number and still pass.
+        assert world_ui.PANEL_TAPS % 2 == 0
+        adb.zoom.assert_not_called()
+        adb.swipe.assert_not_called()
 
     def test_the_swipes_stop_when_the_picture_does(self) -> None:
         """A fixed count was the bug: five was half what this account needed.
@@ -1241,16 +1294,18 @@ class ParkCameraTests(unittest.TestCase):
         """
         adb, parked = self._park([(0, 0), (0, 0)])
         assert parked is True
-        # The very first thing it does, rather than merely somewhere in the
-        # call: a pinch after the walk settles the scale for the next caller and
-        # leaves this one's own readings taken at whatever zoom it was handed.
+        # Before any swipe is read, rather than merely somewhere in the call: a
+        # pinch after the walk settles the scale for the next caller and leaves
+        # this one's own readings taken at whatever zoom it was handed. One
+        # capture comes first, which is the plate-panel check — a cover this has
+        # to shut itself, and the one thing worth not pinching for.
         #
         # Every argument pinned, because each one is load-bearing and none of
         # them is asserted anywhere else: one pinch covers two thirds of the
         # range rather than all of it, and a gesture with no display named goes
         # to every touch node, where MuMu's launcher takes two fingers as a
         # switch away from the game.
-        assert adb.mock_calls[0] == call.zoom(
+        assert adb.mock_calls[1] == call.zoom(
             "out",
             world_ui.ZOOM_PINCHES,
             world_ui.COC_PACKAGE,
@@ -1316,6 +1371,7 @@ class CrossingTests(unittest.TestCase):
             # keeps moving is the other half of that, and the boat is not where
             # it is remembered then.
             patch.object(world_ui, "view_shift", return_value=(0, 0) if parked else (65, -33)),
+            patch.object(world_ui, "plate_panel_open", return_value=None),
         ):
             landed = world_ui.cross(adb, DisplayTarget(logical_id="1", physical_id="2"), want)
         return adb, landed
@@ -1420,6 +1476,7 @@ class CrossingTests(unittest.TestCase):
             patch.object(world_ui.time, "sleep"),
             patch.object(world_ui, "current_world", return_value="night"),
             patch.object(world_ui, "view_shift", return_value=(0, 0) if parked else (65, -33)),
+            patch.object(world_ui, "plate_panel_open", return_value=None),
             patch.object(world_ui, "loot_cart_open", return_value=opens),
             patch.object(world_ui, "loot_cart_ready", return_value=ready),
             patch.object(
@@ -1507,6 +1564,7 @@ class CrossingTests(unittest.TestCase):
             patch.object(world_ui.time, "sleep"),
             patch.object(world_ui, "current_world", return_value="night"),
             patch.object(world_ui, "view_shift", return_value=(0, 0)),
+            patch.object(world_ui, "plate_panel_open", return_value=None),
             patch.object(world_ui, "loot_cart_open", return_value=False),
             patch.object(world_ui, "read_builder_stock", return_value=None),
             patch.object(world_ui, "uncovered") as pressed,
@@ -6162,6 +6220,67 @@ class HomeHudTests(unittest.TestCase):
         """
         assert ShieldState(remaining=0).up is True
         assert ShieldState().up is False
+
+    def test_the_plate_panel_is_found_by_its_running_rows(self) -> None:
+        """Four of the eighteen village frames carry one, and it answers on those four.
+
+        The panel is a village by every test the loops have — `current_world`
+        reads the badge row above it and `read_stock` the bars beside it — so
+        this is the only thing that can say it is there. The edges either side
+        of `BAR_COVERAGE`: `night_builder_panel.png` is the lowest panel at
+        0.9333 and `home_marker_over_bars.png` the highest village at 0.4667,
+        where a marker is sitting over the storage bars.
+
+        **An idle panel is invisible to it.** A plate with nothing running has
+        no bars to find, and the sheet's own dark reads 0.00 to 0.20 of bar
+        where a real one reads 0.83 to 0.97, so there is nothing else in the
+        band to go by. No committed frame has one; the park under an idle panel
+        is unchanged by this.
+        """
+        panelled = {
+            "day_builder_panel.png": ("day", "builder"),
+            "day_lab_panel.png": ("day", "lab"),
+            "night_builder_panel.png": ("night", "builder"),
+            "night_lab_panel.png": ("night", "lab"),
+        }
+        for frame, (world, role) in panelled.items():
+            png = (FRAMES / frame).read_bytes()
+            assert plate_panel_open(png, world) == plate_button(plate_badges(png)[role]), frame
+        for frame in (
+            "home_marker_over_bars.png",
+            "home_builders_busy.png",
+            "world_day.png",
+            "day_village_shield.png",
+            "world_night.png",
+        ):
+            png = (FRAMES / frame).read_bytes()
+            world = current_world(png)
+            assert world is not None, frame
+            assert plate_panel_open(png, world) is None, frame
+
+    def test_a_panel_pins_the_camera_reader_at_no_move_at_all(self) -> None:
+        """Why the park has to shut it rather than read through it.
+
+        The panel floats over the middle of the map and covers 60% of the box
+        `view_shift` compares, so a real pan under it reads as nothing moving —
+        which is the answer that means the camera has arrived. Synthesised the
+        way a static overlay behaves: translate the scene, paste the panel back
+        where it was.
+        """
+        png = (FRAMES / "day_builder_panel.png").read_bytes()
+        scene = Image.open(io.BytesIO(png)).convert("RGB")
+        panel = scene.crop((612, 122, 1032, 698))
+        drift = world_ui.CROSSINGS["night"].drift
+        for across, down in ((65, -33), (131, -65), (261, -131)):
+            moved = Image.new("RGB", scene.size, (0, 0, 0))
+            moved.paste(scene, (across, down))
+            bare = io.BytesIO()
+            moved.save(bare, format="PNG")
+            assert view_shift(png, bare.getvalue(), drift) == (across, down)
+            moved.paste(panel, (612, 122))
+            pinned = io.BytesIO()
+            moved.save(pinned, format="PNG")
+            assert view_shift(png, pinned.getvalue(), drift) == (0, 0), (across, down)
 
     def test_a_plate_under_a_panel_says_nothing_rather_than_claiming_a_shield(self) -> None:
         """Which is why an unreadable countdown is None and not `up=True`.
