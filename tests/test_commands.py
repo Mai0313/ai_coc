@@ -38,6 +38,7 @@ from ai_coc.models import (
     HeroOptions,
     HeroOutcome,
     PlateReport,
+    ShieldState,
     ViewOutcome,
     WallOptions,
     WallOutcome,
@@ -266,6 +267,25 @@ class PlateLineTests(unittest.TestCase):
 
     def _line(self, role: str = "builder", **fields: object) -> str:
         return commands._plate_line(PlateReport(role=role, **fields))
+
+    def test_the_shield_plate_has_three_answers_and_they_are_not_interchangeable(self) -> None:
+        """No plate, a plate saying 無, and a plate with a countdown on it.
+
+        **The two Nones sit one level apart**: no `ShieldState` is a reading
+        this frame could not take, and a `ShieldState` with no `remaining` is
+        the plate read and saying there is no shield. A fourth line used to sit
+        between them for a shield up with an unreadable countdown, which
+        `shield_state` has never been able to produce.
+
+        Nothing covered this before, which is why swapping the two arms of the
+        `shield is None` answer failed no test — and those two are the ones a
+        reader most needs kept apart, since one is structural and the other is
+        work to redo.
+        """
+        assert commands._shield_line(None, "night") == "這個世界沒有護盾"
+        assert "讀不到" in commands._shield_line(None, "day")
+        assert commands._shield_line(ShieldState(), "day") == "**沒有護盾**,村莊現在可以被打"
+        assert commands._shield_line(ShieldState(remaining=600), "day") == "護盾還有 10 分鐘"
 
     def test_a_plate_with_work_on_it_names_the_soonest(self) -> None:
         assert (

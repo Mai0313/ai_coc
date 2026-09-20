@@ -632,9 +632,9 @@ def shield_state(png: bytes, centre: int) -> ShieldState | None:
     """
     ink = ink_mask(open_frame(png).crop(shield_box(centre)))
     if len(glyph_columns(ink, speckle=False)) < SHIELD_GLYPHS:
-        return ShieldState(up=False)
+        return ShieldState()
     seconds = _seconds_from(ink)
-    return None if seconds is None else ShieldState(up=True, remaining=seconds)
+    return None if seconds is None else ShieldState(remaining=seconds)
 
 
 def plate_count(png: bytes, centre: int) -> tuple[int, int] | None:

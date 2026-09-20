@@ -1307,21 +1307,24 @@ class BuilderReport(BaseModel):
 class ShieldState(BaseModel):
     """Whether a shield is up over the home village, and for how much longer.
 
-    **`up` is read separately from `remaining`, because the plate has a state
-    that carries no countdown at all**: with no shield the game writes 無 there
-    beside a green +, and a reader that only looked for digits would report that
+    **The plate has a state that carries no countdown at all**, which is why a
+    countdown alone would not do: with no shield the game writes 無 there beside
+    a green +, and a reader that only looked for digits would report that
     exactly as it reports a frame it could not make out. Those are opposite
     instructions — one says the village is being farmed by other people right
     now, the other says to look again.
 
-    **`remaining` is None exactly when `up` is False**, which is not what this
-    said and is worth being exact about: 無 carries no countdown to read, and a
-    shield that is up but whose countdown will not resolve is reported as no
-    `ShieldState` at all rather than as one with an empty countdown. That is
-    because it cannot be told apart from the plate being covered — swept over
-    every committed frame, a full-screen panel over the village leaves the badge
-    readable and the plate under it unreadable, so `hero_hall_menu.png` would
-    otherwise claim a shield is up on a frame that says no such thing.
+    **So `up` is derived from `remaining` rather than stored beside it.** 無
+    carries no countdown to read, and a shield that is up but whose countdown
+    will not resolve is reported as no `ShieldState` at all rather than as one
+    with an empty countdown. That is because it cannot be told apart from the
+    plate being covered — swept over every committed frame, a full-screen panel
+    over the village leaves the badge readable and the plate under it
+    unreadable, so `hero_hall_menu.png` would otherwise claim a shield is up on
+    a frame that says no such thing. Two stored fields let that combination be
+    written down anyway: `shield_state` never returned it, `_shield_line` had a
+    branch testing for it that nothing could reach, and that dead branch was the
+    only thing in the code suggesting the two were distinguishable.
 
     The plate being absent altogether is not a state here — the builder base has
     no shield plate, so its callers get no `ShieldState` rather than one saying
@@ -1332,8 +1335,24 @@ class ShieldState(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    up: bool
     remaining: int | None = None
+
+    @computed_field
+    @property
+    def up(self) -> bool:
+        """Whether a shield is up at all, which is exactly a countdown having read.
+
+        **Computed rather than stored**, on `RoundReport.stock_full`'s reasoning:
+        the name is what `.agents/skills/watch-upgrades` reads out of
+        `result.json`, so it stays in the file, while the state the docstring
+        above rules out stops being expressible at all.
+
+        The model is what carries the third answer, not this: a caller with no
+        `ShieldState` has either a builder base, which structurally has no
+        plate, or a reading to take again. Collapsing this to a bare
+        `int | None` would lose that, which is the cleanup to refuse.
+        """
+        return self.remaining is not None
 
 
 class PlateJob(BaseModel):
