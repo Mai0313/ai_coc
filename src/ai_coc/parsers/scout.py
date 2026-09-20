@@ -198,6 +198,22 @@ CART_PLANK = 0.55
 # whether the sheet is up.
 CART_COLLECT_BOX = (1110, 740, 1245, 782)
 CART_COLLECT_GREEN = 0.4
+# What the cart is holding, written `135843 / 1600000` beside that button. The
+# left edge is `CART_PLANK_BESIDE`'s own; the right stops 24 px short of the
+# 收集 plate, whose border is the ink run at x 1084-1269 in this band and which
+# goes white when the game lights the button. The only other ink in the box is
+# the drop icon's sheen at x 616-620, five rows tall against a digit's eighteen,
+# and **`SPECKLE_ROWS` (8) inside `glyph_columns` is what drops it** rather than
+# `MIN_GLYPH_ROWS` — three rows of margin, so a box moved much further left
+# would start reading it.
+CART_HELD_BOX = (575, 740, 1060, 775)
+# Measured per glyph on this one line of fourteen: the digits land 6 to 19 from
+# their templates and the `/` lands 30, so the line goes midway. **One line, not
+# a sweep** — there is exactly one frame of this sheet on this machine — so the
+# margin is five bits below and six above rather than anything wider. Below 19
+# the number splits into pieces; at 30 the `/` matches a digit and the whole
+# line fuses into one fourteen-digit number.
+CART_HELD_TOLERANCE = 24
 
 # A troop card keeps its artwork in colour while it still has something to put on
 # the field and turns fully greyscale once it is spent. Measured across live
@@ -956,14 +972,43 @@ def loot_cart_ready(png: bytes) -> bool:
     reasons at once.** That frame's own body reads 暫無新的防禦獎勵, so a cart
     with nothing new in it is as good a candidate as a storage with no room —
     and a cart the loop emptied minutes ago is the commoner of the two. So this
-    answers whether pressing it would buy anything and stops there; **`empty`
-    and `locked` are not reliably separated today**, and what would separate
-    them is on the sheet: it writes `135843 / 1600000` beside the button, and
-    `split_numbers` already lifts the 1 600 000 out cleanly. The held number
-    lands over the plank and the purple bar and comes apart, which needs an ink
-    rule of its own and a frame of an empty cart to measure against.
+    answers whether pressing it would buy anything and stops there. What
+    separates the two is the line beside the button, which `loot_cart_held`
+    reads; this said that number needed an ink rule of its own, and it does not.
     """
     return _button_ratio(open_frame(png), CART_COLLECT_BOX, "green") >= CART_COLLECT_GREEN
+
+
+def loot_cart_held(png: bytes) -> int | None:
+    """How much elixir the cart's sheet says is in it, or None where it will not read.
+
+    **This is what tells a locked cart the loop just emptied from one standing
+    full behind a storage with no room**, which are opposite instructions: the
+    first is nothing to act on and the second is a village that has stopped
+    earning until something spends the elixir. `loot_cart_ready` reads the
+    button and so cannot say which.
+
+    **Gated on the sheet being up, and that gate is load-bearing rather than
+    tidy.** The builder base's own card row writes its `xN` corners at y 742-760
+    where these digits sit at y 747-767, so no box can separate them: ungated,
+    this answers on 315 of the 4 304 frames recorded here and on four of the
+    committed ones — `night_cards.png` reads 4 — and two of those 315 read
+    **0**, which is exactly the answer a caller would believe as an empty cart.
+
+    Two numbers or nothing. A `/` that matched a digit fuses the line into one
+    fourteen-digit number and a digit that failed splits it into three or more,
+    so anything else is handed back as unread. A glyph lost off **either** end
+    still leaves two — `split_numbers` drops the empty piece — so 135 843 can
+    come back as 35 843 or 13 584; both are positive, which is all the caller
+    branches on.
+    """
+    if not loot_cart_open(png):
+        return None
+    found = split_numbers(
+        ink_mask(open_frame(png).crop(CART_HELD_BOX), saturation=STOCK_INK_SATURATION),
+        CART_HELD_TOLERANCE,
+    )
+    return found[0] if len(found) == 2 else None
 
 
 def in_battle(png: bytes) -> bool:

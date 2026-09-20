@@ -161,6 +161,7 @@ from ai_coc.parsers.scout import (
     army_strength,
     counted_cards,
     loading_screen,
+    loot_cart_held,
     loot_cart_open,
     selected_cards,
     loot_cart_ready,
@@ -172,7 +173,7 @@ from ai_coc.parsers.scout import (
     searching_opponent,
 )
 from ai_coc.parsers.world import info_badges, current_world
-from ai_coc.parsers.glyphs import digits_from
+from ai_coc.parsers.glyphs import ink_mask, digits_from, split_numbers
 from ai_coc.ui.main_window import LIVE_INTERVAL, MainWindow
 from ai_coc.adapters.config import ConfigStore
 from ai_coc.parsers.village import parse_village, parse_village_text
@@ -1470,6 +1471,7 @@ class CrossingTests(unittest.TestCase):
         opens: bool = True,
         ready: bool = True,
         parked: bool = True,
+        held: int | None = None,
     ) -> tuple[MagicMock, object, MagicMock]:
         adb = MagicMock()
         with (
@@ -1479,6 +1481,7 @@ class CrossingTests(unittest.TestCase):
             patch.object(world_ui, "plate_panel_open", return_value=None),
             patch.object(world_ui, "loot_cart_open", return_value=opens),
             patch.object(world_ui, "loot_cart_ready", return_value=ready),
+            patch.object(world_ui, "loot_cart_held", return_value=held),
             patch.object(
                 world_ui, "read_builder_stock", side_effect=stocks, return_value=None
             ) as read,
@@ -1503,8 +1506,8 @@ class CrossingTests(unittest.TestCase):
         sheet used to be recognised by that button's green, so the whole trip
         answered that none of its three spots had found a cart.
         """
-        adb, report, read = self._cart(None, ready=False)
-        assert report == CartReport(outcome="locked")
+        adb, report, read = self._cart(None, ready=False, held=135_843)
+        assert report == CartReport(outcome="locked_holding", held=135_843)
         # Nothing was collected, so nothing is read afterwards either.
         assert read.call_count == 1
         assert world_ui.CART_COLLECT not in [call.args[:2] for call in adb.tap.call_args_list]
@@ -2841,6 +2844,85 @@ class FieldTests(unittest.TestCase):
 
 class LootCartTests(unittest.TestCase):
     """The builder base's 聖水車 sheet, which had no committed frame at all until now."""
+
+    def test_the_line_beside_the_button_says_what_the_cart_is_holding(self) -> None:
+        """Which is what tells a cart the loop emptied from one behind a full storage.
+
+        The button cannot: it is grey either way. The two are opposite
+        instructions — nothing to act on, against a village that has stopped
+        earning until something spends the elixir.
+        """
+        assert loot_cart_held((FRAMES / "night_cart_locked.png").read_bytes()) == 135_843
+
+    def test_the_held_line_is_read_between_a_digit_and_the_slash(self) -> None:
+        """One line of fourteen glyphs, so the margin is five bits and six rather than wide.
+
+        Below 19 the worst digit fails and the number comes apart; at 30 the `/`
+        matches a digit and the whole line fuses into one fourteen-digit number.
+        `CART_HELD_TOLERANCE` goes midway.
+        """
+        mask = ink_mask(
+            open_frame((FRAMES / "night_cart_locked.png").read_bytes()).crop(
+                scout_parser.CART_HELD_BOX
+            ),
+            saturation=scout_parser.STOCK_INK_SATURATION,
+        )
+        assert 19 <= scout_parser.CART_HELD_TOLERANCE <= 29
+        assert split_numbers(mask, 19) == [135_843, 1_600_000]
+        assert split_numbers(mask, 18) != [135_843, 1_600_000]
+        assert split_numbers(mask, 30) == [13_584_371_600_000]
+
+    def test_the_card_row_is_why_the_held_line_is_gated_on_the_sheet(self) -> None:
+        """No box can separate them, so the gate is the whole of what does.
+
+        The builder base writes its cards' `xN` corners at y 742-760 where these
+        digits sit at y 747-767. Ungated, this box answers on 315 of the 4 304
+        frames recorded here — and two of those read **0**, which is exactly the
+        answer a caller would believe as an empty cart.
+        """
+        for frame in ("night_cards.png", "night_battle.png", "night_stage2_cards.png"):
+            png = (FRAMES / frame).read_bytes()
+            assert loot_cart_open(png) is False, frame
+            assert loot_cart_held(png) is None, frame
+
+    def test_an_empty_cart_would_read_as_zero(self) -> None:
+        """Synthesised, because no frame of one exists and none can be made to.
+
+        Every locked cart recorded on this machine is the other state — two runs
+        with both builder base storages exactly at their read ceilings — so the
+        game has never been seen to grey 收集 over an empty cart. What this pins
+        is the reader: the `0` the line would need is already on this frame five
+        times over, in the same font and the same row.
+        """
+        png = (FRAMES / "night_cart_locked.png").read_bytes()
+        scene = Image.open(io.BytesIO(png)).convert("RGB")
+        # The six digits of 135 843 span x 647-735; the `/` and 1 600 000 stay.
+        zero = scene.crop((870, 740, 887, 775))
+        blank = scene.crop((900, 740, 1000, 775))
+        emptied = scene.copy()
+        emptied.paste(blank, (640, 740))
+        emptied.paste(zero, (647, 740))
+        raw = io.BytesIO()
+        emptied.save(raw, format="PNG")
+        assert loot_cart_held(raw.getvalue()) == 0
+
+    def test_a_line_that_came_apart_is_unread_rather_than_truncated(self) -> None:
+        """Two numbers or nothing, because the wrong count is the dangerous kind.
+
+        A digit that failed splits the line into three, and reported at face
+        value the leading piece of 135 843 is 13 — a positive number, so the
+        caller believes the cart is holding something and cannot tell it is off
+        by four orders of magnitude. Blanked here in the middle for that reason;
+        a glyph lost off either **end** still leaves two and is the case the
+        reader's docstring accepts.
+        """
+        png = (FRAMES / "night_cart_locked.png").read_bytes()
+        scene = Image.open(io.BytesIO(png)).convert("RGB")
+        # The third and fourth digits of 135 843, which span x 671-702.
+        scene.paste(scene.crop((900, 740, 940, 775)), (669, 740))
+        raw = io.BytesIO()
+        scene.save(raw, format="PNG")
+        assert loot_cart_held(raw.getvalue()) is None
 
     def test_a_sheet_whose_button_the_game_locked_is_still_a_sheet(self) -> None:
         """**The reading that reported a full cart as no cart.**

@@ -37,6 +37,7 @@ from ai_coc.parsers.scout import (
     battle_over,
     card_groups,
     loading_screen,
+    loot_cart_held,
     loot_cart_open,
     loot_cart_ready,
     read_builder_stock,
@@ -300,6 +301,23 @@ CART_CLOSE = (1338, 89)
 CART_SETTLE = 1.5
 
 
+def _locked_cart(sheet: bytes) -> CartReport:
+    """Which of the two a greyed 收集 means, off the amount written beside it.
+
+    The button cannot say: a cart this loop emptied minutes ago is nothing to
+    act on, and one holding loot behind a full 聖水 storage is a village that has
+    stopped earning until something spends it. Read off the frame
+    `loot_cart_open` accepted rather than the re-read taken to confirm the
+    button, which is gated on nothing.
+    """
+    held = loot_cart_held(sheet)
+    if held is None:
+        logger.warning("The cart is open, its 收集 greyed, and the line would not read")
+        return CartReport(outcome="locked")
+    logger.warning("The cart is open, its 收集 greyed, and it is holding %d", held)
+    return CartReport(outcome="locked_holding" if held else "locked_empty", held=held)
+
+
 def collect_cart(adb: AdbController, display: DisplayTarget) -> CartReport:
     """Empty the builder base's loot cart, and say what really happened there.
 
@@ -393,8 +411,7 @@ def collect_cart(adb: AdbController, display: DisplayTarget) -> CartReport:
     adb.tap(*CART_CLOSE, display)
     time.sleep(CART_SETTLE)
     if not ready:
-        logger.warning("The cart is open but its 收集 is greyed; nothing here can be collected")
-        return CartReport(outcome="locked")
+        return _locked_cart(sheet)
     after = read_builder_stock(adb.screenshot(display))
     if before is None or after is None:
         logger.warning("The storage bars would not read either side of the cart")

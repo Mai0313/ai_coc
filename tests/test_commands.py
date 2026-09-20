@@ -443,7 +443,9 @@ class CollectCommandTests(unittest.TestCase):
         own = {
             "collected": "收到聖水",
             "empty": "儲量沒有變",
-            "locked": "收集鈕是灰的",
+            "locked": "車上的數字讀不到",
+            "locked_holding": "先把聖水花掉",
+            "locked_empty": "推車是空的",
             "not_found": "三個候選點",
             "not_parked": "鏡頭沒辦法停回定位",
             "wrong_world": "不在建築大師基地",
@@ -451,10 +453,12 @@ class CollectCommandTests(unittest.TestCase):
         }
         assert set(own) == set(get_args(CartOutcome))
         for outcome, fragment in own.items():
-            line = commands.CART_LINES[outcome].format(elixir=1)
+            line = commands.CART_LINES[outcome].format(elixir=1, held=1)
             assert fragment in line, outcome
             others = [
-                commands.CART_LINES[other].format(elixir=1) for other in own if other != outcome
+                commands.CART_LINES[other].format(elixir=1, held=1)
+                for other in own
+                if other != outcome
             ]
             assert not any(fragment in line for line in others), outcome
 
