@@ -615,6 +615,38 @@ def plate_badges(png: bytes) -> dict[PlateRole, int]:
     return found
 
 
+def plate_panel_open(png: bytes, world: World) -> tuple[int, int] | None:
+    """Where to press to shut the plate panel over this village, or None for none.
+
+    **The panel is a village by every test the loops have**, which is what makes
+    it worth a reader of its own: it floats over the middle of the map rather
+    than filling the screen, so `current_world` reads the badge row above it and
+    `read_stock` reads the bars beside it, and `uncovered` hands a frame that
+    reads as a village straight back untouched. Nothing else clears it — the
+    button toggles, so a run that opened one and died leaves it up for whatever
+    comes next.
+
+    What it does cover is the middle, which is where `view_shift` looks: measured
+    on `day_builder_panel.png` it fills 60% of `ALIGN_BOX`, and a static overlay
+    that large pins the reader to (0, 0) whatever the camera does — true moves of
+    65, 131 and 261 px all read as no move at all.
+
+    Found by its running rows rather than by its own plate, reusing `panel_rows`
+    at no new threshold: over the 18 committed frames `current_world` names a
+    village on, the four with a panel are the four this answers for and the
+    other fourteen answer None. **An idle panel is invisible to it**, since a
+    plate with nothing running has no bars to find, and there is nothing else in
+    the band to go by — the sheet's own dark reads 0.00 to 0.20 of bar where a
+    real bar reads 0.83 to 0.97.
+    """
+    badges = plate_badges(png)
+    for role in ("lab", "builder"):
+        centre = badges.get(role)
+        if centre is not None and panel_rows(png, world, role) is not None:
+            return plate_button(centre)
+    return None
+
+
 def shield_state(png: bytes, centre: int) -> ShieldState | None:
     """What the shield plate says, or None where this frame will not resolve it.
 

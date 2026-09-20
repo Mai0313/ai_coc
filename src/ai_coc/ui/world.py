@@ -30,6 +30,7 @@ import logging
 from ai_coc.models import Crossing, CartReport
 from ai_coc.constants import COC_PACKAGE
 from ai_coc.adapters.adb import ZOOM_PINCHES
+from ai_coc.parsers.home import plate_panel_open
 from ai_coc.parsers.field import view_shift
 from ai_coc.parsers.scout import (
     in_battle,
@@ -192,13 +193,45 @@ def park_camera(adb: AdbController, display: DisplayTarget, world: World) -> boo
     cart on screen from the start. **Five unchecked swipes were the old answer
     and bought neither end.**
 
-    **It buys nothing against a full-screen panel**, which is the one village
-    this cannot see through: the plate row stays readable above one, so a caller
-    hands this a frame that is a village by every test here, the panel swallows
-    the pinch and the swipes alike, and the empty box then reads arrived. That
-    is not new and is not fixed here; it is why the callers that can clear a
-    panel do so first.
+    **The one cover this has to shut itself is the plate panel**, and it is not
+    a full-screen one. It floats over the middle of the map, so every village
+    test the callers have answers through it and `uncovered` hands it straight
+    back — while it fills 60% of the box this reader compares, which pins the
+    answer at (0, 0) whatever the camera does: measured, true moves of 65, 131
+    and 261 px all read as no move at all. No caller clears it, and nothing else
+    can, since the button toggles and a run that died with one open leaves it
+    up. So this presses it shut before it reads anything, and stands down rather
+    than parking if it will not go. **That makes this the one tap this function
+    takes**, which its swipes' own safety argument does not cover — it is at
+    y 48 on a frame every caller has already read as a village, so it cannot
+    land in a battle.
+
+    A full-screen panel is still not handled here and does not need to be: it
+    fails every village test, so no caller reaches this with one.
     """
+    png = adb.screenshot(display)
+    # **Before the pinch, to save the 2.6 s a park that is going to stand down
+    # would otherwise spend on it** — not because the pinch lands on the panel.
+    # It does not: a zoom out starts its fingers at x 300 and x 1300, outside
+    # all four measured panel boxes.
+    #
+    # **Two taps rather than three, and the parity is the point.** A detection
+    # that will not clear is answered an even number of times, so a false
+    # positive on village grass ends with the screen as it was found rather than
+    # with a panel this opened standing over it — which would be worse than what
+    # is being fixed, since a `False` from here ends a whole `walls` or
+    # `collect` run.
+    for _ in range(PANEL_TAPS):
+        button = plate_panel_open(png, world)
+        if button is None:
+            break
+        logger.info("A plate panel is over the village; pressing it shut before parking")
+        adb.tap(*button, display)
+        time.sleep(UNCOVER_SETTLE)
+        png = adb.screenshot(display)
+    else:
+        logger.warning("The plate panel would not shut; the camera cannot be read through it")
+        return False
     adb.zoom("out", ZOOM_PINCHES, COC_PACKAGE, display)
     # Keyed by the village being sailed to, so the push away from the village
     # being stood on is the other one's.
@@ -241,6 +274,9 @@ SAIL_GAP = 1.5
 # How many times to press `back` at whatever is covering the village. A building
 # panel goes in one, and the ceiling is there because a game still loading takes
 # none: `back` cannot hurry that, so more presses would only be more waiting.
+# How many times the plate panel is pressed at before this gives up. Even, so a
+# detection that will not clear leaves the screen as it was found.
+PANEL_TAPS = 2
 UNCOVER_TRIES = 3
 UNCOVER_SETTLE = 1.5
 
