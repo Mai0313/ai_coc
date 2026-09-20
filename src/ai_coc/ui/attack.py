@@ -1570,6 +1570,20 @@ class AttackRunner(ScreenRunner):
         time.sleep(CAMERA_SETTLE)
         moved = self._frame("camera")
         shift = view_shift(frame, moved, drift)
+        if shift is None:
+            # **Left alone rather than folded in as nothing.** A box with
+            # nothing in it cannot say whether the game took the drag, so both
+            # answers are guesses — this one bounds the error by the drag the
+            # loop itself asked for, where believing the tie-break's pick put it
+            # 1.4x the drag out: measured, `_clear_flank`'s (0, -110) answered
+            # (0, -154), and only its upward mirror happened to answer (0, 0).
+            logger.warning(
+                "Dragged the camera by %s and could not read how far it went; "
+                "every coordinate is still read against %s",
+                drift,
+                self._panned,
+            )
+            return moved
         self._panned = (self._panned[0] + shift[0], self._panned[1] + shift[1])
         logger.info(
             "Dragged the camera by %s; the village moved %s, now %s off where the battle opened",
