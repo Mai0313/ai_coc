@@ -42,6 +42,7 @@ from ai_coc.models import (
     RunnerState,
     ScreenPoint,
     ScreenSpots,
+    ShieldState,
     WallOptions,
     WallUpgrade,
     AttackReport,
@@ -6029,6 +6030,18 @@ class HomeHudTests(unittest.TestCase):
         assert held is not None
         assert held.up is True
         assert held.remaining == 6 * 3600 + 8 * 60
+
+    def test_a_shield_with_under_a_minute_left_is_still_a_shield(self) -> None:
+        """`up` is the countdown having read, not the countdown being non-zero.
+
+        This is the mutation deriving it introduces: `bool(self.remaining)`
+        passes every frame here, because no committed frame reads 0, and turns
+        a shield about to lapse into the loudest wrong line this project has —
+        **沒有護盾**,村莊現在可以被打 over a village that is still covered.
+        `_seconds_from` really can return 0, and `spell_out(0)` is 0 分鐘.
+        """
+        assert ShieldState(remaining=0).up is True
+        assert ShieldState().up is False
 
     def test_a_plate_under_a_panel_says_nothing_rather_than_claiming_a_shield(self) -> None:
         """Which is why an unreadable countdown is None and not `up=True`.

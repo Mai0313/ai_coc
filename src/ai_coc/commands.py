@@ -1665,13 +1665,17 @@ def _shield_line(shield: ShieldState | None, world: World | None) -> str:
     could not place is a reading to take again, and reported as the first it
     would stop a session watching the one countdown that costs loot when it
     lapses.
+
+    **There are two Nones here and they sit one level apart.** No `ShieldState`
+    is a plate this frame could not read; a `ShieldState` with no `remaining` is
+    the plate read and saying 無. A third line used to sit between them for a
+    shield up with an unreadable countdown, and `shield_state` could not produce
+    it — see `ShieldState.up` for why that combination is not a state.
     """
     if shield is None:
         return "這個世界沒有護盾" if world == "night" else "護盾的牌子讀不到,沒辦法說還剩多久"
-    if not shield.up:
-        return "**沒有護盾**,村莊現在可以被打"
     if shield.remaining is None:
-        return "有護盾,但倒數讀不到"
+        return "**沒有護盾**,村莊現在可以被打"
     return f"護盾還有 {spell_out(shield.remaining)}"
 
 
