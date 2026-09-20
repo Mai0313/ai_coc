@@ -24,7 +24,7 @@ from ai_coc.models import World, ScreenSpots, VillageStock, DisplayTarget, Stora
 from ai_coc.prompts import render
 from ai_coc.constants import COC_PACKAGE
 from ai_coc.adapters.ai import GeminiClient
-from ai_coc.adapters.adb import AdbController, AdbControlError
+from ai_coc.adapters.adb import ZOOM_PINCHES, AdbController, AdbControlError
 from ai_coc.parsers.scout import (
     read_stock,
     loading_screen,
@@ -298,7 +298,7 @@ class GameRunner(ScreenRunner):
     # zoom everything was measured at.
     _settled: bool = PrivateAttr(default=False)
 
-    def _settle_zoom(self) -> None:
+    def _settle_zoom(self, world: World | None) -> None:
         """Put the camera back at the far zoom, once per village these loops see.
 
         **Every one of these loops taps buildings by screen coordinate**, and
@@ -345,6 +345,12 @@ class GameRunner(ScreenRunner):
         runs. `_settle_game` already opens the attack loop off the plate row,
         which is why the six commands that skip it could not recover.
 
+        **But the two readings do not settle the same half.** Either says this
+        is a village, so either is enough for the pinch; only the plate row says
+        *which* village, and a park has to be told, because the two maps clamp
+        in opposite corners. So a frame the storages alone recognised gets the
+        scale and keeps whatever position it had — see the branch below.
+
         A pinch between wall batches would only be spending three seconds to
         confirm what this one already settled.
 
@@ -358,19 +364,31 @@ class GameRunner(ScreenRunner):
         own walk is only bounded at the far zoom and it is the one that has to
         know that.
         """
-        # Always the home village: `_home` sails off the builder base before it
-        # ever reaches the read that calls this, so there is no other village
-        # this can be looking at.
-        #
+        # **A village nobody could name gets the scale and not the position.**
+        # The two maps clamp in opposite corners, so a park has to be told which
+        # village it is pushing, and the one branch that reaches here with no
+        # world is the one where the plate row answered None and `read_stock` —
+        # which cannot tell the two villages apart — is the only test left.
+        # Picking a side there is a coin flip that runs the builder base away
+        # from the one corner its boat and its 聖水車 are moored at. `view` has
+        # made this call already, for the same reason and in the same shape: the
+        # pinch is safe on any screen and the swipe is not.
+        if world is None:
+            logger.warning(
+                "The storages read but the plate row could not place the village; "
+                "zooming out without parking"
+            )
+            self.adb.zoom("out", ZOOM_PINCHES, COC_PACKAGE, self.display)
+            return
         # **The answer is not acted on, and `_settled` is set either way.** A
         # park that fell short leaves the sweep grid worse rather than unusable,
         # and `_home` re-enters this on every one of its `HOME_TRIES` while
         # `_settled` is False — so returning here without setting it would spend
         # twenty full parks, minutes of swiping, on the one path that cannot
         # check a stop. The warning is in the log where a reader will find it.
-        park_camera(self.adb, self.display, "day")
+        park_camera(self.adb, self.display, world)
 
-    def _put_camera_back(self) -> None:
+    def _put_camera_back(self, world: World | None) -> None:
         """The settle, once a run, off whichever reading recognised the village.
 
         **Two callers because either reading can be the one that recognises
@@ -385,7 +403,7 @@ class GameRunner(ScreenRunner):
         were already chosen.
         """
         if not self._settled:
-            self._settle_zoom()
+            self._settle_zoom(world)
             self._settled = True
 
     def _home(self) -> VillageStock | None:
@@ -468,11 +486,11 @@ class GameRunner(ScreenRunner):
             # camera that makes the storages unreadable and for why nothing
             # below this line can recover from one.
             if world is not None and not self._settled:
-                self._put_camera_back()
+                self._put_camera_back(world)
                 continue
             stock = read_stock(png)
             if stock is not None:
-                self._put_camera_back()
+                self._put_camera_back(world)
                 self._seen_village = True
                 return stock
             if not self._seen_village and attempt < LOADING_PATIENCE:

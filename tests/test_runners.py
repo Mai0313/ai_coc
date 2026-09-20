@@ -247,8 +247,8 @@ class OpenedWalkTests(unittest.TestCase):
             assert runner._home() == STOCK
         # One call for both, because the pinch is the park's own first act: its
         # walk can only be read at the far zoom, so it stopped trusting callers
-        # to have got there. Always the home village — `_home` sails off the
-        # builder base long before it reaches the read that calls this.
+        # to have got there. The village comes off the plate row, which named
+        # this one day; a frame it cannot place is not parked at all.
         parked.assert_called_once_with(runner.adb, runner.display, "day")
 
     def test_restarting_the_game_resolves_the_display_again(self) -> None:
