@@ -32,6 +32,7 @@ from ai_coc.models import (
     NightPlan,
     PlateRole,
     AttackPlan,
+    CartReport,
     HeroReport,
     PlayedPlan,
     ViewReport,
@@ -892,7 +893,7 @@ def _empty_cart(world: World, battles: int, adb: AdbController, display: Display
         # automatically and a locked one used to be indistinguishable from a
         # trip that found nothing.
         cart = collect_cart(adb, display)
-        logger.info("Loot cart: %s", CART_LINES[cart.outcome].format(elixir=cart.elixir))
+        logger.info("Loot cart: %s", cart_line(cart))
     except AdbControlError as exc:
         logger.warning("The loot cart could not be emptied this time: %s", exc)
 
@@ -1687,12 +1688,19 @@ def _shield_line(shield: ShieldState | None, world: World | None) -> str:
 CART_LINES: dict[CartOutcome, str] = {
     "collected": "建築大師基地的推車收到聖水 {elixir}",
     "empty": "按了收集,但儲量沒有變,推車應該是空的",
-    "locked": "推車是開的,但收集鈕是灰的,按下去收不到東西 —— 去看聖水倉庫還有沒有空位",
+    "locked": "推車是開的,收集鈕是灰的,而車上的數字讀不到",
+    "locked_holding": "推車裡還有 {held} 聖水收不出來,收集鈕是灰的 —— 聖水倉庫應該滿了,先把聖水花掉",
+    "locked_empty": "推車是空的,收集鈕是灰的,沒有東西可以收",
     "not_found": "三個候選點都沒有打開推車",
     "not_parked": "鏡頭沒辦法停回定位,這一趟沒有去找聖水車",
     "wrong_world": "現在不在建築大師基地,沒有推車可以收",
     "unreadable": "按了收集,但有一邊的儲量條讀不到,不知道進帳多少",
 }
+
+
+def cart_line(cart: CartReport) -> str:
+    """The one line a person reads off a trip to the loot cart."""
+    return CART_LINES[cart.outcome].format(elixir=cart.elixir, held=cart.held)
 
 
 COLLECT_LINES: dict[CollectOutcome, str] = {
@@ -1711,7 +1719,7 @@ def collect_line(report: CollectReport) -> str:
     vocabulary of collector markers.
     """
     if report.cart is not None:
-        return CART_LINES[report.cart.outcome].format(elixir=report.cart.elixir)
+        return cart_line(report.cart)
     return COLLECT_LINES[report.outcome].format(
         markers=report.markers, gold=report.gold, elixir=report.elixir, dark=report.dark
     )

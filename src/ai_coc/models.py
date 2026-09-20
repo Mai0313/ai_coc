@@ -1243,7 +1243,15 @@ class CollectReport(BaseModel):
 # opening anything, and `unreadable` collected against a storage bar that would
 # not resolve on one side or the other.
 CartOutcome = Literal[
-    "collected", "empty", "locked", "not_found", "not_parked", "wrong_world", "unreadable"
+    "collected",
+    "empty",
+    "locked",
+    "locked_holding",
+    "locked_empty",
+    "not_found",
+    "not_parked",
+    "wrong_world",
+    "unreadable",
 ]
 
 
@@ -1258,18 +1266,31 @@ class CartReport(BaseModel):
     ordinary state of a village that has been farmed: both storages at capacity,
     135 843 elixir of a 1 600 000 cart, and a report saying 推車裡沒有東西可以收.
     **The cart was 8% full rather than standing full**, which is worth being
-    exact about — `locked` is what the button looks like, and the reason is the
-    caller's to read off the storage share.
+    exact about.
+
+    **`locked` then said what the button looked like and not why**, and the two
+    reasons behind it want opposite things done: a cart the loop emptied minutes
+    ago is nothing to act on, and one holding loot behind a full 聖水 storage is
+    a village that has stopped earning until something spends it. The sheet
+    writes the amount beside the button, so `locked_holding` and `locked_empty`
+    are read rather than inferred, and `locked` is kept for the button grey with
+    that line unread. **`locked_empty` has never been seen**: every locked cart
+    recorded on this machine is the other one, two runs with both builder base
+    storages exactly at their read ceilings, so what is tested is the reader
+    rather than the state.
 
     `elixir` is what the storage really gained rather than what the cart
     promised, for the reason `collect` judges its markers that way: a full
-    storage takes none of what it is handed.
+    storage takes none of what it is handed. `held` is the other number — what
+    the cart says is in it — and the two are only ever both set on a trip that
+    collected nothing.
     """
 
     model_config = ConfigDict(frozen=True)
 
     outcome: CartOutcome
     elixir: int = 0
+    held: int | None = None
 
 
 class BuildQueue(BaseModel):
