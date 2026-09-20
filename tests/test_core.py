@@ -5288,7 +5288,7 @@ class HomeTests(unittest.TestCase):
                 shared, "read_stock", side_effect=lambda _png: held if put_back else None
             ),
             patch.object(
-                shared.GameRunner, "_settle_zoom", side_effect=lambda: put_back.append(True)
+                shared.GameRunner, "_settle_zoom", side_effect=lambda _world: put_back.append(True)
             ) as settle,
             patch.object(AdbController, "back") as back,
         ):
@@ -5296,7 +5296,7 @@ class HomeTests(unittest.TestCase):
         assert settle.call_count == 1
         assert back.call_count == 0
 
-    def test_a_village_the_plate_row_misses_still_settles_the_camera(self) -> None:
+    def test_a_village_the_plate_row_misses_still_settles_the_zoom(self) -> None:
         """Widening the test, not swapping it: the storages catch what the plates drop.
 
         A gem shower drifts across the top of the home village and covers a
@@ -5304,6 +5304,9 @@ class HomeTests(unittest.TestCase):
         Gated on the plate row alone, such a frame hands its caller a stock
         with the camera never put back — and every caller reads a returned
         stock as the measured coordinates being valid now.
+
+        The settle still runs and still runs once. What it does on this branch
+        is the scale alone, which is the next test.
         """
         held = VillageStock(gold=1, elixir=1, dark=1)
         run = self._runner()
@@ -5323,6 +5326,64 @@ class HomeTests(unittest.TestCase):
             assert run._home() == held
         assert settle.call_count == 1
         assert back.call_count == 0
+        assert settle.call_args.args == (None,)
+
+    def test_a_village_nobody_could_place_is_zoomed_out_but_not_parked(self) -> None:
+        """The two maps clamp in opposite corners, so a park has to be told which.
+
+        This is the one branch that gets here without a world: the plate row
+        answered None and `read_stock` is the only village test left — and that
+        is the reader which provably cannot tell the two villages apart, since
+        the builder base's gems bar travels as a dark elixir row. Picking a side
+        would run that village's camera away from the one corner its boat and
+        its 聖水車 are moored at.
+
+        The pinch still goes, because it needs no village: zooming out past the
+        far limit does nothing, which is what makes it safe to send blind.
+        """
+        held = VillageStock(gold=1, elixir=1, dark=1)
+        run = self._runner()
+        with (
+            patch.object(shared.time, "sleep"),
+            patch.object(run, "_frame", return_value=b""),
+            patch.object(shared, "idle_disconnected", return_value=False),
+            patch.object(shared, "loading_screen", return_value=False),
+            patch.object(shared, "game_dialog", return_value=None),
+            patch.object(shared, "current_world", return_value=None),
+            patch.object(shared, "read_stock", return_value=held),
+            patch.object(shared, "park_camera") as parked,
+            patch.object(AdbController, "zoom") as zoomed,
+            patch.object(AdbController, "back") as back,
+        ):
+            assert run._home() == held
+        parked.assert_not_called()
+        assert zoomed.call_count == 1
+        assert back.call_count == 0
+
+    def test_the_gems_bar_is_why_the_storages_cannot_name_the_village(self) -> None:
+        """The premise, off real pixels rather than prose.
+
+        The builder base carries two badges and both sit left of the shield's
+        own, so covering either one leaves a row `current_world` will not read —
+        while `read_stock` answers straight through it, the gems bar arriving as
+        a dark elixir row. The home village needs to lose two of its three to
+        get there, which is what makes the builder base the exposed one.
+
+        Painted here rather than committed: it is a synthetic frame, and
+        `tests/frames/` is 33 MB of real screens whose pixel values are the
+        measurement.
+        """
+        night = Image.open(io.BytesIO((FRAMES / "world_night.png").read_bytes())).convert("RGB")
+        grass = night.getpixel((400, 30))
+        covered = night.copy()
+        ImageDraw.Draw(covered).rectangle((810, 8, 890, 40), fill=grass)
+        raw = io.BytesIO()
+        covered.save(raw, format="PNG")
+        hidden = raw.getvalue()
+        assert current_world(hidden) is None
+        held = read_stock(hidden)
+        assert held is not None
+        assert held.dark == 410_152
 
     def _sailing(self, run: shared.GameRunner, seen: list[str], landed: str) -> MagicMock:
         """Walk `_home` over these worlds with the crossing answering `landed`."""
