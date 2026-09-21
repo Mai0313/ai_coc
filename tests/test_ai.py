@@ -24,8 +24,12 @@ class FakeInteractions:
         self.output_text = output_text
         self.body: dict[str, Any] = {}
 
+    on_create: object = None
+
     def create(self, **body: object) -> object:
         self.body = body
+        if callable(self.on_create):
+            self.on_create()
         return FakeEvent("done", output_text=self.output_text, status="completed")
 
 
@@ -34,9 +38,16 @@ class FakeGenaiClient:
         self.interactions = interactions
 
 
-def _client(interactions: FakeInteractions) -> GeminiClient:
+def _client(interactions: FakeInteractions, sends: int = 1) -> GeminiClient:
+    """A client whose transport is faked, and which has `sends` HTTP requests behind it.
+
+    The fake replaces httpx, so the event hook that counts real requests never
+    fires — seeding the counter is what keeps the fake faithful to an SDK that
+    sent one request and answered.
+    """
     client = GeminiClient(api_key="k", settings=GeminiSetting(model="gemini-test"))
     client._client = FakeGenaiClient(interactions)
+    interactions.on_create = lambda: client._sends.extend([0.0] * sends)
     return client
 
 
@@ -56,14 +67,21 @@ class RequestTests(unittest.TestCase):
         assert image["mime_type"] == "image/png"
 
     def test_a_reply_that_outlasted_its_deadline_says_so(self) -> None:
-        """The deadline bounds one attempt and the SDK retries four times by default.
+        """Because `timeout` is not a deadline on the call and never was.
 
-        So a call can come back successfully at several times the number it was
-        given, and it comes back looking like any other reply. Measured, one
-        planning call returned after 145.2 s against a 30 s deadline, with the
-        battle it was planning already two minutes old — and the only trace was
-        a line indistinguishable from a fast one, which is why the guard was
-        taken for one that had held.
+        The SDK hands it to httpx, which spends it as four separate
+        per-operation waits, and `httpx.Timeout` has no total-deadline field at
+        all. The read clock restarts on every chunk received, so a reply that
+        keeps trickling in comes back successfully at any multiple of the number
+        it was given, looking like any other reply. Measured, one planning call
+        returned after 143.0 s against a 30 s deadline with the battle it was
+        planning already two minutes old.
+
+        **This docstring used to blame the SDK's retries, and that is measurably
+        wrong**: a timeout is never retried — `APITimeoutError` is wrapped as a
+        `PermanentError` and re-raised on the spot, one request only. Retries
+        multiply a *failing* call, which is why the attempt count is in the line
+        rather than the explanation.
         """
         interactions = FakeInteractions(output_text="遲到了")
         client = _client(interactions)
@@ -73,7 +91,11 @@ class RequestTests(unittest.TestCase):
             self.assertLogs("ai_coc.adapters.ai", level="WARNING") as logged,
         ):
             assert client._create("在嗎", None, timeout=20) == "遲到了"
-        assert "91.0s against a 20.0s deadline" in "\n".join(logged.output)
+        line = "\n".join(logged.output)
+        assert "91.0s against a 20.0s deadline" in line
+        # The count is what separates the two ways to outlast a deadline: one
+        # attempt is a slow reply, more is the SDK having retried something.
+        assert "in 1 HTTP attempt(s)" in line
 
     def test_a_reply_inside_its_deadline_says_nothing_extra(self) -> None:
         interactions = FakeInteractions(output_text="準時")
