@@ -47,6 +47,12 @@ class GeminiClient(BaseModel):
     settings: GeminiSetting
 
     _client: genai.Client | None = PrivateAttr(default=None)
+    # One entry per HTTP request the SDK really sent, appended by the httpx hook
+    # below and read by `_create`. A plain list rather than anything guarded,
+    # because a client is used from one thread at a time here — two overlapping
+    # calls would pool their counts, and the number is evidence rather than
+    # something a decision rests on.
+    _sends: list[float] = PrivateAttr(default_factory=list)
 
     @property
     def client(self) -> genai.Client:
@@ -54,13 +60,26 @@ class GeminiClient(BaseModel):
         if self._client is None:
             if not self.api_key.strip():
                 raise ValueError("尚未設定 Gemini API Key")
+            # **`client_args` is what carries the counter**, and the counter is
+            # here because the log could not answer the one question a slow
+            # reply raises. Measured over one run of twelve planning calls,
+            # eleven answered between 11.1 s and 143.0 s against a 30 s
+            # deadline, and nothing said whether a 143 s success was one slow
+            # reply or a 5xx retried until it won — the SDK logs neither, and
+            # those two send the next reader to opposite places. Verified
+            # against a local server that answers 503: the hook counts 4.
             self._client = genai.Client(
                 api_key=self.api_key.strip(),
-                http_options=types.HttpOptions(base_url=self.settings.base_url)
-                if self.settings.base_url.strip()
-                else None,
+                http_options=types.HttpOptions(
+                    base_url=self.settings.base_url.strip() or None,
+                    client_args={"event_hooks": {"request": [self._sent]}},
+                ),
             )
         return self._client
+
+    def _sent(self, request: object) -> None:
+        """One HTTP request went out, retries included."""
+        self._sends.append(time.monotonic())
 
     def _request(
         self,
@@ -107,6 +126,7 @@ class GeminiClient(BaseModel):
         """
         request = self._request(prompt, image_png, response_format)
         started = time.monotonic()
+        self._sends.clear()
         try:
             # create() also returns a Stream when stream=True, which this never sets.
             interaction = cast(
@@ -119,26 +139,38 @@ class GeminiClient(BaseModel):
         text = (interaction.output_text or "").strip()
         spent = time.monotonic() - started
         logger.info(
-            "Gemini replied in %.1fs with %d chars (status=%s)",
+            "Gemini replied in %.1fs with %d chars in %d HTTP attempt(s) (status=%s)",
             spent,
             len(text),
+            len(self._sends),
             interaction.status,
         )
-        # **A deadline that did not hold has to say so.** The one below is per
-        # attempt and the SDK retries four times by default, so a call can
-        # return successfully at several times the number it was given — and it
-        # comes back as an ordinary reply, indistinguishable from a fast one.
-        # Measured, one planning call returned after 145.2 s against a 30 s
-        # deadline, and the battle it was planning had been running unattended
-        # for nearly two minutes; the only record of it was a line that read
-        # like every other. Whoever is watching a run cannot be expected to
-        # divide by hand.
+        # **A deadline that did not hold has to say so, and say which way.**
+        # `timeout` is not a deadline on the call: the SDK hands it to httpx,
+        # which spends it as four separate per-operation waits — connect, read,
+        # write, pool — and `httpx.Timeout` has no total-deadline field at all.
+        # The read clock restarts on every chunk received, so a reply that keeps
+        # trickling in outlasts any number here and comes back as an ordinary
+        # success. Measured against a local server: silent for 20 s against a
+        # 2 s deadline raised `APITimeoutError` at 2.3 s, while one that sent a
+        # single byte per second for 12 s returned **successfully** at 12.0 s
+        # against the same 2 s.
+        #
+        # A retried failure is the other way to outlast it, and the two are
+        # indistinguishable from here — which is what the attempt count is for.
+        # A timeout is never retried (measured: one request, and
+        # `APITimeoutError` is wrapped as a `PermanentError`), so more than one
+        # attempt means the SDK was retrying something else, a 5xx among them.
+        # Measured, one planning call returned after 143.0 s against a 30 s
+        # deadline and the battle it was planning had run unattended for most of
+        # its three minutes, with nothing in the log to say why.
         if timeout is not None and spent > timeout:
             logger.warning(
-                "That reply took %.1fs against a %.1fs deadline, which bounds one attempt "
-                "rather than the call: the retries went past whatever was waiting on it",
+                "That reply took %.1fs against a %.1fs deadline, in %d HTTP attempt(s): "
+                "the number bounds each of httpx's per-operation waits rather than the call",
                 spent,
                 timeout,
+                len(self._sends),
             )
         logger.debug("Gemini reply: %s", text)
         if not text:
