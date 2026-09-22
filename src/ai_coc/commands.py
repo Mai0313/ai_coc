@@ -321,10 +321,12 @@ class FrameTicker(BaseModel):
             self._stop.wait(self.seconds)
 
 
-# A round that fought nothing is nearly always an army still training, which
-# takes minutes rather than seconds. Coming straight round again would walk the
-# same menus to read the same half-full camp, so a round that did not attack
-# waits before the next one is started.
+# How long a round that attacked nothing waits before the next one is started.
+# **The army is no longer one of the reasons.** Training is instant in the
+# current game, so a camp under the threshold never fills and that round ends
+# the series instead. What is left are the screens a fresh round would read the
+# same way a minute sooner: no opponent above the thresholds, a popup over the
+# village, an emulator that has just refused a command.
 IDLE_REST = 60
 
 # How long to give the game to paint a village before the world is decided.
@@ -337,9 +339,9 @@ WORLD_SETTLE_POLLS = 8
 # the player's own pacing rather than a measurement: the cart accumulates, so
 # the only cost of waiting is the risk of it capping out.
 CART_EVERY = 3
-# How often the barracks wait looks up to see whether it has been stood down.
-# Sleeping through the whole minute in one go would leave a stop unnoticed for
-# most of it, which reads as a stop that did nothing.
+# How often the wait between rounds looks up to see whether it has been stood
+# down. Sleeping through the whole minute in one go would leave a stop unnoticed
+# for most of it, which reads as a stop that did nothing.
 STOP_POLL = 2.0
 
 # How many rounds in a row may die on the emulator before the series gives up.
@@ -542,7 +544,7 @@ def stop_requested() -> bool:
 
 
 def _rest(seconds: float, should_stop: Callable[[], bool] = stop_requested) -> bool:
-    """Wait out the barracks, answering whether the wait was cut short.
+    """Wait between rounds, answering whether the wait was cut short.
 
     A stop that lands here is said out loud, because the state file goes back to
     `idle` on the way out and this line is then its only trace in `run.log`.
@@ -550,7 +552,7 @@ def _rest(seconds: float, should_stop: Callable[[], bool] = stop_requested) -> b
     try:
         for _ in range(int(seconds / STOP_POLL)):
             if should_stop():
-                logger.info("Stop requested while waiting for the army; ending the series")
+                logger.info("Stop requested between rounds; ending the series")
                 return True
             time.sleep(STOP_POLL)
     except KeyboardInterrupt:
@@ -1005,11 +1007,42 @@ def _lost_round(
         logger.error("The emulator has not answered for %d rounds; ending the series", runner.lost)
         return None
     # Handed back as an ordinary round that fought nothing, which is what it
-    # was. The caller then records it, rests the barracks wait, and comes round
+    # was. The caller then records it, rests between rounds, and comes round
     # again — and that rest is worth more here than anywhere else, since an
     # emulator that just refused a command is the last thing to fire another
     # one at immediately.
     return report
+
+
+def _series_over(report: AttackReport, played: int) -> bool:
+    """Whether this round's outcome stands the whole series down, and says why.
+
+    Two outcomes do, and both are read off the village before the search fee is
+    charged. A full storage is the goal being met, and `farm` owns where that
+    leads; there is nothing left for the round loop to farm for either way.
+
+    **An army short of the camp is the other one, and it is a fault rather than
+    a goal.** The wait between rounds was written for an army still training,
+    where a round that backed out would have been over the line a few minutes
+    later. Training is instant in the current game, so nothing about the camp
+    changes between rounds: measured 2026-09-22, a limited-time event ended and
+    took its own troops out of the saved army, leaving 20 of 340 against a
+    threshold of 306, and a `--repeat 0` run then walked the same menus once a
+    minute and attacked nothing at all. Only the player can re-arm that army, so
+    the run says so and stands down rather than filling the night with rounds
+    that cannot fight.
+    """
+    if report.stock_full:
+        logger.info("The storages are full; there is nothing left to farm for")
+        return True
+    if report.outcome == "army_short":
+        logger.error(
+            "The army is under half the camp and training is instant, so this will not clear "
+            "on its own; ending the series after %d round(s)",
+            played,
+        )
+        return True
+    return False
 
 
 def attack(
@@ -1091,8 +1124,8 @@ def attack(
         config.restart_every if options.restart_every is None else options.restart_every
     )
     # Battles since the last restart rather than rounds over the whole series,
-    # for the reason `AttackOptions.restart_every` gives: a round spent waiting
-    # for barracks did not tire the emulator out.
+    # for the reason `AttackOptions.restart_every` gives: a round that found
+    # nobody to fight did not tire the emulator out.
     fought = 0
     # Night battles since the run began, which is what the loot cart is emptied on.
     battles = 0
@@ -1154,7 +1187,7 @@ def attack(
             # A builder base round reports no `attacked` — there is no scout
             # screen to have advertised any loot — so the two villages answer
             # "did this round really fight" differently and the restart counter
-            # and the barracks wait both have to ask both ways.
+            # and the wait between rounds both have to ask both ways.
             fighting = report.attacked is not None or report.phases > 0
             if fighting:
                 fought += 1
@@ -1166,16 +1199,15 @@ def attack(
             logger.info("Attack finished: %s", round_line(report))
             _write_plan(options.plan_out, runner.played)
             _log_plan(options.plan_log, len(series.root), runner.played)
-            if report.stock_full:
-                logger.info("The storages are full; there is nothing left to farm for")
+            if _series_over(report, len(series.root)):
                 break
             # A stop that arrived mid-search comes back here having attacked
-            # nothing, and a run about to walk away has no reason to wait on
-            # barracks first. Falling through to the loop's own check is what
-            # logs why the series ended, and `run.log` is the only thing a
-            # background run leaves to read while it is still going.
+            # nothing, and a run about to walk away has no reason to wait
+            # first. Falling through to the loop's own check is what logs why
+            # the series ended, and `run.log` is the only thing a background run
+            # leaves to read while it is still going.
             if not fighting and not should_stop() and (rounds <= 0 or len(series.root) < rounds):
-                logger.info("Nothing was attacked; waiting %ds for the army", IDLE_REST)
+                logger.info("Nothing was attacked; waiting %ds before the next round", IDLE_REST)
                 if _rest(IDLE_REST, should_stop):
                     break
     return series
