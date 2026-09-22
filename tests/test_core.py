@@ -4847,7 +4847,7 @@ class RestartEveryTests(unittest.TestCase):
         assert runner.played is None
 
     def test_the_restart_counts_battles_rather_than_rounds(self) -> None:
-        """A round spent waiting for barracks did not tire the emulator out.
+        """A round that found nobody to fight did not tire the emulator out.
 
         Five rounds, two of which fought nothing. Counting rounds would restart
         after the second one; counting battles waits until the fourth, which is

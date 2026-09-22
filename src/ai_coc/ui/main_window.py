@@ -684,13 +684,15 @@ class MainWindow(QMainWindow):
                 logger.info("這一輪沒有打成任何一場")
                 return
             report = series.root[-1]
-            # The storage is full, so the next pass would only read it again and
-            # come back here. Stopping is the whole point of the threshold, and
-            # this is the only line saying why the automation switched itself
+            # Two outcomes end the run rather than the round, and the next pass
+            # would only read the same village and come back here: a full
+            # storage is the threshold being met, and an army under half the
+            # camp is one only the player can re-arm, since training is instant.
+            # This is the only line saying why the automation switched itself
             # off — so it is the outcome's own sentence without the counts
-            # `round_line` appends, which that round has none of anyway: it
-            # returns before any opponent is scouted.
-            if report.stock_full:
+            # `round_line` appends, which neither round has anyway: both return
+            # before any opponent is scouted.
+            if report.stock_full or report.outcome == "army_short":
                 logger.info("%s", commands.ROUND_LINES[report.outcome])
                 self.stop_automation()
                 return

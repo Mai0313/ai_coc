@@ -408,7 +408,8 @@ UNREADABLE_ATTEMPTS = 3
 BATTLE_TIMEOUT = 240
 # Two things routinely cover the home village between runs: a building panel
 # left open by a stray tap, which back closes, and the idle-disconnect dialog,
-# which a loop that waits minutes for barracks will certainly meet. That one is
+# which a loop that leaves the game sitting between rounds will certainly meet.
+# That one is
 # answered by restarting the game rather than by tapping its 重新登入遊戲 button:
 # the button reloads the game anyway, so the two cost the same seconds, and the
 # tap also costs a hard-coded position belonging to this emulator's resolution
@@ -444,9 +445,25 @@ SERVER_POLLS = 270
 # it is a poll rather than a tap.
 RESULT_ATTEMPTS = 4
 RESULT_RETRY_DELAY = 3
-# The army screen comes up before the search fee is charged, so a half-trained
-# army can still back out for free rather than paying to attack with nothing.
-MIN_ARMY_RATIO = 0.9
+# The army screen comes up before the search fee is charged, so an army too
+# small to attack with backs out for free rather than paying for a battle it
+# cannot fight.
+#
+# **Half rather than the 0.9 this started at, because training is instant.** The
+# old line was drawn for an army still filling, where anything under it would be
+# over it a few minutes later. What it catches now is a saved army that does not
+# fill the camp, and the ordinary reason for that is a barracks upgrade nobody
+# has re-armed yet — an army worth a little less than the camp allows, which
+# fights perfectly well and is not worth standing a run down for. Under half is
+# the other thing: measured 2026-09-22, a limited-time event ended and took its
+# troops out of the saved army, leaving 20 of 340. That one never clears, which
+# is why `commands.attack` ends the series on it rather than coming round again.
+MIN_ARMY_RATIO = 0.5
+
+
+def _too_small(strength: tuple[int, int]) -> bool:
+    """Whether a reading of the army screen is too far under the camp to fight with."""
+    return strength[0] < strength[1] * MIN_ARMY_RATIO
 
 
 def clear_of_controls(point: tuple[int, int]) -> tuple[int, int]:
@@ -2291,7 +2308,7 @@ class AttackRunner(ScreenRunner):
         took neither the machine nor a single troop. Counted as a deployment
         those rounds reported 已進攻並回營 for a battle nothing was played in,
         and `commands.attack` took them for real battles too — toward the
-        emulator restart, toward the loot cart, and past the barracks wait.
+        emulator restart, toward the loot cart, and past the wait between rounds.
 
         **The second stage opens on a countdown with the surviving machine's
         card preselected**, so `stage` is what says whether to drop it the
@@ -2613,6 +2630,37 @@ class AttackRunner(ScreenRunner):
         logger.info("Attack run starts, thresholds=%s", self.thresholds.model_dump())
         return self._run_day()
 
+    def _army_short(self) -> bool:
+        """Whether the army screen says this round has nothing to attack with.
+
+        **Read twice, because this answer ends the whole series.**
+        `split_numbers` cuts a row wherever a glyph misses its template rather
+        than dropping it, so one poor leading digit turns `305/305` into
+        `(5, 305)` — two numbers, which is exactly what `army_strength`'s own
+        `len == 2` guard accepts, and the same shape a real short army has. That
+        misread used to cost `IDLE_REST` and now costs the night, so the second
+        capture is 0.9 s on a path that was about to walk away anyway, and a
+        fault that is real reads the same twice.
+
+        Anything else plays the round — a frame that will not read at all, a
+        camp back over the line — because the two mistakes cost very different
+        things: a battle fought with too few troops costs nothing, and a night
+        stood down for a misread costs every round of it.
+        """
+        strength = army_strength(self._frame("army"))
+        if strength is None or not _too_small(strength):
+            return False
+        second = army_strength(self._frame("army-again"))
+        if second is not None and _too_small(second):
+            logger.info("Army is only %d/%d; backing out before the search fee", *second)
+            return True
+        logger.info(
+            "Army first read as %d/%d and then as %s; playing the round",
+            *strength,
+            f"{second[0]}/{second[1]}" if second else "unreadable",
+        )
+        return False
+
     def _run_day(self) -> AttackReport:
         """One home village attack: scout opponents, weigh their loot, fight one."""
         # The same runner plays round after round, and the loot it last saw is
@@ -2653,9 +2701,7 @@ class AttackRunner(ScreenRunner):
             return full
         self._tap(FIND_MATCH)
         time.sleep(2)
-        strength = army_strength(self._frame("army"))
-        if strength and strength[0] < strength[1] * MIN_ARMY_RATIO:
-            logger.info("Army is only %d/%d; backing out before the search fee", *strength)
+        if self._army_short():
             self.adb.back(self.display)
             return AttackReport(outcome="army_short")
         self._tap(ARMY_ATTACK)

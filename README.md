@@ -75,7 +75,7 @@ ai_coc attack --restart-every 0  # skip the scheduled emulator restart this run
 ai_coc attack --stop-at 0        # attack however full the storages are
 ```
 
-**The emulator is restarted every so many battles**, because MuMu drops frames after running for a while and nothing short of a restart clears it. How many sits in the settings file (`restart_every`, 50 by default) rather than being hard-coded, because that number is whatever a given machine turns out to need — `--restart-every` overrides it for one run, and `0` there turns it off the same way the loot flags do. It counts battles rather than rounds, so a night mostly spent waiting on the barracks does not spend restarts on an emulator that has barely been working.
+**The emulator is restarted every so many battles**, because MuMu drops frames after running for a while and nothing short of a restart clears it. How many sits in the settings file (`restart_every`, 50 by default) rather than being hard-coded, because that number is whatever a given machine turns out to need — `--restart-every` overrides it for one run, and `0` there turns it off the same way the loot flags do. It counts battles rather than rounds, so a night mostly spent searching for an opponent does not spend restarts on an emulator that has barely been working.
 
 `stop` marks `~/.ai_coc/state.json` and returns at once. The loop reads it between battles and between opponents, never mid-battle, so the worst case is one more battle: abandoning one halfway would leave the army on the field and the game on a screen the next run cannot get home from. With nothing running it says so, rather than leaving a request nobody will take.
 

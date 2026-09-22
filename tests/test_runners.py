@@ -997,8 +997,9 @@ class DayRoundTests(unittest.TestCase):
         """Play one round over canned scout readings.
 
         `settings` covers what the round is judged against: `strength` for the
-        army screen, `max_skips` and `stop` for the runner, all defaulting to a
-        full army that never stops with the 500k gold threshold.
+        army screen, or `strengths` for a round whose two readings of it differ,
+        plus `max_skips` and `stop` for the runner, all defaulting to a full
+        army that never stops with the 500k gold threshold.
         """
         runner = AttackRunner(
             adb=_adb(),
@@ -1015,7 +1016,9 @@ class DayRoundTests(unittest.TestCase):
             patch.object(runner, "_tap", side_effect=taps.append),
             patch.object(runner, "_frame", return_value=b""),
             patch.object(
-                attack, "army_strength", return_value=settings.get("strength", (305, 305))
+                attack,
+                "army_strength",
+                side_effect=settings.get("strengths", [settings.get("strength", (305, 305))] * 4),
             ),
             patch.object(
                 runner,
@@ -1037,13 +1040,48 @@ class DayRoundTests(unittest.TestCase):
         deployed.assert_called_once_with(b"scout")
         assert taps == [attack.FIND_MATCH, attack.ARMY_ATTACK, attack.NEXT_TARGET]
 
-    def test_a_half_trained_army_backs_out_before_the_fee(self) -> None:
+    def test_an_army_under_half_the_camp_backs_out_before_the_fee(self) -> None:
         report, taps, deployed, back = self._round([RICH], strength=(100, 305))
         assert report.attacked is None
         assert report.outcome == "army_short"
         deployed.assert_not_called()
         back.assert_called_once()
         assert taps == [attack.FIND_MATCH]
+
+    def test_one_bad_reading_of_the_army_is_checked_before_the_series_is_given_up(self) -> None:
+        """A misread is the same shape as a real short army, and now costs the night.
+
+        `split_numbers` cuts the row wherever a glyph misses its template rather
+        than dropping it, so one poor leading digit turns `305/305` into
+        `(5, 305)` — two numbers, so the reader's own guard passes it. The
+        second reading is what separates the two, and a fault that is real
+        reads the same twice.
+        """
+        report, _, deployed, back = self._round([RICH], strengths=[(5, 305), (305, 305)])
+        assert report.outcome == "took_loot"
+        deployed.assert_called_once_with(b"scout")
+        back.assert_not_called()
+
+    def test_a_second_reading_that_will_not_resolve_plays_the_round(self) -> None:
+        """Unreadable is not agreement, and the two mistakes cost different things.
+
+        A battle fought with too few troops costs nothing; a night stood down
+        for a frame nobody could read costs every round of it.
+        """
+        report, _, deployed, _ = self._round([RICH], strengths=[(5, 305), None])
+        assert report.outcome == "took_loot"
+        deployed.assert_called_once_with(b"scout")
+
+    def test_an_army_short_of_the_camp_but_over_half_still_attacks(self) -> None:
+        """A camp bigger than the saved army is a barracks upgrade nobody re-armed.
+
+        Training is instant, so that army is as full as it will ever be, and it
+        still fights. Standing the run down for it would cost every round from
+        the upgrade until the player notices.
+        """
+        report, _, deployed, _ = self._round([RICH], strength=(220, 305))
+        assert report.outcome == "took_loot"
+        deployed.assert_called_once_with(b"scout")
 
     def test_too_many_skips_ends_the_search_through_the_button(self) -> None:
         report, taps, deployed, _ = self._round([POOR, POOR], max_skips=1)

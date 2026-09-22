@@ -580,8 +580,8 @@ RETURN_HOME_GREEN = 0.23
 ABANDON_BOX = (20, 636, 200, 660)
 ABANDON_RED = 0.45
 
-# 還在嗎 / 你因閒置過久而中斷連線. A loop that spends minutes waiting for barracks
-# will meet this, and nothing else clears it: the game stops responding to taps
+# 還在嗎 / 你因閒置過久而中斷連線. A loop that leaves the game sitting between
+# rounds will meet this, and nothing else clears it: the game stops responding to taps
 # until 重新登入遊戲 is pressed. Measured, its flat grey panel fills 0.97 of this
 # box where a village reads 0.14 and even the result screen only 0.45.
 #

@@ -27,6 +27,7 @@ from ai_coc.models import (
     PlateJob,
     ProbeRay,
     AppConfig,
+    LootOffer,
     NightPlan,
     AttackPlan,
     CartReport,
@@ -954,6 +955,61 @@ class AttackSeriesAdapterFailureTests(unittest.TestCase):
         ])
         assert len(rounds) == 6
         assert rounds[-1].stock_full
+
+
+class AttackSeriesArmyShortTests(unittest.TestCase):
+    """An army under the threshold ends the series instead of resting on it.
+
+    Training is instant in the current game, so a camp that cannot reach
+    `MIN_ARMY_RATIO` never will. Measured 2026-09-22: a limited-time event ended
+    and took its troops out of the saved army, leaving 20 of 340 against a
+    threshold of 306, and every round after that backed out before the search
+    fee — a `--repeat 0` run walked the same menus once a minute and attacked
+    nothing.
+    """
+
+    def _series(self, played: list) -> tuple[list, MagicMock]:
+        runner = MagicMock(name="AttackRunner")
+        runner.run.side_effect = played
+        runner.lost = 0
+        runner.world = "day"
+        with (
+            patch.object(commands, "_controller", return_value=_adb()),
+            patch.object(commands.ConfigStore, "load", return_value=AppConfig()),
+            patch.object(commands, "_planner", return_value=None),
+            patch.object(commands, "_settle_game", return_value=DISPLAY),
+            patch.object(commands, "_pick_world", return_value="day"),
+            patch.object(commands, "FrameTicker"),
+            patch.object(commands, "AttackRunner", return_value=runner),
+            patch.object(commands, "_rest", return_value=False) as rest,
+        ):
+            series = commands.attack(AttackOptions(rounds=0), MagicMock(return_value=False))
+        return series.root, rest
+
+    def test_an_army_short_round_ends_the_series_holding_what_it_played(self) -> None:
+        fought = LootOffer(gold=1, elixir=1, dark=1)
+        rounds, rest = self._series([
+            AttackReport(outcome="took_loot", attacked=fought),
+            AttackReport(outcome="army_short"),
+            AttackReport(outcome="took_loot", attacked=fought),
+        ])
+        assert [report.outcome for report in rounds] == ["took_loot", "army_short"]
+        # And it leaves without spending the wait between rounds on a camp that
+        # will read the same a minute later.
+        rest.assert_not_called()
+
+    def test_a_round_that_found_nobody_still_comes_round_again(self) -> None:
+        """The break is `army_short`'s alone: every other empty round rests and retries.
+
+        No opponent above the thresholds is a matchmaker that will offer a
+        different set next time, which is exactly what the wait is still for.
+        """
+        rounds, rest = self._series([
+            AttackReport(outcome="no_opponent"),
+            AttackReport(outcome="stock_full"),
+        ])
+        assert [report.outcome for report in rounds] == ["no_opponent", "stock_full"]
+        rest.assert_called_once()
 
 
 class SettleGameTests(unittest.TestCase):

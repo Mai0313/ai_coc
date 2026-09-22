@@ -992,7 +992,10 @@ class NightPlan(BaseModel):
 # villages, which is the whole thing this replaced.
 #
 # The rest never reached a battle. `army_short` and `stock_full` are the two
-# deliberate stand-downs, both before the search fee. `no_opponent` is a
+# deliberate stand-downs, both before the search fee, and both end the whole
+# series rather than the round: a storage does not empty itself while a run is
+# going, and training is instant in the current game, so an army under the
+# threshold is a composition that cannot reach it. `no_opponent` is a
 # matchmaker or a scout screen that never produced one, `all_skipped` is every
 # candidate under the thresholds, and `stopped` is somebody asking for the run
 # to end — including during the server wait. `no_attack_menu` is a screen the
@@ -1102,10 +1105,10 @@ class AttackOptions(BaseModel):
     # alone. That is how a run being watched gets to skip it.
     #
     # **Battles, not rounds**, wherever the number comes from. A round that found
-    # no opponent, or backed out on a half-trained army, barely touched the
-    # emulator — counting those would spend a restart on a run that has mostly
-    # been waiting for barracks, and worse, the rounds a restart itself costs
-    # would feed back and make it restart more often still.
+    # no opponent, or spent itself waiting out a loading screen, barely touched
+    # the emulator — counting those would spend a restart on a run that has
+    # mostly been waiting, and worse, the rounds a restart itself costs would
+    # feed back and make it restart more often still.
     restart_every: int | None = None
     # Overrides `AppConfig.stop_at` for one run, with the same `None` against `0`
     # split: omitted keeps the file's percentage, zero never stands the run
