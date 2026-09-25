@@ -407,6 +407,31 @@ class CollectCommandTests(unittest.TestCase):
         ):
             return adb, cart, runner, commands.collect()
 
+    def test_the_village_is_read_once_it_has_painted_not_off_the_first_frame(self) -> None:
+        """Every branch but the cart's sails home when it meets the builder base.
+
+        Measured live: `collect` started 13 s after a builder base attack stood
+        down read a frame that was no village yet, took the home branch, and
+        sailed off the cart it had been run for. Only the world is waited for,
+        since both branches park the camera on their own.
+        """
+        adb = _adb()
+        with (
+            patch.object(commands.time, "sleep") as slept,
+            patch.object(commands, "_controller", return_value=adb),
+            patch.object(commands, "_settle_game") as settled,
+            patch.object(commands, "current_world", side_effect=[None, None, "night"]),
+            patch.object(
+                commands, "collect_cart", return_value=CartReport(outcome="empty")
+            ) as cart,
+            patch.object(commands, "UpkeepRunner") as runner,
+        ):
+            commands.collect()
+        cart.assert_called_once_with(adb, DISPLAY)
+        runner.assert_not_called()
+        assert slept.call_count == 2
+        settled.assert_not_called()
+
     def test_the_builder_base_empties_its_cart_instead_of_sweeping(self) -> None:
         adb, cart, runner, report = self._cart(CartReport(outcome="collected", elixir=300_000))
         # No collector was tapped, because that village has none: the cart comes
