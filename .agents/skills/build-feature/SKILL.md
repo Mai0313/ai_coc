@@ -54,7 +54,7 @@ uv run ai_coc read <png>                                          # 現有 parse
 - **每個結構化的值都是 Pydantic model**, 放 `models.py`. 不要 dataclass, TypedDict, 或在函式之間傳裸 dict
 - **座標寫死 1600x900**, 別的尺寸要 raise, 照抄現有的 parser
 - **每次截圖跟每次輸入都要指定 display**
-- **會花資源的能力要有程式層的 guard**. 授權目前只存在於 prompt 裡, prompt 底下沒有任何東西在擋
+- **會花資源的能力要有程式層的 guard**, 而且要靠結構擋, 不是靠檢查: 城牆迴圈只點從聖水圖示往左數出來的位置, 所以城牆戒指跟寶石按鈕根本點不到; 英雄殿堂用 `GEM_GREEN` 認出花寶石的按鈕. 新的花錢能力也要有自己的一道, `CLAUDE.md` 搜 `Spending is guarded by structure`
 
 ## 做的流程
 
