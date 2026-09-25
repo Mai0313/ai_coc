@@ -1274,19 +1274,20 @@ class CartReport(BaseModel):
     **`locked` then said what the button looked like and not why**, and the two
     reasons behind it want opposite things done: a cart the loop emptied minutes
     ago is nothing to act on, and one holding loot behind a full 聖水 storage is
-    a village that has stopped earning until something spends it. The sheet
+    a village banking elixir in its cart, which stops earning only once the cart
+    is full too. The sheet
     writes the amount beside the button, so `locked_holding` and `locked_empty`
     are read rather than inferred, and `locked` is kept for the button grey with
-    that line unread. **`locked_empty` has never been seen**: every locked cart
-    recorded on this machine is the other one, two runs with both builder base
-    storages exactly at their read ceilings, so what is tested is the reader
-    rather than the state.
+    that line unread. **`locked_empty` is the game greying the button over an
+    empty cart**, which it does whatever the storages hold: measured on the
+    committed frame, 0 / 1 600 000 with the builder base's elixir at 3%.
 
     `elixir` is what the storage really gained rather than what the cart
     promised, for the reason `collect` judges its markers that way: a full
     storage takes none of what it is handed. `held` is the other number — what
-    the cart says is in it — and the two are only ever both set on a trip that
-    collected nothing.
+    the cart says is in it — and `capacity` the one after the slash, the most it
+    will hold. Those two come as a pair, and only ever on a trip that collected
+    nothing.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -1294,6 +1295,7 @@ class CartReport(BaseModel):
     outcome: CartOutcome
     elixir: int = 0
     held: int | None = None
+    capacity: int | None = None
 
 
 class BuildQueue(BaseModel):

@@ -161,7 +161,7 @@ from ai_coc.parsers.scout import (
     army_strength,
     counted_cards,
     loading_screen,
-    loot_cart_held,
+    loot_cart_load,
     loot_cart_open,
     selected_cards,
     loot_cart_ready,
@@ -1151,6 +1151,8 @@ class NightAttackTests(unittest.TestCase):
             stop_at=90,
         )
         runner._capacity = StorageCapacity(gold=2_050_000, elixir=2_450_000)
+        # And the cart, which that village banks elixir in past its storages.
+        runner._cart = CartReport(outcome="locked_holding", held=1_500_000, capacity=1_600_000)
         with (
             patch.object(AttackRunner, "_open_attack_menu", return_value=b""),
             patch.object(
@@ -1471,7 +1473,7 @@ class CrossingTests(unittest.TestCase):
         opens: bool = True,
         ready: bool = True,
         parked: bool = True,
-        held: int | None = None,
+        held: tuple[int, int] | None = None,
     ) -> tuple[MagicMock, object, MagicMock]:
         adb = MagicMock()
         with (
@@ -1481,7 +1483,7 @@ class CrossingTests(unittest.TestCase):
             patch.object(world_ui, "plate_panel_open", return_value=None),
             patch.object(world_ui, "loot_cart_open", return_value=opens),
             patch.object(world_ui, "loot_cart_ready", return_value=ready),
-            patch.object(world_ui, "loot_cart_held", return_value=held),
+            patch.object(world_ui, "loot_cart_load", return_value=held),
             patch.object(
                 world_ui, "read_builder_stock", side_effect=stocks, return_value=None
             ) as read,
@@ -1506,8 +1508,8 @@ class CrossingTests(unittest.TestCase):
         sheet used to be recognised by that button's green, so the whole trip
         answered that none of its three spots had found a cart.
         """
-        adb, report, read = self._cart(None, ready=False, held=135_843)
-        assert report == CartReport(outcome="locked_holding", held=135_843)
+        adb, report, read = self._cart(None, ready=False, held=(135_843, 1_600_000))
+        assert report == CartReport(outcome="locked_holding", held=135_843, capacity=1_600_000)
         # Nothing was collected, so nothing is read afterwards either.
         assert read.call_count == 1
         assert world_ui.CART_COLLECT not in [call.args[:2] for call in adb.tap.call_args_list]
@@ -2852,7 +2854,10 @@ class LootCartTests(unittest.TestCase):
         instructions — nothing to act on, against a village that has stopped
         earning until something spends the elixir.
         """
-        assert loot_cart_held((FRAMES / "night_cart_locked.png").read_bytes()) == 135_843
+        assert loot_cart_load((FRAMES / "night_cart_locked.png").read_bytes()) == (
+            135_843,
+            1_600_000,
+        )
 
     def test_the_held_line_is_read_between_a_digit_and_the_slash(self) -> None:
         """One line of fourteen glyphs, so the margin is five bits and six rather than wide.
@@ -2883,28 +2888,29 @@ class LootCartTests(unittest.TestCase):
         for frame in ("night_cards.png", "night_battle.png", "night_stage2_cards.png"):
             png = (FRAMES / frame).read_bytes()
             assert loot_cart_open(png) is False, frame
-            assert loot_cart_held(png) is None, frame
+            assert loot_cart_load(png) is None, frame
 
-    def test_an_empty_cart_would_read_as_zero(self) -> None:
-        """Synthesised, because no frame of one exists and none can be made to.
+    def test_an_empty_cart_reads_as_zero_of_its_ceiling(self) -> None:
+        """The game greys 收集 over an empty cart too, whatever the storages hold.
 
-        Every locked cart recorded on this machine is the other state — two runs
-        with both builder base storages exactly at their read ceilings — so the
-        game has never been seen to grey 收集 over an empty cart. What this pins
-        is the reader: the `0` the line would need is already on this frame five
-        times over, in the same font and the same row.
+        Captured with the builder base's elixir at 3%, so the grey there is the
+        cart having nothing in it rather than a storage with no room.
+        """
+        png = (FRAMES / "night_cart_empty.png").read_bytes()
+        assert loot_cart_open(png) is True
+        assert loot_cart_ready(png) is False
+        assert loot_cart_load(png) == (0, 1_600_000)
+
+    def test_a_cart_holding_more_than_it_takes_is_unread(self) -> None:
+        """A ceiling missing its last glyph is a tenth of the real one.
+
+        Believed, a cart holding 150 000 would read as full and end the run with
+        nearly all of it empty. Past the misread ceiling the pair cannot be
+        true, and that much is caught.
         """
         png = (FRAMES / "night_cart_locked.png").read_bytes()
-        scene = Image.open(io.BytesIO(png)).convert("RGB")
-        # The six digits of 135 843 span x 647-735; the `/` and 1 600 000 stay.
-        zero = scene.crop((870, 740, 887, 775))
-        blank = scene.crop((900, 740, 1000, 775))
-        emptied = scene.copy()
-        emptied.paste(blank, (640, 740))
-        emptied.paste(zero, (647, 740))
-        raw = io.BytesIO()
-        emptied.save(raw, format="PNG")
-        assert loot_cart_held(raw.getvalue()) == 0
+        with patch.object(scout_parser, "split_numbers", return_value=[1_500_000, 160_000]):
+            assert loot_cart_load(png) is None
 
     def test_a_line_that_came_apart_is_unread_rather_than_truncated(self) -> None:
         """Two numbers or nothing, because the wrong count is the dangerous kind.
@@ -2922,7 +2928,7 @@ class LootCartTests(unittest.TestCase):
         scene.paste(scene.crop((900, 740, 940, 775)), (669, 740))
         raw = io.BytesIO()
         scene.save(raw, format="PNG")
-        assert loot_cart_held(raw.getvalue()) is None
+        assert loot_cart_load(raw.getvalue()) is None
 
     def test_a_sheet_whose_button_the_game_locked_is_still_a_sheet(self) -> None:
         """**The reading that reported a full cart as no cart.**
@@ -2992,7 +2998,7 @@ class LootCartTests(unittest.TestCase):
         on the one beside the bar, which is what the second box is for.
         """
         for frame in sorted(FRAMES.glob("*.png")):
-            if frame.name == "night_cart_locked.png":
+            if frame.name.startswith("night_cart_"):
                 continue
             assert loot_cart_open(frame.read_bytes()) is False, frame.name
 

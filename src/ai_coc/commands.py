@@ -869,15 +869,21 @@ def _pick_world(adb: AdbController, display: DisplayTarget, wanted: World | None
     return None
 
 
-def _empty_cart(world: World, battles: int, adb: AdbController, display: DisplayTarget) -> None:
+def _empty_cart(
+    world: World, battles: int, adb: AdbController, display: DisplayTarget, watched: bool = False
+) -> None:
     """Fetch the builder base's elixir every few battles, since it is not paid in.
 
     **That village pays its elixir into a cart rather than into the storages**,
     so a series that never empties it farms half of what it wins. Every few
     battles rather than every one: the cart accumulates — measured, it holds a
     million — while emptying it costs a camera drag to the far corner and back.
+
+    Not after a round that `watched` the cart itself, which every round does
+    once the storages are full: the next one will look before its attack, and
+    this trip would be the same one twice.
     """
-    if world != "night" or not battles or battles % CART_EVERY:
+    if world != "night" or watched or not battles or battles % CART_EVERY:
         return
     # **A failed trip to the cart is not a reason to lose the series.** It is a
     # side errand between rounds, and it opens with a capture of its own, so an
@@ -1195,7 +1201,7 @@ def attack(
                 # Inside the branch that moved the counter, or a round that
                 # matched nobody would pay for the whole trip again against a
                 # cart emptied moments earlier.
-                _empty_cart(world, battles, adb, display)
+                _empty_cart(world, battles, adb, display, watched=runner.cart_watched)
             logger.info("Attack finished: %s", round_line(report))
             _write_plan(options.plan_out, runner.played)
             _log_plan(options.plan_log, len(series.root), runner.played)
@@ -1721,7 +1727,7 @@ CART_LINES: dict[CartOutcome, str] = {
     "collected": "建築大師基地的推車收到聖水 {elixir}",
     "empty": "按了收集,但儲量沒有變,推車應該是空的",
     "locked": "推車是開的,收集鈕是灰的,而車上的數字讀不到",
-    "locked_holding": "推車裡還有 {held} 聖水收不出來,收集鈕是灰的 —— 聖水倉庫應該滿了,先把聖水花掉",
+    "locked_holding": "推車裡存著 {held}／{capacity} 聖水,收集鈕是灰的 —— 聖水倉庫滿了,倉庫有空間再收",
     "locked_empty": "推車是空的,收集鈕是灰的,沒有東西可以收",
     "not_found": "三個候選點都沒有打開推車",
     "not_parked": "鏡頭沒辦法停回定位,這一趟沒有去找聖水車",
@@ -1732,7 +1738,9 @@ CART_LINES: dict[CartOutcome, str] = {
 
 def cart_line(cart: CartReport) -> str:
     """The one line a person reads off a trip to the loot cart."""
-    return CART_LINES[cart.outcome].format(elixir=cart.elixir, held=cart.held)
+    return CART_LINES[cart.outcome].format(
+        elixir=cart.elixir, held=cart.held, capacity=cart.capacity
+    )
 
 
 COLLECT_LINES: dict[CollectOutcome, str] = {
