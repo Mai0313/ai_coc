@@ -225,7 +225,7 @@ def _session(frame_dir: Path | None = None) -> tuple[AdbController, DisplayTarge
 # How long to give the emulator to actually take an instance down. MuMu's
 # `control restart` returns as soon as the request is sent, so the state read a moment later is
 # still the old one — and `ensure_coc` skips its whole boot wait for anything
-# still reporting `android_started`, which would aim a `monkey` launch at an
+# still reporting `android_started`, which would aim a launch at an
 # emulator on its way down.
 SHUTDOWN_POLLS = 15
 SHUTDOWN_GAP = 2.0
@@ -625,7 +625,7 @@ def _rest(seconds: float, should_stop: Callable[[], bool] = stop_requested) -> b
 # **The wait is not for the launch, it is for a frame the loop could play from.**
 # `launch("emulator")` returns as soon as `ensure_coc` has seen the game's
 # process, and that check is a `pidof` — the process exists a couple of seconds
-# after the `monkey` while the village is not on screen for much longer than
+# after the launch while the village is not on screen for much longer than
 # that. `current_world` is what settles it, because counting the plate row is
 # how everything here tests for a village being up at all.
 #
@@ -750,7 +750,7 @@ def _restart_emulator(
 
     The controller is built from the serial `launch` already resolved rather
     than through `_controller()`, which would enumerate the instances a second
-    time and fire another `monkey` at a game that had only just come up.
+    time and fire another launch at a game that had only just come up.
 
     False means the village never appeared. What to do about that is the
     caller's call, since it is a decision about the series rather than about the

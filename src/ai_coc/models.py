@@ -197,15 +197,17 @@ class LDPlayerInstanceInfo(BaseModel):
     """One line of `ldconsole list2`.
 
     Positional and comma-separated: index, title, top window, render window,
-    whether Android is up (1 or 0), the player's pid (-1 when down), the VM's
-    pid, then width, height and dpi.
+    where Android is, the player's pid (-1 when down), the VM's pid, then width,
+    height and dpi. Android is 0 while the instance is down, 2 while it boots
+    and 1 once it is up: watched through a reboot, 0 for two seconds, 2 for ten,
+    then 1.
     """
 
     index: int
     title: str
     top_hwnd: int
     bind_hwnd: int
-    android_started: bool
+    android: int
     pid: int
     vbox_pid: int
     width: int
@@ -222,13 +224,17 @@ class LDPlayerInstanceInfo(BaseModel):
             "title": ",".join(title),
             "top_hwnd": top,
             "bind_hwnd": bind,
-            "android_started": android,
+            "android": android,
             "pid": pid,
             "vbox_pid": vbox,
             "width": width,
             "height": height,
             "dpi": dpi,
         })
+
+    @property
+    def android_started(self) -> bool:
+        return self.android == 1
 
 
 class EmulatorInstance(BaseModel):

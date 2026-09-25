@@ -4903,7 +4903,7 @@ class RestartEveryTests(unittest.TestCase):
 
     def test_the_restart_waits_for_a_village_rather_than_for_the_process(self) -> None:
         """`ensure_coc` is satisfied by a pid, which exists seconds after the
-        `monkey` while the village is not on screen for much longer. So the wait
+        launch while the village is not on screen for much longer. So the wait
         is for a frame the loop could actually play from.
         """
         adb = MagicMock()

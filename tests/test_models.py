@@ -77,6 +77,11 @@ class LDPlayerPayloadTests(unittest.TestCase):
         )
         assert (info.width, info.height, info.dpi) == (1600, 900, 240)
 
+    def test_an_instance_still_booting_is_not_started(self) -> None:
+        """2 is the ten seconds between the VM starting and Android coming up."""
+        info = LDPlayerInstanceInfo.parse("0,LDPlayer,1,2,2,43060,51556,1600,900,240")
+        assert (info.android, info.android_started) == (2, False)
+
     def test_a_comma_in_the_title_stays_in_the_title(self) -> None:
         info = LDPlayerInstanceInfo.parse("2,farm, the second,0,0,0,-1,-1,1600,900,240")
         assert (info.index, info.title, info.android_started, info.pid) == (

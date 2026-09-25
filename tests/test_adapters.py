@@ -17,7 +17,7 @@ from pathlib import Path
 import tempfile
 import unittest
 import subprocess
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 
 import pytest
 
@@ -227,6 +227,26 @@ class AdbConnectionTests(unittest.TestCase):
             patch.object(AdbController, "shell", return_value="Physical density: 240\n"),
         ):
             assert _controller().screen_geometry() == ("1600x900", "240")
+
+    def test_the_game_is_launched_by_its_resolved_component(self) -> None:
+        """LDPlayer 14's image ships no `monkey`, which is what this used to call."""
+        resolved = (
+            "priority=0 preferredOrder=0 match=0x108000 specificIndex=-1 isDefault=false\n"
+            "com.supercell.clashofclans/com.supercell.titan.GameApp\n"
+        )
+        with patch.object(AdbController, "shell", side_effect=[resolved, ""]) as shell:
+            _controller().launch_app(COC_PACKAGE)
+        assert shell.call_args.args[0] == [
+            "am",
+            "start",
+            "-n",
+            "com.supercell.clashofclans/com.supercell.titan.GameApp",
+        ]
+        with (
+            patch.object(AdbController, "shell", return_value="No activity found\n"),
+            pytest.raises(AdbControlError, match="找不到可以啟動"),
+        ):
+            _controller().launch_app(COC_PACKAGE)
 
     def test_running_is_a_pid_and_nothing_else(self) -> None:
         with patch.object(AdbController, "shell", return_value="1234\n"):
@@ -525,7 +545,7 @@ class MuMuAdapterTests(unittest.TestCase):
         launched.assert_called_once()
 
     def test_a_launch_that_never_sticks_restarts_the_instance_and_tries_once_more(self) -> None:
-        """MuMu can report Android ready while the first `monkey` launch is ignored."""
+        """MuMu can report Android ready while the first launch is ignored."""
         stuck = _instance(coc_running=False)
         result, _, launched, restarted = self._ensure([], repeat=stuck)
         assert result is None
@@ -585,6 +605,7 @@ class LDPlayerAdapterTests(unittest.TestCase):
         listing = b"0,LDPlayer,1839594,921748,1,30476,48656,1600,900,240\r\n1,Spare,0,0,0,-1,-1,1280,720,240\r\n"
         with (
             patch.object(LDPlayerAdapter, "_run", return_value=listing) as ran,
+            patch.object(AdbController, "shell", return_value="1\n"),
             patch.object(AdbController, "is_running", return_value=True) as asked,
         ):
             up, down = self.ld.enumerate_instances()
@@ -597,22 +618,67 @@ class LDPlayerAdapterTests(unittest.TestCase):
             True,
         )
         assert (down.adb_serial, down.android_started, down.process_started, down.coc_running) == (
-            "127.0.0.1:5557",
+            "127.0.0.1:0",
             False,
             False,
             False,
         )
+        assert self.ld.serial_of(down) == "127.0.0.1:5557"
 
-    def test_each_lifecycle_call_is_one_ldconsole_command_by_index(self) -> None:
-        with patch.object(LDPlayerAdapter, "_run", return_value=b"") as ran:
+    def test_an_instance_whose_boot_has_not_completed_has_no_port(self) -> None:
+        """`list2` says 1 ten seconds before ADB answers, and a game launched
+        before the boot completes comes up and dies; `_booted` waits on the port.
+        """
+        listing = b"0,LDPlayer,1,2,1,43060,51556,1600,900,240\r\n"
+        for answer in (AdbControlError("not found"), "0\n"):
+            with (
+                patch.object(LDPlayerAdapter, "_run", return_value=listing),
+                patch.object(AdbController, "shell", side_effect=[answer]),
+                patch.object(AdbController, "is_running") as asked,
+            ):
+                (booting,) = self.ld.enumerate_instances()
+            assert booting.android_started
+            assert not booting.endpoint.ready
+            assert self.ld.serial_of(booting) == "127.0.0.1:5555"
+            asked.assert_not_called()
+
+    def test_each_lifecycle_call_is_ldconsole_by_index(self) -> None:
+        with patch.object(LDPlayerAdapter, "_run", return_value=b"stop") as ran:
             self.ld.launch_instance(2)
-            self.ld.restart_instance(2)
             self.ld.close_instance(2)
         assert [call.args[0][1:] for call in ran.call_args_list] == [
+            ["isrunning", "--index", "2"],
             ["launch", "--index", "2"],
-            ["reboot", "--index", "2"],
             ["quit", "--index", "2"],
         ]
+
+    def test_an_instance_already_booting_is_not_launched_again(self) -> None:
+        """A second launch into a booting instance reset its settings to 1920x1080."""
+        with patch.object(LDPlayerAdapter, "_run", return_value=b"running\r\n") as ran:
+            self.ld.launch_instance(0)
+        assert [call.args[0][1:] for call in ran.call_args_list] == [["isrunning", "--index", "0"]]
+
+    def test_a_restart_quits_lets_the_vm_wind_down_and_launches(self) -> None:
+        """Never `reboot`, which rewrote the instance's settings to 1920x1080 with no ADB."""
+        answers = iter([b"", b"running", b"stop", b"", b"stop", b"running"])
+        with (
+            patch.object(
+                LDPlayerAdapter, "_run", side_effect=lambda *_a, **_k: next(answers)
+            ) as ran,
+            patch.object(ldplayer_module.time, "sleep") as slept,
+        ):
+            self.ld.restart_instance(0)
+        assert [call.args[0][1] for call in ran.call_args_list] == [
+            "quit",
+            "isrunning",
+            "isrunning",
+            "launch",
+            "isrunning",
+            "isrunning",
+        ]
+        # A VM process outlived `quit` by five seconds, and a launch inside
+        # that never got a VM at all.
+        assert call(ldplayer_module.QUIT_SETTLE) in slept.call_args_list
 
     def test_the_version_is_read_off_the_banner(self) -> None:
         banner = b"ldplayer v14.0.29.0 Command Line Management Interface\r\n"

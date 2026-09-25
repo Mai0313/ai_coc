@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 # Android ready a while before its ADB port is listening, so both are waited on.
 BOOT_POLLS = 18
 POLL_GAP = 2.0
-# How long to give a `monkey` launch to produce a process before the instance is
+# How long to give a launch to produce a process before the instance is
 # restarted and the launch tried again, and how long the second launch gets.
 LAUNCH_POLLS = 5
 RELAUNCH_SETTLE = 3.0
@@ -164,7 +164,7 @@ class Emulator(BaseModel):
             current = self.instance(index) or current
             if current.coc_running:
                 return current
-        # MuMu can report Android ready while the first monkey launch is ignored.
+        # MuMu can report Android ready while the first launch is ignored.
         logger.warning("Clash of Clans did not come up on %s; restarting the instance", index)
         self.restart_instance(index)
         current = self._booted(index, current)

@@ -525,10 +525,30 @@ class AdbController(BaseModel):
         return bool(self.shell(["pidof", package], timeout=5).strip())
 
     def launch_app(self, package: str) -> None:
+        """Start the package's launcher activity.
+
+        Resolved and started by name rather than through `monkey`, which
+        LDPlayer 14's image does not ship: there the call answered `monkey:
+        inaccessible or not found` and nothing started. `resolve-activity`
+        prints the component on its last line on both emulators.
+        """
         logger.info("Launching %s on %s", package, self.serial)
-        self.shell(
-            ["monkey", "-p", package, "-c", "android.intent.category.LAUNCHER", "1"], timeout=15
-        )
+        resolved = self.shell(
+            [
+                "cmd",
+                "package",
+                "resolve-activity",
+                "--brief",
+                "-c",
+                "android.intent.category.LAUNCHER",
+                package,
+            ],
+            timeout=10,
+        ).strip()
+        component = resolved.splitlines()[-1].strip() if resolved else ""
+        if not component.startswith(f"{package}/"):
+            raise AdbControlError(f"{package} 找不到可以啟動的畫面：{resolved[:120]}")
+        self.shell(["am", "start", "-n", component], timeout=15)
 
     def stop_app(self, package: str) -> None:
         logger.info("Force-stopping %s on %s", package, self.serial)
