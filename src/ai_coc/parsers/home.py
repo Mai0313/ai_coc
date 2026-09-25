@@ -165,7 +165,7 @@ def shield_box(centre: int) -> tuple[int, int, int, int]:
 
 
 # Which plate is which, **keyed by where it sits and never by its place in the
-# row**. `info_badges` returns only the badges it can see, and CLAUDE.md's own
+# row**. `info_badges` returns only the badges it can see, and `parsers/world.py`'s
 # sweep records rows a gem shower left as `[516, 933]` or `[933]` — so on
 # `world_day_shield_only.png` the first badge is the *shield*, and a reader
 # taking index 0 for the laboratory would open the wrong plate. `ROW_LEFT_SPLIT`
