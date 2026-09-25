@@ -521,11 +521,19 @@ class ProbeRay(BaseModel):
         return self.inside_refused and not self.outside_refused
 
 
+# How a survey ended. Both measure the home village's battlefield and nothing
+# here sails, so `builder_base` is the game standing on the other village and
+# nothing measured at all — which an empty list of rays could not say apart
+# from a survey that ran and found nothing.
+SurveyOutcome = Literal["surveyed", "builder_base"]
+
+
 class BoundarySurvey(BaseModel):
     """A whole survey, and how much of it the boundary reader got right."""
 
     rays: list[ProbeRay] = Field(default_factory=list)
     unread: list[float] = Field(default_factory=list)
+    outcome: SurveyOutcome
 
     @property
     def agreement(self) -> str:
@@ -563,6 +571,7 @@ class MapSurvey(BaseModel):
     """
 
     edges: list[MapEdge] = Field(default_factory=list)
+    outcome: SurveyOutcome
 
     @property
     def summary(self) -> str:

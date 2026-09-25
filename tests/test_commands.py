@@ -60,6 +60,7 @@ from ai_coc.models import (
     DonateOutcome,
     EntityMapping,
     ExportOutcome,
+    SurveyOutcome,
     VillageExport,
     BuilderOutcome,
     CollectOutcome,
@@ -1547,10 +1548,10 @@ class SurveyRunnerTests(unittest.TestCase):
             patch.object(commands._BoundarySurvey, "run"),
             patch.object(commands._MapSurvey, "run"),
         ):
-            assert commands.probe().rays == []
-            assert commands.bounds().edges == []
+            assert commands.probe().outcome == "surveyed"
+            assert commands.bounds().outcome == "surveyed"
 
-    def test_the_surveys_refuse_the_builder_base_before_spending_anything(self) -> None:
+    def test_the_surveys_stop_on_the_builder_base_before_spending_anything(self) -> None:
         """Both measure the home village's battlefield, and nothing here sails to it."""
         with (
             patch.object(commands.time, "sleep"),
@@ -1559,12 +1560,18 @@ class SurveyRunnerTests(unittest.TestCase):
             patch.object(commands, "_BoundarySurvey") as probe,
             patch.object(commands, "_MapSurvey") as bounds,
         ):
-            with pytest.raises(ValueError, match="夜世界"):
-                commands.probe()
-            with pytest.raises(ValueError, match="夜世界"):
-                commands.bounds()
+            assert commands.probe().outcome == "builder_base"
+            assert commands.bounds().outcome == "builder_base"
         probe.assert_not_called()
         bounds.assert_not_called()
+
+    def test_every_survey_outcome_has_a_line_of_its_own(self) -> None:
+        own = {"surveyed": "量完了", "builder_base": "遊戲停在夜世界"}
+        assert set(own) == set(get_args(SurveyOutcome))
+        for outcome, fragment in own.items():
+            assert fragment in commands.SURVEY_LINES[outcome], outcome
+            others = [commands.SURVEY_LINES[other] for other in own if other != outcome]
+            assert not any(fragment in other for other in others), outcome
 
 
 PAYLOAD = json.dumps({

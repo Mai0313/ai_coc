@@ -67,6 +67,7 @@ from ai_coc.models import (
     DonateOptions,
     DonateOutcome,
     ExportOutcome,
+    SurveyOutcome,
     VillageEntity,
     VillageExport,
     BoundarySurvey,
@@ -1131,15 +1132,14 @@ def attack(
     return series
 
 
-def _home_battlefield_only(adb: AdbController, display: DisplayTarget, what: str) -> None:
-    """Refuse a survey on the builder base, before it spends anything.
-
-    Both surveys measure the home village's battlefield, and nothing here sails:
-    run there, one would walk the menus of a village it cannot fight on and
-    report an empty survey as if it had measured one.
-    """
-    if _village_now(adb, display) == "night":
-        raise ValueError(f"{what} 量的是主村的戰場,遊戲停在夜世界;先跑 ai_coc world --go day")
+# Only ever used to build the line a person reads; `outcome` is what a caller
+# decides on. Both surveys measure the home village's battlefield and nothing
+# here sails, so on the builder base they stop before spending anything —
+# run there, one would walk the menus of a village it cannot fight on.
+SURVEY_LINES: dict[SurveyOutcome, str] = {
+    "surveyed": "量完了:{result}",
+    "builder_base": "遊戲停在夜世界,量的是主村的戰場;要量先跑 ai_coc world --go day",
+}
 
 
 # Twelve rays is the whole village at 30 degree steps, and two drops on each is
@@ -1162,7 +1162,7 @@ class _BoundarySurvey(AttackRunner):
     away, which costs nothing but the time.
     """
 
-    survey: BoundarySurvey = BoundarySurvey()
+    survey: BoundarySurvey = BoundarySurvey(outcome="surveyed")
 
     def _deploy(self, frame: bytes) -> None:
         card = card_groups(frame)[0][0]
@@ -1216,12 +1216,17 @@ def probe(frame_dir: Path | None = None) -> BoundarySurvey:
     the red line the parser found is the line the game is enforcing.
     """
     adb, display = _session(frame_dir)
-    _home_battlefield_only(adb, display, "probe")
+    if _village_now(adb, display) == "night":
+        survey = BoundarySurvey(outcome="builder_base")
+        logger.warning("Boundary survey: %s", SURVEY_LINES[survey.outcome])
+        return survey
     runner = _BoundarySurvey(
         adb=adb, display=display, thresholds=LootThresholds(), frame_dir=frame_dir
     )
     runner.run()
-    logger.info("Boundary survey: %s", runner.survey.agreement)
+    logger.info(
+        "Boundary survey: %s", SURVEY_LINES["surveyed"].format(result=runner.survey.agreement)
+    )
     return runner.survey
 
 
@@ -1247,7 +1252,7 @@ class _MapSurvey(AttackRunner):
     emulator's resolution.
     """
 
-    survey: MapSurvey = MapSurvey()
+    survey: MapSurvey = MapSurvey(outcome="surveyed")
     # Which cards the probes may spend, read once off the full row.
     _troops: list[int] = PrivateAttr(default_factory=list)
 
@@ -1307,10 +1312,13 @@ class _MapSurvey(AttackRunner):
 def bounds(frame_dir: Path | None = None) -> MapSurvey:
     """Spend a battle finding where the map really ends, and fit a diamond to it."""
     adb, display = _session(frame_dir)
-    _home_battlefield_only(adb, display, "bounds")
+    if _village_now(adb, display) == "night":
+        survey = MapSurvey(outcome="builder_base")
+        logger.warning("Map survey: %s", SURVEY_LINES[survey.outcome])
+        return survey
     runner = _MapSurvey(adb=adb, display=display, thresholds=LootThresholds(), frame_dir=frame_dir)
     runner.run()
-    logger.info("Map survey: %s", runner.survey.summary)
+    logger.info("Map survey: %s", SURVEY_LINES["surveyed"].format(result=runner.survey.summary))
     return runner.survey
 
 

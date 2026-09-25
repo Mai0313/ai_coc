@@ -2281,6 +2281,7 @@ class SurveyTests(unittest.TestCase):
         survey = BoundarySurvey(
             rays=[self._ray(inside=True, outside=False), self._ray(inside=True, outside=True)],
             unread=[90.0, 270.0],
+            outcome="surveyed",
         )
         assert survey.agreement == "1/2 rays agreed, 2 unread"
 
