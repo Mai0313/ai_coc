@@ -1777,11 +1777,23 @@ def collect(frame_dir: Path | None = None) -> CollectReport:
     which is the opposite instruction.
     """
     adb, display = _session(frame_dir)
+    # **Decided on a village that has painted, not on the first frame.** Every
+    # branch but the cart's is the home village's, and that one sails home the
+    # moment it meets the builder base — so a frame caught between a battle and
+    # its village sent a run meant for the cart across the water instead,
+    # measured live 13 s after a builder base attack stood down. Only the world
+    # is waited for: both branches park the camera themselves.
+    world = None
+    for _ in range(WORLD_SETTLE_POLLS):
+        world = current_world(adb.screenshot(display))
+        if world is not None:
+            break
+        time.sleep(RESTART_POLL_GAP)
     # **The builder base has no collectors to sweep and one cart instead.** Its
     # elixir is paid into that cart rather than into the storages, so this is
     # the same job on that village even though it shares none of the machinery:
     # one tap at a known spot rather than a colour-and-size search over the map.
-    if current_world(adb.screenshot(display)) == "night":
+    if world == "night":
         cart = collect_cart(adb, display)
         report = CollectReport(outcome="cart", elixir=cart.elixir, cart=cart)
     else:
