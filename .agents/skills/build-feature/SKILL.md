@@ -40,7 +40,7 @@ uv run ai_coc read <png>                                          # 現有 parse
 
 - 判讀器要**每天跑幾百次**都認得遊戲美術, 而美術每一級、每次改版都會變. 判讀器只讀遊戲畫在上面的 UI, `CLAUDE.md` 搜 `read the UI the game paints on top`; 一次性的辨認用看的就好, 那是 `spend-loot` 的事
 - 不可逆: 拆建築, 換陣型, 動帳號設定
-- 會花寶石或現金. 加速所有同類項目跟城牆戒指的圖示會被讀成資源, 現有程式碼靠**結構**擋掉而不是靠檢查, `CLAUDE.md` 搜 `blue plate`
+- 會花寶石或現金. 加速所有同類項目跟城牆戒指的圖示會被讀成資源, 現有程式碼在判讀器裡就把它們擋掉 (藍色底板), `CLAUDE.md` 搜 `blue plate`
 - 跟別的玩家互動而對方會受影響
 
 找到候選先跟使用者確認再做.
@@ -54,7 +54,7 @@ uv run ai_coc read <png>                                          # 現有 parse
 - **每個結構化的值都是 Pydantic model**, 放 `models.py`. 不要 dataclass, TypedDict, 或在函式之間傳裸 dict
 - **座標寫死 1600x900**, 別的尺寸要 raise, 照抄現有的 parser
 - **每次截圖跟每次輸入都要指定 display**
-- **會花資源的能力要有程式層的 guard**, 而且要靠結構擋, 不是靠檢查: 城牆迴圈只點從聖水圖示往左數出來的位置, 所以城牆戒指跟寶石按鈕根本點不到; 英雄殿堂用 `GEM_GREEN` 認出花寶石的按鈕. 新的花錢能力也要有自己的一道, `CLAUDE.md` 搜 `Spending is guarded by structure`
+- **會花資源的能力要有程式層的 guard**: 做得到就靠結構擋, 像城牆迴圈只點從聖水圖示往左數出來的位置, 城牆戒指跟寶石按鈕根本點不到; 做不到就在判讀器裡擋, 讓呼叫端拿不到那顆按鈕的價格, 像英雄殿堂的 `GEM_GREEN`. 新的花錢能力也要有自己的一道, prompt 或 skill 裡的一句話不算, `CLAUDE.md` 搜 `Spending is guarded`
 
 ## 做的流程
 
