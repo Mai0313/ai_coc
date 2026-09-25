@@ -17,20 +17,33 @@ from pathlib import Path
 import tempfile
 import unittest
 import subprocess
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 
 import pytest
 
-from ai_coc.models import AdbEndpoint, DisplayTarget, EmulatorInstance, MuMuInstanceTable
+from ai_coc.models import (
+    TouchNode,
+    AdbEndpoint,
+    DisplayTarget,
+    EmulatorInstance,
+    MuMuInstanceTable,
+)
 from ai_coc.adapters import adb as adb_module
-from ai_coc.adapters import mumu as mumu_module
 from ai_coc.adapters import mapping, secrets, clipboard
+from ai_coc.adapters import emulator as emulator_module
+from ai_coc.adapters import ldplayer as ldplayer_module
 from ai_coc.constants import COC_PACKAGE
 from ai_coc.adapters.adb import AdbController, AdbControlError
-from ai_coc.adapters.mumu import MuMuError, MuMuAdapter
+from ai_coc.adapters.mumu import MuMuAdapter
 from ai_coc.adapters.secrets import SecretStore
+from ai_coc.adapters.emulator import EmulatorError
+from ai_coc.adapters.ldplayer import LDPlayerAdapter
 
 DISPLAY = DisplayTarget(logical_id="2", physical_id="4619827767814508545")
+# What `touch_devices` makes of MuMu's two touch nodes: both report the screen's
+# axes swapped.
+MUMU_NODE = TouchNode(swapped=True, pressure=False)
+MUMU_TOUCH = {"/dev/input/event8": MUMU_NODE, "/dev/input/event9": MUMU_NODE}
 
 # `getevent -pl` on a MuMu instance: one keyboard node and one multi-touch node.
 GETEVENT = """add device 1: /dev/input/event3
@@ -43,6 +56,7 @@ add device 2: /dev/input/event8
     ABS (0003): ABS_MT_SLOT           : value 0, min 0, max 9
                 ABS_MT_POSITION_X     : value 0, min 0, max 899
                 ABS_MT_POSITION_Y     : value 0, min 0, max 1599
+                ABS_MT_PRESSURE       : value 0, min 0, max 0
 """
 
 # `dumpsys input`, trimmed to the three hops `touch_device_for` walks: the
@@ -70,6 +84,45 @@ Event Hub State:
     9: mumu_touch_2
       Classes: 0x00000014
       Path: /dev/input/event9
+"""
+
+# The same two, trimmed from LDPlayer 14: its multi-touch node reports the
+# screen's own axes, and a `VirtualMouse` whose path is not a node is bound to
+# the one display ahead of the touchscreen.
+LD_GETEVENT = """add device 1: /dev/input/event6
+  name:     "mouse"
+add device 3: /dev/input/event4
+  name:     "input"
+  events:
+    ABS (0003): ABS_MT_SLOT           : value 0, min 0, max 15, fuzz 0, flat 0, resolution 0
+                ABS_MT_POSITION_X     : value 0, min 0, max 1599, fuzz 0, flat 0, resolution 0
+                ABS_MT_POSITION_Y     : value 0, min 0, max 899, fuzz 0, flat 0, resolution 0
+                ABS_MT_TRACKING_ID    : value 0, min 0, max 65535, fuzz 0, flat 0, resolution 0
+                ABS_MT_PRESSURE       : value 0, min 0, max 2, fuzz 0, flat 0, resolution 0
+"""
+
+LD_DUMPSYS_INPUT = """INPUT MANAGER (dumpsys input)
+
+Event Hub State:
+  Devices:
+    3: input
+      Classes: KEYBOARD | TOUCH | TOUCH_MT
+      Path: /dev/input/event4
+    8: VirtualMouse
+      Classes: CURSOR | VIRTUAL
+      Path: <virtual-mouse>
+
+Input Reader State (Nums of device: 9):
+  Device 2: VirtualMouse
+    EventHub Devices: [ 8 ]
+    Sources: MOUSE
+    Touch Input Mapper (mode - DISABLED):
+      Viewport INTERNAL: displayId=0, uniqueId=local:0, port=0, orientation=0
+  Device 7: input
+    EventHub Devices: [ 3 ]
+    Sources: KEYBOARD | TOUCHSCREEN
+    Touch Input Mapper (mode - DIRECT):
+      Viewport INTERNAL: displayId=0, uniqueId=local:0, port=0, orientation=0
 """
 
 WINDOW_DISPLAYS = """WINDOW MANAGER DISPLAY CONTENTS (dumpsys window displays)
@@ -110,6 +163,28 @@ class AdbConnectionTests(unittest.TestCase):
             pytest.raises(AdbControlError, match="尚未就緒"),
         ):
             _controller().connect()
+
+    def test_a_device_the_server_already_holds_is_not_connected_again(self) -> None:
+        """Each connect opens a connection to adbd, and LDPlayer's NAT died under them."""
+        device = MagicMock()
+        device.get_state.return_value = "device"
+        with (
+            patch.object(adb_module.adbutils.adb, "connect") as connected,
+            patch.object(adb_module.adbutils.adb, "device", return_value=device),
+        ):
+            assert _controller().connect() is device
+        connected.assert_not_called()
+
+    def test_a_device_the_server_lost_is_connected_again(self) -> None:
+        """A restarted instance drops the old handle."""
+        device = MagicMock()
+        device.get_state.side_effect = [adb_module.adbutils.AdbError("not found"), "device"]
+        with (
+            patch.object(adb_module.adbutils.adb, "connect") as connected,
+            patch.object(adb_module.adbutils.adb, "device", return_value=device),
+        ):
+            assert _controller().connect() is device
+        connected.assert_called_once()
 
     def test_an_adb_failure_is_reported_with_the_command_that_failed(self) -> None:
         device = MagicMock()
@@ -185,6 +260,26 @@ class AdbConnectionTests(unittest.TestCase):
         ):
             assert _controller().screen_geometry() == ("1600x900", "240")
 
+    def test_the_game_is_launched_by_its_resolved_component(self) -> None:
+        """LDPlayer 14's image ships no `monkey`, which is what this used to call."""
+        resolved = (
+            "priority=0 preferredOrder=0 match=0x108000 specificIndex=-1 isDefault=false\n"
+            "com.supercell.clashofclans/com.supercell.titan.GameApp\n"
+        )
+        with patch.object(AdbController, "shell", side_effect=[resolved, ""]) as shell:
+            _controller().launch_app(COC_PACKAGE)
+        assert shell.call_args.args[0] == [
+            "am",
+            "start",
+            "-n",
+            "com.supercell.clashofclans/com.supercell.titan.GameApp",
+        ]
+        with (
+            patch.object(AdbController, "shell", return_value="No activity found\n"),
+            pytest.raises(AdbControlError, match="找不到可以啟動"),
+        ):
+            _controller().launch_app(COC_PACKAGE)
+
     def test_running_is_a_pid_and_nothing_else(self) -> None:
         with patch.object(AdbController, "shell", return_value="1234\n"):
             assert _controller().is_running(COC_PACKAGE)
@@ -197,34 +292,73 @@ class TouchNodeTests(unittest.TestCase):
 
     def test_only_the_multi_touch_nodes_are_listed(self) -> None:
         with patch.object(AdbController, "shell", return_value=GETEVENT):
-            assert _controller().touch_devices() == ["/dev/input/event8"]
+            assert _controller().touch_devices() == {"/dev/input/event8": MUMU_NODE}
 
     def test_the_node_is_resolved_through_the_three_hops_dumpsys_prints(self) -> None:
-        with patch.object(AdbController, "shell", return_value=DUMPSYS_INPUT):
+        with (
+            patch.object(AdbController, "shell", return_value=DUMPSYS_INPUT),
+            patch.object(AdbController, "touch_devices", return_value=MUMU_TOUCH),
+        ):
             adb = _controller()
             assert adb.touch_device_for(DISPLAY) == "/dev/input/event8"
             other = DisplayTarget(logical_id="3", physical_id="4619826888814064386")
             assert adb.touch_device_for(other) == "/dev/input/event9"
 
     def test_a_display_no_reader_reports_answers_nothing_rather_than_a_guess(self) -> None:
-        with patch.object(AdbController, "shell", return_value=DUMPSYS_INPUT):
+        with (
+            patch.object(AdbController, "shell", return_value=DUMPSYS_INPUT),
+            patch.object(AdbController, "touch_devices", return_value=MUMU_TOUCH),
+        ):
             stranger = DisplayTarget(logical_id="7", physical_id="1")
             assert _controller().touch_device_for(stranger) is None
 
+    def test_ldplayers_node_keeps_the_screens_axes(self) -> None:
+        with patch.object(AdbController, "shell", return_value=LD_GETEVENT):
+            assert _controller().touch_devices() == {
+                "/dev/input/event4": TouchNode(swapped=False, pressure=True)
+            }
+
+    def test_a_reader_whose_path_is_no_touch_node_is_passed_over(self) -> None:
+        """LDPlayer binds its `VirtualMouse` to the display first, and a gesture
+        written to `<virtual-mouse>` is a redirect the shell refuses silently.
+        """
+        with patch.object(AdbController, "shell", side_effect=[LD_DUMPSYS_INPUT, LD_GETEVENT]):
+            only = DisplayTarget(logical_id="0", physical_id="0")
+            assert _controller().touch_device_for(only) == "/dev/input/event4"
+
+    def test_each_node_gets_the_stream_its_own_axes_read(self) -> None:
+        with (
+            patch.object(
+                AdbController,
+                "touch_devices",
+                return_value={
+                    "/dev/input/event8": MUMU_NODE,
+                    "/dev/input/event4": TouchNode(swapped=False, pressure=True),
+                },
+            ),
+            patch.object(AdbController, "shell"),
+            patch.object(adb_module, "gesture_script", return_value="") as scripted,
+        ):
+            _controller().pinch(((500, 450), (600, 450)), ((1100, 450), (1000, 450)), steps=1)
+        swapped, straight = (call.args[0] for call in scripted.call_args_list)
+        assert (adb_module.EV_ABS, adb_module.ABS_MT_POSITION_X, 450) in swapped
+        assert (adb_module.EV_ABS, adb_module.ABS_MT_POSITION_X, 500) in straight
+        # A finger on a node with a pressure axis has to press, or Android
+        # reads it as a hover and the game never sees it.
+        pressed = (adb_module.EV_ABS, adb_module.ABS_MT_PRESSURE, 1)
+        assert pressed not in swapped
+        assert straight.count(pressed) == 2
+
     def test_a_pinch_with_nowhere_to_send_it_is_an_error(self) -> None:
         with (
-            patch.object(AdbController, "touch_devices", return_value=[]),
+            patch.object(AdbController, "touch_devices", return_value={}),
             pytest.raises(AdbControlError, match="多點觸控"),
         ):
             _controller().pinch(((1, 1), (2, 2)), ((3, 3), (4, 4)))
 
     def test_a_pinch_goes_to_every_node_when_none_is_named(self) -> None:
         with (
-            patch.object(
-                AdbController,
-                "touch_devices",
-                return_value=["/dev/input/event8", "/dev/input/event9"],
-            ),
+            patch.object(AdbController, "touch_devices", return_value=MUMU_TOUCH),
             patch.object(AdbController, "shell") as shell,
         ):
             _controller().pinch(((1, 1), (2, 2)), ((3, 3), (4, 4)), steps=1)
@@ -237,7 +371,7 @@ class TouchNodeTests(unittest.TestCase):
     def test_a_gesture_opens_its_node_once_and_paces_itself_between_reports(self) -> None:
         """The open is what `sendevent` was really costing: 31 of the 33 ms an event took."""
         script = adb_module.gesture_script(
-            adb_module.pinch_events(((0, 0), (10, 0)), ((100, 0), (90, 0)), steps=4),
+            adb_module.pinch_events(((0, 0), (10, 0)), ((100, 0), (90, 0)), MUMU_NODE, steps=4),
             "/dev/input/event8",
             gap=0.02,
         )
@@ -249,7 +383,9 @@ class TouchNodeTests(unittest.TestCase):
 
     def test_the_events_go_out_as_the_kernel_lays_them_out(self) -> None:
         """24 bytes each, and what comes back out is what `pinch_events` asked for."""
-        events = adb_module.pinch_events(((0, 0), (10, 0)), ((100, 0), (90, 0)), steps=2)
+        events = adb_module.pinch_events(
+            ((0, 0), (10, 0)), ((100, 0), (90, 0)), MUMU_NODE, steps=2
+        )
         script = adb_module.gesture_script(events, "/dev/input/event8", gap=0)
         packed = b"".join(
             base64.b64decode(part.split("echo ", 1)[1].split(" |", 1)[0])
@@ -327,10 +463,10 @@ class MuMuAdapterTests(unittest.TestCase):
         (root / "nx_main").mkdir()
         (root / "nx_main" / "mumu-cli.exe").write_bytes(b"")
         (root / "nx_main" / "adb.exe").write_bytes(b"")
-        patcher = patch.object(mumu_module, "use_adb_executable")
+        patcher = patch.object(emulator_module, "use_adb_executable")
         patcher.start()
         self.addCleanup(patcher.stop)
-        sleeping = patch.object(mumu_module.time, "sleep")
+        sleeping = patch.object(emulator_module.time, "sleep")
         sleeping.start()
         self.addCleanup(sleeping.stop)
         self.root = root
@@ -338,7 +474,7 @@ class MuMuAdapterTests(unittest.TestCase):
 
     def test_an_install_without_the_cli_is_refused(self) -> None:
         (self.root / "nx_main" / "mumu-cli.exe").unlink()
-        with pytest.raises(MuMuError, match="MuMu CLI"):
+        with pytest.raises(EmulatorError, match="MuMu CLI"):
             MuMuAdapter(install_root=self.root)
 
     def test_the_cli_never_inherits_the_bundled_qt_paths(self) -> None:
@@ -351,18 +487,18 @@ class MuMuAdapterTests(unittest.TestCase):
     def test_a_failed_command_carries_the_emulators_own_message(self) -> None:
         with (
             patch.object(
-                mumu_module.subprocess,
+                emulator_module.subprocess,
                 "run",
                 return_value=subprocess.CompletedProcess([], 1, stdout=b"", stderr=b"boom"),
             ),
-            pytest.raises(MuMuError, match="boom"),
+            pytest.raises(EmulatorError, match="boom"),
         ):
             self.mumu._run(["mumu-cli.exe", "version"])
         with (
             patch.object(
-                mumu_module.subprocess, "run", side_effect=subprocess.TimeoutExpired("cli", 1)
+                emulator_module.subprocess, "run", side_effect=subprocess.TimeoutExpired("cli", 1)
             ),
-            pytest.raises(MuMuError, match="逾時"),
+            pytest.raises(EmulatorError, match="逾時"),
         ):
             self.mumu._run(["mumu-cli.exe", "version"])
 
@@ -371,7 +507,7 @@ class MuMuAdapterTests(unittest.TestCase):
             assert self.mumu.version() == "4.1"
         with (
             patch.object(MuMuAdapter, "_run", return_value=b"not json"),
-            pytest.raises(MuMuError, match="無法解析"),
+            pytest.raises(EmulatorError, match="無法解析"),
         ):
             self.mumu.version()
 
@@ -432,7 +568,7 @@ class MuMuAdapterTests(unittest.TestCase):
         ):
             try:
                 result = self.mumu.ensure_coc(0)
-            except MuMuError:
+            except EmulatorError:
                 result = None
         return result, booted, launched, restarted
 
@@ -453,7 +589,7 @@ class MuMuAdapterTests(unittest.TestCase):
         launched.assert_called_once()
 
     def test_a_launch_that_never_sticks_restarts_the_instance_and_tries_once_more(self) -> None:
-        """MuMu can report Android ready while the first `monkey` launch is ignored."""
+        """MuMu can report Android ready while the first launch is ignored."""
         stuck = _instance(coc_running=False)
         result, _, launched, restarted = self._ensure([], repeat=stuck)
         assert result is None
@@ -463,7 +599,7 @@ class MuMuAdapterTests(unittest.TestCase):
     def test_an_instance_mumu_cannot_find_is_an_error(self) -> None:
         with (
             patch.object(MuMuAdapter, "instance", return_value=None),
-            pytest.raises(MuMuError, match="找不到"),
+            pytest.raises(EmulatorError, match="找不到"),
         ):
             self.mumu.ensure_coc(3)
 
@@ -481,6 +617,123 @@ class MuMuAdapterTests(unittest.TestCase):
         assert self.mumu.controller("127.0.0.1:16416") is not self.mumu.controller(
             "127.0.0.1:16384"
         )
+
+
+class LDPlayerAdapterTests(unittest.TestCase):
+    def setUp(self) -> None:
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        root = Path(folder.name)
+        (root / "ldconsole.exe").write_bytes(b"")
+        (root / "adb.exe").write_bytes(b"")
+        patcher = patch.object(emulator_module, "use_adb_executable")
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.ld = LDPlayerAdapter(install_root=root)
+
+    def test_an_install_without_ldconsole_is_refused(self) -> None:
+        (self.ld.install_root / "ldconsole.exe").unlink()
+        with pytest.raises(EmulatorError, match="LDPlayer CLI"):
+            LDPlayerAdapter(install_root=self.ld.install_root)
+
+    def test_the_install_is_found_through_its_uninstaller_when_no_location_is_given(self) -> None:
+        with patch.object(ldplayer_module, "uninstall_dirs", return_value=[self.ld.install_root]):
+            assert ldplayer_module.detect_install_path() == self.ld.install_root
+        with (
+            patch.object(ldplayer_module, "uninstall_dirs", return_value=[Path("absent")]),
+            pytest.raises(EmulatorError, match="雷電"),
+        ):
+            ldplayer_module.detect_install_path()
+
+    def test_instances_come_off_list2_and_only_a_running_one_is_asked_about_the_game(self) -> None:
+        listing = b"0,LDPlayer,1839594,921748,1,30476,48656,1600,900,240\r\n1,Spare,0,0,0,-1,-1,1280,720,240\r\n"
+        with (
+            patch.object(LDPlayerAdapter, "_run", return_value=listing) as ran,
+            patch.object(AdbController, "shell", return_value="1\n"),
+            patch.object(AdbController, "is_running", return_value=True) as asked,
+        ):
+            up, down = self.ld.enumerate_instances()
+        assert ran.call_args.args[0][1:] == ["list2"]
+        asked.assert_called_once_with(COC_PACKAGE)
+        assert (up.emulator_id, up.adb_serial, up.resolution, up.coc_running) == (
+            "ldplayer:0",
+            "127.0.0.1:5555",
+            "1600x900",
+            True,
+        )
+        assert (down.adb_serial, down.android_started, down.process_started, down.coc_running) == (
+            "127.0.0.1:0",
+            False,
+            False,
+            False,
+        )
+        assert self.ld.serial_of(down) == "127.0.0.1:5557"
+
+    def test_an_instance_whose_boot_has_not_completed_has_no_port(self) -> None:
+        """`list2` says 1 ten seconds before ADB answers, and a game launched
+        before the boot completes comes up and dies; `_booted` waits on the port.
+        """
+        listing = b"0,LDPlayer,1,2,1,43060,51556,1600,900,240\r\n"
+        for answer in (AdbControlError("not found"), "0\n"):
+            with (
+                patch.object(LDPlayerAdapter, "_run", return_value=listing),
+                patch.object(AdbController, "shell", side_effect=[answer]),
+                patch.object(AdbController, "is_running") as asked,
+            ):
+                (booting,) = self.ld.enumerate_instances()
+            assert booting.android_started
+            assert not booting.endpoint.ready
+            assert self.ld.serial_of(booting) == "127.0.0.1:5555"
+            asked.assert_not_called()
+
+    def test_each_lifecycle_call_is_ldconsole_by_index(self) -> None:
+        with patch.object(LDPlayerAdapter, "_run", return_value=b"stop") as ran:
+            self.ld.launch_instance(2)
+            self.ld.close_instance(2)
+        assert [call.args[0][1:] for call in ran.call_args_list] == [
+            ["isrunning", "--index", "2"],
+            ["launch", "--index", "2"],
+            ["quit", "--index", "2"],
+        ]
+
+    def test_an_instance_already_booting_is_not_launched_again(self) -> None:
+        """A second launch into a booting instance reset its settings to 1920x1080."""
+        with patch.object(LDPlayerAdapter, "_run", return_value=b"running\r\n") as ran:
+            self.ld.launch_instance(0)
+        assert [call.args[0][1:] for call in ran.call_args_list] == [["isrunning", "--index", "0"]]
+
+    def test_a_restart_quits_lets_the_vm_wind_down_and_launches(self) -> None:
+        """Never `reboot`, which rewrote the instance's settings to 1920x1080 with no ADB."""
+        answers = iter([b"", b"running", b"stop", b"", b"stop", b"running"])
+        with (
+            patch.object(
+                LDPlayerAdapter, "_run", side_effect=lambda *_a, **_k: next(answers)
+            ) as ran,
+            patch.object(ldplayer_module.time, "sleep") as slept,
+        ):
+            self.ld.restart_instance(0)
+        assert [call.args[0][1] for call in ran.call_args_list] == [
+            "quit",
+            "isrunning",
+            "isrunning",
+            "launch",
+            "isrunning",
+            "isrunning",
+        ]
+        # A VM process outlived `quit` by five seconds, and a launch inside
+        # that never got a VM at all.
+        assert call(ldplayer_module.QUIT_SETTLE) in slept.call_args_list
+
+    def test_the_version_is_read_off_the_banner(self) -> None:
+        banner = b"ldplayer v14.0.29.0 Command Line Management Interface\r\n"
+        with patch.object(LDPlayerAdapter, "_run", return_value=banner):
+            assert self.ld.version() == "14.0.29.0"
+
+    def test_a_serial_is_known_before_the_instance_is_up(self) -> None:
+        """MuMu reports port 0 while an instance is down, so the scheme stands in for it."""
+        down = _instance(index=3, adb_serial="127.0.0.1:0", android_started=False)
+        assert self.ld.serial_of(down) == "127.0.0.1:5561"
+        assert self.ld.serial_of(_instance(adb_serial="127.0.0.1:5555")) == "127.0.0.1:5555"
 
 
 @unittest.skipUnless(sys.platform == "win32", "DPAPI is a Windows API")

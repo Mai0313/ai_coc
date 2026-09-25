@@ -58,7 +58,15 @@ class AdbEndpoint(BaseModel):
 
     @classmethod
     def parse(cls, serial: str) -> AdbEndpoint:
-        host, _, port = serial.strip().rpartition(":")
+        """`host:port`, or adb's own `emulator-<console port>`, whose ADB port is the next one up.
+
+        So LDPlayer's `emulator-5554` and `127.0.0.1:5555` are the same instance,
+        which is how the adb server lists them side by side.
+        """
+        serial = serial.strip()
+        if serial.startswith("emulator-") and serial[9:].isdigit():
+            return cls(port=int(serial[9:]) + 1)
+        host, _, port = serial.rpartition(":")
         return cls(host=host or DEFAULT_ADB_HOST, port=int(port) if port.isdigit() else 0)
 
 
@@ -128,6 +136,24 @@ class DisplayTarget(BaseModel):
     physical_id: str
 
 
+class TouchNode(BaseModel):
+    """What a gesture written straight to one multi-touch input node has to match.
+
+    `swapped` is whether the node's x range is the screen's short side, which
+    MuMu's is and LDPlayer's is not. `pressure` is whether the node reports
+    `ABS_MT_PRESSURE` with any range: Android then reads a finger that never set
+    it as zero pressure, a hover rather than a touch, and the game ignores it —
+    observed on LDPlayer (0 to 2), a tap written to the node that did nothing
+    until it carried one. MuMu's node lists the axis with a range of 0 to 0 and
+    takes a finger without it, so a range of nothing counts as no axis.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    swapped: bool
+    pressure: bool
+
+
 class MuMuInstanceInfo(BaseModel):
     """One entry of `mumu-cli info --vmindex all`."""
 
@@ -183,6 +209,50 @@ class MuMuCliResult(BaseModel):
     """What a `control` command answers; validating it proves the CLI replied."""
 
     model_config = TOLERANT
+
+
+class LDPlayerInstanceInfo(BaseModel):
+    """One line of `ldconsole list2`.
+
+    Positional and comma-separated: index, title, top window, render window,
+    where Android is, the player's pid (-1 when down), the VM's pid, then width,
+    height and dpi. Android is 0 while the instance is down, 2 while it boots
+    and 1 once it is up: watched through a reboot, 0 for two seconds, 2 for ten,
+    then 1.
+    """
+
+    index: int
+    title: str
+    top_hwnd: int
+    bind_hwnd: int
+    android: int
+    pid: int
+    vbox_pid: int
+    width: int
+    height: int
+    dpi: int
+
+    @classmethod
+    def parse(cls, line: str) -> LDPlayerInstanceInfo:
+        # The title is the one field a user types, so a comma in it is taken
+        # back into the title rather than shifting every field after it.
+        index, *title, top, bind, android, pid, vbox, width, height, dpi = line.split(",")
+        return cls.model_validate({
+            "index": index,
+            "title": ",".join(title),
+            "top_hwnd": top,
+            "bind_hwnd": bind,
+            "android": android,
+            "pid": pid,
+            "vbox_pid": vbox,
+            "width": width,
+            "height": height,
+            "dpi": dpi,
+        })
+
+    @property
+    def android_started(self) -> bool:
+        return self.android == 1
 
 
 class EmulatorInstance(BaseModel):
@@ -867,6 +937,14 @@ class AppConfig(BaseModel):
     # file because that is the only place a number nobody can measure belongs:
     # whoever is watching the frame rate is the one who gets to change it.
     restart_every: int = 50
+    # Which emulator instance every command drives, by its ADB serial:
+    # `127.0.0.1:16384` or `emulator-5554`, whichever form `adb devices` shows.
+    # Empty until the first run, which takes the instance running the game —
+    # MuMu's first where both are — and writes its serial here; the window's
+    # emulator picker writes it as well. A serial rather than an emulator name
+    # and an index, because it is what `adb devices` shows and what the picker
+    # lists, and each emulator fixes its instances' ports by index anyway.
+    adb_serial: str = ""
     # Nested rather than three more flat keys, and it earns that twice over. At
     # the top level `model` would sit beside `restart_every` with nothing saying
     # which subsystem it belongs to, and that only gets worse as tiers are added.

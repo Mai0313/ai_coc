@@ -11,7 +11,7 @@ import logging
 import adbutils
 from pydantic import BaseModel
 
-from ai_coc.models import AdbEndpoint, DisplayTarget
+from ai_coc.models import TouchNode, AdbEndpoint, DisplayTarget
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -51,6 +51,7 @@ EV_SYN, EV_KEY, EV_ABS = 0, 1, 3
 SYN_REPORT = 0
 BTN_TOUCH = 0x14A
 ABS_MT_SLOT, ABS_MT_POSITION_X, ABS_MT_POSITION_Y, ABS_MT_TRACKING_ID = 0x2F, 0x35, 0x36, 0x39
+ABS_MT_PRESSURE = 0x3A
 # Any two ids the kernel is not already using for a live finger.
 FIRST_TRACKING_ID = 100
 # struct input_event as the 64-bit kernel lays it out: two 8-byte timeval fields,
@@ -149,15 +150,19 @@ def physical_display(display_dump: str, logical_id: str) -> str:
 def pinch_events(
     first: tuple[tuple[int, int], tuple[int, int]],
     second: tuple[tuple[int, int], tuple[int, int]],
+    node: TouchNode,
     steps: int = PINCH_STEPS,
 ) -> list[tuple[int, int, int]]:
     """One two-finger gesture as the multi-touch events it is written with.
 
-    Each finger is given as (start, end) in **screen** coordinates. **The
-    device's own axes are the screen's swapped**: it reports x to 900 and y to
-    1600 against a 1600x900 screen, so a point goes down as (y, x). Measured by
-    tapping (430, 990) through this path and watching the building at screen
-    (990, 430) open.
+    Each finger is given as (start, end) in **screen** coordinates. **Whether
+    the device's axes are the screen's swapped depends on the emulator**, which
+    is what `node.swapped` says. MuMu's node reports x to 900 and y to 1600 against a
+    1600x900 screen, so a point goes down as (y, x): measured by tapping
+    (430, 990) through this path and watching the building at screen (990, 430)
+    open. LDPlayer's reports x to 1600 and y to 900 and takes the point as it
+    is; measured by zooming its village in and back out. `touch_devices` reads
+    which from the node's own ranges.
 
     **`BTN_TOUCH` is not optional.** Without it the whole gesture is accepted,
     reported, and ignored — which is what a first attempt at this looked like,
@@ -168,13 +173,16 @@ def pinch_events(
     events: list[tuple[int, int, int]] = []
 
     def place(slot: int, point: tuple[int, int]) -> None:
+        x, y = (point[1], point[0]) if node.swapped else point
         events.append((EV_ABS, ABS_MT_SLOT, slot))
-        events.append((EV_ABS, ABS_MT_POSITION_X, point[1]))
-        events.append((EV_ABS, ABS_MT_POSITION_Y, point[0]))
+        events.append((EV_ABS, ABS_MT_POSITION_X, x))
+        events.append((EV_ABS, ABS_MT_POSITION_Y, y))
 
     for slot, (start, _) in enumerate((first, second)):
         events.append((EV_ABS, ABS_MT_SLOT, slot))
         events.append((EV_ABS, ABS_MT_TRACKING_ID, FIRST_TRACKING_ID + slot))
+        if node.pressure:
+            events.append((EV_ABS, ABS_MT_PRESSURE, 1))
         place(slot, start)
         if slot == 0:
             events.append((EV_KEY, BTN_TOUCH, 1))
@@ -245,16 +253,33 @@ class AdbController(BaseModel):
         return self.endpoint.serial
 
     def connect(self) -> adbutils.AdbDevice:
-        """Reconnect on every call: a restarted instance drops the old handle."""
+        """The device, connecting it only when the adb server does not hold it already.
+
+        **A connect to a device the server already holds is not free**: it opens
+        a new connection to the emulator's adbd and drops it at once, measured
+        as ten new connections for ten connects against none for ten shells.
+        This used to connect on every call, several a second through a battle.
+        MuMu took that; LDPlayer's port forward runs through VirtualBox's NAT
+        process, which died under it twice inside a minute of farming, taking
+        ADB and the game's own network down with it.
+
+        A restarted instance drops the old handle, which is why this still
+        connects whenever the server has lost the device.
+        """
         if not self.endpoint.ready:
             raise AdbControlError(f"模擬器尚未開放 ADB 連接埠：{self.serial}")
-        logger.debug("Connecting ADB %s", self.serial)
+        device = adbutils.adb.device(serial=self.serial)
         try:
-            adbutils.adb.connect(self.serial, timeout=8.0)
-            device = adbutils.adb.device(serial=self.serial)
             state = device.get_state()
-        except adbutils.AdbError as exc:
-            raise AdbControlError(f"ADB 連線失敗 {self.serial}：{exc}") from exc
+        except adbutils.AdbError:
+            state = "absent"
+        if state != "device":
+            logger.debug("Connecting ADB %s, which the server holds as %s", self.serial, state)
+            try:
+                adbutils.adb.connect(self.serial, timeout=8.0)
+                state = device.get_state()
+            except adbutils.AdbError as exc:
+                raise AdbControlError(f"ADB 連線失敗 {self.serial}：{exc}") from exc
         if state != "device":
             raise AdbControlError(f"ADB 尚未就緒 {self.serial}：{state}")
         return device
@@ -357,8 +382,8 @@ class AdbController(BaseModel):
         coordinates = [str(start[0]), str(start[1]), str(end[0]), str(end[1])]
         self.input(display, "swipe", *coordinates, str(duration_ms))
 
-    def touch_devices(self) -> list[str]:
-        """Every multi-touch input node this device exposes.
+    def touch_devices(self) -> dict[str, TouchNode]:
+        """Every multi-touch input node this device exposes, and what a gesture on it must carry.
 
         `input` cannot do two fingers, so a pinch has to be written straight to
         the kernel — and that goes to a device node rather than to a display, so
@@ -368,16 +393,30 @@ class AdbController(BaseModel):
         this is the fallback for when that cannot be worked out, and sending to
         all of them is not harmless — see there.
 
-        An empty list is a failure rather than a quiet nothing — a pinch with
+        Swapped means the node's x range is shorter than its y range against a
+        landscape screen, which is how MuMu builds its node and LDPlayer does
+        not; `pinch_events` owns what that does to a point. `TouchNode` says why
+        the pressure axis matters.
+
+        An empty answer is a failure rather than a quiet nothing — a pinch with
         nowhere to send it would otherwise report a zoom that never happened.
         """
-        nodes: list[str] = []
+        nodes: dict[str, TouchNode] = {}
         for block in self.shell("getevent -pl 2>/dev/null").split("add device ")[1:]:
-            if "ABS_MT_POSITION_X" not in block:
+            ranges = {
+                axis: int(top)
+                for axis, top in re.findall(
+                    r"ABS_MT_(POSITION_[XY]|PRESSURE)\s*:[^\n]*?max (\d+)", block
+                )
+            }
+            if not {"POSITION_X", "POSITION_Y"} <= ranges.keys():
                 continue
             node = block.split(":", 1)[1].split()[0] if ":" in block else ""
             if node.startswith("/dev/input/"):
-                nodes.append(node)
+                nodes[node] = TouchNode(
+                    swapped=ranges["POSITION_X"] < ranges["POSITION_Y"],
+                    pressure=ranges.get("PRESSURE", 0) > 0,
+                )
         logger.debug("Multi-touch nodes: %s", nodes)
         return nodes
 
@@ -400,27 +439,33 @@ class AdbController(BaseModel):
         - its `EventHub Devices: [ N ]`;
         - the EventHub entry headed `N:` whose `Path:` is the node.
 
+        **More than one reader can carry that viewport**, and only a multi-touch
+        node is an answer. LDPlayer binds a `VirtualMouse` to its one display
+        ahead of the touchscreen, with `<virtual-mouse>` for a path, and taking
+        the first reader aimed every gesture at that: a redirect the shell
+        refuses and nothing reports.
+
         None rather than a guess when any hop is missing, because the caller's
         fallback — every node, then relaunch the game — is survivable, while a
         pinch aimed at the wrong display silently does nothing to the camera it
         was meant to fix.
         """
         dump = self.shell("dumpsys input 2>/dev/null")
-        reader = re.search(
+        touch = self.touch_devices()
+        for reader in re.finditer(
             rf"EventHub Devices:\s*\[\s*(\d+)[^\]]*\](?:(?!EventHub Devices).)*?"
             rf"uniqueId=local:{display.physical_id}\b",
             dump,
             re.S,
-        )
-        if reader is None:
-            logger.debug("No input device is reported against display %s", display.physical_id)
-            return None
-        path = re.search(rf"\n\s*{reader.group(1)}:[^\n]*\n(?:[^\n]*\n)*?\s*Path:\s*(\S+)", dump)
-        if path is None:
-            logger.debug("EventHub device %s reports no path", reader.group(1))
-            return None
-        logger.debug("Display %s is driven by %s", display.physical_id, path.group(1))
-        return path.group(1)
+        ):
+            path = re.search(
+                rf"\n\s*{reader.group(1)}:[^\n]*\n(?:[^\n]*\n)*?\s*Path:\s*(\S+)", dump
+            )
+            if path is not None and path.group(1) in touch:
+                logger.debug("Display %s is driven by %s", display.physical_id, path.group(1))
+                return path.group(1)
+        logger.debug("No multi-touch node is reported against display %s", display.physical_id)
+        return None
 
     def pinch(
         self,
@@ -437,14 +482,15 @@ class AdbController(BaseModel):
         `node` is the one to send to. Without it the stream goes to every
         multi-touch node, which reaches the game but also the launcher MuMu
         keeps on its other displays — see `touch_device_for` for why that is
-        not free.
+        not free. Either way each node gets the stream its own axes read.
         """
-        nodes = [node] if node else self.touch_devices()
-        if not nodes:
+        touch = self.touch_devices()
+        targets = [node] if node else list(touch)
+        if not targets:
             raise AdbControlError(f"{self.serial} 找不到任何多點觸控裝置，縮放送不出去")
-        stream = pinch_events(first, second, steps)
-        logger.info("Pinch %s %s and %s on %s", self.serial, first, second, nodes)
-        for target in nodes:
+        logger.info("Pinch %s %s and %s on %s", self.serial, first, second, targets)
+        for target in targets:
+            stream = pinch_events(first, second, touch[target], steps)
             self.shell(gesture_script(stream, target), timeout=30)
 
     def zoom(
@@ -508,10 +554,30 @@ class AdbController(BaseModel):
         return bool(self.shell(["pidof", package], timeout=5).strip())
 
     def launch_app(self, package: str) -> None:
+        """Start the package's launcher activity.
+
+        Resolved and started by name rather than through `monkey`, which
+        LDPlayer 14's image does not ship: there the call answered `monkey:
+        inaccessible or not found` and nothing started. `resolve-activity`
+        prints the component on its last line on both emulators.
+        """
         logger.info("Launching %s on %s", package, self.serial)
-        self.shell(
-            ["monkey", "-p", package, "-c", "android.intent.category.LAUNCHER", "1"], timeout=15
-        )
+        resolved = self.shell(
+            [
+                "cmd",
+                "package",
+                "resolve-activity",
+                "--brief",
+                "-c",
+                "android.intent.category.LAUNCHER",
+                package,
+            ],
+            timeout=10,
+        ).strip()
+        component = resolved.splitlines()[-1].strip() if resolved else ""
+        if not component.startswith(f"{package}/"):
+            raise AdbControlError(f"{package} 找不到可以啟動的畫面：{resolved[:120]}")
+        self.shell(["am", "start", "-n", component], timeout=15)
 
     def stop_app(self, package: str) -> None:
         logger.info("Force-stopping %s on %s", package, self.serial)

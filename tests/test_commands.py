@@ -1,6 +1,6 @@
 """The headless commands: the wiring between the flags and the loops, with the emulator out.
 
-`_controller` is the seam. Everything under it is `MuMuAdapter` and
+`_controller` is the seam. Everything under it is an emulator adapter and
 `AdbController` against a live emulator, so it is patched to hand back a mock
 and what is checked is what each command asks of that mock and of the runner
 it builds. The runners themselves are tested in `test_runners.py`.
@@ -86,6 +86,90 @@ def _adb() -> MagicMock:
 def _controller() -> AdbController:
     """A real controller with no emulator behind it, for the runners that validate their `adb`."""
     return AdbController(endpoint=AdbEndpoint(port=16384))
+
+
+def _pair(
+    label: str, serial: str, index: int = 0, *, running: bool = False
+) -> tuple[MagicMock, MagicMock]:
+    """One listed instance and the emulator that runs it, as `commands.emulators` yields them."""
+    emulator = MagicMock(label=label)
+    emulator.serial_of.return_value = serial
+    emulator.serial_for.return_value = serial
+    instance = MagicMock(index=index, coc_running=running, endpoint=AdbEndpoint.parse(serial))
+    return emulator, instance
+
+
+class EmulatorChoiceTests(unittest.TestCase):
+    """Which instance every command drives: the one `adb_serial` names, picked once if it names none."""
+
+    def setUp(self) -> None:
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        self.store = commands.ConfigStore(path=Path(folder.name) / "config.json")
+        patcher = patch.object(commands, "ConfigStore", return_value=self.store)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_with_nothing_configured_mumu_wins_and_its_serial_is_written_down(self) -> None:
+        mumu = _pair("MuMu", "127.0.0.1:16480", 3, running=True)
+        ld = _pair("LDPlayer", "127.0.0.1:5555", running=True)
+        assert commands.chosen([mumu, ld]) == mumu
+        assert self.store.load().adb_serial == "127.0.0.1:16480"
+
+    def test_with_nothing_configured_the_instance_running_the_game_wins(self) -> None:
+        mumu = _pair("MuMu", "127.0.0.1:16480", 3)
+        ld = _pair("LDPlayer", "127.0.0.1:5555", running=True)
+        assert commands.chosen([mumu, ld]) == ld
+        assert self.store.load().adb_serial == "127.0.0.1:5555"
+
+    def test_with_nothing_running_the_first_listed_is_taken(self) -> None:
+        mumu, ld = _pair("MuMu", "127.0.0.1:16480", 3), _pair("LDPlayer", "127.0.0.1:5555")
+        assert commands.chosen([mumu, ld]) == mumu
+
+    def test_a_configured_serial_is_matched_in_either_of_adbs_spellings(self) -> None:
+        mumu, ld = _pair("MuMu", "127.0.0.1:16480", 3), _pair("LDPlayer", "127.0.0.1:5555")
+        self.store.save(AppConfig(adb_serial="emulator-5554"))
+        assert commands.chosen([mumu, ld]) == ld
+
+    def test_an_instance_that_is_down_is_found_by_where_it_will_listen(self) -> None:
+        """MuMu reports port 0 until it is up, and `ensure_coc` is what brings it up."""
+        emulator, instance = _pair("MuMu", "127.0.0.1:16480", 3)
+        instance.endpoint = AdbEndpoint()
+        self.store.save(AppConfig(adb_serial="127.0.0.1:16480"))
+        assert commands.chosen([(emulator, instance)]) == (emulator, instance)
+
+    def test_a_serial_nothing_answers_to_is_an_error_rather_than_a_fallback(self) -> None:
+        self.store.save(AppConfig(adb_serial="127.0.0.1:7555"))
+        with pytest.raises(RuntimeError, match="7555"):
+            commands.chosen([_pair("MuMu", "127.0.0.1:16480", 3)])
+
+    def test_no_instance_at_all_is_an_error(self) -> None:
+        with pytest.raises(RuntimeError, match="找不到任何模擬器"):
+            commands.chosen([])
+
+    def test_a_match_among_mumus_never_asks_ldplayer(self) -> None:
+        """Every command starts here, and an emulator it is not driving must not slow it down."""
+        mumu = MagicMock(label="MuMu")
+        mumu.enumerate_instances.return_value = [
+            MagicMock(index=3, coc_running=True, endpoint=AdbEndpoint(port=16480))
+        ]
+        mumu.serial_for.return_value = "127.0.0.1:16480"
+        self.store.save(AppConfig(adb_serial="127.0.0.1:16480"))
+        with (
+            patch.object(commands, "MuMuAdapter", return_value=mumu),
+            patch.object(commands, "LDPlayerAdapter") as ld,
+        ):
+            commands.chosen(commands.emulators())
+        ld.assert_not_called()
+
+    def test_an_emulator_missing_or_not_answering_is_left_out(self) -> None:
+        broken = MagicMock(label="LDPlayer")
+        broken.enumerate_instances.side_effect = commands.EmulatorError("ldconsole 逾時")
+        with (
+            patch.object(commands, "MuMuAdapter", side_effect=commands.EmulatorError("absent")),
+            patch.object(commands, "LDPlayerAdapter", return_value=broken),
+        ):
+            assert list(commands.emulators()) == []
 
 
 class SessionTests(unittest.TestCase):
