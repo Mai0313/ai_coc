@@ -6354,6 +6354,30 @@ class HomeHudTests(unittest.TestCase):
         assert held.up is True
         assert held.remaining == 6 * 3600 + 8 * 60
 
+    def test_a_countdown_drawn_over_the_icon_keeps_its_hours(self) -> None:
+        """The plate centres its text, so 3小時 12分鐘 starts over the icon's rim.
+
+        The box used to start past the icon and cut the 3 in half, and the
+        reader then took 12 分鐘 for the whole countdown: 720 seconds for a
+        shield of three hours and twelve minutes. Captured on LDPlayer; the
+        plate is the game's own and the same at 1600x900 on MuMu.
+        """
+        png = (FRAMES / "day_shield_over_icon.png").read_bytes()
+        assert shield_state(png, plate_badges(png)["shield"]) == ShieldState(
+            remaining=3 * 3600 + 12 * 60
+        )
+
+    def test_a_countdown_missing_its_first_number_is_unread_rather_than_short(self) -> None:
+        """A shield read hours short looks about to lapse, the wrong way to be wrong.
+
+        On MuMu, 1小時 48分 fuses its 1 with 小 and used to come back as 48
+        minutes; on the committed plate a gem shower hides the hours and it
+        came back as 14 minutes. Neither can be read, so neither is.
+        """
+        for frame in ("day_shield_first_number_fused.png", "world_day_shield_only.png"):
+            png = (FRAMES / frame).read_bytes()
+            assert shield_state(png, plate_badges(png)["shield"]) is None, frame
+
     def test_a_shield_with_under_a_minute_left_is_still_a_shield(self) -> None:
         """`up` is the countdown having read, not the countdown being non-zero.
 

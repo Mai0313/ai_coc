@@ -145,9 +145,26 @@ BUILDER_BOX = plate_box(719)
 # its own: wider on the left, where 6小時 2分鐘 runs further than 0/6 does, and
 # stopping short of the green + on its right, which is a gem purchase and the one
 # thing on this row nothing here should be reading, let alone reaching.
-# Measured, the shield icon ends about 30 px past the badge and the + starts
-# about 145, so both edges have room.
-SHIELD_DIGITS = (42, 33, 145, 66)
+# The + starts about 145 past the badge. **The left edge is where the text can
+# start, not where the icon ends**: the plate centres its countdown, so a longer
+# one starts further left and is drawn over the icon's right side. Measured on
+# the plates on record, the first digit starts anywhere from about 32 to 40 past
+# the badge, and at 42 this cut 3小時 12分鐘's 3 in half and read 12 minutes. 35
+# is past the icon's tip at the digits' height. A first digit starting left of
+# it is left as a sliver in the box or not in it at all, and `shield_state` says
+# what each of those reads as.
+SHIELD_DIGITS = (35, 33, 145, 66)
+# The icon's silver rim rises above the text at its top right, and a digit that
+# starts over the icon fuses with it into a shape no template matches — 3 came
+# out nearest to 9. The rim is cleared from the box's first nine rows up to 52
+# past the badge, which is everything above the digits' tops: at eight rows the
+# 3 still read 26 against a tolerance of 25, at nine it reads 18.
+SHIELD_RIM = (52, 9)
+# How tall a leading fragment can be and still be a leftover of that rim rather
+# than part of a character. Every rim leftover on the plates on record is one row
+# tall; a digit stands 18 to 24, and a sliver of one that the box cut stays that
+# tall, which the width it is left with would not tell apart from the rim.
+SHIELD_SCRAP_ROWS = 10
 # 無 against a countdown, by how many glyphs are written rather than by matching
 # the character: swept over every committed frame with the plate on it, 無 comes
 # out as two and a countdown as six or more.
@@ -647,6 +664,12 @@ def plate_panel_open(png: bytes, world: World) -> tuple[int, int] | None:
     return None
 
 
+def _rows(ink: list[list[bool]], span: tuple[int, int]) -> int:
+    """How many rows one column span's ink runs over, top to bottom."""
+    rows = [y for y, row in enumerate(ink) if any(row[span[0] : span[1]])]
+    return rows[-1] - rows[0] + 1 if rows else 0
+
+
 def shield_state(png: bytes, centre: int) -> ShieldState | None:
     """What the shield plate says, or None where this frame will not resolve it.
 
@@ -661,10 +684,31 @@ def shield_state(png: bytes, centre: int) -> ShieldState | None:
     None is the honest third answer and it is not rare: the plate is translucent,
     so the village behind it decides whether the strokes resolve — measured, two
     of three frames read their countdown and the third did not.
+
+    **A countdown whose first character is not a digit is None, not the rest of
+    it.** The reader skips what it cannot match, so a first number it could not
+    read left the second one standing as the whole countdown: 1小時 48分 came
+    back as 48 minutes, and a plate whose hours a gem shower covered as 14. A
+    shield reported hours shorter than it is reads as one about to lapse, which
+    is the wrong direction to be wrong in.
+
+    Known and open: a countdown with two-digit hours, which is what a shield
+    from a raid starts at, runs further left still, and nothing on record says
+    where. If its leading 1 falls wholly left of the box the plate reads ten
+    hours short, as it always did; a sliver of it in the box is caught above.
     """
     ink = ink_mask(open_frame(png).crop(shield_box(centre)))
-    if len(glyph_columns(ink, speckle=False)) < SHIELD_GLYPHS:
+    for row in ink[: SHIELD_RIM[1]]:
+        for x in range(SHIELD_RIM[0] - SHIELD_DIGITS[0]):
+            row[x] = False
+    columns = glyph_columns(ink, speckle=False)
+    if len(columns) < SHIELD_GLYPHS:
         return ShieldState()
+    first = next((span for span in columns if _rows(ink, span) > SHIELD_SCRAP_ROWS), None)
+    if first is not None:
+        pattern = signature(ink, *first)
+        if pattern is None or nearest(pattern)[1] > TIME_DIGIT_TOLERANCE:
+            return None
     seconds = _seconds_from(ink)
     return None if seconds is None else ShieldState(remaining=seconds)
 
