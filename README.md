@@ -97,7 +97,7 @@ A tactic is a file rather than a set of constants, so a battle worth repeating c
 
 ```bash
 ai_coc attack --plan-out used.json    # write down whichever plan actually ran
-ai_coc attack --plan-in used.json     # play that one again, edits included
+ai_coc attack --plan used.json     # play that one again, edits included
 ```
 
 ### Spending what you farmed
@@ -217,7 +217,7 @@ That is the whole file. **A run that finds no file never creates one** — it us
 - **gemini**: which model answers each kind of call. `main` is asked once per run against a whole screenshot — the attack plan, the target finder — so nothing there is racing anything and the better model is simply the right one. `lite` is asked once per candidate against a cropped strip, which is a classification rather than a judgement and is where a cheaper model earns its place. `base_url` empty means Google's own endpoint. **The API key is not here**, deliberately: it lives in the DPAPI store beside this file, so there is no slot in a plaintext file that looks like the place to put it
 - **ui**: what only the window reads, and the last thing that was not in this file. It lived in the Windows registry, where no editor opens it and no `ai_coc` sub-command can reach it, on the rule that a setting no terminal command asks for does not belong in a shared file — which is how the one part of this app nobody could edit by hand turned out to be the window's own behaviour. `jobs` is which of the five commands the window's cycle round-robins, named for the sub-commands themselves, so `"walls": true` runs the same job `ai_coc walls` does, one pass of it per turn rather than until the storages will not stretch. `cycle_minutes` only ever paces a cycle that found nothing to do, because a finished job queues the next pass straight away. `live_view` is the live preview in the 主控 tab, and `record_frames` is the checkbox form of `--record`
 
-There are no ability or spell timings here any more. They were a table of per-hero constants, and editing them meant guessing how long an army takes to walk across a village nobody had looked at — which is the planner's job, done with the village on screen. Every clock lives on the plan now: see `plans/flat.json` for the shape, and `--plan-in` to replay one.
+There are no ability or spell timings here any more. They were a table of per-hero constants, and editing them meant guessing how long an army takes to walk across a village nobody had looked at — which is the planner's job, done with the village on screen. Every clock lives on the plan now: see `plans/flat.json` for the shape, and `--plan` to replay one.
 
 Everything else lives in `~/.ai_coc`: the account JSON `ai_coc export` writes, the run logs, the DPAPI-protected key file, and `state.json` — which command is driving the emulator, its pid, and its log directory. It is kept after a run ends rather than removed, so the record says what the last run was instead of going blank; deleting it by hand asks whichever run wrote it to stand down, which is the way out when whatever started that run is gone.
 
