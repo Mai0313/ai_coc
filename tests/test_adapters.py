@@ -56,6 +56,7 @@ add device 2: /dev/input/event8
     ABS (0003): ABS_MT_SLOT           : value 0, min 0, max 9
                 ABS_MT_POSITION_X     : value 0, min 0, max 899
                 ABS_MT_POSITION_Y     : value 0, min 0, max 1599
+                ABS_MT_PRESSURE       : value 0, min 0, max 0
 """
 
 # `dumpsys input`, trimmed to the three hops `touch_device_for` walks: the

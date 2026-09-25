@@ -403,14 +403,19 @@ class AdbController(BaseModel):
         """
         nodes: dict[str, TouchNode] = {}
         for block in self.shell("getevent -pl 2>/dev/null").split("add device ")[1:]:
-            ranges = dict(re.findall(r"ABS_MT_POSITION_([XY])\s*:[^\n]*?max (\d+)", block))
-            if not {"X", "Y"} <= ranges.keys():
+            ranges = {
+                axis: int(top)
+                for axis, top in re.findall(
+                    r"ABS_MT_(POSITION_[XY]|PRESSURE)\s*:[^\n]*?max (\d+)", block
+                )
+            }
+            if not {"POSITION_X", "POSITION_Y"} <= ranges.keys():
                 continue
             node = block.split(":", 1)[1].split()[0] if ":" in block else ""
             if node.startswith("/dev/input/"):
                 nodes[node] = TouchNode(
-                    swapped=int(ranges["X"]) < int(ranges["Y"]),
-                    pressure="ABS_MT_PRESSURE" in block,
+                    swapped=ranges["POSITION_X"] < ranges["POSITION_Y"],
+                    pressure=ranges.get("PRESSURE", 0) > 0,
                 )
         logger.debug("Multi-touch nodes: %s", nodes)
         return nodes

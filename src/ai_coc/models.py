@@ -141,9 +141,11 @@ class TouchNode(BaseModel):
 
     `swapped` is whether the node's x range is the screen's short side, which
     MuMu's is and LDPlayer's is not. `pressure` is whether the node reports
-    `ABS_MT_PRESSURE`: Android then reads a finger that never set it as zero
-    pressure, a hover rather than a touch, and the game ignores it — observed on
-    LDPlayer, a tap written to the node that did nothing until it carried one.
+    `ABS_MT_PRESSURE` with any range: Android then reads a finger that never set
+    it as zero pressure, a hover rather than a touch, and the game ignores it —
+    observed on LDPlayer (0 to 2), a tap written to the node that did nothing
+    until it carried one. MuMu's node lists the axis with a range of 0 to 0 and
+    takes a finger without it, so a range of nothing counts as no axis.
     """
 
     model_config = ConfigDict(frozen=True)
