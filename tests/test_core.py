@@ -1578,6 +1578,39 @@ class CrossingTests(unittest.TestCase):
         assert report == CartReport(outcome="not_found")
         pressed.assert_called_once()
 
+    def test_the_sheet_is_read_once_its_opening_animation_is_over(self) -> None:
+        """Every trip comes straight after a battle, which is when the sheet animates.
+
+        Read at `CART_SETTLE`, elixir drops covered the plank and a sheet that
+        was open read as a miss; the next spots then landed on its 重播 buttons.
+        """
+        adb = MagicMock()
+        seen: list[str] = []
+        adb.tap.side_effect = lambda x, y, _display: seen.append(f"tap {x},{y}")
+        adb.screenshot.side_effect = lambda _display: seen.append("shot") or b""
+        with (
+            patch.object(
+                world_ui.time, "sleep", side_effect=lambda seconds: seen.append(f"sleep {seconds}")
+            ),
+            patch.object(world_ui, "current_world", return_value="night"),
+            patch.object(world_ui, "park_camera", return_value=True),
+            patch.object(world_ui, "read_builder_stock", return_value=None),
+            patch.object(world_ui, "loot_cart_open", return_value=True),
+            patch.object(world_ui, "loot_cart_ready", return_value=False),
+            patch.object(world_ui, "loot_cart_load", return_value=(10, 1_600_000)),
+        ):
+            world_ui.collect_cart(adb, DisplayTarget(logical_id="1", physical_id="2"))
+        first = seen.index("tap {},{}".format(*world_ui.CART_SPOTS[0]))
+        assert seen[first + 1 : first + 3] == [f"sleep {world_ui.CART_OPENING}", "shot"]
+        # Measured, the held number holds still from 2.4 s after the tap.
+        assert world_ui.CART_OPENING > 2.4
+
+    def test_the_opening_animation_leaves_the_held_line_unread_rather_than_misread(self) -> None:
+        """Captured 1.9 s after the tap, with the drops over the line and the plank."""
+        png = (FRAMES / "night_cart_animating.png").read_bytes()
+        assert loot_cart_open(png) is True
+        assert loot_cart_load(png) is None
+
     def test_a_cart_whose_camera_never_parked_is_not_tapped_at(self) -> None:
         """The cart is found from the parked view, so an unparked one is grass.
 

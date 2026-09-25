@@ -299,6 +299,18 @@ CART_SPOTS = ((1240, 610), (1218, 596), (1262, 624))
 CART_COLLECT = (1176, 760)
 CART_CLOSE = (1338, 89)
 CART_SETTLE = 1.5
+# **The sheet animates the first time it opens after a battle, and every trip
+# here comes straight after one.** Measured on a burst from the tap: the held
+# number is still counting up at 0.9 s (1 238 535 against a settled 1 256 000),
+# a column of elixir drops covers it and the plank beside the bar from 1.4 s to
+# 1.9 s (0.76 of plank at 1.9 s), and it holds still from 2.4 s on. Read at
+# `CART_SETTLE` instead, one live trip reported `not_found` over a cart holding
+# 1 198 000 and landed its next two spots on the sheet's own 重播 buttons — the
+# drops, by every reading of that trip, having taken the plank under
+# `CART_PLANK`. The amount does not lengthen it: a first open after four
+# defences, about 634 000 at once, had finished counting by 1.5 s. A reopened
+# sheet does not animate at all.
+CART_OPENING = 3.0
 
 
 def _locked_cart(sheet: bytes) -> CartReport:
@@ -384,7 +396,7 @@ def collect_cart(adb: AdbController, display: DisplayTarget) -> CartReport:
     before = read_builder_stock(adb.screenshot(display))
     for spot in CART_SPOTS:
         adb.tap(spot[0], spot[1], display)
-        time.sleep(CART_SETTLE)
+        time.sleep(CART_OPENING)
         sheet = adb.screenshot(display)
         if loot_cart_open(sheet):
             break
