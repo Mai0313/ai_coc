@@ -2112,7 +2112,7 @@ SCROLL_MS = 400
 SCROLL_TRIES = 6
 # Each menu is a full-screen page with an animation on it.
 PAGE_SETTLE = 1.2
-# How long to wait for MuMu to mirror the Android clipboard onto Windows.
+# How long to wait for the emulator to mirror the Android clipboard onto Windows.
 # Measured: the payload was already there on the first read after the tap, and a
 # cleared clipboard stayed empty for ten seconds with nothing copied — so a poll
 # that runs out really is "nothing was copied" rather than "not yet".
@@ -2224,7 +2224,7 @@ EXPORT_LINES: dict[ExportOutcome, str] = {
     "row_not_found": "捲到底了還是找不到「以 JSON 格式匯出村莊數據」那一列",
     "nothing_copied": (
         "點了複製,但剪貼簿沒有東西。"
-        "可能是遊戲沒吃到那一下,也可能是 MuMu 沒把 Android 的剪貼簿同步過來"
+        "可能是遊戲沒吃到那一下,也可能是模擬器沒把 Android 的剪貼簿同步過來"
     ),
     "not_a_village": "剪貼簿裡的不是村莊資料,複製的當下可能被別的東西蓋過去了",
 }

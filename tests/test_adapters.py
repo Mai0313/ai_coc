@@ -154,6 +154,28 @@ class AdbConnectionTests(unittest.TestCase):
         ):
             _controller().connect()
 
+    def test_a_device_the_server_already_holds_is_not_connected_again(self) -> None:
+        """Each connect opens a connection to adbd, and LDPlayer's NAT died under them."""
+        device = MagicMock()
+        device.get_state.return_value = "device"
+        with (
+            patch.object(adb_module.adbutils.adb, "connect") as connected,
+            patch.object(adb_module.adbutils.adb, "device", return_value=device),
+        ):
+            assert _controller().connect() is device
+        connected.assert_not_called()
+
+    def test_a_device_the_server_lost_is_connected_again(self) -> None:
+        """A restarted instance drops the old handle."""
+        device = MagicMock()
+        device.get_state.side_effect = [adb_module.adbutils.AdbError("not found"), "device"]
+        with (
+            patch.object(adb_module.adbutils.adb, "connect") as connected,
+            patch.object(adb_module.adbutils.adb, "device", return_value=device),
+        ):
+            assert _controller().connect() is device
+        connected.assert_called_once()
+
     def test_an_adb_failure_is_reported_with_the_command_that_failed(self) -> None:
         device = MagicMock()
         device.shell.side_effect = adb_module.adbutils.AdbError("closed")

@@ -250,16 +250,33 @@ class AdbController(BaseModel):
         return self.endpoint.serial
 
     def connect(self) -> adbutils.AdbDevice:
-        """Reconnect on every call: a restarted instance drops the old handle."""
+        """The device, connecting it only when the adb server does not hold it already.
+
+        **A connect to a device the server already holds is not free**: it opens
+        a new connection to the emulator's adbd and drops it at once, measured
+        as ten new connections for ten connects against none for ten shells.
+        This used to connect on every call, several a second through a battle.
+        MuMu took that; LDPlayer's port forward runs through VirtualBox's NAT
+        process, which died under it twice inside a minute of farming, taking
+        ADB and the game's own network down with it.
+
+        A restarted instance drops the old handle, which is why this still
+        connects whenever the server has lost the device.
+        """
         if not self.endpoint.ready:
             raise AdbControlError(f"模擬器尚未開放 ADB 連接埠：{self.serial}")
-        logger.debug("Connecting ADB %s", self.serial)
+        device = adbutils.adb.device(serial=self.serial)
         try:
-            adbutils.adb.connect(self.serial, timeout=8.0)
-            device = adbutils.adb.device(serial=self.serial)
             state = device.get_state()
-        except adbutils.AdbError as exc:
-            raise AdbControlError(f"ADB 連線失敗 {self.serial}：{exc}") from exc
+        except adbutils.AdbError:
+            state = "absent"
+        if state != "device":
+            logger.debug("Connecting ADB %s, which the server holds as %s", self.serial, state)
+            try:
+                adbutils.adb.connect(self.serial, timeout=8.0)
+                state = device.get_state()
+            except adbutils.AdbError as exc:
+                raise AdbControlError(f"ADB 連線失敗 {self.serial}：{exc}") from exc
         if state != "device":
             raise AdbControlError(f"ADB 尚未就緒 {self.serial}：{state}")
         return device
