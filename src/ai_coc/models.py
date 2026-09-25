@@ -1001,8 +1001,9 @@ class NightPlan(BaseModel):
 # to end — including during the server wait. `no_attack_menu` is a screen the
 # round could not open the menu on; `server_loading` is that screen outlasting
 # the whole 45-minute wait and `server_flapping` is it loading and dropping
-# back. `emulator_silent` is ADB not answering, and `world_unreachable` is a
-# named village the game could not be put on.
+# back. `emulator_silent` is ADB not answering, and `other_village` is the game
+# standing on the village this series does not play, which ends it: nothing here
+# sails, and `ai_coc world --go` is how the game gets moved.
 AttackOutcome = Literal[
     "took_loot",
     "deployed",
@@ -1018,7 +1019,7 @@ AttackOutcome = Literal[
     "server_loading",
     "server_flapping",
     "emulator_silent",
-    "world_unreachable",
+    "other_village",
 ]
 
 
@@ -1026,8 +1027,9 @@ class AttackReport(BaseModel):
     """What one run of the attack loop did, for the automation log."""
 
     # Which village it played, because the two are different games under one
-    # command and a report that does not say is a report nobody can place.
-    world: World = "day"
+    # command and a report that does not say is a report nobody can place. None
+    # is a round that ended before it read either.
+    world: World | None = "day"
     # How many times the army went down, **on the builder base**. More than one
     # is its second stage, which the game only offers after a first attack takes
     # the whole base, and 0 there is a round that never deployed.
@@ -1081,20 +1083,13 @@ class AttackOptions(BaseModel):
 
     frame_dir: Path | None = None
     # A written plan for either village, played instead of asking the AI. It
-    # names its own village, so with no `world` it is also the village played.
+    # names its own village, and a game on the other one ends the series.
     plan: Path | None = None
     plan_out: Path | None = None
     # The run's own plan log, one line per round. `plan_out` is the caller's
     # path and holds whichever round went last; this is the whole series.
     # None only for a caller with no run directory to write into.
     plan_log: Path | None = None
-    # Which village to play. **None means whichever one is up**, which is the
-    # default because it is the honest one: the game reopens on the village it
-    # was closed on, so a run that insisted on a village would refuse half the
-    # time for no reason. Naming one crosses to it first, and that is what a
-    # scripted night of farming both wants — otherwise a game left on the
-    # builder base has the whole series quietly playing the wrong one.
-    world: World | None = None
     minimums: LootOverrides = LootOverrides()
     # 0 keeps going until it is interrupted, which is what watching the loop play
     # needs: a tactic is judged over a run of battles rather than one.
@@ -1845,7 +1840,7 @@ RestartScope = Literal["none", "game", "emulator"]
 # Base; this project calls them day and night because that is what the player
 # calls them, and because `builder` already means the workman here — `ai_coc
 # builders` reads the panel saying which of the five are free, and a
-# `--world builder` standing next to it would be read as belonging to that.
+# `world --go builder` standing next to it would be read as belonging to that.
 World = Literal["day", "night"]
 
 

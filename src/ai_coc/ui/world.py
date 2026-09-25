@@ -94,10 +94,10 @@ CROSSINGS: dict[World, Crossing] = {
 # builder base animates, and measured live an already-parked home village spent
 # three swipes where two would have done. Every such reading resets `still`, and
 # **a spurious False is expensive** — `cross` returns without tapping, and
-# `GameRunner._home` reads a failed crossing as there being no village to work
-# on, which ends a whole `walls` or `collect` run. What ten buys depends on where
-# the bad readings fall: seven in a row still leave a clean pair at the end,
-# while five alternating with zeros leave no adjacent pair at all.
+# `ai_coc world --go` reports a crossing that never happened. What ten buys
+# depends on where the bad readings fall: seven in a row still leave a clean
+# pair at the end, while five alternating with zeros leave no adjacent pair at
+# all.
 #
 # **A frame caught mid-zoom is not one of those, and it fails the other way.**
 # The opening frame is taken one `PINCH_SETTLE` after the pinch, so it can
@@ -456,9 +456,9 @@ def uncovered(adb: AdbController, display: DisplayTarget) -> World | None:
     **A battle is never pressed at**, and that is the whole reason this filters
     rather than pressing at anything `current_world` will not name. Its callers
     hand it whatever is on screen: `commands.world` goes straight into `cross`
-    on an unreadable frame, and so does `_pick_world` when a run named a
-    village — so a game left mid-battle by a killed run, which is a state this
-    project has written down, would take three presses aimed at 放棄. Every
+    on an unreadable frame — so a game left mid-battle by a killed run, which
+    is a state this project has written down, would take three presses aimed
+    at 放棄. Every
     other place that presses `back` filters first — `GameRunner._home` on its
     dialogs, and the attack loop by routing through here rather than pressing
     itself — and this is not the one to make an exception of. A battle answers
@@ -521,12 +521,9 @@ def cross(adb: AdbController, display: DisplayTarget, want: World) -> World | No
     # to.** A pinch used to sit in a `finally` for it, on the reasoning that the
     # village the boat arrives on comes up at whatever camera the game gives it
     # — true, and beside the point, because every caller that goes on to tap the
-    # map pinches again before it does. `GameRunner._home` is the one that looks
-    # like a counter-example and is not: `_settled` is only ever set inside
-    # `_put_camera_back`, which both of its call sites reach *after* the branch
-    # that sails, so the crossing always returns into a `_home` that still has
-    # it False and pinches for the new village itself. The attack loop pinches
-    # per battle, and `commands.world` taps no map coordinate at all.
+    # map pinches again before it does. The attack loop pinches per battle,
+    # the home village's loops on the first village they read, and
+    # `commands.world` taps no map coordinate at all.
     #
     # `park_camera` keyed on the village being stood on pushes toward the one
     # being sailed to, which is this crossing's own drag — the two agree by

@@ -865,7 +865,7 @@ class RoundLineTests(unittest.TestCase):
             "server_loading": "卡在載入畫面",
             "server_flapping": "又回到載入畫面",
             "emulator_silent": "模擬器沒有回應",
-            "world_unreachable": "沒辦法切到指定的世界",
+            "other_village": "遊戲停在另一個村莊",
         }
         assert set(own) == set(get_args(AttackOutcome))
         for outcome, fragment in own.items():
@@ -909,7 +909,6 @@ class AttackSeriesStopTests(unittest.TestCase):
             patch.object(commands.ConfigStore, "load", return_value=AppConfig()),
             patch.object(commands, "_planner", return_value=None),
             patch.object(commands, "_settle_game", return_value=DISPLAY),
-            patch.object(commands, "_pick_world", return_value="day"),
             patch.object(commands, "FrameTicker"),
             patch.object(commands, "AttackRunner", return_value=runner) as built,
         ):
@@ -955,7 +954,6 @@ class AttackSeriesAdapterFailureTests(unittest.TestCase):
             patch.object(commands.ConfigStore, "load", return_value=AppConfig()),
             patch.object(commands, "_planner", return_value=None),
             patch.object(commands, "_settle_game", return_value=DISPLAY),
-            patch.object(commands, "_pick_world", return_value="day"),
             patch.object(commands, "FrameTicker"),
             patch.object(commands, "AttackRunner", return_value=runner),
             patch.object(commands, "_rest", return_value=False),
@@ -1027,7 +1025,6 @@ class AttackSeriesArmyShortTests(unittest.TestCase):
             patch.object(commands.ConfigStore, "load", return_value=AppConfig()),
             patch.object(commands, "_planner", return_value=None),
             patch.object(commands, "_settle_game", return_value=DISPLAY),
-            patch.object(commands, "_pick_world", return_value="day"),
             patch.object(commands, "FrameTicker"),
             patch.object(commands, "AttackRunner", return_value=runner),
             patch.object(commands, "_rest", return_value=False) as rest,
@@ -1047,8 +1044,17 @@ class AttackSeriesArmyShortTests(unittest.TestCase):
         # will read the same a minute later.
         rest.assert_not_called()
 
+    def test_the_other_village_ends_the_series_too(self) -> None:
+        """Nothing sails, so every round after would find the game on it as well."""
+        rounds, rest = self._series([
+            AttackReport(outcome="other_village"),
+            AttackReport(outcome="took_loot", attacked=LootOffer(gold=1, elixir=1, dark=1)),
+        ])
+        assert [report.outcome for report in rounds] == ["other_village"]
+        rest.assert_not_called()
+
     def test_a_round_that_found_nobody_still_comes_round_again(self) -> None:
-        """The break is `army_short`'s alone: every other empty round rests and retries.
+        """Only those end it: every other empty round rests and retries.
 
         No opponent above the thresholds is a matchmaker that will offer a
         different set next time, which is exactly what the wait is still for.
@@ -1197,16 +1203,13 @@ class RunPlumbingTests(unittest.TestCase):
             assert not (Path(folder) / "never.json").exists()
 
     def test_a_handed_in_plan_names_its_own_village(self) -> None:
-        """A written tactic is for one village, so with no `--world` it picks the village."""
+        """A written tactic is for one village, and the series plays that one."""
         day = plans.PLAN_DIR / "flat.json"
         night = plans.PLAN_DIR / "night_flat.json"
         plan, world = commands._handed_plan(AttackOptions(plan=day))
         assert (isinstance(plan, AttackPlan), world) == (True, "day")
         plan, world = commands._handed_plan(AttackOptions(plan=night))
         assert (isinstance(plan, NightPlan), world) == (True, "night")
-        plan, world = commands._handed_plan(AttackOptions(plan=night, world="night"))
-        assert world == "night"
-        assert commands._handed_plan(AttackOptions(world="day")) == (None, "day")
         assert commands._handed_plan(AttackOptions()) == (None, None)
 
     def test_a_misedited_plan_reports_only_its_own_villages_errors(self) -> None:
@@ -1220,17 +1223,6 @@ class RunPlumbingTests(unittest.TestCase):
                 plans.load_any(path)
         assert "act" in str(raised.value)
         assert "deploy_start" not in str(raised.value)
-
-    def test_a_plan_for_the_other_village_is_refused_before_the_game_is_touched(self) -> None:
-        with (
-            patch.object(commands, "_controller") as controller,
-            pytest.raises(ValueError, match="夜世界的戰術"),
-        ):
-            commands.attack(
-                AttackOptions(plan=plans.PLAN_DIR / "night_flat.json", world="day"),
-                MagicMock(return_value=False),
-            )
-        controller.assert_not_called()
 
     def test_the_plan_log_holds_one_line_per_round_of_either_village(self) -> None:
         with tempfile.TemporaryDirectory() as folder:

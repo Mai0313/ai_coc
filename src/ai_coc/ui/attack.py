@@ -31,7 +31,7 @@ from ai_coc.models import (
     StorageCapacity,
 )
 from ai_coc.prompts import PROMPTS
-from ai_coc.ui.world import cross, uncovered, collect_cart
+from ai_coc.ui.world import uncovered, collect_cart
 from ai_coc.constants import COC_PACKAGE
 from ai_coc.ui.runner import ScreenRunner, restart_game
 from ai_coc.adapters.adb import ZOOM_PINCHES
@@ -847,9 +847,8 @@ class AttackRunner(ScreenRunner):
     the tap and the recorded capture come from. It is not the other one because
     it cannot use `_home`: that method means the home village and answers a
     covered screen with `back`, where this loop has a result screen to leave, a
-    matchmaker to sit through, a loading screen to wait out and possibly a boat
-    to catch — see `_open_attack_menu`, which is its own answer to the same
-    question.
+    matchmaker to sit through and a loading screen to wait out — see
+    `_open_attack_menu`, which is its own answer to the same question.
 
     `should_stop` is checked between opponents only. A battle already under way
     is played out: abandoning one mid-deploy would leave the army on the field
@@ -862,7 +861,12 @@ class AttackRunner(ScreenRunner):
     # with nothing to skip and nothing to weigh. What they share is everything
     # after the battle opens — the boundary, the drop line, the probing, the
     # card row — which is why this is a field rather than a second runner.
-    world: World = "day"
+    #
+    # **None plays whichever village the game is on**, read the first time a
+    # round finds one; nothing here sails, since crossing is `ai_coc world --go`.
+    # Once read or named it holds for the series, and a round that finds the
+    # other village ends the series rather than crossing to this one.
+    world: World | None = "day"
     thresholds: LootThresholds
     # How full every storage has to be before the run stands itself down, as a
     # share of what that storage holds; 0 never stands one down. One number for
@@ -993,7 +997,7 @@ class AttackRunner(ScreenRunner):
             )
         }
 
-    def _settle_ceilings(self) -> None:
+    def _settle_ceilings(self, world: World) -> None:
         """Read this village's storage ceilings once a run and keep what it read.
 
         Kept for the rest of the run, because a storage only grows when a builder
@@ -1007,7 +1011,7 @@ class AttackRunner(ScreenRunner):
         # at 不監控.
         if self._capacity is not None or not self.stop_at:
             return
-        self._capacity = self.read_ceilings(self.world)
+        self._capacity = self.read_ceilings(world)
 
     def _visit_cart(self) -> None:
         """Go to the builder base's cart on a run's first round and every `CART_EVERY` battles.
@@ -1114,15 +1118,13 @@ class AttackRunner(ScreenRunner):
         dialog it opens — `attack_menu_open` does not recognise the builder
         base's and `night_attack_menu` does not recognise the home village's.
         The game reopens on whichever village it was closed on, so a run
-        pointed at one can find the other; without the crossing below it fails
-        safe but expensively and says the wrong thing, spending every attempt
-        here on the other village's dialog and reporting 畫面不在主村, which
-        reads as a game that is stuck rather than one in the other village.
+        pointed at one can find the other. It says so rather than crossing:
+        nothing here sails, since crossing is `ai_coc world --go`. A runner
+        with no village named takes the first one it reads here.
         """
-        other: World = "night" if self.world == "day" else "day"
-        opened = attack_menu_open if self.world == "day" else night_attack_menu
         self._stuck = None
         waited = False
+        elsewhere = False
         for _ in range(HOME_ATTEMPTS):
             home = self._frame("home")
             if idle_disconnected(home):
@@ -1146,19 +1148,7 @@ class AttackRunner(ScreenRunner):
                 logger.info("The last battle's result screen is still up; leaving it")
                 self._leave_result()
                 continue
-            # One crossing and then out, for the reason `GameRunner._home` gives:
-            # `cross` already spends about a minute trying three spots, and
-            # retrying it per attempt would turn a boat nobody can reach into
-            # five minutes of silence rather than the one round this costs.
             here = current_world(home)
-            if here == other:
-                logger.warning(
-                    "The game is on the %s village; sailing over before attacking", other
-                )
-                if cross(self.adb, self.display, self.world) != self.world:
-                    logger.warning("The crossing never landed; this round has no village to open")
-                    return None
-                continue
             # **Something is over the village, and the 攻擊 tap below would land
             # on it.** The game puts full-screen popups up on its own — event
             # rewards, season passes, whatever is running that week — and the one
@@ -1171,18 +1161,35 @@ class AttackRunner(ScreenRunner):
             if here is None:
                 uncovered(self.adb, self.display)
                 continue
+            # **The other village ends the series rather than being sailed to**,
+            # and only on two readings in a row: it stops an overnight run, and
+            # one frame is not enough to stop one on.
+            if self._elsewhere(here):
+                if elsewhere:
+                    logger.warning(
+                        "The game is on the %s village and this series plays the %s one; "
+                        "`ai_coc world --go` changes villages",
+                        here,
+                        self.world,
+                    )
+                    self._stuck = "other_village"
+                    return None
+                elsewhere = True
+                continue
+            elsewhere = False
             # The one moment the run is known to be standing on the right
             # village with nothing over it, which is what tapping the storage
             # bars needs. Past here the attack menu is up and the bars are behind
             # it; before here the frame might be a result screen or the other
             # village. It reads once and every round after this costs nothing.
-            self._settle_ceilings()
+            self._settle_ceilings(here)
             # The builder base's cart is looked in here for the same reason: it
             # is a place on that village's map, and past this tap the dialog is
             # over it.
             self._visit_cart()
             self._tap(HOME_ATTACK)
             time.sleep(2)
+            opened = attack_menu_open if here == "day" else night_attack_menu
             if opened(self._frame("attack-menu")):
                 return home
             # Never `back` here: on a clear village that is 確定退出遊戲嗎, one
@@ -1191,6 +1198,13 @@ class AttackRunner(ScreenRunner):
             # only needs the panel to swallow one press and then retries.
             time.sleep(HOME_RETRY_DELAY)
         return None
+
+    def _elsewhere(self, here: World) -> bool:
+        """Whether the village on screen is not this series', taking it for one when none was named."""
+        if self.world is None:
+            logger.info("Playing the %s village, the one the game is on", here)
+            self.world = here
+        return here != self.world
 
     def _wait_out_loading(self, again: bool) -> bool:
         """Sit on 正在載入 until the game leaves it; False when the wait ended without it.
@@ -2712,7 +2726,7 @@ class AttackRunner(ScreenRunner):
             return png
         return None
 
-    def _run_night(self) -> AttackReport:
+    def _run_night(self, home: bytes | None = None) -> AttackReport:
         """One builder base attack, start to finish.
 
         No thresholds and no skipping: the matchmaker picks the opponent and
@@ -2723,7 +2737,7 @@ class AttackRunner(ScreenRunner):
         """
         self._panned = (0, 0)
         self._played = None
-        home = self._open_attack_menu()
+        home = self._open_attack_menu() if home is None else home
         if home is None:
             logger.warning(
                 "The builder base's attack dialog never opened: %s",
@@ -2766,12 +2780,25 @@ class AttackRunner(ScreenRunner):
         )
 
     def run(self) -> AttackReport:
-        """One attack on whichever village this runner was pointed at."""
+        """One attack on this runner's village, or on the one the game is on when none was named.
+
+        Which of the two rounds to play is only known once a village has been
+        read, and opening the attack menu is where that happens first — so a
+        runner with none named opens it here and hands the frame on.
+        """
+        home = None
+        if self.world is None:
+            home = self._open_attack_menu()
+            if home is None:
+                logger.warning(
+                    "The attack menu did not open: %s", self._stuck or "no village read"
+                )
+                return AttackReport(world=self.world, outcome=self._stuck or "no_attack_menu")
         if self.world == "night":
             logger.info("Builder base attack run starts")
-            return self._run_night()
+            return self._run_night(home)
         logger.info("Attack run starts, thresholds=%s", self.thresholds.model_dump())
-        return self._run_day()
+        return self._run_day(home)
 
     def _army_short(self) -> bool:
         """Whether the army screen says this round has nothing to attack with.
@@ -2804,7 +2831,7 @@ class AttackRunner(ScreenRunner):
         )
         return False
 
-    def _run_day(self) -> AttackReport:
+    def _run_day(self, home: bytes | None = None) -> AttackReport:
         """One home village attack: scout opponents, weigh their loot, fight one."""
         # The same runner plays round after round, and the loot it last saw is
         # what `_wait_out_battle` judges the battle on. Carried over, a battle
@@ -2832,7 +2859,7 @@ class AttackRunner(ScreenRunner):
         # after round, so nothing downstream can tell a stale copy from a real
         # one.
         self._played = None
-        home = self._open_attack_menu()
+        home = self._open_attack_menu() if home is None else home
         if home is None:
             logger.warning(
                 "The attack menu did not open: %s",

@@ -824,50 +824,6 @@ def _log_plan(path: Path | None, played: int, plan: AttackPlan | NightPlan | Non
         log.write(PlayedPlan(round=played, plan=plan).model_dump_json() + "\n")
 
 
-def _pick_world(adb: AdbController, display: DisplayTarget, wanted: World | None) -> World | None:
-    """Which village the series will play, or None when a named one is out of reach.
-
-    Settled once for the whole series rather than per round. Naming one crosses
-    to it; not naming one takes whichever is up, because the game reopens on the
-    village it was closed on and refusing to play that one would stand half the
-    runs down for no reason.
-
-    **An unreadable frame is never fatal**, whether or not a village was named,
-    because it is not the same answer as "the other village". The runner has its
-    own answers for most of them: `_open_attack_menu` restarts a dropped game,
-    leaves a result screen, presses a popup away and sails across, and every
-    one of those is a state `current_world` says nothing for. Bailing here ends
-    a whole series before round one.
-
-    Measured twice, and the second one is why this covers a named village too.
-    Without a name it already fell through here. With one it did not, so a run
-    asked for `--world night` while a battle was still on screen — an ordinary
-    state, a round abandoned by a stop — ended immediately with
-    沒辦法切到夜世界,沒有開打, having done nothing and waited for nothing.
-
-    **What this buys is the rounds, not the round.** A battle is the one state
-    neither this nor the runner can shorten: `uncovered` refuses to press at one
-    and `_open_attack_menu` spends its five attempts in about ten seconds, so
-    that first round still reports 畫面不在建築大師基地. What follows it is the
-    difference — `IDLE_REST` between rounds outlasts a battle comfortably, and
-    the next round finds the village. A single-round run gets nothing out of
-    this, and that is the honest limit of it.
-
-    What is still fatal is a crossing that landed somewhere real and wrong:
-    that is a boat this run cannot find, and the runner has no better answer.
-    """
-    if wanted is None:
-        return current_world(adb.screenshot(display)) or "day"
-    landed = cross(adb, display, wanted)
-    if landed == wanted:
-        return wanted
-    if landed is None:
-        logger.info("No village readable yet; leaving %s to the runner to reach", wanted)
-        return wanted
-    logger.warning("Wanted the %s village and the game is on %s", wanted, landed)
-    return None
-
-
 # Only ever used to build the `Attack finished:` line a person reads; the field
 # a caller decides on is `AttackReport.outcome`. **The four that fought are kept
 # distinguishable in the wording too**, because `run.log` is where a farming
@@ -888,7 +844,7 @@ ROUND_LINES: dict[AttackOutcome, str] = {
     "server_loading": "遊戲卡在載入畫面,伺服器可能連不上,這一輪停手",
     "server_flapping": "遊戲又回到載入畫面,伺服器可能還連不上,這一輪停手",
     "emulator_silent": "模擬器沒有回應",
-    "world_unreachable": "沒辦法切到指定的世界,沒有開打",
+    "other_village": "遊戲停在另一個村莊,這一批不打那邊;換村莊用 ai_coc world --go",
 }
 
 
@@ -985,9 +941,11 @@ def _lost_round(
 def _series_over(report: AttackReport, played: int) -> bool:
     """Whether this round's outcome stands the whole series down, and says why.
 
-    Two outcomes do, and both are read off the village before the search fee is
-    charged. A full storage is the goal being met, and `farm` owns where that
-    leads; there is nothing left for the round loop to farm for either way.
+    Three outcomes do, and all are read off the village before the search fee
+    is charged. A full storage is the goal being met, and `farm` owns where that
+    leads; there is nothing left for the round loop to farm for either way. The
+    game standing on the other village is the third: nothing here sails, so
+    every round after would find it there too.
 
     **An army short of the camp is the other one, and it is a fault rather than
     a goal.** The wait between rounds was written for an army still training,
@@ -1003,6 +961,8 @@ def _series_over(report: AttackReport, played: int) -> bool:
     if report.stock_full:
         logger.info("The storages are full; there is nothing left to farm for")
         return True
+    if report.outcome == "other_village":
+        return True
     if report.outcome == "army_short":
         logger.error(
             "The army is under half the camp and training is instant, so this will not clear "
@@ -1014,18 +974,11 @@ def _series_over(report: AttackReport, played: int) -> bool:
 
 
 def _handed_plan(options: AttackOptions) -> tuple[AttackPlan | NightPlan | None, World | None]:
-    """The plan `--plan` handed in, and the village to play: the one named, else the plan's own.
-
-    A plan is written for one village, so one that disagrees with `--world` is
-    refused here, before anything touches the game.
-    """
+    """The plan `--plan` handed in, and the village it was written for, which the series plays."""
     if options.plan is None:
-        return None, options.world
+        return None, None
     plan = plans.load_any(options.plan)
-    planned = _PLAN_WORLD[type(plan)]
-    if options.world not in (None, planned):
-        raise ValueError(f"--plan 是{_WORLDS[planned]}的戰術,跟 --world {options.world} 對不上")
-    return plan, planned
+    return plan, _PLAN_WORLD[type(plan)]
 
 
 def attack(
@@ -1044,9 +997,9 @@ def attack(
     `plan` replaces the AI entirely — the loop plays that file and asks for
     nothing — and `plan_out` writes down whichever plan actually ran, so a battle
     worth repeating can be repeated and one worth arguing with can be edited.
-    A plan is written for one village, so it picks the village when `world`
-    names none, and one that disagrees with `world` is refused before anything
-    touches the game.
+    A plan is written for one village, so the series plays that one and ends
+    at once on the other. Without a plan it plays whichever the game is on, and
+    in neither case does it sail: crossing is `ai_coc world --go`.
 
     `rounds` of 0 keeps going until it is stopped, which is what watching the
     loop play needs: a tactic is judged over a run of battles rather than one,
@@ -1062,7 +1015,7 @@ def attack(
     replaces the state file — the default reads it, and the `claim` around this
     call is what marks the run as under way for anybody looking from outside.
     """
-    plan, wanted = _handed_plan(options)
+    plan, world = _handed_plan(options)
     adb = _controller()
     _prepare_frames(options)
     config = ConfigStore().load()
@@ -1073,18 +1026,6 @@ def attack(
     # one. This is the same wait a restart already does, and it leaves the camera
     # at the far zoom on the way past, which every coordinate below wants anyway.
     display = _settle_game(adb, WORLD_SETTLE_POLLS, should_stop) or adb.display_for(COC_PACKAGE)
-    world = _pick_world(adb, display, wanted)
-    if world is None:
-        # **The village that was asked for rather than the default**, which says
-        # "day" and would otherwise be the only world named on a run that could
-        # not reach the other one. `_pick_world` answers None only when one was
-        # named, so the fallback below is unreachable; it is written out because
-        # the type says `wanted` may be None and an assertion nobody reads is
-        # worse than an `or` that says so.
-        return AttackSeries(
-            root=[AttackReport(world=wanted or "day", outcome="world_unreachable")]
-        )
-    logger.info("Playing the %s village", world)
     runner = AttackRunner(
         adb=adb,
         display=display,
