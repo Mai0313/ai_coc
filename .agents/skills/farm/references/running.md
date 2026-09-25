@@ -8,11 +8,11 @@
 
 **主 session 的角色是監督, 不是執行.** 迴圈在背景跑, 你在前景讀 log, 下判斷, 改東西, 回答使用者. 一個把 `--repeat 0` 丟在前景的主 session 等於整晚不能被下指令, 而使用者開這些 skill 的一部分意思就是「我隨時可以插話」.
 
-**會跑很久的不只 `attack`, 而這裡是唯一一份這個清單.** `walls` 一趟掃描加買下去是好幾分鐘; `upgrade` 跟 `hero` 找不到目標的時候會退回 `_sweep` 鋪網格, 那是兩分半起跳; `donate --rounds 0` 也一樣. 這幾個都用背景送出去. 幾秒鐘就回來的 (`world`, `read`, `collect`, `capture`, `view`) 前景跑就好, 送到背景反而多一次來回. `builders` 平常也是秒回, 但它在夜世界會先坐船回主村, 那要一分鐘上下.
+**會跑很久的不只 `attack`, 而這裡是唯一一份這個清單.** `walls` 一趟掃描加買下去是好幾分鐘; `upgrade` 跟 `hero` 找不到目標的時候會退回 `_sweep` 鋪網格, 那是兩分半起跳; `donate --rounds 0` 也一樣. 這幾個都用背景送出去. 幾秒鐘就回來的 (`world`, `read`, `collect`, `capture`, `view`, `builders`) 前景跑就好, 送到背景反而多一次來回. `world --go` 真的要坐船的時候大約一分鐘, 一樣前景跑.
 
 **但這條只對主對話成立, 你是 subagent 的話反過來.** 上面兩個理由的前提是「跑完會有人叫醒你」跟「有使用者在等著插話」, 而 subagent 兩個都沒有: 背景指令跑完的通知只送到主對話, 而且沒有人在跟你講話. 所以 subagent 把指令丟到背景然後結束回合, 等於**停在那裡不動**, 沒有任何東西會讓它繼續.
 
-實測過兩次, 同一個交辦裡: 一個 subagent 把 `ai_coc attack --world day` 丟到背景, 回一句「我會等它跑完再繼續」就結束了; 被提醒之後改用 `until [ -s result.json ]; do sleep 10; done`, 然後又把**那個等待迴圈**也丟到背景, 再次停住. 兩次都是照著上面那段做的, 所以這是文件的缺口不是判斷失誤.
+實測過兩次, 同一個交辦裡: 一個 subagent 把 `ai_coc attack` 丟到背景, 回一句「我會等它跑完再繼續」就結束了; 被提醒之後改用 `until [ -s result.json ]; do sleep 10; done`, 然後又把**那個等待迴圈**也丟到背景, 再次停住. 兩次都是照著上面那段做的, 所以這是文件的缺口不是判斷失誤.
 
 **subagent 要在前景阻塞**, 把 timeout 開大到蓋得住整段等待:
 
@@ -25,12 +25,13 @@ until [ -s ~/.ai_coc/logs/<這次的目錄>/result.json ]; do sleep 15; done
 ## 開跑
 
 ```bash
-uv run ai_coc attack --world day --repeat 0 --record
+uv run ai_coc world --go day
+uv run ai_coc attack --repeat 0 --record
 ```
 
-**`--world` 要寫出來.** 不給的話打的是遊戲當下停在的那個村莊, 而遊戲會開在上次離開的那一個, 所以少了它就有可能整晚在打夜世界而你以為在打主村. 夜世界是 `--world night`.
+**先切到要打的村莊, 再開.** `attack` 打的是遊戲當下停在的那個村莊, 而遊戲會開在上次離開的那一個, 所以少了 `world --go` 就有可能整晚在打夜世界而你以為在打主村. 沒有指令會自己坐船, `world --go` 是唯一一個; 它沒切成就不要開 `attack`. 夜世界是 `world --go night`. 這一步是前景的, 幾秒鐘就回來.
 
-用 Bash 工具自己的 `run_in_background` 送出去, **而且只能用它**. 它是唯一一種跑完會把你叫醒的開法: 指令結束的時候 harness 會把一個通知送進對話, 那個通知就是你接下一步的時刻. `Start-Process`, `nohup … &`, PowerShell 的 job, 任何 shell 層的 detach 都不行 —— 程序照樣會跑, 但 harness 不知道有這個程序, 它結束的時候什麼都不會發生, 而且它的輸出跟 exit code 也回不到你手上. 實測一次: 一個 session 用 `Start-Process` 開了 `attack --world night`, 夜世界打到 `stock_full` 自己收工之後, session 就停在原地什麼都沒做, 因為沒有任何東西叫醒它; 它自己另外寫的監看器又把 `result.json` 讀錯了 (形狀見下面), 於是連「已經打滿」這個訊號也漏掉. **不必自己重導向**, log 跟結果都是程式自己寫的, 一次執行一個目錄:
+用 Bash 工具自己的 `run_in_background` 送出去, **而且只能用它**. 它是唯一一種跑完會把你叫醒的開法: 指令結束的時候 harness 會把一個通知送進對話, 那個通知就是你接下一步的時刻. `Start-Process`, `nohup … &`, PowerShell 的 job, 任何 shell 層的 detach 都不行 —— 程序照樣會跑, 但 harness 不知道有這個程序, 它結束的時候什麼都不會發生, 而且它的輸出跟 exit code 也回不到你手上. 實測一次: 一個 session 用 `Start-Process` 開了夜世界的 `attack`, 夜世界打到 `stock_full` 自己收工之後, session 就停在原地什麼都沒做, 因為沒有任何東西叫醒它; 它自己另外寫的監看器又把 `result.json` 讀錯了 (形狀見下面), 於是連「已經打滿」這個訊號也漏掉. **不必自己重導向**, log 跟結果都是程式自己寫的, 一次執行一個目錄:
 
 ```
 ~/.ai_coc/logs/2026-08-29-011423-attack/
@@ -74,7 +75,7 @@ jq '.[-1] | {world, outcome, stock_full, attacked}' ~/.ai_coc/logs/<run>/result.
 - `run.log` 結尾有 `Stop requested`: 有人下了 `ai_coc stop`. 停在回合之間跟停在兩輪中間的等待都會留這一行. 誰停的看 log, 現在還有沒有人在跑看 `~/.ai_coc/state.json` —— 收工的時候它會被寫回 `idle`, 所以兩份看的是不同的問題. 不是你下的就不要自己開回去, 見「中止」
 - 使用者指定了 `--repeat N` 而輪數跑完: 照他的交辦接下去或收工
 - 有幾輪的 `outcome` 是 `emulator_silent`: 那幾輪是模擬器當下不理人, 迴圈把它當成打不成的一輪記下來、休息一下再來. **一兩輪夾在中間不是事**, 後面照常打就對了. 但 `run.log` 結尾如果是 `The emulator has not answered for 3 rounds; ending the series`, 那是連續三輪都這樣, 整個 series 收工 —— 那時候先去看模擬器還活著沒有, 不要直接開下一個. 這種結束**有完整的 `result.json`**, 所以不要跟下面那種被砍掉的搞混
-- 都不是的話就是迴圈自己放棄了, `outcome` 跟最後一條 WARNING / ERROR 會說原因: 排程重開模擬器之後村莊沒回來 (`The village never came back after the restart`), 或者 `--world` 指定的村莊切不過去 (`outcome` 是 `world_unreachable`, 整個陣列只有一個元素, 而 `world` 說的就是切不過去的那一邊). 這幾種是 `farm` 的「其他停手的理由」那節在管的, 先把遊戲弄回村莊再說, 不要直接開下一個
+- 都不是的話就是迴圈自己放棄了, `outcome` 跟最後一條 WARNING / ERROR 會說原因: 排程重開模擬器之後村莊沒回來 (`The village never came back after the restart`), 或者打到一半遊戲跑到另一個村莊 (`outcome` 是 `other_village`, 那是最後一個元素; 迴圈不會自己坐船回去, 多半是有人切過村莊, 例如使用者在手機上玩). 這幾種是 `farm` 的「其他停手的理由」那節在管的, 先把遊戲弄回村莊再說, 不要直接開下一個
 
 一個 run 結束而你什麼都沒接, 就是上面那次實測的樣子: 模擬器閒著, 使用者以為還在打.
 
@@ -114,7 +115,7 @@ jq '.[-1] | {world, outcome, stock_full, attacked}' ~/.ai_coc/logs/<run>/result.
 
 停之前**先記下三件事**, 因為等一下要接回同一件工作:
 
-- 打的是哪個世界 (`--world day` 還是 `--world night`), 以及原本那組旗標
+- 打的是哪個世界 (`ai_coc world` 問得到), 以及原本那組旗標. 開回去之前要先 `world --go` 切回那一邊, 因為你的測試可能把遊戲留在另一邊
 - 那次執行的目錄 (`ls -t ~/.ai_coc/logs` 最上面那個). 累計的進帳要從它的 `result.json` 數, 開下一輪之後它就不會再更新了
 - 停下來當下的倉庫水位, 那是下一段的起點
 

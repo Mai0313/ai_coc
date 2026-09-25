@@ -146,10 +146,10 @@ ai_coc export --last                  # the last one off the disk, without touch
 ai_coc view --zoom out                # put the camera back where every coordinate was measured
 ai_coc world                          # which of the two villages the game is on
 ai_coc world --go day                 # sail there; already being there does nothing
-ai_coc attack --world night           # attack the builder base instead of the home village
+ai_coc attack                         # attack whichever village the game is on
 ```
 
-The game keeps two villages — the home village and the builder base — and reopens on whichever one it was closed on, so `world` is worth asking before anything that assumes one of them. Reading it is a single screenshot: no tap, no swipe, no camera move.
+The game keeps two villages — the home village and the builder base — and reopens on whichever one it was closed on, so `world` is worth asking before anything that assumes one of them. Reading it is a single screenshot: no tap, no swipe, no camera move. **No command sails on its own**: `world --go` is the only one that changes villages, and one with nothing to do on the village it finds — `walls` on the builder base, say — says so and leaves the game where it is.
 
 `read` is the quickest way to answer "did it misread the screen, or did the tap miss?" It prints what every reader got from one frame: the loot panel, the storages, the card row and the builder panel.
 
