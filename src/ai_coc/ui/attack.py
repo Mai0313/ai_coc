@@ -475,6 +475,15 @@ def _too_small(strength: tuple[int, int]) -> bool:
     return strength[0] < strength[1] * MIN_ARMY_RATIO
 
 
+def _matched(png: bytes) -> bool:
+    """Whether the builder base's matchmaker has opened a battle on this frame.
+
+    A card row with the matchmaker gone, and no village under it: the
+    village's own buttons along the bottom read as a card row too.
+    """
+    return not searching_opponent(png) and current_world(png) is None and bool(card_groups(png))
+
+
 def clear_of_controls(point: tuple[int, int]) -> tuple[int, int]:
     """Pull a drop onto the ground the UI leaves free.
 
@@ -2326,9 +2335,13 @@ class AttackRunner(ScreenRunner):
         The battle is recognised by the card row rather than by the matchmaker
         going away, because the two are not the same moment: the screen fades
         out over the battle it is opening, and a frame caught mid-fade has
-        neither on it.
+        neither on it. **And never on a village**, whose own buttons along the
+        bottom read as a card row too: measured on both search restarts logged
+        here, a village read as four cards and was deployed into as an opponent.
         """
         for attempt in range(SEARCH_ATTEMPTS):
+            if attempt and not self._reopen_search():
+                return None
             self._tap(NIGHT_FIND)
             opened = time.monotonic()
             deadline = opened + SEARCH_PATIENCE
@@ -2339,7 +2352,7 @@ class AttackRunner(ScreenRunner):
                     self._tap(SEARCH_CANCEL)
                     return None
                 png = self._frame("searching")
-                if not searching_opponent(png) and card_groups(png):
+                if _matched(png):
                     logger.info(
                         "Matched after %.0fs on search %d", time.monotonic() - opened, attempt + 1
                     )
@@ -2347,8 +2360,32 @@ class AttackRunner(ScreenRunner):
             logger.info("No opponent in %.0fs; cancelling and searching again", SEARCH_PATIENCE)
             self._tap(SEARCH_CANCEL)
             time.sleep(2)
+            # A match can open in the second before 取消 lands, and then the
+            # tap hits the card row rather than the button: that is a battle to
+            # play, not a dialog to reopen.
+            png = self._frame("cancelled")
+            if _matched(png):
+                logger.info("Matched as the search was being cancelled")
+                return png
         logger.warning("Nobody was matched in %d searches", SEARCH_ATTEMPTS)
         return None
+
+    def _reopen_search(self) -> bool:
+        """Get back to 開始進攻 after a cancelled search, or say it did not come back.
+
+        取消 drops the game on the village rather than on the dialog, so the
+        立即尋找 tap that used to follow it landed on the map and started
+        nothing — on both search restarts logged here. A dialog that will not
+        come back is a menu this round could not open, which is its own outcome
+        rather than a matchmaker that found nobody.
+        """
+        self._tap(HOME_ATTACK)
+        time.sleep(2)
+        if night_attack_menu(self._frame("attack-menu")):
+            return True
+        logger.warning("The attack dialog did not come back after the search was cancelled")
+        self._stuck = "no_attack_menu"
+        return False
 
     def _night_plan(self, frame: bytes) -> NightPlan:
         """The tactic for this opponent: the AI's, or the flat one written down.
@@ -2684,8 +2721,11 @@ class AttackRunner(ScreenRunner):
             # `_find_opponent` answers None for a stop as readily as for a
             # matchmaker that never matched, and those are not the same news:
             # `farm` treats a run of `no_opponent` as worth reporting upwards.
-            stopped = self.should_stop()
-            return AttackReport(world="night", outcome="stopped" if stopped else "no_opponent")
+            # A dialog that would not reopen after a cancel is a third, and it
+            # names itself in `_stuck`.
+            if self.should_stop():
+                return AttackReport(world="night", outcome="stopped")
+            return AttackReport(world="night", outcome=self._stuck or "no_opponent")
         played = 0
         for stage in range(NIGHT_PHASES):
             deployed = self._deploy_night(battle, stage)
