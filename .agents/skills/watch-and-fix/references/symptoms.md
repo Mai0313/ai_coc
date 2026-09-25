@@ -1,6 +1,6 @@
 # 症狀對照該去看什麼
 
-這張表只指路, 不給結論. 結論會過期, 而且 `CLAUDE.md` 已經把每一條的來龍去脈寫得比這裡完整. 用法是: 找到症狀, 拿關鍵字去 grep `CLAUDE.md`, 再去讀那個函式.
+這張表只指路, 不給結論. 結論會過期, 而且每一條的來龍去脈都寫在那個常數或函式旁邊的註解裡, 比這裡完整. 用法是: 找到症狀, 拿關鍵字去 grep `src/` (跟釘住它的 `tests/`), 規則面的再看 `CLAUDE.md`, 然後去讀那個函式.
 
 整條路是 **開起遊戲 -> 站上要打的那個村莊 -> 打完一場 -> 回到村莊 -> 開下一輪**, 而中間那一大段在 `src/ai_coc/ui/attack.py` 的 `AttackRunner` 裡面: 攻擊 -> 倉庫檢查 -> 尋找對戰目標 -> 兵力檢查 -> scout -> 縮放與置中 -> 規劃 -> 等開打 -> 清側翼 -> 出兵 -> 排程 -> 等結束 -> 回營. 下面照這個順序排, 頭尾兩端的那幾節排在它們發生的位置上.
 
@@ -138,7 +138,7 @@
 
 相機動過而沒有被記下來. 看 `_settle_camera`, `_pan`, `_panned`, `_onscreen`, 以及 `parsers/field.py` 的 `view_shift` 跟 `parsers/boundary.py` 的 `village_box`.
 
-`view_shift` 是沿著拖曳方向把兩張畫面滑過去比對, 不是量兩次村莊位置, 因為 `village_box` 會被村莊自己的紅色裝飾騙到. `CLAUDE.md` 搜 `98 px`.
+`view_shift` 是沿著拖曳方向把兩張畫面滑過去比對, 不是量兩次村莊位置, 因為 `village_box` 會被村莊自己的紅色裝飾騙到. `parsers/field.py` 開頭的註解搜 `98 px`.
 
 已知而且沒修的一件事也寫在 `CLAUDE.md` 裡: `_settle_camera` 拿到的是 scout 畫面, 而 `village_box` 不是為那張畫面校正的.
 
