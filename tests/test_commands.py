@@ -1,6 +1,6 @@
 """The headless commands: the wiring between the flags and the loops, with the emulator out.
 
-`_controller` is the seam. Everything under it is `MuMuAdapter` and
+`_controller` is the seam. Everything under it is an emulator adapter and
 `AdbController` against a live emulator, so it is patched to hand back a mock
 and what is checked is what each command asks of that mock and of the runner
 it builds. The runners themselves are tested in `test_runners.py`.

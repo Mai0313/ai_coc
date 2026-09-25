@@ -1,7 +1,7 @@
 """看一眼村莊, 點一下村莊. 這是純視覺流程唯一需要的原語.
 
 `ai_coc` 的每個指令都是一整套迴圈, 沒有一個是「點這裡然後給我看」. 這個腳本補上
-那一格: 它自己解析 MuMu instance 跟 display, 所以呼叫端只要給座標.
+那一格: 它自己解析設定裡那台模擬器的 instance 跟 display, 所以呼叫端只要給座標.
 
     uv run python <skill>/scripts/eye.py shot out.png
     uv run python <skill>/scripts/eye.py tap 1157,500 out.png
