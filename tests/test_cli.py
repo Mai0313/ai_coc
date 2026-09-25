@@ -126,7 +126,7 @@ class DispatchTests(unittest.TestCase):
                     "--record",
                     "--shot-every",
                     "4",
-                    "--plan-in",
+                    "--plan",
                     "a.json",
                     "--plan-out",
                     "b.json",
@@ -135,7 +135,7 @@ class DispatchTests(unittest.TestCase):
             )
         assert attacked.call_args.args[0] == AttackOptions(
             frame_dir=self.recorded.frames,
-            plan_in=Path("a.json"),
+            plan=Path("a.json"),
             plan_out=Path("b.json"),
             plan_log=self.recorded.plan_log,
             minimums=LootOverrides(min_gold=0),

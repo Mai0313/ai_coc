@@ -870,9 +870,10 @@ class AttackRunner(ScreenRunner):
     stop_at: int = 0
     max_skips: int = 20
     # A plan settled before the run, which skips the Gemini call entirely. This is
-    # what `--plan-in` fills, and it is how a hand-written tactic is replayed
+    # what `--plan` fills, and it is how a hand-written tactic is replayed
     # exactly: the loop plays what it is given rather than asking for its own.
-    plan: AttackPlan | None = None
+    # Each village plays only its own kind; `commands.attack` pairs them.
+    plan: AttackPlan | NightPlan | None = None
 
     _seen: LootOffer | None = PrivateAttr(default=None)
     # Whether the last frame `_scout` gave up on still had 下一個 on it, which
@@ -1309,7 +1310,7 @@ class AttackRunner(ScreenRunner):
         the default readable and editable, and it is the same tactic the loop
         used to hold in `DEPLOY_LINES` and a fixed grid of rage points.
         """
-        if self.plan is not None:
+        if isinstance(self.plan, AttackPlan):
             logger.info("Playing the plan handed in: %s", self.plan.reason or "no reason given")
             self._played = self.plan
             return self.plan
@@ -2400,12 +2401,15 @@ class AttackRunner(ScreenRunner):
         return False
 
     def _night_plan(self, frame: bytes) -> NightPlan:
-        """The tactic for this opponent: the AI's, or the flat one written down.
+        """The tactic for this opponent: the one handed in, the AI's, or the flat one written down.
 
-        There is no "plan handed in" branch the way the home village has one:
-        the builder base has no scout screen to decide on, so a run that wants a
-        fixed tactic is a run that wants the flat plan, and that is a file.
+        A handed-in plan is played on every stage, since a written tactic cannot
+        know which of the two bases it will meet.
         """
+        if isinstance(self.plan, NightPlan):
+            logger.info("Playing the plan handed in: %s", self.plan.reason or "no reason given")
+            self._played = self.plan
+            return self.plan
         if self.ai is None:
             self._played = plans.night_flat()
             return self._played
@@ -2824,7 +2828,7 @@ class AttackRunner(ScreenRunner):
         # no opponent above the thresholds, an army under `MIN_ARMY_RATIO`, the
         # attack menu not opening — and carried over, each of them would be
         # filed holding the previous round's plan. That is worse than no file:
-        # a `--plan-in` or flat-fallback series writes identical plans round
+        # a `--plan` or flat-fallback series writes identical plans round
         # after round, so nothing downstream can tell a stale copy from a real
         # one.
         self._played = None

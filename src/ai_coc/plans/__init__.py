@@ -9,7 +9,10 @@ against. It is exactly what the loop used to do from constants, written down.
 
 from __future__ import annotations
 
+from typing import Annotated
 from pathlib import Path
+
+from pydantic import Tag, TypeAdapter, Discriminator
 
 from ai_coc.models import NightPlan, AttackPlan
 
@@ -19,8 +22,28 @@ from ai_coc.models import NightPlan, AttackPlan
 PLAN_DIR = Path(__file__).parent
 
 
+def _kind(data: object) -> str:
+    """Which village a plan document is for: only a home village plan has `steps`."""
+    return "day" if isinstance(data, dict) and "steps" in data else "night"
+
+
+# Either village's plan, decided before validating so a hand-edited file that
+# is slightly wrong reports its own type's errors rather than both types'.
+_EITHER: TypeAdapter[AttackPlan | NightPlan] = TypeAdapter(
+    Annotated[
+        Annotated[AttackPlan, Tag("day")] | Annotated[NightPlan, Tag("night")],
+        Discriminator(_kind),
+    ]
+)
+
+
 def load(path: Path) -> AttackPlan:
     return AttackPlan.model_validate_json(path.read_text(encoding="utf-8"))
+
+
+def load_any(path: Path) -> AttackPlan | NightPlan:
+    """A written plan for whichever village it was written for, which is what `--plan` takes."""
+    return _EITHER.validate_json(path.read_text(encoding="utf-8"))
 
 
 def flat() -> AttackPlan:
@@ -29,14 +52,7 @@ def flat() -> AttackPlan:
 
 
 def load_night(path: Path) -> NightPlan:
-    """One builder base plan off disk, which today only `night_flat` asks for.
-
-    Kept beside `load` rather than folded into its one caller: `--plan-in` is
-    the home village's flag and says so, so the single caller is a fact about
-    which flags exist rather than about this pair, and a loader on one of the
-    two documents and not the other is a question every reader has to answer
-    again.
-    """
+    """One builder base plan off disk; a handed-in one goes through `load_any`."""
     return NightPlan.model_validate_json(path.read_text(encoding="utf-8"))
 
 

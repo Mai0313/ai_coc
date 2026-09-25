@@ -19,6 +19,7 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 import pytest
+from pydantic import ValidationError
 
 from ai_coc import plans, commands
 from ai_coc.ui import world as world_ui
@@ -1171,6 +1172,42 @@ class RunPlumbingTests(unittest.TestCase):
             commands._write_plan(None, plans.flat())
             commands._write_plan(Path(folder) / "never.json", None)
             assert not (Path(folder) / "never.json").exists()
+
+    def test_a_handed_in_plan_names_its_own_village(self) -> None:
+        """A written tactic is for one village, so with no `--world` it picks the village."""
+        day = plans.PLAN_DIR / "flat.json"
+        night = plans.PLAN_DIR / "night_flat.json"
+        plan, world = commands._handed_plan(AttackOptions(plan=day))
+        assert (isinstance(plan, AttackPlan), world) == (True, "day")
+        plan, world = commands._handed_plan(AttackOptions(plan=night))
+        assert (isinstance(plan, NightPlan), world) == (True, "night")
+        plan, world = commands._handed_plan(AttackOptions(plan=night, world="night"))
+        assert world == "night"
+        assert commands._handed_plan(AttackOptions(world="day")) == (None, "day")
+        assert commands._handed_plan(AttackOptions()) == (None, None)
+
+    def test_a_misedited_plan_reports_only_its_own_villages_errors(self) -> None:
+        """Listing the other plan's missing fields reads as if this one needed them too."""
+        broken = json.loads((plans.PLAN_DIR / "flat.json").read_text(encoding="utf-8"))
+        broken["steps"][0]["act"] = "troop"
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "broken.json"
+            path.write_text(json.dumps(broken), encoding="utf-8")
+            with pytest.raises(ValidationError) as raised:
+                plans.load_any(path)
+        assert "act" in str(raised.value)
+        assert "deploy_start" not in str(raised.value)
+
+    def test_a_plan_for_the_other_village_is_refused_before_the_game_is_touched(self) -> None:
+        with (
+            patch.object(commands, "_controller") as controller,
+            pytest.raises(ValueError, match="夜世界的戰術"),
+        ):
+            commands.attack(
+                AttackOptions(plan=plans.PLAN_DIR / "night_flat.json", world="day"),
+                MagicMock(return_value=False),
+            )
+        controller.assert_not_called()
 
     def test_the_plan_log_holds_one_line_per_round_of_either_village(self) -> None:
         with tempfile.TemporaryDirectory() as folder:

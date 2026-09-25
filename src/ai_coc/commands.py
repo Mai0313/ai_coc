@@ -335,6 +335,9 @@ IDLE_REST = 60
 # right after one used to read no village and end before round one.
 WORLD_SETTLE_POLLS = 8
 
+# Which village a handed-in plan was written for, by its kind.
+_PLAN_WORLD: dict[type[AttackPlan | NightPlan], World] = {AttackPlan: "day", NightPlan: "night"}
+
 # How often the wait between rounds looks up to see whether it has been stood
 # down. Sleeping through the whole minute in one go would leave a stop unnoticed
 # for most of it, which reads as a stop that did nothing.
@@ -1010,6 +1013,21 @@ def _series_over(report: AttackReport, played: int) -> bool:
     return False
 
 
+def _handed_plan(options: AttackOptions) -> tuple[AttackPlan | NightPlan | None, World | None]:
+    """The plan `--plan` handed in, and the village to play: the one named, else the plan's own.
+
+    A plan is written for one village, so one that disagrees with `--world` is
+    refused here, before anything touches the game.
+    """
+    if options.plan is None:
+        return None, options.world
+    plan = plans.load_any(options.plan)
+    planned = _PLAN_WORLD[type(plan)]
+    if options.world not in (None, planned):
+        raise ValueError(f"--plan 是{_WORLDS[planned]}的戰術,跟 --world {options.world} 對不上")
+    return plan, planned
+
+
 def attack(
     options: AttackOptions, should_stop: Callable[[], bool] = stop_requested
 ) -> AttackSeries:
@@ -1023,9 +1041,12 @@ def attack(
     zero is "attack the first opponent shown", and skipping nothing is what puts
     the code worth watching on screen.
 
-    `plan_in` replaces the AI entirely — the loop plays that file and asks for
+    `plan` replaces the AI entirely — the loop plays that file and asks for
     nothing — and `plan_out` writes down whichever plan actually ran, so a battle
     worth repeating can be repeated and one worth arguing with can be edited.
+    A plan is written for one village, so it picks the village when `world`
+    names none, and one that disagrees with `world` is refused before anything
+    touches the game.
 
     `rounds` of 0 keeps going until it is stopped, which is what watching the
     loop play needs: a tactic is judged over a run of battles rather than one,
@@ -1041,9 +1062,9 @@ def attack(
     replaces the state file — the default reads it, and the `claim` around this
     call is what marks the run as under way for anybody looking from outside.
     """
+    plan, wanted = _handed_plan(options)
     adb = _controller()
     _prepare_frames(options)
-    plan = plans.load(options.plan_in) if options.plan_in else None
     config = ConfigStore().load()
     # **Which village to play cannot be asked until one has painted.**
     # `_controller` is satisfied by a pid, so a run started right after a launch
@@ -1052,7 +1073,6 @@ def attack(
     # one. This is the same wait a restart already does, and it leaves the camera
     # at the far zoom on the way past, which every coordinate below wants anyway.
     display = _settle_game(adb, WORLD_SETTLE_POLLS, should_stop) or adb.display_for(COC_PACKAGE)
-    wanted = options.world
     world = _pick_world(adb, display, wanted)
     if world is None:
         # **The village that was asked for rather than the default**, which says

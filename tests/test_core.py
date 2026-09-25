@@ -4871,7 +4871,7 @@ class RestartEveryTests(unittest.TestCase):
         thresholds, an army under `MIN_ARMY_RATIO`, the attack menu not opening.
         Carried over, each would be filed under its own number holding the
         previous round's tactic, which is worse than the absent file it replaces:
-        a `--plan-in` or flat-fallback series writes identical plans round after
+        a `--plan` or flat-fallback series writes identical plans round after
         round, so nothing downstream could tell a stale copy from a real one.
         """
         runner = AttackRunner(
