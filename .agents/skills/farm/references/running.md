@@ -8,13 +8,18 @@
 
 **會跑很久的都用背景送出去, 這裡是唯一一份清單**: `attack`; `walls` (掃描加購買好幾分鐘); `upgrade` 跟 `hero` (找不到目標會退回 `_sweep`, 兩分半起跳); `donate --rounds 0`. 幾秒就回來的前景跑: `world`, `read`, `collect`, `capture`, `view`, `builders`; `world --go` 真的坐船約一分鐘, 也前景跑.
 
-**你是 subagent 的話反過來, 在前景阻塞.** 背景指令跑完的通知只送到主對話, 也沒有人在跟你講話, 所以 subagent 把指令 (或等它的迴圈) 丟到背景再結束回合, 就會停在那裡不動. **subagent 要在前景阻塞**, 把 timeout 開大到蓋得住整段等待:
+**你是 subagent 的話反過來, 在前景阻塞.** 背景指令跑完的通知只送到主對話, 也沒有人在跟你講話, 所以 subagent 把指令 (或等它的迴圈) 丟到背景再結束回合, 就會停在那裡不動. **subagent 要在前景阻塞**, 而一次阻塞的呼叫有 runtime 自己的 timeout 上限 (常見是十分鐘, 預設值往往更短), 所以分段等: 一段比那個上限短, **那次呼叫的 timeout 要設得比一段長** (沒設的話一段還沒等完就被砍), 等不到就再下一段. 每一段照「等待要有出口, 收工要清乾淨」寫, 不要只看 `result.json`:
 
 ```bash
-until [ -s ~/.ai_coc/logs/<這次的目錄>/result.json ]; do sleep 15; done
+RUN=~/.ai_coc/logs/<這次的目錄>
+for i in 1 2 3; do   # 一段最多九分鐘
+    [ -s "$RUN/result.json" ] && break
+    grep -q '"status": "idle"' ~/.ai_coc/state.json && break
+    sleep 180
+done
 ```
 
-一輪四五分鐘, `--repeat 3` 抓十五分鐘, `--repeat 0` 就分段等. 前景卡住對 subagent 沒有代價.
+一輪四五分鐘, 所以 `--repeat 3` 要兩段左右, `--repeat 0` 要很多段. **每一段等完還沒結束, 就看 `state.json` 的 `pid` 還在不在**: 還在就是 run 還活著, 接著等下一段 (順便看 `run.log` 有沒有往前走); 不在了就是被砍掉 (這種 run 會一直停在 `running`), 停下來回報. 這個 pid 檢查就是整段等待的出口. 前景卡住對 subagent 沒有代價.
 
 ## 開跑
 
@@ -25,7 +30,7 @@ uv run ai_coc attack --repeat 0 --record
 
 **先切到要打的村莊, 再開.** `attack` 打的是遊戲當下停著的村莊, 遊戲會開在上次離開的那一個, 而沒有指令會自己坐船. `world --go` 沒切成就不要開 `attack`. 夜世界是 `world --go night`, 前景跑.
 
-**送到背景只能用 Bash 工具自己的 `run_in_background`**: 它是唯一跑完會把你叫醒的開法, harness 送進對話的那個通知就是接下一步的時刻. `Start-Process`, `nohup … &`, PowerShell 的 job, 任何 shell 層的 detach 都不行: 程序照跑, 但結束時沒有東西叫醒你, 輸出跟 exit code 也回不來 (量過: 夜世界打到 `stock_full` 自己收工之後, session 就停在原地). **不必自己重導向**, 程式一次執行寫一個目錄:
+**送到背景只能用 runtime 自己管的背景執行** (跑完會通知你的那一種): 它是唯一跑完會把你叫醒的開法, harness 送進對話的那個通知就是接下一步的時刻. `Start-Process`, `nohup … &`, PowerShell 的 job, 任何 shell 層的 detach 都不行: 程序照跑, 但結束時沒有東西叫醒你, 輸出跟 exit code 也回不來 (量過: 夜世界打到 `stock_full` 自己收工之後, session 就停在原地). **不必自己重導向**, 程式一次執行寫一個目錄:
 
 ```
 ~/.ai_coc/logs/2026-08-29-011423-attack/
@@ -51,7 +56,7 @@ jq '.[-1] | {world, outcome, stock_full, attacked}' ~/.ai_coc/logs/<run>/result.
 
 ## 盯
 
-`run.log` 用 Grep 抓有意義的行, 不要整份 Read (一小時幾千行):
+`run.log` 用搜尋抓有意義的行, 不要整份讀進來 (一小時幾千行):
 
 - `Round \d+ of`: 現在第幾輪
 - `Attack finished:`: 每輪一行, 句子是照 `AttackReport.outcome` 組的; 下判斷讀 `result.json` 的 `outcome`, 不要比對這裡的字
@@ -81,7 +86,7 @@ jq '.[-1] | {world, outcome, stock_full, attacked}' ~/.ai_coc/logs/<run>/result.
 
 - **不要只看 `result.json`**: 也看 `~/.ai_coc/state.json` 的 `status` 有沒有回到 `idle`, 或那個 pid 還在不在. 死掉的 run 不寫檔案, 但也不會一直是 `running`
 - **sleep 拉長**: 一輪三到五分鐘, 幾分鐘一次就夠
-- **給一個上限**: 到了就停下來回報「等不到」, 那是一個有用的結論
+- **給一個上限**: 到了就停下來回報「等不到」, 那是一個有用的結論. 等一個 `ai_coc` run 的時候, 上限是它的 pid 不在了 (見上面「你是 subagent 的話反過來」那段), 不是一個固定的時數
 
 **收工之前自己看一遍有沒有東西留在背景**, 真的去看而不是回想: 沒有 `ai_coc` 程序, 沒有 shell 還在輪詢, `state.json` 回到 `idle`. 刻意留著的就留著, 但回報裡要講是哪一個、為什麼. 主 session 不會採信「已經清掉了」這句話 (上面那個 subagent 被問兩次都這樣答, 八個都還在跑), 它會自己查一遍.
 

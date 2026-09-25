@@ -1239,15 +1239,13 @@ class CollectReport(BaseModel):
 
 # How a trip to the builder base's 聖水車 ended. `collected` and `empty` are both
 # a cart that was opened and pressed, told apart by whether the storage moved;
-# `locked` is a cart that was opened and whose 收集 the game had greyed, which is
-# the one the loop used to report as an empty cart.
+# the three `locked*` are a cart that was opened and whose 收集 the game had
+# greyed, which is the one the loop used to report as an empty cart.
 #
-# **`locked` says what the button looks like and not why**, and the difference
-# matters because the sheet offers two reasons at once: its body reads
-# 暫無新的防禦獎勵 while the storages behind it may be at capacity. So it means
-# "pressing this would buy nothing" and a caller that wants the reason reads the
-# storage share. See `loot_cart_ready` for what would separate the two and what
-# it needs first.
+# **The greyed button is split by the `held / capacity` line beside it**
+# (`loot_cart_load`): `locked_holding` is loot banked behind a full 聖水 storage,
+# `locked_empty` a cart with nothing in it, and `locked` a greyed button whose
+# line would not read, which says what the button looks like and not why.
 #
 # The rest are failures: `not_parked` never went looking, `wrong_world` was not
 # on the builder base at all, `not_found` tapped every candidate spot without
@@ -1269,7 +1267,7 @@ CartOutcome = Literal[
 class CartReport(BaseModel):
     """What one trip to the builder base's loot cart did.
 
-    **Seven answers because the old two were wrong about five of them.** This
+    **Named answers because the old two were wrong about five of them.** This
     used to be an `int | None`, where None meant the camera never parked and 0
     meant everything else — an empty cart, a cart nobody found, a village that
     was not the builder base, a cart whose sheet would not read, and a cart

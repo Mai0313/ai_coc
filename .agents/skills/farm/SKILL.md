@@ -68,7 +68,7 @@ uv run ai_coc attack --repeat 0
 - **搜尋要等真人** (量過四秒到五分半). 過了 `SEARCH_PATIENCE` 迴圈自己取消重搜, log 停在 searching 一兩分鐘是正常的
 - **容量一整趟只讀一次** (`AttackRunner._settle_ceilings`), 只讀兩排 (沒有黑水, 第三排是寶石, 不點)
 - **聖水車也算一個倉庫.** 迴圈開跑第一輪跟之後每 `CART_EVERY` (五) 場去一次車子: 倉庫有空間就倒進去, 倉庫滿了就讀車上存多少. 倉庫滿了**而且**最近一次讀到車子也過同一個百分比才 `stock_full`, 所以車子剛滿之後最多還會多打四場. 同一趟看三次都讀不到車子, 就退回只看倉庫. 手動領是在夜世界跑 `uv run ai_coc collect`; 車子容量會跟著村莊長大 (現在 160 萬). 打完一輪記得確認有領到
-- **`CartReport.outcome` 有七種**: `collected` 領到了; `empty` 按了收集而儲量沒動; `not_found` 三個候選點都沒點開; `wrong_world` 不在夜世界; `not_parked` 鏡頭沒停好所以沒去找; `unreadable` 領了但有一邊的儲量條讀不到
+- **`CartReport.outcome` 有九種**, 收集鈕灰的三種在下一條: `collected` 領到了; `empty` 按了收集而儲量沒動; `not_found` 三個候選點都沒點開; `wrong_world` 不在夜世界; `not_parked` 鏡頭沒停好所以沒去找; `unreadable` 領了但有一邊的儲量條讀不到
 - **收集鈕灰的三種**: `locked_holding` 車上有東西領不出來 (`held` 車上的數字, `capacity` 上限), 幾乎一定是聖水倉庫滿了, 車子在當額外倉庫, **車子也滿了才是這個村莊不再賺了**; `locked_empty` 車上本來就空, 沒事; `locked` 按鈕灰而車上數字讀不到, 要自己去看
 
 ## 怎麼跑
@@ -91,9 +91,9 @@ uv run ai_coc attack --repeat 0
 
 **幾分鐘看一次就夠**, 不要每幾秒讀一次, 也不要掛東西在 log 上等新行 (見 `references/running.md` 的「盯」). 空檔拿去做別的事.
 
-**每一輪結束有一行 `Attack finished:`**, 但判斷看 `result.json` 那一輪的 **`AttackReport.outcome`**, 不要比對 log 的句子. 十四種, 分成兩組.
+**每一輪結束有一行 `Attack finished:`**, 但判斷看 `result.json` 那一輪的 **`AttackReport.outcome`**, 不要比對 log 的句子. 十五種, 分成兩組.
 
-**打了一場的四種**, 差別就是下一步往哪走:
+**打了一場的五種**, 差別就是下一步往哪走:
 
 - `took_loot`: 打完回營而且倉庫真的動了. 正常的一輪, **只有主村會出現**
 - `deployed`: **夜世界的正常一輪**. 不保證倉庫動了, 看進帳就比對前後的 `stock`
@@ -251,7 +251,7 @@ uv run ai_coc attack --repeat 0
 
 - **刷牆**: `WallReport.walls` 跟 `paid("gold")` / `paid("elixir")` 說買了多少, `WallReport.outcome` 說為什麼停
 
-- **工人**: 一張主村畫面丟 `ai_coc read`, 看 `builders`
+- **工人**: `ai_coc worker`, 答的是當下站著的那個村莊 (見「倉庫滿了」開頭)
 
 - **時長**: `run.log` 第一行跟最後一行的時間戳; 沒有日期, 跨午夜看目錄名
 

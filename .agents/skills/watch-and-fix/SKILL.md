@@ -29,7 +29,7 @@ description: >-
 
 你自己決定, 中途也可以換:
 
-- **自己跑**: `run_in_background` 送出去, 前景讀 log 改東西. 隨時可以 `capture`, 代價是每一輪的通知都進你的 context.
+- **自己跑**: 用 runtime 自己管的背景執行送出去 (見 `running.md` 的「開跑」), 前景讀 log 改東西. 隨時可以 `capture`, 代價是每一輪的通知都進你的 context.
 - **交給 subagent**: 照 `CLAUDE.md` 那段派一個跑 `farm` 的 subagent (降一級模型, 降 thinking budget), 你只讀它留下的檔案. 省下盯的成本, 代價是你不在現場.
 
 **使用者指名就照他的**: 「你親自監督執行」是第一種, 不要為了省 context 轉包出去.

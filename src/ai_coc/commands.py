@@ -632,11 +632,6 @@ def _settle_game(
             # landed on is not this wait's to settle: nothing crosses on its own,
             # a loop that finds the other village says so, and `launch` reports
             # `at_village` rather than promising the home one.
-            #
-            # It is the better test of the two on its own terms as well: a home
-            # village with the camera at a map corner can leave the dark elixir
-            # row unreadable, which had `read_stock` call an ordinary village no
-            # village at all.
             png = adb.screenshot(display)
             if (world := current_world(png)) is not None:
                 # The scale and the position together, and the pinch that used
@@ -856,7 +851,7 @@ def round_line(report: AttackReport) -> str:
     numbers are appended rather than written into each sentence because they are
     orthogonal to how the round ended: a forced battle can take loot or deploy
     nothing, and a round that skipped forty opponents can still end any of the
-    fourteen ways.
+    ways `AttackOutcome` lists.
     """
     line = ROUND_LINES[report.outcome]
     if report.forced:
