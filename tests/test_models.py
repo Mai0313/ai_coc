@@ -165,7 +165,8 @@ class MapFrameTests(unittest.TestCase):
                 MapEdge(degrees=45, reached=round(radius), predicted=800),
                 # A ray taken at the screen edge measured the screen, not the map.
                 MapEdge(degrees=180, reached=None, predicted=800),
-            ]
+            ],
+            outcome="surveyed",
         )
         fitted = survey.fitted
         assert fitted is not None
@@ -178,11 +179,13 @@ class MapFrameTests(unittest.TestCase):
             edges=[
                 MapEdge(degrees=0, reached=1000, predicted=800),
                 MapEdge(degrees=90, reached=None, predicted=800),
-            ]
+            ],
+            outcome="surveyed",
         )
         assert survey.fitted is None
         assert "accepted at the screen edge" not in survey.summary
-        assert MapSurvey(edges=[MapEdge(degrees=0, reached=None, predicted=800)]).summary == (
+        edge = MapEdge(degrees=0, reached=None, predicted=800)
+        assert MapSurvey(edges=[edge], outcome="surveyed").summary == (
             "1 ray(s) accepted at the screen edge; the map reaches past it"
         )
 

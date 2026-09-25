@@ -521,11 +521,19 @@ class ProbeRay(BaseModel):
         return self.inside_refused and not self.outside_refused
 
 
+# How a survey ended. Both measure the home village's battlefield and nothing
+# here sails, so `builder_base` is the game standing on the other village and
+# nothing measured at all — which an empty list of rays could not say apart
+# from a survey that ran and found nothing.
+SurveyOutcome = Literal["surveyed", "builder_base"]
+
+
 class BoundarySurvey(BaseModel):
     """A whole survey, and how much of it the boundary reader got right."""
 
     rays: list[ProbeRay] = Field(default_factory=list)
     unread: list[float] = Field(default_factory=list)
+    outcome: SurveyOutcome
 
     @property
     def agreement(self) -> str:
@@ -563,6 +571,7 @@ class MapSurvey(BaseModel):
     """
 
     edges: list[MapEdge] = Field(default_factory=list)
+    outcome: SurveyOutcome
 
     @property
     def summary(self) -> str:
@@ -1001,8 +1010,9 @@ class NightPlan(BaseModel):
 # to end — including during the server wait. `no_attack_menu` is a screen the
 # round could not open the menu on; `server_loading` is that screen outlasting
 # the whole 45-minute wait and `server_flapping` is it loading and dropping
-# back. `emulator_silent` is ADB not answering, and `world_unreachable` is a
-# named village the game could not be put on.
+# back. `emulator_silent` is ADB not answering, and `other_village` is the game
+# standing on the village this series does not play, which ends it: nothing here
+# sails, and `ai_coc world --go` is how the game gets moved.
 AttackOutcome = Literal[
     "took_loot",
     "deployed",
@@ -1018,7 +1028,7 @@ AttackOutcome = Literal[
     "server_loading",
     "server_flapping",
     "emulator_silent",
-    "world_unreachable",
+    "other_village",
 ]
 
 
@@ -1026,8 +1036,9 @@ class AttackReport(BaseModel):
     """What one run of the attack loop did, for the automation log."""
 
     # Which village it played, because the two are different games under one
-    # command and a report that does not say is a report nobody can place.
-    world: World = "day"
+    # command and a report that does not say is a report nobody can place. None
+    # is a round that ended before it read either.
+    world: World | None = "day"
     # How many times the army went down, **on the builder base**. More than one
     # is its second stage, which the game only offers after a first attack takes
     # the whole base, and 0 there is a round that never deployed.
@@ -1081,20 +1092,13 @@ class AttackOptions(BaseModel):
 
     frame_dir: Path | None = None
     # A written plan for either village, played instead of asking the AI. It
-    # names its own village, so with no `world` it is also the village played.
+    # names its own village, and a game on the other one ends the series.
     plan: Path | None = None
     plan_out: Path | None = None
     # The run's own plan log, one line per round. `plan_out` is the caller's
     # path and holds whichever round went last; this is the whole series.
     # None only for a caller with no run directory to write into.
     plan_log: Path | None = None
-    # Which village to play. **None means whichever one is up**, which is the
-    # default because it is the honest one: the game reopens on the village it
-    # was closed on, so a run that insisted on a village would refuse half the
-    # time for no reason. Naming one crosses to it first, and that is what a
-    # scripted night of farming both wants — otherwise a game left on the
-    # builder base has the whole series quietly playing the wrong one.
-    world: World | None = None
     minimums: LootOverrides = LootOverrides()
     # 0 keeps going until it is interrupted, which is what watching the loop play
     # needs: a tactic is judged over a run of battles rather than one.
@@ -1206,7 +1210,9 @@ class ResourceBubble(BaseModel):
 # rather than five more values here: what happened there is `CartReport`'s to
 # say, and duplicating its seven outcomes would be the same answer in two
 # vocabularies.
-CollectOutcome = Literal["collected", "nothing_to_collect", "no_village", "stock_unread", "cart"]
+CollectOutcome = Literal[
+    "collected", "nothing_to_collect", "no_village", "builder_base", "stock_unread", "cart"
+]
 
 
 class CollectReport(BaseModel):
@@ -1320,7 +1326,9 @@ class BuildQueue(BaseModel):
 # minus the badge, because this one taps a button at a fixed place rather than
 # finding a plate: `idle` is inferred from the counter the way it is there, and
 # `panel_shut` is the honest answer when the counter would not read either.
-BuilderOutcome = Literal["read", "idle", "no_village", "count_unread", "panel_shut"]
+BuilderOutcome = Literal[
+    "read", "idle", "no_village", "builder_base", "count_unread", "panel_shut"
+]
 
 
 class BuilderReport(BaseModel):
@@ -1579,6 +1587,7 @@ BuildOutcome = Literal[
     "builders_busy",
     "count_unread",
     "no_village",
+    "builder_base",
     "village_lost",
 ]
 
@@ -1840,7 +1849,7 @@ RestartScope = Literal["none", "game", "emulator"]
 # Base; this project calls them day and night because that is what the player
 # calls them, and because `builder` already means the workman here — `ai_coc
 # builders` reads the panel saying which of the five are free, and a
-# `--world builder` standing next to it would be read as belonging to that.
+# `world --go builder` standing next to it would be read as belonging to that.
 World = Literal["day", "night"]
 
 
@@ -1991,6 +2000,7 @@ HeroOutcome = Literal[
     "no_confirmation",
     "undercharged",
     "no_village",
+    "builder_base",
     "village_lost",
 ]
 
@@ -2015,7 +2025,13 @@ class HeroReport(BaseModel):
 # almost nothing, which is what this loop is written to be: donating cannot be
 # done on demand, somebody else has to ask first.
 DonateOutcome = Literal[
-    "donated", "dry_run", "nobody_asking", "nothing_given", "panel_shut", "no_village"
+    "donated",
+    "dry_run",
+    "nobody_asking",
+    "nothing_given",
+    "panel_shut",
+    "no_village",
+    "builder_base",
 ]
 
 
@@ -2164,8 +2180,9 @@ class WallUpgrade(BaseModel):
 # which is a decision for the player rather than for the loop. The rest are the
 # run not getting started: `no_walls_found` found none — swept, or verified the
 # spots a caller named, which does not sweep at all — `no_village`
-# never got back to one, `no_stock` lost the storage bars between batches, and
-# `stopped` is somebody asking it to stand down.
+# never got back to one, `builder_base` found the game on the other village,
+# `no_stock` lost the storage bars between batches, and `stopped` is somebody
+# asking it to stand down.
 WallOutcome = Literal[
     "bought",
     "nothing_bought",
@@ -2173,6 +2190,7 @@ WallOutcome = Literal[
     "builders_busy",
     "no_walls_found",
     "no_village",
+    "builder_base",
     "no_stock",
     "stopped",
 ]

@@ -113,8 +113,6 @@ class DispatchTests(unittest.TestCase):
             _answer(
                 _args(
                     "attack",
-                    "--world",
-                    "night",
                     "--repeat",
                     "0",
                     "--min-gold",
@@ -139,7 +137,6 @@ class DispatchTests(unittest.TestCase):
             plan_out=Path("b.json"),
             plan_log=self.recorded.plan_log,
             minimums=LootOverrides(min_gold=0),
-            world="night",
             rounds=0,
             shot_every=4.0,
             restart_every=0,
@@ -153,7 +150,7 @@ class DispatchTests(unittest.TestCase):
         options = attacked.call_args.args[0]
         assert options == AttackOptions(plan_log=self.run.plan_log)
         assert options.minimums == LootOverrides()
-        assert (options.restart_every, options.stop_at, options.world) == (None, None, None)
+        assert (options.restart_every, options.stop_at) == (None, None)
         assert options.frame_dir is None
 
     def test_walls_collects_every_named_spot(self) -> None:

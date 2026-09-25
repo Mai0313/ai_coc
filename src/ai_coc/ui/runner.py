@@ -13,7 +13,7 @@ Kept Qt-free like everything else under `ui/` that is not a widget, so
 from __future__ import annotations
 
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 import logging
 from pathlib import Path
 from collections.abc import Callable
@@ -35,7 +35,7 @@ from ai_coc.parsers.scout import (
 from ai_coc.parsers.world import current_world
 from ai_coc.parsers.building import game_dialog
 
-from .world import cross, park_camera
+from .world import park_camera
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Iterator
@@ -167,7 +167,7 @@ class ScreenRunner(BaseModel):
     **`AttackRunner` is the other subclass, and it is why this is a class at
     all.** It is not a `GameRunner` — it has no use for `_home`, since its way
     back to a village has to cope with a result screen, a matchmaker and a
-    village it may have to sail to — but it declared these five fields with the
+    server that takes minutes to answer — but it declared these five fields with the
     same names, types and defaults, and both methods with the same bodies. The
     frame naming in particular (`0006_scout`, `0010_pass`) is written down in
     `CLAUDE.md` and in two of the project's skills, and a convention documented
@@ -297,6 +297,13 @@ class GameRunner(ScreenRunner):
     # above and for the same reason: a restarted game does not come back at the
     # zoom everything was measured at.
     _settled: bool = PrivateAttr(default=False)
+    # Whether `_home` gave up because the game is on the builder base, which is
+    # the one reason for no village that a report names on its own.
+    _builder_base: bool = PrivateAttr(default=False)
+
+    def _lost(self) -> Literal["builder_base", "no_village"]:
+        """Why the first `_home` found nothing to work on, as a report names it."""
+        return "builder_base" if self._builder_base else "no_village"
 
     def _settle_zoom(self, world: World | None) -> None:
         """Put the camera back at the far zoom, once per village these loops see.
@@ -436,6 +443,7 @@ class GameRunner(ScreenRunner):
         session gets the game restarted; see `restart_game` for why not its own
         button.
         """
+        night = False
         for attempt in range(HOME_TRIES):
             png = self._frame("home")
             if idle_disconnected(png):
@@ -465,23 +473,27 @@ class GameRunner(ScreenRunner):
             # could tell the difference: `read_stock` answers on the builder
             # base as readily, reading its gems bar as dark elixir, so a run
             # that arrived there would sweep the wrong map and report it as an
-            # ordinary empty one. A night loop will want its own answer here;
-            # until there is one, this method means the home village.
+            # ordinary empty one.
             #
-            # **One crossing and then out**, because `cross` is already the
-            # patient one: it swipes to the corner and tries three candidate
-            # spots, about a minute in all. Left to `continue` on a failure this
-            # loop would spend every one of its `HOME_TRIES` on another whole
-            # crossing — twenty minutes against about fifty seconds for the
-            # worst path here before this, and none of it interruptible, since
-            # `_home` never reads the state file.
+            # **It stops there rather than sailing**, because no command sails
+            # on its own: crossing is `ai_coc world --go`, so whoever started a
+            # command knows which village it left the game on. This used to
+            # cross, which moved the game to the other village under five
+            # commands without any of them saying so. Two readings in a row
+            # before giving up, since this ends the run and one frame is not
+            # enough to end a run on.
             world = current_world(png)
             if world == "night":
-                logger.warning("The game came up on the builder base; sailing home first")
-                if cross(self.adb, self.display, "day") == "day":
-                    continue
-                logger.warning("The crossing never landed; there is no home village to work on")
-                return None
+                if night:
+                    logger.warning(
+                        "The game is on the builder base and this works on the home village; "
+                        "`ai_coc world --go day` changes villages"
+                    )
+                    self._builder_base = True
+                    return None
+                night = True
+                continue
+            night = False
             # Before the read and not after it: see `_settle_zoom` for the
             # camera that makes the storages unreadable and for why nothing
             # below this line can recover from one.

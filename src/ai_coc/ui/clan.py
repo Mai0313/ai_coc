@@ -63,7 +63,7 @@ class ClanRunner(GameRunner):
         """Give what the village can to the first request in the clan chat."""
         report = DonateReport(outcome="nothing_given")
         if self._home() is None:
-            report.outcome = "no_village"
+            report.outcome = self._lost()
             return report
         button = reinforce_button(self._after_tap(CHAT_TAB, "chat"))
         if button is None:

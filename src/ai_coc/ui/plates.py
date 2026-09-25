@@ -6,12 +6,12 @@ panel behind it: 升級中 over 建議升級 over 其他升級, one green bar pe
 row with its countdown written above. So one runner answers for either plate on
 either village, and `parsers.home` holds the four measured places to look.
 
-**Nothing here crosses, and that is why it is not in `upkeep`.** `UpkeepRunner`
-is a `GameRunner`, and `GameRunner._home` sails to the home village the moment
-it finds the builder base — right for a loop about to spend the home village's
-loot, wrong for a question about whichever village is up. `ai_coc world --go` is
-how a caller moves the game; these commands only ever look, the same bargain
-`ai_coc stock` makes.
+**It reads either village, and that is why it is not in `upkeep`.**
+`UpkeepRunner` is a `GameRunner`, and `GameRunner._home` works on the home
+village alone — right for a loop about to spend the home village's loot, wrong
+for a question about whichever village is up. Neither crosses: `ai_coc world
+--go` is how a caller moves the game, and these commands only ever look, the
+same bargain `ai_coc stock` makes.
 
 Kept Qt-free like the rest of `ui/` outside the widgets, so `commands.py` can
 drive it against the live game without a window.

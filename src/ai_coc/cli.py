@@ -87,20 +87,13 @@ def _parser() -> argparse.ArgumentParser:
     """Every argument the entry point takes; no sub-command means open the window."""
     parser = argparse.ArgumentParser(prog="ai_coc", description=APP_NAME)
     sub = parser.add_subparsers(dest="command")
-    run = sub.add_parser("attack", help="跑進攻迴圈")
-    # Omitted means "whichever village the game is on", which is the honest
-    # default: the game reopens on the one it was closed on — unless a `--plan`
-    # names its own. Naming one sails there first, which is what farming both
-    # in one script wants.
-    run.add_argument(
-        "--world",
-        choices=get_args(World),
-        help="打哪個世界,不給就打當下所在的那個(給了 --plan 就打戰術所屬的那一邊);指定的話會先坐船過去",
-    )
+    # It plays whichever village the game is on and never sails there itself:
+    # crossing is `world --go`, which is the one command that moves the game.
+    run = sub.add_parser("attack", help="跑進攻迴圈,打遊戲當下所在的村莊")
     run.add_argument(
         "--plan",
         type=Path,
-        help="照這份戰術 JSON 打,完全不呼叫 AI;主村跟夜世界各用自己的戰術,沒給 --world 就打戰術所屬的那一邊",
+        help="照這份戰術 JSON 打,完全不呼叫 AI;戰術寫明是哪個村莊的,遊戲停在另一邊就不打",
     )
     run.add_argument("--plan-out", type=Path, help="把這一場實際用的計畫寫成 JSON")
     run.add_argument("--repeat", type=int, default=1, help="連打幾輪,0 代表打到手動中止為止")
@@ -268,7 +261,6 @@ def _answer(arguments: argparse.Namespace, run: RunLog) -> BaseModel | str:
                 minimums=LootOverrides(
                     min_gold=a.min_gold, min_elixir=a.min_elixir, min_dark=a.min_dark
                 ),
-                world=a.world,
                 rounds=a.repeat,
                 shot_every=a.shot_every,
                 restart_every=a.restart_every,

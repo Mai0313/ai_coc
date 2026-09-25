@@ -60,6 +60,7 @@ from ai_coc.models import (
     DonateOutcome,
     EntityMapping,
     ExportOutcome,
+    SurveyOutcome,
     VillageExport,
     BuilderOutcome,
     CollectOutcome,
@@ -409,7 +410,7 @@ class CollectCommandTests(unittest.TestCase):
             return adb, cart, runner, commands.collect()
 
     def test_the_village_is_read_once_it_has_painted_not_off_the_first_frame(self) -> None:
-        """Every branch but the cart's sails home when it meets the builder base.
+        """Every branch but the cart's is the home village's.
 
         Measured live: `collect` started 13 s after a builder base attack stood
         down read a frame that was no village yet, took the home branch, and
@@ -432,6 +433,23 @@ class CollectCommandTests(unittest.TestCase):
         runner.assert_not_called()
         assert slept.call_count == 2
         settled.assert_not_called()
+
+    def test_a_village_slower_than_the_wait_still_gets_its_cart(self) -> None:
+        """The home branch stops at the builder base rather than sailing, so the cart is taken."""
+        adb = _adb()
+        with (
+            patch.object(commands.time, "sleep"),
+            patch.object(commands, "_controller", return_value=adb),
+            patch.object(commands, "current_world", return_value=None),
+            patch.object(
+                commands, "collect_cart", return_value=CartReport(outcome="collected", elixir=5)
+            ) as cart,
+            patch.object(commands, "UpkeepRunner") as runner,
+        ):
+            runner.return_value.collect.return_value = CollectReport(outcome="builder_base")
+            report = commands.collect()
+        cart.assert_called_once_with(adb, DISPLAY)
+        assert (report.outcome, report.elixir) == ("cart", 5)
 
     def test_the_builder_base_empties_its_cart_instead_of_sweeping(self) -> None:
         adb, cart, runner, report = self._cart(CartReport(outcome="collected", elixir=300_000))
@@ -644,6 +662,7 @@ class WallLineTests(unittest.TestCase):
             "builders_busy": "工人都在忙",
             "no_walls_found": "找不到任何城牆",
             "no_village": "沒辦法回到村莊",
+            "builder_base": "城牆只在主村升",
             "no_stock": "看不到村莊的儲量",
             "stopped": "收到停止要求",
         }
@@ -682,6 +701,7 @@ class UpkeepLineTests(unittest.TestCase):
                 "collected": "收了",
                 "nothing_to_collect": "沒有採集器等著收",
                 "no_village": "收集沒有開始",
+                "builder_base": "主村的採集器沒有收",
                 "stock_unread": "讀不到儲量",
             },
             tuple(one for one in get_args(CollectOutcome) if one != "cart"),
@@ -694,6 +714,7 @@ class UpkeepLineTests(unittest.TestCase):
                 "read": "個升級在跑",
                 "idle": "沒有在跑的升級",
                 "no_village": "畫面沒辦法回到村莊",
+                "builder_base": "這裡讀的是主村的工人",
                 "count_unread": "讀不到工人數量",
                 "panel_shut": "工人面板打不開",
             },
@@ -711,6 +732,7 @@ class UpkeepLineTests(unittest.TestCase):
                 "builders_busy": "工人都在忙",
                 "count_unread": "讀不到工人數量",
                 "no_village": "建築升級沒有開始",
+                "builder_base": "只升主村的建築",
                 "village_lost": "升級之後讀不到村莊",
             },
             tuple(one for one in get_args(BuildOutcome) if one != "started"),
@@ -734,6 +756,7 @@ class UpkeepLineTests(unittest.TestCase):
                 "no_confirmation": "沒有出現確認畫面",
                 "undercharged": "儲量沒有少那麼多",
                 "no_village": "英雄升級沒有開始",
+                "builder_base": "英雄殿堂在主村",
                 "village_lost": "之後讀不到村莊",
             },
             get_args(HeroOutcome),
@@ -749,6 +772,7 @@ class UpkeepLineTests(unittest.TestCase):
                 "nobody_asking": "沒有人在請求增援",
                 "panel_shut": "捐贈畫面沒有打開",
                 "no_village": "捐兵沒有開始",
+                "builder_base": "捐兵只在主村",
             },
             get_args(DonateOutcome),
         )
@@ -842,7 +866,7 @@ class RoundLineTests(unittest.TestCase):
             "server_loading": "卡在載入畫面",
             "server_flapping": "又回到載入畫面",
             "emulator_silent": "模擬器沒有回應",
-            "world_unreachable": "沒辦法切到指定的世界",
+            "other_village": "遊戲停在另一個村莊",
         }
         assert set(own) == set(get_args(AttackOutcome))
         for outcome, fragment in own.items():
@@ -886,7 +910,6 @@ class AttackSeriesStopTests(unittest.TestCase):
             patch.object(commands.ConfigStore, "load", return_value=AppConfig()),
             patch.object(commands, "_planner", return_value=None),
             patch.object(commands, "_settle_game", return_value=DISPLAY),
-            patch.object(commands, "_pick_world", return_value="day"),
             patch.object(commands, "FrameTicker"),
             patch.object(commands, "AttackRunner", return_value=runner) as built,
         ):
@@ -932,7 +955,6 @@ class AttackSeriesAdapterFailureTests(unittest.TestCase):
             patch.object(commands.ConfigStore, "load", return_value=AppConfig()),
             patch.object(commands, "_planner", return_value=None),
             patch.object(commands, "_settle_game", return_value=DISPLAY),
-            patch.object(commands, "_pick_world", return_value="day"),
             patch.object(commands, "FrameTicker"),
             patch.object(commands, "AttackRunner", return_value=runner),
             patch.object(commands, "_rest", return_value=False),
@@ -1004,7 +1026,6 @@ class AttackSeriesArmyShortTests(unittest.TestCase):
             patch.object(commands.ConfigStore, "load", return_value=AppConfig()),
             patch.object(commands, "_planner", return_value=None),
             patch.object(commands, "_settle_game", return_value=DISPLAY),
-            patch.object(commands, "_pick_world", return_value="day"),
             patch.object(commands, "FrameTicker"),
             patch.object(commands, "AttackRunner", return_value=runner),
             patch.object(commands, "_rest", return_value=False) as rest,
@@ -1024,8 +1045,17 @@ class AttackSeriesArmyShortTests(unittest.TestCase):
         # will read the same a minute later.
         rest.assert_not_called()
 
+    def test_the_other_village_ends_the_series_too(self) -> None:
+        """Nothing sails, so every round after would find the game on it as well."""
+        rounds, rest = self._series([
+            AttackReport(outcome="other_village"),
+            AttackReport(outcome="took_loot", attacked=LootOffer(gold=1, elixir=1, dark=1)),
+        ])
+        assert [report.outcome for report in rounds] == ["other_village"]
+        rest.assert_not_called()
+
     def test_a_round_that_found_nobody_still_comes_round_again(self) -> None:
-        """The break is `army_short`'s alone: every other empty round rests and retries.
+        """Only those end it: every other empty round rests and retries.
 
         No opponent above the thresholds is a matchmaker that will offer a
         different set next time, which is exactly what the wait is still for.
@@ -1174,16 +1204,13 @@ class RunPlumbingTests(unittest.TestCase):
             assert not (Path(folder) / "never.json").exists()
 
     def test_a_handed_in_plan_names_its_own_village(self) -> None:
-        """A written tactic is for one village, so with no `--world` it picks the village."""
+        """A written tactic is for one village, and the series plays that one."""
         day = plans.PLAN_DIR / "flat.json"
         night = plans.PLAN_DIR / "night_flat.json"
         plan, world = commands._handed_plan(AttackOptions(plan=day))
         assert (isinstance(plan, AttackPlan), world) == (True, "day")
         plan, world = commands._handed_plan(AttackOptions(plan=night))
         assert (isinstance(plan, NightPlan), world) == (True, "night")
-        plan, world = commands._handed_plan(AttackOptions(plan=night, world="night"))
-        assert world == "night"
-        assert commands._handed_plan(AttackOptions(world="day")) == (None, "day")
         assert commands._handed_plan(AttackOptions()) == (None, None)
 
     def test_a_misedited_plan_reports_only_its_own_villages_errors(self) -> None:
@@ -1197,17 +1224,6 @@ class RunPlumbingTests(unittest.TestCase):
                 plans.load_any(path)
         assert "act" in str(raised.value)
         assert "deploy_start" not in str(raised.value)
-
-    def test_a_plan_for_the_other_village_is_refused_before_the_game_is_touched(self) -> None:
-        with (
-            patch.object(commands, "_controller") as controller,
-            pytest.raises(ValueError, match="夜世界的戰術"),
-        ):
-            commands.attack(
-                AttackOptions(plan=plans.PLAN_DIR / "night_flat.json", world="day"),
-                MagicMock(return_value=False),
-            )
-        controller.assert_not_called()
 
     def test_the_plan_log_holds_one_line_per_round_of_either_village(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
@@ -1528,11 +1544,34 @@ class SurveyRunnerTests(unittest.TestCase):
     def test_probe_and_bounds_hand_the_survey_back(self) -> None:
         with (
             patch.object(commands, "_session", return_value=(_controller(), DISPLAY)),
+            patch.object(commands, "_village_now", return_value="day"),
             patch.object(commands._BoundarySurvey, "run"),
             patch.object(commands._MapSurvey, "run"),
         ):
-            assert commands.probe().rays == []
-            assert commands.bounds().edges == []
+            assert commands.probe().outcome == "surveyed"
+            assert commands.bounds().outcome == "surveyed"
+
+    def test_the_surveys_stop_on_the_builder_base_before_spending_anything(self) -> None:
+        """Both measure the home village's battlefield, and nothing here sails to it."""
+        with (
+            patch.object(commands.time, "sleep"),
+            patch.object(commands, "_controller", return_value=_adb()),
+            patch.object(commands, "current_world", return_value="night"),
+            patch.object(commands, "_BoundarySurvey") as probe,
+            patch.object(commands, "_MapSurvey") as bounds,
+        ):
+            assert commands.probe().outcome == "builder_base"
+            assert commands.bounds().outcome == "builder_base"
+        probe.assert_not_called()
+        bounds.assert_not_called()
+
+    def test_every_survey_outcome_has_a_line_of_its_own(self) -> None:
+        own = {"surveyed": "量完了", "builder_base": "遊戲停在夜世界"}
+        assert set(own) == set(get_args(SurveyOutcome))
+        for outcome, fragment in own.items():
+            assert fragment in commands.SURVEY_LINES[outcome], outcome
+            others = [commands.SURVEY_LINES[other] for other in own if other != outcome]
+            assert not any(fragment in other for other in others), outcome
 
 
 PAYLOAD = json.dumps({

@@ -101,7 +101,7 @@ class UpkeepRunner(GameRunner):
         report = CollectReport(outcome="nothing_to_collect")
         before = self._home()
         if before is None:
-            report.outcome = "no_village"
+            report.outcome = self._lost()
             return report
         # The set of markers the last pass tapped. A pass that finds the same set
         # again made no progress, which is what a full storage looks like: the
@@ -316,7 +316,7 @@ class UpkeepRunner(GameRunner):
         """
         report = BuilderReport(outcome="read")
         if self._home() is None:
-            report.outcome = "no_village"
+            report.outcome = self._lost()
             return report
         counted = free_builders(self._frame("builders"))
         if counted is None:
@@ -347,7 +347,7 @@ class UpkeepRunner(GameRunner):
         report = BuildReport(outcome="started", only=self.only)
         stock = self._home()
         if stock is None:
-            report.outcome = "no_village"
+            report.outcome = self._lost()
             return report
         builders = free_builders(self._frame("builders"))
         if builders is None:

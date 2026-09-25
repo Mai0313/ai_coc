@@ -31,6 +31,7 @@ from ai_coc.models import (
     GameDialog,
     AdbEndpoint,
     ScreenPoint,
+    AttackReport,
     BuildingName,
     VillageStock,
     DisplayTarget,
@@ -757,10 +758,10 @@ class HeroRunnerTests(unittest.TestCase):
 
 
 class OpenAttackMenuTests(unittest.TestCase):
-    """One method for both villages, differing only in which way it sails and which menu it trusts."""
+    """One method for both villages, differing only in which menu it trusts."""
 
     def _open(
-        self, world: str, worlds: list[str | None], crossed: str | None = None, **screens: object
+        self, world: str | None, worlds: list[str | None], **screens: object
     ) -> tuple[bytes | None, dict[str, MagicMock]]:
         """Open the menu against canned readings.
 
@@ -786,7 +787,6 @@ class OpenAttackMenuTests(unittest.TestCase):
             ),
             patch.object(attack, "battle_over", side_effect=screens.get("result") or [False] * 20),
             patch.object(attack, "current_world", side_effect=worlds),
-            patch.object(attack, "cross", return_value=crossed) as sailed,
             patch.object(attack, "uncovered") as cleared,
             patch.object(attack, "restart_game", return_value=DISPLAY) as restarted,
             patch.object(runner, "_settle_ceilings") as ceilings,
@@ -804,7 +804,6 @@ class OpenAttackMenuTests(unittest.TestCase):
             got = runner._open_attack_menu()
         return got, {
             "order": order,
-            "sailed": sailed,
             "cleared": cleared,
             "restarted": restarted,
             "ceilings": ceilings,
@@ -819,7 +818,6 @@ class OpenAttackMenuTests(unittest.TestCase):
         assert got == b"home"
         seen["ceilings"].assert_called_once()
         seen["tapped"].assert_called_once_with(attack.HOME_ATTACK)
-        seen["sailed"].assert_not_called()
 
     def test_the_cart_is_looked_in_before_the_attack_tap(self) -> None:
         """The cart is a place on the map, and past the 攻擊 tap the dialog is over it."""
@@ -827,18 +825,51 @@ class OpenAttackMenuTests(unittest.TestCase):
         seen["visited"].assert_called_once_with()
         assert [name for name, *_ in seen["order"].mock_calls] == ["visit", "tap"]
 
-    def test_the_other_village_is_sailed_from_first(self) -> None:
-        got, seen = self._open("day", ["night", "day"], crossed="day")
-        assert got == b"home"
-        assert seen["sailed"].call_args.args[2] == "day"
-        got, seen = self._open("night", ["day", "night"], crossed="night", day_menu=False)
-        assert got == b"home"
-        assert seen["sailed"].call_args.args[2] == "night"
-
-    def test_a_crossing_that_never_lands_ends_the_round(self) -> None:
-        got, seen = self._open("day", ["night"], crossed="night")
+    def test_the_other_village_ends_the_round_rather_than_being_sailed_to(self) -> None:
+        """Nothing here sails; crossing is `ai_coc world --go`, which the module does not even import."""
+        assert not hasattr(attack, "cross")
+        got, seen = self._open("day", ["night", "night"])
         assert got is None
+        assert seen["runner"]._stuck == "other_village"
         seen["tapped"].assert_not_called()
+
+    def test_one_reading_of_the_other_village_is_not_enough_to_end_a_series(self) -> None:
+        got, seen = self._open("day", ["night", "day"])
+        assert got == b"home"
+        seen["tapped"].assert_called_once_with(attack.HOME_ATTACK)
+
+    def test_a_runner_with_no_village_named_plays_the_one_it_finds(self) -> None:
+        """The game reopens on the village it was closed on, and that is the one played."""
+        got, seen = self._open(None, [None, "night"], day_menu=False)
+        assert got == b"home"
+        assert seen["runner"].world == "night"
+        seen["cleared"].assert_called_once()
+
+    def test_a_round_with_no_village_named_opens_the_menu_before_it_picks_a_side(self) -> None:
+        """Which round to play is only known once a village has been read."""
+        runner = AttackRunner(adb=_adb(), display=DISPLAY, world=None, thresholds=LootThresholds())
+
+        def opened() -> bytes:
+            runner.world = "night"
+            return b"home"
+
+        with (
+            patch.object(runner, "_open_attack_menu", side_effect=opened) as menu,
+            patch.object(
+                runner, "_run_night", return_value=AttackReport(world="night", outcome="deployed")
+            ) as night,
+            patch.object(runner, "_run_day") as day,
+        ):
+            assert runner.run().outcome == "deployed"
+        menu.assert_called_once_with()
+        night.assert_called_once_with(b"home")
+        day.assert_not_called()
+
+    def test_a_round_that_never_read_a_village_says_neither(self) -> None:
+        runner = AttackRunner(adb=_adb(), display=DISPLAY, world=None, thresholds=LootThresholds())
+        with patch.object(runner, "_open_attack_menu", return_value=None):
+            report = runner.run()
+        assert (report.world, report.outcome) == (None, "no_attack_menu")
 
     def test_a_popup_is_pressed_away_and_a_dropped_session_restarted(self) -> None:
         got, seen = self._open("day", [None, "day"])
