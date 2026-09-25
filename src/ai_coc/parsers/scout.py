@@ -973,20 +973,26 @@ def loot_cart_ready(png: bytes) -> bool:
     with nothing new in it is as good a candidate as a storage with no room —
     and a cart the loop emptied minutes ago is the commoner of the two. So this
     answers whether pressing it would buy anything and stops there. What
-    separates the two is the line beside the button, which `loot_cart_held`
+    separates the two is the line beside the button, which `loot_cart_load`
     reads; this said that number needed an ink rule of its own, and it does not.
     """
     return _button_ratio(open_frame(png), CART_COLLECT_BOX, "green") >= CART_COLLECT_GREEN
 
 
-def loot_cart_held(png: bytes) -> int | None:
-    """How much elixir the cart's sheet says is in it, or None where it will not read.
+def loot_cart_load(png: bytes) -> tuple[int, int] | None:
+    """What the cart's sheet says it holds and holds at most, or None where it will not read.
 
-    **This is what tells a locked cart the loop just emptied from one standing
-    full behind a storage with no room**, which are opposite instructions: the
-    first is nothing to act on and the second is a village that has stopped
-    earning until something spends the elixir. `loot_cart_ready` reads the
-    button and so cannot say which.
+    **This is what tells a locked cart the loop just emptied from one filling
+    behind a storage with no room**: the first is nothing to act on and the
+    second is a village banking elixir in its cart until that fills too.
+    `loot_cart_ready` reads the button and so cannot say which.
+
+    **The ceiling is the second half of the same line**, and it is what lets the
+    cart count as a storage of its own: the builder base keeps elixir in it past
+    what the storages take, so a run filling that village fills this too, and
+    how full it is is a share of the number written here rather than of one
+    anybody typed in. It grows with the village like every other ceiling —
+    1 000 000 on the first sheet this loop opened, 1 600 000 on the committed ones.
 
     **Gated on the sheet being up, and that gate is load-bearing rather than
     tidy.** The builder base's own card row writes its `xN` corners at y 742-760
@@ -999,8 +1005,13 @@ def loot_cart_held(png: bytes) -> int | None:
     fourteen-digit number and a digit that failed splits it into three or more,
     so anything else is handed back as unread. A glyph lost off **either** end
     still leaves two — `split_numbers` drops the empty piece — so 135 843 can
-    come back as 35 843 or 13 584; both are positive, which is all the caller
-    branches on.
+    come back as 35 843, and 1 600 000 as 160 000. **The second is the one that
+    costs now that the share is read**, since a ceiling a tenth of the real one
+    makes a cart holding 150 000 look full. What rules most of it out is that a
+    cart cannot hold more than it takes: past 160 000 the pair is unread rather
+    than believed. Under that nothing on this line can rule it out, so it is
+    named here rather than guarded: no sheet recorded on this machine has lost
+    a glyph off either end.
     """
     if not loot_cart_open(png):
         return None
@@ -1008,7 +1019,9 @@ def loot_cart_held(png: bytes) -> int | None:
         ink_mask(open_frame(png).crop(CART_HELD_BOX), saturation=STOCK_INK_SATURATION),
         CART_HELD_TOLERANCE,
     )
-    return found[0] if len(found) == 2 else None
+    if len(found) != 2 or found[0] > found[1]:
+        return None
+    return found[0], found[1]
 
 
 def in_battle(png: bytes) -> bool:

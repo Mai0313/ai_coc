@@ -37,7 +37,7 @@ from ai_coc.parsers.scout import (
     battle_over,
     card_groups,
     loading_screen,
-    loot_cart_held,
+    loot_cart_load,
     loot_cart_open,
     loot_cart_ready,
     read_builder_stock,
@@ -305,17 +305,20 @@ def _locked_cart(sheet: bytes) -> CartReport:
     """Which of the two a greyed 收集 means, off the amount written beside it.
 
     The button cannot say: a cart this loop emptied minutes ago is nothing to
-    act on, and one holding loot behind a full 聖水 storage is a village that has
-    stopped earning until something spends it. Read off the frame
+    act on, and one holding loot behind a full 聖水 storage is a village banking
+    elixir in its cart until that fills too. Read off the frame
     `loot_cart_open` accepted rather than the re-read taken to confirm the
     button, which is gated on nothing.
     """
-    held = loot_cart_held(sheet)
-    if held is None:
+    load = loot_cart_load(sheet)
+    if load is None:
         logger.warning("The cart is open, its 收集 greyed, and the line would not read")
         return CartReport(outcome="locked")
-    logger.warning("The cart is open, its 收集 greyed, and it is holding %d", held)
-    return CartReport(outcome="locked_holding" if held else "locked_empty", held=held)
+    held, capacity = load
+    logger.warning("The cart is open, its 收集 greyed, and it is holding %d of %d", held, capacity)
+    return CartReport(
+        outcome="locked_holding" if held else "locked_empty", held=held, capacity=capacity
+    )
 
 
 def collect_cart(adb: AdbController, display: DisplayTarget) -> CartReport:

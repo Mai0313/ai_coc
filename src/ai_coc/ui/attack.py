@@ -23,6 +23,7 @@ from ai_coc.models import (
     ScoutView,
     AttackPlan,
     AttackStep,
+    CartReport,
     ScreenPoint,
     AttackReport,
     AttackOutcome,
@@ -30,7 +31,7 @@ from ai_coc.models import (
     StorageCapacity,
 )
 from ai_coc.prompts import PROMPTS
-from ai_coc.ui.world import cross, uncovered
+from ai_coc.ui.world import cross, uncovered, collect_cart
 from ai_coc.constants import COC_PACKAGE
 from ai_coc.ui.runner import ScreenRunner, restart_game
 from ai_coc.adapters.adb import ZOOM_PINCHES
@@ -126,6 +127,14 @@ ABILITY_TAP = 1.0
 # asks whether it is back on a village after each stage, so it plays whatever it
 # is offered rather than modelling when the offer comes.
 NIGHT_PHASES = 2
+
+# Trips one visit may take to the builder base's cart before the storages decide
+# the stop alone, as they did before the cart counted. One miss is not rare
+# enough to end a run on — 2 of the 110 trips logged on this machine tapped all
+# three spots without opening it — and a cart that never reads must not keep a
+# run of full storages farming for ever. Three is the line `commands` already
+# draws for an emulator that stops answering.
+CART_LOOKS = 3
 
 # Card positions come from the frame rather than a constant, because the row
 # depends on the army. Cards are then emptied in passes: `live_cards` reports
@@ -899,6 +908,9 @@ class AttackRunner(ScreenRunner):
     # run. A storage only grows when a builder finishes upgrading one, which is
     # days apart, against six taps and three captures to ask again every round.
     _capacity: StorageCapacity | None = PrivateAttr(default=None)
+    # The builder base's cart as this round's visit found it, or None where
+    # nothing went to look; see `_visit_cart`.
+    _cart: CartReport | None = PrivateAttr(default=None)
     # Why the last `_open_attack_menu` gave up, when the reason is worth more
     # than the round simply not finding its menu: a loading screen that
     # outlasted `SERVER_POLLS`, one that came back after a wait, or a stop that
@@ -976,6 +988,70 @@ class AttackRunner(ScreenRunner):
             return
         self._capacity = self.read_ceilings(self.world)
 
+    def _visit_cart(self, home: bytes) -> None:
+        """Look in the builder base's cart, once a round, once its storages are full.
+
+        **The cart is that village's third storage.** Elixir waits in it until
+        its 收集 is pressed, and past a full 聖水 storage the game greys that
+        button and keeps paying in, up to the ceiling written on the sheet — so
+        full storages there are a village that can still bank what a battle
+        wins, and `_stood_down` asks what this found before standing a run down.
+
+        Not before the storages are full, because until then `commands` empties
+        the cart into them every few battles and it has nothing to say; and
+        every round after, because every battle pays into it. A trip that can
+        collect does, which is what takes the 聖水 storage the rest of the way
+        to its own ceiling when `stop_at` stood it down short of one.
+
+        **A trip that could not say how full the cart is goes again at once**,
+        up to `CART_LOOKS` times, rather than being taken either way: a missed
+        tap is no evidence of a full cart, and a cart that never reads must not
+        keep full storages farming for ever. Inside the one visit rather than
+        across rounds, because the window builds a new runner for every pass
+        and a count kept here would start from nothing each time.
+        """
+        if self.world != "night" or self._cart is not None:
+            return
+        stock = read_builder_stock(home)
+        if stock is None or not self._ceiling.full(stock, self.stop_at):
+            return
+        for look in range(1, CART_LOOKS + 1):
+            self._cart = collect_cart(self.adb, self.display)
+            if self._cart.capacity or self._cart.outcome == "collected":
+                return
+            logger.warning(
+                "Look %d at the cart did not say how full it is (%s)", look, self._cart.outcome
+            )
+
+    @property
+    def cart_watched(self) -> bool:
+        """Whether this round already looked in the builder base's cart.
+
+        True once that village's storages are full, since every round then
+        looks before its attack; `commands` skips its own trip to the cart
+        after such a round rather than making the same one twice.
+        """
+        return self._cart is not None
+
+    def _cart_has_room(self) -> bool:
+        """Whether the builder base's cart can still bank what a battle wins.
+
+        Short of `stop_at` of its own ceiling it can, which is the share every
+        storage is judged on. A trip that collected has room by definition: the
+        storages took elixir out of it. A cart that would not say after every
+        look `_visit_cart` gave it is left out, which is what a ceiling nobody
+        can read has always meant here: the storages decide alone.
+        """
+        cart = self._cart
+        if cart is not None and cart.held is not None and cart.capacity:
+            logger.info("The storages are full; the cart holds %d of %d", cart.held, cart.capacity)
+            return cart.held * 100 < cart.capacity * self.stop_at
+        if cart is not None and cart.outcome == "collected":
+            logger.info("The storages took %d out of the cart; it has room again", cart.elixir)
+            return True
+        logger.warning("The cart would not say how full it is; the storages decide alone")
+        return False
+
     def _battle_ended(self, label: str) -> bool:
         """Whether the result screen is up, and the loot on the way past.
 
@@ -1023,6 +1099,7 @@ class AttackRunner(ScreenRunner):
         other: World = "night" if self.world == "day" else "day"
         opened = attack_menu_open if self.world == "day" else night_attack_menu
         self._stuck = None
+        self._cart = None
         waited = False
         for _ in range(HOME_ATTEMPTS):
             home = self._frame("home")
@@ -1078,6 +1155,10 @@ class AttackRunner(ScreenRunner):
             # it; before here the frame might be a result screen or the other
             # village. It reads once and every round after this costs nothing.
             self._settle_ceilings()
+            # The builder base's cart is looked in here for the same reason: it
+            # is a place on that village's map, and past this tap the dialog is
+            # over it.
+            self._visit_cart(home)
             self._tap(HOME_ATTACK)
             time.sleep(2)
             if opened(self._frame("attack-menu")):
@@ -1147,13 +1228,15 @@ class AttackRunner(ScreenRunner):
         The ceilings are this village's own, read off its bars by
         `_settle_ceilings`, which is what lets one percentage serve both. The
         builder base reads two rows, because what sits at its third is the
-        gems bar.
+        gems bar — and its cart is the third storage there, by `_cart_has_room`.
         """
         stock = (read_stock if self.world == "day" else read_builder_stock)(home)
         if stock is None:
             return None
         full = self._ceiling.full(stock, self.stop_at)
         if not full:
+            return None
+        if self.world == "night" and self._cart_has_room():
             return None
         held = f"金幣 {stock.gold}／聖水 {stock.elixir}"
         if self.world == "day":

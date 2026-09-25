@@ -445,7 +445,7 @@ class CollectCommandTests(unittest.TestCase):
             "collected": "收到聖水",
             "empty": "儲量沒有變",
             "locked": "車上的數字讀不到",
-            "locked_holding": "先把聖水花掉",
+            "locked_holding": "倉庫有空間再收",
             "locked_empty": "推車是空的",
             "not_found": "三個候選點",
             "not_parked": "鏡頭沒辦法停回定位",
@@ -454,10 +454,10 @@ class CollectCommandTests(unittest.TestCase):
         }
         assert set(own) == set(get_args(CartOutcome))
         for outcome, fragment in own.items():
-            line = commands.CART_LINES[outcome].format(elixir=1, held=1)
+            line = commands.CART_LINES[outcome].format(elixir=1, held=1, capacity=1)
             assert fragment in line, outcome
             others = [
-                commands.CART_LINES[other].format(elixir=1, held=1)
+                commands.CART_LINES[other].format(elixir=1, held=1, capacity=1)
                 for other in own
                 if other != outcome
             ]
@@ -955,6 +955,42 @@ class AttackSeriesAdapterFailureTests(unittest.TestCase):
         ])
         assert len(rounds) == 6
         assert rounds[-1].stock_full
+
+
+class AttackSeriesCartTests(unittest.TestCase):
+    """The builder base's cart trip between battles, and when a round already made it."""
+
+    def _emptied(self, watched: bool) -> MagicMock:
+        runner = MagicMock(name="AttackRunner")
+        runner.run.side_effect = [
+            AttackReport(world="night", outcome="deployed", phases=1)
+        ] * commands.CART_EVERY
+        runner.lost = 0
+        runner.world = "night"
+        runner.cart_watched = watched
+        with (
+            patch.object(commands, "_controller", return_value=_adb()),
+            patch.object(commands.ConfigStore, "load", return_value=AppConfig()),
+            patch.object(commands, "_planner", return_value=None),
+            patch.object(commands, "_settle_game", return_value=DISPLAY),
+            patch.object(commands, "_pick_world", return_value="night"),
+            patch.object(commands, "FrameTicker"),
+            patch.object(commands, "AttackRunner", return_value=runner),
+            patch.object(
+                commands, "collect_cart", return_value=CartReport(outcome="empty")
+            ) as emptied,
+        ):
+            commands.attack(
+                AttackOptions(rounds=commands.CART_EVERY), MagicMock(return_value=False)
+            )
+        return emptied
+
+    def test_the_cart_is_emptied_every_few_battles(self) -> None:
+        self._emptied(watched=False).assert_called_once()
+
+    def test_a_round_that_looked_in_the_cart_itself_is_not_followed_by_another_look(self) -> None:
+        """Full storages have every round look before its attack, so the next one will too."""
+        self._emptied(watched=True).assert_not_called()
 
 
 class AttackSeriesArmyShortTests(unittest.TestCase):
