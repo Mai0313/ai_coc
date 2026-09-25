@@ -1080,7 +1080,9 @@ class AttackOptions(BaseModel):
     """
 
     frame_dir: Path | None = None
-    plan_in: Path | None = None
+    # A written plan for either village, played instead of asking the AI. It
+    # names its own village, so with no `world` it is also the village played.
+    plan: Path | None = None
     plan_out: Path | None = None
     # The run's own plan log, one line per round. `plan_out` is the caller's
     # path and holds whichever round went last; this is the whole series.
@@ -1817,7 +1819,7 @@ class RunLog(BaseModel):
         hundred small files is a directory nobody opens. A line carries its own
         round number, so it lines up with `run.log` and `result.json`, and the
         whole series greps and diffs as one document. Pulling a single round
-        back out for `--plan-in` is a line of `jq`.
+        back out for `--plan` is a line of `jq`, on either village.
         """
         return self.directory / "plans.jsonl"
 

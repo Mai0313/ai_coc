@@ -1160,6 +1160,26 @@ class NightCartTests(unittest.TestCase):
         assert runner._since_cart == 1
 
 
+class HandedPlanTests(unittest.TestCase):
+    """A plan passed in is played on its own village instead of asking the AI."""
+
+    def test_the_builder_base_plays_a_plan_handed_in(self) -> None:
+        """It used to fall back to the flat plan whatever it was given."""
+        plan = plans.night_flat().model_copy(update={"troops_after": 9, "reason": "written"})
+        runner = AttackRunner(
+            adb=_adb(),
+            display=DISPLAY,
+            world="night",
+            thresholds=LootThresholds(),
+            ai=GeminiClient(api_key="not-a-real-key", settings=GeminiSetting()),
+            plan=plan,
+        )
+        with patch.object(GeminiClient, "generate_structured") as asked:
+            assert runner._night_plan(b"") is plan
+        assert runner.played is plan
+        asked.assert_not_called()
+
+
 class DayRoundTests(unittest.TestCase):
     """One home village round from the attack menu to the report."""
 

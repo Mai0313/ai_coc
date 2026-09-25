@@ -81,7 +81,7 @@ uv run ai_coc attack --world day --repeat 0 --record --shot-every 5
 
 ```bash
 jq -c 'select(.round==2).plan' ~/.ai_coc/logs/<run>/plans.jsonl > .runs/tuned.json
-uv run ai_coc attack --plan-in .runs/tuned.json
+uv run ai_coc attack --plan .runs/tuned.json
 ```
 
 `--plan-out` 也還在, 但它只留最後一輪而且要事先想到加, 所以它是「我知道這一份要留」的時候用的, 不是查問題用的.
@@ -101,7 +101,7 @@ uv run ai_coc attack --plan-in .runs/tuned.json
 每一層都比下一層便宜而且好回頭. 不要跳級.
 
 1. **`~/.ai_coc/config.json`**: 戰利品門檻, 倉庫上限, 每打幾場重開一次模擬器, 模型設定. 改一個數字就重跑, 不用改碼, 不用測試, 不用開 PR. 但要知道**這一層已經沒有任何一個數字會改變一場仗怎麼打了**: 技能秒數跟法術秒數以前在這裡, 現在整批搬到 plan 的步驟上 —— 一份戰術就是一串 `AttackStep`, 而等待本身就是一個 `act: wait` 的步驟, 秒數從上一個動作做完開始算, `adapters/config.py` 甚至會主動把殘留的 `timings` 從既有檔案裡刪掉 —— 留著它才是害人, 因為那看起來像一個還有人在讀的設定. 這一層決定的是打誰跟打到什麼時候, 不是怎麼打, 所以「打得不夠好」現在要從第二層開始
-2. **戰術檔案**: `src/ai_coc/plans/flat.json` 是那份「什麼都平均攤開」的預設戰術, `--plan-in` 可以餵任何一份進去而且**完全不呼叫 AI**. 想試不同的下兵線或不同的法術落點, 寫一份新的 JSON 比改程式碼快得多, 而且 `--plan-in` 把 AI 這個變因拿掉之後才有辦法做對照
+2. **戰術檔案**: `src/ai_coc/plans/flat.json` 是那份「什麼都平均攤開」的預設戰術, `--plan` 可以餵任何一份進去而且**完全不呼叫 AI**, 主村跟夜世界都可以 (夜世界的戰術長得不一樣, 形狀看 `plans/night_flat.json`; 沒給 `--world` 就打戰術所屬的那一邊). 想試不同的下兵線或不同的法術落點, 寫一份新的 JSON 比改程式碼快得多, 而且 `--plan` 把 AI 這個變因拿掉之後才有辦法做對照
 3. **`src/ai_coc/prompts/attack_plan.md`**: 如果問題是 AI 每次都畫出爛的線或者漏掉欄位, 那是 prompt 的事, 不是迴圈的事. 注意 `AttackPlan` 除了 `deploy_from` 跟 `reason` 以外每個欄位都是必填的, 那是刻意的: 有預設值的欄位在 JSON schema 裡是選填, 而 Gemini 會直接不寫它, 所以迴圈少不了的東西一個預設都不給. 讀 model 上面的註解就知道漏掉一個的代價是什麼
 4. **`src/ai_coc/ui/attack.py` 頂端的常數**: 到這一層才需要量測撐腰. 檔案頂端每個常數旁邊都有註解說它是怎麼來的. 有一個不在那裡: `TAP_GAP` 住在 `adapters/adb.py`, 因為它管的是 ADB 那層兩個 `input` 之間要隔多遠, 不是進攻的事
 5. **迴圈的邏輯**: 最後手段. 改到這裡就是在改行為, 要跑測試, 要開 PR
@@ -122,7 +122,7 @@ uv run ai_coc attack --plan-in .runs/tuned.json
 
 想比較兩種打法, 變因只能有一個:
 
-- 用 `--plan-in` 餵同一份戰術, 這樣 AI 不會每場給不同的答案
+- 用 `--plan` 餵同一份戰術, 這樣 AI 不會每場給不同的答案
 - 兩邊都跑 `--repeat 3` 以上
 - 比的是**進帳的資源**跟**打完的百分比**, 不是「感覺比較順」
 - 對手的差異吃掉一切. 三場對三場只能看出很大的差別, 看不出百分之十的改善

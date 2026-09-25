@@ -89,14 +89,19 @@ def _parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command")
     run = sub.add_parser("attack", help="跑進攻迴圈")
     # Omitted means "whichever village the game is on", which is the honest
-    # default: the game reopens on the one it was closed on. Naming one sails
-    # there first, which is what farming both in one script wants.
+    # default: the game reopens on the one it was closed on — unless a `--plan`
+    # names its own. Naming one sails there first, which is what farming both
+    # in one script wants.
     run.add_argument(
         "--world",
         choices=get_args(World),
-        help="打哪個世界,不給就打當下所在的那個;指定的話會先坐船過去",
+        help="打哪個世界,不給就打當下所在的那個(給了 --plan 就打戰術所屬的那一邊);指定的話會先坐船過去",
     )
-    run.add_argument("--plan-in", type=Path, help="照這份 JSON 打，完全不呼叫 AI，只適用日世界")
+    run.add_argument(
+        "--plan",
+        type=Path,
+        help="照這份戰術 JSON 打,完全不呼叫 AI;主村跟夜世界各用自己的戰術,沒給 --world 就打戰術所屬的那一邊",
+    )
     run.add_argument("--plan-out", type=Path, help="把這一場實際用的計畫寫成 JSON")
     run.add_argument("--repeat", type=int, default=1, help="連打幾輪,0 代表打到手動中止為止")
     run.add_argument(
@@ -257,7 +262,7 @@ def _answer(arguments: argparse.Namespace, run: RunLog) -> BaseModel | str:
         "attack": lambda: commands.attack(
             AttackOptions(
                 frame_dir=run.frames,
-                plan_in=a.plan_in,
+                plan=a.plan,
                 plan_out=a.plan_out,
                 plan_log=run.plan_log,
                 minimums=LootOverrides(
