@@ -63,6 +63,7 @@ from ai_coc.models import (
 )
 from ai_coc.parsers import scout as scout_parser
 from ai_coc.prompts import PROMPTS, PROMPT_DIR, render
+from ai_coc.ui.clan import ClanRunner
 from ai_coc.ui.hero import HeroRunner
 from ai_coc.ui.walls import WallRunner
 from ai_coc.constants import DEFAULT_LITE_MODEL
@@ -5346,6 +5347,14 @@ class UiJobNameTests(unittest.TestCase):
         """
         assert set(MainWindow._job_boxes(MagicMock())) == set(UiJobs.model_fields)
 
+    def test_a_home_village_job_is_taken_to_that_village_first(self) -> None:
+        """None of the commands sails, so the cycle that strings them together does."""
+        order = MagicMock()
+        order.task.return_value = "report"
+        with patch.object(commands, "world", order.world):
+            assert MainWindow._on_home_village(order.task)("log") == "report"
+        assert order.mock_calls[:2] == [call.world("day"), call.task("log")]
+
 
 def _menu(price: int, gold: int = 887) -> WallMenu:
     """A wall menu whose buttons sit where a row of this width puts them."""
@@ -5622,8 +5631,13 @@ class HomeTests(unittest.TestCase):
         assert held is not None
         assert held.dark == 410_152
 
-    def _sailing(self, run: shared.GameRunner, seen: list[str], landed: str) -> MagicMock:
-        """Walk `_home` over these worlds with the crossing answering `landed`."""
+    def _walked(self, run: shared.GameRunner, seen: list[str]) -> tuple[bool, int]:
+        """Walk `_home` over these worlds, the storages reading whenever it looks.
+
+        Hands back whether a village came back, and how many taps and swipes
+        the walk made: a crossing is a drag to the map corner and a tap on the
+        boat, so either one says this sailed.
+        """
         with (
             patch.object(shared.time, "sleep"),
             patch.object(run, "_frame", return_value=b""),
@@ -5635,24 +5649,58 @@ class HomeTests(unittest.TestCase):
                 shared, "read_stock", return_value=VillageStock(gold=1, elixir=1, dark=1)
             ),
             patch.object(shared.GameRunner, "_settle_zoom"),
-            patch.object(shared, "cross", return_value=landed) as sailed,
+            patch.object(AdbController, "swipe") as swiped,
+            patch.object(AdbController, "tap") as tapped,
         ):
             run._settled = True
-            run._home()
-        return sailed
+            found = run._home() is not None
+        return found, swiped.call_count + tapped.call_count
 
-    def test_a_crossing_that_never_lands_is_not_tried_again(self) -> None:
-        """`cross` is already the patient one: it swipes to the corner and tries three spots.
+    def test_the_builder_base_is_reported_rather_than_sailed_from(self) -> None:
+        """No command sails on its own; crossing is `ai_coc world --go`.
 
-        Retried once per attempt this method would spend `HOME_TRIES` whole
-        crossings on a boat nobody can reach — about twenty minutes, against
-        fifty seconds for the worst path here before it, and none of it
-        interruptible since `_home` never reads the state file.
+        This used to cross, which moved the game to the other village under five
+        commands without any of them saying so. Now the run ends on a name its
+        report can carry, and the game stays where it was.
         """
-        assert self._sailing(self._runner(), ["night"], "night").call_count == 1
+        run = self._runner()
+        found, moved = self._walked(run, ["night"])
+        assert not found
+        assert moved == 0
+        assert run._lost() == "builder_base"
 
-    def test_a_crossing_that_lands_carries_on_into_the_village(self) -> None:
-        assert self._sailing(self._runner(), ["night", "day"], "day").call_count == 1
+    def test_one_builder_base_reading_is_not_enough_to_end_a_run(self) -> None:
+        """A single frame read as the other village costs a capture, not the run."""
+        run = self._runner()
+        found, moved = self._walked(run, ["night", "day"])
+        assert found
+        assert moved == 0
+        assert run._lost() == "no_village"
+
+    def test_every_home_village_command_names_the_builder_base(self) -> None:
+        """Six entry points share `_home`, and each carries the reason into its own report."""
+        where = {
+            "adb": AdbController(endpoint=AdbEndpoint(port=16384)),
+            "display": DisplayTarget(logical_id="1", physical_id="2"),
+        }
+        entries = [
+            WallRunner(**where).run,
+            UpkeepRunner(**where).collect,
+            UpkeepRunner(**where).builders,
+            UpkeepRunner(**where).upgrade,
+            HeroRunner(**where).run,
+            ClanRunner(**where).donate,
+        ]
+        with (
+            patch.object(shared.time, "sleep"),
+            patch.object(shared.ScreenRunner, "_frame", return_value=b""),
+            patch.object(shared, "idle_disconnected", return_value=False),
+            patch.object(shared, "loading_screen", return_value=False),
+            patch.object(shared, "game_dialog", return_value=None),
+            patch.object(shared, "current_world", return_value="night"),
+        ):
+            for entry in entries:
+                assert entry().outcome == "builder_base", entry
 
     def test_a_restart_puts_the_launch_patience_back(self) -> None:
         """The one branch that stops `back` being pressed at a game that is cold again.

@@ -638,6 +638,24 @@ class MainWindow(QMainWindow):
         logger.info("%s", label)
         self.run_async(label, driving, answered, finished)
 
+    @staticmethod
+    def _on_home_village(task: Callable[[RunLog], BaseModel]) -> Callable[[RunLog], BaseModel]:
+        """A home village job, with the game taken to that village first.
+
+        None of the commands sails on its own; crossing is `commands.world`'s
+        job and it is the caller's to ask for. The cycle is that caller for the
+        three jobs that exist only on the home village, which is what keeps a
+        window started on the builder base doing what it always did: sail over
+        for them, and farm whichever village they left it on. On the home
+        village already, the crossing does nothing.
+        """
+
+        def run(log: RunLog) -> BaseModel:
+            commands.world("day")
+            return task(log)
+
+        return run
+
     def run_collect(self) -> None:
         self._run_job("正在收取採集器…", "collect", lambda run: commands.collect(run.frames))
 
@@ -645,14 +663,18 @@ class MainWindow(QMainWindow):
         self._run_job(
             "正在檢查部落增援請求…",
             "donate",
-            lambda run: commands.donate(DonateOptions(frame_dir=run.frames)),
+            self._on_home_village(
+                lambda run: commands.donate(DonateOptions(frame_dir=run.frames))
+            ),
         )
 
     def run_upgrade(self) -> None:
         self._run_job(
             "正在安排建築升級…",
             "upgrade",
-            lambda run: commands.upgrade(UpgradeOptions(frame_dir=run.frames), self._stopping),
+            self._on_home_village(
+                lambda run: commands.upgrade(UpgradeOptions(frame_dir=run.frames), self._stopping)
+            ),
         )
 
     def run_walls(self) -> None:
@@ -666,8 +688,10 @@ class MainWindow(QMainWindow):
         self._run_job(
             "正在升級城牆…",
             "walls",
-            lambda run: commands.walls(
-                WallOptions(frame_dir=run.frames, rounds=1), self._stopping
+            self._on_home_village(
+                lambda run: commands.walls(
+                    WallOptions(frame_dir=run.frames, rounds=1), self._stopping
+                )
             ),
         )
 

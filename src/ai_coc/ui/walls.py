@@ -370,7 +370,7 @@ class WallRunner(GameRunner):
         # no flag to know nothing did.
         report = WallReport(outcome="nothing_bought")
         if self._home() is None:
-            report.outcome = "no_village"
+            report.outcome = self._lost()
             return report
         walls = self._candidates()
         if not walls:

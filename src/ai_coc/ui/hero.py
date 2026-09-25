@@ -266,7 +266,7 @@ class HeroRunner(GameRunner):
         report = HeroReport(hero=self.hero, outcome="read")
         stock = self._home()
         if stock is None:
-            report.outcome = "no_village"
+            report.outcome = self._lost()
             return report
         builders = free_builders(self._frame("builders"))
         if builders is None:

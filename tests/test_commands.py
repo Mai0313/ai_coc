@@ -409,7 +409,7 @@ class CollectCommandTests(unittest.TestCase):
             return adb, cart, runner, commands.collect()
 
     def test_the_village_is_read_once_it_has_painted_not_off_the_first_frame(self) -> None:
-        """Every branch but the cart's sails home when it meets the builder base.
+        """Every branch but the cart's is the home village's.
 
         Measured live: `collect` started 13 s after a builder base attack stood
         down read a frame that was no village yet, took the home branch, and
@@ -432,6 +432,23 @@ class CollectCommandTests(unittest.TestCase):
         runner.assert_not_called()
         assert slept.call_count == 2
         settled.assert_not_called()
+
+    def test_a_village_slower_than_the_wait_still_gets_its_cart(self) -> None:
+        """The home branch stops at the builder base rather than sailing, so the cart is taken."""
+        adb = _adb()
+        with (
+            patch.object(commands.time, "sleep"),
+            patch.object(commands, "_controller", return_value=adb),
+            patch.object(commands, "current_world", return_value=None),
+            patch.object(
+                commands, "collect_cart", return_value=CartReport(outcome="collected", elixir=5)
+            ) as cart,
+            patch.object(commands, "UpkeepRunner") as runner,
+        ):
+            runner.return_value.collect.return_value = CollectReport(outcome="builder_base")
+            report = commands.collect()
+        cart.assert_called_once_with(adb, DISPLAY)
+        assert (report.outcome, report.elixir) == ("cart", 5)
 
     def test_the_builder_base_empties_its_cart_instead_of_sweeping(self) -> None:
         adb, cart, runner, report = self._cart(CartReport(outcome="collected", elixir=300_000))
@@ -644,6 +661,7 @@ class WallLineTests(unittest.TestCase):
             "builders_busy": "工人都在忙",
             "no_walls_found": "找不到任何城牆",
             "no_village": "沒辦法回到村莊",
+            "builder_base": "城牆只在主村升",
             "no_stock": "看不到村莊的儲量",
             "stopped": "收到停止要求",
         }
@@ -682,6 +700,7 @@ class UpkeepLineTests(unittest.TestCase):
                 "collected": "收了",
                 "nothing_to_collect": "沒有採集器等著收",
                 "no_village": "收集沒有開始",
+                "builder_base": "主村的採集器沒有收",
                 "stock_unread": "讀不到儲量",
             },
             tuple(one for one in get_args(CollectOutcome) if one != "cart"),
@@ -694,6 +713,7 @@ class UpkeepLineTests(unittest.TestCase):
                 "read": "個升級在跑",
                 "idle": "沒有在跑的升級",
                 "no_village": "畫面沒辦法回到村莊",
+                "builder_base": "這裡讀的是主村的工人",
                 "count_unread": "讀不到工人數量",
                 "panel_shut": "工人面板打不開",
             },
@@ -711,6 +731,7 @@ class UpkeepLineTests(unittest.TestCase):
                 "builders_busy": "工人都在忙",
                 "count_unread": "讀不到工人數量",
                 "no_village": "建築升級沒有開始",
+                "builder_base": "只升主村的建築",
                 "village_lost": "升級之後讀不到村莊",
             },
             tuple(one for one in get_args(BuildOutcome) if one != "started"),
@@ -734,6 +755,7 @@ class UpkeepLineTests(unittest.TestCase):
                 "no_confirmation": "沒有出現確認畫面",
                 "undercharged": "儲量沒有少那麼多",
                 "no_village": "英雄升級沒有開始",
+                "builder_base": "英雄殿堂在主村",
                 "village_lost": "之後讀不到村莊",
             },
             get_args(HeroOutcome),
@@ -749,6 +771,7 @@ class UpkeepLineTests(unittest.TestCase):
                 "nobody_asking": "沒有人在請求增援",
                 "panel_shut": "捐贈畫面沒有打開",
                 "no_village": "捐兵沒有開始",
+                "builder_base": "捐兵只在主村",
             },
             get_args(DonateOutcome),
         )
@@ -1528,11 +1551,28 @@ class SurveyRunnerTests(unittest.TestCase):
     def test_probe_and_bounds_hand_the_survey_back(self) -> None:
         with (
             patch.object(commands, "_session", return_value=(_controller(), DISPLAY)),
+            patch.object(commands, "_village_now", return_value="day"),
             patch.object(commands._BoundarySurvey, "run"),
             patch.object(commands._MapSurvey, "run"),
         ):
             assert commands.probe().rays == []
             assert commands.bounds().edges == []
+
+    def test_the_surveys_refuse_the_builder_base_before_spending_anything(self) -> None:
+        """Both measure the home village's battlefield, and nothing here sails to it."""
+        with (
+            patch.object(commands.time, "sleep"),
+            patch.object(commands, "_controller", return_value=_adb()),
+            patch.object(commands, "current_world", return_value="night"),
+            patch.object(commands, "_BoundarySurvey") as probe,
+            patch.object(commands, "_MapSurvey") as bounds,
+        ):
+            with pytest.raises(ValueError, match="夜世界"):
+                commands.probe()
+            with pytest.raises(ValueError, match="夜世界"):
+                commands.bounds()
+        probe.assert_not_called()
+        bounds.assert_not_called()
 
 
 PAYLOAD = json.dumps({

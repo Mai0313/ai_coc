@@ -628,9 +628,9 @@ def _settle_game(
             # `current_world` rather than `read_stock`, and **either village
             # counts** — what this is waiting for is a game that has finished
             # painting, not a particular one of the two. Which village a restart
-            # landed on is settled by whoever asked for it: every loop's own
-            # way home crosses if it has to, and `launch` reports `at_village`
-            # rather than promising the home one.
+            # landed on is not this wait's to settle: nothing crosses on its own,
+            # a loop that finds the other village says so, and `launch` reports
+            # `at_village` rather than promising the home one.
             #
             # It is the better test of the two on its own terms as well: a home
             # village with the camera at a map corner can leave the dark elixir
@@ -1190,6 +1190,17 @@ def attack(
     return series
 
 
+def _home_battlefield_only(adb: AdbController, display: DisplayTarget, what: str) -> None:
+    """Refuse a survey on the builder base, before it spends anything.
+
+    Both surveys measure the home village's battlefield, and nothing here sails:
+    run there, one would walk the menus of a village it cannot fight on and
+    report an empty survey as if it had measured one.
+    """
+    if _village_now(adb, display) == "night":
+        raise ValueError(f"{what} 量的是主村的戰場,遊戲停在夜世界;先跑 ai_coc world --go day")
+
+
 # Twelve rays is the whole village at 30 degree steps, and two drops on each is
 # what fits: a refused drop costs no troop but does cost the capture that reads
 # the card afterwards, so a wider sweep runs past the end of the battle.
@@ -1264,6 +1275,7 @@ def probe(frame_dir: Path | None = None) -> BoundarySurvey:
     the red line the parser found is the line the game is enforcing.
     """
     adb, display = _session(frame_dir)
+    _home_battlefield_only(adb, display, "probe")
     runner = _BoundarySurvey(
         adb=adb, display=display, thresholds=LootThresholds(), frame_dir=frame_dir
     )
@@ -1354,6 +1366,7 @@ class _MapSurvey(AttackRunner):
 def bounds(frame_dir: Path | None = None) -> MapSurvey:
     """Spend a battle finding where the map really ends, and fit a diamond to it."""
     adb, display = _session(frame_dir)
+    _home_battlefield_only(adb, display, "bounds")
     runner = _MapSurvey(adb=adb, display=display, thresholds=LootThresholds(), frame_dir=frame_dir)
     runner.run()
     logger.info("Map survey: %s", runner.survey.summary)
@@ -1376,6 +1389,7 @@ WALL_LINES: dict[WallOutcome, str] = {
     "builders_busy": "工人都在忙,遊戲不讓升級城牆;跑 ai_coc builders 看最快的還要多久",
     "no_walls_found": "找不到任何城牆",
     "no_village": "畫面沒辦法回到村莊,城牆升級沒有開始",
+    "builder_base": "遊戲停在夜世界,城牆只在主村升;要升先跑 ai_coc world --go day",
     "no_stock": "看不到村莊的儲量,先停下來",
     "stopped": "收到停止要求,已經買成 {walls} 面城牆",
 }
@@ -1430,6 +1444,7 @@ BUILDER_LINES: dict[BuilderOutcome, str] = {
     "read": "工人 {free}/{total},{running} 個升級在跑,最快的還要 {soonest}",
     "idle": "工人 {free}/{total},沒有在跑的升級",
     "no_village": "畫面沒辦法回到村莊,讀不到工人",
+    "builder_base": "遊戲停在夜世界,這裡讀的是主村的工人;夜世界的用 ai_coc worker",
     "count_unread": "讀不到工人數量,先停下來",
     "panel_shut": "工人 {free}/{total},但工人面板打不開",
 }
@@ -1567,11 +1582,9 @@ def worker(frame_dir: Path | None = None) -> PlateReport:
     """Who is building what on the village that is up, and how long each has left.
 
     **`ai_coc builders` is the home village's own version of this and stays
-    that way.** It goes through `GameRunner._home`, which sails to the day
-    village the moment it finds the builder base — so asking it about the
-    builder base spends a boat trip and leaves the game on the other village,
-    which is a thing the `farm` skill has to warn every session about. This one
-    reads whichever village is on screen and reports which that turned out to be.
+    that way.** It goes through `GameRunner._home`, which answers the builder
+    base with `builder_base` and reads nothing there. This one reads whichever
+    village is on screen and reports which that turned out to be.
     """
     return _plate("builder", frame_dir)
 
@@ -1718,6 +1731,7 @@ COLLECT_LINES: dict[CollectOutcome, str] = {
     "collected": "收了 {markers} 個採集器,金幣 +{gold}／聖水 +{elixir}／黑水 +{dark}",
     "nothing_to_collect": "沒有採集器等著收",
     "no_village": "畫面沒辦法回到村莊,收集沒有開始",
+    "builder_base": "遊戲停在夜世界,主村的採集器沒有收",
     "stock_unread": "點了 {markers} 個採集標記,但收完之後讀不到儲量",
 }
 
@@ -1736,6 +1750,16 @@ def collect_line(report: CollectReport) -> str:
     )
 
 
+def _village_now(adb: AdbController, display: DisplayTarget) -> World | None:
+    """Which village the game is on, once one has painted; None when none does in time."""
+    for _ in range(WORLD_SETTLE_POLLS):
+        world = current_world(adb.screenshot(display))
+        if world is not None:
+            return world
+        time.sleep(RESTART_POLL_GAP)
+    return None
+
+
 def collect(frame_dir: Path | None = None) -> CollectReport:
     """Tap every collector the village has left standing, with no window in the way.
 
@@ -1749,26 +1773,23 @@ def collect(frame_dir: Path | None = None) -> CollectReport:
     """
     adb, display = _session(frame_dir)
     # **Decided on a village that has painted, not on the first frame.** Every
-    # branch but the cart's is the home village's, and that one sails home the
-    # moment it meets the builder base — so a frame caught between a battle and
-    # its village sent a run meant for the cart across the water instead,
-    # measured live 13 s after a builder base attack stood down. Only the world
-    # is waited for: both branches park the camera themselves.
-    world = None
-    for _ in range(WORLD_SETTLE_POLLS):
-        world = current_world(adb.screenshot(display))
-        if world is not None:
-            break
-        time.sleep(RESTART_POLL_GAP)
+    # branch but the cart's is the home village's, and a frame caught between a
+    # battle and its village used to send a run meant for the cart across the
+    # water instead, measured live 13 s after a builder base attack stood down.
+    # Only the world is waited for: both branches park the camera themselves.
+    report = None
+    if _village_now(adb, display) != "night":
+        report = UpkeepRunner(adb=adb, display=display, frame_dir=frame_dir).collect()
     # **The builder base has no collectors to sweep and one cart instead.** Its
     # elixir is paid into that cart rather than into the storages, so this is
     # the same job on that village even though it shares none of the machinery:
     # one tap at a known spot rather than a colour-and-size search over the map.
-    if world == "night":
+    # A village slower to paint than the wait above goes down the home path,
+    # which stops rather than sails on the builder base, so its cart is taken
+    # here as well.
+    if report is None or report.outcome == "builder_base":
         cart = collect_cart(adb, display)
         report = CollectReport(outcome="cart", elixir=cart.elixir, cart=cart)
-    else:
-        report = UpkeepRunner(adb=adb, display=display, frame_dir=frame_dir).collect()
     logger.info("Collect: %s", collect_line(report))
     return report
 
@@ -1783,6 +1804,7 @@ BUILD_LINES: dict[BuildOutcome, str] = {
     "builders_busy": "工人都在忙,沒有可以派的",
     "count_unread": "讀不到工人數量,先停下來",
     "no_village": "畫面沒辦法回到村莊,建築升級沒有開始",
+    "builder_base": "遊戲停在夜世界,這裡只升主村的建築;要升先跑 ai_coc world --go day",
     "village_lost": "升級之後讀不到村莊,先停下來",
 }
 
@@ -1851,6 +1873,7 @@ HERO_LINES: dict[HeroOutcome, str] = {
     "no_confirmation": "點了 {hero} 的升級,但沒有出現確認畫面",
     "undercharged": "確認了 {hero} 的升級,但儲量沒有少那麼多",
     "no_village": "畫面沒辦法回到村莊,英雄升級沒有開始",
+    "builder_base": "遊戲停在夜世界,英雄殿堂在主村;要升先跑 ai_coc world --go day",
     "village_lost": "開始升級 {hero} 之後讀不到村莊,先停下來",
 }
 
@@ -1903,6 +1926,7 @@ DONATE_LINES: dict[DonateOutcome, str] = {
     "nobody_asking": "部落聊天裡目前沒有人在請求增援",
     "panel_shut": "點了增援,但捐贈畫面沒有打開",
     "no_village": "畫面沒辦法回到村莊,捐兵沒有開始",
+    "builder_base": "遊戲停在夜世界,捐兵只在主村;要捐先跑 ai_coc world --go day",
 }
 
 

@@ -1206,7 +1206,9 @@ class ResourceBubble(BaseModel):
 # rather than five more values here: what happened there is `CartReport`'s to
 # say, and duplicating its seven outcomes would be the same answer in two
 # vocabularies.
-CollectOutcome = Literal["collected", "nothing_to_collect", "no_village", "stock_unread", "cart"]
+CollectOutcome = Literal[
+    "collected", "nothing_to_collect", "no_village", "builder_base", "stock_unread", "cart"
+]
 
 
 class CollectReport(BaseModel):
@@ -1320,7 +1322,9 @@ class BuildQueue(BaseModel):
 # minus the badge, because this one taps a button at a fixed place rather than
 # finding a plate: `idle` is inferred from the counter the way it is there, and
 # `panel_shut` is the honest answer when the counter would not read either.
-BuilderOutcome = Literal["read", "idle", "no_village", "count_unread", "panel_shut"]
+BuilderOutcome = Literal[
+    "read", "idle", "no_village", "builder_base", "count_unread", "panel_shut"
+]
 
 
 class BuilderReport(BaseModel):
@@ -1579,6 +1583,7 @@ BuildOutcome = Literal[
     "builders_busy",
     "count_unread",
     "no_village",
+    "builder_base",
     "village_lost",
 ]
 
@@ -1991,6 +1996,7 @@ HeroOutcome = Literal[
     "no_confirmation",
     "undercharged",
     "no_village",
+    "builder_base",
     "village_lost",
 ]
 
@@ -2015,7 +2021,13 @@ class HeroReport(BaseModel):
 # almost nothing, which is what this loop is written to be: donating cannot be
 # done on demand, somebody else has to ask first.
 DonateOutcome = Literal[
-    "donated", "dry_run", "nobody_asking", "nothing_given", "panel_shut", "no_village"
+    "donated",
+    "dry_run",
+    "nobody_asking",
+    "nothing_given",
+    "panel_shut",
+    "no_village",
+    "builder_base",
 ]
 
 
@@ -2164,8 +2176,9 @@ class WallUpgrade(BaseModel):
 # which is a decision for the player rather than for the loop. The rest are the
 # run not getting started: `no_walls_found` found none — swept, or verified the
 # spots a caller named, which does not sweep at all — `no_village`
-# never got back to one, `no_stock` lost the storage bars between batches, and
-# `stopped` is somebody asking it to stand down.
+# never got back to one, `builder_base` found the game on the other village,
+# `no_stock` lost the storage bars between batches, and `stopped` is somebody
+# asking it to stand down.
 WallOutcome = Literal[
     "bought",
     "nothing_bought",
@@ -2173,6 +2186,7 @@ WallOutcome = Literal[
     "builders_busy",
     "no_walls_found",
     "no_village",
+    "builder_base",
     "no_stock",
     "stopped",
 ]
