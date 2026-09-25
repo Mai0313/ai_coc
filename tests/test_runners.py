@@ -12,6 +12,8 @@ from pathlib import Path
 import unittest
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from ai_coc import plans, commands
 from ai_coc.ui import clan as clan_ui
 from ai_coc.ui import hero as hero_ui
@@ -822,7 +824,7 @@ class OpenAttackMenuTests(unittest.TestCase):
     def test_the_cart_is_looked_in_before_the_attack_tap(self) -> None:
         """The cart is a place on the map, and past the 攻擊 tap the dialog is over it."""
         _, seen = self._open("night", ["night"])
-        seen["visited"].assert_called_once_with(b"home")
+        seen["visited"].assert_called_once_with()
         assert [name for name, *_ in seen["order"].mock_calls] == ["visit", "tap"]
 
     def test_the_other_village_is_sailed_from_first(self) -> None:
@@ -1049,19 +1051,34 @@ class NightCartTests(unittest.TestCase):
 
     EMPTY = CartReport(outcome="locked_empty", held=0, capacity=1_600_000)
 
-    def _visit(
-        self,
-        runner: AttackRunner,
-        stock: VillageStock | None,
-        trips: list[CartReport] | None = None,
+    def _visits(
+        self, runner: AttackRunner, battles: int, trips: list[CartReport] | None = None
     ) -> MagicMock:
-        with (
-            patch.object(attack, "read_builder_stock", return_value=stock),
-            patch.object(attack, "collect_cart", side_effect=trips or [self.EMPTY]) as trip,
-        ):
-            runner._visit_cart(b"")
-            runner._visit_cart(b"")
+        """Open the attack menu for this many rounds, each one a battle, counting trips."""
+        with patch.object(attack, "collect_cart", side_effect=trips or [self.EMPTY] * 10) as trip:
+            for _ in range(battles):
+                runner._visit_cart()
+                # What a matched battle does to the count, as `_run_night` does.
+                if runner._since_cart is not None:
+                    runner._since_cart += 1
         return trip
+
+    def test_the_first_round_goes_and_then_every_few_battles(self) -> None:
+        """A run can open with a cart already holding most of its ceiling.
+
+        Measured on 2026-09-25: a run that started with 1 256 000 of 1 600 000
+        in the cart would have paid three battles into it before its first trip.
+        """
+        runner = self._runner()
+        trip = self._visits(runner, 2 * attack.CART_EVERY + 1)
+        assert trip.call_count == 3
+        assert runner._cart == self.EMPTY
+
+    def test_the_trip_empties_the_cart_whatever_the_stop_share(self) -> None:
+        """It is the elixir's only way into the storages, not just the stop's reading."""
+        runner = self._runner()
+        runner.stop_at = 0
+        self._visits(runner, 1).assert_called_once_with(runner.adb, DISPLAY)
 
     def test_a_look_that_could_not_say_is_taken_again_at_once(self) -> None:
         """A missed tap is no evidence of a full cart, so the visit goes again.
@@ -1071,7 +1088,7 @@ class NightCartTests(unittest.TestCase):
         """
         runner = self._runner()
         room = CartReport(outcome="locked_holding", held=10, capacity=1_600_000)
-        trip = self._visit(runner, self.FULL, [CartReport(outcome="not_found"), room])
+        trip = self._visits(runner, 1, [CartReport(outcome="not_found"), room])
         assert trip.call_count == 2
         assert runner._cart == room
 
@@ -1079,32 +1096,68 @@ class NightCartTests(unittest.TestCase):
         """Taken as empty for ever, it would keep full storages farming all night."""
         runner = self._runner()
         missed = CartReport(outcome="not_found")
-        trip = self._visit(runner, self.FULL, [missed] * attack.CART_LOOKS)
+        trip = self._visits(runner, 1, [missed] * attack.CART_LOOKS)
         assert trip.call_count == attack.CART_LOOKS
         assert self._stood_down(runner, runner._cart)
-
-    def test_the_cart_is_only_visited_once_the_storages_are_full(self) -> None:
-        """Until then `commands` empties it into them and it has nothing to say."""
-        runner = self._runner()
-        self._visit(runner, VillageStock(gold=95, elixir=50, dark=0)).assert_not_called()
-        self._visit(runner, None).assert_not_called()
-        assert runner._cart is None
-
-    def test_one_visit_a_round_however_many_attempts_the_menu_takes(self) -> None:
-        runner = self._runner()
-        self._visit(runner, self.FULL).assert_called_once_with(runner.adb, DISPLAY)
-        assert runner._cart == self.EMPTY
-        assert runner.cart_watched
-
-    def test_a_run_told_never_to_stand_down_never_goes_to_look(self) -> None:
-        runner = self._runner()
-        runner.stop_at = 0
-        self._visit(runner, self.FULL).assert_not_called()
 
     def test_the_home_village_has_no_cart_to_look_in(self) -> None:
         runner = self._runner()
         runner.world = "day"
-        self._visit(runner, self.FULL).assert_not_called()
+        self._visits(runner, 1).assert_not_called()
+        assert runner._since_cart is None
+
+    def test_a_trip_the_emulator_broke_off_is_taken_again_next_round(self) -> None:
+        """Counted as made, it would leave a full village's stop to the storages alone."""
+        runner = self._runner()
+        runner._since_cart = attack.CART_EVERY
+        with (
+            patch.object(attack, "collect_cart", side_effect=AdbControlError("status -2")),
+            pytest.raises(AdbControlError),
+        ):
+            runner._visit_cart()
+        assert runner._since_cart == attack.CART_EVERY
+        self._visits(runner, 1).assert_called_once()
+
+    def test_a_round_between_trips_decides_on_the_last_reading(self) -> None:
+        """Opening the menu keeps the cart the last trip read, rather than forgetting it.
+
+        Forgotten, every round between two trips would find no reading and
+        leave the stop to the storages alone, which ends a run whose cart
+        still has room.
+        """
+        runner = self._runner()
+        room = CartReport(outcome="locked_holding", held=10, capacity=1_600_000)
+        runner._cart = room
+        runner._since_cart = 1
+        with (
+            patch.object(attack.time, "sleep"),
+            patch.object(runner, "_frame", return_value=b"home"),
+            patch.object(attack, "idle_disconnected", return_value=False),
+            patch.object(attack, "loading_screen", return_value=False),
+            patch.object(attack, "battle_over", return_value=False),
+            patch.object(attack, "current_world", return_value="night"),
+            patch.object(runner, "_settle_ceilings"),
+            patch.object(attack, "collect_cart") as trip,
+            patch.object(runner, "_tap"),
+            patch.object(attack, "night_attack_menu", return_value=True),
+        ):
+            assert runner._open_attack_menu() == b"home"
+        trip.assert_not_called()
+        assert runner._cart == room
+        assert not self._stood_down(runner, runner._cart)
+
+    def test_a_matched_battle_counts_towards_the_next_trip_whatever_went_down(self) -> None:
+        """Every attack there is also a defence, and the defence is what pays in."""
+        runner = self._runner()
+        runner._since_cart = 0
+        with (
+            patch.object(runner, "_open_attack_menu", return_value=b""),
+            patch.object(runner, "_stood_down", return_value=None),
+            patch.object(runner, "_find_opponent", return_value=b"battle"),
+            patch.object(runner, "_deploy_night", return_value=None),
+        ):
+            assert runner.run().outcome == "nothing_deployed"
+        assert runner._since_cart == 1
 
 
 class DayRoundTests(unittest.TestCase):

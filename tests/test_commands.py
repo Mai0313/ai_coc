@@ -982,42 +982,6 @@ class AttackSeriesAdapterFailureTests(unittest.TestCase):
         assert rounds[-1].stock_full
 
 
-class AttackSeriesCartTests(unittest.TestCase):
-    """The builder base's cart trip between battles, and when a round already made it."""
-
-    def _emptied(self, watched: bool) -> MagicMock:
-        runner = MagicMock(name="AttackRunner")
-        runner.run.side_effect = [
-            AttackReport(world="night", outcome="deployed", phases=1)
-        ] * commands.CART_EVERY
-        runner.lost = 0
-        runner.world = "night"
-        runner.cart_watched = watched
-        with (
-            patch.object(commands, "_controller", return_value=_adb()),
-            patch.object(commands.ConfigStore, "load", return_value=AppConfig()),
-            patch.object(commands, "_planner", return_value=None),
-            patch.object(commands, "_settle_game", return_value=DISPLAY),
-            patch.object(commands, "_pick_world", return_value="night"),
-            patch.object(commands, "FrameTicker"),
-            patch.object(commands, "AttackRunner", return_value=runner),
-            patch.object(
-                commands, "collect_cart", return_value=CartReport(outcome="empty")
-            ) as emptied,
-        ):
-            commands.attack(
-                AttackOptions(rounds=commands.CART_EVERY), MagicMock(return_value=False)
-            )
-        return emptied
-
-    def test_the_cart_is_emptied_every_few_battles(self) -> None:
-        self._emptied(watched=False).assert_called_once()
-
-    def test_a_round_that_looked_in_the_cart_itself_is_not_followed_by_another_look(self) -> None:
-        """Full storages have every round look before its attack, so the next one will too."""
-        self._emptied(watched=True).assert_not_called()
-
-
 class AttackSeriesArmyShortTests(unittest.TestCase):
     """An army under the threshold ends the series instead of resting on it.
 
@@ -1221,21 +1185,6 @@ class RunPlumbingTests(unittest.TestCase):
         assert [line.round for line in lines] == [1, 2]
         assert isinstance(lines[0].plan, AttackPlan)
         assert isinstance(lines[1].plan, NightPlan)
-
-    def test_the_cart_is_emptied_every_few_builder_base_battles_and_never_on_the_home_village(
-        self,
-    ) -> None:
-        adb = _adb()
-        with patch.object(
-            commands, "collect_cart", return_value=CartReport(outcome="empty")
-        ) as cart:
-            for battles in range(1, 2 * commands.CART_EVERY + 1):
-                commands._empty_cart("night", battles, adb, DISPLAY)
-            emptied = cart.call_count
-            commands._empty_cart("day", commands.CART_EVERY, adb, DISPLAY)
-            commands._empty_cart("night", 0, adb, DISPLAY)
-        assert emptied == 2
-        assert cart.call_count == 2
 
     def test_the_restart_counter_carries_on_until_it_is_due(self) -> None:
         runner, ticker = MagicMock(), MagicMock()

@@ -335,10 +335,6 @@ IDLE_REST = 60
 # right after one used to read no village and end before round one.
 WORLD_SETTLE_POLLS = 8
 
-# How many builder base battles go by between trips to the loot cart. Three is
-# the player's own pacing rather than a measurement: the cart accumulates, so
-# the only cost of waiting is the risk of it capping out.
-CART_EVERY = 3
 # How often the wait between rounds looks up to see whether it has been stood
 # down. Sleeping through the whole minute in one go would leave a stop unnoticed
 # for most of it, which reads as a stop that did nothing.
@@ -869,43 +865,6 @@ def _pick_world(adb: AdbController, display: DisplayTarget, wanted: World | None
     return None
 
 
-def _empty_cart(
-    world: World, battles: int, adb: AdbController, display: DisplayTarget, watched: bool = False
-) -> None:
-    """Fetch the builder base's elixir every few battles, since it is not paid in.
-
-    **That village pays its elixir into a cart rather than into the storages**,
-    so a series that never empties it farms half of what it wins. Every few
-    battles rather than every one: the cart accumulates — measured, it holds a
-    million — while emptying it costs a camera drag to the far corner and back.
-
-    Not after a round that `watched` the cart itself, which every round does
-    once the storages are full: the next one will look before its attack, and
-    this trip would be the same one twice.
-    """
-    if world != "night" or watched or not battles or battles % CART_EVERY:
-        return
-    # **A failed trip to the cart is not a reason to lose the series.** It is a
-    # side errand between rounds, and it opens with a capture of its own, so an
-    # adapter error here used to unwind all the way out of `attack` with
-    # `result.json` unwritten — measured twice, at 17 and 14 battles played and
-    # countable only out of `run.log`. The elixir stays in the cart, which
-    # holds over a million and is emptied every few battles anyway, so the next trip
-    # collects what this one did not.
-    try:
-        # **Logged rather than carried onto the round's report**, which is the
-        # honest limit of it: this is a side errand between battles and
-        # `AttackReport` has no field for one, so the six outcomes reach
-        # `run.log` and not `result.json`. Saying which it was there is still
-        # worth the line, because this is the only path that empties the cart
-        # automatically and a locked one used to be indistinguishable from a
-        # trip that found nothing.
-        cart = collect_cart(adb, display)
-        logger.info("Loot cart: %s", cart_line(cart))
-    except AdbControlError as exc:
-        logger.warning("The loot cart could not be emptied this time: %s", exc)
-
-
 # Only ever used to build the `Attack finished:` line a person reads; the field
 # a caller decides on is `AttackReport.outcome`. **The four that fought are kept
 # distinguishable in the wording too**, because `run.log` is where a farming
@@ -1133,8 +1092,6 @@ def attack(
     # for the reason `AttackOptions.restart_every` gives: a round that found
     # nobody to fight did not tire the emulator out.
     fought = 0
-    # Night battles since the run began, which is what the loot cart is emptied on.
-    battles = 0
     with FrameTicker(
         adb=adb, display=display, out_dir=options.frame_dir or Path(), seconds=options.shot_every
     ) as ticker:
@@ -1172,17 +1129,16 @@ def attack(
             #
             # Measured on two consecutive night series, both a few battles after
             # an idle-disconnect restart — display 2 to 3 on one and 3 to 4 on
-            # the next. Both died in `_empty_cart` below with `result.json`
-            # never written, so the 17 and 14 battles they had played were
-            # countable only out of `run.log`.
+            # the next. Both died on the trip to the loot cart this loop used to
+            # make between rounds, with `result.json` never written, so the 17
+            # and 14 battles they had played were countable only out of
+            # `run.log`.
             #
             # **`_restart_emulator` does not already cover this.** It re-points
             # `runner` and `ticker` and says why, but it never touches this
-            # function's own pair either — so the scheduled restart has the same
-            # `_empty_cart` crash waiting behind it, unreached only because no
-            # night series had yet run long enough to hit one. Syncing here
-            # rather than at the call covers both restarts and whatever consumer
-            # is added to this loop next.
+            # function's own pair either. Syncing here rather than at the call
+            # covers both restarts and whatever consumer is added to this loop
+            # next.
             #
             # Not every `Status: -2` is this: one recorded series lost a display
             # with no restart at all and died in `uncovered`, where the runner's
@@ -1197,11 +1153,6 @@ def attack(
             fighting = report.attacked is not None or report.phases > 0
             if fighting:
                 fought += 1
-                battles += 1
-                # Inside the branch that moved the counter, or a round that
-                # matched nobody would pay for the whole trip again against a
-                # cart emptied moments earlier.
-                _empty_cart(world, battles, adb, display, watched=runner.cart_watched)
             logger.info("Attack finished: %s", round_line(report))
             _write_plan(options.plan_out, runner.played)
             _log_plan(options.plan_log, len(series.root), runner.played)

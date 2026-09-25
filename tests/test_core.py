@@ -4732,14 +4732,15 @@ class RunnerStateTests(unittest.TestCase):
 class InRoundRestartTests(unittest.TestCase):
     """A restart inside the round moves the game, and only the runner is told."""
 
-    def test_the_cart_follows_the_runner_onto_the_new_display(self) -> None:
-        """Otherwise a later round asks a display that no longer exists.
+    def test_the_ticker_follows_the_runner_onto_the_new_display(self) -> None:
+        """Otherwise a later capture asks a display that no longer exists.
 
         `AttackRunner` reassigns its own display when the idle-disconnect dialog
         sends it through `restart_game`, and `commands.attack` holds a second
-        copy that nothing updates. Measured twice in one night: `_empty_cart`
-        asked the display the game had left, `screencap` answered `Status: -2`,
-        and the whole series died with `result.json` never written.
+        copy that nothing updates. Measured twice in one night: the loot cart
+        trip this loop used to make asked the display the game had left,
+        `screencap` answered `Status: -2`, and the whole series died with
+        `result.json` never written.
         """
         fresh = MagicMock(name="the display the game came back on")
         controller = MagicMock(name="the controller that came back")
@@ -4751,7 +4752,6 @@ class InRoundRestartTests(unittest.TestCase):
             patch.object(commands.ConfigStore, "load", return_value=AppConfig()),
             patch.object(commands, "FrameTicker") as ticker,
             patch.object(commands, "AttackRunner") as runner,
-            patch.object(commands, "_empty_cart") as cart,
         ):
             runner.return_value.run.return_value = MagicMock(
                 stock_full=False,
@@ -4767,11 +4767,10 @@ class InRoundRestartTests(unittest.TestCase):
             commands.attack(AttackOptions(world="night", rounds=1))
         # Both halves: a scheduled restart builds a fresh controller as well as a
         # fresh display, so dropping either from the handover puts one of them
-        # back on the emulator that went away.
-        assert cart.call_args.args[2] is controller
-        assert cart.call_args.args[3] is fresh
-        # The ticker captures from its own thread and swallows what it cannot
-        # reach, so a stale one costs warnings nobody reads rather than the run.
+        # back on the emulator that went away. The ticker captures from its own
+        # thread and swallows what it cannot reach, so a stale one costs
+        # warnings nobody reads rather than the run.
+        assert ticker.return_value.__enter__.return_value.adb is controller
         assert ticker.return_value.__enter__.return_value.display is fresh
 
 
