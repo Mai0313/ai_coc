@@ -818,12 +818,18 @@ class MainWindow(QMainWindow):
 
     def refresh_instances(self) -> None:
         def task() -> tuple[
-            list[tuple[Emulator, EmulatorInstance]], tuple[Emulator, EmulatorInstance], str
+            list[tuple[Emulator, EmulatorInstance]], tuple[Emulator, EmulatorInstance] | None, str
         ]:
             listed = list(commands.emulators())
-            # Before the versions are asked for: with nothing listed this raises,
-            # and the message says so better than an empty dropdown would.
-            configured = commands.chosen(listed)
+            if not listed:
+                raise RuntimeError("找不到任何模擬器 instance")
+            # A serial nothing answers to still fills the dropdown, because the
+            # dropdown is where it gets changed; only then is nothing driven.
+            try:
+                configured = commands.chosen(listed)
+            except RuntimeError:
+                logger.warning("The configured emulator is not listed", exc_info=True)
+                configured = None
             versions: dict[str, str] = {}
             for emulator, _ in listed:
                 if emulator.label not in versions:
@@ -833,7 +839,9 @@ class MainWindow(QMainWindow):
 
         def done(
             result: tuple[
-                list[tuple[Emulator, EmulatorInstance]], tuple[Emulator, EmulatorInstance], str
+                list[tuple[Emulator, EmulatorInstance]],
+                tuple[Emulator, EmulatorInstance] | None,
+                str,
             ],
         ) -> None:
             self.instances, configured, summary = result
@@ -844,10 +852,12 @@ class MainWindow(QMainWindow):
                     f"{emulator.label} {item.name} — {item.state} — ADB {emulator.serial_of(item)}",
                     item.emulator_id,
                 )
-            current = self.instances.index(configured)
+            current = self.instances.index(configured) if configured else -1
             self.instance_combo.setCurrentIndex(current)
             self.instance_combo.blockSignals(False)
             self._select_instance(current)
+            if configured is None:
+                self.active = None
             self.statusBar().showMessage(f"{summary}: {len(self.instances)} instance(s)", 6000)
 
         self.run_async("Detecting emulator instances…", task, done)

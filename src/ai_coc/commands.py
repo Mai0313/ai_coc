@@ -189,7 +189,10 @@ def chosen(
                 AdbEndpoint.parse(emulator.serial_for(instance.index)),
             ):
                 return emulator, instance
-        raise RuntimeError(f"設定的模擬器 {config.adb_serial} 不在任何模擬器的 instance 裡")
+        raise RuntimeError(
+            f"設定的模擬器 {config.adb_serial} 不在任何模擬器列出的 instance 裡"
+            ",有模擬器列不出 instance 的話,原因在 log 前面的 warning"
+        )
     pairs = iter(listed)
     first = next(pairs, None)
     if first is None:
