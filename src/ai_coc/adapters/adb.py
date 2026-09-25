@@ -149,15 +149,19 @@ def physical_display(display_dump: str, logical_id: str) -> str:
 def pinch_events(
     first: tuple[tuple[int, int], tuple[int, int]],
     second: tuple[tuple[int, int], tuple[int, int]],
+    swapped: bool,
     steps: int = PINCH_STEPS,
 ) -> list[tuple[int, int, int]]:
     """One two-finger gesture as the multi-touch events it is written with.
 
-    Each finger is given as (start, end) in **screen** coordinates. **The
-    device's own axes are the screen's swapped**: it reports x to 900 and y to
-    1600 against a 1600x900 screen, so a point goes down as (y, x). Measured by
-    tapping (430, 990) through this path and watching the building at screen
-    (990, 430) open.
+    Each finger is given as (start, end) in **screen** coordinates. **Whether
+    the device's axes are the screen's swapped depends on the emulator**, which
+    is what `swapped` says. MuMu's node reports x to 900 and y to 1600 against a
+    1600x900 screen, so a point goes down as (y, x): measured by tapping
+    (430, 990) through this path and watching the building at screen (990, 430)
+    open. LDPlayer's reports x to 1600 and y to 900 and takes the point as it
+    is; measured by zooming its village in and back out. `touch_devices` reads
+    which from the node's own ranges.
 
     **`BTN_TOUCH` is not optional.** Without it the whole gesture is accepted,
     reported, and ignored — which is what a first attempt at this looked like,
@@ -168,9 +172,10 @@ def pinch_events(
     events: list[tuple[int, int, int]] = []
 
     def place(slot: int, point: tuple[int, int]) -> None:
+        x, y = (point[1], point[0]) if swapped else point
         events.append((EV_ABS, ABS_MT_SLOT, slot))
-        events.append((EV_ABS, ABS_MT_POSITION_X, point[1]))
-        events.append((EV_ABS, ABS_MT_POSITION_Y, point[0]))
+        events.append((EV_ABS, ABS_MT_POSITION_X, x))
+        events.append((EV_ABS, ABS_MT_POSITION_Y, y))
 
     for slot, (start, _) in enumerate((first, second)):
         events.append((EV_ABS, ABS_MT_SLOT, slot))
@@ -357,8 +362,8 @@ class AdbController(BaseModel):
         coordinates = [str(start[0]), str(start[1]), str(end[0]), str(end[1])]
         self.input(display, "swipe", *coordinates, str(duration_ms))
 
-    def touch_devices(self) -> list[str]:
-        """Every multi-touch input node this device exposes.
+    def touch_devices(self) -> dict[str, bool]:
+        """Every multi-touch input node this device exposes, and whether its axes are swapped.
 
         `input` cannot do two fingers, so a pinch has to be written straight to
         the kernel — and that goes to a device node rather than to a display, so
@@ -368,17 +373,22 @@ class AdbController(BaseModel):
         this is the fallback for when that cannot be worked out, and sending to
         all of them is not harmless — see there.
 
-        An empty list is a failure rather than a quiet nothing — a pinch with
+        Swapped means the node's x range is shorter than its y range against a
+        landscape screen, which is how MuMu builds its node and LDPlayer does
+        not; `pinch_events` owns what that does to a point.
+
+        An empty answer is a failure rather than a quiet nothing — a pinch with
         nowhere to send it would otherwise report a zoom that never happened.
         """
-        nodes: list[str] = []
+        nodes: dict[str, bool] = {}
         for block in self.shell("getevent -pl 2>/dev/null").split("add device ")[1:]:
-            if "ABS_MT_POSITION_X" not in block:
+            ranges = dict(re.findall(r"ABS_MT_POSITION_([XY])\s*:[^\n]*?max (\d+)", block))
+            if not {"X", "Y"} <= ranges.keys():
                 continue
             node = block.split(":", 1)[1].split()[0] if ":" in block else ""
             if node.startswith("/dev/input/"):
-                nodes.append(node)
-        logger.debug("Multi-touch nodes: %s", nodes)
+                nodes[node] = int(ranges["X"]) < int(ranges["Y"])
+        logger.debug("Multi-touch nodes (node: axes swapped): %s", nodes)
         return nodes
 
     def touch_device_for(self, display: DisplayTarget) -> str | None:
@@ -400,27 +410,33 @@ class AdbController(BaseModel):
         - its `EventHub Devices: [ N ]`;
         - the EventHub entry headed `N:` whose `Path:` is the node.
 
+        **More than one reader can carry that viewport**, and only a multi-touch
+        node is an answer. LDPlayer binds a `VirtualMouse` to its one display
+        ahead of the touchscreen, with `<virtual-mouse>` for a path, and taking
+        the first reader aimed every gesture at that: a redirect the shell
+        refuses and nothing reports.
+
         None rather than a guess when any hop is missing, because the caller's
         fallback — every node, then relaunch the game — is survivable, while a
         pinch aimed at the wrong display silently does nothing to the camera it
         was meant to fix.
         """
         dump = self.shell("dumpsys input 2>/dev/null")
-        reader = re.search(
+        touch = self.touch_devices()
+        for reader in re.finditer(
             rf"EventHub Devices:\s*\[\s*(\d+)[^\]]*\](?:(?!EventHub Devices).)*?"
             rf"uniqueId=local:{display.physical_id}\b",
             dump,
             re.S,
-        )
-        if reader is None:
-            logger.debug("No input device is reported against display %s", display.physical_id)
-            return None
-        path = re.search(rf"\n\s*{reader.group(1)}:[^\n]*\n(?:[^\n]*\n)*?\s*Path:\s*(\S+)", dump)
-        if path is None:
-            logger.debug("EventHub device %s reports no path", reader.group(1))
-            return None
-        logger.debug("Display %s is driven by %s", display.physical_id, path.group(1))
-        return path.group(1)
+        ):
+            path = re.search(
+                rf"\n\s*{reader.group(1)}:[^\n]*\n(?:[^\n]*\n)*?\s*Path:\s*(\S+)", dump
+            )
+            if path is not None and path.group(1) in touch:
+                logger.debug("Display %s is driven by %s", display.physical_id, path.group(1))
+                return path.group(1)
+        logger.debug("No multi-touch node is reported against display %s", display.physical_id)
+        return None
 
     def pinch(
         self,
@@ -437,14 +453,15 @@ class AdbController(BaseModel):
         `node` is the one to send to. Without it the stream goes to every
         multi-touch node, which reaches the game but also the launcher MuMu
         keeps on its other displays — see `touch_device_for` for why that is
-        not free.
+        not free. Either way each node gets the stream its own axes read.
         """
-        nodes = [node] if node else self.touch_devices()
-        if not nodes:
+        touch = self.touch_devices()
+        targets = [node] if node else list(touch)
+        if not targets:
             raise AdbControlError(f"{self.serial} 找不到任何多點觸控裝置，縮放送不出去")
-        stream = pinch_events(first, second, steps)
-        logger.info("Pinch %s %s and %s on %s", self.serial, first, second, nodes)
-        for target in nodes:
+        logger.info("Pinch %s %s and %s on %s", self.serial, first, second, targets)
+        for target in targets:
+            stream = pinch_events(first, second, touch[target], steps)
             self.shell(gesture_script(stream, target), timeout=30)
 
     def zoom(

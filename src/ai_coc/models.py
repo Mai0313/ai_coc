@@ -58,7 +58,15 @@ class AdbEndpoint(BaseModel):
 
     @classmethod
     def parse(cls, serial: str) -> AdbEndpoint:
-        host, _, port = serial.strip().rpartition(":")
+        """`host:port`, or adb's own `emulator-<console port>`, whose ADB port is the next one up.
+
+        So LDPlayer's `emulator-5554` and `127.0.0.1:5555` are the same instance,
+        which is how the adb server lists them side by side.
+        """
+        serial = serial.strip()
+        if serial.startswith("emulator-") and serial[9:].isdigit():
+            return cls(port=int(serial[9:]) + 1)
+        host, _, port = serial.rpartition(":")
         return cls(host=host or DEFAULT_ADB_HOST, port=int(port) if port.isdigit() else 0)
 
 
@@ -183,6 +191,44 @@ class MuMuCliResult(BaseModel):
     """What a `control` command answers; validating it proves the CLI replied."""
 
     model_config = TOLERANT
+
+
+class LDPlayerInstanceInfo(BaseModel):
+    """One line of `ldconsole list2`.
+
+    Positional and comma-separated: index, title, top window, render window,
+    whether Android is up (1 or 0), the player's pid (-1 when down), the VM's
+    pid, then width, height and dpi.
+    """
+
+    index: int
+    title: str
+    top_hwnd: int
+    bind_hwnd: int
+    android_started: bool
+    pid: int
+    vbox_pid: int
+    width: int
+    height: int
+    dpi: int
+
+    @classmethod
+    def parse(cls, line: str) -> LDPlayerInstanceInfo:
+        # The title is the one field a user types, so a comma in it is taken
+        # back into the title rather than shifting every field after it.
+        index, *title, top, bind, android, pid, vbox, width, height, dpi = line.split(",")
+        return cls.model_validate({
+            "index": index,
+            "title": ",".join(title),
+            "top_hwnd": top,
+            "bind_hwnd": bind,
+            "android_started": android,
+            "pid": pid,
+            "vbox_pid": vbox,
+            "width": width,
+            "height": height,
+            "dpi": dpi,
+        })
 
 
 class EmulatorInstance(BaseModel):
@@ -867,6 +913,14 @@ class AppConfig(BaseModel):
     # file because that is the only place a number nobody can measure belongs:
     # whoever is watching the frame rate is the one who gets to change it.
     restart_every: int = 50
+    # Which emulator instance every command drives, by its ADB serial:
+    # `127.0.0.1:16384` or `emulator-5554`, whichever form `adb devices` shows.
+    # Empty until the first run, which takes the instance running the game —
+    # MuMu's first where both are — and writes its serial here; the window's
+    # emulator picker writes it as well. A serial rather than an emulator name
+    # and an index, because it is what `adb devices` shows and what the picker
+    # lists, and each emulator fixes its instances' ports by index anyway.
+    adb_serial: str = ""
     # Nested rather than three more flat keys, and it earns that twice over. At
     # the top level `model` would sit beside `restart_every` with nothing saying
     # which subsystem it belongs to, and that only gets worse as tiers are added.

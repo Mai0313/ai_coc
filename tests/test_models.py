@@ -42,6 +42,7 @@ from ai_coc.models import (
     MuMuInstanceInfo,
     MuMuInstanceTable,
     GeminiResponseFormat,
+    LDPlayerInstanceInfo,
     tolerant_int,
 )
 
@@ -58,6 +59,37 @@ class EndpointTests(unittest.TestCase):
         endpoint = AdbEndpoint.parse("junk")
         assert (endpoint.host, endpoint.port) == ("127.0.0.1", 0)
         assert not endpoint.ready
+
+    def test_adbs_emulator_name_is_the_port_after_its_console(self) -> None:
+        """`adb devices` lists LDPlayer's first instance as both of these."""
+        assert AdbEndpoint.parse("emulator-5554") == AdbEndpoint.parse("127.0.0.1:5555")
+        assert AdbEndpoint.parse("emulator-x").port == 0
+
+
+class LDPlayerPayloadTests(unittest.TestCase):
+    def test_a_list2_line_is_read_by_position(self) -> None:
+        info = LDPlayerInstanceInfo.parse("0,LDPlayer,1839594,921748,1,30476,48656,1600,900,240")
+        assert (info.index, info.title, info.android_started, info.pid) == (
+            0,
+            "LDPlayer",
+            True,
+            30476,
+        )
+        assert (info.width, info.height, info.dpi) == (1600, 900, 240)
+
+    def test_a_comma_in_the_title_stays_in_the_title(self) -> None:
+        info = LDPlayerInstanceInfo.parse("2,farm, the second,0,0,0,-1,-1,1600,900,240")
+        assert (info.index, info.title, info.android_started, info.pid) == (
+            2,
+            "farm, the second",
+            False,
+            -1,
+        )
+
+
+class AppConfigTests(unittest.TestCase):
+    def test_no_serial_is_configured_until_the_first_run_picks_one(self) -> None:
+        assert AppConfig().adb_serial == ""
 
 
 class MuMuPayloadTests(unittest.TestCase):

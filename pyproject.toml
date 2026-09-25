@@ -420,6 +420,7 @@ runtime-evaluated-base-classes = [
     "pydantic.BaseModel",
     "ai_coc.ui.runner.ScreenRunner",
     "ai_coc.ui.runner.GameRunner",
+    "ai_coc.adapters.emulator.Emulator",
 ]
 
 [tool.ruff.lint.pyflakes]

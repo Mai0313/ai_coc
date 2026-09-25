@@ -44,11 +44,9 @@ from ai_coc.models import (
     VillageExport,
     LootThresholds,
     UpgradeOptions,
-    EmulatorInstance,
 )
 from ai_coc.constants import LOG_DIR, APP_NAME, COC_PACKAGE, VERSION_LABEL, DEFAULT_GEMINI_MODEL
 from ai_coc.adapters.ai import GeminiClient
-from ai_coc.adapters.mumu import MuMuAdapter
 from ai_coc.logging_setup import configure_logging
 from ai_coc.adapters.config import ConfigStore
 from ai_coc.adapters.secrets import SecretStore
@@ -59,6 +57,9 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from pydantic import BaseModel
+
+    from ai_coc.models import EmulatorInstance
+    from ai_coc.adapters.emulator import Emulator
 
 logger = logging.getLogger(__name__)
 
@@ -91,9 +92,10 @@ class MainWindow(QMainWindow):
         self.pool = QThreadPool.globalInstance()
         self.secrets = SecretStore()
         self.config = ConfigStore().load()
-        self.mumu: MuMuAdapter | None = None
-        self.instances: list[EmulatorInstance] = []
-        self.active: EmulatorInstance | None = None
+        # Every instance of every emulator installed here, each with the adapter
+        # that runs it, and the one the picker has on.
+        self.instances: list[tuple[Emulator, EmulatorInstance]] = []
+        self.active: tuple[Emulator, EmulatorInstance] | None = None
         self.current_frame: Frame | None = None
         self.frame_sequence = 0
         self.current_account_tag = ""
@@ -131,7 +133,7 @@ class MainWindow(QMainWindow):
         self.live_timer.timeout.connect(self._live_tick)
         self._build_ui()
         self._attach_log_panel()
-        self.statusBar().showMessage("Ready — 偵測 MuMu 以開始")
+        self.statusBar().showMessage("Ready — 偵測模擬器以開始")
         self.refresh_instances()
         # Straight rather than through a worker: it reads one file this machine
         # already has, and the table is worth having filled before the emulator
@@ -222,17 +224,13 @@ class MainWindow(QMainWindow):
         group = QGroupBox("模擬器")
         layout = QVBoxLayout(group)
         self.instance_combo = QComboBox()
-        # **This picks what the buttons below and the preview act on, and not
-        # what the automation drives.** Every job in the cycle is a `commands.*`
-        # call and `_controller()` takes the first instance MuMu lists, so with
-        # more than one the window would be watching one emulator and driving
-        # another with nothing on screen saying so. Said here rather than fixed
-        # by threading an index through eight command signatures, because this
-        # account runs one instance and the two agree wherever that holds.
+        # Picking one writes its serial to `adb_serial`, which is what every
+        # `commands.*` call drives, so the automation, the buttons below and the
+        # preview all follow the same choice — a terminal command included.
         self.instance_combo.setToolTip(
-            "選擇下面幾個按鈕跟即時畫面要看哪一個模擬器。自動化一律驅動 MuMu 列出的第一個"
+            "選擇要驅動哪一個模擬器。自動化、下面的按鈕跟即時畫面都跟著這個選擇,終端機的指令也是"
         )
-        self.instance_combo.currentIndexChanged.connect(self._select_instance)
+        self.instance_combo.currentIndexChanged.connect(self._pick_instance)
         layout.addWidget(self.instance_combo)
         toolbar = QHBoxLayout()
         for text, fn in (
@@ -819,27 +817,40 @@ class MainWindow(QMainWindow):
         QMessageBox.critical(self, title, message)
 
     def refresh_instances(self) -> None:
-        def task() -> tuple[MuMuAdapter, str, list[EmulatorInstance]]:
-            adapter = MuMuAdapter()
-            return adapter, adapter.version(), adapter.enumerate_instances()
+        def task() -> tuple[
+            list[tuple[Emulator, EmulatorInstance]], tuple[Emulator, EmulatorInstance], str
+        ]:
+            listed = list(commands.emulators())
+            # Before the versions are asked for: with nothing listed this raises,
+            # and the message says so better than an empty dropdown would.
+            configured = commands.chosen(listed)
+            versions: dict[str, str] = {}
+            for emulator, _ in listed:
+                if emulator.label not in versions:
+                    versions[emulator.label] = emulator.version()
+            summary = ", ".join(f"{label} {version}" for label, version in versions.items())
+            return listed, configured, summary
 
-        def done(result: tuple[MuMuAdapter, str, list[EmulatorInstance]]) -> None:
-            self.mumu, version, self.instances = result
+        def done(
+            result: tuple[
+                list[tuple[Emulator, EmulatorInstance]], tuple[Emulator, EmulatorInstance], str
+            ],
+        ) -> None:
+            self.instances, configured, summary = result
             self.instance_combo.blockSignals(True)
             self.instance_combo.clear()
-            for item in self.instances:
+            for emulator, item in self.instances:
                 self.instance_combo.addItem(
-                    f"{item.name} — {item.state} — ADB {item.adb_serial}", item.emulator_id
+                    f"{emulator.label} {item.name} — {item.state} — ADB {emulator.serial_of(item)}",
+                    item.emulator_id,
                 )
+            current = self.instances.index(configured)
+            self.instance_combo.setCurrentIndex(current)
             self.instance_combo.blockSignals(False)
-            if self.instances:
-                self.instance_combo.setCurrentIndex(0)
-                self._select_instance(0)
-            self.statusBar().showMessage(
-                f"MuMu {version}: {len(self.instances)} instance(s)", 6000
-            )
+            self._select_instance(current)
+            self.statusBar().showMessage(f"{summary}: {len(self.instances)} instance(s)", 6000)
 
-        self.run_async("Detecting MuMu instances…", task, done)
+        self.run_async("Detecting emulator instances…", task, done)
 
     def _select_instance(self, index: int) -> None:
         """Which emulator the buttons and the preview act on.
@@ -850,16 +861,27 @@ class MainWindow(QMainWindow):
         """
         if 0 <= index < len(self.instances):
             self.active = self.instances[index]
+            self.live_display = None
 
-    def _require(self) -> tuple[MuMuAdapter, EmulatorInstance]:
-        if not self.mumu or not self.active:
-            raise RuntimeError("請先選擇 MuMu instance")
-        return self.mumu, self.active
+    def _pick_instance(self, index: int) -> None:
+        """A choice made in the dropdown, which is also the one every command drives from now on."""
+        self._select_instance(index)
+        if self.active is not None:
+            emulator, instance = self.active
+            self._save_config(adb_serial=emulator.serial_of(instance))
+            logger.info("Driving %s instance %s from now on", emulator.label, instance.index)
+
+    def _require(self) -> tuple[Emulator, EmulatorInstance]:
+        if not self.active:
+            raise RuntimeError("請先選擇模擬器 instance")
+        return self.active
 
     def close_emulator(self) -> None:
         m, a = self._require()
         self.run_async(
-            "Closing MuMu…", lambda: m.close_instance(a.index), lambda _: self.refresh_instances()
+            "Closing the emulator…",
+            lambda: m.close_instance(a.index),
+            lambda _: self.refresh_instances(),
         )
 
     def launch_coc(self) -> None:
@@ -897,9 +919,9 @@ class MainWindow(QMainWindow):
         raise a message box the way `run_async` would, and a stale display id
         must clear itself rather than need a restart.
         """
-        if self.live_busy or not self.mumu or not self.active:
+        if self.live_busy or not self.active:
             return
-        m, a = self.mumu, self.active
+        m, a = self.active
         self.live_busy = True
 
         def frame() -> bytes | None:
@@ -939,7 +961,7 @@ class MainWindow(QMainWindow):
             self._paint_frame(png)
             self.statusBar().showMessage(f"Captured {self.current_frame.frame_id}", 7000)
 
-        self.run_async("Capturing current MuMu frame…", lambda: m.screenshot(a), done)
+        self.run_async("Capturing the current frame…", lambda: m.screenshot(a), done)
 
     def run_export(self) -> None:
         """Get the village out of the game, through the same call a terminal makes.

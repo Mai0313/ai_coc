@@ -37,6 +37,7 @@ from ai_coc.models import (
     PlayedPlan,
     ViewReport,
     WallReport,
+    AdbEndpoint,
     BuildReport,
     CartOutcome,
     HeroOptions,
@@ -76,6 +77,7 @@ from ai_coc.models import (
     LootThresholds,
     UpgradeOptions,
     StorageCapacity,
+    EmulatorInstance,
 )
 from ai_coc.constants import STATE_PATH, COC_PACKAGE, ACCOUNT_JSON_DIR
 from ai_coc.adapters.ai import GeminiClient
@@ -122,6 +124,8 @@ from ai_coc.adapters.secrets import SecretStore
 from ai_coc.parsers.boundary import PLAYFIELD, VILLAGE_CENTRE, village_box, boundary_reach
 from ai_coc.parsers.building import wall_menu, game_dialog, upgrade_sheet, upgrade_buttons
 from ai_coc.parsers.settings import export_row, settings_open, more_settings_open
+from ai_coc.adapters.emulator import Emulator, EmulatorError
+from ai_coc.adapters.ldplayer import LDPlayerAdapter
 from ai_coc.adapters.clipboard import read_clipboard, clear_clipboard, write_clipboard
 
 from .ui.clan import ClanRunner
@@ -134,18 +138,75 @@ from .ui.runner import ScreenRunner, spell_out, restart_game
 from .ui.upkeep import UpkeepRunner
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterator
+    from collections.abc import Callable, Iterable, Iterator
 
 logger = logging.getLogger(__name__)
 
 
+def emulators() -> Iterator[tuple[Emulator, EmulatorInstance]]:
+    """Every instance of every emulator installed here, MuMu's first.
+
+    Lazy, so a caller that finds what it wants among MuMu's instances never
+    asks LDPlayer at all: every command starts here, and an emulator it is not
+    driving should not be able to slow it down or fail it. One that is not
+    installed is left out quietly, and one whose CLI will not list its
+    instances is left out with a warning.
+    """
+    for kind in (MuMuAdapter, LDPlayerAdapter):
+        try:
+            emulator = kind()
+        except EmulatorError as exc:
+            logger.debug("%s is not installed here: %s", kind.label, exc)
+            continue
+        try:
+            instances = emulator.enumerate_instances()
+        except (EmulatorError, ValueError):
+            logger.warning("%s did not list its instances", kind.label, exc_info=True)
+            continue
+        for instance in instances:
+            yield emulator, instance
+
+
+def chosen(
+    listed: Iterable[tuple[Emulator, EmulatorInstance]],
+) -> tuple[Emulator, EmulatorInstance]:
+    """The instance `config.json`'s `adb_serial` names, picking and writing one if it names none.
+
+    A serial is matched against what the emulator reports and against where
+    the instance will listen, which is what finds one that is down: MuMu
+    reports port 0 until it is up, and `ensure_coc` is what brings it up.
+
+    The pick is the first instance with the game running, else the first
+    listed, so MuMu wins wherever both emulators have it.
+    """
+    store = ConfigStore()
+    config = store.load()
+    if config.adb_serial:
+        wanted = AdbEndpoint.parse(config.adb_serial)
+        for emulator, instance in listed:
+            if wanted in (
+                instance.endpoint,
+                AdbEndpoint.parse(emulator.serial_for(instance.index)),
+            ):
+                return emulator, instance
+        raise RuntimeError(f"設定的模擬器 {config.adb_serial} 不在任何模擬器的 instance 裡")
+    pairs = iter(listed)
+    first = next(pairs, None)
+    if first is None:
+        raise RuntimeError("找不到任何模擬器 instance")
+    emulator, instance = (
+        first if first[1].coc_running else next((p for p in pairs if p[1].coc_running), first)
+    )
+    serial = emulator.serial_of(instance)
+    logger.info("Driving %s instance %s at %s from now on", emulator.label, instance.index, serial)
+    store.save(config.model_copy(update={"adb_serial": serial}))
+    return emulator, instance
+
+
 def _controller() -> AdbController:
-    """The first MuMu instance, with Clash of Clans already up on it."""
-    mumu = MuMuAdapter()
-    instances = mumu.enumerate_instances()
-    if not instances:
-        raise RuntimeError("找不到任何 MuMu instance")
-    return mumu.controller(mumu.ensure_coc(instances[0].index).adb_serial)
+    """The configured instance, with Clash of Clans already up on it."""
+    emulator, instance = chosen(emulators())
+    return emulator.controller(emulator.ensure_coc(instance.index).adb_serial)
 
 
 def _session(frame_dir: Path | None = None) -> tuple[AdbController, DisplayTarget]:
@@ -161,8 +222,8 @@ def _session(frame_dir: Path | None = None) -> tuple[AdbController, DisplayTarge
     return adb, adb.display_for(COC_PACKAGE)
 
 
-# How long to give MuMu to actually take an instance down. `control restart`
-# returns as soon as the request is sent, so the state read a moment later is
+# How long to give the emulator to actually take an instance down. MuMu's
+# `control restart` returns as soon as the request is sent, so the state read a moment later is
 # still the old one — and `ensure_coc` skips its whole boot wait for anything
 # still reporting `android_started`, which would aim a `monkey` launch at an
 # emulator on its way down.
@@ -170,7 +231,7 @@ SHUTDOWN_POLLS = 15
 SHUTDOWN_GAP = 2.0
 
 
-def _await_shutdown(mumu: MuMuAdapter, index: int) -> None:
+def _await_shutdown(emulator: Emulator, index: int) -> None:
     """Wait for a restarting instance to really go down before it comes back up.
 
     An instance missing from the listing entirely is not treated as down: MuMu
@@ -180,10 +241,12 @@ def _await_shutdown(mumu: MuMuAdapter, index: int) -> None:
     """
     for _ in range(SHUTDOWN_POLLS):
         time.sleep(SHUTDOWN_GAP)
-        current = mumu.instance(index)
+        current = emulator.instance(index)
         if current is not None and not current.android_started:
             return
-    logger.warning("MuMu instance %s never went down; bringing the game up anyway", index)
+    logger.warning(
+        "%s instance %s never went down; bringing the game up anyway", emulator.label, index
+    )
 
 
 # What this call did, for the two scopes that say it outright. `none` is left
@@ -207,7 +270,7 @@ def launch_line(report: LaunchReport) -> str:
 
 
 def launch(restart: RestartScope) -> LaunchReport:
-    """Bring the game up on the first MuMu instance, tearing down as much as asked.
+    """Bring the game up on the configured instance, tearing down as much as asked.
 
     Every other headless command assumes the game is already running: they go
     through `_controller`, which calls `ensure_coc` and gives up on whatever it
@@ -215,24 +278,21 @@ def launch(restart: RestartScope) -> LaunchReport:
     from there — an emulator or a game that is up and no longer answering, which
     from here looks exactly like a working one.
     """
-    mumu = MuMuAdapter()
-    instances = mumu.enumerate_instances()
-    if not instances:
-        raise RuntimeError("找不到任何 MuMu instance")
-    index = instances[0].index
-    was_running = instances[0].coc_running
+    emulator, found = chosen(emulators())
+    index = found.index
+    was_running = found.coc_running
     if restart == "emulator":
-        logger.info("Restarting MuMu instance %s before bringing the game up", index)
-        mumu.restart_instance(index)
-        _await_shutdown(mumu, index)
+        logger.info("Restarting %s instance %s before bringing the game up", emulator.label, index)
+        emulator.restart_instance(index)
+        _await_shutdown(emulator, index)
     elif restart == "game":
         # The game can only be stopped on an emulator that is already up, which
         # is what the inner call is for. On a cold machine that call is also the
         # whole job and `restart_coc` then costs one relaunch of a game that had
         # only just started, which is cheaper than refusing and naming another
         # command: either way the caller asked to end up with a fresh game.
-        mumu.restart_coc(mumu.ensure_coc(index))
-    instance = mumu.ensure_coc(index)
+        emulator.restart_coc(emulator.ensure_coc(index))
+    instance = emulator.ensure_coc(index)
     # `ensure_coc` is satisfied by a pid, which says the game is running and
     # nothing about whether it can be driven. Every command after this one aims
     # screen coordinates at it, and those were all measured against a village at
@@ -240,7 +300,7 @@ def launch(restart: RestartScope) -> LaunchReport:
     # than in each of them. The position is settled there too, by parking the
     # camera against a map edge — the pinch does not do it, whatever this used
     # to say.
-    settled = _settle_game(mumu.controller(instance.adb_serial), RESTART_POLLS)
+    settled = _settle_game(emulator.controller(instance.adb_serial), RESTART_POLLS)
     # A game whose village never painted is reported rather than raised: the
     # process is up, so the caller may still have something to do with it, and
     # the one thing it must not do is assume the screen is ready.
@@ -697,8 +757,8 @@ def _restart_emulator(
     emulator.
     """
     # Wider than it looks, and deliberately so: `launch` raises `RuntimeError`
-    # for an instance MuMu has dropped from its listing and `MuMuError` for a
-    # game that never came up, both of which are exactly the state this is here
+    # for an instance MuMu has dropped from its listing and `EmulatorError` for
+    # a game that never came up, both of which are exactly the state this is here
     # to recover from. Letting either escape would take the whole series with it
     # — `cli.py` never reaches `run.answer` and `result.json` is left empty,
     # which is the failure the False path below exists to avoid.
@@ -707,7 +767,7 @@ def _restart_emulator(
     except (RuntimeError, KeyboardInterrupt):
         logger.exception("The emulator did not come back up")
         return False
-    adb = MuMuAdapter().controller(launched.serial)
+    adb = AdbController(endpoint=AdbEndpoint.parse(launched.serial))
     # The camera comes back out in here too, and that is not a courtesy. A
     # restarted game does not return at the zoom everything was measured at:
     # observed live, the restart succeeded, the village read, and every battle

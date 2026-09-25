@@ -7,6 +7,7 @@ import logging
 from pathlib import Path
 import tempfile
 import unittest
+from contextlib import AbstractContextManager
 from unittest.mock import ANY, MagicMock, call, patch
 from collections.abc import Callable
 
@@ -4908,8 +4909,8 @@ class RestartEveryTests(unittest.TestCase):
         adb = MagicMock()
         runner, ticker = MagicMock(), MagicMock()
         with (
-            patch.object(commands, "launch"),
-            patch.object(commands, "MuMuAdapter") as mumu,
+            patch.object(commands, "launch", return_value=MagicMock(serial="127.0.0.1:16384")),
+            patch.object(commands, "AdbController", return_value=adb),
             patch.object(commands.time, "sleep"),
             patch.object(commands, "stop_requested", return_value=False),
             # The village test rather than the storages: the game reopens on
@@ -4920,7 +4921,6 @@ class RestartEveryTests(unittest.TestCase):
             patch.object(commands, "idle_disconnected", return_value=False),
             patch.object(commands, "loading_screen", return_value=False),
         ):
-            mumu.return_value.controller.return_value = adb
             assert commands._restart_emulator(runner, ticker)
         assert adb.screenshot.call_count == 3
         # Both objects and both fields, or `--shot-every` spends the rest of the
@@ -4940,14 +4940,13 @@ class RestartEveryTests(unittest.TestCase):
         adb = MagicMock()
         adb.display_for.side_effect = [AdbControlError("not on a display"), MagicMock()]
         with (
-            patch.object(commands, "launch"),
-            patch.object(commands, "MuMuAdapter") as mumu,
+            patch.object(commands, "launch", return_value=MagicMock(serial="127.0.0.1:16384")),
+            patch.object(commands, "AdbController", return_value=adb),
             patch.object(commands.time, "sleep"),
             patch.object(commands, "stop_requested", return_value=False),
             patch.object(commands, "current_world", return_value="day"),
             patch.object(commands, "park_camera", return_value=True),
         ):
-            mumu.return_value.controller.return_value = adb
             assert commands._restart_emulator(MagicMock(), MagicMock())
         assert adb.display_for.call_count == 2
 
@@ -4961,15 +4960,14 @@ class RestartEveryTests(unittest.TestCase):
         """
         adb = MagicMock()
         with (
-            patch.object(commands, "launch"),
-            patch.object(commands, "MuMuAdapter") as mumu,
+            patch.object(commands, "launch", return_value=MagicMock(serial="127.0.0.1:16384")),
+            patch.object(commands, "AdbController", return_value=adb),
             patch.object(commands.time, "sleep"),
             patch.object(commands, "stop_requested", return_value=False),
             patch.object(commands, "current_world", return_value=None),
             patch.object(commands, "idle_disconnected", return_value=False),
             patch.object(commands, "loading_screen", return_value=False),
         ):
-            mumu.return_value.controller.return_value = adb
             assert not commands._restart_emulator(MagicMock(), MagicMock())
         assert adb.screenshot.call_count == commands.RESTART_POLLS
 
@@ -4978,9 +4976,8 @@ class RestartEveryTests(unittest.TestCase):
         an instance MuMu dropped, a game that never started — and a raise here
         would leave `cli.py` writing an empty `result.json` over a night's work.
         """
-        with (
-            patch.object(commands, "launch", side_effect=RuntimeError("找不到任何 MuMu instance")),
-            patch.object(commands, "MuMuAdapter"),
+        with patch.object(
+            commands, "launch", side_effect=RuntimeError("找不到任何模擬器 instance")
         ):
             assert not commands._restart_emulator(MagicMock(), MagicMock())
 
@@ -5046,6 +5043,14 @@ class LaunchTests(unittest.TestCase):
         self.addCleanup(patcher.stop)
 
     @staticmethod
+    def _driving(mumu: MagicMock) -> AbstractContextManager[object]:
+        """The configured instance is MuMu's first, without enumerating anything real."""
+        pair = (mumu, mumu.enumerate_instances.return_value[0])
+        return patch.multiple(
+            commands, emulators=MagicMock(return_value=[pair]), chosen=MagicMock(return_value=pair)
+        )
+
+    @staticmethod
     def _mumu(*, running: bool = True) -> MagicMock:
         instance = MagicMock(
             index=0, adb_serial="127.0.0.1:16384", coc_running=running, android_started=True
@@ -5064,7 +5069,7 @@ class LaunchTests(unittest.TestCase):
         on its loading screen answers by silently missing whatever it aims at.
         """
         mumu = self._mumu()
-        with patch.object(commands, "MuMuAdapter", return_value=mumu):
+        with self._driving(mumu):
             report = commands.launch("none")
         self.settled.assert_called_once()
         mumu.controller.assert_called_once_with("127.0.0.1:16384")
@@ -5076,14 +5081,14 @@ class LaunchTests(unittest.TestCase):
         """
         mumu = self._mumu()
         self.settled.return_value = None
-        with patch.object(commands, "MuMuAdapter", return_value=mumu):
+        with self._driving(mumu):
             report = commands.launch("none")
         assert not report.at_village
         assert "村莊沒有出現" in commands.launch_line(report)
 
     def test_the_ordinary_case_restarts_nothing(self) -> None:
         mumu = self._mumu()
-        with patch.object(commands, "MuMuAdapter", return_value=mumu):
+        with self._driving(mumu):
             report = commands.launch("none")
         mumu.restart_instance.assert_not_called()
         mumu.restart_coc.assert_not_called()
@@ -5093,14 +5098,14 @@ class LaunchTests(unittest.TestCase):
     def test_a_cold_machine_says_so_rather_than_claiming_it_was_already_up(self) -> None:
         """This scope does the same work either way; only the report tells them apart."""
         mumu = self._mumu(running=False)
-        with patch.object(commands, "MuMuAdapter", return_value=mumu):
+        with self._driving(mumu):
             report = commands.launch("none")
         assert not report.was_running
         assert "開起來" in commands.launch_line(report)
 
     def test_restarting_the_game_leaves_the_emulator_alone(self) -> None:
         mumu = self._mumu()
-        with patch.object(commands, "MuMuAdapter", return_value=mumu):
+        with self._driving(mumu):
             commands.launch("game")
         mumu.restart_coc.assert_called_once()
         mumu.restart_instance.assert_not_called()
@@ -5124,19 +5129,18 @@ class LaunchTests(unittest.TestCase):
         # and only then down: the wait ends on the third and not before.
         mumu.instance.side_effect = [up, None, down]
         mumu.ensure_coc.return_value = down
-        with (
-            patch.object(commands, "MuMuAdapter", return_value=mumu),
-            patch.object(commands, "SHUTDOWN_GAP", 0),
-        ):
+        with self._driving(mumu), patch.object(commands, "SHUTDOWN_GAP", 0):
             commands.launch("emulator")
         assert mumu.instance.call_count == 3
         mumu.restart_instance.assert_called_once_with(0)
         mumu.restart_coc.assert_not_called()
 
     def test_no_emulator_at_all_is_an_error_rather_than_a_report(self) -> None:
-        mumu = MagicMock()
-        mumu.enumerate_instances.return_value = []
-        with patch.object(commands, "MuMuAdapter", return_value=mumu), pytest.raises(RuntimeError):
+        with (
+            patch.object(commands, "emulators", return_value=[]),
+            patch.object(commands.ConfigStore, "load", return_value=AppConfig()),
+            pytest.raises(RuntimeError, match="找不到任何模擬器"),
+        ):
             commands.launch("none")
 
 
@@ -6552,7 +6556,7 @@ class PinchTests(unittest.TestCase):
     """The two-finger gesture, which `input` cannot express at all."""
 
     def _events(self) -> list[tuple[int, int, int]]:
-        return pinch_events(((500, 450), (760, 450)), ((1100, 450), (840, 450)), steps=2)
+        return pinch_events(((500, 450), (760, 450)), ((1100, 450), (840, 450)), True, steps=2)
 
     def test_the_gesture_carries_btn_touch(self) -> None:
         """Without it the whole thing is accepted, reported, and ignored — which
@@ -6562,6 +6566,12 @@ class PinchTests(unittest.TestCase):
         events = self._events()
         assert (EV_KEY, BTN_TOUCH, 1) in events
         assert (EV_KEY, BTN_TOUCH, 0) in events
+
+    def test_a_point_on_ldplayers_node_goes_down_as_it_is(self) -> None:
+        """LDPlayer's node reports x to 1600 and y to 900, the screen's own axes."""
+        events = pinch_events(((500, 450), (760, 450)), ((1100, 450), (840, 450)), False, steps=2)
+        assert (EV_ABS, ABS_MT_POSITION_X, 500) in events
+        assert (EV_ABS, ABS_MT_POSITION_Y, 450) in events
 
     def test_a_point_goes_down_with_its_axes_swapped(self) -> None:
         """The device reports x to 900 and y to 1600 against a 1600x900 screen,
