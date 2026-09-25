@@ -11,7 +11,7 @@ import logging
 import adbutils
 from pydantic import BaseModel
 
-from ai_coc.models import AdbEndpoint, DisplayTarget
+from ai_coc.models import TouchNode, AdbEndpoint, DisplayTarget
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -51,6 +51,7 @@ EV_SYN, EV_KEY, EV_ABS = 0, 1, 3
 SYN_REPORT = 0
 BTN_TOUCH = 0x14A
 ABS_MT_SLOT, ABS_MT_POSITION_X, ABS_MT_POSITION_Y, ABS_MT_TRACKING_ID = 0x2F, 0x35, 0x36, 0x39
+ABS_MT_PRESSURE = 0x3A
 # Any two ids the kernel is not already using for a live finger.
 FIRST_TRACKING_ID = 100
 # struct input_event as the 64-bit kernel lays it out: two 8-byte timeval fields,
@@ -149,14 +150,14 @@ def physical_display(display_dump: str, logical_id: str) -> str:
 def pinch_events(
     first: tuple[tuple[int, int], tuple[int, int]],
     second: tuple[tuple[int, int], tuple[int, int]],
-    swapped: bool,
+    node: TouchNode,
     steps: int = PINCH_STEPS,
 ) -> list[tuple[int, int, int]]:
     """One two-finger gesture as the multi-touch events it is written with.
 
     Each finger is given as (start, end) in **screen** coordinates. **Whether
     the device's axes are the screen's swapped depends on the emulator**, which
-    is what `swapped` says. MuMu's node reports x to 900 and y to 1600 against a
+    is what `node.swapped` says. MuMu's node reports x to 900 and y to 1600 against a
     1600x900 screen, so a point goes down as (y, x): measured by tapping
     (430, 990) through this path and watching the building at screen (990, 430)
     open. LDPlayer's reports x to 1600 and y to 900 and takes the point as it
@@ -172,7 +173,7 @@ def pinch_events(
     events: list[tuple[int, int, int]] = []
 
     def place(slot: int, point: tuple[int, int]) -> None:
-        x, y = (point[1], point[0]) if swapped else point
+        x, y = (point[1], point[0]) if node.swapped else point
         events.append((EV_ABS, ABS_MT_SLOT, slot))
         events.append((EV_ABS, ABS_MT_POSITION_X, x))
         events.append((EV_ABS, ABS_MT_POSITION_Y, y))
@@ -180,6 +181,8 @@ def pinch_events(
     for slot, (start, _) in enumerate((first, second)):
         events.append((EV_ABS, ABS_MT_SLOT, slot))
         events.append((EV_ABS, ABS_MT_TRACKING_ID, FIRST_TRACKING_ID + slot))
+        if node.pressure:
+            events.append((EV_ABS, ABS_MT_PRESSURE, 1))
         place(slot, start)
         if slot == 0:
             events.append((EV_KEY, BTN_TOUCH, 1))
@@ -379,8 +382,8 @@ class AdbController(BaseModel):
         coordinates = [str(start[0]), str(start[1]), str(end[0]), str(end[1])]
         self.input(display, "swipe", *coordinates, str(duration_ms))
 
-    def touch_devices(self) -> dict[str, bool]:
-        """Every multi-touch input node this device exposes, and whether its axes are swapped.
+    def touch_devices(self) -> dict[str, TouchNode]:
+        """Every multi-touch input node this device exposes, and what a gesture on it must carry.
 
         `input` cannot do two fingers, so a pinch has to be written straight to
         the kernel — and that goes to a device node rather than to a display, so
@@ -392,20 +395,24 @@ class AdbController(BaseModel):
 
         Swapped means the node's x range is shorter than its y range against a
         landscape screen, which is how MuMu builds its node and LDPlayer does
-        not; `pinch_events` owns what that does to a point.
+        not; `pinch_events` owns what that does to a point. `TouchNode` says why
+        the pressure axis matters.
 
         An empty answer is a failure rather than a quiet nothing — a pinch with
         nowhere to send it would otherwise report a zoom that never happened.
         """
-        nodes: dict[str, bool] = {}
+        nodes: dict[str, TouchNode] = {}
         for block in self.shell("getevent -pl 2>/dev/null").split("add device ")[1:]:
             ranges = dict(re.findall(r"ABS_MT_POSITION_([XY])\s*:[^\n]*?max (\d+)", block))
             if not {"X", "Y"} <= ranges.keys():
                 continue
             node = block.split(":", 1)[1].split()[0] if ":" in block else ""
             if node.startswith("/dev/input/"):
-                nodes[node] = int(ranges["X"]) < int(ranges["Y"])
-        logger.debug("Multi-touch nodes (node: axes swapped): %s", nodes)
+                nodes[node] = TouchNode(
+                    swapped=int(ranges["X"]) < int(ranges["Y"]),
+                    pressure="ABS_MT_PRESSURE" in block,
+                )
+        logger.debug("Multi-touch nodes: %s", nodes)
         return nodes
 
     def touch_device_for(self, display: DisplayTarget) -> str | None:

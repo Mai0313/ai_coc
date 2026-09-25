@@ -31,6 +31,7 @@ from ai_coc.models import (
     BattleRow,
     LootOffer,
     ScoutView,
+    TouchNode,
     WallBatch,
     AttackPlan,
     AttackStep,
@@ -6556,7 +6557,12 @@ class PinchTests(unittest.TestCase):
     """The two-finger gesture, which `input` cannot express at all."""
 
     def _events(self) -> list[tuple[int, int, int]]:
-        return pinch_events(((500, 450), (760, 450)), ((1100, 450), (840, 450)), True, steps=2)
+        return pinch_events(
+            ((500, 450), (760, 450)),
+            ((1100, 450), (840, 450)),
+            TouchNode(swapped=True, pressure=False),
+            steps=2,
+        )
 
     def test_the_gesture_carries_btn_touch(self) -> None:
         """Without it the whole thing is accepted, reported, and ignored — which
@@ -6569,7 +6575,12 @@ class PinchTests(unittest.TestCase):
 
     def test_a_point_on_ldplayers_node_goes_down_as_it_is(self) -> None:
         """LDPlayer's node reports x to 1600 and y to 900, the screen's own axes."""
-        events = pinch_events(((500, 450), (760, 450)), ((1100, 450), (840, 450)), False, steps=2)
+        events = pinch_events(
+            ((500, 450), (760, 450)),
+            ((1100, 450), (840, 450)),
+            TouchNode(swapped=False, pressure=True),
+            steps=2,
+        )
         assert (EV_ABS, ABS_MT_POSITION_X, 500) in events
         assert (EV_ABS, ABS_MT_POSITION_Y, 450) in events
 

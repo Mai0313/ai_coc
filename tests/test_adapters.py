@@ -21,7 +21,13 @@ from unittest.mock import MagicMock, call, patch
 
 import pytest
 
-from ai_coc.models import AdbEndpoint, DisplayTarget, EmulatorInstance, MuMuInstanceTable
+from ai_coc.models import (
+    TouchNode,
+    AdbEndpoint,
+    DisplayTarget,
+    EmulatorInstance,
+    MuMuInstanceTable,
+)
 from ai_coc.adapters import adb as adb_module
 from ai_coc.adapters import mapping, secrets, clipboard
 from ai_coc.adapters import emulator as emulator_module
@@ -36,7 +42,8 @@ from ai_coc.adapters.ldplayer import LDPlayerAdapter
 DISPLAY = DisplayTarget(logical_id="2", physical_id="4619827767814508545")
 # What `touch_devices` makes of MuMu's two touch nodes: both report the screen's
 # axes swapped.
-MUMU_TOUCH = {"/dev/input/event8": True, "/dev/input/event9": True}
+MUMU_NODE = TouchNode(swapped=True, pressure=False)
+MUMU_TOUCH = {"/dev/input/event8": MUMU_NODE, "/dev/input/event9": MUMU_NODE}
 
 # `getevent -pl` on a MuMu instance: one keyboard node and one multi-touch node.
 GETEVENT = """add device 1: /dev/input/event3
@@ -89,6 +96,8 @@ add device 3: /dev/input/event4
     ABS (0003): ABS_MT_SLOT           : value 0, min 0, max 15, fuzz 0, flat 0, resolution 0
                 ABS_MT_POSITION_X     : value 0, min 0, max 1599, fuzz 0, flat 0, resolution 0
                 ABS_MT_POSITION_Y     : value 0, min 0, max 899, fuzz 0, flat 0, resolution 0
+                ABS_MT_TRACKING_ID    : value 0, min 0, max 65535, fuzz 0, flat 0, resolution 0
+                ABS_MT_PRESSURE       : value 0, min 0, max 2, fuzz 0, flat 0, resolution 0
 """
 
 LD_DUMPSYS_INPUT = """INPUT MANAGER (dumpsys input)
@@ -282,7 +291,7 @@ class TouchNodeTests(unittest.TestCase):
 
     def test_only_the_multi_touch_nodes_are_listed(self) -> None:
         with patch.object(AdbController, "shell", return_value=GETEVENT):
-            assert _controller().touch_devices() == {"/dev/input/event8": True}
+            assert _controller().touch_devices() == {"/dev/input/event8": MUMU_NODE}
 
     def test_the_node_is_resolved_through_the_three_hops_dumpsys_prints(self) -> None:
         with (
@@ -304,7 +313,9 @@ class TouchNodeTests(unittest.TestCase):
 
     def test_ldplayers_node_keeps_the_screens_axes(self) -> None:
         with patch.object(AdbController, "shell", return_value=LD_GETEVENT):
-            assert _controller().touch_devices() == {"/dev/input/event4": False}
+            assert _controller().touch_devices() == {
+                "/dev/input/event4": TouchNode(swapped=False, pressure=True)
+            }
 
     def test_a_reader_whose_path_is_no_touch_node_is_passed_over(self) -> None:
         """LDPlayer binds its `VirtualMouse` to the display first, and a gesture
@@ -319,7 +330,10 @@ class TouchNodeTests(unittest.TestCase):
             patch.object(
                 AdbController,
                 "touch_devices",
-                return_value={"/dev/input/event8": True, "/dev/input/event4": False},
+                return_value={
+                    "/dev/input/event8": MUMU_NODE,
+                    "/dev/input/event4": TouchNode(swapped=False, pressure=True),
+                },
             ),
             patch.object(AdbController, "shell"),
             patch.object(adb_module, "gesture_script", return_value="") as scripted,
@@ -328,6 +342,11 @@ class TouchNodeTests(unittest.TestCase):
         swapped, straight = (call.args[0] for call in scripted.call_args_list)
         assert (adb_module.EV_ABS, adb_module.ABS_MT_POSITION_X, 450) in swapped
         assert (adb_module.EV_ABS, adb_module.ABS_MT_POSITION_X, 500) in straight
+        # A finger on a node with a pressure axis has to press, or Android
+        # reads it as a hover and the game never sees it.
+        pressed = (adb_module.EV_ABS, adb_module.ABS_MT_PRESSURE, 1)
+        assert pressed not in swapped
+        assert straight.count(pressed) == 2
 
     def test_a_pinch_with_nowhere_to_send_it_is_an_error(self) -> None:
         with (
@@ -351,7 +370,7 @@ class TouchNodeTests(unittest.TestCase):
     def test_a_gesture_opens_its_node_once_and_paces_itself_between_reports(self) -> None:
         """The open is what `sendevent` was really costing: 31 of the 33 ms an event took."""
         script = adb_module.gesture_script(
-            adb_module.pinch_events(((0, 0), (10, 0)), ((100, 0), (90, 0)), True, steps=4),
+            adb_module.pinch_events(((0, 0), (10, 0)), ((100, 0), (90, 0)), MUMU_NODE, steps=4),
             "/dev/input/event8",
             gap=0.02,
         )
@@ -363,7 +382,9 @@ class TouchNodeTests(unittest.TestCase):
 
     def test_the_events_go_out_as_the_kernel_lays_them_out(self) -> None:
         """24 bytes each, and what comes back out is what `pinch_events` asked for."""
-        events = adb_module.pinch_events(((0, 0), (10, 0)), ((100, 0), (90, 0)), True, steps=2)
+        events = adb_module.pinch_events(
+            ((0, 0), (10, 0)), ((100, 0), (90, 0)), MUMU_NODE, steps=2
+        )
         script = adb_module.gesture_script(events, "/dev/input/event8", gap=0)
         packed = b"".join(
             base64.b64decode(part.split("echo ", 1)[1].split(" |", 1)[0])

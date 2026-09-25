@@ -136,6 +136,22 @@ class DisplayTarget(BaseModel):
     physical_id: str
 
 
+class TouchNode(BaseModel):
+    """What a gesture written straight to one multi-touch input node has to match.
+
+    `swapped` is whether the node's x range is the screen's short side, which
+    MuMu's is and LDPlayer's is not. `pressure` is whether the node reports
+    `ABS_MT_PRESSURE`: Android then reads a finger that never set it as zero
+    pressure, a hover rather than a touch, and the game ignores it — observed on
+    LDPlayer, a tap written to the node that did nothing until it carried one.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    swapped: bool
+    pressure: bool
+
+
 class MuMuInstanceInfo(BaseModel):
     """One entry of `mumu-cli info --vmindex all`."""
 
