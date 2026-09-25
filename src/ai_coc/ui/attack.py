@@ -128,6 +128,16 @@ ABILITY_TAP = 1.0
 # is offered rather than modelling when the offer comes.
 NIGHT_PHASES = 2
 
+# How many builder base battles go by between trips to its elixir cart, and the
+# one schedule every trip there keeps: the first round of a run goes, and then
+# every this many battles. The trip empties the cart into the storages while
+# they have room and reads how full it is once they have none, which is the
+# reading a full village's stop is decided on. Five because the cart holds
+# 1 600 000 and one battle has paid up to 220 000 into it, so seven would risk
+# it capping out while the storages still had room; the cost of the stretch is
+# that a village whose cart has just filled plays up to four battles more.
+CART_EVERY = 5
+
 # Trips one visit may take to the builder base's cart before the storages decide
 # the stop alone, as they did before the cart counted. One miss is not rare
 # enough to end a run on — 2 of the 110 trips logged on this machine tapped all
@@ -917,9 +927,10 @@ class AttackRunner(ScreenRunner):
     # run. A storage only grows when a builder finishes upgrading one, which is
     # days apart, against six taps and three captures to ask again every round.
     _capacity: StorageCapacity | None = PrivateAttr(default=None)
-    # The builder base's cart as this round's visit found it, or None where
-    # nothing went to look; see `_visit_cart`.
+    # The builder base's cart as the last trip found it, and the battles played
+    # since that trip, None before the first; see `_visit_cart`.
     _cart: CartReport | None = PrivateAttr(default=None)
+    _since_cart: int | None = PrivateAttr(default=None)
     # Why the last `_open_attack_menu` gave up, when the reason is worth more
     # than the round simply not finding its menu: a loading screen that
     # outlasted `SERVER_POLLS`, one that came back after a wait, or a stop that
@@ -997,20 +1008,20 @@ class AttackRunner(ScreenRunner):
             return
         self._capacity = self.read_ceilings(self.world)
 
-    def _visit_cart(self, home: bytes) -> None:
-        """Look in the builder base's cart, once a round, once its storages are full.
+    def _visit_cart(self) -> None:
+        """Go to the builder base's cart on a run's first round and every `CART_EVERY` battles.
 
-        **The cart is that village's third storage.** Elixir waits in it until
-        its 收集 is pressed, and past a full 聖水 storage the game greys that
-        button and keeps paying in, up to the ceiling written on the sheet — so
-        full storages there are a village that can still bank what a battle
-        wins, and `_stood_down` asks what this found before standing a run down.
+        **The cart is that village's third storage.** Every battle there pays
+        its defence reward into it, and it waits there until 收集 is pressed —
+        so the trip empties it into the storages while they have room, and past
+        a full 聖水 storage, where the game greys that button and keeps paying
+        in, it reads how full the cart is instead. `_stood_down` decides a full
+        village's stop on that reading, whichever trip took it last.
 
-        Not before the storages are full, because until then `commands` empties
-        the cart into them every few battles and it has nothing to say; and
-        every round after, because every battle pays into it. A trip that can
-        collect does, which is what takes the 聖水 storage the rest of the way
-        to its own ceiling when `stop_at` stood it down short of one.
+        **One schedule for both jobs**, and the first round always goes: a run
+        can start with a cart already holding most of its ceiling, and waiting
+        `CART_EVERY` battles for the first trip would pay those battles into a
+        cart with no room for them.
 
         **A trip that could not say how full the cart is goes again at once**,
         up to `CART_LOOKS` times, rather than being taken either way: a missed
@@ -1019,31 +1030,24 @@ class AttackRunner(ScreenRunner):
         across rounds, because the window builds a new runner for every pass
         and a count kept here would start from nothing each time.
         """
-        if self.world != "night" or self._cart is not None:
+        if self.world != "night":
             return
-        stock = read_builder_stock(home)
-        if stock is None or not self._ceiling.full(stock, self.stop_at):
+        if self._since_cart is not None and self._since_cart < CART_EVERY:
             return
         for look in range(1, CART_LOOKS + 1):
             self._cart = collect_cart(self.adb, self.display)
+            # Only once a trip came back: one the emulator broke off raises
+            # through here, and the next round has to go again rather than
+            # decide a full village's stop on a cart nobody read.
+            self._since_cart = 0
             if self._cart.capacity or self._cart.outcome == "collected":
                 return
             logger.warning(
                 "Look %d at the cart did not say how full it is (%s)", look, self._cart.outcome
             )
 
-    @property
-    def cart_watched(self) -> bool:
-        """Whether this round already looked in the builder base's cart.
-
-        True once that village's storages are full, since every round then
-        looks before its attack; `commands` skips its own trip to the cart
-        after such a round rather than making the same one twice.
-        """
-        return self._cart is not None
-
     def _cart_has_room(self) -> bool:
-        """Whether the builder base's cart can still bank what a battle wins.
+        """Whether the builder base's cart can still bank what a battle wins, by its last trip.
 
         Short of `stop_at` of its own ceiling it can, which is the share every
         storage is judged on. A trip that collected has room by definition: the
@@ -1053,10 +1057,19 @@ class AttackRunner(ScreenRunner):
         """
         cart = self._cart
         if cart is not None and cart.held is not None and cart.capacity:
-            logger.info("The storages are full; the cart holds %d of %d", cart.held, cart.capacity)
+            logger.info(
+                "The storages are full; the cart held %d of %d %d battle(s) ago",
+                cart.held,
+                cart.capacity,
+                self._since_cart or 0,
+            )
             return cart.held * 100 < cart.capacity * self.stop_at
         if cart is not None and cart.outcome == "collected":
-            logger.info("The storages took %d out of the cart; it has room again", cart.elixir)
+            logger.info(
+                "The storages took %d out of the cart %d battle(s) ago; it has room",
+                cart.elixir,
+                self._since_cart or 0,
+            )
             return True
         logger.warning("The cart would not say how full it is; the storages decide alone")
         return False
@@ -1108,7 +1121,6 @@ class AttackRunner(ScreenRunner):
         other: World = "night" if self.world == "day" else "day"
         opened = attack_menu_open if self.world == "day" else night_attack_menu
         self._stuck = None
-        self._cart = None
         waited = False
         for _ in range(HOME_ATTEMPTS):
             home = self._frame("home")
@@ -1167,7 +1179,7 @@ class AttackRunner(ScreenRunner):
             # The builder base's cart is looked in here for the same reason: it
             # is a place on that village's map, and past this tap the dialog is
             # over it.
-            self._visit_cart(home)
+            self._visit_cart()
             self._tap(HOME_ATTACK)
             time.sleep(2)
             if opened(self._frame("attack-menu")):
@@ -2726,6 +2738,10 @@ class AttackRunner(ScreenRunner):
             if self.should_stop():
                 return AttackReport(world="night", outcome="stopped")
             return AttackReport(world="night", outcome=self._stuck or "no_opponent")
+        # A match is what pays into the cart, whatever goes down from this
+        # side: every attack there is also a defence.
+        if self._since_cart is not None:
+            self._since_cart += 1
         played = 0
         for stage in range(NIGHT_PHASES):
             deployed = self._deploy_night(battle, stage)

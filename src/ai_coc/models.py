@@ -1038,7 +1038,7 @@ class AttackReport(BaseModel):
     # opponent was advertising rather than only that there was one. So a caller
     # asking "did this round really fight" has to ask both ways, which is what
     # `commands.attack` does before it counts a battle towards the emulator
-    # restart or a trip to the loot cart.
+    # restart.
     phases: int = 0
     skipped: int = 0
     # The opponent that was fought, as its scout screen advertised it — what was
