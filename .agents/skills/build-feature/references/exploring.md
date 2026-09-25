@@ -2,7 +2,7 @@
 
 ## 一段可以互動的探索腳本
 
-`commands._controller()` 已經找好 MuMu instance 並確認遊戲開著, 只剩 display 要自己解析:
+`commands._controller()` 已經找好 `config.json` 的 `adb_serial` 指的那台模擬器 (MuMu 或雷電) 並確認遊戲開著, 只剩 display 要自己解析:
 
 ```bash
 uv run python - <<'PY'
@@ -45,7 +45,7 @@ print(current_world(adb.screenshot(display)))  # "day" / "night" / None
 cross(adb, display, "night")  # 已經在那邊就什麼都不做
 ```
 
-**每個呼叫都要帶 `display`**: display 0 是模擬器的 launcher, 少帶的截圖解碼失敗, 點擊安靜地落在 launcher 上, 兩種都不報錯.
+**每個呼叫都要帶 `display`**: MuMu 的 display 0 是它的 launcher, 少帶的截圖解碼失敗, 點擊安靜地落在 launcher 上, 兩種都不報錯. 雷電的遊戲就在 display 0, 但照樣帶, 程式碼不分是哪一台.
 
 ## 三件不能亂做的事
 
