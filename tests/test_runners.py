@@ -8,6 +8,7 @@ tap follows which reading, and what each report says.
 
 from __future__ import annotations
 
+from pathlib import Path
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -58,6 +59,7 @@ from ai_coc.ui.upkeep import UpkeepRunner
 from ai_coc.adapters.ai import GeminiClient
 from ai_coc.adapters.adb import AdbController, AdbControlError
 
+FRAMES = Path(__file__).parent / "frames"
 DISPLAY = DisplayTarget(logical_id="1", physical_id="2")
 STOCK = VillageStock(gold=9_000_000, elixir=9_000_000, dark=100_000)
 THRESHOLDS = LootThresholds(min_gold=500_000)
@@ -1266,6 +1268,7 @@ class BattleWaitTests(unittest.TestCase):
             patch.object(runner, "_tap") as tapped,
             patch.object(runner, "_frame", return_value=b"battle"),
             patch.object(attack, "searching_opponent", side_effect=[True, False]),
+            patch.object(attack, "current_world", return_value=None),
             patch.object(attack, "card_groups", return_value=[[164]]),
         ):
             assert runner._find_opponent() == b"battle"
@@ -1285,9 +1288,73 @@ class BattleWaitTests(unittest.TestCase):
             patch.object(attack.time, "sleep"),
             patch.object(attack, "SEARCH_PATIENCE", 0),
             patch.object(patient, "_tap") as tapped,
+            patch.object(patient, "_frame", return_value=b""),
+            patch.object(attack, "_matched", return_value=False),
+            patch.object(attack, "night_attack_menu", return_value=True),
         ):
             assert patient._find_opponent() is None
-        assert tapped.call_count == 2 * attack.SEARCH_ATTEMPTS
+        # Every search after the first reopens the dialog the cancel left behind.
+        assert [call.args[0] for call in tapped.call_args_list] == [
+            NIGHT_FIND,
+            SEARCH_CANCEL,
+            *[attack.HOME_ATTACK, NIGHT_FIND, SEARCH_CANCEL] * (attack.SEARCH_ATTEMPTS - 1),
+        ]
+
+    def test_a_dialog_that_does_not_come_back_after_a_cancel_ends_the_search(self) -> None:
+        """取消 lands on the village, so the next 立即尋找 would tap the map."""
+        runner = self._runner(world="night")
+        with (
+            patch.object(attack.time, "sleep"),
+            patch.object(attack, "SEARCH_PATIENCE", 0),
+            patch.object(runner, "_tap") as tapped,
+            patch.object(runner, "_frame", return_value=b""),
+            patch.object(attack, "_matched", return_value=False),
+            patch.object(attack, "night_attack_menu", return_value=False),
+        ):
+            assert runner._find_opponent() is None
+        assert [call.args[0] for call in tapped.call_args_list] == [
+            NIGHT_FIND,
+            SEARCH_CANCEL,
+            attack.HOME_ATTACK,
+        ]
+        # A menu this round could not open, not a matchmaker that found nobody.
+        assert runner._stuck == "no_attack_menu"
+        with (
+            patch.object(runner, "_open_attack_menu", return_value=b""),
+            patch.object(runner, "_stood_down", return_value=None),
+            patch.object(runner, "_find_opponent", return_value=None),
+        ):
+            assert runner.run().outcome == "no_attack_menu"
+
+    def test_a_match_that_opened_under_the_cancel_is_played(self) -> None:
+        """The last second of a search can open a battle, and 取消 then hits its card row."""
+        runner = self._runner(world="night")
+        with (
+            patch.object(attack.time, "sleep"),
+            patch.object(attack, "SEARCH_PATIENCE", 0),
+            patch.object(runner, "_tap") as tapped,
+            patch.object(runner, "_frame", return_value=b"battle"),
+            patch.object(attack, "_matched", return_value=True),
+        ):
+            assert runner._find_opponent() == b"battle"
+        assert [call.args[0] for call in tapped.call_args_list] == [NIGHT_FIND, SEARCH_CANCEL]
+
+    def test_the_village_a_cancel_leaves_behind_is_not_a_match(self) -> None:
+        """Its own buttons read as a card row, and it was deployed into as an opponent.
+
+        The frame is the live one: 取消 had just dropped the game on the
+        builder base, and the loop called it a match four seconds later.
+        """
+        runner = self._runner(world="night")
+        village = (FRAMES / "night_village_after_cancel.png").read_bytes()
+        with (
+            patch.object(attack.time, "sleep"),
+            patch.object(attack.time, "monotonic", side_effect=[0.0, 0.0, 1e9]),
+            patch.object(attack, "SEARCH_ATTEMPTS", 1),
+            patch.object(runner, "_tap"),
+            patch.object(runner, "_frame", return_value=village),
+        ):
+            assert runner._find_opponent() is None
 
     def test_the_stage_after_a_result_is_a_village_or_another_card_row(self) -> None:
         runner = self._runner(world="night")

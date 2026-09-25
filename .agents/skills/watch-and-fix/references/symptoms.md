@@ -26,6 +26,8 @@
 
 掉線的話 `idle_disconnected` 會認出來 (閒置那張跟 連線已中斷 那張都算), `restart_game` 會重開遊戲並**重新解析 display**. 還在載入的話 `loading_screen` 會認出來, `_open_attack_menu` 會等它 (`_wait_out_loading`, 每次載入一次, 最多 45 分鐘), `outcome` 會是 `server_loading` 或 `server_flapping` 而不是 `no_attack_menu`; 所以看到 `no_attack_menu` 的話, 原因也不是伺服器.
 
+**夜世界多一個來源, 而那一輪其實已經搜過一次.** 搜尋等滿 `SEARCH_PATIENCE` 被取消之後, 遊戲回到的是村莊而不是 開始進攻, 所以 `_reopen_search` 要先按 攻擊 把對話框叫回來再重搜; 叫不回來就報 `no_attack_menu`, log 裡在它前面是 `The attack dialog did not come back after the search was cancelled`. 看到那一行就去看 `_reopen_search` 當下那張 `attack-menu` 畫面, 不是 `_open_attack_menu`.
+
 **第五種擋路的是站錯村莊**, 而它以前就是報這個 outcome. 遊戲會開在上次離開的那一張地圖, 而夜世界 (建築大師基地) 的攻擊按鈕在同一個角落, 開出來的卻是另一個對話框 —— `attack_menu_open` 認不得它, 於是整輪的重試都花在那裡, 最後報 `no_attack_menu`, 讀起來像遊戲卡住而不是像走錯地方. 現在 `_open_attack_menu` 會先問 `current_world`, 是夜世界就坐船回來再打, log 裡是 `sailing home before attacking`. 所以現在還看到這個 outcome 的話, 原因就不是這個.
 
 **第六種是遊戲自己蓋上來的全螢幕彈窗** (活動獎勵、賽季通行證那類), 而它是最貴的一種, 因為那顆攻擊按鈕整個被蓋住, 五次重試全部點在彈窗上. 實測一次「周期挑戰獎勵之路已完成」卡了 40 分鐘 —— 18 輪, 每輪都報這個 outcome, 而底下有一場已經配對成功的戰鬥就這樣跑完了. 那種頁面只能用它自己右上角的紅色 X 關, 點 回營 的位置完全沒有反應. 現在 `current_world` 讀不出東西的時候會走 `uncovered` 按 back, log 裡是 `Something is over the village; pressing back to get at it`. 沒看到那一行就表示彈窗被誤讀成別的東西了, 而**它有兩種形狀, 量錯地方就白費一輪**.
