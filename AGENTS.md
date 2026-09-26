@@ -34,6 +34,8 @@ Six skills under `.agents/skills/` own the judgement of driving the game, and th
 
 **Look before driving.** Before the first command of any piece of work, read `~/.ai_coc/state.json`. On `running` or `stopping`, check the `pid` with `Get-Process -Id`. A pid that is gone is residue that the next claim overwrites; one that answers is somebody's run, and starting a second interleaves taps on the one display.
 
+**Say who is driving.** Every `ai_coc` command an agent runs carries `--agent` (its own name: `claude-code`, `antigravity`, `codex`), `--session` (its own session id) and `--mission` (one line on what the run is for). They land in `state.json`'s `caller` and in the second line of the run's `run.log`, `stop` included. The flags are optional so a person can type a command bare, and a run without them logs a warning; an agent leaving them out leaves nobody able to say which session drove the emulator, which on 2026-09-26 took reading another agent's conversation database to find out.
+
 **Two drivers that file cannot show** (both bit on 2026-09-21):
 
 - A **monitor** session re-running `ai_coc worker` reads `idle` between runs, and `ai_coc stop` cannot reach it, because what loops is an agent rather than a process. Only killing that agent stops it.
@@ -86,6 +88,7 @@ uv run ai_coc hero --upgrade duke         # put a builder on that hero
 uv run ai_coc view --zoom out             # put the camera back at the far zoom everything was measured at
 uv run ai_coc world                       # which of the two villages the game is on
 uv run ai_coc world --go day              # sail to that one; already being there does nothing
+uv run ai_coc stock --agent claude-code --session <id> --mission "打日世界資源"   # who asked, into state.json and run.log; every sub-command takes these
 uv run ai_coc launch                      # start the emulator if it is down, and bring the game up on it
 uv run ai_coc launch --restart game       # relaunch the game alone, leaving the emulator running
 uv run ai_coc launch --restart emulator   # restart the emulator, then bring the game up again
@@ -249,7 +252,7 @@ Prices in a building row shrink with their length, so `digits_from` takes the ro
 
 ### Stopping and the state file (`~/.ai_coc/state.json`, `RunnerState`, `claim`, `read_state`)
 
-- Every command that opens ADB claims the file (`running`) on the way in and writes `idle` on the way out; `read`, `stop` and `export --last` do not claim. `ai_coc stop` marks it `stopping` and returns, touching neither the game nor any process. The file is never deleted, and `ended` and `log` ride on the `idle` record.
+- Every command that opens ADB claims the file (`running`) on the way in and writes `idle` on the way out; `read`, `stop` and `export --last` do not claim. `ai_coc stop` marks it `stopping` and returns, touching neither the game nor any process. The file is never deleted, and `ended` and `log` ride on the `idle` record. `caller` (`Caller`: `--agent`, `--session`, `--mission`) is written with the claim and kept through `stopping` and `idle`; the window claims as `agent="window"`.
 - Loops check it only where stopping is safe: `commands.attack`'s round loop, `AttackRunner.should_stop` between opponents (a committed battle is played out, since abandoning one leaves the game where the next run cannot get home from), `walls` between batches, and every tap in `GameRunner._opened`. The wait between rounds polls at `STOP_POLL`. `collect`, `builders`, `hero`, `donate`, `probe` and `bounds` do not check it.
 - The claim at the start takes over a stale `stopping`, and only the process that claimed writes the release. **Deleting the file by hand is a stop**, the escape hatch when the driving agent has died; `_held` keeps a machine's first run from reading the missing file as one.
 - Nothing refuses a second run; the check belongs to whoever is about to start one. Never test a pid with `os.kill(pid, 0)`: on Windows that is `TerminateProcess` and kills the run it asked about.

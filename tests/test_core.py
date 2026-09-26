@@ -22,6 +22,7 @@ from ai_coc.ui import runner as shared
 from ai_coc.cli import _parser
 from ai_coc.models import (
     World,
+    Caller,
     RunLog,
     UiJobs,
     HeroCard,
@@ -4496,6 +4497,25 @@ class RunnerStateTests(unittest.TestCase):
             assert after is not None
             assert (after.status, after.command, after.log) == ("idle", "walls", log)
             assert after.ended is not None
+
+    def test_who_asked_is_on_the_claim_the_stop_and_the_finished_record(self) -> None:
+        """Which agent, session and mission, so a run can be traced to whoever
+        started it without reading that agent's own history.
+        """
+        who = Caller(agent="antigravity", session="3ef769ec", mission="打日世界資源")
+        with tempfile.TemporaryDirectory() as folder:
+            state = Path(folder) / "state.json"
+            with patch.object(commands, "STATE_PATH", state):
+                with commands.claim("attack", caller=who):
+                    running = commands.read_state()
+                    commands.stop()
+                    stopping = commands.read_state()
+                after = commands.read_state()
+        assert running is not None
+        assert stopping is not None
+        assert after is not None
+        assert [s.status for s in (running, stopping, after)] == ["running", "stopping", "idle"]
+        assert running.caller == stopping.caller == after.caller == who
 
     def test_a_claim_takes_over_a_stop_the_last_run_never_read(self) -> None:
         """Stopping means the run going now, never the next one to start. One

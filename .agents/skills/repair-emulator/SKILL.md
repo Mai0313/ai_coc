@@ -38,6 +38,7 @@ description: >-
 - 照 `CLAUDE.md` 的 Look before driving 讀 `~/.ai_coc/state.json`. farm subagent 還在跑就照 `CLAUDE.md` 先把模擬器拿回來, 模擬器只有一台; 它的迴圈多半已經跟著模擬器掛掉了, 那就等它的回報
 - **結束程序、`quit`、重開模擬器之前先問使用者, 他說好才做.** 那是他的模擬器, 他看得到那個視窗, 一直開開關關又沒人說明, 他只會以為壞得更嚴重. 跑 `ai_coc launch` 之前講一聲: 遊戲開不起來的時候 `ensure_coc` 會自己重開一次實例
 - 使用者可能正在模擬器或手機上玩 (`CLAUDE.md` 的 Driving the game), 有疑慮就問
+- 每個 `ai_coc` 指令都帶 `--agent`、`--session`、`--mission` (`CLAUDE.md` 的 Say who is driving), `look.py` 不用
 
 ## 讀狀態 (雷電)
 
