@@ -8,9 +8,11 @@ still have been paid for. Screen reading is `parsers.scout` instead.
 
 from __future__ import annotations
 
+import math
 import time
 from typing import TYPE_CHECKING
 import logging
+import itertools
 
 from pydantic import PrivateAttr
 
@@ -312,6 +314,17 @@ DEPLOY_ATTEMPTS = 5
 # clamped straight back onto it: measured live, four pushes in a row of a point
 # already on the map's edge came back within two pixels of each other.
 SPOT_APART = 20
+# How far inside the troops' line a siege machine or hero has to be aimed before
+# `onto_line` moves it onto the line. Over eleven recorded rounds the spots 1 to
+# 9 px inside all landed and refusals began at 13. The line is not the boundary,
+# so there is no clean cut above that either — of 27 spots 41 px or more inside,
+# 20 were refused and 7 landed, on two villages — but moving a spot that would
+# have landed only puts it on ground the troops were just poured over.
+ONTO_LINE_SLACK = 10
+# And how far is too far to be the same flank. The refused spots sat at most
+# 108 px inside the line; nothing measured where a hero the planner deliberately
+# put elsewhere sits, so past this it is left where it was aimed.
+ONTO_LINE_REACH = 150
 # A spell card that would not cast is offered the run once more and no further:
 # past that it is a card the game is refusing, not a tap it happened to swallow.
 SPELL_ATTEMPTS = 2
@@ -690,6 +703,67 @@ def single_spots(
         if all(((spot[0] - x) ** 2 + (spot[1] - y) ** 2) ** 0.5 >= SPOT_APART for x, y in spots):
             spots.append(spot)
     return spots[:DEPLOY_ATTEMPTS]
+
+
+def onto_line(
+    spot: tuple[int, int], line: list[tuple[int, int]], centre: tuple[int, int]
+) -> tuple[int, int]:
+    """A one-off drop moved out onto the troops' line when the planner aimed it inside.
+
+    The planner places the siege machine and the heroes along the line it drew,
+    which is the prompt's base line copied; the troops go down along that line
+    bent onto the game's own boundary by `_flank`, which on a large village
+    sits well outside it. Over eleven recorded rounds 23 of those spots were
+    refused, the siege machine's on five rounds; 21 of them sat square across
+    from the troops' line, 13 to 108 px inside it, and the other two just past
+    its end. A refused card is retried from the shared ladder,
+    so they all went to the line's middle together three to four seconds
+    later: the siege machine meant to lead the troops arrived behind them, and
+    heroes meant for the two ends piled up in the middle.
+
+    Only a spot square across from the line is moved. One past either end is
+    left alone: that is where the prompt puts the heroes that clear the outside,
+    and the line's own extension says nothing about the village there.
+
+    This is settled here rather than asked of the planner, for the reason
+    `spaced` gives: it never sees the line `_flank` fits, and cannot measure the
+    pixels between a point it drew and one it did not.
+    """
+    legs = list(itertools.pairwise(line))
+    index = min(range(len(legs)), key=lambda i: _gap(spot, *legs[i]))
+    a, b = legs[index]
+    share = _share(spot, a, b)
+    # Only the line's own two ends can be passed. A spot facing a bend between
+    # two legs projects just off the end of both, and is still square across.
+    past_end = (index == 0 and share < 0) or (index == len(legs) - 1 and share > 1)
+    share = min(max(share, 0.0), 1.0)
+    foot = (a[0] + (b[0] - a[0]) * share, a[1] + (b[1] - a[1]) * share)
+    # Measured across the leg rather than as distance from the centre: the map
+    # is a diamond, so along an edge the radius changes as fast as the gaps
+    # being told apart, and a spot past either end of the line — where the
+    # prompt puts the heroes that clear the outside — reads as inside by it.
+    inside = _side(spot, a, b) * _side(centre, a, b) > 0
+    gap = math.dist(spot, foot)
+    if not past_end and inside and ONTO_LINE_SLACK <= gap <= ONTO_LINE_REACH:
+        return round(foot[0]), round(foot[1])
+    return spot
+
+
+def _share(spot: tuple[int, int], a: tuple[int, int], b: tuple[int, int]) -> float:
+    """How far along from `a` to `b` the spot sits, square across, as a share of the way."""
+    dx, dy = b[0] - a[0], b[1] - a[1]
+    return ((spot[0] - a[0]) * dx + (spot[1] - a[1]) * dy) / max(dx * dx + dy * dy, 1)
+
+
+def _side(spot: tuple[int, int], a: tuple[int, int], b: tuple[int, int]) -> int:
+    """Which side of the line through `a` and `b` the spot is on, by sign."""
+    return (b[0] - a[0]) * (spot[1] - a[1]) - (b[1] - a[1]) * (spot[0] - a[0])
+
+
+def _gap(spot: tuple[int, int], a: tuple[int, int], b: tuple[int, int]) -> float:
+    """How far the spot is from the stretch of line between `a` and `b`."""
+    share = min(max(_share(spot, a, b), 0.0), 1.0)
+    return math.dist(spot, (a[0] + (b[0] - a[0]) * share, a[1] + (b[1] - a[1]) * share))
 
 
 def spaced(points: Iterable[tuple[int, int]]) -> list[tuple[int, int]]:
@@ -2085,8 +2159,15 @@ class AttackRunner(ScreenRunner):
         """
         points = self._onscreen(tuple(point.pixels() for point in step.at))
         middle = line[len(line) // 2]
+        # Where a siege machine or a hero goes; see `onto_line`. Said out loud
+        # when it moves, since `plans.jsonl` still holds where it was aimed.
+        spot = onto_line(points[0], line, self._middle) if points else middle
+        if step.act in ("siege", "hero") and points and spot != points[0]:
+            logger.info(
+                "%s aimed inside the line at %s; dropping at %s", _reads(step), points[0], spot
+            )
         if step.act == "siege":
-            self._drop_at(row.machine, points[0] if points else middle)
+            self._drop_at(row.machine, spot)
         elif step.act == "hero":
             # `who` names the hero for the log and for the prompt to reason
             # with; which card it is comes from the row order, because nothing
@@ -2100,7 +2181,7 @@ class AttackRunner(ScreenRunner):
             # battle. Measured live on a row of three: `1 of 2 one-off card(s)
             # never landed` where the army carried four.
             wanted = list(self._unsent) if step.who == "unknown" else self._unsent[:1]
-            self._drop_at(wanted, points[0] if points else middle)
+            self._drop_at(wanted, spot)
             # Which card each named hero went to, so its own `ability` step can
             # find it again. Nothing on the row says who is on which card, so
             # this record is the only link between the two.

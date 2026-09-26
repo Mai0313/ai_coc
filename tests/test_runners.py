@@ -8,8 +8,10 @@ tap follows which reading, and what each report says.
 
 from __future__ import annotations
 
+import math
 from pathlib import Path
 import unittest
+import itertools
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -53,9 +55,11 @@ from ai_coc.ui.attack import (
     LINE_POINTS,
     DEPLOY_LINES,
     HOME_ATTEMPTS,
+    SCREEN_CENTRE,
     SEARCH_CANCEL,
     DROPS_PER_PASS,
     AttackRunner,
+    onto_line,
     deploy_line,
 )
 from ai_coc.ui.runner import GameRunner, ScreenRunner
@@ -1620,6 +1624,41 @@ class DeploymentTests(unittest.TestCase):
         # freeze card holding three against the two it was given.
         assert len(cast.call_args_list[0].args[1]) == 2
         assert len(cast.call_args_list[1].args[1]) == 2
+
+    def test_a_hero_aimed_inside_the_troops_line_goes_down_on_it(self) -> None:
+        """The planner copies the prompt's base line; the troops go down on the boundary.
+
+        A spot nearer the village than that line is refused ground, and the retry
+        sends every refused card to one shared spot seconds later.
+        """
+        line = deploy_line(LINE_POINTS, *DEPLOY_LINES["top_left"])
+        mid = line[len(line) // 2]
+        inside, outside = (mid[0] + 50, mid[1] + 30), (mid[0] - 50, mid[1] - 30)
+        moved = onto_line(inside, line, SCREEN_CENTRE)
+        assert moved != inside
+        assert min(attack._gap(moved, a, b) for a, b in itertools.pairwise(line)) < 1
+        assert onto_line(outside, line, SCREEN_CENTRE) == outside
+        # Square across the line's middle, towards the village: close enough to
+        # be on it already, far enough to be meant for somewhere else.
+        (ax, ay), (bx, by) = DEPLOY_LINES["top_left"]
+        span = math.dist((ax, ay), (bx, by))
+        towards = ((by - ay) / span, (ax - bx) / span)
+        for depth in (5, 200):
+            aimed = (round(mid[0] + towards[0] * depth), round(mid[1] + towards[1] * depth))
+            assert onto_line(aimed, line, SCREEN_CENTRE) == aimed
+        # Facing a bend between two legs, which projects just off the end of both.
+        assert onto_line((340, 390), line, SCREEN_CENTRE) != (340, 390)
+        # Past the end of the line is where the heroes clearing the outside go,
+        # and by distance from the middle this one reads as 46 px inside.
+        assert onto_line((700, 110), line, SCREEN_CENTRE) == (700, 110)
+        # Another flank altogether is the planner meaning somewhere else.
+        assert onto_line((1100, 300), line, SCREEN_CENTRE) == (1100, 300)
+
+        runner = self._runner()
+        row = self._row()
+        with patch.object(runner, "_drop_at") as dropped:
+            runner._act(_step("hero", (inside[0] / 16, inside[1] / 9)), row, line)
+        assert dropped.call_args.args[1] == onto_line(inside, line, SCREEN_CENTRE)
 
     def test_a_freeze_card_spends_its_bottles_on_separate_points(self) -> None:
         """One card holds three, and slicing to the card count stacked all three.
