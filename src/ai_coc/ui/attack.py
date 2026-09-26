@@ -1974,13 +1974,14 @@ class AttackRunner(ScreenRunner):
             len(spells),
             len(plan.steps),
         )
-        # Nothing can be placed while the scout countdown is still running, and a
-        # tap the game ignores raises nothing at all, so probing then drains no
-        # card and every flank in turn reads as one the village has grown over.
-        # With Gemini in the loop the planning call happens to outlast the
-        # countdown, which is what has been hiding this; without a key `_plan`
-        # returns at once and the run would probe into the countdown every time.
-        battle = self._wait_for_battle()
+        # **The countdown is not waited out**: a drop during it starts the battle
+        # there and then, and the boundary is already drawn. Measured 2026-09-26,
+        # a siege machine put down with 8 秒 left had the battle clock at
+        # 2分鐘59秒 1.8 s later, and `fitted_line` answered the same line off the
+        # last countdown frame as off the first battle frame. Waiting cost the
+        # rest of the 30 s every round, 14 s when the plan came back in 12. This
+        # used to say nothing could be placed then, from a run with no key.
+        battle = self._frame("battle")
         # `_flank` bends the plan's own line onto the boundary the game draws,
         # and the tactic is played against whatever comes back.
         anchors = self._flank(battle, plan)
