@@ -28,7 +28,7 @@ uv run ai_coc world --go day --agent <名字> --session <session id> --mission "
 uv run ai_coc attack --repeat 0 --record --agent <名字> --session <session id> --mission "打日世界資源"
 ```
 
-**每一個 `ai_coc` 指令都帶 `--agent`、`--session`、`--mission`**, 其他 skill 裡寫的指令也一樣: 你自己的名字 (`claude-code`、`antigravity`、`codex`), 你自己的 session id, 這一趟在做什麼 (一句話). 它們寫進 `state.json` 的 `caller` 跟這次 `run.log` 的第二行, 別的 session 才查得到是誰在開模擬器. 旗標是選填的, 那是留給使用者手動打指令; agent 一律要帶, 沒帶的話 log 會留一行 warning.
+**每一個 `ai_coc` 指令都帶 `--agent`、`--session`、`--mission`**, 其他 skill 裡寫的指令也一樣: 你自己的名字 (`claude-code`、`antigravity`、`codex`), 你自己的 session id, 這一趟在做什麼 (一句話). 每個指令都把它們寫進自己 `run.log` 的第二行; 會佔用模擬器的指令還會寫進 `state.json` 的 `caller`, 所以那裡記的永遠是開始這一輪的人, 而 `stop` 是誰下的要去翻 `*-stop` 那幾個執行目錄. 別的 session 就是靠這些查出是誰在開模擬器. 旗標是選填的, 那是留給使用者手動打指令; agent 一律要帶, 沒帶的話 log 會留一行 warning.
 
 **先切到要打的村莊, 再開.** `attack` 打的是遊戲當下停著的村莊, 遊戲會開在上次離開的那一個, 而沒有指令會自己坐船. `world --go` 沒切成就不要開 `attack`. 夜世界是 `world --go night`, 前景跑.
 

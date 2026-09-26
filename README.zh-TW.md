@@ -139,6 +139,7 @@ ai_coc launch --restart emulator      # 連模擬器一起重開, 再把遊戲�
 ```bash
 ai_coc capture --count 30             # 從活著的遊戲連續抓畫面,存進這次執行自己的資料夾
 ai_coc <任何指令> --label baseline    # 給這次的資料夾取名字,之後找得回來
+ai_coc <任何指令> --agent codex --session <id> --mission "打資源"  # 誰叫的; agent 一律要帶, 沒帶會在 log 留 warning
 ai_coc read shot.png                  # 每個判讀器從這張圖讀到什麼
 ai_coc export                         # 從遊戲裡取出整個村莊,對照過名稱,吐 JSON
 ai_coc export --table                 # 同一份東西,畫成表格給人看
@@ -221,7 +222,7 @@ ai_coc attack                         # 打遊戲當下所在的那個村莊
 
 大招與法術的秒數不在這裡了。以前它是一張按英雄寫死的表, 而要填那張表, 就得在沒看過村莊的情況下猜軍隊要走多久 —— 那是規劃那一步的事, 而它是看著村莊做的。現在每一個時鐘都寫在計畫裡: 形狀看 `plans/flat.json`, 要重播一份就用 `--plan`。
 
-其他東西都放在 `~/.ai_coc`: `ai_coc export` 存下的帳號 JSON、每次執行的 log、DPAPI 保護的金鑰檔, 還有 `state.json` —— 現在是哪個指令在驅動模擬器、它的 pid 跟 log 目錄。跑完之後不會刪掉, 所以那份記錄說的是上一次跑的是什麼, 而不是變成空的; 手動刪掉它等於請那次執行收工, 那是「開這輪的東西已經不在了」的時候唯一的出路。
+其他東西都放在 `~/.ai_coc`: `ai_coc export` 存下的帳號 JSON、每次執行的 log、DPAPI 保護的金鑰檔, 還有 `state.json` —— 現在是哪個指令在驅動模擬器、它的 pid、log 目錄, 還有是誰開的 (`--agent`、`--session`、`--mission`, 或 `window`)。跑完之後不會刪掉, 所以那份記錄說的是上一次跑的是什麼, 而不是變成空的; 手動刪掉它等於請那次執行收工, 那是「開這輪的東西已經不在了」的時候唯一的出路。
 
 ## 🤝 參與貢獻
 
