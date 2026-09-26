@@ -49,8 +49,7 @@ from ai_coc.models import (
 from ai_coc.constants import LOG_DIR, APP_NAME, COC_PACKAGE, VERSION_LABEL, DEFAULT_GEMINI_MODEL
 from ai_coc.adapters.ai import GeminiClient
 from ai_coc.logging_setup import configure_logging
-from ai_coc.adapters.config import ConfigStore
-from ai_coc.adapters.secrets import SecretStore
+from ai_coc.adapters.config import ConfigStore, gemini_key
 
 from .workers import Worker, LogBridge, UiLogHandler
 
@@ -94,7 +93,6 @@ class MainWindow(QMainWindow):
         self.setWindowTitle(f"{APP_NAME} — {VERSION_LABEL}")
         self.resize(1260, 820)
         self.pool = QThreadPool.globalInstance()
-        self.secrets = SecretStore()
         self.config = ConfigStore().load()
         # Every instance of every emulator installed here, each with the adapter
         # that runs it, and the one the picker has on.
@@ -751,7 +749,7 @@ class MainWindow(QMainWindow):
         self.provider_combo.addItem("Google Gemini")
         self.api_key = QLineEdit()
         self.api_key.setEchoMode(QLineEdit.Password)
-        self.api_key.setPlaceholderText("Stored with Windows DPAPI")
+        self.api_key.setPlaceholderText("存在 ~/.ai_coc/config.json")
         self.model_combo = QComboBox()
         self.model_combo.addItem(self.config.gemini.main.model or DEFAULT_GEMINI_MODEL)
         self.model_combo.setToolTip("按「測試連線並載入模型」後會列出這把金鑰可用的文字模型")
@@ -767,10 +765,7 @@ class MainWindow(QMainWindow):
         self.thinking_combo.setToolTip(
             "模型回答前思考多久。進攻計畫是看圖判讀,low 已經夠用而且快得多"
         )
-        try:
-            self.api_key.setText(self.secrets.load())
-        except Exception:
-            logger.debug("Unable to load the saved API key", exc_info=True)
+        self.api_key.setText(gemini_key(self.config))
         form.addRow("Provider", self.provider_combo)
         form.addRow("API Key", self.api_key)
         form.addRow("Model", self.model_combo)
@@ -1039,27 +1034,27 @@ class MainWindow(QMainWindow):
 
     def save_api(self) -> None:
         try:
-            self.secrets.save(self.api_key.text())
             # Only the main tier is on this tab; the lite one has no picker
             # because nothing about it is a judgement call the user makes.
             self._save_config(
                 gemini=self.config.gemini.model_copy(
                     update={
+                        "api_key": self.api_key.text(),
                         "main": GeminiSetting(
                             model=self.model_combo.currentText(),
                             base_url=self.endpoint.text(),
                             thinking_level=self.thinking_combo.currentText(),
-                        )
+                        ),
                     }
                 )
             )
             logger.info("Saved API settings, model=%s", self.model_combo.currentText())
-            QMessageBox.information(self, "Saved", "API Key 已使用 Windows DPAPI 儲存。")
+            QMessageBox.information(self, "Saved", "API Key 已存到 config.json。")
         except Exception as exc:
             self._error("Save API Key", str(exc))
 
     def clear_api(self) -> None:
-        self.secrets.clear()
+        self._save_config(gemini=ConfigStore().load().gemini.model_copy(update={"api_key": ""}))
         self.api_key.clear()
         QMessageBox.information(self, "Cleared", "API Key 已清除。")
 

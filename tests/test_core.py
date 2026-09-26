@@ -180,9 +180,8 @@ from ai_coc.parsers.scout import (
 from ai_coc.parsers.world import info_badges, current_world
 from ai_coc.parsers.glyphs import ink_mask, digits_from, split_numbers
 from ai_coc.ui.main_window import LIVE_INTERVAL, MainWindow
-from ai_coc.adapters.config import ConfigStore
+from ai_coc.adapters.config import ConfigStore, dotenv_value
 from ai_coc.parsers.village import parse_village, parse_village_text
-from ai_coc.adapters.secrets import dotenv_value
 from ai_coc.parsers.boundary import DEPLOY_BOUND, fitted_line, village_box, boundary_reach
 from ai_coc.parsers.building import (
     PRICE_TOLERANCE,
@@ -2460,6 +2459,24 @@ class ConfigTests(unittest.TestCase):
         assert not saved.live_view
         assert not saved.record_frames
         assert saved.cycle_minutes == 30
+
+    def test_clearing_the_key_takes_it_off_the_disk_and_nothing_else(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            store = ConfigStore(path=Path(td) / "config.json")
+            on_disk = GeminiSettings(
+                api_key="AQ.saved", lite=GeminiSetting(model="edited-by-hand")
+            )
+            store.save(AppConfig(gemini=on_disk))
+            window = MagicMock()
+            window.config = AppConfig()
+            window._save_config = lambda **changes: MainWindow._save_config(window, **changes)
+            with (
+                patch("ai_coc.ui.main_window.ConfigStore", lambda: store),
+                patch("ai_coc.ui.main_window.QMessageBox"),
+            ):
+                MainWindow.clear_api(window)
+            written = store.load().gemini
+        assert written == on_disk.model_copy(update={"api_key": ""})
 
     def test_the_settings_scratch_file_belongs_to_one_process(self) -> None:
         """A worker thread reads this file while the window writes it, and
@@ -7014,14 +7031,6 @@ class GeminiTierTests(unittest.TestCase):
         """The whole point of a second tier is that it is a different model."""
         assert AppConfig().gemini.lite.model == DEFAULT_LITE_MODEL
         assert AppConfig().gemini.main.model != DEFAULT_LITE_MODEL
-
-    def test_the_key_has_nowhere_to_live_in_the_settings_file(self) -> None:
-        """`ConfigStore.save` writes every field of every nested model, so a key
-        field here would put an empty slot in a plaintext file — beside the DPAPI
-        store built to keep it out of one. The client carries it instead.
-        """
-        assert "api_key" not in AppConfig().model_dump_json()
-        assert "api_key" not in GeminiSetting.model_fields
 
 
 class BuildingNameTests(unittest.TestCase):

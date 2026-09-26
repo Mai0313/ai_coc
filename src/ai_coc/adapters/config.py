@@ -1,4 +1,4 @@
-"""The one settings file, beside the key store the window and the terminal already share."""
+"""The one settings file the window and the terminal share."""
 
 from __future__ import annotations
 
@@ -10,6 +10,29 @@ from pydantic import Field, BaseModel
 
 from ai_coc.models import AppConfig
 from ai_coc.constants import data_root
+
+# Development fallback for a machine with no key saved yet. Never written to,
+# and always outranked by a key saved in the settings file.
+ENV_VAR = "GEMINI_API_KEY"
+DOTENV_PATH = Path(".env")
+
+
+def dotenv_value(name: str, path: Path = DOTENV_PATH) -> str:
+    """One value out of a .env file, so a checkout can run without saving a key first."""
+    if not path.is_file():
+        return ""
+    for line in path.read_text(encoding="utf-8").splitlines():
+        key, separator, value = line.partition("=")
+        if separator and key.strip() == name:
+            # Quoting a value is ordinary .env syntax, and the quotes are not
+            # part of the key: left on, they only surface as a failed request.
+            return value.strip().strip("\"'")
+    return ""
+
+
+def gemini_key(config: AppConfig) -> str:
+    """The saved key, or the development fallback when nothing has been saved."""
+    return config.gemini.api_key or os.environ.get(ENV_VAR, "") or dotenv_value(ENV_VAR)
 
 
 class ConfigStore(BaseModel):
