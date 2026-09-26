@@ -176,7 +176,7 @@
 
 ## 出兵太慢
 
-整支軍隊該在**兩秒左右**下完, 過程中什麼都不讀 (一次判讀 0.9 秒), 順序全由 plan 決定. 看 `_play_tactic`, `_act`; 落地後那次判讀是 `_settle_drops`, 躲在第一個夠長的 `wait` 裡 (`CHECK_BUDGET`). `DROP_SETTLE` / `HERO_SETTLE` 只有重試用; `TAP_GAP` 住在 `adapters/adb.py`. 改前改後的秒數在 `AGENTS.md` 搜 `7 seconds`.
+整支軍隊該在**兩秒左右**下完, 過程中什麼都不讀 (一次判讀 0.9 秒), 順序全由 plan 決定. 看 `_play_tactic`, `_act`; 落地後那次判讀是 `_settle_drops`, 躲在第一個夠長的 `wait` 裡 (`CHECK_BUDGET`), 截圖之前先讓最後一個投下的英雄等滿 `HERO_SETTLE` 把血條畫出來 (太早讀會把落地的英雄判成沒下去, 重點卡片就是放技能). `DROP_SETTLE` 只有重試用; `TAP_GAP` 住在 `adapters/adb.py`. 改前改後的秒數在 `AGENTS.md` 搜 `7 seconds`.
 
 ## 一張卡的兵全堆在一起, 或者某張卡點個不停
 

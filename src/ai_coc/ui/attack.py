@@ -263,14 +263,15 @@ NUDGE_ATTEMPTS = 8
 NUDGE_REACH = 1.0
 
 # How long a pause has to be before the loop will spend a frame inside it. A
-# capture and its decode are about 0.9 s, so a shorter wait than this would be
-# overrun by the very check it was hiding — and a check that pushes the next
-# step late is the thing steps exist to avoid. Everything that needs a frame
-# waits for a pause this long: the one reading of what the burst landed, and
-# whether there is still a battle to play into. Some card slots sit exactly
-# where the result screen draws 回營, so a tactic still tapping after a battle
-# has ended is one walking itself out of the village.
-CHECK_BUDGET = 2
+# capture and its decode are about 0.9 s, and the reading of what the burst
+# landed first gives the last drop `HERO_SETTLE`, 2.4 s together, so a shorter
+# wait than this would be overrun by the very check it was hiding — and a check
+# that pushes the next step late is the thing steps exist to avoid. Everything
+# that needs a frame waits for a pause this long: the one reading of what the
+# burst landed, and whether there is still a battle to play into. Some card
+# slots sit exactly where the result screen draws 回營, so a tactic still
+# tapping after a battle has ended is one walking itself out of the village.
+CHECK_BUDGET = 2.5
 
 # Between selecting a one-off card and placing what it holds, and it is now
 # nothing. It was 0.6, then 0.15 on a live burst that put the siege machine and
@@ -922,6 +923,9 @@ class AttackRunner(ScreenRunner):
     # signature carrying its own bookkeeping is one nobody can read.
     _sending: dict[int, tuple[int, int]] = PrivateAttr(default_factory=dict)
     _unsent: list[int] = PrivateAttr(default_factory=list)
+    # When the last of those went down, which is what `_settle_drops` waits on
+    # before it reads the health bars.
+    _sent_at: float = PrivateAttr(default=0.0)
     # Cards the game really put something on the field for, which is a different
     # question from `_sending` and outlives it: that one is emptied by every
     # reading, and an `ability` step after one still has to know which heroes
@@ -2152,6 +2156,7 @@ class AttackRunner(ScreenRunner):
             gap=SINGLE_DROP_DELAY,
         )
         self._sending.update(dict.fromkeys(cards, spot))
+        self._sent_at = time.monotonic()
 
     def _pour(self, troops: list[int], line: list[tuple[int, int]], frame: bytes) -> None:
         """Empty every troop card along the line, one card at a time, reading nothing.
@@ -2181,7 +2186,19 @@ class AttackRunner(ScreenRunner):
         A whole row of troops still holding something is the line rather than
         the taps: `_spread_troops` answers that by pushing the flank further out,
         which is the backstop that was always underneath the probing.
+
+        **The bars are given `HERO_SETTLE` from the last drop before anything
+        reads them.** This used to capture the moment the pause began, which on
+        a tactic reading `hero … → wait` is a fraction of a second after the
+        hero went down. Measured on the first two rounds of one recorded run,
+        both times a hero that had landed — the queen with her cloak already
+        running, then the warden mid-landing — carried no bar on that frame and
+        one on the next, taken a second later before anything was tapped. The
+        retry that followed tapped the warden's card, which spent his tome
+        eight seconds in where the plan held it for thirty-five. The wait comes
+        out of the pause the reading already sits in.
         """
+        time.sleep(max(0.0, self._sent_at + HERO_SETTLE - time.monotonic()))
         after = self._frame("settled")
         sent = list(self._sending)
         # Emptied here rather than by the caller, because that is what makes a
