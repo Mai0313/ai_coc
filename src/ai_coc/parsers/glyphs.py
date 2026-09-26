@@ -98,7 +98,7 @@ def ink_mask(
     return mask
 
 
-def _patches(mask: list[list[bool]]) -> Iterator[list[tuple[int, int]]]:
+def ink_patches(mask: list[list[bool]]) -> Iterator[list[tuple[int, int]]]:
     """Every 8-connected patch of ink in a mask, as the cells it holds.
 
     Not `parsers.regions.patches`, which is the other connected-component scan
@@ -148,7 +148,7 @@ def glyph_columns(mask: list[list[bool]], *, speckle: bool = True) -> list[tuple
     """
     kept = [row.copy() for row in mask]
     if speckle:
-        for cells in _patches(mask):
+        for cells in ink_patches(mask):
             rows = [y for y, _ in cells]
             if max(rows) - min(rows) + 1 >= SPECKLE_ROWS:
                 continue

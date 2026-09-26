@@ -35,7 +35,14 @@ from ai_coc.parsers.world import ROW_LEFT_SPLIT, SHIELD_BADGE_LEFT, info_badges,
 # The digit reader and the mask it wants; nothing here is worth a second copy of
 # either. It used to be reached for through `parsers.scout`, by private name,
 # because that is where it happened to have been written.
-from ai_coc.parsers.glyphs import nearest, ink_mask, signature, glyph_columns, split_numbers
+from ai_coc.parsers.glyphs import (
+    nearest,
+    ink_mask,
+    signature,
+    ink_patches,
+    glyph_columns,
+    split_numbers,
+)
 from ai_coc.parsers.regions import mask, patches
 
 if TYPE_CHECKING:
@@ -160,6 +167,17 @@ SHIELD_DIGITS = (35, 33, 145, 66)
 # past the badge, which is everything above the digits' tops: at eight rows the
 # 3 still read 26 against a tolerance of 25, at nine it reads 18.
 SHIELD_RIM = (52, 9)
+# Below the digits' tops the rim is a patch of its own, and it only shows when a
+# shorter countdown sits further right and leaves it bare between the first
+# digit and 小; column spans then fuse all three into a shape nothing matches.
+# Over the 23 home village frames of one recorded night, 3小時 26分, 45分 and 53分
+# among them, and the committed frames with the plate, every patch this clears
+# was 1 to 4 px wide and 1 to 12 rows tall. A 1 is 7 wide and only 5 on most of
+# its rows, so the width alone leaves one pixel; what keeps a 1 is its height,
+# 18 rows or more like every digit, and a digit the box cut into a sliver keeps
+# the height of the digit. Taking either would read 12小時 as 2小時.
+SHIELD_RIM_WIDTH = 5
+SHIELD_RIM_ROWS = 15
 # How tall a leading fragment can be and still be a leftover of that rim rather
 # than part of a character. Every rim leftover on the plates on record is one row
 # tall; a digit stands 18 to 24, and a sliver of one that the box cut stays that
@@ -167,7 +185,8 @@ SHIELD_RIM = (52, 9)
 SHIELD_SCRAP_ROWS = 10
 # 無 against a countdown, by how many glyphs are written rather than by matching
 # the character: swept over every committed frame with the plate on it, 無 comes
-# out as two and a countdown as six or more.
+# out as one, once `_clear_rim` has taken the stub of rim it was counted with,
+# and a countdown as six or more.
 SHIELD_GLYPHS = 4
 
 
@@ -670,6 +689,20 @@ def _rows(ink: list[list[bool]], span: tuple[int, int]) -> int:
     return rows[-1] - rows[0] + 1 if rows else 0
 
 
+def _clear_rim(ink: list[list[bool]]) -> None:
+    """Clear, in place, the stretch of the icon's rim a short countdown leaves bare."""
+    reach = SHIELD_RIM[0] - SHIELD_DIGITS[0]
+    for cells in list(ink_patches(ink)):
+        xs, ys = [x for _, x in cells], [y for y, _ in cells]
+        if (
+            max(xs) < reach
+            and max(xs) - min(xs) + 1 < SHIELD_RIM_WIDTH
+            and max(ys) - min(ys) + 1 < SHIELD_RIM_ROWS
+        ):
+            for y, x in cells:
+                ink[y][x] = False
+
+
 def shield_state(png: bytes, centre: int) -> ShieldState | None:
     """What the shield plate says, or None where this frame will not resolve it.
 
@@ -677,7 +710,7 @@ def shield_state(png: bytes, centre: int) -> ShieldState | None:
     the same templates as a panel row — or 無 when nothing is protecting the
     village. **Those are told apart by how much is written there rather than by
     reading any of it**: swept over every committed frame carrying the plate, 無
-    comes out as two glyphs and a countdown as six or more, so the line goes
+    comes out as one glyph and a countdown as six or more, so the line goes
     between at four. Nothing here matches the character itself, which would be
     one more Chinese template to keep.
 
@@ -696,11 +729,16 @@ def shield_state(png: bytes, centre: int) -> ShieldState | None:
     from a raid starts at, runs further left still, and nothing on record says
     where. If its leading 1 falls wholly left of the box the plate reads ten
     hours short, as it always did; a sliver of it in the box is caught above.
+    Also still None on the night `SHIELD_RIM_WIDTH` was measured on: five frames
+    whose first digit will not match for other reasons, four of them 4小時 and
+    one of those a 4 fused with a line drawn under it, and one whose 小 fell
+    apart into two spans, so the unit after the hours never matched.
     """
     ink = ink_mask(open_frame(png).crop(shield_box(centre)))
     for row in ink[: SHIELD_RIM[1]]:
         for x in range(SHIELD_RIM[0] - SHIELD_DIGITS[0]):
             row[x] = False
+    _clear_rim(ink)
     columns = glyph_columns(ink, speckle=False)
     if len(columns) < SHIELD_GLYPHS:
         return ShieldState()
