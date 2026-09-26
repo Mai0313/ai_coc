@@ -10,13 +10,14 @@ A Windows-only PyQt5 desktop app that drives Clash of Clans inside MuMu Player 1
 
 ## Driving the game
 
-Five skills under `.agents/skills/` own the judgement of driving the game, and they are the only copy of those rules; a rule written here as well would drift.
+Six skills under `.agents/skills/` own the judgement of driving the game, and they are the only copy of those rules; a rule written here as well would drift.
 
 - **`farm`** — run the loops on both villages and judge them. By default `stock_full` ends the run with a report; the loot is spent only when the user asked for that.
 - **`spend-loot`** — walls, buildings and heroes, once the user asked; walls must be named even then.
 - **`watch-and-fix`** — farm and watch the same run, fix whatever breaks between launching the game and landing back on the village, and take the fix through to a merged PR.
 - **`build-feature`** — find what the game still does by hand, and automate it.
 - **`watch-upgrades`** — read the builder, laboratory and shield timers, and come back when they run out.
+- **`repair-emulator`** — bring the emulator itself back when it will not come up, without changing code, and hand it to the user when it cannot be fixed from here.
 
 `.agents/skills/farm/references/running.md` owns the mechanics the skills that run a loop share: which commands run in the background, why a subagent blocks instead, what `result.json` holds, how a loop is stopped and when that is safe.
 
@@ -304,10 +305,11 @@ The game writes the whole village out as JSON from 設定 → 更多設定 → t
 - **Never invent master data.** What an upgrade costs, how long it takes and what it requires stay unknown until a value is source-backed, and the UI shows `—` rather than a guess.
 - **`docs/` is generated and gitignored**, rebuilt from the three READMEs and the source by `make gen-docs`. Edit the READMEs and the docstrings, never the output.
 - **`AGENTS.md` is a symlink to this file.** A hand-kept copy drifted thirteen PRs behind; do not replace the link with a file.
-- **A change that outdates a project skill updates that skill in the same PR.** Before opening the PR, grep the five skills for whatever was renamed, moved or reversed, and mention new capabilities they should know about.
+- **A change that outdates a project skill updates that skill in the same PR.** Before opening the PR, grep the six skills for whatever was renamed, moved or reversed, and mention new capabilities they should know about.
 - **This file gets rules, not measurement records.** How a threshold was measured, what the previous value cost and which alternative was rejected go in the comment beside the constant (or the test that pins it). A paragraph here earns its place only as a rule an agent must follow, an invariant that spans files, or a known defect nobody has fixed; a number here is the evidence for one of those, or one a skill points at, not a record of its own. It grew from 7 KB to 235 KB between 2026-08-22 and 2026-09-25, mostly by restating those comments.
 - **UI strings, prompts and user-facing messages are Traditional Chinese**; code, comments, commit messages and anything published to GitHub are English.
 - **Send the user every image you look at.** They cannot see your tool output, and a path they have to open themselves is one they will not open.
+- **Debug from the screen, not from the log.** A failure that depends on what the game or the emulator was showing is settled by frames of it (`--record`, `ai_coc capture`, or `repair-emulator`'s `look.py` when the emulator is the suspect), not reconstructed from `run.log` or logcat. The user asked for this on 2026-09-26, after a launch failure was chased through logcat instead of looked at.
 - **Deliberate deviations from the repo template**, documented in `pyproject.toml`: the coverage gate is `--cov-fail-under=75` rather than 80, because `ui/main_window.py` is the untested PyQt shell; `[tool.ty.environment] python-platform = "win32"` so `winreg` and `ctypes.windll` resolve on Linux; ty excludes `cli.py`, `ui/main_window.py` and `ui/workers.py` for PyQt5's inaccurate stubs; `allowed-confusables` carries `／` and `？`; `check-added-large-files` excludes `tests/frames/`, whose exact pixel values are the measurement; the sdist ships no `tests/`, because the frames carry a live account's player and clan names; `build_release.yml`'s build matrix and `test.yml` run on Windows only. **`test.yml` has to be Windows**: on Linux `test_core.py` cannot import (`adapters/mumu.py` imports `winreg`), and a suite that cannot import looks exactly like one that passes. The test step also runs under `shell: bash`, whose `pipefail` keeps `uv run pytest | tee` from reporting `tee`'s exit code. `code-quality-check.yml` stays on Linux, since ruff and ty read the source rather than import it.
 - **The version is never written down.** `constants.py` reads it from the installed package metadata, which CI derives from the git tag through `dunamai`. The `0.1.0` in `pyproject.toml` is a placeholder CI overwrites; do not hand-edit a version anywhere, `version_info.txt` included.
 - **The PyInstaller step needs `--copy-metadata`** for the version lookup and one `--add-data` line each for `prompts/` and `plans/`, in `build_release.yml`; a missing data line raises the first time it is loaded.
