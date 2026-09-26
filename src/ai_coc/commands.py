@@ -118,10 +118,9 @@ from ai_coc.parsers.scout import (
     searching_opponent,
 )
 from ai_coc.parsers.world import current_world
-from ai_coc.adapters.config import ConfigStore
+from ai_coc.adapters.config import ConfigStore, gemini_key
 from ai_coc.parsers.village import parse_village_text
 from ai_coc.adapters.mapping import fetch_entity_mapping
-from ai_coc.adapters.secrets import SecretStore
 from ai_coc.parsers.boundary import PLAYFIELD, VILLAGE_CENTRE, village_box, boundary_reach
 from ai_coc.parsers.building import wall_menu, game_dialog, upgrade_sheet, upgrade_buttons
 from ai_coc.parsers.settings import export_row, settings_open, more_settings_open
@@ -326,11 +325,7 @@ def _planner(config: AppConfig, tier: Literal["main", "lite"] = "main") -> Gemin
     sweep, and the building namer leaves the name unread. That is what keeps a
     run with no key working exactly as it did before any of this existed.
     """
-    try:
-        key = SecretStore().load()
-    except Exception:
-        logger.warning("No saved API key could be read", exc_info=True)
-        return None
+    key = gemini_key(config)
     if not key:
         logger.info("No API key is saved; the loops will fall back to reading the screen alone")
         return None

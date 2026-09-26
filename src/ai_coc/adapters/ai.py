@@ -40,9 +40,8 @@ NON_TEXT_MODEL_TAGS = (
 class GeminiClient(BaseModel):
     """The single place the application talks to Gemini, through google-genai."""
 
-    # Its own field rather than part of `settings`, because the two come from
-    # different places and only one of them may be written down: the settings are
-    # the plaintext config file and the key is the DPAPI store.
+    # Its own field rather than part of `settings`, because `settings` is one
+    # tier and the key serves both.
     api_key: str = ""
     settings: GeminiSetting
 

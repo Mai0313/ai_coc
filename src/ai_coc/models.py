@@ -807,14 +807,7 @@ class AttackStep(BaseModel):
 
 
 class GeminiSetting(BaseModel):
-    """Which model to send one kind of call to, and how to reach it.
-
-    **No `api_key`, deliberately.** This is what the plaintext config file holds,
-    and the key lives in the DPAPI store precisely so it is not in a file anyone
-    can read. A field here would serialise as an empty string on every save — a
-    slot that looks like the place to put your key, sitting beside the store
-    built to keep it out. `GeminiClient` takes the key as its own field instead.
-    """
+    """Which model to send one kind of call to, and how to reach it."""
 
     model: str = DEFAULT_GEMINI_MODEL
     base_url: str = ""
@@ -836,6 +829,9 @@ class GeminiSettings(BaseModel):
     a scar from a settings key that outlived what it configured.
     """
 
+    # One key for both tiers, in plain text, because an OS key store tied the
+    # app to one OS.
+    api_key: str = ""
     main: GeminiSetting = GeminiSetting()
     lite: GeminiSetting = GeminiSetting(model=DEFAULT_LITE_MODEL)
 

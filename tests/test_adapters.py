@@ -2,14 +2,13 @@
 
 Every call that would reach a real device is patched at the subprocess or
 adbutils seam, and the canned text it is fed is the shape the real tools
-print. The DPAPI round trip is the one exception: it runs against the real
+print. The clipboard round trip is the one exception: it runs against the real
 API, on the one platform this project runs on.
 """
 
 from __future__ import annotations
 
 import os
-import sys
 import base64
 import ctypes
 from ctypes import wintypes
@@ -22,20 +21,21 @@ from unittest.mock import MagicMock, call, patch
 import pytest
 
 from ai_coc.models import (
+    AppConfig,
     TouchNode,
     AdbEndpoint,
     DisplayTarget,
+    GeminiSettings,
     EmulatorInstance,
     MuMuInstanceTable,
 )
 from ai_coc.adapters import adb as adb_module
-from ai_coc.adapters import mapping, secrets, clipboard
+from ai_coc.adapters import config, mapping, clipboard
 from ai_coc.adapters import emulator as emulator_module
 from ai_coc.adapters import ldplayer as ldplayer_module
 from ai_coc.constants import COC_PACKAGE
 from ai_coc.adapters.adb import AdbController, AdbControlError
 from ai_coc.adapters.mumu import MuMuAdapter
-from ai_coc.adapters.secrets import SecretStore
 from ai_coc.adapters.emulator import EmulatorError
 from ai_coc.adapters.ldplayer import LDPlayerAdapter
 
@@ -756,37 +756,25 @@ class LDPlayerAdapterTests(unittest.TestCase):
         assert self.ld.serial_of(_instance(adb_serial="127.0.0.1:5555")) == "127.0.0.1:5555"
 
 
-@unittest.skipUnless(sys.platform == "win32", "DPAPI is a Windows API")
-class SecretStoreTests(unittest.TestCase):
-    def test_a_key_round_trips_through_dpapi_without_being_written_in_clear(self) -> None:
-        with tempfile.TemporaryDirectory() as folder:
-            store = SecretStore(path=Path(folder) / "gemini.key.dpapi")
-            store.save("AQ.secret-key")
-            assert b"AQ.secret-key" not in store.path.read_bytes()
-            assert store.load() == "AQ.secret-key"
-            store.clear()
-            assert not store.path.exists()
-            # Clearing twice is not an error.
-            store.clear()
-
-    def test_nothing_saved_falls_back_to_the_environment_and_then_the_dotenv(self) -> None:
-        with tempfile.TemporaryDirectory() as folder:
-            store = SecretStore(path=Path(folder) / "absent")
-            with (
-                patch.dict(os.environ, {"GEMINI_API_KEY": "from-env"}),
-                patch.object(secrets, "dotenv_value", return_value="from-file"),
-            ):
-                assert store.load() == "from-env"
-            with (
-                patch.dict(os.environ, {}, clear=True),
-                patch.object(secrets, "dotenv_value", return_value="from-file"),
-            ):
-                assert store.load() == "from-file"
-            with (
-                patch.dict(os.environ, {}, clear=True),
-                patch.object(secrets, "dotenv_value", return_value=""),
-            ):
-                assert store.load() == ""
+class GeminiKeyTests(unittest.TestCase):
+    def test_a_saved_key_outranks_the_environment_which_outranks_the_dotenv(self) -> None:
+        saved = AppConfig(gemini=GeminiSettings(api_key="from-config"))
+        with (
+            patch.dict(os.environ, {"GEMINI_API_KEY": "from-env"}),
+            patch.object(config, "dotenv_value", return_value="from-file"),
+        ):
+            assert config.gemini_key(saved) == "from-config"
+            assert config.gemini_key(AppConfig()) == "from-env"
+        with (
+            patch.dict(os.environ, {}, clear=True),
+            patch.object(config, "dotenv_value", return_value="from-file"),
+        ):
+            assert config.gemini_key(AppConfig()) == "from-file"
+        with (
+            patch.dict(os.environ, {}, clear=True),
+            patch.object(config, "dotenv_value", return_value=""),
+        ):
+            assert config.gemini_key(AppConfig()) == ""
 
 
 class EntityMappingDownloadTests(unittest.TestCase):
@@ -822,7 +810,7 @@ class EntityMappingDownloadTests(unittest.TestCase):
 
 
 class ClipboardTests(unittest.TestCase):
-    """Against the real Windows clipboard, like the DPAPI round trip above.
+    """Against the real Windows clipboard.
 
     This is where the game's village export arrives: the copy button writes to
     the Android clipboard and MuMu mirrors it here, `cmd clipboard get` having
