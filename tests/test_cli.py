@@ -215,11 +215,15 @@ class DispatchTests(unittest.TestCase):
             _answer(_args("launch", "--restart", "game"), self.run)
             _answer(_args("launch"), self.run)
         viewed.assert_called_once_with("in", 2)
-        assert [call.args for call in asked.call_args_list] == [("day",), (None,)]
+        # Both keep the frame no village read on; neither has a `--record` to ask for it.
+        assert [call.args for call in asked.call_args_list] == [
+            ("day", self.run.no_village),
+            (None, self.run.no_village),
+        ]
         # And the state file's stop, so `ai_coc stop` ends the wait for the village.
         assert [call.args for call in launched.call_args_list] == [
-            ("game", commands.stop_requested),
-            ("none", commands.stop_requested),
+            ("game", commands.stop_requested, self.run.no_village),
+            ("none", commands.stop_requested, self.run.no_village),
         ]
 
     def test_the_frame_only_commands_get_this_runs_frame_directory(self) -> None:

@@ -45,7 +45,7 @@ uv run ai_coc attack --repeat 0 --record --agent <名字> --session <session id>
 ├── run.log        # 這次執行的完整紀錄, 純文字
 ├── result.json    # 這次的答案, 跑完才會有內容
 ├── plans.jsonl    # 只有 attack 有: 一場一行, 那一場的整份戰術
-└── frames/        # 迴圈自己讀的畫面要開 --record; capture 一定會有
+└── frames/        # 迴圈自己讀的畫面要開 --record; capture 一定會有; world 跟 launch 截得到畫面卻找不到村莊時留 no_village.png (log 會寫路徑)
 ```
 
 **目錄在開跑第一行 log** (`This run is being kept in ...`). 名字是「時間-指令」, `ls -t ~/.ai_coc/logs` 最上面是最近已經建好的一次 (剛開跑的那一次可能還沒建好). 任何指令加 `--label <名字>` 會接在後面 (`…-attack-baseline`), 給之後要找回來的那一次用.

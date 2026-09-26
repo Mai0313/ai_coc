@@ -279,14 +279,32 @@ def launch_line(report: LaunchReport) -> str:
     return f"{did}{LAUNCH_OUTCOME_LINES[report.outcome]},模擬器 {report.index} ({report.serial})"
 
 
-def launch(restart: RestartScope, should_stop: Callable[[], bool]) -> LaunchReport:
+def _keep_frame(path: Path, png: bytes) -> None:
+    """Keep the frame a command could not find a village on, for whoever debugs it."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(png)
+    logger.info("Kept the frame no village read on: %s", path)
+
+
+def _keep_screen(adb: AdbController, path: Path) -> None:
+    """`_keep_frame` for what is on screen now, when a wait has already given up."""
+    try:
+        _keep_frame(path, adb.screenshot(adb.display_for(COC_PACKAGE)))
+    except AdbControlError:
+        logger.warning("The game is not on a display; there is no frame to keep")
+
+
+def launch(
+    restart: RestartScope, should_stop: Callable[[], bool], keep: Path | None = None
+) -> LaunchReport:
     """Bring the game up on the configured instance, tearing down as much as asked.
 
     Every other headless command assumes the game is already running: they go
     through `_controller`, which calls `ensure_coc` and gives up on whatever it
     cannot fix. This is that step on its own, for the two states it cannot reach
     from there — an emulator or a game that is up and no longer answering, which
-    from here looks exactly like a working one.
+    from here looks exactly like a working one. `keep` is where the frame goes
+    when the village never appears.
     """
     emulator, found = chosen(emulators())
     index = found.index
@@ -310,14 +328,19 @@ def launch(restart: RestartScope, should_stop: Callable[[], bool]) -> LaunchRepo
     # than in each of them. The position is settled there too, by parking the
     # camera against a map edge — the pinch does not do it, whatever this used
     # to say.
-    settled = _settle_game(emulator.controller(instance.adb_serial), RESTART_POLLS, should_stop)
+    adb = emulator.controller(instance.adb_serial)
+    settled = _settle_game(adb, RESTART_POLLS, should_stop)
     # A game whose village never painted is reported rather than raised: the
     # process is up, so the caller may still have something to do with it, and
     # the one thing it must not do is assume the screen is ready.
     if settled is not None:
         outcome: LaunchOutcome = "at_village"
+    elif should_stop():
+        outcome = "stopped"
     else:
-        outcome = "stopped" if should_stop() else "no_village"
+        outcome = "no_village"
+        if keep is not None:
+            _keep_screen(adb, keep)
     report = LaunchReport(
         index=instance.index,
         serial=instance.adb_serial,
@@ -1975,7 +1998,7 @@ def donate(options: DonateOptions) -> DonateReport:
     return report
 
 
-def world(go: World | None = None) -> WorldReport:
+def world(go: World | None = None, keep: Path | None = None) -> WorldReport:
     """Which village the game is on, and sail to the other one when asked for it.
 
     Reading is the default and crossing is the exception, for the same reason
@@ -1990,7 +2013,8 @@ def world(go: World | None = None) -> WorldReport:
     project's own measurement, and still enough to make the claim false. The
     patience that call also brings is not this command's to spend: a game still
     on its loading screen honestly has no village on it, and `ai_coc launch` is
-    the one that waits a cold start out.
+    the one that waits a cold start out. `keep` is where the frame goes when no
+    village reads on it.
     """
     adb = _controller()
     try:
@@ -1998,7 +2022,10 @@ def world(go: World | None = None) -> WorldReport:
     except AdbControlError:
         logger.warning("The game is not on a display yet; neither village can be confirmed")
         return WorldReport(found=None, world=None, outcome="no_display")
-    found = current_world(adb.screenshot(display))
+    png = adb.screenshot(display)
+    found = current_world(png)
+    if found is None and keep is not None:
+        _keep_frame(keep, png)
     if go is None or go == found:
         report = WorldReport(found=found, world=found, outcome="here" if found else "no_village")
     else:

@@ -5319,6 +5319,16 @@ class LaunchTests(unittest.TestCase):
         assert not report.at_village
         assert "村莊沒有出現" in commands.launch_line(report)
 
+    def test_a_village_that_never_painted_leaves_its_frame(self) -> None:
+        """`launch` has no `--record`, and this failure is the one that needs a frame."""
+        mumu = self._mumu()
+        mumu.controller.return_value.screenshot.return_value = b"frame"
+        self.settled.return_value = None
+        with tempfile.TemporaryDirectory() as folder, self._driving(mumu):
+            keep = Path(folder) / "frames" / "no_village.png"
+            commands.launch("none", lambda: False, keep)
+            assert keep.read_bytes() == b"frame"
+
     def test_a_stop_ends_the_wait_and_is_named_as_one(self) -> None:
         """`ai_coc stop` used to wait out the whole three minutes, and the report
         then blamed a village that never painted.
