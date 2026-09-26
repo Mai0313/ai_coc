@@ -3744,6 +3744,36 @@ class AttackTests(unittest.TestCase):
         assert scouted is not None
         assert scouted[0] == settled
 
+    def _first_answer(self, readings: list[ScoutView]) -> ScoutView:
+        """What `_scout` hands back over drawn frames carrying these readings."""
+        runner = self._runner()
+        with (
+            patch.object(AttackRunner, "_frame", return_value=b""),
+            patch.object(AttackRunner, "_tap"),
+            patch.object(attack, "read_scout", side_effect=readings),
+            patch.object(attack, "skip_offered", return_value=True),
+            patch.object(attack, "panel_peak", return_value=240),
+            patch.object(attack.time, "sleep"),
+        ):
+            scouted = runner._scout(timeout=60)
+        assert scouted is not None
+        return scouted[0]
+
+    def test_a_new_opponent_whose_button_has_not_painted_is_looked_at_again(self) -> None:
+        """Measured live on 2026-09-26: a new opponent's first frame showed its
+        countdown at 30 秒 through a haze, its panel drawn at 240 and its button
+        too pale to read, and the loop attacked it as a countdown that had ended
+        though its gold was under the threshold. The next frame has the button.
+        """
+        loot = LootOffer(gold=288501, elixir=656684, dark=6679)
+        painted = ScoutView(loot=loot, can_skip=True)
+        assert self._first_answer([ScoutView(loot=loot, can_skip=False), painted]) == painted
+
+    def test_a_countdown_that_really_ended_is_believed_on_the_second_frame(self) -> None:
+        loot = LootOffer(gold=288501, elixir=656684, dark=6679)
+        ended = ScoutView(loot=loot, can_skip=False)
+        assert self._first_answer([ended, ended]) == ended
+
     def test_the_opponent_just_skipped_is_not_taken_for_the_next(self) -> None:
         """The game answers 下一個 a moment late, and the frame in between is the
         same panel. Measured live on 2026-09-26: with its button still up it was
