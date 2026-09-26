@@ -3714,6 +3714,77 @@ class AttackTests(unittest.TestCase):
         assert scouted is not None
         assert scouted[0] == settled
 
+    def test_the_opponent_just_skipped_is_not_taken_for_the_next(self) -> None:
+        """The game answers 下一個 a moment late, and the frame in between is the
+        same panel. Measured live on 2026-09-26: with its button still up it was
+        tapped a second time, and with the button already gone it read as an
+        expired countdown, so the next opponent was attacked unseen and the round
+        reported the skipped one's loot.
+        """
+        runner = self._runner()
+        left = LootOffer(gold=646662, elixir=6869, dark=8176)
+        lingering = ScoutView(loot=left, can_skip=False)
+        following = ScoutView(
+            loot=LootOffer(gold=803761, elixir=605441, dark=15001), can_skip=True
+        )
+        with (
+            patch.object(AttackRunner, "_frame", return_value=b""),
+            patch.object(AttackRunner, "_tap") as tapped,
+            patch.object(attack, "read_scout", side_effect=[lingering, lingering, following]),
+            patch.object(attack, "skip_offered", return_value=True),
+            patch.object(attack, "panel_peak", return_value=247),
+            patch.object(attack.time, "sleep"),
+        ):
+            scouted = runner._scout(timeout=60, leaving=left)
+        assert scouted is not None
+        assert scouted[0] == following
+        tapped.assert_not_called()
+
+    def test_a_skip_that_never_landed_counts_once_it_has_had_its_moment(self) -> None:
+        """Past `NEXT_SETTLE` the same opponent is the tap having missed, and its
+        countdown is running, so it is handed back to be weighed again.
+        """
+        runner = self._runner()
+        left = LootOffer(gold=646662, elixir=6869, dark=8176)
+        still = ScoutView(loot=left, can_skip=True)
+        with (
+            patch.object(AttackRunner, "_frame", return_value=b""),
+            patch.object(AttackRunner, "_tap"),
+            patch.object(attack, "read_scout", return_value=still),
+            patch.object(attack, "skip_offered", return_value=True),
+            patch.object(attack, "panel_peak", return_value=247),
+            patch.object(attack.time, "sleep"),
+            patch.object(attack.time, "monotonic", side_effect=range(0, 1000, 2)),
+        ):
+            scouted = runner._scout(timeout=60, leaving=left)
+        assert scouted is not None
+        assert scouted[0] == still
+
+    def test_a_skip_tells_the_next_search_which_opponent_it_left(self) -> None:
+        runner = AttackRunner(
+            adb=AdbController(endpoint=AdbEndpoint(port=16384)),
+            display=DisplayTarget(logical_id="1", physical_id="2"),
+            thresholds=LootThresholds(min_gold=500_000),
+        )
+        poor = ScoutView(loot=LootOffer(gold=1, elixir=1, dark=1), can_skip=True)
+        rich = ScoutView(loot=LootOffer(gold=900_000, elixir=900_000, dark=1), can_skip=True)
+        with (
+            patch.object(AttackRunner, "_open_attack_menu", return_value=b"home"),
+            patch.object(AttackRunner, "_stood_down", return_value=None),
+            patch.object(AttackRunner, "_army_short", return_value=False),
+            patch.object(AttackRunner, "_tap"),
+            patch.object(
+                AttackRunner, "_scout", side_effect=[(poor, b""), (rich, b"")]
+            ) as scouted,
+            patch.object(AttackRunner, "_deploy"),
+            patch.object(AttackRunner, "_wait_out_battle", return_value=True),
+            patch.object(AttackRunner, "_outcome", return_value="took_loot"),
+            patch.object(attack.time, "sleep"),
+        ):
+            report = runner._run_day()
+        assert [c.kwargs["leaving"] for c in scouted.call_args_list] == [None, poor.loot]
+        assert report.attacked == rich.loot
+
     def test_a_search_that_ran_out_on_a_fading_frame_still_leaves_through_the_button(self) -> None:
         """A frame refused for still fading is an opponent all the same.
 
