@@ -9,6 +9,10 @@ flag this replaced did the same damage in a smaller way, eating a stop somebody
 had asked of a loop still playing out its battle. Three helpers reached
 `commands.attack` without redirecting it before this fixture existed, and each
 new caller would have had to remember to.
+
+`~/.ai_coc/config.json` is the same kind of file: loading it rewrites it to the
+settings model, so a suite run on a branch that changed the model rewrote the
+real one and dropped the serial the farming loop was driving.
 """
 
 from __future__ import annotations
@@ -18,6 +22,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from ai_coc import commands
+from ai_coc.adapters import config
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -25,7 +30,7 @@ if TYPE_CHECKING:
 
 @pytest.fixture(autouse=True)
 def _state_file_in_tmp(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Point the state file at a path of this test's own, for every test.
+    """Point the state file and the settings file at paths of this test's own, for every test.
 
     `_held` goes back with it: it is module state that outlives one test, and
     left set by a test that claimed, the next test's `stop_requested` would read
@@ -33,3 +38,4 @@ def _state_file_in_tmp(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """
     monkeypatch.setattr(commands, "STATE_PATH", tmp_path / "state.json")
     monkeypatch.setattr(commands, "_held", None)
+    monkeypatch.setattr(config, "data_root", lambda: tmp_path)
