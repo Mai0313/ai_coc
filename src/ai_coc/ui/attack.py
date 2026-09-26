@@ -324,6 +324,10 @@ SPELL_ATTEMPTS = 2
 # left the two lower flanks with no room to push past a village's boundary,
 # which loses the army just as completely.
 ABANDON_BUTTON = (215, 630)
+# The scout screen's 下一個, measured at x 1328-1587 and y 581-700. The tactic
+# goes in while the countdown still shows it, and a drop there pays the search
+# fee and plays the rest of the tactic at an opponent nobody weighed.
+NEXT_BUTTON = (1320, 575)
 # A planned line has to run past the village, not merely start and end clear of
 # it. `push_out` moves a point away from SCREEN_CENTRE, so a point near the
 # centre has almost no direction to be pushed in and a line drawn straight
@@ -517,11 +521,16 @@ def clear_of_controls(point: tuple[int, int]) -> tuple[int, int]:
     battle being over. That one is dodged by lifting rather than by moving
     aside: a point ends up there because it is heading away from the village,
     and shifting it right would send it back towards the boundary it is clearing.
+    The scout screen's 下一個 in the other corner is lifted clear the same way.
     """
     left, top, right, bottom = PLAYFIELD
     x = min(max(point[0], left), right)
     y = min(max(point[1], top), bottom)
-    return (x, min(y, ABANDON_BUTTON[1])) if x < ABANDON_BUTTON[0] else (x, y)
+    if x < ABANDON_BUTTON[0]:
+        return (x, min(y, ABANDON_BUTTON[1]))
+    if x > NEXT_BUTTON[0]:
+        return (x, min(y, NEXT_BUTTON[1]))
+    return (x, y)
 
 
 def deploy_line(count: int, *anchors: tuple[int, int]) -> list[tuple[int, int]]:
@@ -1493,7 +1502,7 @@ class AttackRunner(ScreenRunner):
         return None
 
     def _flank(
-        self, battle: bytes | None, plan: AttackPlan | NightPlan | None
+        self, battle: bytes, plan: AttackPlan | NightPlan | None
     ) -> tuple[tuple[int, int], ...]:
         """The line to deploy along: what the plan drew, bent onto the boundary.
 
@@ -1515,8 +1524,7 @@ class AttackRunner(ScreenRunner):
         preset = deploy_candidates(plan)[0]
         battle = self._clear_flank(battle, preset)
         flank = self._onscreen(preset)
-        fitted = fitted_line(battle, flank[0], flank[1], centre=self._middle) if battle else None
-        return fitted or flank
+        return fitted_line(battle, flank[0], flank[1], centre=self._middle) or flank
 
     def _spread_troops(
         self, troops: list[int], anchors: tuple[tuple[int, int], ...], pushed: int
@@ -1707,9 +1715,9 @@ class AttackRunner(ScreenRunner):
         """Hold until the scout countdown ends, and hand back the first battle frame.
 
         The 下一個 button going away is the countdown ending, which is what
-        `can_skip` reads. The frame comes back because the boundary is only drawn
-        once the battle is under way, so this is the first moment it can be read
-        and the caller would otherwise have to pay for another capture.
+        `can_skip` reads. The frame comes back so the caller does not pay for
+        another capture. Only `probe` and `bounds` wait; the attack deploys into
+        the countdown, which starts the battle (see `_deploy`).
 
         A panel that stops reading ends the wait rather than extending it. It is
         the countdown *still running* that is worth waiting out; an unreadable
@@ -1879,9 +1887,7 @@ class AttackRunner(ScreenRunner):
             frame = self._frame("camera")
         return frame
 
-    def _clear_flank(
-        self, frame: bytes | None, preset: tuple[tuple[int, int], ...]
-    ) -> bytes | None:
+    def _clear_flank(self, frame: bytes, preset: tuple[tuple[int, int], ...]) -> bytes:
         """Drag the village clear of the card row so this flank has ground to drop on.
 
         Which way comes from the flank about to be tried rather than from the
@@ -1893,8 +1899,6 @@ class AttackRunner(ScreenRunner):
         a village small enough to leave the flank room is left alone: dragging a
         camera that is fine only takes the room off the other side.
         """
-        if frame is None:
-            return None
         box = village_box(frame)
         if box is None:
             logger.info("The village will not measure; the camera stays where it is")

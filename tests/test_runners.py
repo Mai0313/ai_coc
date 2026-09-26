@@ -1599,7 +1599,6 @@ class DeploymentTests(unittest.TestCase):
             patch.object(attack, "fitted_line", return_value=None),
         ):
             assert runner._flank(b"battle", None) == DEPLOY_LINES["top_left"]
-        assert runner._flank(None, None) == DEPLOY_LINES["top_left"]
 
     def test_each_act_reaches_its_own_tap(self) -> None:
         runner = self._runner()

@@ -78,6 +78,7 @@ from ai_coc.ui.attack import (
     END_BATTLE,
     DROP_STRIDE,
     LINE_POINTS,
+    NEXT_BUTTON,
     NUDGE_REACH,
     DEPLOY_LINES,
     DEPLOY_START,
@@ -3125,6 +3126,19 @@ class AttackTests(unittest.TestCase):
         """Both ends can clear that corner while the span between them cuts across it."""
         points = deploy_line(LINE_POINTS, (30, 700), (600, 700))
         assert not any(x < ABANDON_BUTTON[0] and y > ABANDON_BUTTON[1] for x, y in points)
+
+    def test_no_drop_lands_on_the_scout_screens_next_button(self) -> None:
+        """The tactic goes in during the countdown, while 下一個 is still up, and a
+        drop on it pays the search fee and moves to an opponent nobody weighed.
+        """
+        grid = [
+            (x, y)
+            for x in range(PLAYFIELD[0], PLAYFIELD[2] + 1, 70)
+            for y in range(PLAYFIELD[1], PLAYFIELD[3] + 1, 70)
+        ]
+        drops = [push_out(point, steps) for point in grid for steps in range(DEPLOY_ATTEMPTS)]
+        drops += deploy_line(LINE_POINTS, (1376, 432), (1570, 700))
+        assert not any(x > NEXT_BUTTON[0] and y > NEXT_BUTTON[1] for x, y in drops)
 
     def test_a_line_the_planner_drew_under_the_card_row_is_pulled_back_up(self) -> None:
         """Gemini answered y_pct 80, which is y 720 — the army bar, not the ground."""
