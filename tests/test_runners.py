@@ -109,7 +109,7 @@ class ReadStoragesTests(unittest.TestCase):
         return world, held, day_reader, night_reader
 
     def test_the_builder_base_goes_to_its_own_reader(self) -> None:
-        """`read_stock` reports that village's gems bar as dark elixir — 10 152 gems as 410 152."""
+        """`read_stock` reports that village's gems bar as dark elixir — 10 152 gems as 10 152."""
         world, held, day_reader, night_reader = self._read("night")
         assert world == "night"
         assert held == VillageStock(gold=2, elixir=2, dark=0)
