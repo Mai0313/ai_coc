@@ -104,6 +104,7 @@ from ai_coc.parsers.scout import (
     card_drained,
     freeze_cards,
     skip_offered,
+    welcome_back,
     army_strength,
     counted_cards,
     loading_screen,
@@ -726,6 +727,12 @@ def _settle_game(
                     restart_game(adb, display)
                     restarted = True
                     waiting = "the game is being restarted"
+            # The raid report the game opens on after the village was attacked,
+            # which nothing else here answers either.
+            elif welcome_back(png):
+                logger.info("The raid report is covering the village; pressing back")
+                adb.back(display)
+                waiting = "the raid report was covering the village"
             elif loading_screen(png):
                 waiting = "the game is on its loading screen"
             else:
@@ -2354,6 +2361,7 @@ def read(png: bytes) -> FrameReading:
         skip_offered=skip_offered(png),
         panel_drawn=panel_drawn(png),
         idle_dialog=idle_disconnected(png),
+        welcome_back=welcome_back(png),
         loading=loading_screen(png),
         settings_menu=settings_open(png),
         more_settings=more_settings_open(png),

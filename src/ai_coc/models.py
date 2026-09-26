@@ -2448,6 +2448,8 @@ class FrameReading(BaseModel):
     # is reported here as an ordinary reading with nothing marking it.
     panel_drawn: bool = False
     idle_dialog: bool = False
+    # 首領，歡迎回來, the raid report whose 確定 used to read as 回營.
+    welcome_back: bool = False
     # 正在載入, which every other reader answers None on; this is what says a
     # run that reported no village was in fact waiting on the server.
     loading: bool = False
