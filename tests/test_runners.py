@@ -49,6 +49,7 @@ from ai_coc.ui.attack import (
     CARD_ROW_Y,
     END_BATTLE,
     NIGHT_FIND,
+    HERO_SETTLE,
     LINE_POINTS,
     DEPLOY_LINES,
     HOME_ATTEMPTS,
@@ -1682,6 +1683,30 @@ class DeploymentTests(unittest.TestCase):
         assert runner._onfield == [500, 600]
         spread.assert_called_once_with([100], DEPLOY_LINES["top_left"], 0)
         assert singles.call_args.args[0] == [600]
+
+    def test_the_one_reading_gives_the_last_drop_its_health_bar_first(self) -> None:
+        """Read the instant a pause opens, a hero that landed has no bar yet.
+
+        The retry then taps its card again, which is its ability.
+        """
+        runner = self._runner()
+        with (
+            patch.object(AdbController, "tap_many"),
+            patch.object(attack.time, "monotonic", return_value=100.0),
+        ):
+            runner._drop_at([500], (600, 300))
+        order: list[str] = []
+        with (
+            patch.object(attack.time, "monotonic", return_value=100.4),
+            patch.object(
+                attack.time, "sleep", side_effect=lambda s: order.append(f"sleep {s:.1f}")
+            ),
+            patch.object(runner, "_frame", side_effect=lambda label: order.append(label) or b""),
+            patch.object(attack, "field_units", return_value=[500]),
+            patch.object(attack, "live_cards", return_value=[]),
+        ):
+            runner._settle_drops([100], deploy_line(LINE_POINTS), DEPLOY_LINES["top_left"])
+        assert order == [f"sleep {HERO_SETTLE - 0.4:.1f}", "settled"]
 
     def test_an_outcome_tells_a_battle_nobody_read_from_one_that_never_landed(self) -> None:
         runner = self._runner()
