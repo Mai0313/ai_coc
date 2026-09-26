@@ -36,7 +36,7 @@ description: >-
 
 - **你是 subagent 就不要修.** 這份 skill 要跟使用者講話、請他改設定, subagent 做不到. 停手, 把 `state.json`、`list2` 那一行跟截圖交回給主 session, 由它照這份處理
 - 照 `CLAUDE.md` 的 Look before driving 讀 `~/.ai_coc/state.json`. farm subagent 還在跑就照 `CLAUDE.md` 先把模擬器拿回來, 模擬器只有一台; 它的迴圈多半已經跟著模擬器掛掉了, 那就等它的回報
-- **每次關、開、結束模擬器之前先講一聲**, 包括跑 `ai_coc launch`: 遊戲開不起來的時候 `ensure_coc` 會自己重開一次實例. 使用者看得到那個視窗, 一直開開關關又沒人說明, 他只會以為壞得更嚴重
+- **結束程序、`quit`、重開模擬器之前先問使用者, 他說好才做.** 那是他的模擬器, 他看得到那個視窗, 一直開開關關又沒人說明, 他只會以為壞得更嚴重. 跑 `ai_coc launch` 之前講一聲: 遊戲開不起來的時候 `ensure_coc` 會自己重開一次實例
 - 使用者可能正在模擬器或手機上玩 (`CLAUDE.md` 的 Driving the game), 有疑慮就問
 
 ## 讀狀態 (雷電)
@@ -63,13 +63,15 @@ description: >-
 
 等到哪裡為止: 三分鐘還沒好, 或者 Android 欄停在 2 而 VM 沒起來 (第 7 欄 -1, 也沒有 `Ld9BoxHeadless.exe`), 就不是修復了. 後面那種是 `adapters/ldplayer.py` 的 `QUIT_SETTLE` 註解寫的卡死, 做一次「不要做的事」裡的乾淨重開.
 
-### 2. 殘留的 `dnplayer.exe`
+### 2. `ldconsole` 看不到還在跑的雷電
 
-症狀: `list2` 說沒在跑 (Android 0, pid -1), `isrunning` 說 `stop`, 可是 `dnplayer.exe index=0|` 還在, 而且沒有任何視窗. `quit` 跟 `quitall` 都關不掉它. `launch` 會把 VM 開起來, ADB 甚至會通, 但 `list2` 五分鐘都說沒在跑, 所以 `ai_coc` 永遠等不到.
+症狀: `list2` 說沒在跑 (Android 0, pid -1), `isrunning` 說 `stop`, 可是 `dnplayer.exe index=0|` 還在, 多半沒有視窗, `Ld9BoxHeadless.exe` 也常常在. `quit` 跟 `quitall` 碰不到它. `ai_coc` 只信 `list2`, 所以會去 `ldconsole launch`, 等半分多鐘, 報 `127.0.0.1:0`.
 
-先排除第 1 種: 修復到一半 `list2` 也會有十幾秒是 Android 0. 至少看一分鐘都是這樣, 而且那個 `dnplayer.exe` 的命令列沒有 `from=repairer`, 才是這一種. 那天這個殘留程序放了十幾分鐘都沒變.
+**這不是殘留, 雷電多半是活的.** 2026-09-26 遇到兩次, 兩次 ADB 都通. 第二次那台剛打完一小時的資源, 使用者沒有關它, `list2` 就看不到了; VM 自己的紀錄 (`vms\leidian0\Logs\VBox.log`) 一直正常寫到它被結束, 而同樣狀態下 `look.py` 截得到 1600x900 的 Android 桌面. `list2` 為什麼會看不到, 還沒查出來. 那一次有個 agent 把它當殘留直接結束, 等於親手關掉一台好好的模擬器.
 
-處理: 這是唯一該直接結束程序的情況. 先確認那個 `dnplayer.exe` 真的沒有視窗 (`Get-Process` 的 `MainWindowTitle` 是空的), 講一聲, 再 `Stop-Process` 它跟 `Ld9BoxHeadless.exe`. 等 `Ld9BoxHeadless.exe` 不見了再多等十秒 (`QUIT_SETTLE` 的理由), 然後 `ldconsole launch --index 0`. 結束程序對雷電來說就是一次閃退, 所以接下來可能變成第 1 種或第 3 種, 看畫面判斷.
+先排除第 1 種: 修復到一半 `list2` 也會有十幾秒是 Android 0. 至少看一分鐘都是這樣, 而且那個 `dnplayer.exe` 的命令列沒有 `from=repairer`, 才是這一種.
+
+處理: **不要結束任何程序, 請人.** 用 `look.py` 截一張, 連同 `list2` 那一行跟程序清單交給使用者, 說明 `ai_coc` 在這個狀態下用不了 (它只信 `list2`), 也說清楚強制結束的代價: 那天兩次強制結束有一次把設定洗掉了 (第 3 種). 要不要重開、怎麼重開由他決定. 他同意由你來做的話: `Stop-Process` 那個 `dnplayer.exe` 跟 `Ld9BoxHeadless.exe`, 等 `Ld9BoxHeadless.exe` 不見了再多等十秒 (`QUIT_SETTLE` 的理由), `ldconsole launch --index 0`, 然後照第 1 種等滿三分鐘, 中間不要 `quit`, 也不要再開一次. 那天這樣做過兩次, 一次 82 秒後正常起來; 另一次重開之後沒多久就被 `quit` 過, 重開的那台 `list2` 一樣看不到. 結束程序對雷電來說就是一次閃退, 也可能變成第 3 種.
 
 ### 3. 設定被洗掉
 
@@ -92,13 +94,14 @@ description: >-
 ## 不要做的事
 
 - 不要 `ldconsole reboot`
-- 不要為了「重現閃退」去強制結束模擬器. 那天就是這樣把設定洗掉的. 只有第 2 種的殘留程序該直接結束
+- 不要為了「重現閃退」去強制結束模擬器. 那天就是這樣把設定洗掉的. 結束任何程序都要使用者先同意 (第 2 種)
 - 不要手改 `leidian0.config`, 理由在第 3 種
-- 同一招不要連試. 一次乾淨的重開: `ldconsole quit --index 0`, 等 `isrunning` 說 `stop` 而且 `Ld9BoxHeadless.exe` 不見了 (那天都是兩秒內; 一分鐘還在就請人. `Ld9BoxSVC.exe` 有時會一直留著, 不用等它), 再多等十秒 (`adapters/ldplayer.py` 的 `QUIT_SETTLE` 寫了為什麼), `ldconsole launch --index 0`, 等 Android 欄變 1 而且 `look.py` 截得到圖, 再 `ai_coc launch`. 這樣還站不上村莊, 就是該請人的時候
+- 不要自己下 `adb connect` / `adb disconnect`, 看 ADB 用 `look.py`: 每次 connect 都在雷電那端開一條新連線, 雷電的 port forward 曾經因此整個掛掉 (`CLAUDE.md` 的 Adapters)
+- 同一招不要連試. 一次乾淨的重開 (使用者同意之後): `ldconsole quit --index 0`, 等 `isrunning` 說 `stop` 而且 `Ld9BoxHeadless.exe` 不見了 (那天都是兩秒內; 一分鐘還在就請人. `Ld9BoxSVC.exe` 有時會一直留著, 不用等它), 再多等十秒 (`adapters/ldplayer.py` 的 `QUIT_SETTLE` 寫了為什麼), `ldconsole launch --index 0`, 等 Android 欄變 1 而且 `look.py` 截得到圖, 再 `ai_coc launch`. 這樣還站不上村莊, 就是該請人的時候
 
 ## 什麼時候請人
 
-- 第 3 種, 一定
+- 第 2 種跟第 3 種, 一定
 - 一次乾淨的重開之後還是站不上村莊
 - 看不到的東西: 模擬器視窗上的對話框, 截桌面沒被授權
 
