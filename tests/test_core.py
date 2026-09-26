@@ -112,7 +112,6 @@ from ai_coc.adapters.adb import (
     ABS_MT_POSITION_Y,
     ABS_MT_TRACKING_ID,
     AdbController,
-    AdbControlError,
     pinch_events,
     focused_display,
     physical_display,
@@ -551,7 +550,6 @@ class WorldChoiceTests(unittest.TestCase):
             patch.object(commands, "FrameTicker"),
             patch.object(commands, "_rest", return_value=False),
             patch.object(commands, "AttackRunner") as runner,
-            patch.object(commands, "_restart_emulator", return_value=True),
             patch.object(world_ui, "cross") as sailed,
         ):
             runner.return_value.run.return_value = MagicMock(
@@ -2444,21 +2442,20 @@ class ConfigTests(unittest.TestCase):
 
     def test_a_save_merges_into_what_is_on_disk_rather_than_a_snapshot(self) -> None:
         """Every write here puts the whole file back, so a field the window has
-        no widget for goes to disk from whatever copy the window is holding —
-        and `restart_every` is exactly that field, the one number here that
-        belongs to whoever is watching the frame rate. Editing this file by hand
-        is what it is for, so a preview checkbox must not undo it.
+        not touched goes to disk from whatever copy the window is holding — and
+        `adb_serial` is such a field, written back by the first CLI run after
+        the window opened. A preview checkbox must not undo it.
         """
         with tempfile.TemporaryDirectory() as td:
             store = ConfigStore(path=Path(td) / "config.json")
-            store.save(AppConfig(restart_every=7))
+            store.save(AppConfig(adb_serial="127.0.0.1:5555"))
             window = MagicMock()
             # What the window read when it opened, which can be hours ago.
-            window.config = AppConfig(restart_every=99)
+            window.config = AppConfig()
             with patch("ai_coc.ui.main_window.ConfigStore", lambda: store):
                 MainWindow._save_config(window, stop_at=55)
             written = store.load()
-        assert written.restart_every == 7
+        assert written.adb_serial == "127.0.0.1:5555"
         assert written.stop_at == 55
 
     def test_saving_the_automation_reads_every_switch_off_its_own_widget(self) -> None:
@@ -2541,7 +2538,8 @@ class ConfigTests(unittest.TestCase):
             path = Path(td) / "config.json"
             path.write_text(
                 json.dumps({
-                    "restart_every": 7,
+                    "adb_serial": "127.0.0.1:5555",
+                    "restart_every": 50,
                     "timings": {"queen": 1, "warden": 30},
                     "keepalive_seconds": 120.0,
                 }),
@@ -2549,13 +2547,14 @@ class ConfigTests(unittest.TestCase):
             )
             config = ConfigStore(path=path).load()
             written = json.loads(path.read_text(encoding="utf-8"))
-        assert config.restart_every == 7
+        assert config.adb_serial == "127.0.0.1:5555"
+        assert "restart_every" not in written
         assert "timings" not in written
         assert "keepalive_seconds" not in written
         # What it parsed is what it wrote. Rewriting `AppConfig()` instead would
         # pass every other assertion here while wiping the user's settings, and
         # this call is the first thing that runs after an upgrade.
-        assert written["restart_every"] == 7
+        assert written["adb_serial"] == "127.0.0.1:5555"
         # And a key the file never had is filled in, so it reads as what this run
         # will actually do rather than as what happened to be saved once.
         assert written["stop_at"] == AppConfig().stop_at
@@ -2570,9 +2569,9 @@ class ConfigTests(unittest.TestCase):
         """
         with tempfile.TemporaryDirectory() as td:
             store = ConfigStore(path=Path(td) / "config.json")
-            store.save(AppConfig(restart_every=7))
+            store.save(AppConfig(adb_serial="127.0.0.1:5555"))
             with patch.object(ConfigStore, "save") as saved:
-                assert store.load().restart_every == 7
+                assert store.load().adb_serial == "127.0.0.1:5555"
             saved.assert_not_called()
 
     def test_a_file_that_will_not_parse_raises_rather_than_farming_on_defaults(self) -> None:
@@ -4970,22 +4969,15 @@ class InRoundRestartTests(unittest.TestCase):
             runner.return_value.adb = controller
             runner.return_value.display = fresh
             commands.attack(AttackOptions(rounds=1))
-        # Both halves: a scheduled restart builds a fresh controller as well as a
-        # fresh display, so dropping either from the handover puts one of them
-        # back on the emulator that went away. The ticker captures from its own
-        # thread and swallows what it cannot reach, so a stale one costs
-        # warnings nobody reads rather than the run.
+        # Both halves, so neither is left pointing at what the game left. The
+        # ticker captures from its own thread and swallows what it cannot reach,
+        # so a stale one costs warnings nobody reads rather than the run.
         assert ticker.return_value.__enter__.return_value.adb is controller
         assert ticker.return_value.__enter__.return_value.display is fresh
 
 
-class RestartEveryTests(unittest.TestCase):
-    """Restarting the emulator on a schedule, because MuMu drops frames.
-
-    The mechanism is a few lines; what is worth testing is the two decisions
-    underneath them — what gets counted, and what the loop waits for before it
-    calls the emulator ready.
-    """
+class PlanLogTests(unittest.TestCase):
+    """What an attack series writes down about the tactic each round played."""
 
     @staticmethod
     def _fought() -> MagicMock:
@@ -4998,25 +4990,10 @@ class RestartEveryTests(unittest.TestCase):
             outcome="took_loot",
         )
 
-    @staticmethod
-    def _idle() -> MagicMock:
-        return MagicMock(
-            stock_full=False,
-            attacked=None,
-            phases=0,
-            skipped=0,
-            forced=False,
-            outcome="no_opponent",
-        )
-
     def _play(
-        self,
-        reports: list[MagicMock],
-        options: AttackOptions,
-        every: int,
-        played: AttackPlan | None = None,
-    ) -> MagicMock:
-        """Run the loop over a fixed list of rounds and hand back the restart mock."""
+        self, reports: list[MagicMock], options: AttackOptions, played: AttackPlan | None = None
+    ) -> None:
+        """Run the loop over a fixed list of rounds."""
         with (
             patch.object(commands, "_controller"),
             patch.object(commands, "current_world", return_value="day"),
@@ -5024,18 +5001,14 @@ class RestartEveryTests(unittest.TestCase):
             # None of these tests is about the park itself.
             patch.object(commands, "park_camera", return_value=True),
             patch.object(commands, "_planner", return_value=None),
-            patch.object(
-                commands.ConfigStore, "load", return_value=AppConfig(restart_every=every)
-            ),
+            patch.object(commands.ConfigStore, "load", return_value=AppConfig()),
             patch.object(commands, "FrameTicker"),
             patch.object(commands, "_rest", return_value=False),
             patch.object(commands, "AttackRunner") as runner,
-            patch.object(commands, "_restart_emulator", return_value=True) as restart,
         ):
             runner.return_value.run.side_effect = reports
             runner.return_value.played = played
             self.series = commands.attack(options)
-        return restart
 
     def test_every_round_leaves_its_own_line_in_the_plan_log(self) -> None:
         """`--plan-out` keeps whichever round went last and overwrites the rest.
@@ -5048,10 +5021,7 @@ class RestartEveryTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             log = Path(td) / "plans.jsonl"
             self._play(
-                [self._fought()] * 3,
-                AttackOptions(rounds=3, plan_log=log),
-                every=0,
-                played=plans.flat(),
+                [self._fought()] * 3, AttackOptions(rounds=3, plan_log=log), played=plans.flat()
             )
             lines = [
                 PlayedPlan.model_validate_json(line)
@@ -5066,7 +5036,7 @@ class RestartEveryTests(unittest.TestCase):
         """
         with tempfile.TemporaryDirectory() as td:
             log = Path(td) / "plans.jsonl"
-            self._play([self._fought()], AttackOptions(rounds=1, plan_log=log), every=0)
+            self._play([self._fought()], AttackOptions(rounds=1, plan_log=log))
             assert not log.exists()
 
     def test_a_round_does_not_inherit_the_last_one_s_plan(self) -> None:
@@ -5088,131 +5058,6 @@ class RestartEveryTests(unittest.TestCase):
         with patch.object(AttackRunner, "_open_attack_menu", return_value=None):
             runner.run()
         assert runner.played is None
-
-    def test_the_restart_counts_battles_rather_than_rounds(self) -> None:
-        """A round that found nobody to fight did not tire the emulator out.
-
-        Five rounds, two of which fought nothing. Counting rounds would restart
-        after the second one; counting battles waits until the fourth, which is
-        where the second battle actually finished.
-        """
-        rounds = [self._idle(), self._fought(), self._idle(), self._fought(), self._fought()]
-        restart = self._play(rounds, AttackOptions(rounds=5), every=2)
-        assert len(self.series.root) == 5
-        assert restart.call_count == 1
-
-    def test_zero_on_the_flag_is_not_the_same_as_leaving_it_out(self) -> None:
-        """Omitting it keeps the configured value; passing zero turns it off.
-
-        The same distinction the loot overrides carry, and for the same reason:
-        a run being watched needs a way to skip the restart without editing the
-        file every other run reads.
-        """
-        assert self._play([self._fought()] * 2, AttackOptions(rounds=2), every=1).call_count == 1
-        off = AttackOptions(rounds=2, restart_every=0)
-        assert self._play([self._fought()] * 2, off, every=1).call_count == 0
-
-    def test_a_restart_that_never_came_back_keeps_the_rounds_already_played(self) -> None:
-        """Raising instead would leave `result.json` empty on `cli.py`'s side,
-        which reports a night of farming as nothing at all.
-        """
-        with (
-            patch.object(commands, "_controller"),
-            patch.object(commands, "current_world", return_value="day"),
-            # `_settle_game` parks, and the park reads its own frames now.
-            # None of these tests is about the park itself.
-            patch.object(commands, "park_camera", return_value=True),
-            patch.object(commands, "_planner", return_value=None),
-            patch.object(commands.ConfigStore, "load", return_value=AppConfig(restart_every=1)),
-            patch.object(commands, "FrameTicker"),
-            patch.object(commands, "AttackRunner") as runner,
-            patch.object(commands, "_restart_emulator", return_value=False),
-        ):
-            runner.return_value.run.side_effect = [self._fought(), self._fought()]
-            series = commands.attack(AttackOptions(rounds=2))
-        assert len(series.root) == 1
-
-    def test_the_restart_waits_for_a_village_rather_than_for_the_process(self) -> None:
-        """`ensure_coc` is satisfied by a pid, which exists seconds after the
-        launch while the village is not on screen for much longer. So the wait
-        is for a frame the loop could actually play from.
-        """
-        adb = MagicMock()
-        runner, ticker = MagicMock(), MagicMock()
-        with (
-            patch.object(commands, "launch", return_value=MagicMock(serial="127.0.0.1:16384")),
-            patch.object(commands, "AdbController", return_value=adb),
-            patch.object(commands.time, "sleep"),
-            patch.object(commands, "stop_requested", return_value=False),
-            # The village test rather than the storages: the game reopens on
-            # whichever village it was closed on, and `read_stock` answers on
-            # both, so it can say a village is up but never which one.
-            patch.object(commands, "current_world", side_effect=[None, None, "day"]),
-            patch.object(commands, "park_camera", return_value=True) as parked,
-            patch.object(commands, "idle_disconnected", return_value=False),
-            patch.object(commands, "welcome_back", return_value=False),
-            patch.object(commands, "loading_screen", return_value=False),
-        ):
-            assert commands._restart_emulator(runner, ticker)
-        assert adb.screenshot.call_count == 3
-        # Both objects and both fields, or `--shot-every` spends the rest of the
-        # night timing out against a display that no longer exists.
-        assert (runner.adb, runner.display) == (adb, adb.display_for.return_value)
-        assert (ticker.adb, ticker.display) == (adb, adb.display_for.return_value)
-        # A restarted game comes back zoomed in, and every coordinate in this
-        # project was measured at the far limit — without this the run keeps
-        # going and deploys nothing for the rest of the night. The pinch is the
-        # park's own first act, so asking for the park is asking for both.
-        parked.assert_called_once_with(adb, adb.display_for.return_value, "day")
-
-    def test_a_game_with_no_window_yet_is_waited_out_rather_than_given_up_on(self) -> None:
-        """`display_for` raises while the game has no focused window, which is
-        the ordinary state of one still loading rather than a failure.
-        """
-        adb = MagicMock()
-        adb.display_for.side_effect = [AdbControlError("not on a display"), MagicMock()]
-        with (
-            patch.object(commands, "launch", return_value=MagicMock(serial="127.0.0.1:16384")),
-            patch.object(commands, "AdbController", return_value=adb),
-            patch.object(commands.time, "sleep"),
-            patch.object(commands, "stop_requested", return_value=False),
-            patch.object(commands, "current_world", return_value="day"),
-            patch.object(commands, "park_camera", return_value=True),
-        ):
-            assert commands._restart_emulator(MagicMock(), MagicMock())
-        assert adb.display_for.call_count == 2
-
-    def test_a_village_that_never_paints_gives_up_instead_of_waiting_forever(self) -> None:
-        """The patience is sized for the bad case but it is still finite.
-
-        Measured live, one restart had the village up in 22 seconds and the next
-        one on the same machine had not got there in 120 — so this path is real,
-        and a run that hangs in it is worse than one that ends holding the rounds
-        it played.
-        """
-        adb = MagicMock()
-        with (
-            patch.object(commands, "launch", return_value=MagicMock(serial="127.0.0.1:16384")),
-            patch.object(commands, "AdbController", return_value=adb),
-            patch.object(commands.time, "sleep"),
-            patch.object(commands, "stop_requested", return_value=False),
-            patch.object(commands, "current_world", return_value=None),
-            patch.object(commands, "idle_disconnected", return_value=False),
-            patch.object(commands, "welcome_back", return_value=False),
-            patch.object(commands, "loading_screen", return_value=False),
-        ):
-            assert not commands._restart_emulator(MagicMock(), MagicMock())
-        assert adb.screenshot.call_count == commands.RESTART_POLLS
-
-    def test_an_emulator_that_will_not_come_back_does_not_take_the_series_with_it(self) -> None:
-        """`launch` raises for exactly the states this exists to recover from —
-        an instance MuMu dropped, a game that never started — and a raise here
-        would leave `cli.py` writing an empty `result.json` over a night's work.
-        """
-        with patch.object(
-            commands, "launch", side_effect=RuntimeError("找不到任何模擬器 instance")
-        ):
-            assert not commands._restart_emulator(MagicMock(), MagicMock())
 
 
 class StopAtOverrideTests(unittest.TestCase):
@@ -5341,19 +5186,6 @@ class LaunchTests(unittest.TestCase):
         assert self.settled.call_args.args[2] is stop
         assert report.outcome == "stopped"
         assert not report.at_village
-
-    def test_a_restart_hands_its_own_stop_to_the_launch(self) -> None:
-        """The window's stop button reaches the launch the same way `ai_coc stop` does."""
-        stop = MagicMock(return_value=True)
-        with (
-            patch.object(
-                commands, "launch", return_value=MagicMock(serial="127.0.0.1:16384")
-            ) as launched,
-            patch.object(commands, "AdbController"),
-            patch.object(commands, "_settle_game", return_value=None),
-        ):
-            assert not commands._restart_emulator(MagicMock(), MagicMock(), stop)
-        launched.assert_called_once_with("emulator", stop)
 
     def test_the_ordinary_case_restarts_nothing(self) -> None:
         mumu = self._mumu()

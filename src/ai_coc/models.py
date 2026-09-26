@@ -925,14 +925,6 @@ class AppConfig(BaseModel):
     # army takes to walk across a village nobody had looked at — which is the
     # planner's job, done with the village on screen. They live on `AttackPlan`
     # now, so a tactic is one document rather than points here and a clock there.
-    # How many battles to fight before restarting the emulator and the game, 0
-    # turning it off. MuMu drops frames after running for a while and nothing
-    # short of a restart clears it — that is a property of the emulator rather
-    # than of anything here, so this number is where it starts hurting on one
-    # machine rather than anything this code can measure. It lives in the config
-    # file because that is the only place a number nobody can measure belongs:
-    # whoever is watching the frame rate is the one who gets to change it.
-    restart_every: int = 50
     # Which emulator instance every command drives, by its ADB serial:
     # `127.0.0.1:16384` or `emulator-5554`, whichever form `adb devices` shows.
     # Empty until the first run, which takes the instance running the game —
@@ -942,7 +934,7 @@ class AppConfig(BaseModel):
     # lists, and each emulator fixes its instances' ports by index anyway.
     adb_serial: str = ""
     # Nested rather than three more flat keys, and it earns that twice over. At
-    # the top level `model` would sit beside `restart_every` with nothing saying
+    # the top level `model` would sit beside `adb_serial` with nothing saying
     # which subsystem it belongs to, and that only gets worse as tiers are added.
     # More usefully, a tier *is* a `GeminiSetting`, so building a client stopped
     # being four lines of copying one field name onto another.
@@ -1122,8 +1114,7 @@ class AttackReport(BaseModel):
     # answers the same question and answers it better, since it carries what the
     # opponent was advertising rather than only that there was one. So a caller
     # asking "did this round really fight" has to ask both ways, which is what
-    # `commands.attack` does before it counts a battle towards the emulator
-    # restart.
+    # `commands.attack` does before it decides whether to rest between rounds.
     phases: int = 0
     skipped: int = 0
     # The opponent that was fought, as its scout screen advertised it — what was
@@ -1179,19 +1170,8 @@ class AttackOptions(BaseModel):
     rounds: int = 1
     # 0 records nothing beyond the frames the loop reads for itself.
     shot_every: float = 0.0
-    # Overrides `AppConfig.restart_every` for one run, and `None` is not `0` for
-    # the reason the loot overrides are not: omitting the flag keeps whatever the
-    # config file says, while passing zero turns the restart off for this run
-    # alone. That is how a run being watched gets to skip it.
-    #
-    # **Battles, not rounds**, wherever the number comes from. A round that found
-    # no opponent, or spent itself waiting out a loading screen, barely touched
-    # the emulator — counting those would spend a restart on a run that has
-    # mostly been waiting, and worse, the rounds a restart itself costs would
-    # feed back and make it restart more often still.
-    restart_every: int | None = None
-    # Overrides `AppConfig.stop_at` for one run, with the same `None` against `0`
-    # split: omitted keeps the file's percentage, zero never stands the run
+    # Overrides `AppConfig.stop_at` for one run, with the `None` against `0`
+    # split the loot overrides have: omitted keeps the file's percentage, zero never stands the run
     # down. Zero is what a test battle against a village the farming has just
     # filled needs — every storage is past the line, so the file's value would
     # end the series before it searched, and the code under test never runs.

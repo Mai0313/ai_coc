@@ -69,11 +69,8 @@ ai_coc attack                    # one battle
 ai_coc attack --repeat 5         # five in a row
 ai_coc attack --repeat 0         # keep going until a storage fills up
 ai_coc stop                      # stand down after the battle in progress
-ai_coc attack --restart-every 0  # skip the scheduled emulator restart this run
 ai_coc attack --stop-at 0        # attack however full the storages are
 ```
-
-**The emulator is restarted every so many battles**, because MuMu drops frames after running for a while and nothing short of a restart clears it. How many sits in the settings file (`restart_every`, 50 by default) rather than being hard-coded, because that number is whatever a given machine turns out to need — `--restart-every` overrides it for one run, and `0` there turns it off the same way the loot flags do. It counts battles rather than rounds, so a night mostly spent searching for an opponent does not spend restarts on an emulator that has barely been working.
 
 `stop` marks `~/.ai_coc/state.json` and returns at once. The loop reads it between battles and between opponents, never mid-battle, so the worst case is one more battle: abandoning one halfway would leave the army on the field and the game on a screen the next run cannot get home from. With nothing running it says so, rather than leaving a request nobody will take.
 
@@ -180,7 +177,6 @@ The first line of every run says which directory it is, and the name is `<when>-
     "min_dark": 5000
   },
   "stop_at": 90,
-  "restart_every": 50,
   "adb_serial": "127.0.0.1:16384",
   "gemini": {
     "api_key": "",
@@ -214,7 +210,6 @@ That is the whole file. **A run that finds no file creates one only to write dow
 
 - **thresholds**: who is worth attacking. Set them too high and a run skips dozens of opponents without ever starting a battle
 - **stop_at**: how full every storage has to be before a run stands down, as a percentage. **One number for both villages**, because the loop reads each storage's real ceiling off the game — tap a storage bar and it writes 最大儲存量 on the spot. Every storage has to reach it, not just one of them: a battle brings home three, so one at the ceiling is no reason to stop earning the other two. On the builder base the elixir cart counts as one more: past a full elixir storage it keeps banking each battle's defence reward, so a run there stands down only once the cart has reached the same share of the ceiling written on it. `0` never stands a run down, and a storage whose ceiling would not read is left out of the count. `--stop-at` overrides it for one run, `0` included, which is what a test battle against a village that farming has just filled needs
-- **restart_every**: how many battles to fight before restarting the emulator and the game. MuMu drops frames after running for a while and nothing short of a restart clears it, which is a property of the emulator rather than anything this code can measure — so this is the one number in the file that is somebody's observation. `0` turns it off; `--restart-every` overrides it for one run
 - **adb_serial**: which emulator instance to drive, by the serial `adb devices` shows (`127.0.0.1:16384`, `127.0.0.1:5555`, or `emulator-5554`, which is the same LDPlayer instance as `127.0.0.1:5555`). Left empty, the first run takes the instance with the game running, MuMu's where both have it, and writes its serial here; picking an instance in the window's emulator list writes it too. A serial no installed emulator answers to is an error rather than a guess
 - **gemini**: which model answers each kind of call. `main` is asked once per run against a whole screenshot — the attack plan, the target finder — so nothing there is racing anything and the better model is simply the right one. `lite` is asked once per candidate against a cropped strip, which is a classification rather than a judgement and is where a cheaper model earns its place. `base_url` empty means Google's own endpoint. `api_key` is the one key both tiers use, kept in plain text; the settings tab's 儲存設定 writes it, and while it is empty a `GEMINI_API_KEY` from the environment or a `.env` stands in
 - **ui**: what only the window reads, and the last thing that was not in this file. It lived in the Windows registry, where no editor opens it and no `ai_coc` sub-command can reach it, on the rule that a setting no terminal command asks for does not belong in a shared file — which is how the one part of this app nobody could edit by hand turned out to be the window's own behaviour. `jobs` is which of the five commands the window's cycle round-robins, named for the sub-commands themselves, so `"walls": true` runs the same job `ai_coc walls` does, one pass of it per turn rather than until the storages will not stretch. `cycle_minutes` only ever paces a cycle that found nothing to do, because a finished job queues the next pass straight away. `live_view` is the live preview in the 主控 tab, and `record_frames` is the checkbox form of `--record`

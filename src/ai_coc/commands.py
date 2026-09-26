@@ -656,25 +656,24 @@ def _rest(seconds: float, should_stop: Callable[[], bool] = stop_requested) -> b
     return False
 
 
-# How long to give a restarted emulator before deciding it is not coming back.
+# How long `launch` gives a started emulator before deciding it is not coming.
 #
-# **The wait is not for the launch, it is for a frame the loop could play from.**
-# `launch("emulator")` returns as soon as `ensure_coc` has seen the game's
-# process, and that check is a `pidof` — the process exists a couple of seconds
-# after the launch while the village is not on screen for much longer than
-# that. `current_world` is what settles it, because counting the plate row is
-# how everything here tests for a village being up at all.
+# **The wait is not for the launch, it is for a frame a loop could play from.**
+# `ensure_coc` returns as soon as it has seen the game's process, and that check
+# is a `pidof` — the process exists a couple of seconds after the launch while
+# the village is not on screen for much longer than that. `current_world` is
+# what settles it, because counting the plate row is how everything here tests
+# for a village being up at all.
 #
 # Much longer than `restart_game`'s flat 15 seconds, which only reopens the
 # package on an emulator that never went down; this sits through a cold boot.
 #
 # **And a cold boot is not a fixed cost.** Measured on the same machine within
 # one run: the first restart had the village up 22 seconds after `launch`
-# returned, and the second one had not got there in 120 — which is the whole
-# reason this feature exists, since an emulator slow enough to need restarting
-# is also slow to come back. So the patience is sized for the bad case rather
-# than the good one; a run that reaches the end of it has lost the series, while
-# one that waits an extra minute has lost a minute.
+# returned, and the second one had not got there in 120. So the patience is
+# sized for the bad case rather than the good one; a caller that reaches the
+# end of it has no village, while one that waits an extra minute has lost a
+# minute.
 RESTART_POLLS = 45
 RESTART_POLL_GAP = 4.0
 
@@ -739,8 +738,8 @@ def _settle_game(
                 # since the maps clamp in opposite corners.
                 #
                 # **Its answer is deliberately not acted on here.** None from
-                # this function means no village appeared, and `attack` ends the
-                # whole series on it; a park that fell short is a worse view
+                # this function means no village appeared, which `launch` reports
+                # as `no_village`; a park that fell short is a worse view
                 # rather than no village, and nothing this hands back depends on
                 # it — the attack menu is a fixed screen corner and the battle
                 # camera is measured per battle by `_settle_camera`. The park
@@ -778,63 +777,6 @@ def _settle_game(
     return None
 
 
-def _restart_emulator(
-    runner: AttackRunner, ticker: FrameTicker, should_stop: Callable[[], bool] = stop_requested
-) -> bool:
-    """Restart the emulator and the game, and point the run at what came back.
-
-    MuMu drops frames after running for a while and nothing short of this clears
-    it. What makes it more than one `launch` call is that everything still
-    holding the old emulator has to be told — the display above all, because
-    MuMu opens the game on a display of its own choosing and nothing promises it
-    picks the same one. An `input tap` aimed at the old one lands silently on
-    the launcher, which is the exact failure the `-d` flags exist to prevent.
-
-    The controller is built from the serial `launch` already resolved rather
-    than through `_controller()`, which would enumerate the instances a second
-    time and fire another launch at a game that had only just come up.
-
-    False means the village never appeared. What to do about that is the
-    caller's call, since it is a decision about the series rather than about the
-    emulator.
-    """
-    # Wider than it looks, and deliberately so: `launch` raises `RuntimeError`
-    # for an instance MuMu has dropped from its listing and `EmulatorError` for
-    # a game that never came up, both of which are exactly the state this is here
-    # to recover from. Letting either escape would take the whole series with it
-    # — `cli.py` never reaches `run.answer` and `result.json` is left empty,
-    # which is the failure the False path below exists to avoid.
-    try:
-        launched = launch("emulator", should_stop)
-    except (RuntimeError, KeyboardInterrupt):
-        logger.exception("The emulator did not come back up")
-        return False
-    adb = AdbController(endpoint=AdbEndpoint.parse(launched.serial))
-    # The camera comes back out in here too, and that is not a courtesy. A
-    # restarted game does not return at the zoom everything was measured at:
-    # observed live, the restart succeeded, the village read, and every battle
-    # afterwards deployed nothing at all — two rounds of `0 of 4 hero card(s)
-    # landed` before a recorded frame showed a battlefield zoomed most of the
-    # way in.
-    display = _settle_game(adb, RESTART_POLLS, should_stop)
-    if display is None:
-        return False
-    # Both objects. The ticker captures from its own thread and would otherwise
-    # spend the rest of the night timing out against a display that no longer
-    # exists, logged as warnings nobody is reading.
-    runner.adb = adb
-    runner.display = display
-    ticker.adb = adb
-    ticker.display = display
-    # That the village reads at all is the signal; what it reads is not, and
-    # logging the number would present it as one. Measured on a live restart,
-    # the storage bars animate up from zero while the game loads and the first
-    # frame that resolved came back at 12.4M gold against a real 19.7M —
-    # printed here, that reads as a village raided overnight.
-    logger.info("The emulator is back and the village is on display %s", display.logical_id)
-    return True
-
-
 def _prepare_frames(options: AttackOptions) -> None:
     """Make room for whatever this run was told to keep, and refuse what it cannot.
 
@@ -846,45 +788,6 @@ def _prepare_frames(options: AttackOptions) -> None:
         options.frame_dir.mkdir(parents=True, exist_ok=True)
     elif options.shot_every > 0:
         raise ValueError("--shot-every 要搭配 --record，不然心跳畫面沒有地方放")
-
-
-def _restarted(
-    runner: AttackRunner,
-    ticker: FrameTicker,
-    fought: int,
-    every: int,
-    should_stop: Callable[[], bool] = stop_requested,
-) -> int | None:
-    """How many battles to carry forward, or None when the emulator never returned.
-
-    `fought` unchanged where no restart was due, and zero after one. The
-    decision, the restart and the reset are one thought, and keeping them in one
-    place is also what keeps `attack` under the complexity this repo lints for.
-    """
-    if not every or fought < every:
-        return fought
-    logger.info("%d battle(s) fought; restarting the emulator", fought)
-    # **The restart is the other place an adapter error can take the series
-    # down with the process**, and it is not covered by the guard around the
-    # round itself: `_restart_emulator` guards the launch, while the
-    # `_settle_game` that follows captures, pinches and parks, and any of those
-    # can raise. Ending the series is already what this function says with
-    # None, so the error needs no new answer — only somewhere to be caught, so
-    # that `result.json` is still written with the rounds already played.
-    try:
-        restarted = _restart_emulator(runner, ticker, should_stop)
-    except AdbControlError as exc:
-        logger.error("The emulator did not come back: %s", exc)
-        return None
-    if restarted:
-        return 0
-    # The series ends either way, but only one of these is an alarm: a stop
-    # asked for mid-restart comes back the same False as an emulator that never
-    # returned, and an error line that cries wolf on an ordinary `ai_coc stop`
-    # is worth less than no error line at all.
-    if not should_stop():
-        logger.error("The village never came back after the restart; stopping here")
-    return None
 
 
 def _write_plan(path: Path | None, plan: AttackPlan | NightPlan | None) -> None:
@@ -1133,7 +1036,7 @@ def attack(
         # storages hold rather than an amount: the runner reads each village's
         # own ceilings off its bars, so the same 90% means one thing here and
         # another on the builder base without anybody typing either number.
-        # The flag overrides it for one run, like `restart_every` below.
+        # The flag overrides it for one run, like the loot thresholds above.
         stop_at=config.stop_at if options.stop_at is None else options.stop_at,
         ai=None if plan else _planner(config),
         plan=plan,
@@ -1142,15 +1045,6 @@ def attack(
     )
     series = AttackSeries()
     rounds = options.rounds
-    # The file is the default and the flag overrides it for one run, the same
-    # shape the loot thresholds already have.
-    restart_every = (
-        config.restart_every if options.restart_every is None else options.restart_every
-    )
-    # Battles since the last restart rather than rounds over the whole series,
-    # for the reason `AttackOptions.restart_every` gives: a round that found
-    # nobody to fight did not tire the emulator out.
-    fought = 0
     with FrameTicker(
         adb=adb, display=display, out_dir=options.frame_dir or Path(), seconds=options.shot_every
     ) as ticker:
@@ -1163,17 +1057,6 @@ def attack(
                     "Stop requested; ending the series after %d round(s)", len(series.root)
                 )
                 break
-            # And the cheapest place to restart, for the same reasons. After the
-            # stop check rather than before it, because a run being stood down
-            # has no use for a fresh emulator.
-            carried = _restarted(runner, ticker, fought, restart_every, should_stop)
-            if carried is None:
-                # Everything after this would be aimed at an emulator that never
-                # came back, so the series ends here holding the rounds it really
-                # played rather than raising and taking them with it. Why it
-                # ended is logged where the two reasons can still be told apart.
-                break
-            fought = carried
             logger.info("Round %d of %s", len(series.root) + 1, rounds or "no limit")
             report = _round(runner, series)
             if report is None:
@@ -1191,13 +1074,8 @@ def attack(
             # the next. Both died on the trip to the loot cart this loop used to
             # make between rounds, with `result.json` never written, so the 17
             # and 14 battles they had played were countable only out of
-            # `run.log`.
-            #
-            # **`_restart_emulator` does not already cover this.** It re-points
-            # `runner` and `ticker` and says why, but it never touches this
-            # function's own pair either. Syncing here rather than at the call
-            # covers both restarts and whatever consumer is added to this loop
-            # next.
+            # `run.log`. Syncing here covers whatever consumer is added to this
+            # loop next.
             #
             # Not every `Status: -2` is this: one recorded series lost a display
             # with no restart at all and died in `uncovered`, where the runner's
@@ -1207,11 +1085,9 @@ def attack(
             series.root.append(report)
             # A builder base round reports no `attacked` — there is no scout
             # screen to have advertised any loot — so the two villages answer
-            # "did this round really fight" differently and the restart counter
-            # and the wait between rounds both have to ask both ways.
+            # "did this round really fight" differently and the wait between
+            # rounds has to ask both ways.
             fighting = report.attacked is not None or report.phases > 0
-            if fighting:
-                fought += 1
             logger.info("Attack finished: %s", round_line(report))
             _write_plan(options.plan_out, runner.played)
             _log_plan(options.plan_log, len(series.root), runner.played)

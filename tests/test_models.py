@@ -323,7 +323,6 @@ class ConfigDefaultTests(unittest.TestCase):
         config = AppConfig()
         assert config.thresholds.min_gold > 0
         assert config.stop_at == 90
-        assert config.restart_every > 0
         assert json.loads(config.model_dump_json())["gemini"]["main"]["thinking_level"] == "low"
 
 

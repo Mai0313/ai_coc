@@ -71,7 +71,6 @@ uv run ai_coc attack --plan tuned.json  # play a written tactic, no AI call at a
 uv run ai_coc attack --plan-out used.json  # write down whichever plan actually ran
 uv run ai_coc attack --min-gold 0 --min-elixir 0 --min-dark 0   # attack whatever comes up first
 uv run ai_coc attack --repeat 0            # keep attacking until stopped
-uv run ai_coc attack --restart-every 0     # skip this run's scheduled emulator restart
 uv run ai_coc attack --stop-at 0           # attack however full the storages are, which a test against a farmed village needs
 uv run ai_coc attack --record --shot-every 4   # plus a frame every four seconds
 uv run ai_coc stop                        # ask whatever is driving the emulator to finish this battle and stand down
@@ -269,7 +268,6 @@ Prices in a building row shrink with their length, so `digits_from` takes the ro
 ### Launch, restarts and the session
 
 - **`ai_coc launch` leaves the game at a village and at the far zoom** (`_settle_game`), not at a pid; `LaunchReport.at_village` says whether it got there and `was_running` whether it found the game up. `RestartScope`: `none` is `ensure_coc` alone; `game` calls `ensure_coc` first and then restarts the package; `emulator` restarts the instance and waits (`_await_shutdown`) until it is listed and not started, because MuMu's `control restart` returns at once and MuMu drops the instance from the listing for a moment mid-restart. LDPlayer restarts by `quit` and `launch` and **never by `reboot`**, which rewrote the instance's settings to 1920x1080 with ADB off.
-- **The emulator is restarted on a schedule** (`restart_every`, counted in battles; `--restart-every 0` turns it off) because MuMu drops frames over hours. The restart waits for a village by `current_world` for up to `RESTART_POLLS` (a cold boot varies widely), pinches out (a restarted game comes back zoomed in, and every drop then misses), and points the runner and the frame ticker at the new display. A storage bar read straight after a restart is still animating up from zero.
 - **Nothing keeps the session online.** The game raids a village whether or not its owner is in it, so `ai_coc online` and the window's 保持上線 were removed; the shield a raid hands out bounds the loss.
 
 ### Adapters
@@ -295,7 +293,7 @@ Prices in a building row shrink with their length, so `digits_from` takes the ro
 **One settings file, so a run plays the same from the window and the CLI** (`AppConfig`, `adapters/config.py`).
 
 - Its defaults are the ones the window shows, not the field defaults underneath (`LootThresholds()` means take anything). A file that will not parse raises.
-- `attack --min-gold` / `--min-elixir` / `--min-dark`, `--stop-at` and `--restart-every` override it for one run: omitting a flag keeps the file's value, and `0` takes it out. `probe` and `bounds` use `LootThresholds()`.
+- `attack --min-gold` / `--min-elixir` / `--min-dark` and `--stop-at` override it for one run: omitting a flag keeps the file's value, and `0` takes it out. `probe` and `bounds` use `LootThresholds()`.
 - `gemini` holds two tiers, `main` (once per run, a whole screenshot) and `lite` (once per candidate, a cropped strip), each with `model`, `base_url` and `thinking_level` (default `low`), plus one `api_key` both tiers use. `gemini_key` falls back to `GEMINI_API_KEY` in the environment, then in `.env`, only while that key is empty.
 - A file holding keys the model no longer reads is rewritten to what it does read, with missing keys filled in; a file that already matches is left untouched. No migrations.
 - The window's own settings are the `ui` block (`UiSettings`, `UiJobs`). The job flags are named for the sub-commands (`ui.jobs.walls` runs `ai_coc walls`), and `_job_boxes` is the one place a name is paired with its widget. The name has to hold in three places at once — a field of `UiJobs`, a checkbox, a sub-command — because the cycle cannot tell a missing checkbox from an unticked one, so a job whose name misses one of them silently stops running. Nothing is in `QSettings`.

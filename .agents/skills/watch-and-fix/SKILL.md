@@ -85,7 +85,7 @@ uv run ai_coc attack --plan .runs/tuned.json
 
 每一層都比下一層便宜而且好回頭, 不要跳級.
 
-1. **`~/.ai_coc/config.json`**: 戰利品門檻, 倉庫上限, 重開模擬器的間隔, 模型. 改數字重跑, 不用測試不用 PR. 它只決定打誰跟打到什麼時候, **沒有任何數字決定怎麼打**: 秒數都在 plan 的 `AttackStep` 上 (`act: wait` 從上一個動作做完算), 殘留的 `timings` 會被 `adapters/config.py` 刪掉. 所以「打得不夠好」從第二層開始
+1. **`~/.ai_coc/config.json`**: 戰利品門檻, 倉庫上限, 模型. 改數字重跑, 不用測試不用 PR. 它只決定打誰跟打到什麼時候, **沒有任何數字決定怎麼打**: 秒數都在 plan 的 `AttackStep` 上 (`act: wait` 從上一個動作做完算), 殘留的 `timings` 會被 `adapters/config.py` 刪掉. 所以「打得不夠好」從第二層開始
 2. **戰術檔案**: `src/ai_coc/plans/flat.json` 是預設戰術 (夜世界的形狀看 `plans/night_flat.json`), `--plan` 餵一份進去**完全不呼叫 AI**, 只打它所屬的村莊, 遊戲在另一邊就回 `other_village`, 所以先 `world --go` 切過去. 寫 JSON 比改程式碼快, 而且拿掉 AI 這個變因才能對照
 3. **`src/ai_coc/prompts/attack_plan.md`**: AI 每次都畫爛線或漏欄位是 prompt 的事. `AttackPlan` 除了 `deploy_from` 跟 `reason` 都必填, 是刻意的 (Gemini 會不寫有預設值的欄位), 見 model 上面的註解. **戰術本身是使用者定的**: 從防禦最重的一側打, 攻城機器先下, 怒吼跟在兵後面. 要換掉這些先問他; 他對戰術的回報當成要量的假說, 不是結論
 4. **`src/ai_coc/ui/attack.py` 頂端的常數**: 到這層才需要量測撐腰, 來歷寫在各常數旁邊. `TAP_GAP` 住在 `adapters/adb.py`
