@@ -361,8 +361,8 @@ def collect_cart(adb: AdbController, display: DisplayTarget) -> CartReport:
 
     **`read_builder_stock`, because this only ever runs on the builder base.**
     `read_stock` reads a third row that village does not have: what sits at that
-    y is its gems bar, and 10 152 gems come back as `dark=410152` with the green
-    `+` read as a leading 4. Two costs, both real. It has to resolve at all for
+    y is its gems bar, and 10 152 gems come back as `dark=10152`, the gem count
+    read as dark elixir. Two costs, both real. It has to resolve at all for
     `read_stock` to answer anything, so a gems row that will not read loses the
     whole trip to the cart — the taps are spent, the elixir is collected, and
     this reports 0. And it logged `Village holds … dark=410005` in the middle of

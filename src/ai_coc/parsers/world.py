@@ -5,8 +5,8 @@ command can assume which it is looking at. That matters more than it sounds:
 `read_stock` answers with three numbers on the builder base as readily as on the
 home village, because the builder base has no dark elixir and its gems bar sits
 at exactly the y the dark row is read from — measured, a builder base holding
-10 152 gems reports `dark=410152`, the green `+` plate beside the number reading
-as a leading 4. So every loop's own "am I on the village" test says yes in the
+10 152 gems reports `dark=10152`, the gem count read as if it were dark elixir.
+So every loop's own "am I on the village" test says yes in the
 wrong world, and a sweep would walk the wrong map.
 
 **What separates them is the shield.** The home village carries a 護盾 plate in

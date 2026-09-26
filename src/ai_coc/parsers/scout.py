@@ -475,6 +475,16 @@ STOCK_DIGIT_TOLERANCE = 30
 # It can only ever hand a trimmed row back the answer it had before any of this
 # existed, which is None, so nothing that reads today can be reached from here.
 STOCK_TRIMMED_TOLERANCE = 20
+# **The leftmost glyph has to match more closely than the rest to count as a
+# digit**, because it is the one the village can fake. A collector's bubble left
+# of the elixir bar read as a leading `1` at 28, inside `STOCK_DIGIT_TOLERANCE`,
+# and 11 778 462 came back as 111 778 462 (`stock_bubbles_left_of_elixir.png`).
+# Measured over every fixture that reads a village, a real leading digit sits at
+# 18 at worst (the builder base's 5 100 000) and a glyph the village put there at
+# 28 at best, so the line goes between them. The builder base's gems bar leads
+# its dark row with a green `+` at 30, which this trims too: that row now reads
+# the gem count itself instead of it with a 4 in front, and nothing compares it.
+STOCK_LEADING_TOLERANCE = 23
 STOCK_INK_SATURATION = 45
 
 # 最大儲存量 on the tooltip a tapped storage bar drops open, which is the one
@@ -689,20 +699,23 @@ def _read_row(image: Image.Image, box: tuple[int, int, int, int], tolerance: int
     prompted this reads what a capture of the same village two minutes earlier
     read, before the camera was parked.
 
-    **The trim is judged by what survives it, not by what it removed**, and
-    `STOCK_TRIMMED_TOLERANCE` is where that is measured. Going by the dropped
-    glyph alone does not hold up: a real leading digit lands within 12 of its
-    template and the glyphs dropped here start at 31, but the builder base's
-    gems bar puts its green `+` in the dark row at exactly 30 — one bit under
-    the line, and the reason `read_stock` reports the documented `dark=410152`
-    there. A bound drawn against that is a bound where one bit picks between two
-    numbers rather than between a number and no answer.
+    **The trim is judged by what survives it as well as by what it removed.**
+    `STOCK_LEADING_TOLERANCE` decides what is removed: a real leading digit lands
+    within 18 of its template and the village's own glyphs start at 28, so the
+    line sits between them rather than at `STOCK_DIGIT_TOLERANCE`, where a
+    collector's bubble at 28 used to pass as a leading `1`. `STOCK_TRIMMED_TOLERANCE`
+    then holds whatever survives the trim of a glyph past `STOCK_DIGIT_TOLERANCE`
+    to a closer match, since removing that glyph also removes the rule that one
+    poor glyph fails the row.
     """
     glyphs = list(row_glyphs(ink_mask(image.crop(box), saturation=STOCK_INK_SATURATION)))
     trimmed = False
-    while glyphs and glyphs[0][1] > tolerance:
+    while glyphs and glyphs[0][1] > min(tolerance, STOCK_LEADING_TOLERANCE):
+        # Only a glyph past `tolerance` takes the row-wide rule away. One the
+        # leading line alone trims leaves every digit held to `tolerance` as
+        # before, which matters because a real `9` on these bars reads 27.
+        trimmed = trimmed or glyphs[0][1] > tolerance
         glyphs.pop(0)
-        trimmed = True
     if trimmed:
         tolerance = STOCK_TRIMMED_TOLERANCE
     if not glyphs or any(distance > tolerance for _, distance in glyphs):
@@ -1381,8 +1394,8 @@ def read_builder_stock(png: bytes) -> VillageStock | None:
 
     **`read_stock` cannot be used there.** That village has no dark elixir, and
     its gems bar sits at exactly the y the dark row is read from — measured, a
-    builder base holding 10 152 gems reports `dark=410152`, the green `+` beside
-    the number reading as a leading 4. A number that wrong travelling as a
+    builder base holding 10 152 gems reports `dark=10152`, the gem count read as
+    if it were dark elixir. A number that wrong travelling as a
     resource is how a limit ends up checked against a bar belonging to something
     else, so it is not read at all: `dark` comes back 0, and that village's
     `StorageCapacity` carries no dark ceiling either, so nothing compares them.

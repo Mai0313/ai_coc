@@ -418,9 +418,10 @@ class WorldTests(unittest.TestCase):
     def test_the_builder_base_storages_are_read_two_rows_deep(self) -> None:
         """Three would read the gems bar, which sits at exactly the dark row's y.
 
-        Measured, a builder base holding 10 152 gems reports `dark=410152`
-        through `read_stock`, the green `+` beside the number reading as a
-        leading 4. Here `dark` is 0, and that village's `StorageCapacity` has no
+        Measured, a builder base holding 10 152 gems reports `dark=10152`
+        through `read_stock`: the gem count, the green `+` beside it trimmed as
+        `STOCK_LEADING_TOLERANCE` trims whatever the village leaves in front of a
+        number. Here `dark` is 0, and that village's `StorageCapacity` has no
         dark ceiling either, so nothing ever compares the two.
         """
         assert read_builder_stock((FRAMES / "world_night.png").read_bytes()) == VillageStock(
@@ -1426,8 +1427,8 @@ class CrossingTests(unittest.TestCase):
     def test_the_cart_is_judged_on_the_builder_bases_own_two_rows(self) -> None:
         """`read_stock` wants a third row that village does not have.
 
-        What sits at that y is its gems bar, which comes back as `dark=410005`
-        with the green `+` read as a leading 4 — and it has to resolve at all
+        What sits at that y is its gems bar, which comes back as the gem count
+        read as dark elixir — and it has to resolve at all
         for `read_stock` to answer anything, so a gems row that will not read
         would lose the whole trip. The numbers are one real trip's own.
         """
@@ -2117,6 +2118,35 @@ class ScoutTests(unittest.TestCase):
         corner = read_stock((FRAMES / "world_day_corner.png").read_bytes())
         assert corner == read_stock((FRAMES / "world_day.png").read_bytes())
         assert corner == VillageStock(gold=118475, elixir=1710564, dark=311298)
+
+    def test_a_bubble_left_of_a_bar_is_not_a_leading_digit(self) -> None:
+        """A collector's bubble behind the elixir bar matched `1` at 28, inside
+        `STOCK_DIGIT_TOLERANCE`; the screen said 11 778 462 and this read
+        111 778 462, an elixir storage at 413% of its ceiling.
+        """
+        assert read_stock(
+            (FRAMES / "stock_bubbles_left_of_elixir.png").read_bytes()
+        ) == VillageStock(gold=10767091, elixir=11778462, dark=440000)
+
+    def test_a_bubble_trimmed_off_leaves_a_poor_nine_standing(self) -> None:
+        """A real `9` on these bars reads 27, measured on the same run's frames.
+        Holding what survives a bubble's trim to `STOCK_TRIMMED_TOLERANCE` would
+        fail the whole row on it, and a storage that will not read takes every
+        loop's village test down with it.
+        """
+        bubble_then_digits = [
+            ("1", 28), ("1", 1), ("1", 1), ("7", 15), ("7", 14),
+            ("8", 12), ("4", 6), ("9", 27), ("2", 8),
+        ]  # fmt: skip
+        image = Image.new("RGB", (1600, 900))
+        with patch.object(scout_parser, "row_glyphs", return_value=iter(bubble_then_digits)):
+            assert _read_row(image, (0, 0, 10, 10), STOCK_DIGIT_TOLERANCE) == 11778492
+
+    def test_a_real_leading_digit_is_kept_on_every_village_that_reads(self) -> None:
+        """The line sits above the worst real leading digit measured, 18."""
+        assert read_builder_stock(
+            (FRAMES / "night_builder_panel.png").read_bytes()
+        ) == VillageStock(gold=5500000, elixir=5100000, dark=0)
 
     def test_a_screens_own_text_is_not_trimmed_into_a_reading(self) -> None:
         """The trim drops the rule that kept these rows honest, so it has to pay it back.
@@ -5697,7 +5727,7 @@ class HomeTests(unittest.TestCase):
         assert current_world(hidden) is None
         held = read_stock(hidden)
         assert held is not None
-        assert held.dark == 410_152
+        assert held.dark == 10_152
 
     def _walked(self, run: shared.GameRunner, seen: list[str]) -> tuple[bool, int]:
         """Walk `_home` over these worlds, the storages reading whenever it looks.
