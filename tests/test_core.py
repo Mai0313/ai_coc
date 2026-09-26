@@ -162,6 +162,7 @@ from ai_coc.parsers.scout import (
     card_drained,
     freeze_cards,
     skip_offered,
+    welcome_back,
     _dimmed_floor,
     army_strength,
     counted_cards,
@@ -1417,6 +1418,17 @@ class CrossingTests(unittest.TestCase):
         assert adb.swipe.call_count == 0
         assert adb.back.call_count == world_ui.UNCOVER_TRIES
 
+    def test_the_raid_report_is_pressed_away(self) -> None:
+        """Its 確定 sits where 回營 does, and a result screen is never pressed at."""
+        adb = MagicMock()
+        adb.screenshot.side_effect = [
+            (FRAMES / name).read_bytes() for name in ("welcome_back.png", "world_night.png")
+        ]
+        with patch.object(world_ui.time, "sleep"):
+            here = world_ui.uncovered(adb, DisplayTarget(logical_id="1", physical_id="2"))
+        assert here == "night"
+        assert adb.back.call_count == 1
+
     def test_a_loading_screen_is_never_pressed_at(self) -> None:
         """Nothing on it answers a press, and the presses were noise in the one log that matters."""
         adb, landed = self._cross([None], loading=True)
@@ -2023,6 +2035,19 @@ class ScoutTests(unittest.TestCase):
         assert not battle_over(png)
         # And not a village either, so nothing downstream mistakes it for one.
         assert current_world(png) is None
+
+    def test_the_raid_report_is_not_a_result_screen(self) -> None:
+        """首領，歡迎回來, whose one green 確定 sits where 回營 does.
+
+        Read as a result screen, `uncovered` refused to press `back` at it and
+        `launch` waited out its whole patience beneath it.
+        """
+        png = (FRAMES / "welcome_back.png").read_bytes()
+        assert welcome_back(png)
+        assert not battle_over(png)
+        for path in FRAMES.glob("*.png"):
+            if path.name != "welcome_back.png":
+                assert not welcome_back(path.read_bytes()), path.name
 
     def test_only_the_card_that_lost_one_shows_it(self) -> None:
         """A drop is judged on the card's own corner, which repaints when it loses one.
@@ -5125,6 +5150,7 @@ class RestartEveryTests(unittest.TestCase):
             patch.object(commands, "current_world", side_effect=[None, None, "day"]),
             patch.object(commands, "park_camera", return_value=True) as parked,
             patch.object(commands, "idle_disconnected", return_value=False),
+            patch.object(commands, "welcome_back", return_value=False),
             patch.object(commands, "loading_screen", return_value=False),
         ):
             assert commands._restart_emulator(runner, ticker)
@@ -5172,6 +5198,7 @@ class RestartEveryTests(unittest.TestCase):
             patch.object(commands, "stop_requested", return_value=False),
             patch.object(commands, "current_world", return_value=None),
             patch.object(commands, "idle_disconnected", return_value=False),
+            patch.object(commands, "welcome_back", return_value=False),
             patch.object(commands, "loading_screen", return_value=False),
         ):
             assert not commands._restart_emulator(MagicMock(), MagicMock())

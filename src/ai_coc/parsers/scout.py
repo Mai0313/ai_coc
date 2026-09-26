@@ -619,6 +619,20 @@ LOADING_FILL = (602, 760, 612, 776)
 LOADING_PLATE_FLAT = 0.9
 LOADING_FILL_PURPLE = 0.5
 
+# 首領，歡迎回來 / 你的村莊被襲擊了, the report the game opens on after the
+# village was raided while nobody was in it. Its one green 確定 sits inside
+# `RETURN_HOME_BOX`, so `battle_over` alone took it for a result screen:
+# `uncovered` then refused to press `back` at what it thought was a battle, and
+# `_settle_game` waited out its whole patience beneath it. `back` closes it.
+# Read off the red ribbon the title is written on and the pale sheet beside
+# 確定: the builder base's report measured 1.00 on both, against at most 0.10 of
+# ribbon (`battle_dimmed_by_popup`) and 0.83 of sheet (`settings_window`) over
+# every committed fixture. The home village's report has not been recorded.
+WELCOME_RIBBON_BOX = (240, 80, 620, 145)
+WELCOME_SHEET_BOX = (270, 705, 700, 800)
+WELCOME_RIBBON_RED = 0.5
+WELCOME_SHEET_PALE = 0.9
+
 
 def battle_over(png: bytes) -> bool:
     """Whether the battle result screen is up with its 回營 button waiting."""
@@ -627,7 +641,29 @@ def battle_over(png: bytes) -> bool:
         data[i + 1] > 150 and data[i + 1] - data[i] > 45 and data[i + 1] - data[i + 2] > 60
         for i in range(0, len(data), 3)
     )
-    return green / (len(data) // 3) >= RETURN_HOME_GREEN
+    if green / (len(data) // 3) < RETURN_HOME_GREEN:
+        return False
+    return not welcome_back(png)
+
+
+def welcome_back(png: bytes) -> bool:
+    """Whether the raid report the game opens on is covering the village."""
+    image = open_frame(png)
+    ribbon = image.crop(WELCOME_RIBBON_BOX).tobytes()
+    red = sum(
+        ribbon[i] > 130 and ribbon[i] - ribbon[i + 1] > 80 and ribbon[i] - ribbon[i + 2] > 90
+        for i in range(0, len(ribbon), 3)
+    )
+    if red / (len(ribbon) // 3) < WELCOME_RIBBON_RED:
+        return False
+    sheet = image.crop(WELCOME_SHEET_BOX).tobytes()
+    pale = sum(
+        min(sheet[i], sheet[i + 1], sheet[i + 2]) > 200
+        and max(sheet[i], sheet[i + 1], sheet[i + 2]) - min(sheet[i], sheet[i + 1], sheet[i + 2])
+        < 20
+        for i in range(0, len(sheet), 3)
+    )
+    return pale / (len(sheet) // 3) >= WELCOME_SHEET_PALE
 
 
 def idle_disconnected(png: bytes) -> bool:

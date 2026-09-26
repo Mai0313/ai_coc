@@ -20,7 +20,7 @@ uv run ai_coc read <png>
 
 回 `FrameReading` (欄位看 `models.py` 的 `FrameReading` 跟 `commands.read`), 是每個 parser 對這張圖的說法, 包括 `counts`: 每張卡的 `xN` 讀到幾, 決定點幾下, 查出兵節奏先看它.
 
-**一輪卡住先看「這是哪個畫面」的欄位, 不看兵**: `world` (None 是根本不是村莊), `attack_menu` / `night_menu` (兩個世界的攻擊對話框, 互相認不得), `searching` (夜世界配對在等真人), `loot_cart` / `cart_ready` (推車面板開著沒, 收集鈕活不活; 灰的原因看 `CartReport.held`), `battle_over` (結算畫面, 這才是戰鬥結束的判準, 不是 `scout` 讀到 None), `dialog` (確定／取消面板跟兩顆按鈕座標), `idle_dialog` / `loading` (掉線, 伺服器沒回應). `outcome` 是 `no_attack_menu` 的那一輪, 這幾個欄位說出當時看到什麼.
+**一輪卡住先看「這是哪個畫面」的欄位, 不看兵**: `world` (None 是根本不是村莊), `attack_menu` / `night_menu` (兩個世界的攻擊對話框, 互相認不得), `searching` (夜世界配對在等真人), `loot_cart` / `cart_ready` (推車面板開著沒, 收集鈕活不活; 灰的原因看 `CartReport.held`), `battle_over` (結算畫面, 這才是戰鬥結束的判準, 不是 `scout` 讀到 None), `welcome_back` (被打之後開場的 首領，歡迎回來 報告, 按 `back` 就關), `dialog` (確定／取消面板跟兩顆按鈕座標), `idle_dialog` / `loading` (掉線, 伺服器沒回應). `outcome` 是 `no_attack_menu` 的那一輪, 這幾個欄位說出當時看到什麼.
 
 **這是分辨「判讀錯」跟「點沒中」的唯一辦法**: parser 讀到的跟眼睛看到的一樣, 問題在後面的動作; 不一樣, 問題在 parser.
 

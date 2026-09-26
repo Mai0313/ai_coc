@@ -1163,7 +1163,7 @@ class SettleGameTests(unittest.TestCase):
         stop: bool = False,
         **screens: list[bool],
     ) -> tuple[MagicMock, DisplayTarget | None]:
-        """Poll against canned readings; `dropped` and `loading` are what each frame reads as."""
+        """Poll against canned readings; `dropped`, `welcome` and `loading` are what each frame reads as."""
         adb = _adb()
         if displays is not None:
             adb.display_for.side_effect = displays
@@ -1172,6 +1172,9 @@ class SettleGameTests(unittest.TestCase):
             patch.object(commands, "current_world", side_effect=worlds),
             patch.object(
                 commands, "idle_disconnected", side_effect=screens.get("dropped") or [False] * 9
+            ),
+            patch.object(
+                commands, "welcome_back", side_effect=screens.get("welcome") or [False] * 9
             ),
             patch.object(
                 commands, "loading_screen", side_effect=screens.get("loading") or [False] * 9
@@ -1215,6 +1218,12 @@ class SettleGameTests(unittest.TestCase):
         )
         assert display == DISPLAY
         assert adb.restarted.call_count == 1
+
+    def test_the_raid_report_is_pressed_away_rather_than_waited_under(self) -> None:
+        """首領，歡迎回來 held a launch for its whole patience; `back` closes it."""
+        adb, display = self._settle([None, "night"], welcome=[True])
+        assert display == DISPLAY
+        adb.back.assert_called_once_with(DISPLAY)
 
     def test_giving_up_names_the_loading_screen(self) -> None:
         with self.assertLogs("ai_coc.commands", "WARNING") as logged:
