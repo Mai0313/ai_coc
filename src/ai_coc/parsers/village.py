@@ -18,7 +18,7 @@ def parse_village_text(text: str) -> AccountSnapshot:
     `skins`, `house_parts` and their builder-base twins — including the three
     named helpers the mapping does know. So the sections are whatever the
     document holds a list under, which is also what the tolerance rule in
-    CLAUDE.md asks for: a section nobody has heard of survives instead of
+    AGENTS.md asks for: a section nobody has heard of survives instead of
     needing a code change first.
     """
     document = VillageDocument.model_validate_json(text.lstrip("﻿").strip())

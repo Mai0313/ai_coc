@@ -426,6 +426,9 @@ class WallRunner(GameRunner):
                 # This point is spent as far as this run is concerned. Dropping
                 # it rather than retrying is what keeps a wall the game will not
                 # sell from being asked about once a round for the whole run.
+                # Known and open (#68): a tap that opened another building instead,
+                # or landed while its menu was still open, drops a wall the game
+                # would sell, and the run then buys dearer ones.
                 del prices[point]
                 continue
             report.upgrades.append(bought)

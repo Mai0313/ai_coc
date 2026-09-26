@@ -170,9 +170,9 @@ class ScreenRunner(BaseModel):
     server that takes minutes to answer — but it declared these five fields with the
     same names, types and defaults, and both methods with the same bodies. The
     frame naming in particular (`0006_scout`, `0010_pass`) is written down in
-    `CLAUDE.md` and in two of the project's skills, and a convention documented
-    in three places and implemented in two is the drift `AGENTS.md` is a symlink
-    to avoid.
+    `AGENTS.md` and in the `watch-and-fix` skill, and a convention documented in
+    two places and implemented in two is the drift `CLAUDE.md` is a symlink to
+    avoid.
     """
 
     adb: AdbController

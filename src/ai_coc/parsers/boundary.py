@@ -210,11 +210,16 @@ def village_box(png: bytes) -> tuple[int, int, int, int] | None:
 
     Nothing downstream should assume where the camera is pointing: `push_out`
     moves a drop away from the screen centre, the preset flanks are screen
-    coordinates and the spell grid is spaced off the middle. Measured across nine
-    battles and both theme fixtures the game opens every attack with the village
-    already within 35 px of the centre — but reading it is what makes that a fact
-    rather than an assumption, and a camera left anywhere else then shows up
-    instead of quietly putting the whole army in the wrong place.
+    coordinates and the spell grid is spaced off the middle. Reading the box was
+    meant to catch a camera left anywhere else before it put the whole army in
+    the wrong place.
+
+    Known and open (#65): the box barely follows the camera, so it does not
+    catch that yet. The mask is mostly village art that passes the red test,
+    spread over the whole playfield, so the 2% trim lands near the playfield's
+    edges wherever the camera points; the "within 35 px of the centre across
+    nine battles" this used to cite is what a rectangle fixed to the screen
+    reads too.
     """
     image = open_frame(png)
     red, green, blue = image.split()
@@ -246,6 +251,11 @@ def village_box(png: bytes) -> tuple[int, int, int, int] | None:
 # because a wall's edge highlight is as thin as the stroke. The boundary is one
 # closed curve, so the readings belong to it only if they sit near each other,
 # and this is the fraction of the middle reading below which one is dropped.
+# Known and open: rays on one flank of a diamond were measured as far apart as
+# 304, 402 and 631, so this ratio also drops a correct reading. Dividing each by
+# the radius the diamond would have there was tried and read worse: it let
+# `boundary_reach`'s over-reads through, and lines landed further out than the
+# presets. `boundary_reach` is the thing to fix first.
 OUTLIER_RATIO = 0.6
 
 

@@ -14,7 +14,7 @@ description: >-
 ## 三份文件的分工
 
 - **程式碼**說現在做得到什麼. 完整清單是 `src/ai_coc/cli.py` 的 `_parser()` 跟 `src/ai_coc/commands.py`, 開工前先讀, 不在上面的就是題目
-- **`CLAUDE.md`** 說架構跟規則, **常數旁邊的註解**說每個數字怎麼量的
+- **`AGENTS.md`** 說架構跟規則, **常數旁邊的註解**說每個數字怎麼量的
 - **這份 skill** 說怎麼探索, 什麼算好題目, 做出來放哪
 
 ## 探索一定要看圖
@@ -38,23 +38,23 @@ uv run ai_coc read <png>                                          # 現有 parse
 
 **不好的**:
 
-- 判讀器要**每天跑幾百次**都認得遊戲美術, 而美術每一級、每次改版都會變. 判讀器只讀遊戲畫在上面的 UI, `CLAUDE.md` 搜 `read the UI the game paints on top`; 一次性的辨認用看的就好, 那是 `spend-loot` 的事
+- 判讀器要**每天跑幾百次**都認得遊戲美術, 而美術每一級、每次改版都會變. 判讀器只讀遊戲畫在上面的 UI, `AGENTS.md` 搜 `read the UI the game paints on top`; 一次性的辨認用看的就好, 那是 `spend-loot` 的事
 - 不可逆: 拆建築, 換陣型, 動帳號設定
-- 會花寶石或現金. 加速所有同類項目跟城牆戒指的圖示會被讀成資源, 現有程式碼在判讀器裡就把它們擋掉 (藍色底板), `CLAUDE.md` 搜 `blue plate`
+- 會花寶石或現金. 加速所有同類項目跟城牆戒指的圖示會被讀成資源, 現有程式碼在判讀器裡就把它們擋掉 (藍色底板), `AGENTS.md` 搜 `blue plate`
 - 跟別的玩家互動而對方會受影響
 
 找到候選先跟使用者確認再做.
 
 ## 做出來要放哪
 
-完整規則在 `CLAUDE.md` 的 Architecture 跟 Project rules, 一定會撞到的是:
+完整規則在 `AGENTS.md` 的 Architecture 跟 Project rules, 一定會撞到的是:
 
 - **headless 先行**: 新功能要能被 `commands.py` 叫到, 才能在開發中對著活的遊戲跑; 視窗最後才接, 有時不接
 - **三層目錄**: `ui/` 編排, `adapters/` 外面的世界, `parsers/` 純函式. 判讀畫面進 `parsers/`, 才能拿真實截圖當 fixture 測
 - **每個結構化的值都是 Pydantic model**, 放 `models.py`. 不要 dataclass, TypedDict, 或在函式之間傳裸 dict
 - **座標寫死 1600x900**, 別的尺寸要 raise, 照抄現有的 parser
 - **每次截圖跟每次輸入都要指定 display**
-- **會花資源的能力要有程式層的 guard**: 做得到就靠結構擋, 像城牆迴圈只點從聖水圖示往左數出來的位置, 城牆戒指跟寶石按鈕根本點不到; 做不到就在判讀器裡擋, 讓呼叫端拿不到那顆按鈕的價格, 像英雄殿堂的 `GEM_GREEN`. 新的花錢能力也要有自己的一道, prompt 或 skill 裡的一句話不算, `CLAUDE.md` 搜 `Spending is guarded`
+- **會花資源的能力要有程式層的 guard**: 做得到就靠結構擋, 像城牆迴圈只點從聖水圖示往左數出來的位置, 城牆戒指跟寶石按鈕根本點不到; 做不到就在判讀器裡擋, 讓呼叫端拿不到那顆按鈕的價格, 像英雄殿堂的 `GEM_GREEN`. 新的花錢能力也要有自己的一道, prompt 或 skill 裡的一句話不算, `AGENTS.md` 搜 `Spending is guarded`
 
 ## 做的流程
 
@@ -64,16 +64,16 @@ uv run ai_coc read <png>                                          # 現有 parse
 4. **接上 `commands.py` 跟 `cli.py` 的 sub-command**
 5. **對著活的遊戲驗證**, 失敗的路徑也要驗
 6. `uv run pytest` 跟 `make fmt`
-7. **流程照 `CLAUDE.md` 的 `## Development flow`**, 不用另外問使用者
+7. **流程照 `AGENTS.md` 的 `## Development flow`**, 不用另外問使用者
 
-**量測寫進常數旁邊的註解, 不寫進 `CLAUDE.md`; 想寫進 `CLAUDE.md` 的規則先給使用者看過**, 它每個 session 都會被讀.
+**量測寫進常數旁邊的註解, 不寫進 `AGENTS.md`**, 它每個 session 都會被讀, 只收規則, 不變式跟未修的已知缺陷. 要加規則就直接寫, 不用先給使用者看.
 
 ## 打資源要一直在背景跑
 
 改碼跟等測試的時間拿去打資源, 這是使用者明講的要求.
 
 - `walls` 是會花錢的迴圈裡最少被跑過的, 跑它就是在測它, 但**要使用者開口** (`farm` 的「授權」那節). 想拿它測就把牆列進倉庫滿了那則通知的選項, 不要自己跑
-- **城牆等級被大本營卡住時, `walls` 一批都買不成**: 約兩分鐘後回報 `WallReport.outcome` 是 `nothing_bought`, 既不是 bug 也不代表牆刷完了 (`CLAUDE.md` 的 Wall loop). 要等大本營升上去, 那是使用者的決定
+- **城牆等級被大本營卡住時, `walls` 一批都買不成**: 約兩分鐘後回報 `WallReport.outcome` 是 `nothing_bought`, 既不是 bug 也不代表牆刷完了 (`AGENTS.md` 的 Wall loop). 要等大本營升上去, 那是使用者的決定
 - **絕對不能同時跑兩個指令**, 它們搶同一個模擬器畫面. 要探索或驗證就自己停掉背景那輪, 不用問, **然後記得開回去** (`.agents/skills/farm/references/running.md` 的「你自己要用畫面」). 停用 `uv run ai_coc stop`: 它秒回, 但迴圈會打完手上那一場才收工. 不要 kill 背景程序: 背景送不進 Ctrl-C, 被 kill 會把軍隊留在戰場上, 遊戲停在下一輪回不了家的畫面
 
 ## 任務報告

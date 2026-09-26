@@ -30,7 +30,7 @@ description: >-
 你自己決定, 中途也可以換:
 
 - **自己跑**: 用 runtime 自己管的背景執行送出去 (見 `running.md` 的「開跑」), 前景讀 log 改東西. 隨時可以 `capture`, 代價是每一輪的通知都進你的 context.
-- **交給 subagent**: 照 `CLAUDE.md` 那段派一個跑 `farm` 的 subagent (降一級模型, 降 thinking budget), 你只讀它留下的檔案. 省下盯的成本, 代價是你不在現場.
+- **交給 subagent**: 照 `AGENTS.md` 那段派一個跑 `farm` 的 subagent (降一級模型, 降 thinking budget), 你只讀它留下的檔案. 省下盯的成本, 代價是你不在現場.
 
 **使用者指名就照他的**: 「你親自監督執行」是第一種, 不要為了省 context 轉包出去.
 
@@ -47,7 +47,7 @@ uv run ai_coc world --go day      # 坐船切過去, 已經在那邊就什麼都
 
 ## 三份文件的分工
 
-程式碼說現在是什麼, 常數旁邊的註解 (跟釘住它的測試) 說數字怎麼量出來的, `CLAUDE.md` 放規則跟不變式 (Attack loop 那節是必讀), 這份 skill 說怎麼判斷. 動常數之前先在 `src/` 跟 `tests/` 搜它: 多半是修某個實測 bug 才變成現在的值, 改回去就把 bug 放回來.
+程式碼說現在是什麼, 常數旁邊的註解 (跟釘住它的測試) 說數字怎麼量出來的, `AGENTS.md` 放規則跟不變式 (Attack loop 那節是必讀), 這份 skill 說怎麼判斷. 動常數之前先在 `src/` 跟 `tests/` 搜它: 多半是修某個實測 bug 才變成現在的值, 改回去就把 bug 放回來.
 
 ## 出兵沒有成本, 不要客氣
 
@@ -87,7 +87,7 @@ uv run ai_coc attack --plan .runs/tuned.json
 
 1. **`~/.ai_coc/config.json`**: 戰利品門檻, 倉庫上限, 重開模擬器的間隔, 模型. 改數字重跑, 不用測試不用 PR. 它只決定打誰跟打到什麼時候, **沒有任何數字決定怎麼打**: 秒數都在 plan 的 `AttackStep` 上 (`act: wait` 從上一個動作做完算), 殘留的 `timings` 會被 `adapters/config.py` 刪掉. 所以「打得不夠好」從第二層開始
 2. **戰術檔案**: `src/ai_coc/plans/flat.json` 是預設戰術 (夜世界的形狀看 `plans/night_flat.json`), `--plan` 餵一份進去**完全不呼叫 AI**, 只打它所屬的村莊, 遊戲在另一邊就回 `other_village`, 所以先 `world --go` 切過去. 寫 JSON 比改程式碼快, 而且拿掉 AI 這個變因才能對照
-3. **`src/ai_coc/prompts/attack_plan.md`**: AI 每次都畫爛線或漏欄位是 prompt 的事. `AttackPlan` 除了 `deploy_from` 跟 `reason` 都必填, 是刻意的 (Gemini 會不寫有預設值的欄位), 見 model 上面的註解
+3. **`src/ai_coc/prompts/attack_plan.md`**: AI 每次都畫爛線或漏欄位是 prompt 的事. `AttackPlan` 除了 `deploy_from` 跟 `reason` 都必填, 是刻意的 (Gemini 會不寫有預設值的欄位), 見 model 上面的註解. **戰術本身是使用者定的**: 從防禦最重的一側打, 攻城機器先下, 怒吼跟在兵後面. 要換掉這些先問他; 他對戰術的回報當成要量的假說, 不是結論
 4. **`src/ai_coc/ui/attack.py` 頂端的常數**: 到這層才需要量測撐腰, 來歷寫在各常數旁邊. `TAP_GAP` 住在 `adapters/adb.py`
 5. **迴圈的邏輯**: 最後手段, 要跑測試, 要開 PR
 
@@ -95,8 +95,8 @@ uv run ai_coc attack --plan .runs/tuned.json
 
 - **先量再改.** 沒量測就改常數, 下一個人會以為那是量過的.
 - **一次只動一件事**, 跑幾輪看差別.
-- **流程照 `CLAUDE.md` 的 `## Development flow`**, 不用另外問使用者.
-- **量到的新東西寫進常數旁邊的註解, 不寫進 `CLAUDE.md`**: 那裡只收規則, 不變式跟未修的已知缺陷; 真要加規則, 先把文字給使用者看過.
+- **流程照 `AGENTS.md` 的 `## Development flow`**, 不用另外問使用者.
+- **量到的新東西寫進常數旁邊的註解, 不寫進 `AGENTS.md`**: 那裡只收規則, 不變式跟未修的已知缺陷; 要加規則就直接寫, 不用先給使用者看.
 - 改的時候讓迴圈繼續跑. **要活的遊戲才驗得了的, 自己停掉迴圈, 驗完自己開回去**, 不用問, 規矩在 `.agents/skills/farm/references/running.md` 的「你自己要用畫面」那節. 驗證場對著的多半是打滿的村莊, 所以加 `--stop-at 0`.
 
 ## 對照要怎麼做
@@ -107,6 +107,8 @@ uv run ai_coc attack --plan .runs/tuned.json
 - 兩邊都跑 `--repeat 3` 以上
 - 比**進帳的資源**跟**打完的百分比**, 不比「感覺比較順」
 - 三場對三場只看得出很大的差別, 看不出百分之十
+- **修好的證據是新的那條路在 log 裡真的走到**: 十場乾淨而該出現的那一行一次都沒有, 只證明沒弄壞別的東西, 沒證明修好
+- 量測那幾場先跟使用者說一聲別碰模擬器: 他幫忙丟一瓶藥水, 那一場就不能算
 
 `--plan-out` 寫下實際跑的那份 (只留最後一輪, 要事先加), 好的可以重播, 爛的可以拿出來吵.
 

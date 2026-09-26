@@ -148,9 +148,10 @@ class UpkeepRunner(GameRunner):
                 report.markers += len(markers)
                 tapped = standing
                 time.sleep(COLLECT_SETTLE)
-        # Through `_home` rather than a bare capture: a marker that turned out to
-        # be a building has left its menu open, and this is what closes it as
-        # well as what reads the storages.
+        # Through `_home` rather than a bare capture, for the storages. A marker
+        # that turned out to be a building leaves its menu open, and this does
+        # not close it: a building menu leaves the storage bars readable, and
+        # `_home` only presses `back` on a frame whose storages will not read.
         after = self._home()
         if after is None:
             report.outcome = "stock_unread"

@@ -1,6 +1,6 @@
 # 症狀對照該去看什麼
 
-這張表只指路, 不給結論; 來龍去脈在常數或函式旁邊的註解. 找到症狀, 拿關鍵字 grep `src/` (跟釘住它的 `tests/`), 規則面看 `CLAUDE.md`, 再讀那個函式.
+這張表只指路, 不給結論; 來龍去脈在常數或函式旁邊的註解. 找到症狀, 拿關鍵字 grep `src/` (跟釘住它的 `tests/`), 規則面看 `AGENTS.md`, 再讀那個函式.
 
 整條路是 **開起遊戲 -> 站上要打的那個村莊 -> 打完一場 -> 回到村莊 -> 開下一輪**, 中間那段在 `src/ai_coc/ui/attack.py` 的 `AttackRunner`: 攻擊 -> 倉庫檢查 -> 尋找對戰目標 -> 兵力檢查 -> scout -> 縮放與置中 -> 規劃 -> 等開打 -> 清側翼 -> 出兵 -> 排程 -> 等結束 -> 回營. 下面照這個順序排.
 
@@ -10,7 +10,7 @@
 
 **症狀**: `run.log` 出現 `The village never came back after the restart`, 或一輪連攻擊選單都沒碰到就結束. 那是 `logger.error` 不是報告欄位 (序列直接收掉, `result.json` 沒有這一輪), 只能 grep log.
 
-`ai_coc launch` 的收工條件是**站在村莊上而且鏡頭在最遠處**, 不是 pid (`ensure_coc` 只看 `pidof`): 看 `LaunchReport.at_village`. 重開範圍 `none` / `game` / `emulator` 在 `CLAUDE.md` 搜 `RestartScope`; `emulator` 要等實例真的倒下 (`_await_shutdown`).
+`ai_coc launch` 的收工條件是**站在村莊上而且鏡頭在最遠處**, 不是 pid (`ensure_coc` 只看 `pidof`): 看 `LaunchReport.at_village`. 重開範圍 `none` / `game` / `emulator` 在 `AGENTS.md` 搜 `RestartScope`; `emulator` 要等實例真的倒下 (`_await_shutdown`).
 
 **排程重開** (`restart_every`, `_restart_emulator`, 數的是打過幾場) 有三處會出錯:
 
@@ -22,7 +22,7 @@
 
 **症狀**: `AttackReport.outcome` 是 `no_attack_menu`.
 
-看 `_open_attack_menu`, `attack_menu_open`, `ui/runner.py` 的 `_home` (共用的回家路徑, 分辨載入, 面板, 對話框, 掉線). 在乾淨的村莊上按 back 是災難, `CLAUDE.md` 搜 `back` 跟 `確定退出遊戲嗎`.
+看 `_open_attack_menu`, `attack_menu_open`, `ui/runner.py` 的 `_home` (共用的回家路徑, 分辨載入, 面板, 對話框, 掉線). 在乾淨的村莊上按 back 是災難, `AGENTS.md` 搜 `back` 跟 `確定退出遊戲嗎`.
 
 三個常被懷疑的原因:
 
@@ -45,7 +45,7 @@
 
 點歪會打開那裡的建築, 面板會吞掉後面的點擊, 所以每個沒坐成的點後面 (跟第一下滑動之前) 補一次 `back`. `back` **絕對不按在戰鬥上** (被砍掉的執行會把遊戲留在戰鬥裡, 那會點到 放棄): `uncovered` 先認載入畫面, 再要 `card_groups` 跟 `in_battle` 兩個都成立 (或者是結算畫面) 才算戰鬥, 戰鬥回 `None`. 那個判讀的坑在上一節末尾.
 
-分辨兩個村莊靠頂端面板徽章**的跨度而不是數量** (`CLAUDE.md` 搜 `933`): 寶石雨動畫會蓋掉一格.
+分辨兩個村莊靠頂端面板徽章**的跨度而不是數量** (`AGENTS.md` 搜 `933`): 寶石雨動畫會蓋掉一格.
 
 ## 兵力不足, 而且整個 series 停了
 
@@ -65,13 +65,13 @@
 
 **症狀**: 100 萬讀成 10 萬, 或同一個對手在不同畫面讀出不同數字.
 
-看 `parsers/scout.py` 的 `read_scout` (面板在哪), 再看 `parsers/glyphs.py` 切數字那段 (四個判讀器共用). `CLAUDE.md` 搜 `1 047 758`: 中間字元配不上整行放棄, 只丟右端的差配對, 超過 18 px 的區塊要切開而且切點要可信.
+看 `parsers/scout.py` 的 `read_scout` (面板在哪), 再看 `parsers/glyphs.py` 切數字那段 (四個判讀器共用). `AGENTS.md` 搜 `1 047 758`: 中間字元配不上整行放棄, 只丟右端的差配對, 超過 18 px 的區塊要切開而且切點要可信.
 
 ## 迴圈走出還在打的戰鬥
 
 **症狀**: 戰鬥還在打卻回報結束, 或回不了家.
 
-`read_scout` 的 `None` 同時是「正在搜尋對手」跟「讀不出來」, 不能當戰鬥結束. 結束看 `_battle_ended` (結果畫面的綠色回營按鈕). `CLAUDE.md` 搜 `overloaded`.
+`read_scout` 的 `None` 同時是「正在搜尋對手」跟「讀不出來」, 不能當戰鬥結束. 結束看 `_battle_ended` (結果畫面的綠色回營按鈕). `AGENTS.md` 搜 `overloaded`.
 
 ## 打完了但回不到村莊
 
@@ -88,16 +88,17 @@
 **先看 outcome**, 兩種往相反方向查:
 
 - `nothing_deployed`: 一張卡都出不去, 迴圈的問題, 看這一節
-- `no_loot`: 兵下去了, 位置不對, **戰術**的問題, 先讀那一輪的 `plans.jsonl`, 再照 SKILL.md 的調整階梯從戰術檔開始 (實測過: 32%, 卡全清空, 英雄全落地, 打進了沒有倉庫的那一側)
+- `no_loot`: 兵下去了, 位置不對, **戰術**的問題, 先讀那一輪的 `plans.jsonl`, 再照 SKILL.md 的調整階梯從戰術檔開始 (實測過: 32%, 卡全清空, 英雄全落地, 打進了沒有倉庫的那一側). 從哪一側打是使用者定的, 見階梯第三層
+- `no_loot` 而且那一輪拖滿四分鐘, 戰鬥中每十秒一行 `No battle on screen; nothing here is a card to empty`: 戰鬥畫面不見了而結算畫面也沒出來, 迴圈沒有這個狀態, 只能等 `BATTLE_TIMEOUT` 用完. 最常見的是打到一半登入被搶走了 (使用者在手機或另一台模擬器上開遊戲); 彈出視窗蓋住戰鬥也會這樣. 先看那一輪的畫面, 是被登出就問他是不是在玩, 不要調戰術
 
 依序看:
 
 - `_flank` 不花兵, 只讓開卡片列, 把線彎到紅線上
 - `_spread_troops` 在整個 pass 沒消耗時把線往外推 (村莊外圍**不是凸的**, 兩端在外面的線中間仍可能穿過去)
 - `push_out` 推到 `DEPLOY_BOUND` 邊緣就不動, 一直推同一點是可能的
-- `boundary_reach` 跟 `fitted_line` 把預設側翼彎到真實邊界, 三個錨點的理由 `CLAUDE.md` 搜 `chord`
+- `boundary_reach` 跟 `fitted_line` 把預設側翼彎到真實邊界, 三個錨點的理由 `AGENTS.md` 搜 `chord`
 
-出兵成不成功看 `card_drained`, 不看畫面上有沒有兵 (紅色橫幅不能用, `CLAUDE.md` 搜 `你無法在紅線區域內派遣部隊`). 偵察倒數中丟兵會直接開打 (2026-09-26 實測), 所以攻擊不等倒數; 只有 `probe` 跟 `bounds` 還用 `_wait_for_battle` 等.
+出兵成不成功看 `card_drained`, 不看畫面上有沒有兵 (紅色橫幅不能用, `AGENTS.md` 搜 `你無法在紅線區域內派遣部隊`). 偵察倒數中丟兵會直接開打 (2026-09-26 實測), 所以攻擊不等倒數; 只有 `probe` 跟 `bounds` 還用 `_wait_for_battle` 等.
 
 ## 下兵線畫穿村莊
 
@@ -105,7 +106,7 @@
 
 ## 下方側翼站不下人
 
-看 `_clear_flank` 跟 `FLANK_ROOM`: 卡片列站在下方側翼上, 要先把村莊拖離卡片列再出兵. `CLAUDE.md` 搜 `FLANK_ROOM`.
+看 `_clear_flank` 跟 `FLANK_ROOM`: 卡片列站在下方側翼上, 要先把村莊拖離卡片列再出兵. `AGENTS.md` 搜 `FLANK_ROOM`.
 
 ## 整場一隻兵都沒下去
 
@@ -123,7 +124,7 @@
 
 相機動過而沒被記下. 看 `_settle_camera`, `_pan`, `_panned`, `_onscreen`, `parsers/field.py` 的 `view_shift` 跟 `parsers/boundary.py` 的 `village_box`. `view_shift` 滑兩張畫面比對, 不量兩次村莊 (`village_box` 會被紅色裝飾騙), `parsers/field.py` 開頭的註解搜 `98 px`.
 
-已知沒修的寫在 `CLAUDE.md`: `_settle_camera` 拿到的是 scout 畫面, `village_box` 不是為那張校正的.
+已知沒修的寫在 `AGENTS.md`: `_settle_camera` 拿到的是 scout 畫面, `village_box` 不是為那張校正的.
 
 ## 多讀到一張卡
 
@@ -142,6 +143,8 @@
 **症狀**: 皇后的斗篷開在別人身上, 或某個英雄整場沒開大.
 
 哪張一次性卡片是攻城機具由 plan 有沒有 `siege` 步驟決定 (血條分不出來, 遊戲對攻城戰車也畫血條): `_deploy` 建 `BattleRow` 時有 `siege` 就把第一張當機具, 沒有就整排當英雄. 多寫或少寫一個 `siege`, 整排英雄的落點跟開大秒數就偏一格, **沒有下游會發現**. 對照那輪 `plans.jsonl` 有沒有 `siege` 跟 `--record` 的 `home` 畫面上有沒有攻城機具, 對不上就從 `prompts/attack_plan.md` 查.
+
+`siege` 對得上還是晚一格, 看戰鬥中途卡片列前面有沒有多出一張 (活動卡): `BattleRow` 記的是開場讀到的 x, 前面插一張, 後面每張都往右移, `ability` 跟 `_cast` 就點到隔壁那張. 這是 `AGENTS.md` 記著的已知缺陷.
 
 ## 法術沒放出去
 
@@ -173,7 +176,7 @@
 
 ## 出兵太慢
 
-整支軍隊該在**兩秒左右**下完, 過程中什麼都不讀 (一次判讀 0.9 秒), 順序全由 plan 決定. 看 `_play_tactic`, `_act`; 落地後那次判讀是 `_settle_drops`, 躲在第一個夠長的 `wait` 裡 (`CHECK_BUDGET`). `DROP_SETTLE` / `HERO_SETTLE` 只有重試用; `TAP_GAP` 住在 `adapters/adb.py`. 改前改後的秒數在 `CLAUDE.md` 搜 `7 seconds`.
+整支軍隊該在**兩秒左右**下完, 過程中什麼都不讀 (一次判讀 0.9 秒), 順序全由 plan 決定. 看 `_play_tactic`, `_act`; 落地後那次判讀是 `_settle_drops`, 躲在第一個夠長的 `wait` 裡 (`CHECK_BUDGET`). `DROP_SETTLE` / `HERO_SETTLE` 只有重試用; `TAP_GAP` 住在 `adapters/adb.py`. 改前改後的秒數在 `AGENTS.md` 搜 `7 seconds`.
 
 ## 一張卡的兵全堆在一起, 或者某張卡點個不停
 

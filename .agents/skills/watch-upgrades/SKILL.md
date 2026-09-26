@@ -21,7 +21,7 @@ description: >-
 uv run ai_coc status --label watch --agent <名字> --session <session id> --mission "盯升級跟護盾"
 ```
 
-`--agent`、`--session`、`--mission` 每次都帶, 理由在 `CLAUDE.md` 的 Say who is driving.
+`--agent`、`--session`、`--mission` 每次都帶, 理由在 `AGENTS.md` 的 Say who is driving.
 
 它答當下**那一個**世界的工人、實驗室、倉庫跟護盾, **不切世界**. `result.json` 長這樣:
 
@@ -69,7 +69,7 @@ uv run ai_coc status --label watch --agent <名字> --session <session id> --mis
 `shield` 的 `null` 要配 `world` 一起讀:
 
 - `{"up": false, "remaining": null}` —— **牌子寫「無」, 村莊現在就可以被打**. 馬上講, 不等下次醒來
-- `{"up": true, "remaining": 22080}` —— 還有這麼多秒
+- `{"up": true, "remaining": 22080}` —— 還有這麼多秒. **十小時以上的護盾可能少讀十小時** (#260, 還沒修): 被打之後拿到長護盾時, 把讀到的時間當下限, 並且用 `ai_coc capture` 留一張那時的村莊畫面給 #260, 修它缺的就是這張
 - `null` 而 `world` 是 `"night"` —— 夜世界本來就沒有護盾. 不用追
 - `null` 而 `world` 是 `"day"` —— **說不上來, 過幾分鐘再讀**: 牌子沒照到、被全螢幕面板蓋住或倒數讀不出來, 判讀器不猜. `{"up": true, "remaining": null}` 這個形狀不會出現
 
@@ -85,7 +85,7 @@ uv run ai_coc status --label watch --agent <名字> --session <session id> --mis
 
 - 他要看的那件事發生了, 講完就收工
 - 他說停
-- **讀到一次不是村莊就停**: 兩個 plate 的 `outcome` 都是 `not_a_village` (等於 `world` 是 `null`). 常見的原因是使用者正在手機上玩, 模擬器那邊被登出了, 而每跑一次 `ai_coc status` 都會經過 `ensure_coc` 把遊戲搶回來, 等於把他從手機上踢掉 (`CLAUDE.md` 的 Driving the game). 所以不重試: 停下來, 用選擇題問他玩完了沒 (見「講給使用者聽」, 回覆推不到他手機上), 他說可以了再讀. 看欄位不要看句子, 那句話只在 `run.log` 裡
+- **讀到一次不是村莊就停**: 兩個 plate 的 `outcome` 都是 `not_a_village` (等於 `world` 是 `null`). 常見的原因是使用者正在手機上玩, 模擬器那邊被登出了, 而每跑一次 `ai_coc status` 都會經過 `ensure_coc` 把遊戲搶回來, 等於把他從手機上踢掉 (`AGENTS.md` 的 Driving the game). 所以不重試: 停下來, 用選擇題問他玩完了沒 (見「講給使用者聽」, 回覆推不到他手機上), 他說可以了再讀. 看欄位不要看句子, 那句話只在 `run.log` 裡
 - 排到的下一次醒來超過他交代的範圍 (他說「盯到今天晚上」而最快的要三天), 就直接講還要多久, 不要排一個他沒要的鬧鐘
 
 **收工就真的收工**, 不要在背景留迴圈「以防萬一」: 村莊的保護是遊戲自己給的護盾.

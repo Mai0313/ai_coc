@@ -17,7 +17,7 @@ description: >-
 ## 三份文件的分工
 
 - **程式碼**說現在是什麼: 旗標看 `src/ai_coc/cli.py` 的 `_parser()`, 指令做什麼看 `src/ai_coc/commands.py` 對應的函式, 回報欄位看 `src/ai_coc/models.py` 的 `AttackReport` / `AttackSeries` / `WallReport`
-- **`CLAUDE.md` 跟常數旁邊的註解**說為什麼
+- **`AGENTS.md` 跟常數旁邊的註解**說為什麼
 - **這份 skill** 說怎麼判斷: 什麼時候介入, 什麼時候停手
 
 不要憑記憶下參數, 開跑前讀上面三個程式碼位置.
@@ -120,6 +120,8 @@ uv run ai_coc attack --repeat 0 --plan src/ai_coc/plans/night_flat.json
 - `The session was dropped`: `ui/runner.py` 的 `restart_game` 自己會重開遊戲回到村莊 (閒置斷線跟 連線已中斷 都是). 一直重複才要查
 - `waiting for the server rather than tapping`: 卡在載入畫面, 伺服器的事. 迴圈每次載入最多等 45 分鐘; 等不到的那輪是 `server_loading` (等滿) 或 `server_flapping` (載入完又掉回去). **不要**重開遊戲或模擬器, 量過兩次都是自己回來的. 連續兩輪都是這兩種再停下來講
 - `The camera was not at the far zoom` (**只在主村**): 那一輪多半白打. 迴圈每場自己會 pinch 回去, 連著出現才去看畫面; 手動修是先停迴圈再 `ai_coc view --zoom out`. 夜世界不做這個判斷, 沒這條不代表那邊的鏡頭是對的
+
+**一輪就要停下來的**: `no_loot` 拖滿四分鐘, 戰鬥中每十秒一行 `No battle on screen`. 多半是戰鬥打到一半登入被搶走了, 使用者在手機上玩, 不是戰術問題; 再開一輪就是再把他踢下線一次. 停下來, 有畫面就附上, 問他.
 
 ## 倉庫滿了: 預設就收工, 他開口才花
 

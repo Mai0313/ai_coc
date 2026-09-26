@@ -692,7 +692,7 @@ def shield_state(png: bytes, centre: int) -> ShieldState | None:
     shield reported hours shorter than it is reads as one about to lapse, which
     is the wrong direction to be wrong in.
 
-    Known and open: a countdown with two-digit hours, which is what a shield
+    Known and open (#260): a countdown with two-digit hours, which is what a shield
     from a raid starts at, runs further left still, and nothing on record says
     where. If its leading 1 falls wholly left of the box the plate reads ten
     hours short, as it always did; a sliver of it in the box is caught above.

@@ -35,10 +35,10 @@ description: >-
 ## 動手之前
 
 - **你是 subagent 就不要修.** 這份 skill 要跟使用者講話、請他改設定, subagent 做不到. 停手, 把 `state.json`、`list2` 那一行跟截圖交回給主 session, 由它照這份處理
-- 照 `CLAUDE.md` 的 Look before driving 讀 `~/.ai_coc/state.json`. farm subagent 還在跑就照 `CLAUDE.md` 先把模擬器拿回來, 模擬器只有一台; 它的迴圈多半已經跟著模擬器掛掉了, 那就等它的回報
+- 照 `AGENTS.md` 的 Look before driving 讀 `~/.ai_coc/state.json`. farm subagent 還在跑就照 `AGENTS.md` 先把模擬器拿回來, 模擬器只有一台; 它的迴圈多半已經跟著模擬器掛掉了, 那就等它的回報
 - **結束程序、`quit`、重開模擬器之前先問使用者, 他說好才做.** 那是他的模擬器, 他看得到那個視窗, 一直開開關關又沒人說明, 他只會以為壞得更嚴重. 跑 `ai_coc launch` 之前講一聲: 遊戲開不起來的時候 `ensure_coc` 會自己重開一次實例
-- 使用者可能正在模擬器或手機上玩 (`CLAUDE.md` 的 Driving the game), 有疑慮就問
-- 每個 `ai_coc` 指令都帶 `--agent`、`--session`、`--mission` (`CLAUDE.md` 的 Say who is driving), `look.py` 不用
+- 使用者可能正在模擬器或手機上玩 (`AGENTS.md` 的 Driving the game), 有疑慮就問
+- 每個 `ai_coc` 指令都帶 `--agent`、`--session`、`--mission` (`AGENTS.md` 的 Say who is driving), `look.py` 不用
 
 ## 讀狀態 (雷電)
 
@@ -98,7 +98,7 @@ description: >-
 
 先認得正常的樣子: 那天連拍到的遊戲啟動, 頭十幾秒依序是 Play 遊戲的登入橫幅、SUPERCELL 標誌, **大約第 9 秒會跳回桌面一兩秒**, 然後遊戲自己回來. 所以一張桌面不代表失敗, 連拍十幾秒再判斷.
 
-處理: log 前面有 `The session was dropped; restarting the game` 的話, 先問使用者是不是正在手機上玩: 重跑會把登入搶回來, 把他踢掉 (`CLAUDE.md` 的 Driving the game). 不是, 就再跑一次 `ai_coc launch`. 那天出事的那一次就有這一行, 而且剛好是設定剛被洗成新機器之後; 當時沒留畫面, 原因沒查到, 之後重跑都正常. 再遇到就連拍留證據.
+處理: log 前面有 `The session was dropped; restarting the game` 的話, 先問使用者是不是正在手機上玩: 重跑會把登入搶回來, 把他踢掉 (`AGENTS.md` 的 Driving the game). 不是, 就再跑一次 `ai_coc launch`. 那天出事的那一次就有這一行, 而且剛好是設定剛被洗成新機器之後; 當時沒留畫面, 原因沒查到, 之後重跑都正常. 再遇到就連拍留證據.
 
 ## 不要做的事
 
@@ -106,7 +106,7 @@ description: >-
 - 不要為了「重現閃退」去強制結束模擬器. 那天就是這樣把設定洗掉的. 結束任何程序都要使用者先同意 (第 2 種), 而且要跟他說清楚兩輪之後設定會壞 (第 3 種)
 - 不要手改 `leidian0.config`, 理由在第 3 種
 - 不要在 `dnplayer.exe` 或 `Ld9BoxHeadless.exe` 還在的時候 `ldconsole launch`. 那天有三台雷電開出來就沒有視窗、使用者叫不出來: 兩次開的時候舊的確定還在或剛被結束十秒, 第三次舊的 VM 已經關了一分多鐘, 舊的 `dnplayer.exe` 在不在沒記到. 等兩個都不見了才開的那次有視窗
-- 不要自己下 `adb connect` / `adb disconnect`, 看 ADB 用 `look.py`: 每次 connect 都在雷電那端開一條新連線, 雷電的 port forward 曾經因此整個掛掉 (`CLAUDE.md` 的 Adapters)
+- 不要自己下 `adb connect` / `adb disconnect`, 看 ADB 用 `look.py`: 每次 connect 都在雷電那端開一條新連線, 雷電的 port forward 曾經因此整個掛掉 (`AGENTS.md` 的 Adapters)
 - 同一招不要連試. 一次乾淨的重開 (使用者同意之後): `ldconsole quit --index 0`, 等 `isrunning` 說 `stop` 而且 `dnplayer.exe` 跟 `Ld9BoxHeadless.exe` 都不見了 (那天都是幾秒內; 一分鐘還在就請人. `Ld9BoxSVC.exe` 有時會一直留著, 不用等它), 再多等十秒 (`adapters/ldplayer.py` 的 `QUIT_SETTLE` 寫了為什麼), `ldconsole launch --index 0`, 等 Android 欄變 1 而且 `look.py` 截得到圖, 再 `ai_coc launch`. 這樣還站不上村莊, 就是該請人的時候
 
 ## 什麼時候請人
@@ -119,4 +119,4 @@ description: >-
 
 ## 修好的標準
 
-`uv run --no-sync ai_coc launch` 回 `at_village: true`, 而且你看過 `look.py` 截的那一張: 1600x900, 站在村莊上, 鏡頭拉到最遠. 發給使用者. 模擬器是從 farm subagent 手上拿來的, 就照 `CLAUDE.md` 還回去.
+`uv run --no-sync ai_coc launch` 回 `at_village: true`, 而且你看過 `look.py` 截的那一張: 1600x900, 站在村莊上, 鏡頭拉到最遠. 發給使用者. 模擬器是從 farm subagent 手上拿來的, 就照 `AGENTS.md` 還回去.
