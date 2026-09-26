@@ -19,7 +19,11 @@ for i in 1 2 3; do   # 一段最多九分鐘
 done
 ```
 
+`RUN` 從這次執行 log 的第一行拿 (`This run is being kept in ...`), 不要拿 `ls -t` 最上面那個: 新目錄還沒建好之前, 最上面的是上一次, 它的 `result.json` 已經有內容, 等待會立刻結束, 接著你就在還在跑的那一輪上面再開一輪.
+
 一輪四五分鐘, 所以 `--repeat 3` 要兩段左右, `--repeat 0` 要很多段. **每一段等完還沒結束, 就看 `state.json` 的 `pid` 還在不在**: 還在就是 run 還活著, 接著等下一段 (順便看 `run.log` 有沒有往前走); 不在了就是被砍掉 (這種 run 會一直停在 `running`), 停下來回報. 這個 pid 檢查就是整段等待的出口. 前景卡住對 subagent 沒有代價.
+
+**pid 還在但 `run.log` 超過一場戰鬥的時間 (五分鐘上下; 夜世界配對最久量過五分半) 沒有新的一行, 是卡死了**, 只有一個例外: 最後一行是 `waiting for the server rather than tapping` 的話, 迴圈在等伺服器, 最久 45 分鐘不寫 log, 那是正常的, 照常等. 卡死的樣子是這樣: 排程重開模擬器之後停在 `Launching com.supercell.clashofclans` 九分鐘以上就出過, 那次模擬器已經掛了而等待一直沒結束. 不要再等下一段: 用 `repair-emulator` 的 `look.py` 看畫面 (它不佔用模擬器), 回報 pid, log 最後一行跟那張畫面.
 
 ## 開跑
 
@@ -27,6 +31,8 @@ done
 uv run ai_coc world --go day --agent <名字> --session <session id> --mission "打日世界資源"
 uv run ai_coc attack --repeat 0 --record --agent <名字> --session <session id> --mission "打日世界資源"
 ```
+
+**你是跟開發同時跑的 farm subagent, 就在主 checkout (預設分支) 上跑, 每個指令都寫成 `uv run --no-sync ai_coc …`**, `stop` 也一樣: 開發在另一個 worktree 做, 理由在 `AGENTS.md` 的 The loop runs the main checkout. 真的要同步 (merge 帶進新的依賴, 指令 import 失敗) 就等手上的程序結束再 `uv sync`.
 
 **每一個 `ai_coc` 指令都帶 `--agent`、`--session`、`--mission`**, 其他 skill 裡寫的指令也一樣: 你自己的名字 (`claude-code`、`antigravity`、`codex`), 你自己的 session id, 這一趟在做什麼 (一句話). 每個指令都把它們寫進自己 `run.log` 的第二行; 會佔用模擬器的指令還會寫進 `state.json` 的 `caller`, 所以那裡記的永遠是開始這一輪的人, 而 `stop` 是誰下的要去翻 `*-stop` 那幾個執行目錄. 別的 session 就是靠這些查出是誰在開模擬器. 旗標是選填的, 那是留給使用者手動打指令; agent 一律要帶, 沒帶的話 log 會留一行 warning.
 
@@ -42,7 +48,7 @@ uv run ai_coc attack --repeat 0 --record --agent <名字> --session <session id>
 └── frames/        # 迴圈自己讀的畫面要開 --record; capture 一定會有
 ```
 
-**目錄在開跑第一行 log** (`This run is being kept in ...`). 名字是「時間-指令」, `ls -t ~/.ai_coc/logs` 最上面是最近一次. 任何指令加 `--label <名字>` 會接在後面 (`…-attack-baseline`), 給之後要找回來的那一次用.
+**目錄在開跑第一行 log** (`This run is being kept in ...`). 名字是「時間-指令」, `ls -t ~/.ai_coc/logs` 最上面是最近已經建好的一次 (剛開跑的那一次可能還沒建好). 任何指令加 `--label <名字>` 會接在後面 (`…-attack-baseline`), 給之後要找回來的那一次用.
 
 **畫面只留七天, log 永久留.** 過期的 `frames/` 在下一次有指令開跑時刪掉, 同目錄的 `run.log`、`result.json`、`plans.jsonl` 不動, 刪了幾個會寫進 log. 要留久的證據自己複製一份.
 

@@ -69,7 +69,7 @@ uv run ai_coc status --label watch --agent <名字> --session <session id> --mis
 `shield` 的 `null` 要配 `world` 一起讀:
 
 - `{"up": false, "remaining": null}` —— **牌子寫「無」, 村莊現在就可以被打**. 馬上講, 不等下次醒來
-- `{"up": true, "remaining": 22080}` —— 還有這麼多秒
+- `{"up": true, "remaining": 22080}` —— 還有這麼多秒. **十小時以上的護盾可能少讀十小時** (#260, 還沒修): 被打之後拿到長護盾時, 把讀到的時間當下限, 並且用 `ai_coc capture` 留一張那時的村莊畫面給 #260, 修它缺的就是這張
 - `null` 而 `world` 是 `"night"` —— 夜世界本來就沒有護盾. 不用追
 - `null` 而 `world` 是 `"day"` —— **說不上來, 過幾分鐘再讀**: 牌子沒照到、被全螢幕面板蓋住或倒數讀不出來, 判讀器不猜. `{"up": true, "remaining": null}` 這個形狀不會出現
 

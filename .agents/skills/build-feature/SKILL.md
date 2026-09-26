@@ -66,7 +66,7 @@ uv run ai_coc read <png>                                          # 現有 parse
 6. `uv run pytest` 跟 `make fmt`
 7. **流程照 `AGENTS.md` 的 `## Development flow`**, 不用另外問使用者
 
-**量測寫進常數旁邊的註解, 不寫進 `AGENTS.md`; 想寫進 `AGENTS.md` 的規則先給使用者看過**, 它每個 session 都會被讀.
+**量測寫進常數旁邊的註解, 不寫進 `AGENTS.md`**, 它每個 session 都會被讀, 只收規則, 不變式跟未修的已知缺陷. 要加規則就直接寫, 不用先給使用者看.
 
 ## 打資源要一直在背景跑
 
