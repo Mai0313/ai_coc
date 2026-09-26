@@ -65,13 +65,17 @@ description: >-
 
 ### 2. `ldconsole` 看不到還在跑的雷電
 
-症狀: `list2` 說沒在跑 (Android 0, pid -1), `isrunning` 說 `stop`, 可是 `dnplayer.exe index=0|` 還在, 多半沒有視窗, `Ld9BoxHeadless.exe` 也常常在. `quit` 跟 `quitall` 碰不到它. `ai_coc` 只信 `list2`, 所以會去 `ldconsole launch`, 等半分多鐘, 報 `127.0.0.1:0`.
+症狀: `list2` 說沒在跑 (Android 0, pid -1), `isrunning` 說 `stop`, 可是 `dnplayer.exe index=0|` 還在, 有時沒有視窗, `Ld9BoxHeadless.exe` 也常常在. `quit` 跟 `quitall` 碰不到它.
 
-**這不是殘留, 雷電多半是活的.** 2026-09-26 遇到兩次, 兩次 ADB 都通. 第二次那台剛打完一小時的資源, 使用者沒有關它, `list2` 就看不到了; VM 自己的紀錄 (`vms\leidian0\Logs\VBox.log`) 一直正常寫到它被結束, 而同樣狀態下 `look.py` 截得到 1600x900 的 Android 桌面. `list2` 為什麼會看不到, 還沒查出來. 那一次有個 agent 把它當殘留直接結束, 等於親手關掉一台好好的模擬器.
+**這不是殘留, 雷電多半是活的.** 2026-09-26 遇到好幾次, ADB 每次都通: 一台剛打完一小時的資源、使用者沒有關它; 一台使用者從圖示剛打開、有視窗, 開起來之後好幾分鐘 `list2` 都是 0. VM 自己的紀錄 (`vms\leidian0\Logs\VBox.log`) 一直正常寫, `look.py` 截得到 1600x900 的 Android 桌面. `list2` 為什麼會看不到, 還沒查出來. 有個 agent 把它當殘留直接結束, 等於親手關掉一台好好的模擬器.
 
-先排除第 1 種: 修復到一半 `list2` 也會有十幾秒是 Android 0. 至少看一分鐘都是這樣, 而且那個 `dnplayer.exe` 的命令列沒有 `from=repairer`, 才是這一種.
+先排除第 1 種: 修復到一半 `list2` 也會有十幾秒是 Android 0, 那時跑任何會開模擬器的指令都會讓修復重來. 至少看一分鐘都是這樣, 而且那個 `dnplayer.exe` 的命令列沒有 `from=repairer`, 才是這一種.
 
-處理: **不要結束任何程序, 請人.** 用 `look.py` 截一張, 連同 `list2` 那一行跟程序清單交給使用者, 說明 `ai_coc` 在這個狀態下用不了 (它只信 `list2`), 也說清楚強制結束的代價: 那天兩次強制結束有一次把設定洗掉了 (第 3 種). 要不要重開、怎麼重開由他決定. 他同意由你來做的話: `Stop-Process` 那個 `dnplayer.exe` 跟 `Ld9BoxHeadless.exe`, 等 `Ld9BoxHeadless.exe` 不見了再多等十秒 (`QUIT_SETTLE` 的理由), `ldconsole launch --index 0`, 然後照第 1 種等滿三分鐘, 中間不要 `quit`, 也不要再開一次. 那天這樣做過兩次, 一次 82 秒後正常起來; 另一次重開之後沒多久就被 `quit` 過, 重開的那台 `list2` 一樣看不到. 結束程序對雷電來說就是一次閃退, 也可能變成第 3 種.
+**是這一種就直接跑 `ai_coc launch`.** `ai_coc` 不管 `list2` 怎麼說都會問 ADB (`adapters/ldplayer.py` 的 `enumerate_instances`), 開機完成就照常開遊戲, log 裡會有一行 `LDPlayer lists instance 0 as down, but its ADB answers`. 站上村莊就沒事了.
+
+`ai_coc launch` 還是不行, 而且 `look.py` 也截不到圖, 才往下處理.
+
+處理: **不要結束任何程序, 請人.** 用 `look.py` 試一次, 連同 `list2` 那一行跟程序清單交給使用者, 也說清楚強制結束的代價: 那天兩次強制結束有一次把設定洗掉了 (第 3 種). 要不要重開、怎麼重開由他決定. 他同意由你來做的話: `Stop-Process` 那個 `dnplayer.exe` 跟 `Ld9BoxHeadless.exe`, 等 `Ld9BoxHeadless.exe` 不見了再多等十秒 (`QUIT_SETTLE` 的理由), `ldconsole launch --index 0`, 然後照第 1 種等滿三分鐘, 中間不要 `quit`, 也不要再開一次. 那天這樣做過兩次, 一次 82 秒後正常起來; 另一次重開之後沒多久就被 `quit` 過, 重開的那台 `list2` 一樣看不到. 結束程序對雷電來說就是一次閃退, 也可能變成第 3 種.
 
 ### 3. 設定被洗掉
 
@@ -101,7 +105,7 @@ description: >-
 
 ## 什麼時候請人
 
-- 第 2 種跟第 3 種, 一定
+- 第 3 種, 一定; 第 2 種在 `ai_coc launch` 也救不回來的時候
 - 一次乾淨的重開之後還是站不上村莊
 - 看不到的東西: 模擬器視窗上的對話框, 截桌面沒被授權
 
