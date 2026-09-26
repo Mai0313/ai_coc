@@ -32,6 +32,7 @@ from ai_coc.models import (
     BuildCandidate,
 )
 from ai_coc.prompts import render
+from ai_coc.ui.world import SWIPE_MS, SWIPE_SETTLE
 from ai_coc.ui.runner import BUY_SETTLE, MENU_SETTLE, SPOT_TIMEOUT, GameRunner
 from ai_coc.adapters.ai import GeminiClient
 from ai_coc.parsers.home import BUILDER_BUTTON, builder_jobs, free_builders, collect_bubbles
@@ -55,6 +56,14 @@ COLLECT_SETTLE = 2.0
 # second read is what catches the taps the game did not take — and it stops as
 # soon as a read comes back empty, which is the normal way out after one pass.
 COLLECT_PASSES = 3
+# The parked camera leaves one corner of the home village under the storage
+# bars and above `VILLAGE_AREA`. Measured 2026-09-26: collectors in the top-right
+# corner stood at y 35 to 200 with their dark markers behind the bars, and a pass
+# found none of the six markers on screen. So the passes run again after this
+# drag, the park's own direction reversed, which puts that corner in the open.
+# It starts in the forest past the village's right edge, where no building can
+# be under the finger.
+FAR_CORNER_SWIPE = ((1380, 540), (820, 820))
 
 # How many buildings to ask Gemini for, and how to describe one.
 #
@@ -109,26 +118,36 @@ class UpkeepRunner(GameRunner):
         # goes on refusing to move it. Without this the passes would all be spent
         # tapping it.
         tapped: set[tuple[int, int]] = set()
-        for index in range(COLLECT_PASSES):
-            # Every pass but the first re-checks the village first. An empty read
-            # means "all collected" and "the screen is not a village any more"
-            # equally, and one of those is worth recovering from — measured, a
-            # run walked into the idle-disconnect dialog between two passes.
-            if index and self._home() is None:
-                break
-            markers = collect_bubbles(self._frame("markers"))
-            standing = {marker.point for marker in markers}
-            if not markers or standing == tapped:
-                break
-            logger.info(
-                "%d marker(s) waiting: %s",
-                len(markers),
-                "/".join(f"{m.resource}@{m.point[0]},{m.point[1]}" for m in markers),
-            )
-            self.adb.tap_many([marker.point for marker in markers], self.display, gap=COLLECT_GAP)
-            report.markers += len(markers)
-            tapped = standing
-            time.sleep(COLLECT_SETTLE)
+        for view in range(2):
+            if view:
+                if self._home() is None:
+                    break
+                logger.info("Dragging the camera into the far corner for the markers the park hid")
+                self.adb.swipe(*FAR_CORNER_SWIPE, SWIPE_MS, self.display)
+                time.sleep(SWIPE_SETTLE)
+            for index in range(COLLECT_PASSES):
+                # Every pass but the first re-checks the village first. An empty
+                # read means "all collected" and "the screen is not a village any
+                # more" equally, and one of those is worth recovering from —
+                # measured, a run walked into the idle-disconnect dialog between
+                # two passes.
+                if index and self._home() is None:
+                    break
+                markers = collect_bubbles(self._frame("markers"))
+                standing = {marker.point for marker in markers}
+                if not markers or standing == tapped:
+                    break
+                logger.info(
+                    "%d marker(s) waiting: %s",
+                    len(markers),
+                    "/".join(f"{m.resource}@{m.point[0]},{m.point[1]}" for m in markers),
+                )
+                self.adb.tap_many(
+                    [marker.point for marker in markers], self.display, gap=COLLECT_GAP
+                )
+                report.markers += len(markers)
+                tapped = standing
+                time.sleep(COLLECT_SETTLE)
         # Through `_home` rather than a bare capture: a marker that turned out to
         # be a building has left its menu open, and this is what closes it as
         # well as what reads the storages.

@@ -350,7 +350,7 @@ class CollectTests(unittest.TestCase):
 
     def _collect(
         self, homes: list[VillageStock | None], markers: list[list[ResourceBubble]]
-    ) -> tuple[object, MagicMock]:
+    ) -> tuple[object, MagicMock, MagicMock]:
         runner = self._runner()
         with (
             patch.object(upkeep.time, "sleep"),
@@ -358,15 +358,16 @@ class CollectTests(unittest.TestCase):
             patch.object(runner, "_frame", return_value=b""),
             patch.object(upkeep, "collect_bubbles", side_effect=markers),
             patch.object(AdbController, "tap_many") as tapped,
+            patch.object(AdbController, "swipe") as swiped,
         ):
-            return runner.collect(), tapped
+            return runner.collect(), tapped, swiped
 
     def test_every_marker_is_tapped_in_one_burst_and_the_gain_comes_off_the_bars(self) -> None:
         coin = ResourceBubble(resource="gold", point=(1000, 300))
         drop = ResourceBubble(resource="elixir", point=(1100, 320))
         before = VillageStock(gold=100, elixir=100, dark=100)
         after = VillageStock(gold=150, elixir=130, dark=100)
-        report, tapped = self._collect([before, after, after], [[coin, drop], []])
+        report, tapped, _ = self._collect([before, after, after, after], [[coin, drop], [], []])
         assert tapped.call_args_list[0].args[0] == [(1000, 300), (1100, 320)]
         assert (report.markers, report.gold, report.elixir, report.dark) == (2, 50, 30, 0)
         assert report.outcome == "collected"
@@ -374,20 +375,32 @@ class CollectTests(unittest.TestCase):
     def test_markers_that_are_still_standing_end_the_passes(self) -> None:
         """A full storage takes none of what it is handed, so the marker never leaves."""
         coin = ResourceBubble(resource="gold", point=(1000, 300))
-        report, tapped = self._collect([STOCK, STOCK, STOCK], [[coin], [coin]])
+        report, tapped, _ = self._collect([STOCK] * 4, [[coin], [coin], [coin]])
         assert tapped.call_count == 1
         assert report.markers == 1
 
     def test_nothing_waiting_is_said_rather_than_reported_as_a_haul(self) -> None:
-        report, tapped = self._collect([STOCK, STOCK], [[]])
+        report, tapped, _ = self._collect([STOCK, STOCK, STOCK], [[], []])
         tapped.assert_not_called()
         assert report.outcome == "nothing_to_collect"
+
+    def test_the_corner_the_park_hid_is_dragged_into_view_and_collected(self) -> None:
+        """Measured 2026-09-26: the parked camera put a corner of collectors under
+        the storage bars, and a pass there found none of the six markers on screen.
+        """
+        drill = ResourceBubble(resource="dark", point=(957, 339))
+        report, tapped, swiped = self._collect([STOCK, STOCK, STOCK, STOCK], [[], [drill], []])
+        swiped.assert_called_once()
+        assert swiped.call_args.args[:2] == upkeep.FAR_CORNER_SWIPE
+        assert tapped.call_args_list[0].args[0] == [(957, 339)]
+        assert report.outcome == "collected"
 
     def test_a_village_lost_after_the_taps_still_reports_them(self) -> None:
         """Measured, a run walked into the idle-disconnect dialog between two passes."""
         coin = ResourceBubble(resource="gold", point=(1000, 300))
-        # Read once before, once at the top of the second pass, once after.
-        report, _ = self._collect([STOCK, None, None], [[coin]])
+        # Read once before, at the top of the second pass, before the drag, and after.
+        report, _, swiped = self._collect([STOCK, None, None, None], [[coin]])
+        swiped.assert_not_called()
         assert report.markers == 1
         assert report.outcome == "stock_unread"
 
