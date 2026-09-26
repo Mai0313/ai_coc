@@ -416,6 +416,15 @@ PLAN_TIMEOUT = 30
 # battle that ended 戰敗 at 0% with nothing deployed. Asking for another opponent
 # costs 1400 gold.
 UNREADABLE_SKIPS = 5
+# How long the opponent just skipped is not believed again. The game answers
+# 下一個 a moment late, and the next frame can still be that opponent: measured
+# 2026-09-26, the frame after the tap was the same panel, same countdown, button
+# and all, and the loop tapped 下一個 a second time; in another run the button had
+# already gone, which read as an expired countdown and attacked the next opponent
+# unseen, reporting the skipped one's loot. The next opponent read 2 to 3 seconds
+# after the tap. Past this the reading counts again, since a tap that never
+# landed leaves exactly that opponent on screen with its countdown running.
+NEXT_SETTLE = 3.0
 
 # The scout countdown is 30 seconds; this polls a second at a time and leaves
 # room for a slow frame rather than sitting through a whole battle.
@@ -1363,8 +1372,14 @@ class AttackRunner(ScreenRunner):
         )
         return plan
 
-    def _scout(self, timeout: float = 30) -> tuple[ScoutView, bytes] | None:
+    def _scout(
+        self, timeout: float = 30, leaving: LootOffer | None = None
+    ) -> tuple[ScoutView, bytes] | None:
         """Poll until an opponent is on screen; 正在搜尋對手 reads as nothing at all.
+
+        `leaving` is the loot of the opponent 下一個 was just pressed on, which
+        can still be on screen for a moment and is not a new opponent; see
+        `NEXT_SETTLE`.
 
         The frame comes back with the view because `card_groups` only holds on a
         full card row, and this is the last moment one is guaranteed.
@@ -1394,10 +1409,15 @@ class AttackRunner(ScreenRunner):
         whatever the loot says. See `panel_drawn` for what that cost.
         """
         deadline = time.monotonic() + timeout
+        settled = time.monotonic() + NEXT_SETTLE
         unread = 0
         while time.monotonic() < deadline:
             png = self._frame("scout")
             view = read_scout(png)
+            if view and view.loot == leaving and time.monotonic() < settled:
+                logger.info("Still the opponent 下一個 was pressed on; waiting for the next one")
+                time.sleep(1)
+                continue
             if view:
                 # Said out loud and with its number, because `read_scout` has
                 # already logged the loot this is about to throw away and a
@@ -2876,8 +2896,9 @@ class AttackRunner(ScreenRunner):
             return AttackReport(outcome="army_short")
         self._tap(ARMY_ATTACK)
         skipped = 0
+        leaving: LootOffer | None = None
         while True:
-            scouted = self._scout()
+            scouted = self._scout(leaving=leaving)
             if scouted is None:
                 # An opponent still offering 下一個 has a countdown of its own
                 # running, and leaving it to expire is what starts a battle the
@@ -2919,3 +2940,4 @@ class AttackRunner(ScreenRunner):
                 )
             skipped += 1
             self._tap(NEXT_TARGET)
+            leaving = view.loot
