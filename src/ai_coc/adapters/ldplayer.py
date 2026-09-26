@@ -48,10 +48,6 @@ class LDPlayerAdapter(Emulator):
     def cli(self) -> Path:
         return self.install_root / "ldconsole.exe"
 
-    @property
-    def adb(self) -> Path:
-        return self.install_root / "adb.exe"
-
     def _console(self, *args: str, timeout: float = 15) -> str:
         # Titles come back in the system's code page rather than in UTF-8.
         return self._run([str(self.cli), *args], timeout).decode("mbcs", errors="replace")

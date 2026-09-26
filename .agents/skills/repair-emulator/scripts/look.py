@@ -9,9 +9,9 @@
 
 每張本身還要一兩秒 (找 display 跟截圖), 所以 `1` 的實際間隔大約兩秒.
 
-實例用 `chosen(emulators())` 找, 跟每個指令一樣: 它只列出 instance, 不開任何東西,
-而且會把 adbutils 指到那台模擬器自己的 `adb.exe`. 連的是那台的真實 port, 雷電
-還沒開好時回報的 port 0 不用, 所以 ADB 不通會直接看到被拒絕的那句話.
+實例用 `chosen(emulators())` 找, 跟每個指令一樣: 它只列出 instance, 不開任何東西.
+連的是那台的真實 port, 雷電還沒開好時回報的 port 0 不用, 所以 ADB 不通會直接看到
+被拒絕的那句話.
 
 遊戲在某個 display 上就截那個 display (MuMu 把遊戲開在自己的 display), 不在就截
 display 0.
