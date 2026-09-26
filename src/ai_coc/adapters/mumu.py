@@ -43,10 +43,6 @@ class MuMuAdapter(Emulator):
     def cli(self) -> Path:
         return self.install_root / "nx_main" / "mumu-cli.exe"
 
-    @property
-    def adb(self) -> Path:
-        return self.install_root / "nx_main" / "adb.exe"
-
     def cli_model(self, model: type[T], *args: str, timeout: float = 15) -> T:
         """Run one CLI command and validate its JSON answer into `model`."""
         data = self._run([str(self.cli), *args], timeout)

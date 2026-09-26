@@ -1,20 +1,15 @@
 from __future__ import annotations
 
-import os
 import re
 import time
 import base64
 import struct
-from typing import TYPE_CHECKING
 import logging
 
 import adbutils
 from pydantic import BaseModel
 
 from ai_coc.models import TouchNode, AdbEndpoint, DisplayTarget
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -113,12 +108,6 @@ ZOOM_PINCHES = 2
 
 class AdbControlError(RuntimeError):
     pass
-
-
-def use_adb_executable(path: Path) -> None:
-    """Point adbutils at the emulator's own adb.exe instead of whatever is on PATH."""
-    os.environ["ADBUTILS_ADB_PATH"] = str(path)
-    logger.info("adbutils will use %s", path)
 
 
 def focused_display(window_dump: str, package: str) -> str:

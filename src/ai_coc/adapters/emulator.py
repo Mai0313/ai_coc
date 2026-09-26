@@ -13,7 +13,7 @@ from pydantic import BaseModel, PrivateAttr
 from ai_coc.models import AdbEndpoint, EmulatorInstance
 from ai_coc.constants import COC_PACKAGE
 
-from .adb import AdbController, use_adb_executable
+from .adb import AdbController
 
 logger = logging.getLogger(__name__)
 
@@ -34,10 +34,24 @@ class EmulatorError(RuntimeError):
 class Emulator(BaseModel):
     """What every emulator does the same way: ADB for the game, its own CLI for its instances.
 
-    A subclass names its CLI and its adb.exe and answers the five questions only
-    its CLI can: which instances exist, how to start, restart and stop one, and
-    which version it is. Everything else goes through ADB, which is the same on
-    all of them.
+    A subclass names its CLI and answers the five questions only its CLI can:
+    which instances exist, how to start, restart and stop one, and which version
+    it is. Everything else goes through ADB, which is the same on all of them.
+
+    **ADB is whichever adb adbutils finds, never the emulator's own**: the one on
+    PATH, else the copy adbutils ships. Every adb talks to one server on port
+    5037, so the binary only decides which build starts it. Measured on
+    2026-09-26 with three builds installed (platform-tools 37.0.1, MuMu 36.0.0,
+    LDPlayer 34.0.4): a server started by platform-tools outlived three LDPlayer
+    restarts and a MuMu boot while LDPlayer ran its own adb against it, and a
+    shell round trip (45 ms against 46) and a screencap (about 0.6 s) timed the
+    same through it as through LDPlayer's.
+
+    The cost, accepted: a PyInstaller build on a machine with no adb on PATH
+    starts the server from the copy bundled inside itself, and the server
+    outlives the app, so a `--onefile` run leaves its extraction folder behind
+    and a `--onedir` folder cannot be replaced until `adb kill-server`.
+    Installing platform-tools avoids both.
     """
 
     # Which emulator a message is about, since two of them can be installed.
@@ -49,17 +63,10 @@ class Emulator(BaseModel):
     def model_post_init(self, context: object, /) -> None:
         if not self.cli.is_file():
             raise EmulatorError(f"找不到 {self.label} CLI：{self.cli}")
-        if not self.adb.is_file():
-            raise EmulatorError(f"找不到 {self.label} ADB：{self.adb}")
-        use_adb_executable(self.adb)
         logger.info("%s install root: %s", self.label, self.install_root)
 
     @property
     def cli(self) -> Path:
-        raise NotImplementedError
-
-    @property
-    def adb(self) -> Path:
         raise NotImplementedError
 
     def version(self) -> str:

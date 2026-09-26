@@ -462,10 +462,6 @@ class MuMuAdapterTests(unittest.TestCase):
         root = Path(folder.name)
         (root / "nx_main").mkdir()
         (root / "nx_main" / "mumu-cli.exe").write_bytes(b"")
-        (root / "nx_main" / "adb.exe").write_bytes(b"")
-        patcher = patch.object(emulator_module, "use_adb_executable")
-        patcher.start()
-        self.addCleanup(patcher.stop)
         sleeping = patch.object(emulator_module.time, "sleep")
         sleeping.start()
         self.addCleanup(sleeping.stop)
@@ -625,16 +621,18 @@ class LDPlayerAdapterTests(unittest.TestCase):
         self.addCleanup(folder.cleanup)
         root = Path(folder.name)
         (root / "ldconsole.exe").write_bytes(b"")
-        (root / "adb.exe").write_bytes(b"")
-        patcher = patch.object(emulator_module, "use_adb_executable")
-        patcher.start()
-        self.addCleanup(patcher.stop)
         self.ld = LDPlayerAdapter(install_root=root)
 
     def test_an_install_without_ldconsole_is_refused(self) -> None:
         (self.ld.install_root / "ldconsole.exe").unlink()
         with pytest.raises(EmulatorError, match="LDPlayer CLI"):
             LDPlayerAdapter(install_root=self.ld.install_root)
+
+    def test_adbutils_is_left_to_find_adb_on_its_own(self) -> None:
+        """The emulator's bundled adb.exe is neither required nor handed to adbutils."""
+        with patch.dict(os.environ, {}, clear=True):
+            LDPlayerAdapter(install_root=self.ld.install_root)
+            assert "ADBUTILS_ADB_PATH" not in os.environ
 
     def test_the_install_is_found_through_its_uninstaller_when_no_location_is_given(self) -> None:
         with patch.object(ldplayer_module, "uninstall_dirs", return_value=[self.ld.install_root]):
