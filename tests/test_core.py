@@ -5303,7 +5303,7 @@ class LaunchTests(unittest.TestCase):
         """
         mumu = self._mumu()
         with self._driving(mumu):
-            report = commands.launch("none")
+            report = commands.launch("none", lambda: False)
         self.settled.assert_called_once()
         mumu.controller.assert_called_once_with("127.0.0.1:16384")
         assert report.at_village
@@ -5315,14 +5315,40 @@ class LaunchTests(unittest.TestCase):
         mumu = self._mumu()
         self.settled.return_value = None
         with self._driving(mumu):
-            report = commands.launch("none")
+            report = commands.launch("none", lambda: False)
         assert not report.at_village
         assert "村莊沒有出現" in commands.launch_line(report)
+
+    def test_a_stop_ends_the_wait_and_is_named_as_one(self) -> None:
+        """`ai_coc stop` used to wait out the whole three minutes, and the report
+        then blamed a village that never painted.
+        """
+        mumu = self._mumu()
+        self.settled.return_value = None
+        stop = MagicMock(return_value=True)
+        with self._driving(mumu):
+            report = commands.launch("none", stop)
+        assert self.settled.call_args.args[2] is stop
+        assert report.outcome == "stopped"
+        assert not report.at_village
+
+    def test_a_restart_hands_its_own_stop_to_the_launch(self) -> None:
+        """The window's stop button reaches the launch the same way `ai_coc stop` does."""
+        stop = MagicMock(return_value=True)
+        with (
+            patch.object(
+                commands, "launch", return_value=MagicMock(serial="127.0.0.1:16384")
+            ) as launched,
+            patch.object(commands, "AdbController"),
+            patch.object(commands, "_settle_game", return_value=None),
+        ):
+            assert not commands._restart_emulator(MagicMock(), MagicMock(), stop)
+        launched.assert_called_once_with("emulator", stop)
 
     def test_the_ordinary_case_restarts_nothing(self) -> None:
         mumu = self._mumu()
         with self._driving(mumu):
-            report = commands.launch("none")
+            report = commands.launch("none", lambda: False)
         mumu.restart_instance.assert_not_called()
         mumu.restart_coc.assert_not_called()
         mumu.ensure_coc.assert_called_once_with(0)
@@ -5332,14 +5358,14 @@ class LaunchTests(unittest.TestCase):
         """This scope does the same work either way; only the report tells them apart."""
         mumu = self._mumu(running=False)
         with self._driving(mumu):
-            report = commands.launch("none")
+            report = commands.launch("none", lambda: False)
         assert not report.was_running
         assert "開起來" in commands.launch_line(report)
 
     def test_restarting_the_game_leaves_the_emulator_alone(self) -> None:
         mumu = self._mumu()
         with self._driving(mumu):
-            commands.launch("game")
+            commands.launch("game", lambda: False)
         mumu.restart_coc.assert_called_once()
         mumu.restart_instance.assert_not_called()
 
@@ -5363,7 +5389,7 @@ class LaunchTests(unittest.TestCase):
         mumu.instance.side_effect = [up, None, down]
         mumu.ensure_coc.return_value = down
         with self._driving(mumu), patch.object(commands, "SHUTDOWN_GAP", 0):
-            commands.launch("emulator")
+            commands.launch("emulator", lambda: False)
         assert mumu.instance.call_count == 3
         mumu.restart_instance.assert_called_once_with(0)
         mumu.restart_coc.assert_not_called()
@@ -5374,7 +5400,7 @@ class LaunchTests(unittest.TestCase):
             patch.object(commands.ConfigStore, "load", return_value=AppConfig()),
             pytest.raises(RuntimeError, match="找不到任何模擬器"),
         ):
-            commands.launch("none")
+            commands.launch("none", lambda: False)
 
 
 class RunLogTests(unittest.TestCase):

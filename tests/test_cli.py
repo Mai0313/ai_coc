@@ -216,7 +216,11 @@ class DispatchTests(unittest.TestCase):
             _answer(_args("launch"), self.run)
         viewed.assert_called_once_with("in", 2)
         assert [call.args for call in asked.call_args_list] == [("day",), (None,)]
-        assert [call.args for call in launched.call_args_list] == [("game",), ("none",)]
+        # And the state file's stop, so `ai_coc stop` ends the wait for the village.
+        assert [call.args for call in launched.call_args_list] == [
+            ("game", commands.stop_requested),
+            ("none", commands.stop_requested),
+        ]
 
     def test_the_frame_only_commands_get_this_runs_frame_directory(self) -> None:
         """None when nothing is recorded, which every loop reads as "do not save"."""

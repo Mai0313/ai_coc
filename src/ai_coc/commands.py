@@ -69,6 +69,7 @@ from ai_coc.models import (
     DonateOptions,
     DonateOutcome,
     ExportOutcome,
+    LaunchOutcome,
     SurveyOutcome,
     VillageEntity,
     VillageExport,
@@ -262,18 +263,23 @@ LAUNCH_LINES: dict[RestartScope, str] = {
     "emulator": "已重開模擬器與部落衝突",
 }
 
+# How the wait for the village ended; reaching it needs no words of its own.
+LAUNCH_OUTCOME_LINES: dict[LaunchOutcome, str] = {
+    "at_village": "",
+    "no_village": ",但村莊沒有出現,畫面可能還在載入",
+    "stopped": ",收到停止要求,沒有等村莊出現",
+}
+
 
 def launch_line(report: LaunchReport) -> str:
     """The one line a person reads off a launch."""
     did = LAUNCH_LINES.get(report.restart) or (
         "部落衝突已經在跑" if report.was_running else "已把部落衝突開起來"
     )
-    if not report.at_village:
-        did = f"{did},但村莊沒有出現,畫面可能還在載入"
-    return f"{did},模擬器 {report.index} ({report.serial})"
+    return f"{did}{LAUNCH_OUTCOME_LINES[report.outcome]},模擬器 {report.index} ({report.serial})"
 
 
-def launch(restart: RestartScope) -> LaunchReport:
+def launch(restart: RestartScope, should_stop: Callable[[], bool]) -> LaunchReport:
     """Bring the game up on the configured instance, tearing down as much as asked.
 
     Every other headless command assumes the game is already running: they go
@@ -304,16 +310,20 @@ def launch(restart: RestartScope) -> LaunchReport:
     # than in each of them. The position is settled there too, by parking the
     # camera against a map edge — the pinch does not do it, whatever this used
     # to say.
-    settled = _settle_game(emulator.controller(instance.adb_serial), RESTART_POLLS)
+    settled = _settle_game(emulator.controller(instance.adb_serial), RESTART_POLLS, should_stop)
     # A game whose village never painted is reported rather than raised: the
     # process is up, so the caller may still have something to do with it, and
     # the one thing it must not do is assume the screen is ready.
+    if settled is not None:
+        outcome: LaunchOutcome = "at_village"
+    else:
+        outcome = "stopped" if should_stop() else "no_village"
     report = LaunchReport(
         index=instance.index,
         serial=instance.adb_serial,
         was_running=was_running,
         restart=restart,
-        at_village=settled is not None,
+        outcome=outcome,
     )
     logger.info("Launch: %s", launch_line(report))
     return report
@@ -772,7 +782,7 @@ def _restart_emulator(
     # — `cli.py` never reaches `run.answer` and `result.json` is left empty,
     # which is the failure the False path below exists to avoid.
     try:
-        launched = launch("emulator")
+        launched = launch("emulator", should_stop)
     except (RuntimeError, KeyboardInterrupt):
         logger.exception("The emulator did not come back up")
         return False

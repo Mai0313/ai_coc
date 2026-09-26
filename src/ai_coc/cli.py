@@ -316,7 +316,7 @@ def _answer(arguments: argparse.Namespace, run: RunLog) -> BaseModel | str:
         ),
         "world": lambda: commands.world(a.go),
         "view": lambda: commands.view(a.zoom, a.times),
-        "launch": lambda: commands.launch(a.restart),
+        "launch": lambda: commands.launch(a.restart, commands.stop_requested),
         "donate": lambda: commands.donate(
             DonateOptions(frame_dir=run.frames, dry_run=a.dry_run, rounds=a.rounds)
         ),

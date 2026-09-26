@@ -60,6 +60,7 @@ from ai_coc.models import (
     DonateOutcome,
     EntityMapping,
     ExportOutcome,
+    LaunchOutcome,
     SurveyOutcome,
     VillageExport,
     BuilderOutcome,
@@ -907,14 +908,16 @@ class UpkeepLineTests(unittest.TestCase):
     def test_a_launch_says_which_of_the_four_things_it_did(self) -> None:
         """`none` reads off `was_running` instead, which is all that scope can report."""
 
-        def line(restart: RestartScope, was_running: bool = True, at_village: bool = True) -> str:
+        def line(
+            restart: RestartScope, was_running: bool = True, outcome: LaunchOutcome = "at_village"
+        ) -> str:
             return commands.launch_line(
                 LaunchReport(
                     index=0,
                     serial="127.0.0.1:16384",
                     was_running=was_running,
                     restart=restart,
-                    at_village=at_village,
+                    outcome=outcome,
                 )
             )
 
@@ -923,7 +926,10 @@ class UpkeepLineTests(unittest.TestCase):
         assert line("game").startswith("已重開部落衝突")
         assert line("emulator").startswith("已重開模擬器與部落衝突")
         # Orthogonal to all four, the way the attack's counts are to its outcome.
-        assert "村莊沒有出現" in line("none", at_village=False)
+        assert set(commands.LAUNCH_OUTCOME_LINES) == set(get_args(LaunchOutcome))
+        assert "村莊沒有出現" in line("none", outcome="no_village")
+        assert "收到停止要求" in line("none", outcome="stopped")
+        assert "村莊沒有出現" not in line("none", outcome="stopped")
 
 
 class RoundLineTests(unittest.TestCase):
