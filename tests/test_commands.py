@@ -1354,29 +1354,6 @@ class RunPlumbingTests(unittest.TestCase):
         assert isinstance(lines[0].plan, AttackPlan)
         assert isinstance(lines[1].plan, NightPlan)
 
-    def test_the_restart_counter_carries_on_until_it_is_due(self) -> None:
-        runner, ticker = MagicMock(), MagicMock()
-        with patch.object(commands, "_restart_emulator", return_value=True) as restart:
-            assert commands._restarted(runner, ticker, 3, 0) == 3
-            assert commands._restarted(runner, ticker, 1, 2) == 1
-            restart.assert_not_called()
-            assert commands._restarted(runner, ticker, 2, 2) == 0
-            restart.assert_called_once_with(runner, ticker, commands.stop_requested)
-
-    def test_a_restart_that_failed_is_an_error_unless_somebody_asked_to_stop(self) -> None:
-        with (
-            patch.object(commands, "_restart_emulator", return_value=False),
-            patch.object(commands.logger, "error") as alarm,
-            # `stop` only has something to ask of a run that claimed the
-            # emulator, which is every real one and no bare unit test.
-            commands.claim("attack"),
-        ):
-            assert commands._restarted(MagicMock(), MagicMock(), 2, 2) is None
-            assert alarm.call_count == 1
-            commands.stop()
-            assert commands._restarted(MagicMock(), MagicMock(), 2, 2) is None
-            assert alarm.call_count == 1
-
     def test_the_barracks_wait_runs_its_course_with_nobody_stopping_it(self) -> None:
         with patch.object(commands, "STOP_POLL", 0.001):
             assert not commands._rest(0.005)

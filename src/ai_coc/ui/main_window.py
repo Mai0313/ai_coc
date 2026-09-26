@@ -445,12 +445,11 @@ class MainWindow(QMainWindow):
         **Merged into a fresh read rather than into the copy this window opened
         with**, because every write here puts the *whole* file back: a field
         this call never touched would go to disk from a snapshot that can be
-        hours old. `restart_every` is the one that costs: no widget anywhere
-        sets it, so its only source is somebody editing the file — which is
-        what these settings living in a file is for. That only became worth
-        guarding when the preview switches started writing here, since the two
-        save buttons are moments where somebody means to store what is on
-        screen and a checkbox is not.
+        hours old. `adb_serial` is one that costs: the first CLI run writes it
+        back when it is empty, so a window opened before then holds an empty
+        one. That only became worth guarding when the preview switches started
+        writing here, since the two save buttons are moments where somebody
+        means to store what is on screen and a checkbox is not.
         """
         self.config = ConfigStore().load().model_copy(update=changes)
         ConfigStore().save(self.config)

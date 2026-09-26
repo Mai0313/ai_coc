@@ -106,15 +106,8 @@ def _parser() -> argparse.ArgumentParser:
         help="除了迴圈自己讀的畫面之外,每隔這麼多秒再存一張,需要搭配 --record",
     )
     # Omitted means "whatever the config file says", like the loot thresholds
-    # below; 0 is how one run turns the restart off without editing the file.
-    run.add_argument(
-        "--restart-every",
-        type=int,
-        metavar="場",
-        help="每真的打完這麼多場就重開模擬器跟遊戲,蓋過設定檔,0 代表這次不重開",
-    )
-    # The same shape again: 0 is how a test run attacks a village the farming
-    # has already filled, where the file's percentage would stand it down first.
+    # below; 0 is how a test run attacks a village the farming has already
+    # filled, where the file's percentage would stand it down first.
     run.add_argument(
         "--stop-at",
         type=int,
@@ -282,7 +275,6 @@ def _answer(arguments: argparse.Namespace, run: RunLog) -> BaseModel | str:
                 ),
                 rounds=a.repeat,
                 shot_every=a.shot_every,
-                restart_every=a.restart_every,
                 stop_at=a.stop_at,
             )
         ),

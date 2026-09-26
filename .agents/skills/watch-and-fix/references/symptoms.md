@@ -8,14 +8,14 @@
 
 ## 遊戲起不來, 或者重開之後沒回來
 
-**症狀**: `run.log` 出現 `The village never came back after the restart`, 或一輪連攻擊選單都沒碰到就結束. 那是 `logger.error` 不是報告欄位 (序列直接收掉, `result.json` 沒有這一輪), 只能 grep log.
+**症狀**: `ai_coc launch` 回 `at_village: false` (log 裡有 `Gave up after 180s waiting for the game: ...`, 冒號後面寫著最後在等什麼), 或一輪連攻擊選單都沒碰到就結束.
 
 `ai_coc launch` 的收工條件是**站在村莊上而且鏡頭在最遠處**, 不是 pid (`ensure_coc` 只看 `pidof`): 看 `LaunchReport.at_village`. 重開範圍 `none` / `game` / `emulator` 在 `AGENTS.md` 搜 `RestartScope`; `emulator` 要等實例真的倒下 (`_await_shutdown`).
 
-**排程重開** (`restart_every`, `_restart_emulator`, 數的是打過幾場) 有三處會出錯:
+**`launch` 等村莊** (`_settle_game`) 有三處會出錯:
 
 - **等太短.** 冷開機時間差很多, `RESTART_POLLS` 照最壞情況抓; 每次 poll 寫下還在等哪個狀態.
-- **鏡頭沒回到最遠處.** 重開成功, 然後連兩輪報 `0 of 4 hero card(s) landed` 跟 `3 troop card(s) still hold something`. 排程重開收尾會 pinch, 沒 pinch 的是掉線後 `_open_attack_menu` 叫的 `restart_game`. 確認方法見「整場一隻兵都沒下去」.
+- **鏡頭沒回到最遠處.** 重開成功, 然後連兩輪報 `0 of 4 hero card(s) landed` 跟 `3 troop card(s) still hold something`. `launch` 收尾會 pinch, 沒 pinch 的是掉線後 `_open_attack_menu` 叫的 `restart_game`. 確認方法見「整場一隻兵都沒下去」.
 - **等的是畫完而不是哪個村莊.** `_settle_game` 只問 `current_world` 讀不讀得出 (不用 `read_stock`, 它在兩個世界都答得出來, 分不出是哪一個), 兩個世界都算; 落在另一邊 attack 回 `other_village`, 主村指令回 `builder_base`. 載入時倉庫水位是從零跑上來的動畫, 那時讀到的數字不能回報.
 
 ## 開不了攻擊選單
@@ -114,7 +114,7 @@
 
 先在 log 找 `The camera was not at the far zoom`: 所有座標都在最遠的 zoom 量, 鏡頭拉近就全部安靜地落空. **這條警告只在主村問** (高度門檻拿主村量的, 夜世界每張都比它短, 換門檻也分不開), 夜世界沒有它不代表鏡頭沒問題, 直接看下面兩段.
 
-**排程重開不是嫌疑人** (收尾會 pinch); 沒 pinch 的是 `restart_game` 跟任何在迴圈外動過鏡頭的東西.
+**`launch` 不是嫌疑人** (收尾會 pinch); 沒 pinch 的是 `restart_game` 跟任何在迴圈外動過鏡頭的東西.
 
 遊戲不報 zoom, 所以 `_settle_zoom` 每場先拉遠一次, 順手量村莊高度: 被上下切掉就偏矮, 健康 500 到 572, 出事那輪 411. 寬度不能用, 對手本來就不一樣寬.
 

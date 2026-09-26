@@ -23,7 +23,7 @@ done
 
 一輪四五分鐘, 所以 `--repeat 3` 要兩段左右, `--repeat 0` 要很多段. **每一段等完還沒結束, 就看 `state.json` 的 `pid` 還在不在**: 還在就是 run 還活著, 接著等下一段 (順便看 `run.log` 有沒有往前走); 不在了就是被砍掉 (這種 run 會一直停在 `running`), 停下來回報. 這個 pid 檢查就是整段等待的出口. 前景卡住對 subagent 沒有代價.
 
-**pid 還在但 `run.log` 超過一場戰鬥的時間 (五分鐘上下; 夜世界配對最久量過五分半) 沒有新的一行, 是卡死了**, 只有一個例外: 最後一行是 `waiting for the server rather than tapping` 的話, 迴圈在等伺服器, 最久 45 分鐘不寫 log, 那是正常的, 照常等. 卡死的樣子是這樣: 排程重開模擬器之後停在 `Launching com.supercell.clashofclans` 九分鐘以上就出過, 那次模擬器已經掛了而等待一直沒結束. 不要再等下一段: 用 `repair-emulator` 的 `look.py` 看畫面 (它不佔用模擬器), 回報 pid, log 最後一行跟那張畫面.
+**pid 還在但 `run.log` 超過一場戰鬥的時間 (五分鐘上下; 夜世界配對最久量過五分半) 沒有新的一行, 是卡死了**, 只有一個例外: 最後一行是 `waiting for the server rather than tapping` 的話, 迴圈在等伺服器, 最久 45 分鐘不寫 log, 那是正常的, 照常等. 卡死的樣子是這樣: 模擬器重開之後停在 `Launching com.supercell.clashofclans` 九分鐘以上就出過, 那次模擬器已經掛了而等待一直沒結束. 不要再等下一段: 用 `repair-emulator` 的 `look.py` 看畫面 (它不佔用模擬器), 回報 pid, log 最後一行跟那張畫面.
 
 ## 開跑
 
@@ -80,7 +80,7 @@ jq '.[-1] | {world, outcome, stock_full, attacked}' ~/.ai_coc/logs/<run>/result.
 - `run.log` 結尾有 `Stop requested`: 有人下了 `ai_coc stop` (停在回合之間或兩輪中間的等待都會留這一行). 誰停的看 log, 現在還有沒有人在跑看 `~/.ai_coc/state.json`. 不是你下的就不要自己開回去, 見「中止」
 - 使用者指定的 `--repeat N` 跑完: 照他的交辦接下去或收工
 - 有幾輪 `outcome` 是 `emulator_silent`: 模擬器當下不理人, 夾在中間一兩輪不是事, 照常打. 但結尾是 `The emulator has not answered for 3 rounds; ending the series` 就是連續三輪, 整個 series 收工: 先看模擬器還活著沒有, 不要直接開下一個. 這種有完整的 `result.json`, 不要跟被砍掉的搞混
-- 都不是就是迴圈自己放棄了, `outcome` 跟最後一條 WARNING / ERROR 說原因: 排程重開模擬器之後村莊沒回來 (`The village never came back after the restart`), 或打到一半遊戲跑到另一個村莊 (最後一個元素是 `other_village`, 多半是有人切過村莊, 例如使用者在手機上玩). 這幾種歸 `farm` 的「其他停手的理由」, 先把遊戲弄回村莊, 不要直接開下一個
+- 都不是就是迴圈自己放棄了, `outcome` 跟最後一條 WARNING / ERROR 說原因, 例如打到一半遊戲跑到另一個村莊 (最後一個元素是 `other_village`, 多半是有人切過村莊, 例如使用者在手機上玩). 這幾種歸 `farm` 的「其他停手的理由」, 先把遊戲弄回村莊, 不要直接開下一個
 
 一個 run 結束而你什麼都沒接, 模擬器就閒著, 使用者卻以為還在打.
 
