@@ -1410,6 +1410,7 @@ class AttackRunner(ScreenRunner):
         """
         deadline = time.monotonic() + timeout
         settled = time.monotonic() + NEXT_SETTLE
+        unconfirmed: LootOffer | None = None
         unread = 0
         while time.monotonic() < deadline:
             png = self._frame("scout")
@@ -1436,6 +1437,26 @@ class AttackRunner(ScreenRunner):
                     # Its own line cannot carry this: `can_skip` is what the
                     # reason there is derived from, so printing it beside the
                     # reason is one bit twice.
+                    #
+                    # **And it is believed on the second frame, not the first.**
+                    # A new opponent's panel can be drawn before its button:
+                    # measured 2026-09-26, a frame with the countdown at 30 秒
+                    # and the screen still hazy peaked at 240 with a pale button
+                    # that read as none, and the loop attacked an opponent under
+                    # the thresholds as if its countdown had ended. A countdown
+                    # that has ended stays ended, so one more frame costs a
+                    # second and settles which of the two this is. The window
+                    # can run out while it waits, and this is an opponent on
+                    # screen, so `_offered` says so before looking again.
+                    if not view.can_skip and view.loot != unconfirmed:
+                        logger.info(
+                            "下一個 is not on screen yet; looking again before calling "
+                            "this opponent's countdown over"
+                        )
+                        unconfirmed = view.loot
+                        self._offered = True
+                        time.sleep(1)
+                        continue
                     if not view.can_skip:
                         logger.info(
                             "下一個 is not on screen and the panel is drawn at %d, "
