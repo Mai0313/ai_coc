@@ -79,15 +79,26 @@ class LDPlayerAdapter(Emulator):
             # serial goes out as port 0 until the boot has completed, which is
             # what MuMu's CLI reports in the same window and what `_booted`
             # waits on.
-            if info.android_started:
-                try:
-                    adb = self.controller(serial)
-                    answered = (
-                        adb.shell(["getprop", "sys.boot_completed"], timeout=5).strip() == "1"
-                    )
-                    coc_running = answered and adb.is_running(COC_PACKAGE)
-                except AdbControlError:
-                    logger.debug("LDPlayer instance %s has no ADB bridge yet", info.index)
+            #
+            # **And `list2` can lose an instance that is up**, so ADB is asked
+            # whatever it says. Seen twice on 2026-09-26: an instance that had
+            # just farmed for an hour, and one opened from its icon minutes
+            # earlier, both read `0,…,-1,-1` with the player and the VM running
+            # and `adb` answering. Believing `list2` there had `ensure_coc`
+            # launch an emulator that was already up, wait out the boot and
+            # fail on port 0, without ever reaching the game.
+            try:
+                adb = self.controller(serial)
+                answered = adb.shell(["getprop", "sys.boot_completed"], timeout=5).strip() == "1"
+                coc_running = answered and adb.is_running(COC_PACKAGE)
+            except AdbControlError:
+                logger.debug("LDPlayer instance %s has no ADB bridge", info.index)
+            if answered and not info.android_started:
+                logger.warning(
+                    "LDPlayer lists instance %s as down, but its ADB answers; driving it anyway",
+                    info.index,
+                )
+            android = 1 if answered else info.android
             instances.append(
                 EmulatorInstance(
                     emulator_id=f"ldplayer:{info.index}",
@@ -96,8 +107,8 @@ class LDPlayerAdapter(Emulator):
                     android_version="unknown",
                     adb_serial=serial if answered else AdbEndpoint().serial,
                     process_started=info.pid > 0,
-                    android_started=info.android_started,
-                    state=STATES.get(info.android, "unknown"),
+                    android_started=android == 1,
+                    state=STATES.get(android, "unknown"),
                     pid=info.pid,
                     main_hwnd=info.top_hwnd,
                     render_hwnd=info.bind_hwnd,

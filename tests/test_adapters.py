@@ -645,11 +645,13 @@ class LDPlayerAdapterTests(unittest.TestCase):
         ):
             ldplayer_module.detect_install_path()
 
-    def test_instances_come_off_list2_and_only_a_running_one_is_asked_about_the_game(self) -> None:
+    def test_instances_come_off_list2_and_only_one_adb_answers_is_asked_about_the_game(
+        self,
+    ) -> None:
         listing = b"0,LDPlayer,1839594,921748,1,30476,48656,1600,900,240\r\n1,Spare,0,0,0,-1,-1,1280,720,240\r\n"
         with (
             patch.object(LDPlayerAdapter, "_run", return_value=listing) as ran,
-            patch.object(AdbController, "shell", return_value="1\n"),
+            patch.object(AdbController, "shell", side_effect=["1\n", AdbControlError("refused")]),
             patch.object(AdbController, "is_running", return_value=True) as asked,
         ):
             up, down = self.ld.enumerate_instances()
@@ -685,6 +687,24 @@ class LDPlayerAdapterTests(unittest.TestCase):
             assert not booting.endpoint.ready
             assert self.ld.serial_of(booting) == "127.0.0.1:5555"
             asked.assert_not_called()
+
+    def test_an_instance_list2_has_lost_is_up_when_its_adb_answers(self) -> None:
+        """`list2` read `0,…,-1,-1` for an instance that was up and answering
+        ADB; believing it sent `ensure_coc` to launch an emulator already running.
+        """
+        listing = b"0,LDPlayer,0,0,0,-1,-1,1600,900,240\r\n"
+        with (
+            patch.object(LDPlayerAdapter, "_run", return_value=listing),
+            patch.object(AdbController, "shell", return_value="1\n"),
+            patch.object(AdbController, "is_running", return_value=False),
+        ):
+            (lost,) = self.ld.enumerate_instances()
+        assert (lost.android_started, lost.adb_serial, lost.state, lost.coc_running) == (
+            True,
+            "127.0.0.1:5555",
+            "running",
+            False,
+        )
 
     def test_each_lifecycle_call_is_ldconsole_by_index(self) -> None:
         with patch.object(LDPlayerAdapter, "_run", return_value=b"stop") as ran:
