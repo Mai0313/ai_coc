@@ -41,7 +41,7 @@ uv run ai_coc probe --record          # 實測出兵邊界, 對照判讀器的�
 uv run ai_coc bounds --record         # 實測地圖邊緣, 回推村莊範圍
 ```
 
-各丟一場戰鬥換一組數字. 值得跑的時機: 遊戲更新後, 村莊換主題後, 或連續好幾場在同一處出兵失敗而畫面看不出原因. 細節在 `CLAUDE.md` (`probe`) 跟 `parsers/boundary.py` 的註解 (`bounds`). 它們用 `LootThresholds()` 不用設定檔, 要的是任何一場戰鬥.
+各丟一場戰鬥換一組數字. 值得跑的時機: 遊戲更新後, 村莊換主題後, 或連續好幾場在同一處出兵失敗而畫面看不出原因. 細節在 `AGENTS.md` (`probe`) 跟 `parsers/boundary.py` 的註解 (`bounds`). 它們用 `LootThresholds()` 不用設定檔, 要的是任何一場戰鬥.
 
 ## 讓一場戰鬥可以重播
 

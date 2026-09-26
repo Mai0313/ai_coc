@@ -3,7 +3,7 @@
 `commands.claim` writes the state file at both ends of a run, and unpatched that
 is the real `~/.ai_coc/state.json`. A suite run would then publish the test
 process's own pid over whatever is farming and hand the emulator back as `idle`
-on the way out, which is exactly the arrangement `CLAUDE.md` sets up: a farming
+on the way out, which is exactly the arrangement `AGENTS.md` sets up: a farming
 subagent holds the loop while the main session runs the suite beside it. The
 flag this replaced did the same damage in a smaller way, eating a stop somebody
 had asked of a loop still playing out its battle. Three helpers reached

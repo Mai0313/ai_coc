@@ -111,7 +111,7 @@ Prompts are one Markdown file each under `prompts/`, loaded once and filled in b
 
 Every structured value is a Pydantic model, collected in `models.py`: no `dataclass`, no `TypedDict`, and no bare `dict[str, Any]` travelling between functions. Blocking calls go through a `QThreadPool` worker and come back to the UI thread as a signal; never call an adapter directly from a slot.
 
-The comment beside each measured constant in these loops carries the reasoning behind its value, and `CLAUDE.md` at the repo root carries the rules that span files. Read both before changing a constant, because most of them were paid for by a battle that went wrong.
+The comment beside each measured constant in these loops carries the reasoning behind its value, and `AGENTS.md` at the repo root carries the rules that span files. Read both before changing a constant, because most of them were paid for by a battle that went wrong.
 
 ## Testing
 

@@ -17,7 +17,7 @@ description: >-
 ## 三份文件的分工
 
 - **程式碼**說現在是什麼: 旗標看 `src/ai_coc/cli.py` 的 `_parser()`, 指令做什麼看 `src/ai_coc/commands.py` 對應的函式, 回報欄位看 `src/ai_coc/models.py` 的 `AttackReport` / `AttackSeries` / `WallReport`
-- **`CLAUDE.md` 跟常數旁邊的註解**說為什麼
+- **`AGENTS.md` 跟常數旁邊的註解**說為什麼
 - **這份 skill** 說怎麼判斷: 什麼時候介入, 什麼時候停手
 
 不要憑記憶下參數, 開跑前讀上面三個程式碼位置.
