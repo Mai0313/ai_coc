@@ -136,15 +136,7 @@ log 裡的 `stopped moving after 2 swipe(s)` 是正常的. `camera was still mov
 
 遊戲卡在載入畫面是另一回事: `launch` 一樣只等三分鐘, 放棄時 log 最後一行說 `the game is on its loading screen`. 那是伺服器的事, 攻擊迴圈自己會等 (最多 45 分鐘, 見 `farm` 的警覺樣態), 不要一直重跑 `launch`.
 
-**雷電開起來變成 1920x1080, 或者 5555 連不上**, 是雷電自己把 instance 的設定洗回預設了 (它的 `reboot` 會這樣, 程式碼已經不用它), 不是程式的問題. 先用 `ldconsole list2` 確認, 第 8 到 10 欄是解析度跟 dpi. 還原只有這個順序留得住, 其他順序會讓雷電在下一次開機把整份設定當成新機器重寫:
-
-1. `ldconsole quit --index 0`, 等 `Ld9Box` 開頭的程序全部結束
-2. `ldconsole modify --index 0 --resolution 1600,900,240`
-3. `ldconsole launch --index 0` 開一次讓雷電自己寫回設定檔, 這時 ADB 還是關的
-4. 再 `quit` 一次, 在安裝目錄的 `vms\config\leidian0.config` 裡 `"basicSettings.fps"` 那一行後面加 `"basicSettings.adbDebug": 2,` (本地連接), 保留檔案原本的 CRLF
-5. `launch`, 開機完 ADB 就回來了
-
-`modify` 之後直接手改那個檔案, 就是會被整份重寫的那種順序.
+**模擬器本身起不來**: 指令報 `模擬器尚未開放 ADB 連接埠：127.0.0.1:0`, 雷電開起來變成 1920x1080, 或者 5555 連不上. 那不是程式的問題, 照 `repair-emulator` 處理; 你是 subagent 的話停下來回報, 修是主 session 的事.
 
 **三個都會把進行中的戰鬥打斷**, 跑之前先確認背景那輪真的停了.
 
