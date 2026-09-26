@@ -2011,6 +2011,9 @@ class WorldReport(BaseModel):
     outcome: WorldOutcome
 
 
+LaunchOutcome = Literal["at_village", "no_village", "stopped"]
+
+
 class LaunchReport(BaseModel):
     """Which instance one `launch` command left the game running on.
 
@@ -2034,8 +2037,15 @@ class LaunchReport(BaseModel):
     # Whether the village really came up and the camera was put back at the far
     # zoom, which is a different question from whether the process is running:
     # `ensure_coc` is satisfied by a pid, and a game still on its loading screen
-    # answers every command by silently missing whatever it aimed at.
-    at_village: bool = False
+    # answers every command by silently missing whatever it aimed at. `stopped`
+    # is an `ai_coc stop` that landed while it waited.
+    outcome: LaunchOutcome
+
+    @computed_field
+    @property
+    def at_village(self) -> bool:
+        """Whether the village came up, which is what the skills check."""
+        return self.outcome == "at_village"
 
 
 class HeroCard(BaseModel):
