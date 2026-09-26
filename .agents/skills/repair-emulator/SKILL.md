@@ -75,13 +75,17 @@ description: >-
 
 `ai_coc launch` 還是不行, 而且 `look.py` 也截不到圖, 才往下處理.
 
-處理: **不要結束任何程序, 請人.** 用 `look.py` 試一次, 連同 `list2` 那一行跟程序清單交給使用者, 也說清楚強制結束的代價: 那天兩次強制結束有一次把設定洗掉了 (第 3 種). 要不要重開、怎麼重開由他決定. 他同意由你來做的話: `Stop-Process` 那個 `dnplayer.exe` 跟 `Ld9BoxHeadless.exe`, 等 `Ld9BoxHeadless.exe` 不見了再多等十秒 (`QUIT_SETTLE` 的理由), `ldconsole launch --index 0`, 然後照第 1 種等滿三分鐘, 中間不要 `quit`, 也不要再開一次. 那天這樣做過兩次, 一次 82 秒後正常起來; 另一次重開之後沒多久就被 `quit` 過, 重開的那台 `list2` 一樣看不到. 結束程序對雷電來說就是一次閃退, 也可能變成第 3 種.
+處理: **不要結束任何程序, 請人.** 用 `look.py` 試一次, 連同 `list2` 那一行跟程序清單交給使用者, 也說清楚強制結束的代價: 那天兩次強制結束有一次把設定洗掉了 (第 3 種). 要不要重開、怎麼重開由他決定. 他同意由你來做的話: `Stop-Process` 那個 `dnplayer.exe` 跟 `Ld9BoxHeadless.exe`, 等兩個都不見了再多等十秒 (`QUIT_SETTLE` 的理由), `ldconsole launch --index 0`, 然後照第 1 種等滿三分鐘, 中間不要 `quit`, 也不要再開一次. 那天這樣做過兩次, 一次 82 秒後正常起來; 另一次重開之後沒多久就被 `quit` 過, 重開的那台 `list2` 一樣看不到. 結束程序對雷電來說就是一次閃退, 也可能變成第 3 種.
 
 ### 3. 設定被洗掉
 
-症狀: `list2` 最後三欄變成 `1920,1080,280`, 或者 Android 欄已經是 1 很久了 ADB 還是拒絕連線, 設定檔裡沒有 `basicSettings.adbDebug`. `ai_coc` 也會報 `127.0.0.1:0`, 但是一開始就報, 不像第 1 種要等半分多鐘: Android 已經是 1, `ensure_coc` 就不等開機. 雷電的 `reboot` 會這樣 (程式碼已經不用它), 被強制結束之後也會: 那天兩次強制結束, 有一次就洗掉了.
+症狀: `list2` 最後三欄變成 `1920,1080,280`, 或者 Android 欄已經是 1 很久了 ADB 還是拒絕連線, 設定檔裡沒有 `basicSettings.adbDebug`. `ai_coc` 也會報 `127.0.0.1:0`, 但是一開始就報, 不像第 1 種要等半分多鐘: Android 已經是 1, `ensure_coc` 就不等開機. 雷電的 `reboot` 會這樣 (程式碼已經不用它), 被強制結束之後也會.
 
-處理: **請使用者在雷電的設定畫面改回來, 你不要自己修**: ADB 調試開本地連接, 解析度 1600x900, DPI 240. 他在設定畫面改完, 設定檔裡寫的是 `"basicSettings.adbDebug": 1`.
+**強制結束之後, 壞掉會晚一輪才看得出來.** 2026-09-26 兩次都是這個順序: 雷電被強制結束 (一次是 agent, 一次是使用者在工作管理員); 下一次開機, 雷電把 `vms\config\leidian0.config` 整份重寫成新機器 (`isNewPlayer` 變 `true`, 手機型號換掉, 解析度跟 `adbDebug` 那幾行不見), 可是這一次開起來還是 1600x900、ADB 也通, 看起來沒事; 再下一次開機才變成 1920x1080、ADB 關著. 所以看到設定檔被重寫, 就知道下一次開機會壞. 同一段時間 `log` 資料夾沒有新的 crash 紀錄, 看不出是雷電哪個部分重寫的.
+
+**關雷電用右上角的 X 或 `ldconsole quit`, 不要用工作管理員.** 那天兩種都在 8 秒內把視窗程式跟 VM 乾淨關掉, 沒有一次洗掉設定. X 的行為看設定畫面的「關閉設定」, 設定檔的 `statusSettings.closeOption` 是 1 的時候就是「直接關閉」; 設定檔被重寫之後這一欄會不見, 按 X 變成先跳一個提示.
+
+處理: **請使用者在雷電的設定畫面改回來, 你不要自己修**: ADB 偵錯開本地連接, 解析度 1600x900, DPI 240. 他在設定畫面改完, 設定檔的 `basicSettings.adbDebug` 那天看過 1 跟 2, 兩次 ADB 都通.
 
 為什麼不自己修: 那天用 `ldconsole modify` 加手改設定檔的步驟修了三次, 三次都失敗, 還把雷電弄成每次開機都把自己當成新機器重寫設定檔 (`isNewPlayer` 變 `true`, 手機型號每開一次就換一個), 又把 ADB 關了一次. 其中一次是 Git Bash 的 `sed -i` 把設定檔的 CRLF 悄悄換成 LF. `ldconsole modify` 改得了解析度, 但沒有 ADB 的選項.
 
@@ -98,10 +102,11 @@ description: >-
 ## 不要做的事
 
 - 不要 `ldconsole reboot`
-- 不要為了「重現閃退」去強制結束模擬器. 那天就是這樣把設定洗掉的. 結束任何程序都要使用者先同意 (第 2 種)
+- 不要為了「重現閃退」去強制結束模擬器. 那天就是這樣把設定洗掉的. 結束任何程序都要使用者先同意 (第 2 種), 而且要跟他說清楚兩輪之後設定會壞 (第 3 種)
 - 不要手改 `leidian0.config`, 理由在第 3 種
+- 不要在 `dnplayer.exe` 或 `Ld9BoxHeadless.exe` 還在的時候 `ldconsole launch`. 那天有三台雷電開出來就沒有視窗、使用者叫不出來: 兩次開的時候舊的確定還在或剛被結束十秒, 第三次舊的 VM 已經關了一分多鐘, 舊的 `dnplayer.exe` 在不在沒記到. 等兩個都不見了才開的那次有視窗
 - 不要自己下 `adb connect` / `adb disconnect`, 看 ADB 用 `look.py`: 每次 connect 都在雷電那端開一條新連線, 雷電的 port forward 曾經因此整個掛掉 (`CLAUDE.md` 的 Adapters)
-- 同一招不要連試. 一次乾淨的重開 (使用者同意之後): `ldconsole quit --index 0`, 等 `isrunning` 說 `stop` 而且 `Ld9BoxHeadless.exe` 不見了 (那天都是兩秒內; 一分鐘還在就請人. `Ld9BoxSVC.exe` 有時會一直留著, 不用等它), 再多等十秒 (`adapters/ldplayer.py` 的 `QUIT_SETTLE` 寫了為什麼), `ldconsole launch --index 0`, 等 Android 欄變 1 而且 `look.py` 截得到圖, 再 `ai_coc launch`. 這樣還站不上村莊, 就是該請人的時候
+- 同一招不要連試. 一次乾淨的重開 (使用者同意之後): `ldconsole quit --index 0`, 等 `isrunning` 說 `stop` 而且 `dnplayer.exe` 跟 `Ld9BoxHeadless.exe` 都不見了 (那天都是幾秒內; 一分鐘還在就請人. `Ld9BoxSVC.exe` 有時會一直留著, 不用等它), 再多等十秒 (`adapters/ldplayer.py` 的 `QUIT_SETTLE` 寫了為什麼), `ldconsole launch --index 0`, 等 Android 欄變 1 而且 `look.py` 截得到圖, 再 `ai_coc launch`. 這樣還站不上村莊, 就是該請人的時候
 
 ## 什麼時候請人
 
