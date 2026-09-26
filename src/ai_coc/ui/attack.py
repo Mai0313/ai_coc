@@ -337,10 +337,10 @@ NEXT_BUTTON = (1320, 575)
 MIN_LINE_RADIUS = 300
 
 # The camera is measured rather than assumed, and only moved when it is really
-# off. Measured across nine battles the game opens every attack with the village
-# already within 35 px of the middle, so this normally reads once and does
-# nothing; the tolerance keeps it that way and leaves the drag for a camera that
-# has genuinely been left somewhere else.
+# off; the tolerance leaves the drag for a camera genuinely left somewhere else.
+# Known and open (#65): `village_box` barely follows the camera, so across ten
+# recorded battles this never fired, and it would not catch a camera that was
+# off either.
 CAMERA_TOLERANCE = 60
 CAMERA_ATTEMPTS = 2
 # How short the village has to read before the pre-battle pinch to say the
@@ -1897,7 +1897,9 @@ class AttackRunner(ScreenRunner):
 
         How much comes from where the village's own red line already reaches, so
         a village small enough to leave the flank room is left alone: dragging a
-        camera that is fine only takes the room off the other side.
+        camera that is fine only takes the room off the other side. Known and
+        open (#65): the box that measures it barely follows the village, so in
+        practice every battle drags, 86-102 px.
         """
         box = village_box(frame)
         if box is None:
@@ -2465,6 +2467,9 @@ class AttackRunner(ScreenRunner):
 
         A handed-in plan is played on every stage, since a written tactic cannot
         know which of the two bases it will meet.
+
+        The AI half stays although farming overrides it with `night_flat.json`:
+        the user wants both villages planned the same way.
         """
         if isinstance(self.plan, NightPlan):
             logger.info("Playing the plan handed in: %s", self.plan.reason or "no reason given")
