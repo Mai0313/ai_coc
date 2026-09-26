@@ -97,7 +97,7 @@
 - `push_out` 推到 `DEPLOY_BOUND` 邊緣就不動, 一直推同一點是可能的
 - `boundary_reach` 跟 `fitted_line` 把預設側翼彎到真實邊界, 三個錨點的理由 `CLAUDE.md` 搜 `chord`
 
-出兵成不成功看 `card_drained`, 不看畫面上有沒有兵 (紅色橫幅不能用, `CLAUDE.md` 搜 `你無法在紅線區域內派遣部隊`). 開打前丟兵會全部失敗, 那是 `_wait_for_battle` 管的.
+出兵成不成功看 `card_drained`, 不看畫面上有沒有兵 (紅色橫幅不能用, `CLAUDE.md` 搜 `你無法在紅線區域內派遣部隊`). 偵察倒數中丟兵會直接開打 (2026-09-26 實測), 所以攻擊不等倒數; 只有 `probe` 跟 `bounds` 還用 `_wait_for_battle` 等.
 
 ## 下兵線畫穿村莊
 

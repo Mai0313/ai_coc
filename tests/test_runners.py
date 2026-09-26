@@ -1518,7 +1518,7 @@ class DeploymentTests(unittest.TestCase):
             patch.object(attack, "freeze_cards", return_value=[]),
             patch.object(attack, "card_count", return_value=4),
             patch.object(runner, "_plan", return_value=siege),
-            patch.object(runner, "_wait_for_battle", return_value=b"battle"),
+            patch.object(runner, "_frame", return_value=b"battle"),
             patch.object(runner, "_flank", return_value=DEPLOY_LINES["top_left"]),
             patch.object(
                 runner, "_play_tactic", side_effect=lambda plan, anchors, row: rows.append(row)
@@ -1545,7 +1545,7 @@ class DeploymentTests(unittest.TestCase):
                     update={"steps": [_step("troops", (37.5, 12), (14, 42))]}
                 ),
             ),
-            patch.object(runner, "_wait_for_battle", return_value=None),
+            patch.object(runner, "_frame", return_value=b"battle"),
             patch.object(runner, "_flank", return_value=DEPLOY_LINES["top_left"]),
             patch.object(
                 runner, "_play_tactic", side_effect=lambda plan, anchors, row: rows.append(row)
@@ -1553,6 +1553,27 @@ class DeploymentTests(unittest.TestCase):
         ):
             runner._deploy(b"opening")
         assert (rows[0].machine, rows[0].heroes) == ([], [557, 683])
+
+    def test_the_tactic_goes_in_without_waiting_out_the_scout_countdown(self) -> None:
+        """Measured 2026-09-26: a drop with 8 秒 left started the battle, and the
+        boundary read the same off the countdown frame as off the battle frame.
+        """
+        runner = self._runner()
+        with (
+            patch.object(runner, "_settle_zoom", side_effect=lambda frame: frame),
+            patch.object(runner, "_settle_camera", side_effect=lambda frame: frame),
+            patch.object(attack, "card_groups", return_value=[[171], [557]]),
+            patch.object(attack, "counted_cards", return_value=[]),
+            patch.object(attack, "freeze_cards", return_value=[]),
+            patch.object(runner, "_plan", return_value=plans.flat()),
+            patch.object(runner, "_frame", return_value=b"countdown"),
+            patch.object(runner, "_wait_for_battle") as waited,
+            patch.object(runner, "_flank", return_value=DEPLOY_LINES["top_left"]) as flanked,
+            patch.object(runner, "_play_tactic"),
+        ):
+            runner._deploy(b"opening")
+        waited.assert_not_called()
+        assert flanked.call_args.args[0] == b"countdown"
 
     def test_no_cards_on_the_row_means_nothing_to_deploy(self) -> None:
         runner = self._runner()
@@ -1578,7 +1599,6 @@ class DeploymentTests(unittest.TestCase):
             patch.object(attack, "fitted_line", return_value=None),
         ):
             assert runner._flank(b"battle", None) == DEPLOY_LINES["top_left"]
-        assert runner._flank(None, None) == DEPLOY_LINES["top_left"]
 
     def test_each_act_reaches_its_own_tap(self) -> None:
         runner = self._runner()
