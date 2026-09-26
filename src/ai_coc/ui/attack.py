@@ -1445,13 +1445,16 @@ class AttackRunner(ScreenRunner):
                     # that read as none, and the loop attacked an opponent under
                     # the thresholds as if its countdown had ended. A countdown
                     # that has ended stays ended, so one more frame costs a
-                    # second and settles which of the two this is.
+                    # second and settles which of the two this is. The window
+                    # can run out while it waits, and this is an opponent on
+                    # screen, so `_offered` says so before looking again.
                     if not view.can_skip and view.loot != unconfirmed:
                         logger.info(
                             "下一個 is not on screen yet; looking again before calling "
                             "this opponent's countdown over"
                         )
                         unconfirmed = view.loot
+                        self._offered = True
                         time.sleep(1)
                         continue
                     if not view.can_skip:
