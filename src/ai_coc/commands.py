@@ -25,6 +25,7 @@ from pydantic import BaseModel, PrivateAttr
 from ai_coc import plans
 from ai_coc.models import (
     World,
+    Caller,
     MapEdge,
     ProbeRay,
     AppConfig,
@@ -486,8 +487,8 @@ def _write_state(state: RunnerState) -> None:
 
 
 @contextmanager
-def claim(command: str, log: Path | None = None) -> Iterator[None]:
-    """Say that this process is driving the emulator, and hand it back after.
+def claim(command: str, log: Path | None = None, caller: Caller | None = None) -> Iterator[None]:
+    """Say that this process is driving the emulator, and who asked, and hand it back after.
 
     Every command that touches the emulator takes one, short ones included: a
     `collect` that runs for eight seconds still holds the screen for those
@@ -526,6 +527,7 @@ def claim(command: str, log: Path | None = None) -> Iterator[None]:
         command=command,
         started=datetime.now().astimezone(),
         log=log,
+        caller=caller or Caller(),
     )
     _write_state(mine)
     _held = mine
@@ -563,6 +565,8 @@ def _release(command: str, log: Path | None) -> None:
             started=_held.started if _held else None,
             ended=datetime.now().astimezone(),
             log=log,
+            # Kept on `idle` so the last run stays attributable after it ends.
+            caller=_held.caller if _held else Caller(),
         )
     )
     _held = None

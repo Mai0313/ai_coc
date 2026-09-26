@@ -32,6 +32,7 @@ from PyQt5.QtWidgets import (
 from ai_coc import commands
 from ai_coc.models import (
     Frame,
+    Caller,
     RunLog,
     UiJobs,
     WallOptions,
@@ -70,6 +71,9 @@ RUN_BUTTON_RUNNING = "background:#c2410c;font-size:12pt;font-weight:bold;border-
 # A finished job queues the next pass straight away, so the loop runs back to
 # back; the interval timer is only what retries when a pass had nothing to do.
 NEXT_CYCLE_DELAY = 3000
+# What the state file says about a run the window started: it has no session or
+# mission of its own to report, only that it was the window and not an agent.
+WINDOW_CALLER = Caller(agent="window")
 # Two frames a second: enough to watch an attack unfold, and slow enough that the
 # preview's own `screencap` does not compete with the loop taking the frames it
 # reads. A tick whose frame is still in flight is dropped rather than queued.
@@ -492,7 +496,9 @@ class MainWindow(QMainWindow):
         # pass's own claim nests inside this one and does nothing.
         self.stop_seen = False
         self.holding.close()
-        self.holding.enter_context(commands.claim("automation", self.session.directory))
+        self.holding.enter_context(
+            commands.claim("automation", self.session.directory, WINDOW_CALLER)
+        )
         self.automation_timer.start(self.cycle_minutes.value() * 60000)
         self._paint_run_button()
         logger.info("自動化已啟動,第一輪開始")
@@ -630,7 +636,7 @@ class MainWindow(QMainWindow):
             # the claim `start_automation` already took and leaves it alone, so
             # the state file reads `running` across the three seconds between
             # one pass and the next instead of flickering to `idle` in each gap.
-            with commands.claim(what, run.directory):
+            with commands.claim(what, run.directory, WINDOW_CALLER):
                 return task(run)
 
         logger.info("%s", label)

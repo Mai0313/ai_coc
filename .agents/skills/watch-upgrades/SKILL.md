@@ -18,8 +18,10 @@ description: >-
 ## 先讀一次
 
 ```bash
-uv run ai_coc status --label watch
+uv run ai_coc status --label watch --agent <名字> --session <session id> --mission "盯升級跟護盾"
 ```
+
+`--agent`、`--session`、`--mission` 每次都帶, 理由在 `CLAUDE.md` 的 Say who is driving.
 
 它答當下**那一個**世界的工人、實驗室、倉庫跟護盾, **不切世界**. `result.json` 長這樣:
 

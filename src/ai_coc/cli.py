@@ -16,6 +16,7 @@ from PyQt5.QtWidgets import QApplication
 from ai_coc import commands, __version__
 from ai_coc.models import (
     World,
+    Caller,
     RunLog,
     HeroKind,
     HeroOptions,
@@ -240,7 +241,25 @@ def _parser() -> argparse.ArgumentParser:
             metavar="名稱",
             help="在這次的紀錄資料夾名字後面加上這個,方便之後認出是哪一次",
         )
+        # Who asked, for the same reason on every sub-command: `stop` and `read`
+        # included, since the log is where a stop somebody issued gets traced.
+        # Optional so a person can still type a command bare; the skills are
+        # what hold an agent to them.
+        one.add_argument(
+            "--agent",
+            default="",
+            metavar="名稱",
+            help="是誰叫的,例如 claude-code、antigravity、codex",
+        )
+        one.add_argument(
+            "--session", default="", metavar="ID", help="叫它的那個 agent 自己的 session id"
+        )
+        one.add_argument("--mission", default="", metavar="任務", help="這次在做什麼,一句話")
     return parser
+
+
+def _caller(arguments: argparse.Namespace) -> Caller:
+    return Caller(agent=arguments.agent, session=arguments.session, mission=arguments.mission)
 
 
 def _answer(arguments: argparse.Namespace, run: RunLog) -> BaseModel | str:
@@ -379,7 +398,7 @@ def _claim_for(arguments: argparse.Namespace, run: RunLog) -> AbstractContextMan
     """
     if arguments.command in WITHOUT_CLAIM or getattr(arguments, "last", False):
         return nullcontext()
-    return commands.claim(arguments.command, run.directory)
+    return commands.claim(arguments.command, run.directory, _caller(arguments))
 
 
 def _spot(text: str) -> tuple[int, int]:
@@ -405,6 +424,17 @@ def main() -> int:
     # goes back to: this is what a session reads to find the frames afterwards.
     logger.info("This run is being kept in %s", run.directory)
     if arguments.command:
+        # Second line of every run: `state.json` holds only the latest, and the
+        # run directories are the history someone greps to find who ran what.
+        caller = _caller(arguments)
+        logger.info(
+            "Called by agent=%r session=%r mission=%r",
+            caller.agent,
+            caller.session,
+            caller.mission,
+        )
+        if not (caller.agent and caller.session and caller.mission):
+            logger.warning("Missing --agent/--session/--mission; this run will not say who ran it")
         return _run_command(arguments, run)
     app = QApplication(sys.argv)
     app.setApplicationName(APP_NAME)

@@ -1722,6 +1722,23 @@ class ViewReport(BaseModel):
 RunnerStatus = Literal["running", "stopping", "idle"]
 
 
+class Caller(BaseModel):
+    """Who asked for a run, in the caller's own words from the command line.
+
+    Several agents and the user drive the one emulator, and the state file used
+    to say only which command held it. The day an agent took a running emulator
+    for a leftover and killed it, finding out which session had done that meant
+    digging through that agent's own conversation database. Nothing checks these
+    three: they are whatever the caller passed, and blank when it passed none.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    agent: str = ""
+    session: str = ""
+    mission: str = ""
+
+
 class RunnerState(BaseModel):
     """Who is driving the emulator, kept between runs rather than during one.
 
@@ -1754,6 +1771,7 @@ class RunnerState(BaseModel):
     # it. The alternative was copying the progress in here and keeping two
     # records of one run in step, which is the arrangement that goes stale.
     log: Path | None = None
+    caller: Caller = Field(default_factory=Caller)
 
 
 def _labelled(label: str) -> str:

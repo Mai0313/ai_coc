@@ -21,6 +21,7 @@ import pytest
 from ai_coc import cli, models, commands
 from ai_coc.cli import RECORDABLE, _spot, _answer, _parser, _run_command
 from ai_coc.models import (
+    Caller,
     RunLog,
     ViewReport,
     HeroOptions,
@@ -78,6 +79,13 @@ class ParserTests(unittest.TestCase):
 
     def test_no_sub_command_means_the_window(self) -> None:
         assert _args().command is None
+
+    def test_every_sub_command_takes_who_is_asking_and_none_needs_it(self) -> None:
+        for name, extra in MINIMAL.items():
+            asked = _args(name, *extra, "--agent", "codex", "--session", "s1", "--mission", "m")
+            assert (asked.agent, asked.session, asked.mission) == ("codex", "s1", "m"), name
+            bare = _args(name, *extra)
+            assert (bare.agent, bare.session, bare.mission) == ("", "", ""), name
 
     def test_record_is_only_offered_where_a_loop_reads_frames(self) -> None:
         for name in RECORDABLE:
@@ -320,6 +328,45 @@ class DispatchTests(unittest.TestCase):
         assert frames is not None
         assert frames.name == "frames"
         assert frames.parent.name.endswith("-capture-baseline")
+
+    def test_who_asked_reaches_the_claim(self) -> None:
+        with (
+            patch.object(
+                commands, "collect", return_value=CollectReport(markers=0, outcome="collected")
+            ),
+            patch.object(commands, "claim") as claimed,
+            patch("sys.stdout", new_callable=io.StringIO),
+        ):
+            _run_command(
+                _args(
+                    "collect", "--agent", "claude-code", "--session", "abc", "--mission", "收集"
+                ),
+                self.run,
+            )
+        assert claimed.call_args.args[2] == Caller(
+            agent="claude-code", session="abc", mission="收集"
+        )
+
+    def test_a_run_logs_who_called_it_and_warns_when_nobody_said(self) -> None:
+        """Through `main`, where the log is opened, so the line lands in every
+        run's own `run.log`; `read` needs no emulator for it.
+        """
+        asked = ["--agent", "codex", "--session", "s1", "--mission", "m"]
+        for extra, warned in (([], True), (asked, False)):
+            with (
+                tempfile.TemporaryDirectory() as folder,
+                patch.object(models, "LOG_DIR", Path(folder)),
+                patch.object(
+                    sys, "argv", ["ai_coc", "read", str(FRAMES / "world_day.png"), *extra]
+                ),
+                patch.object(cli, "configure_logging"),
+                patch.object(cli.logger, "info") as said,
+                patch.object(cli.logger, "warning") as warning,
+                patch("sys.stdout", new_callable=io.StringIO),
+            ):
+                assert cli.main() == 0
+            assert any(call.args[0].startswith("Called by") for call in said.call_args_list)
+            assert warning.called is warned
 
     def test_read_puts_the_named_file_through_every_parser(self) -> None:
         """The one command that runs its real code here: it needs no emulator."""
