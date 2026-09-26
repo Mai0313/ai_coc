@@ -119,6 +119,7 @@ from ai_coc.adapters.adb import (
 from ai_coc.parsers.clan import panel_top, donatable_cards, reinforce_button
 from ai_coc.parsers.hero import SCROLL_LEFT, SCROLL_RIGHT, can_scroll, hero_cards, hall_buttons
 from ai_coc.parsers.home import (
+    _clear_rim,
     panel_jobs,
     plate_count,
     builder_jobs,
@@ -6440,7 +6441,7 @@ class HomeHudTests(unittest.TestCase):
 
         A village with no shield is being farmed by other people right now; a
         frame whose countdown will not resolve only wants looking at again. The
-        two are separated by how much is written on the plate — two glyphs
+        two are separated by how much is written on the plate — one glyph
         against six — rather than by matching the character.
         """
         for frame, wanted in (("world_day.png", False), ("home_builders_busy.png", False)):
@@ -6466,6 +6467,36 @@ class HomeHudTests(unittest.TestCase):
         assert shield_state(png, plate_badges(png)["shield"]) == ShieldState(
             remaining=3 * 3600 + 12 * 60
         )
+
+    def test_a_shorter_countdown_reads_past_the_rim_it_leaves_bare(self) -> None:
+        """3小時 26分 sits further right, and the rim shows between the 3 and 小.
+
+        Cut by columns, the three came out as one span nearest to 5 at 64 bits,
+        and the plate read as unreadable. Captured on LDPlayer.
+        """
+        png = (FRAMES / "day_shield_rim_bare.png").read_bytes()
+        assert shield_state(png, plate_badges(png)["shield"]) == ShieldState(
+            remaining=3 * 3600 + 26 * 60
+        )
+
+    def test_only_a_thin_patch_clear_of_the_box_edge_is_taken_for_the_rim(self) -> None:
+        """A sliver of a digit the box cut, and a 1's stem, both stand taller than the rim.
+
+        Taking either would leave 2小時 of 12小時 standing: a shield ten hours
+        shorter than it is, the direction a shield must never be wrong in. The 1
+        here is its stem alone, as narrow as the rim, which is what a plate whose
+        flag did not clear the ink threshold leaves.
+        """
+        for digit in (range(0, 3), range(4, 8)):
+            ink = [[False] * 110 for _ in range(34)]
+            for y in range(9, 28):
+                for x in digit:
+                    ink[y][x] = True
+            for y in range(9, 20):
+                for x in range(12, 15):
+                    ink[y][x] = True
+            _clear_rim(ink)
+            assert sorted({x for row in ink for x, on in enumerate(row) if on}) == list(digit)
 
     def test_a_countdown_missing_its_first_number_is_unread_rather_than_short(self) -> None:
         """A shield read hours short looks about to lapse, the wrong way to be wrong.
@@ -6556,7 +6587,7 @@ class HomeHudTests(unittest.TestCase):
 
         A full-screen panel leaves the badge row readable above it and the plate
         itself unreadable, so the two look identical from here: both write
-        enough in that box to clear 無's two glyphs and neither resolves. Reading
+        enough in that box to clear 無's one glyph and neither resolves. Reading
         that as a shield would have this frame claim one on a screen that says no
         such thing, and `remaining=None` on a live shield is a state nothing
         produces for the same reason.
