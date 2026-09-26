@@ -75,7 +75,7 @@ description: >-
 
 `ai_coc launch` 還是不行, 而且 `look.py` 也截不到圖, 才往下處理.
 
-處理: **不要結束任何程序, 請人.** 用 `look.py` 試一次, 連同 `list2` 那一行跟程序清單交給使用者, 也說清楚強制結束的代價: 那天兩次強制結束有一次把設定洗掉了 (第 3 種). 要不要重開、怎麼重開由他決定. 他同意由你來做的話: `Stop-Process` 那個 `dnplayer.exe` 跟 `Ld9BoxHeadless.exe`, 等 `Ld9BoxHeadless.exe` 不見了再多等十秒 (`QUIT_SETTLE` 的理由), `ldconsole launch --index 0`, 然後照第 1 種等滿三分鐘, 中間不要 `quit`, 也不要再開一次. 那天這樣做過兩次, 一次 82 秒後正常起來; 另一次重開之後沒多久就被 `quit` 過, 重開的那台 `list2` 一樣看不到. 結束程序對雷電來說就是一次閃退, 也可能變成第 3 種.
+處理: **不要結束任何程序, 請人.** 用 `look.py` 試一次, 連同 `list2` 那一行跟程序清單交給使用者, 也說清楚強制結束的代價: 那天兩次強制結束有一次把設定洗掉了 (第 3 種). 要不要重開、怎麼重開由他決定. 他同意由你來做的話: `Stop-Process` 那個 `dnplayer.exe` 跟 `Ld9BoxHeadless.exe`, 等兩個都不見了再多等十秒 (`QUIT_SETTLE` 的理由), `ldconsole launch --index 0`, 然後照第 1 種等滿三分鐘, 中間不要 `quit`, 也不要再開一次. 那天這樣做過兩次, 一次 82 秒後正常起來; 另一次重開之後沒多久就被 `quit` 過, 重開的那台 `list2` 一樣看不到. 結束程序對雷電來說就是一次閃退, 也可能變成第 3 種.
 
 ### 3. 設定被洗掉
 
@@ -104,8 +104,9 @@ description: >-
 - 不要 `ldconsole reboot`
 - 不要為了「重現閃退」去強制結束模擬器. 那天就是這樣把設定洗掉的. 結束任何程序都要使用者先同意 (第 2 種), 而且要跟他說清楚兩輪之後設定會壞 (第 3 種)
 - 不要手改 `leidian0.config`, 理由在第 3 種
+- 不要在 `dnplayer.exe` 或 `Ld9BoxHeadless.exe` 還在的時候 `ldconsole launch`. 那天有三台雷電開出來就沒有視窗、使用者叫不出來: 兩次開的時候舊的確定還在或剛被結束十秒, 第三次舊的 VM 已經關了一分多鐘, 舊的 `dnplayer.exe` 在不在沒記到. 等兩個都不見了才開的那次有視窗
 - 不要自己下 `adb connect` / `adb disconnect`, 看 ADB 用 `look.py`: 每次 connect 都在雷電那端開一條新連線, 雷電的 port forward 曾經因此整個掛掉 (`CLAUDE.md` 的 Adapters)
-- 同一招不要連試. 一次乾淨的重開 (使用者同意之後): `ldconsole quit --index 0`, 等 `isrunning` 說 `stop` 而且 `Ld9BoxHeadless.exe` 不見了 (那天都是兩秒內; 一分鐘還在就請人. `Ld9BoxSVC.exe` 有時會一直留著, 不用等它), 再多等十秒 (`adapters/ldplayer.py` 的 `QUIT_SETTLE` 寫了為什麼), `ldconsole launch --index 0`, 等 Android 欄變 1 而且 `look.py` 截得到圖, 再 `ai_coc launch`. 這樣還站不上村莊, 就是該請人的時候
+- 同一招不要連試. 一次乾淨的重開 (使用者同意之後): `ldconsole quit --index 0`, 等 `isrunning` 說 `stop` 而且 `dnplayer.exe` 跟 `Ld9BoxHeadless.exe` 都不見了 (那天都是幾秒內; 一分鐘還在就請人. `Ld9BoxSVC.exe` 有時會一直留著, 不用等它), 再多等十秒 (`adapters/ldplayer.py` 的 `QUIT_SETTLE` 寫了為什麼), `ldconsole launch --index 0`, 等 Android 欄變 1 而且 `look.py` 截得到圖, 再 `ai_coc launch`. 這樣還站不上村莊, 就是該請人的時候
 
 ## 什麼時候請人
 
