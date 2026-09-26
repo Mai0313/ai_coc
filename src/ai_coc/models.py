@@ -1900,6 +1900,16 @@ class RunLog(BaseModel):
         return path
 
     @property
+    def no_village(self) -> Path:
+        """Where `world` and `launch` keep the frame they could not find a village on.
+
+        Unconditional where `frames` is not: neither command has a `--record`,
+        and this is one PNG written only on that failure, which is exactly the
+        one that needs a frame to be debugged from.
+        """
+        return self.directory / "frames" / "no_village.png"
+
+    @property
     def plan_log(self) -> Path:
         """One line per round, holding the tactic that round played.
 

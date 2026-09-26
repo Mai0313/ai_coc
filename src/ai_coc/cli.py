@@ -314,9 +314,9 @@ def _answer(arguments: argparse.Namespace, run: RunLog) -> BaseModel | str:
         "hero": lambda: commands.hero(
             HeroOptions(frame_dir=run.frames, upgrade=a.upgrade, at=_spot(a.at) if a.at else None)
         ),
-        "world": lambda: commands.world(a.go),
+        "world": lambda: commands.world(a.go, run.no_village),
         "view": lambda: commands.view(a.zoom, a.times),
-        "launch": lambda: commands.launch(a.restart, commands.stop_requested),
+        "launch": lambda: commands.launch(a.restart, commands.stop_requested, run.no_village),
         "donate": lambda: commands.donate(
             DonateOptions(frame_dir=run.frames, dry_run=a.dry_run, rounds=a.rounds)
         ),

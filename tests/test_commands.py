@@ -258,6 +258,22 @@ class WorldCommandTests(unittest.TestCase):
         assert report.outcome == "no_display"
         sailed.assert_not_called()
 
+    def test_a_frame_with_no_village_on_it_is_kept(self) -> None:
+        """Two `no_village` readings on 2026-09-26 left nothing to look at afterwards."""
+        adb = _adb()
+        adb.screenshot.return_value = b"frame"
+        with (
+            tempfile.TemporaryDirectory() as folder,
+            patch.object(commands, "_controller", return_value=adb),
+        ):
+            keep = Path(folder) / "frames" / "no_village.png"
+            with patch.object(commands, "current_world", return_value="day"):
+                commands.world(None, keep)
+            assert not keep.exists()
+            with patch.object(commands, "current_world", return_value=None):
+                commands.world(None, keep)
+            assert keep.read_bytes() == b"frame"
+
 
 class StockCommandTests(unittest.TestCase):
     """The read-only status check, which is about the village on screen and does not cross."""
