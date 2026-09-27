@@ -223,6 +223,12 @@ Everything else lives in `~/.ai_coc`: the account JSON `ai_coc export` writes, t
 
 Setup, architecture, packaging and the CI layout live in [CONTRIBUTING.md](https://github.com/Mai0313/ai_coc/blob/main/.github/CONTRIBUTING.md).
 
+## ⚠️ Disclaimer
+
+This project is not affiliated with, endorsed or sponsored by Supercell. Clash of Clans is a trademark of Supercell, and the game's names and artwork belong to Supercell.
+
+Supercell's Terms of Service forbid automation software, emulators and bots, and let Supercell suspend or delete an account that uses them. Running this tool puts the account it plays at exactly that risk; use it at your own risk.
+
 ## 📄 License
 
 MIT, see `LICENSE`.

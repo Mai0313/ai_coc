@@ -223,6 +223,12 @@ ai_coc attack                         # 打游戏当下所在的那个村庄
 
 开发环境、架构、打包发布跟 CI 的说明都在 [CONTRIBUTING.md](https://github.com/Mai0313/ai_coc/blob/main/.github/CONTRIBUTING.md)。
 
+## ⚠️ 免责声明
+
+本项目与 Supercell 没有任何关系, 也没有得到 Supercell 的认可或赞助。《部落冲突》(Clash of Clans) 是 Supercell 的商标, 游戏的名称与美术素材都属于 Supercell。
+
+Supercell 的服务条款禁止使用自动化软件、模拟器和机器人, 并允许 Supercell 封禁或删除使用这些工具的账号。运行这个工具, 就是让它操作的账号承担这个风险, 请自行斟酌使用。
+
 ## 📄 许可
 
 MIT, 见 `LICENSE`。
