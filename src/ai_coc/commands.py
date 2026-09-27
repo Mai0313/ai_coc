@@ -553,9 +553,10 @@ def _alive(state: RunnerState) -> bool:
 
 def holder() -> RunnerState | None:
     """The live run of another process holding the emulator, if there is one."""
+    torn = RunnerState(status="running", pid=os.getpid())
     state = read_state()
     for _ in range(TORN_READS):
-        if state is None or state.pid != os.getpid() or _held is not None:
+        if state != torn or _held is not None:
             break
         time.sleep(TORN_GAP)
         state = read_state()
@@ -572,13 +573,16 @@ def take_over(caller: Caller, wait: float | None = None) -> None:
     `ai_coc stop` writes, naming who asked, and waits for it to reach its seam
     and release — a battle under way is played out, never abandoned. A holder
     still up after `wait` is ended here and that is logged, rather than left for
-    somebody to kill by hand or to delete the file under.
+    somebody to kill by hand or to delete the file under. The wait starts over
+    for each holder, so one that claimed while this waited on another gets its
+    own, rather than the rest of its predecessor's.
     """
     wait = TAKEOVER_WAIT if wait is None else wait
-    deadline = time.monotonic() + wait
+    deadline = 0.0
     asked: tuple[int, datetime | None] | None = None
     while (current := holder()) is not None:
         if asked != (current.pid, current.started):
+            deadline = time.monotonic() + wait
             ask_to_stand_down(current, caller)
             logger.info(
                 "%s (pid %d, %s) holds the emulator; asked it to stand down, waiting up to %.0fs",
@@ -616,6 +620,13 @@ def _end(holder: RunnerState, waited: float) -> None:
     if holder.caller.agent == WINDOW_AGENT:
         raise RuntimeError(
             f"視窗佔著模擬器,請它停了 {waited / 60:.0f} 分鐘還沒放手;請在視窗按停止"
+        )
+    # A record written before `pid_created` existed was matched on the process
+    # name alone, which a Python process that reused the pid also passes.
+    if holder.pid_created is None:
+        raise RuntimeError(
+            f"pid {holder.pid} 佔著模擬器,請它停了 {waited / 60:.0f} 分鐘還沒放手;"
+            "它的紀錄是舊版寫的,分不出是不是原本那個程序,沒有結束它"
         )
     logger.warning(
         "%s (pid %d, %s: %s) did not stand down in %.0fs; ending it",
@@ -698,11 +709,12 @@ def _write_state(state: RunnerState) -> None:
 def claim(command: str, log: Path | None = None, caller: Caller | None = None) -> Iterator[None]:
     """Say that this process is driving the emulator, and who asked, and hand it back after.
 
-    Every command that touches the emulator takes one, short ones included: a
+    Every command that drives the emulator takes one, short ones included: a
     `collect` that runs for eight seconds still holds the screen for those
     eight, and a second session that reads the file wants the truth rather than
     only being told about the long runs. `read` takes none, since it parses a
-    PNG and never opens ADB.
+    PNG and never opens ADB, and neither do `capture` and a plain `world`,
+    which only look.
 
     **A claim this process already holds is left alone, and the outermost one
     owns the release.** The window runs every pass as its own `commands.*` call

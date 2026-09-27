@@ -55,6 +55,7 @@ from ai_coc.adapters.config import ConfigStore, gemini_key
 from .workers import Worker, LogBridge, UiLogHandler
 
 if TYPE_CHECKING:
+    from datetime import datetime
     from collections.abc import Callable
 
     from pydantic import BaseModel
@@ -132,6 +133,7 @@ class MainWindow(QMainWindow):
         # `STOP_POLL` and hands the emulator back within seconds.
         self.stop_watch = QTimer(self)
         self.stop_watch.timeout.connect(self._watch_stop)
+        self.hand_over_turn = 0
         self.automation_step = 0
         # The preview polls `screencap`, so the display is resolved once and kept
         # rather than paying two `dumpsys` calls for every frame; a failed frame
@@ -487,32 +489,39 @@ class MainWindow(QMainWindow):
         self.save_automation()
         self.automation_active = True
         self._paint_run_button()
-        self._hand_over(time.monotonic() + commands.TAKEOVER_WAIT, asked=False)
+        self.hand_over_turn += 1
+        self._hand_over(self.hand_over_turn, None, 0.0)
 
-    def _hand_over(self, deadline: float, *, asked: bool) -> None:
+    def _hand_over(
+        self, turn: int, asked: tuple[int, datetime | None] | None, deadline: float
+    ) -> None:
         """Wait, on a timer rather than on this thread, for another run to hand the emulator over.
 
         The claim below would wait out a live holder too, but on the UI thread,
         which freezes the window for as long as a battle takes to finish.
         Pressing stop meanwhile ends the wait; the holder asked to stand down
-        still does.
+        still does. `turn` drops the wait a stop left pending, which a quick
+        start again would otherwise run alongside its own. The wait starts over
+        for each holder, as `take_over`'s does.
         """
-        if not self.automation_active:
+        if not self.automation_active or turn != self.hand_over_turn:
             return
         held = commands.holder()
-        if held is not None and time.monotonic() < deadline:
-            commands.ask_to_stand_down(held, WINDOW_CALLER)
-            if not asked:
+        if held is not None:
+            if asked != (held.pid, held.started):
+                asked = (held.pid, held.started)
+                deadline = time.monotonic() + commands.TAKEOVER_WAIT
+                commands.ask_to_stand_down(held, WINDOW_CALLER)
                 logger.info(
                     "模擬器正被 %s 使用(%s),已請它收工,等它放手再開始",
                     held.command,
                     held.caller.mission or held.caller.agent or "沒寫原因",
                 )
-            QTimer.singleShot(
-                int(commands.STOP_POLL * 1000), lambda: self._hand_over(deadline, asked=True)
-            )
-            return
-        if held is not None:
+            if time.monotonic() < deadline:
+                QTimer.singleShot(
+                    int(commands.STOP_POLL * 1000), lambda: self._hand_over(turn, asked, deadline)
+                )
+                return
             commands.take_over(WINDOW_CALLER, wait=0)
         self._begin_automation()
 

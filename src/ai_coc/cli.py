@@ -66,7 +66,7 @@ RECORDABLE = (
     "export",
 )
 
-# The two sub-commands that hold no claim on the emulator, listed the way round
+# The sub-commands that hold no claim on the emulator, listed the way round
 # that fails safely: `read` parses a PNG off the disk and `stop` changes one
 # field of the state file, so neither ever opens ADB. Everything else claims,
 # short ones included — a `collect` holds the display for the eight seconds it

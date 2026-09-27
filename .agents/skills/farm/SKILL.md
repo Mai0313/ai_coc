@@ -98,7 +98,7 @@ uv run ai_coc attack --repeat 0 --plan src/ai_coc/plans/night_flat.json
 
 - **`run.log`** 便宜, 答「走到哪, 這輪結果是什麼」. 跨好幾次找同一個症狀用 `grep -r ~/.ai_coc/logs/*/run.log`
 - **`plans.jsonl`** (每次執行的目錄都有, 一場一行帶輪數) 答那一場的 AI 叫部隊往哪打. 一輪打得爛先看它, 再對 `run.log` 的實際發生: 對不上是迴圈的問題, 對得上是戰術的問題
-- **畫面**答 log 答不了的: 畫面長什麼樣, 兵有沒有在打, 判讀器讀的跟眼睛看的一不一樣. 迴圈在跑的時候看 `--record` 留下的 `frames/`, 或用 `repair-emulator` 的 `scripts/look.py` 截 (它只截圖, 不碰 `state.json`); **不要趁迴圈在跑下 `ai_coc capture`**, 理由在 `references/running.md` 的「絕對不要同時跑兩個」. 沒有迴圈在跑時才用 `uv run ai_coc capture --count N` 抓活著的遊戲 (`--label` 取名). `uv run ai_coc read <png>` 不碰模擬器, 隨時能跑, 看每個 parser 讀到什麼
+- **畫面**答 log 答不了的: 畫面長什麼樣, 兵有沒有在打, 判讀器讀的跟眼睛看的一不一樣. 迴圈在跑的時候看 `--record` 留下的 `frames/`, 或用 `uv run ai_coc capture --count N` (`--label` 取名)、`repair-emulator` 的 `scripts/look.py` 截 (兩個都只截圖, 不佔 `state.json`). `uv run ai_coc read <png>` 不碰模擬器, 隨時能跑, 看每個 parser 讀到什麼
 
 **看過的圖發一份給使用者.** 只要你看了並據此下判斷, 就用檔案傳送機制發出去, 不要只留路徑; 他看不到你的工具輸出. 你是 subagent 而發不出去, 就把路徑跟它說明了什麼寫進回報, 讓主 session 發.
 
@@ -273,4 +273,4 @@ uv run ai_coc attack --repeat 0 --plan src/ai_coc/plans/night_flat.json
 
 報當下的資源跟輪數就好, **不要停下迴圈**. 報告留到任務真的達成再交.
 
-數字從那次的 `run.log` 讀: 最近一行 `Village holds …` (夜世界 `Builder base holds …`) 跟 `Round N of`. **不要為了這個下 `ai_coc stock`**: 迴圈在跑的時候, 任何會碰模擬器的指令都跟它搶畫面, 還會把 `state.json` 蓋掉 (`references/running.md` 的「絕對不要同時跑兩個」).
+數字從那次的 `run.log` 讀: 最近一行 `Village holds …` (夜世界 `Builder base holds …`) 跟 `Round N of`. **不要為了這個下 `ai_coc stock`**: 迴圈在跑的時候, 會操作畫面的指令會先把它停掉 (`references/running.md` 的「絕對不要同時跑兩個」).
