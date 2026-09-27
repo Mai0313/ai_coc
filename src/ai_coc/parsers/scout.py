@@ -207,12 +207,26 @@ CART_COLLECT_GREEN = 0.4
 # `MIN_GLYPH_ROWS` — three rows of margin, so a box moved much further left
 # would start reading it.
 CART_HELD_BOX = (575, 740, 1060, 775)
-# Measured per glyph on this one line of fourteen: the digits land 6 to 19 from
-# their templates and the `/` lands 30, so the line goes midway. **One line, not
-# a sweep** — there is exactly one frame of this sheet on this machine — so the
-# margin is five bits below and six above rather than anything wider. Below 19
-# the number splits into pieces; at 30 the `/` matches a digit and the whole
-# line fuses into one fourteen-digit number.
+# **The `/` is not told from a digit by how badly it matches**, which is what
+# this line used to be cut at. Measured on the three sheets that read, the `/`
+# lands 30 and 38 from its nearest template, and two 1s of `1229712 / 1600000`
+# (`night_cart_holding.png`), drawn a pixel over from the rest, land 29 and 31 —
+# only two to four bits nearer 1 than 4, so no tolerance takes them in and
+# keeps them 1s. At the single line of 24 this used to be, that line came apart
+# into three numbers, three looks at the cart would not read, and a builder
+# base run ended with the cart holding 1 229 712 of 1 600 000.
+#
+# The layout separates them instead, with room on both sides. The `/` stands
+# 10 to 11 px clear of each neighbour where digits sit 1 to 3 apart, so a gap
+# wider than `CART_SPACE` starts a new word. A 1 spans 6 to 7 px where every
+# other whole digit spans 12 to 17, so a span no wider than `CART_ONE_WIDTH` is
+# a 1. `CART_HELD_TOLERANCE` judges only the other nine digits, which land 6 to
+# 19 from their templates. **A digit half covered is not whole**: on
+# `night_cart_animating.png` a drop falling across a 0 leaves 9 px of it, which
+# this takes for a 1 as the single tolerance did before it (1 at 22). That line
+# is refused by its spaces, the drop having opened a gap of 124 across it.
+CART_SPACE = 6
+CART_ONE_WIDTH = 9
 CART_HELD_TOLERANCE = 24
 
 # A troop card keeps its artwork in colour while it still has something to put on
@@ -1057,11 +1071,12 @@ def loot_cart_load(png: bytes) -> tuple[int, int] | None:
     committed ones — `night_cards.png` reads 4 — and two of those 315 read
     **0**, which is exactly the answer a caller would believe as an empty cart.
 
-    Two numbers or nothing. A `/` that matched a digit fuses the line into one
-    fourteen-digit number and a digit that failed splits it into three or more,
-    so anything else is handed back as unread. A glyph lost off **either** end
-    still leaves two — `split_numbers` drops the empty piece — so 135 843 can
-    come back as 35 843, and 1 600 000 as 160 000. **The second is the one that
+    Two numbers with the `/` between them, or nothing. The line is cut at the
+    spaces either side of the `/` rather than at a glyph that matches badly
+    (see `CART_SPACE`), so a digit that fails leaves its number unread instead
+    of splitting it, and a line the spaces cut into anything but three words is
+    unread too. A glyph lost off **either** end still leaves a number, so
+    135 843 can come back as 35 843, and 1 600 000 as 160 000. **The second is the one that
     costs now that the share is read**, since a ceiling a tenth of the real one
     makes a cart holding 150 000 look full. What rules most of it out is that a
     cart cannot hold more than it takes: past 160 000 the pair is unread rather
@@ -1071,13 +1086,27 @@ def loot_cart_load(png: bytes) -> tuple[int, int] | None:
     """
     if not loot_cart_open(png):
         return None
-    found = split_numbers(
-        ink_mask(open_frame(png).crop(CART_HELD_BOX), saturation=STOCK_INK_SATURATION),
-        CART_HELD_TOLERANCE,
-    )
-    if len(found) != 2 or found[0] > found[1]:
+    mask = ink_mask(open_frame(png).crop(CART_HELD_BOX), saturation=STOCK_INK_SATURATION)
+    words: list[str] = []
+    end: int | None = None
+    for left, right in glyph_columns(mask):
+        pattern = signature(mask, left, right)
+        if pattern is None:
+            continue
+        if end is None or left - end > CART_SPACE:
+            words.append("")
+        end = right
+        digit, distance = nearest(pattern)
+        if right - left <= CART_ONE_WIDTH:
+            words[-1] += "1"
+        else:
+            words[-1] += digit if distance <= CART_HELD_TOLERANCE else "?"
+    if len(words) != 3 or len(words[1]) != 1 or not (words[0] + words[2]).isdigit():
         return None
-    return found[0], found[1]
+    held, capacity = int(words[0]), int(words[2])
+    if held > capacity:
+        return None
+    return held, capacity
 
 
 def in_battle(png: bytes) -> bool:

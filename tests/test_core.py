@@ -8,6 +8,7 @@ from pathlib import Path
 from datetime import datetime, timedelta
 import tempfile
 import unittest
+import itertools
 from contextlib import AbstractContextManager
 from unittest.mock import ANY, MagicMock, call, patch
 from collections.abc import Callable
@@ -182,7 +183,7 @@ from ai_coc.parsers.scout import (
     searching_opponent,
 )
 from ai_coc.parsers.world import info_badges, current_world
-from ai_coc.parsers.glyphs import ink_mask, digits_from, split_numbers
+from ai_coc.parsers.glyphs import nearest, ink_mask, signature, digits_from, glyph_columns
 from ai_coc.ui.main_window import LIVE_INTERVAL, MainWindow
 from ai_coc.adapters.config import ConfigStore, dotenv_value
 from ai_coc.parsers.village import parse_village, parse_village_text
@@ -2945,23 +2946,56 @@ class LootCartTests(unittest.TestCase):
             1_600_000,
         )
 
-    def test_the_held_line_is_read_between_a_digit_and_the_slash(self) -> None:
-        """One line of fourteen glyphs, so the margin is five bits and six rather than wide.
+    def test_a_cart_part_full_reads_as_what_it_is_holding(self) -> None:
+        """**The line that ended a builder base run with the cart three-quarters empty.**
 
-        Below 19 the worst digit fails and the number comes apart; at 30 the `/`
-        matches a digit and the whole line fuses into one fourteen-digit number.
-        `CART_HELD_TOLERANCE` goes midway.
+        Two of its 1s sit 29 and 31 from their template, past the 30 the `/`
+        reads on `night_cart_locked.png`. Cut wherever a glyph matched badly,
+        the line came apart into three numbers, three looks at the cart would
+        not read, and the full storages ended the run on their own.
         """
+        assert loot_cart_load((FRAMES / "night_cart_holding.png").read_bytes()) == (
+            1_229_712,
+            1_600_000,
+        )
+
+    @staticmethod
+    def _held_glyphs(frame: str) -> list[tuple[int, int, int]]:
+        """Each glyph on the held line as its span and how far it lands from its template."""
         mask = ink_mask(
-            open_frame((FRAMES / "night_cart_locked.png").read_bytes()).crop(
-                scout_parser.CART_HELD_BOX
-            ),
+            open_frame((FRAMES / frame).read_bytes()).crop(scout_parser.CART_HELD_BOX),
             saturation=scout_parser.STOCK_INK_SATURATION,
         )
-        assert 19 <= scout_parser.CART_HELD_TOLERANCE <= 29
-        assert split_numbers(mask, 19) == [135_843, 1_600_000]
-        assert split_numbers(mask, 18) != [135_843, 1_600_000]
-        assert split_numbers(mask, 30) == [13_584_371_600_000]
+        glyphs = []
+        for left, right in glyph_columns(mask):
+            pattern = signature(mask, left, right)
+            if pattern is not None:
+                glyphs.append((left, right, nearest(pattern)[1]))
+        return glyphs
+
+    def test_the_slash_is_found_by_its_spaces_and_a_1_by_its_width(self) -> None:
+        """Because neither is found by how badly it matches, and both have room.
+
+        The `/` stands 10 px or more clear of both neighbours where digits sit
+        3 or closer; a 1 spans 7 px or less where any other digit spans 12 or
+        more, and those others land within 19 of their templates.
+        """
+        for frame in ("night_cart_locked.png", "night_cart_empty.png", "night_cart_holding.png"):
+            glyphs = self._held_glyphs(frame)
+            gaps = [after[0] - before[1] for before, after in itertools.pairwise(glyphs)]
+            spaces = [i for i, gap in enumerate(gaps) if gap > scout_parser.CART_SPACE]
+            assert len(spaces) == 2, frame
+            assert spaces[1] == spaces[0] + 1, frame
+            assert min(gaps[i] for i in spaces) >= 10, frame
+            assert max(gap for i, gap in enumerate(gaps) if i not in spaces) <= 3, frame
+            digits = glyphs[: spaces[1]] + glyphs[spaces[1] + 1 :]
+            narrow = scout_parser.CART_ONE_WIDTH
+            ones = [right - left for left, right, _ in digits if right - left <= narrow]
+            others = [(right - left, off) for left, right, off in digits if right - left > narrow]
+            assert ones, frame
+            assert max(ones) <= 7, frame
+            assert min(width for width, _ in others) >= 12, frame
+            assert max(off for _, off in others) <= 19 < scout_parser.CART_HELD_TOLERANCE, frame
 
     def test_the_card_row_is_why_the_held_line_is_gated_on_the_sheet(self) -> None:
         """No box can separate them, so the gate is the whole of what does.
@@ -2994,24 +3028,41 @@ class LootCartTests(unittest.TestCase):
         nearly all of it empty. Past the misread ceiling the pair cannot be
         true, and that much is caught.
         """
-        png = (FRAMES / "night_cart_locked.png").read_bytes()
-        with patch.object(scout_parser, "split_numbers", return_value=[1_500_000, 160_000]):
-            assert loot_cart_load(png) is None
+        scene = Image.open(FRAMES / "night_cart_holding.png").convert("RGB")
+        # The last 0 of 1 600 000, which spans x 872-889, under the bar beside it.
+        scene.paste(scene.crop((935, 740, 955, 775)), (871, 740))
+        raw = io.BytesIO()
+        scene.save(raw, format="PNG")
+        assert loot_cart_load(raw.getvalue()) is None
 
     def test_a_line_that_came_apart_is_unread_rather_than_truncated(self) -> None:
         """Two numbers or nothing, because the wrong count is the dangerous kind.
 
-        A digit that failed splits the line into three, and reported at face
-        value the leading piece of 135 843 is 13 — a positive number, so the
-        caller believes the cart is holding something and cannot tell it is off
-        by four orders of magnitude. Blanked here in the middle for that reason;
-        a glyph lost off either **end** still leaves two and is the case the
-        reader's docstring accepts.
+        Two digits gone from the middle leave a space that cuts the line into
+        four, and reported at face value the leading piece of 135 843 is 13 — a
+        positive number, so the caller believes the cart is holding something
+        and cannot tell it is off by four orders of magnitude. Blanked here in
+        the middle for that reason; a glyph lost off either **end** still leaves
+        two and is the case the reader's docstring accepts.
         """
         png = (FRAMES / "night_cart_locked.png").read_bytes()
         scene = Image.open(io.BytesIO(png)).convert("RGB")
         # The third and fourth digits of 135 843, which span x 671-702.
         scene.paste(scene.crop((900, 740, 940, 775)), (669, 740))
+        raw = io.BytesIO()
+        scene.save(raw, format="PNG")
+        assert loot_cart_load(raw.getvalue()) is None
+
+    def test_a_smudged_digit_leaves_the_line_unread_rather_than_misread(self) -> None:
+        """What `CART_HELD_TOLERANCE` is for, now that it no longer finds the `/`.
+
+        Three rows struck out of the first 0 of 1 600 000 keep it one span in
+        its place, so no space gives it away, and it lands 36 from its template.
+        Without the tolerance it would still come back as a 0 here, and a smudge
+        that happened to sit nearer another digit would come back as that one.
+        """
+        scene = Image.open(FRAMES / "night_cart_holding.png").convert("RGB")
+        scene.paste(scene.crop((935, 755, 953, 758)), (797, 755))
         raw = io.BytesIO()
         scene.save(raw, format="PNG")
         assert loot_cart_load(raw.getvalue()) is None
