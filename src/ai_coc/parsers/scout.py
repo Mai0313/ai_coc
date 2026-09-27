@@ -387,6 +387,13 @@ CARD_CORNER_PIXELS = 20
 # Blue is what separates them: measured over the two, the bar runs (101, 231, 9)
 # and grass (131, 184, 53), so the bar is both greener and has almost no blue in
 # it at all where grass keeps a third of a channel.
+#
+# Known and left: the bar brightens for a moment when an ability fires. Measured
+# 2026-09-27 on one recorded frame, a queen whose cloak had just gone off drew
+# her bar at (150, 255, 45) to (96, 238, 36), over the blue line, and read as no
+# bar; the next frame read (101, 231, 9). By then the ability is spent, so the
+# retry that follows only gets 你已經用過這項英雄技能了, while loosening the line
+# risks the grass it exists to keep out.
 HERO_BAR_TOP, HERO_BAR_BOTTOM = 714, 738
 HERO_BAR_HALF_WIDTH = 50
 HERO_BAR_GREEN = 0.15

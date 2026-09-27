@@ -12,7 +12,16 @@ description: >-
 
 # 修模擬器
 
-目標只有一個: `uv run --no-sync ai_coc launch` 回 `at_village: true`, 而且你自己看過那張畫面. 這個 skill 不改程式碼; 模擬器好好的而 `ai_coc` 還是失敗, 那是程式的問題, 交給 watch-and-fix.
+目標只有一個: `uv run --no-sync ai_coc launch` 回 `at_village: true`, 而且你自己看過那張畫面 (怎麼驗在「修好的標準」). 這個 skill 不改程式碼.
+
+## 做完的樣子
+
+一趟只有四種收尾, 回覆裡講是哪一種:
+
+- **修好了**: 過了「修好的標準」
+- **交給使用者**: 撞到「什麼時候請人」列的情況, 照那一節交代, 他說改好了你再照「修好的標準」驗
+- **不是模擬器的事**: 模擬器好好的而 `ai_coc` 還是失敗, 那是程式的問題, 這裡不改, 交給 watch-and-fix
+- **你是 subagent**: 不修, 看完就交回主 session (見「動手之前」)
 
 下面的壞法全部是 2026-09-26 在雷電 14 上實際看到的. MuMu 還沒走過一遍: 方法一樣 (先看, 再動手, 修不好請人), 但雷電的指令跟檔案不適用, 它的 CLI 看 `src/ai_coc/adapters/mumu.py`.
 
@@ -36,7 +45,7 @@ description: >-
 
 - **你是 subagent 就不要修.** 這份 skill 要跟使用者講話、請他改設定, subagent 做不到. 停手, 把 `state.json`、`list2` 那一行跟截圖交回給主 session, 由它照這份處理
 - 照 `AGENTS.md` 的 Look before driving 讀 `~/.ai_coc/state.json`. farm subagent 還在跑就照 `AGENTS.md` 先把模擬器拿回來, 模擬器只有一台; 它的迴圈多半已經跟著模擬器掛掉了, 那就等它的回報
-- **結束程序、`quit`、重開模擬器之前先問使用者, 他說好才做.** 那是他的模擬器, 他看得到那個視窗, 一直開開關關又沒人說明, 他只會以為壞得更嚴重. 跑 `ai_coc launch` 之前講一聲: 遊戲開不起來的時候 `ensure_coc` 會自己重開一次實例
+- **結束程序、`quit`、重開模擬器之前先問使用者, 他說好才做.** 那是他的模擬器, 他看得到那個視窗, 一直開開關關又沒人說明, 他只會以為壞得更嚴重. `ai_coc launch --restart emulator` 也是重開 (雷電上就是 `quit` 再 `launch`, 見 `adapters/ldplayer.py` 的 `restart_instance`). 不帶 `--restart` 的 `ai_coc launch` 跑之前講一聲就好: 遊戲開不起來的時候 `ensure_coc` 會自己重開一次實例
 - 使用者可能正在模擬器或手機上玩 (`AGENTS.md` 的 Driving the game), 有疑慮就問
 - 每個 `ai_coc` 指令都帶 `--agent`、`--session`、`--mission` (`AGENTS.md` 的 Say who is driving), `look.py` 不用
 
@@ -62,7 +71,7 @@ description: >-
 
 處理: 不要動它. 等 Android 欄變 1 而且 `look.py` 截得到圖, 再跑 `ai_coc launch`. 修復到一半關掉或再開一次, 只會從頭再來.
 
-等到哪裡為止: 三分鐘還沒好, 或者 Android 欄停在 2 而 VM 沒起來 (第 7 欄 -1, 也沒有 `Ld9BoxHeadless.exe`), 就不是修復了. 後面那種是 `adapters/ldplayer.py` 的 `QUIT_SETTLE` 註解寫的卡死, 做一次「不要做的事」裡的乾淨重開.
+等到哪裡為止: 三分鐘還沒好, 或者 Android 欄停在 2 而 VM 沒起來 (第 7 欄 -1, 也沒有 `Ld9BoxHeadless.exe`), 就不是修復了. 後面那種是 `adapters/ldplayer.py` 的 `QUIT_SETTLE` 註解寫的卡死, 使用者同意之後照「乾淨的重開」做一次.
 
 ### 2. `ldconsole` 看不到還在跑的雷電
 
@@ -72,11 +81,11 @@ description: >-
 
 先排除第 1 種: 修復到一半 `list2` 也會有十幾秒是 Android 0, 那時跑任何會開模擬器的指令都會讓修復重來. 至少看一分鐘都是這樣, 而且那個 `dnplayer.exe` 的命令列沒有 `from=repairer`, 才是這一種.
 
-**是這一種就直接跑 `ai_coc launch`.** `ai_coc` 不管 `list2` 怎麼說都會問 ADB (`adapters/ldplayer.py` 的 `enumerate_instances`), 開機完成就照常開遊戲, log 裡會有一行 `LDPlayer lists instance 0 as down, but its ADB answers`. 站上村莊就沒事了.
+**是這一種就先用 `look.py` 看一次, 截得到圖就直接跑 `ai_coc launch`.** `ai_coc` 不管 `list2` 怎麼說都會問 ADB (`adapters/ldplayer.py` 的 `enumerate_instances`), 開機完成就照常開遊戲, log 裡會有一行 `LDPlayer lists instance 0 as down, but its ADB answers`. 站上村莊就沒事了. 截得到圖而 `ai_coc launch` 還是站不上村莊, 就不是 `list2` 的問題了, 照症狀對其他幾種.
 
-`ai_coc launch` 還是不行, 而且 `look.py` 也截不到圖, 才往下處理.
+**截不到圖就不要跑 `ai_coc launch`**: ADB 不通時它照 `list2` 當成關著, `isrunning` 又說 `stop`, `ensure_coc` 就會在舊的 `dnplayer.exe` 跟 `Ld9BoxHeadless.exe` 還在的時候下 `ldconsole launch` (`adapters/emulator.py` 的 `ensure_coc` 跟 `ldplayer.py` 的 `launch_instance`), 正是「不要做的事」擋的那一條. 這時才往下處理.
 
-處理: **不要結束任何程序, 請人.** 用 `look.py` 試一次, 連同 `list2` 那一行跟程序清單交給使用者, 也說清楚強制結束的代價: 那天兩次強制結束有一次把設定洗掉了 (第 3 種). 要不要重開、怎麼重開由他決定. 他同意由你來做的話: `Stop-Process` 那個 `dnplayer.exe` 跟 `Ld9BoxHeadless.exe`, 等兩個都不見了再多等十秒 (`QUIT_SETTLE` 的理由), `ldconsole launch --index 0`, 然後照第 1 種等滿三分鐘, 中間不要 `quit`, 也不要再開一次. 那天這樣做過兩次, 一次 82 秒後正常起來; 另一次重開之後沒多久就被 `quit` 過, 重開的那台 `list2` 一樣看不到. 結束程序對雷電來說就是一次閃退, 也可能變成第 3 種.
+處理: **不要結束任何程序, 請人.** 把 `look.py` 的結果連同 `list2` 那一行跟程序清單交給使用者, 也說清楚強制結束的代價: 那天兩次強制結束有一次把設定洗掉了 (第 3 種). 要不要重開、怎麼重開由他決定. 他同意由你來做的話: `Stop-Process` 那個 `dnplayer.exe` 跟 `Ld9BoxHeadless.exe`, 等兩個都不見了再多等十秒 (`QUIT_SETTLE` 的理由), `ldconsole launch --index 0`, 然後照第 1 種等滿三分鐘, 中間不要 `quit`, 也不要再開一次. 那天這樣做過兩次, 一次 82 秒後正常起來; 另一次重開之後沒多久就被 `quit` 過, 重開的那台 `list2` 一樣看不到. 結束程序對雷電來說就是一次閃退, 也可能變成第 3 種.
 
 ### 3. 設定被洗掉
 
@@ -102,6 +111,18 @@ description: >-
 
 處理: log 前面有 `The session was dropped; restarting the game` 的話, 先問使用者是不是正在手機上玩: 重跑會把登入搶回來, 把他踢掉 (`AGENTS.md` 的 Driving the game). 不是, 就再跑一次 `ai_coc launch`. 那天出事的那一次就有這一行, 而且剛好是設定剛被洗成新機器之後; 當時沒留畫面, 原因沒查到, 之後重跑都正常. 再遇到就連拍留證據.
 
+## 乾淨的重開
+
+使用者同意之後才做, 只做一次, 照這個順序. 任何重開都可能洗掉設定 (第 3 種), 不必要就不要做.
+
+1. `ldconsole quit --index 0`
+2. 等 `isrunning` 說 `stop` 而且 `dnplayer.exe` 跟 `Ld9BoxHeadless.exe` 都不見了 (理由見「不要做的事」的 `ldconsole launch` 那條). 那天都是幾秒內; 一分鐘還在就請人. `Ld9BoxSVC.exe` 有時會一直留著, 不用等它
+3. 再多等十秒 (`adapters/ldplayer.py` 的 `QUIT_SETTLE` 寫了為什麼)
+4. `ldconsole launch --index 0`, 等 Android 欄變 1 而且 `look.py` 截得到圖
+5. `ai_coc launch`
+
+這樣還站不上村莊, 就是該請人的時候.
+
 ## 不要做的事
 
 - 不要 `ldconsole reboot`
@@ -109,16 +130,17 @@ description: >-
 - 不要手改 `leidian0.config`, 理由在第 3 種
 - 不要在 `dnplayer.exe` 或 `Ld9BoxHeadless.exe` 還在的時候 `ldconsole launch`. 那天有三台雷電開出來就沒有視窗、使用者叫不出來: 兩次開的時候舊的確定還在或剛被結束十秒, 第三次舊的 VM 已經關了一分多鐘, 舊的 `dnplayer.exe` 在不在沒記到. 等兩個都不見了才開的那次有視窗
 - 不要自己下 `adb connect` / `adb disconnect`, 看 ADB 用 `look.py`: 每次 connect 都在雷電那端開一條新連線, 雷電的 port forward 曾經因此整個掛掉 (`AGENTS.md` 的 Adapters)
-- 同一招不要連試. 一次乾淨的重開 (使用者同意之後): `ldconsole quit --index 0`, 等 `isrunning` 說 `stop` 而且 `dnplayer.exe` 跟 `Ld9BoxHeadless.exe` 都不見了 (那天都是幾秒內; 一分鐘還在就請人. `Ld9BoxSVC.exe` 有時會一直留著, 不用等它), 再多等十秒 (`adapters/ldplayer.py` 的 `QUIT_SETTLE` 寫了為什麼), `ldconsole launch --index 0`, 等 Android 欄變 1 而且 `look.py` 截得到圖, 再 `ai_coc launch`. 這樣還站不上村莊, 就是該請人的時候
+- 同一招不要連試. 乾淨的重開只做一次 (見「乾淨的重開」)
 
 ## 什麼時候請人
 
-- 第 3 種, 一定; 第 2 種在 `ai_coc launch` 也救不回來的時候
-- 一次乾淨的重開之後還是站不上村莊
+- 第 3 種, 一定; 他改完之後 `isNewPlayer` 還是 `true`, 再請一次
+- 第 2 種而 `look.py` 截不到圖的時候
+- 一次乾淨的重開之後還是站不上村莊, 或者 `quit` 了一分鐘程序還在
 - 看不到的東西: 模擬器視窗上的對話框, 截桌面沒被授權
 
 請人的時候講清楚四件事: 看到什麼 (附圖), 試過什麼, 要他改哪裡、改成什麼, 他改完你怎麼確認. 他說改好了, 照下一節驗.
 
 ## 修好的標準
 
-`uv run --no-sync ai_coc launch` 回 `at_village: true`, 而且你看過 `look.py` 截的那一張: 1600x900, 站在村莊上, 鏡頭拉到最遠. 發給使用者. 模擬器是從 farm subagent 手上拿來的, 就照 `AGENTS.md` 還回去.
+`uv run --no-sync ai_coc launch` 回 `at_village: true`, 而且你看過 `look.py` 截的那一張: 1600x900, 站在村莊上, 鏡頭拉到最遠. 發給使用者. 模擬器是從 farm subagent 手上拿來的, 就照 `AGENTS.md` 還回去, 並在回覆裡講一聲: 使用者看不到 subagent 的輸出.

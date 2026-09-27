@@ -60,7 +60,7 @@ jq '.[-1] | {world, outcome, stock_full, attacked}' ~/.ai_coc/logs/<run>/result.
 
 `jq '.stock_full'` 對陣列直接報錯, 別的讀法多半拿到不是 `true` 的東西, 讀起來像「還沒滿」. 其他指令 (`walls`, `collect`, `world` ...) 寫的是單一個物件.
 
-`--record` 留下迴圈讀的每一張 (一張 PNG 一兩百 KB, 一場幾十 MB, 每一張都是模擬器的一次編碼), 這批會有東西要查就開. `--shot-every` 另加一條固定心跳 (`tick_00012.3s.png`), 要搭配 `--record`, 補兩張之間看不到的那段.
+`--record` 留下迴圈讀的每一張 (每一張都是模擬器的一次 PNG 編碼, 平均兩 MB 多: `AGENTS.md` 量過 11 456 張佔 27.2 GB), 這批會有東西要查就開. `--shot-every` 另加一條固定心跳 (`tick_00012.3s.png`), 要搭配 `--record`, 補兩張之間看不到的那段.
 
 ## 盯
 
@@ -112,6 +112,8 @@ jq '.[-1] | {world, outcome, stock_full, attacked}' ~/.ai_coc/logs/<run>/result.
 
 **使用者說停, 停的是整件事而不是一個指令.** `state.json` 只停得下當下在跑的那個迴圈, 不知道你打算接著做什麼. 所以收到停止之後**不要再開下一個指令**, 除非使用者又說要繼續. 這一條沒有機制在管, 只有你.
 
+**你是 farm subagent 而那個停不是你下的**, 多半是主 session 要借模擬器去測 (`AGENTS.md` 的 Taking the game for a live test). 不要自己開回去, 馬上回報: 你的回報送到, 就是它知道畫面空出來的訊號. 回報寫明停在哪 (打的世界跟旗標, 執行目錄, 累計進帳), 基準留在你手上; 它之後傳話叫你接回去, 就是上面說的「又說要繼續」, 同一個世界同一組旗標開回去.
+
 **這一條只管使用者叫停.** 迴圈自己跑完 (倉庫滿了, 輪數跑完) 的通知是接縫不是終點, 自己接下一步, 判斷在 `.agents/skills/farm/SKILL.md` 的「倉庫滿了」那節. 差別是誰按的停.
 
 ## 你自己要用畫面: 自己停, 用完自己開回去
@@ -120,9 +122,9 @@ jq '.[-1] | {world, outcome, stock_full, attacked}' ~/.ai_coc/logs/<run>/result.
 
 停之前**先記下三件事**, 等一下要接回同一件工作:
 
-- 打的是哪個世界 (`ai_coc world`) 跟原本那組旗標. 開回去之前先 `world --go` 切回那一邊, 你的測試可能把遊戲留在另一邊
-- 那次執行的目錄 (`ls -t ~/.ai_coc/logs` 最上面), 累計進帳從它的 `result.json` 數
-- 停下來當下的倉庫水位, 那是下一段的起點
+- 打的是哪個世界跟原本那組旗標. 世界從那次的 `run.log` 讀 (每輪開頭 `Attack run starts` 是主村, `Builder base attack run starts` 是夜世界), **不要趁迴圈還在跑下 `ai_coc world`** (見「絕對不要同時跑兩個」). 開回去之前先 `world --go` 切回那一邊, 你的測試可能把遊戲留在另一邊
+- 那次執行的目錄 (迴圈在跑時 `state.json` 的 `log`; `ls -t ~/.ai_coc/logs` 最上面的不一定是它), 累計進帳從它的 `result.json` 數
+- 停下來當下的倉庫水位 (迴圈退出之後跑 `ai_coc stock`), 那是下一段的起點
 
 然後 `uv run ai_coc stop`, **等它真的退出**再動遊戲 (見上一節).
 
@@ -138,11 +140,11 @@ jq '.[-1] | {world, outcome, stock_full, attacked}' ~/.ai_coc/logs/<run>/result.
 
 那種時候 `uv run ai_coc launch --restart game` 重開遊戲而不動模擬器, `--restart emulator` 連模擬器一起重開.
 
-**`launch` 三種 scope 都會等村莊畫出來再把鏡頭放好**: 輪詢到村莊畫出來 (最久三分鐘, 等不到就放棄), pinch 回最遠, 再用 `park_camera` 滑到地圖角落停好 (pinch 不移動鏡頭, 所以兩步都要). `LaunchReport.at_village` 說村莊有沒有出現, `outcome` 說沒出現是等到放棄 (`no_village`) 還是等的時候收到 `ai_coc stop` (`stopped`). 其他指令走 `_controller()`, 只保證有一個 pid, 所以鏡頭被拉近了, 修法是 `launch` 而不是重跑原本的指令.
+**`launch` 三種 scope 都會等村莊畫出來再把鏡頭放好**: 輪詢到村莊畫出來 (最久三分鐘, 等不到就放棄), pinch 回最遠, 再用 `park_camera` 滑到地圖角落停好 (pinch 不移動鏡頭, 所以兩步都要). `LaunchReport.at_village` 說村莊有沒有出現, `outcome` 說沒出現是等到放棄 (`no_village`) 還是等的時候收到 `ai_coc stop` (`stopped`). 其他指令等得短得多: 會等村莊的 (`attack`、`stock`、`worker`、`lab`、`status`、`export` 走同一段 `_settle_game`, 走 `GameRunner._home` 的那幾個迴圈走自己的) 最多半分鐘上下, 等到了也會把鏡頭拉遠停好; `world` 跟 `capture` 不等也不動鏡頭. 所以遊戲剛開而村莊還沒出來, 修法是 `launch` 而不是重跑原本的指令.
 
 log 裡的 `stopped moving after 2 swipe(s)` 是正常的. `camera was still moving` 的 warning 是鏡頭沒停好: 坐船跟收聖水車會因此收工, `launch` 跟攻擊迴圈的 `_settle_game` 不會 (後面點的是固定的畫面角落), 所以看到這行而指令仍回報成功不是矛盾.
 
-遊戲卡在載入畫面是另一回事: `launch` 一樣只等三分鐘, 放棄時 log 最後一行說 `the game is on its loading screen`. 那是伺服器的事, 攻擊迴圈自己會等 (最多 45 分鐘, 見 `farm` 的警覺樣態), 不要一直重跑 `launch`.
+遊戲卡在載入畫面是另一回事: `launch` 一樣只等三分鐘, 放棄的那一行是 `Gave up after 180s waiting for the game: the game is on its loading screen`. 那是伺服器的事, 攻擊迴圈自己會等 (最多 45 分鐘, 見 `farm` 的警覺樣態), 不要一直重跑 `launch`.
 
 **模擬器本身起不來**: 指令報 `模擬器尚未開放 ADB 連接埠：127.0.0.1:0`, 雷電開起來變成 1920x1080, 或者 5555 連不上. 那不是程式的問題, 照 `repair-emulator` 處理; 你是 subagent 的話停下來回報, 修是主 session 的事.
 
@@ -151,6 +153,8 @@ log 裡的 `stopped moving after 2 swipe(s)` 是正常的. `camera was still mov
 ## 絕對不要同時跑兩個
 
 `attack`, `walls`, `collect`, `upgrade`, `donate` 全都在驅動同一個模擬器的同一個 display. 兩個一起跑, 一邊點開選單, 另一邊截到那張圖判讀成完全不同的東西, 而且沒有任何機制會發現. 開下一個之前先確定上一個真的結束了.
+
+**只讀的指令也算.** 除了 `read`、`stop` 跟 `export --last`, 每個 `ai_coc` 指令 (`world`、`stock`、`worker`、`status`、`capture` 都在內) 開頭把 `state.json` claim 成自己的, 結束時寫回 `idle` (`cli.py` 的 `WITHOUT_CLAIM` 跟 `_claim_for`, `commands.py` 的 `claim`). 迴圈在跑時插一個進去, 還沒生效的 `stopping` 被它的 claim 蓋掉, 結束後檔案說沒人在跑, `ai_coc stop` 回「沒有東西要停」, 背景那輪再也 `stop` 不到, 要停只剩手動刪掉 `state.json` (見「中止」). 迴圈在跑時要看畫面, 用 `repair-emulator` 的 `look.py` (`uv run --no-sync python .agents/skills/repair-emulator/scripts/look.py <資料夾>`): 它只截圖, 不 claim, 也不點任何東西, 代價是跟迴圈多搶一條 ADB, 跟下面 `--shot-every` 的心跳同一類.
 
 **而「上一個」不一定是你開的**, 使用者可能同時開著另一個 session. 所以**開第一個會碰模擬器的指令之前, 先讀 `~/.ai_coc/state.json`**:
 

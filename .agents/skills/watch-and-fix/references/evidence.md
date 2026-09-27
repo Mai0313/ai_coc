@@ -4,9 +4,9 @@
 
 ## 三種畫面
 
-**迴圈自己讀的那些** (`--record`): 檔名是迴圈當下在問的問題 (`0006_scout`, `0010_pass`, `0018_dropped`; 標籤是 `AttackRunner._frame` 的呼叫端給的, 現有哪些 grep `self._frame(`). 這是判讀器真的看過的那一張, 判讀錯的證據在這裡.
+**迴圈自己讀的那些** (`--record`): 檔名是迴圈當下在問的問題 (`0006_scout`, `0010_pass`, `0018_dropped`; 標籤是 `_frame` (`ui/runner.py` 的 `ScreenRunner`, `AttackRunner` 繼承它) 的呼叫端給的, 現有哪些 grep `self._frame(`). 這是判讀器真的看過的那一張, 判讀錯的證據在這裡.
 
-**成對的那些**: `before-drop` 跟 `dropped`, 比兩張的卡片角落決定出兵成不成功. 查英雄有沒有下去看這一對, 不看戰場, 也不看 log.
+**判英雄有沒有下去的那幾張**: 第一波出兵後只判一次, 是 `settled` (`_settle_drops`); 沒下去的重試 (跟夜世界送機器) 是一對 `before-drop` 跟 `dropped` (`_drop_singles`). 比的是卡片上有沒有畫出血條, 有沒有變灰. 查英雄有沒有下去看這幾張, 不看戰場, 也不看 log.
 
 **心跳那些** (`--shot-every`): `tick_00012.3s.png`, 按檔名排就是按時間排, 補迴圈兩次截圖之間的洞. 五秒一張夠看出兵怎麼走.
 
@@ -30,7 +30,7 @@ uv run ai_coc read <png>
 uv run ai_coc capture --count 30 --gap 1.5 --label <這次在測什麼>
 ```
 
-量判讀器還讀不懂的新畫面用這個, 連拍才抓得到瞬間的畫面. 存到那次執行的 `frames/`, 不能指定, 所以 `--label` 要寫. **畫面只留七天** (`FRAME_RETENTION_DAYS`): 過期的 `frames/` 由下一次開跑刪掉, `run.log` 跟 `result.json` 不動. 要跨好幾天對照就自己複製出去.
+量判讀器還讀不懂的新畫面用這個, 連拍才抓得到瞬間的畫面. 它會 claim `state.json`, 所以只在迴圈停著的時候用 (理由在 SKILL.md 的「誰在跑那個迴圈」). 存到那次執行的 `frames/`, 不能指定, 所以 `--label` 要寫. **畫面只留七天** (`FRAME_RETENTION_DAYS`): 過期的 `frames/` 由下一次開跑刪掉, `run.log` 跟 `result.json` 不動. 要跨好幾天對照就自己複製出去.
 
 **不要自己下裸的 `adb shell screencap`**: 不指定 display 截圖會解碼失敗, `input tap` 會點到 launcher. `ai_coc capture` 已經用 `AdbController.display_for(package)` 做對了.
 
