@@ -75,7 +75,7 @@ uv run ai_coc read <png>                                          # 現有 parse
 ## 做的流程
 
 1. **先在活著的遊戲上量**: 哪些像素穩定, 哪些隨等級或主題變. 數字寫成常數, 旁邊註明怎麼量的 (怎麼量在 `references/exploring.md`)
-2. **寫 parser 加測試**, 用真實截圖當 fixture, 放 `tests/frames/`; 錯的畫面也要有一張, 判讀器在上面要答不是
+2. **寫 parser 加測試**, 用真實截圖當 fixture, 放 `tests/frames/`; 錯的畫面也要有一張, 判讀器在上面要答不是. 放進去之前先照 `AGENTS.md` 把名字、玩家標籤、部落名跟聊天內容塗掉
 3. **接上 runner**, 放在 `ui/`, 保持 Qt-free
 4. **接上 `commands.py` 跟 `cli.py` 的 sub-command**
 5. **對著活的遊戲驗證**, 失敗的路徑也要驗. 在你的 worktree 裡跑, 畫面先從背景那輪拿過來
