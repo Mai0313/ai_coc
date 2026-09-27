@@ -30,8 +30,10 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "adbutils" },
+    { name = "filelock" },
     { name = "google-genai" },
     { name = "pillow" },
+    { name = "psutil" },
     { name = "pydantic" },
     { name = "pyqt5" },
     { name = "pyqt5-qt5", marker = "sys_platform == 'win32'" },

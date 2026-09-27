@@ -4867,6 +4867,181 @@ class RunnerStateTests(unittest.TestCase):
             assert "沒有指令在跑" in commands.stop()
             assert not commands.stop_requested()
 
+    FARMING = Caller(agent="codex", session="s1", mission="打日世界資源")
+
+    def _held_by(self, folder: str, caller: Caller = FARMING) -> RunnerState:
+        """Another process's live run holding the emulator, written to this test's file."""
+        self.enterContext(patch.object(commands, "STATE_PATH", Path(folder) / "state.json"))
+        held = RunnerState(
+            status="running", pid=424242, pid_created=100.0, command="attack", caller=caller
+        )
+        commands._write_state(held)
+        return held
+
+    def test_a_live_holder_is_asked_to_stand_down_and_waited_out(self) -> None:
+        """The file is a lock: a command that needs the emulator stands the run
+        holding it down through the normal stop, naming who asked, and claims
+        once it has released. Killing it or deleting the file is what this ends.
+        """
+        me = Caller(agent="claude-code", session="s2", mission="測一個修正")
+        seen: list[RunnerState | None] = []
+        with tempfile.TemporaryDirectory() as folder:
+            held = self._held_by(folder)
+
+            def the_holder_releases(_seconds: float) -> None:
+                seen.append(commands.read_state())
+                commands._write_state(held.model_copy(update={"status": "idle"}))
+
+            with (
+                patch.object(commands, "_alive", return_value=True),
+                patch.object(commands.time, "sleep", side_effect=the_holder_releases),
+                commands.claim("walls", caller=me),
+            ):
+                mine = commands.read_state()
+        assert seen[0] is not None
+        assert (seen[0].status, seen[0].pid, seen[0].stop_by) == ("stopping", 424242, me)
+        assert mine is not None
+        assert (mine.status, mine.pid, mine.caller) == ("running", os.getpid(), me)
+
+    def test_a_holder_whose_process_is_gone_is_taken_over_at_once(self) -> None:
+        """A killed run leaves `running` behind; nothing needs deleting by hand."""
+        with tempfile.TemporaryDirectory() as folder:
+            self._held_by(folder)
+            with (
+                patch.object(commands, "_alive", return_value=False),
+                patch.object(commands.time, "sleep") as slept,
+                commands.claim("walls"),
+            ):
+                mine = commands.read_state()
+        slept.assert_not_called()
+        assert mine is not None
+        assert (mine.status, mine.pid) == ("running", os.getpid())
+
+    def test_a_holder_that_never_stands_down_is_ended_and_named(self) -> None:
+        """Past `TAKEOVER_WAIT` a holder is not reaching a seam; it is ended here,
+        and the log says whose run it was, rather than left for somebody to kill.
+        """
+        ended: list[bool] = []
+        process = MagicMock()
+        process.terminate.side_effect = lambda: ended.append(True)
+        with tempfile.TemporaryDirectory() as folder:
+            self._held_by(folder)
+            with (
+                patch.object(commands, "TAKEOVER_WAIT", 0),
+                patch.object(commands, "_alive", side_effect=lambda _state: not ended),
+                patch.object(commands.psutil, "Process", return_value=process),
+                patch.object(commands.time, "sleep"),
+                self.assertLogs(commands.logger, "WARNING") as logged,
+                commands.claim("walls"),
+            ):
+                mine = commands.read_state()
+        process.terminate.assert_called_once()
+        assert "打日世界資源" in logged.output[0]
+        assert mine is not None
+        assert mine.pid == os.getpid()
+
+    def test_a_holder_that_claimed_mid_wait_gets_a_wait_of_its_own(self) -> None:
+        """Two commands waiting on one run: whichever claims first must not be
+        ended on what was left of the other's wait.
+        """
+        first = RunnerState(status="running", pid=424242, command="attack", pid_created=1.0)
+        second = RunnerState(status="running", pid=434343, command="walls", pid_created=2.0)
+        clock = [0.0]
+
+        def a_minute_passes(_seconds: float) -> None:
+            clock[0] += 60
+
+        with (
+            patch.object(commands, "holder", side_effect=[first, second, second, None]),
+            patch.object(commands, "ask_to_stand_down") as asked,
+            patch.object(commands, "_end") as ended,
+            patch.object(commands.time, "monotonic", side_effect=lambda: clock[0]),
+            patch.object(commands.time, "sleep", side_effect=a_minute_passes),
+        ):
+            commands.take_over(Caller(), wait=100)
+        assert [call.args[0] for call in asked.call_args_list] == [first, second]
+        ended.assert_not_called()
+
+    def test_a_record_too_old_to_name_its_process_is_never_ended(self) -> None:
+        """Without `pid_created` only the process name matched, and a Python
+        process that reused the pid passes that too.
+        """
+        with patch.object(commands.psutil, "Process") as process, pytest.raises(RuntimeError):
+            commands._end(RunnerState(status="running", pid=424242, command="attack"), 720)
+        process.assert_not_called()
+
+    def test_the_window_is_never_ended_for_holding_on(self) -> None:
+        """Ending it would close the program somebody may be looking at."""
+        with tempfile.TemporaryDirectory() as folder:
+            self._held_by(folder, Caller(agent=commands.WINDOW_AGENT))
+            with (
+                patch.object(commands, "TAKEOVER_WAIT", 0),
+                patch.object(commands, "_alive", return_value=True),
+                patch.object(commands.psutil, "Process") as process,
+                patch.object(commands.time, "sleep"),
+                pytest.raises(RuntimeError),
+                commands.claim("walls"),
+            ):
+                pass
+        process.assert_not_called()
+
+    def test_a_torn_read_is_read_again_before_the_emulator_counts_as_free(self) -> None:
+        """`read_state` answers a torn read as "running, and ours", which at claim
+        time would pass for a free emulator while another process is halfway
+        through writing its own record.
+        """
+        live = RunnerState(status="running", pid=424242, command="attack")
+        torn = RunnerState(status="running", pid=os.getpid())
+        with (
+            patch.object(commands, "read_state", side_effect=[torn, live]),
+            patch.object(commands, "_alive", return_value=True),
+            patch.object(commands.time, "sleep"),
+        ):
+            assert commands.holder() == live
+
+    def test_this_process_own_record_is_not_read_again_as_a_torn_one(self) -> None:
+        """Every window job leaves an honest `idle` under the window's own pid,
+        and reading that again froze the window on each start.
+        """
+        mine = RunnerState(status="idle", pid=os.getpid(), command="automation")
+        with (
+            patch.object(commands, "read_state", return_value=mine),
+            patch.object(commands.time, "sleep") as slept,
+        ):
+            assert commands.holder() is None
+        slept.assert_not_called()
+
+    def test_a_pid_now_worn_by_another_process_is_not_the_holder(self) -> None:
+        """Windows reuses pids and ignores their two low bits. The record's own
+        process start time, and the process being Python or `ai_coc`, are what
+        tell the holder from whatever sits at that number now.
+        """
+        process = MagicMock()
+        process.name.return_value = "python.exe"
+        process.create_time.return_value = 200.0
+        with patch.object(commands.psutil, "Process", return_value=process):
+            assert commands._alive(RunnerState(status="running", pid=424242, pid_created=200.0))
+            assert not commands._alive(
+                RunnerState(status="running", pid=424242, pid_created=100.0)
+            )
+            process.name.return_value = "chrome.exe"
+            assert not commands._alive(
+                RunnerState(status="running", pid=424242, pid_created=200.0)
+            )
+        assert not commands._alive(RunnerState(status="running", pid=os.getpid()))
+        assert not commands._alive(RunnerState(status="running", pid=0))
+
+    def test_who_stopped_a_run_is_kept_on_the_record_it_ends_with(self) -> None:
+        """So the agent whose run it was can read who took the emulator and why."""
+        stopper = Caller(agent="claude-code", session="s2", mission="要測東西")
+        with tempfile.TemporaryDirectory() as folder:
+            self.enterContext(patch.object(commands, "STATE_PATH", Path(folder) / "state.json"))
+            with commands.claim("attack", caller=self.FARMING):
+                commands.stop(stopper)
+            after = commands.read_state()
+        assert after is not None
+        assert (after.status, after.caller, after.stop_by) == ("idle", self.FARMING, stopper)
+
     def test_the_wall_command_answers_the_same_file(self) -> None:
         """One file for every long loop rather than a mechanism each."""
         with tempfile.TemporaryDirectory() as folder:

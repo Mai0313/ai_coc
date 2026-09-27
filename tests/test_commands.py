@@ -213,11 +213,14 @@ class WorldCommandTests(unittest.TestCase):
         if not display:
             adb.display_for.side_effect = AdbControlError("no window yet")
         with (
-            patch.object(commands, "_controller", return_value=adb),
+            patch.object(commands, "_controller", return_value=adb) as driving,
+            patch.object(commands, "_attached", return_value=adb) as looking,
             patch.object(commands, "current_world", return_value=seen),
             patch.object(commands, "cross", return_value=crossed) as sailed,
         ):
             report = commands.world(go)
+        # Reading only looks, and crossing drives: see `_attached`.
+        assert (driving.called, looking.called) == ((True, False) if go else (False, True))
         return adb, sailed, report
 
     def test_reading_is_one_capture_and_nothing_else(self) -> None:
@@ -264,7 +267,7 @@ class WorldCommandTests(unittest.TestCase):
         adb.screenshot.return_value = b"frame"
         with (
             tempfile.TemporaryDirectory() as folder,
-            patch.object(commands, "_controller", return_value=adb),
+            patch.object(commands, "_attached", return_value=adb),
         ):
             keep = Path(folder) / "frames" / "no_village.png"
             with patch.object(commands, "current_world", return_value="day"):
@@ -1447,7 +1450,7 @@ class CaptureAndViewTests(unittest.TestCase):
         adb.screenshot.return_value = b"x"
         with (
             tempfile.TemporaryDirectory() as folder,
-            patch.object(commands, "_controller", return_value=adb),
+            patch.object(commands, "_attached", return_value=adb),
             patch.object(commands.time, "sleep") as slept,
         ):
             saved = commands.capture(Path(folder) / "shots", count=2, gap=0.5)

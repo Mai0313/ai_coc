@@ -100,15 +100,15 @@ jq '.[-1] | {world, outcome, stock_full, attacked}' ~/.ai_coc/logs/<run>/result.
 
 ## 中止
 
-**跑 `uv run ai_coc stop`, 這是停止的唯一方式.** 它把 `~/.ai_coc/state.json` 的 `status` 改成 `stopping` 就秒回, 不碰遊戲也不找程序. 每個會碰模擬器的指令都讀同一份檔案, 所以不必先查在跑哪一個; 它會回你叫停的是什麼、pid 多少, 沒有人在跑就說沒有.
+**跑 `uv run ai_coc stop`, 這是停止的唯一方式.** 它把 `~/.ai_coc/state.json` 的 `status` 改成 `stopping` 就秒回, 不碰遊戲也不找程序. 每個會碰模擬器的指令都讀同一份檔案, 所以不必先查在跑哪一個; 它會回你叫停的是什麼、pid 多少, 沒有人在跑就說沒有. 你帶的 `--agent`、`--session`、`--mission` 會記成 `stop_by`, 那一輪收工後的 `idle` 紀錄還留著, 被停的那一邊讀得到是誰、為什麼.
 
-手動刪掉那份檔案也會停, 那是留給叫得動遊戲的東西已經不在的情況 (agent 掛了, 終端機沒了); 平常用 `ai_coc stop`, 它留得下記錄.
+**不用再手動刪那份檔案.** 程序死掉留下的 `running` 不會卡住任何人: 下一個要用模擬器的指令查得出那個程序已經不在, 直接接手.
 
 停在每個迴圈最安全的接縫: `attack` 在回合之間跟對手之間, `walls` 在批次之間跟開場掃描村莊時. 所以**停不是立刻的**, 最久要等當下那一場戰鬥打完或那一批城牆買完 (量過一次 107 秒). 打到一半棄權會把軍隊丟在場上、遊戲停在回不了家的畫面, 比多等兩分鐘貴得多.
 
 **怎麼知道停好了.** 背景指令自己結束: exit code 0, `result.json` 有內容. `state.json` 的 `status` 是 `stopping` 表示收到了、還在打完手上那一場; 變成 `idle` (連同 `ended`) 才是真的收工.
 
-**不要去砍背景程序.** 砍掉的話迴圈的 `KeyboardInterrupt` 出口執行不到 (只有前景的 Ctrl-C 走得到), 軍隊留在場上, 遊戲停在回不了家的畫面, `result.json` 是空的, 只剩 `run.log` 能數. 真的非硬停不可才砍, 砍完自己確認遊戲回到村莊.
+**不要去砍背景程序.** 砍掉的話迴圈的 `KeyboardInterrupt` 出口執行不到 (只有前景的 Ctrl-C 走得到), 軍隊留在場上, 遊戲停在回不了家的畫面, `result.json` 是空的, 只剩 `run.log` 能數. **卡死的也不用你砍**: 別的指令等滿 `TAKEOVER_WAIT` (約 12 分鐘) 還等不到它收工, 會自己結束它並在自己的 `run.log` 記下是誰的 run; 下一個指令照常把遊戲帶回村莊. 視窗例外, 不會被結束, 請使用者在視窗按停止.
 
 **使用者說停, 停的是整件事而不是一個指令.** `state.json` 只停得下當下在跑的那個迴圈, 不知道你打算接著做什麼. 所以收到停止之後**不要再開下一個指令**, 除非使用者又說要繼續. 這一條沒有機制在管, 只有你.
 
@@ -154,19 +154,19 @@ log 裡的 `stopped moving after 2 swipe(s)` 是正常的. `camera was still mov
 
 `attack`, `walls`, `collect`, `upgrade`, `donate` 全都在驅動同一個模擬器的同一個 display. 兩個一起跑, 一邊點開選單, 另一邊截到那張圖判讀成完全不同的東西, 而且沒有任何機制會發現. 開下一個之前先確定上一個真的結束了.
 
-**只讀的指令也算.** 除了 `read`、`stop` 跟 `export --last`, 每個 `ai_coc` 指令 (`world`、`stock`、`worker`、`status`、`capture` 都在內) 開頭把 `state.json` claim 成自己的, 結束時寫回 `idle` (`cli.py` 的 `WITHOUT_CLAIM` 跟 `_claim_for`, `commands.py` 的 `claim`). 迴圈在跑時插一個進去, 還沒生效的 `stopping` 被它的 claim 蓋掉, 結束後檔案說沒人在跑, `ai_coc stop` 回「沒有東西要停」, 背景那輪再也 `stop` 不到, 要停只剩手動刪掉 `state.json` (見「中止」). 迴圈在跑時要看畫面, 用 `repair-emulator` 的 `look.py` (`uv run --no-sync python .agents/skills/repair-emulator/scripts/look.py <資料夾>`): 它只截圖, 不 claim, 也不點任何東西, 代價是跟迴圈多搶一條 ADB, 跟下面 `--shot-every` 的心跳同一類.
+**`state.json` 是一把鎖.** 除了只看的指令 (`read`、`stop`、`export --last`、`capture`、不帶 `--go` 的 `world`), 每個 `ai_coc` 指令開跑時先看有沒有別的活著的程序佔著 (`cli.py` 的 `_claim_for`, `commands.py` 的 `claim` 跟 `take_over`): 有, 就照 `ai_coc stop` 的流程請它收工, 記下是你叫停的, 等它打完手上那一場退出才開始. 所以**迴圈在跑的時候下 `stock`、`status`、`worker` 這種要操作畫面的指令, 就是把那輪停掉**, 不是你要的就不要下. 只想看畫面, 用 `capture` 或 `repair-emulator` 的 `look.py` (`uv run --no-sync python .agents/skills/repair-emulator/scripts/look.py <資料夾>`): 都只截圖, 不佔鎖也不開任何東西, 代價是跟迴圈多搶一條 ADB, 跟下面 `--shot-every` 的心跳同一類.
 
 **而「上一個」不一定是你開的**, 使用者可能同時開著另一個 session. 所以**開第一個會碰模擬器的指令之前, 先讀 `~/.ai_coc/state.json`**:
 
-- `status` 是 `running` 或 `stopping`: 有人在跑. `command` 是哪個指令, `log` 是它那次執行的目錄. 不要開第二個, 跟使用者說一聲
+- `status` 是 `running` 或 `stopping`: 有人在跑. `command` 是哪個指令, `log` 是它那次執行的目錄, `caller` 是誰為了什麼開的. 你下會操作畫面的指令就會停掉它; 不是你要的就不要下, 跟使用者說一聲
 - `status` 是 `idle`: 沒人在跑, `command` 跟 `ended` 說的是上一次. 可以開
 - 檔案不存在: 這台機器沒跑過, 或者有人剛手動刪掉它來叫停
 
-**`running` 有可能是殘留**, 程序被砍掉的話沒有人把它寫回 `idle`. 拿裡面的 `pid` 去 `Get-Process -Id <pid>`, 查不到就是殘留, 直接開你的, 你的 claim 會蓋掉它 (193 ms). **這一步每次開工都做**, 不是只在看起來不對的時候.
+**`running` 有可能是殘留**, 程序被砍掉的話沒有人把它寫回 `idle`. 不用自己查 pid: 指令開跑時會查 (pid 還在, 是 Python 或 `ai_coc`, 而且就是寫那筆紀錄的那個程序), 殘留就直接接手. **讀檔這一步每次開工都做**, 為的是知道你要停掉的是誰的 run.
 
 **這個檔有兩件事看不到, 2026-09-21 兩件都出過事.**
 
-- **監控**: 被交辦盯工人的 session 每隔一陣子跑一次 `ai_coc worker`, 兩次之間檔案寫的是 `idle`, 從外面看不見. `ai_coc stop` 也碰不到它, 在迴圈的是 agent 不是程序, 只有殺掉那個 agent 才停得下來
+- **監控**: 被交辦盯工人的 session 每隔一陣子跑一次 `ai_coc worker`, 兩次之間檔案寫的是 `idle`, 從外面看不見. `ai_coc stop` 也碰不到它, 在迴圈的是 agent 不是程序, 只有殺掉那個 agent 才停得下來. 而且它每跑一次 `worker`, 都會把當下在跑的迴圈停掉 (上面那把鎖)
 - **使用者本人**: 他用手機玩就會把模擬器踢下線, 在另一台模擬器 (MuMu 跟雷電登同一個帳號) 開遊戲也一樣. 那天一次 `builders` 把被踢下線的畫面當成普通遮擋, 花 61 秒按 `back` 跟答 `取消`, 回報 `畫面沒辦法回到村莊`; 重跑時 `ensure_coc` 又把登入搶回來, 把使用者再踢一次. **所以在人可能正在玩的時候回不到村莊, 是停下來講一聲的理由, 不是再試一次的理由.**
 
 `--shot-every` 的心跳是同一個程序裡的執行緒, 跟迴圈搶同一條 ADB 連線 (一張 `screencap -p` 0.6 到 0.8 秒), 有代價但可控; 兩個獨立的指令不是.

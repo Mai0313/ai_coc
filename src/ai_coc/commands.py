@@ -20,6 +20,8 @@ from datetime import UTC, datetime
 import threading
 from contextlib import contextmanager
 
+import psutil
+from filelock import Timeout, FileLock
 from pydantic import BaseModel, PrivateAttr
 
 from ai_coc import plans
@@ -134,7 +136,7 @@ from .ui.clan import ClanRunner
 from .ui.hero import HeroRunner
 from .ui.walls import WallRunner
 from .ui.world import cross, uncovered, park_camera, collect_cart
-from .ui.attack import CARD_ROW_Y, DROP_SETTLE, SINGLE_DROP_DELAY, AttackRunner
+from .ui.attack import CARD_ROW_Y, DROP_SETTLE, BATTLE_TIMEOUT, SINGLE_DROP_DELAY, AttackRunner
 from .ui.plates import PlateRunner
 from .ui.runner import ScreenRunner, spell_out, restart_game
 from .ui.upkeep import UpkeepRunner
@@ -212,6 +214,21 @@ def _controller() -> AdbController:
     """The configured instance, with Clash of Clans already up on it."""
     emulator, instance = chosen(emulators())
     return emulator.controller(emulator.ensure_coc(instance.index).adb_serial)
+
+
+def _attached() -> AdbController:
+    """The configured instance as it is, for a command that only looks.
+
+    `_controller` goes through `ensure_coc`, which relaunches the game or the
+    whole instance when it finds them down. That is driving the emulator, and a
+    command that takes no claim must not do it under a loop that holds one.
+    """
+    emulator, instance = chosen(emulators())
+    if instance.endpoint.port == 0:
+        raise RuntimeError(
+            f"模擬器 {instance.adb_serial} 沒開,這個指令只看不開;要開用 ai_coc launch"
+        )
+    return emulator.controller(instance.adb_serial)
 
 
 def _session(frame_dir: Path | None = None) -> tuple[AdbController, DisplayTarget]:
@@ -456,6 +473,179 @@ ADAPTER_FAILURES = 3
 # this ever answered.
 _held: RunnerState | None = None
 
+# How long a command that needs the emulator waits for the run holding it to
+# stand down before ending that run itself. A loop stands down only at a seam,
+# and the longest way to one is a battle already under way: the builder base
+# plays up to two stages, each a plan, a drop and up to `BATTLE_TIMEOUT` of
+# waiting, then the result screens and the cart. Three of them covers that with
+# a stage to spare, so a holder still up past it is not reaching a seam at all.
+TAKEOVER_WAIT = 3 * BATTLE_TIMEOUT
+# How many times a claim reads the file again when it will not parse, and how
+# far apart. `read_state` answers a torn read as "running, and ours", which at
+# claim time would pass for a free emulator while another process is halfway
+# through writing its own record.
+TORN_READS = 3
+TORN_GAP = 0.2
+# What a holder's process is called: `uv run` starts Python, and the release
+# build is its own executable. Windows reuses pids and ignores their two low
+# bits, so a record with nothing else to go on must not read as held by
+# whatever process sits at that number now.
+HOLDER_NAMES = ("python", "ai_coc")
+# How long to wait for another process's turn at the file. A turn is a read and
+# a write, milliseconds long, so running out means that process died holding
+# the lock, and the write goes ahead unguarded rather than failing the run.
+LOCK_WAIT = 10
+# The window's own name on the file. It is never ended by a takeover: that
+# would close the program somebody may be looking at.
+WINDOW_AGENT = "window"
+
+
+@contextmanager
+def _turn() -> Iterator[None]:
+    """One process at a time through a read and a write of the state file.
+
+    Without it two commands waiting on one holder both read `idle` in the same
+    instant and both claim, and a `stopping` written from a stale read lands on
+    whichever record replaced it — both of them two processes driving one
+    display, which is what the file exists to prevent.
+    """
+    lock = FileLock(str(STATE_PATH.with_name(f"{STATE_PATH.name}.lock")))
+    try:
+        lock.acquire(timeout=LOCK_WAIT)
+    except Timeout:
+        logger.warning("%s stayed locked for %ds; writing without it", STATE_PATH, LOCK_WAIT)
+        yield
+        return
+    try:
+        yield
+    finally:
+        lock.release()
+
+
+def _started_at(pid: int) -> float | None:
+    """When process `pid` started, or None where that cannot be told."""
+    try:
+        return psutil.Process(pid).create_time()
+    except psutil.Error:
+        return None
+
+
+def _alive(state: RunnerState) -> bool:
+    """Whether the process a record names is still the one that wrote it.
+
+    Never `os.kill(pid, 0)`: on Windows signal 0 is `CTRL_C_EVENT`, so it sends
+    a Ctrl+C to that console group, can kill the very run it asked about, and
+    still reads as alive. A process this one cannot inspect is not an `ai_coc`
+    run, which is always the same user's.
+    """
+    if state.pid <= 0 or state.pid == os.getpid():
+        return False
+    try:
+        process = psutil.Process(state.pid)
+        name = process.name().lower()
+        created = process.create_time()
+    except psutil.Error:
+        return False
+    if not any(part in name for part in HOLDER_NAMES):
+        return False
+    return state.pid_created is None or created == state.pid_created
+
+
+def holder() -> RunnerState | None:
+    """The live run of another process holding the emulator, if there is one."""
+    torn = RunnerState(status="running", pid=os.getpid())
+    state = read_state()
+    for _ in range(TORN_READS):
+        if state != torn or _held is not None:
+            break
+        time.sleep(TORN_GAP)
+        state = read_state()
+    if state is None or state.status == "idle" or not _alive(state):
+        return None
+    return state
+
+
+def take_over(caller: Caller, wait: float | None = None) -> None:
+    """Have the run holding the emulator stand down, and return once it has.
+
+    **The file is a lock**, the user's call of 2026-09-27. A command that needs
+    the emulator asks the holder to stand down through the same `stopping` that
+    `ai_coc stop` writes, naming who asked, and waits for it to reach its seam
+    and release — a battle under way is played out, never abandoned. A holder
+    still up after `wait` is ended here and that is logged, rather than left for
+    somebody to kill by hand or to delete the file under. The wait starts over
+    for each holder, so one that claimed while this waited on another gets its
+    own, rather than the rest of its predecessor's.
+    """
+    wait = TAKEOVER_WAIT if wait is None else wait
+    deadline = 0.0
+    asked: tuple[int, datetime | None] | None = None
+    while (current := holder()) is not None:
+        if asked != (current.pid, current.started):
+            deadline = time.monotonic() + wait
+            ask_to_stand_down(current, caller)
+            logger.info(
+                "%s (pid %d, %s) holds the emulator; asked it to stand down, waiting up to %.0fs",
+                current.command,
+                current.pid,
+                current.caller.mission or "no mission given",
+                wait,
+            )
+            asked = (current.pid, current.started)
+        if time.monotonic() >= deadline:
+            _end(current, wait)
+            return
+        time.sleep(STOP_POLL)
+
+
+def ask_to_stand_down(held: RunnerState, caller: Caller) -> None:
+    """Write `stopping` onto this holder's record, naming who asked.
+
+    Only onto that same record, and only while it still reads `running`: one
+    another process wrote in the meantime is not this holder, and a `stopping`
+    already there keeps the name of whoever asked first.
+    """
+    with _turn():
+        current = read_state()
+        if (
+            current is not None
+            and current.status == "running"
+            and (current.pid, current.started) == (held.pid, held.started)
+        ):
+            _write_state(current.model_copy(update={"status": "stopping", "stop_by": caller}))
+
+
+def _end(holder: RunnerState, waited: float) -> None:
+    """End a holder that never reached its seam, and say who it was."""
+    if holder.caller.agent == WINDOW_AGENT:
+        raise RuntimeError(
+            f"視窗佔著模擬器,請它停了 {waited / 60:.0f} 分鐘還沒放手;請在視窗按停止"
+        )
+    # A record written before `pid_created` existed was matched on the process
+    # name alone, which a Python process that reused the pid also passes.
+    if holder.pid_created is None:
+        raise RuntimeError(
+            f"pid {holder.pid} 佔著模擬器,請它停了 {waited / 60:.0f} 分鐘還沒放手;"
+            "它的紀錄是舊版寫的,分不出是不是原本那個程序,沒有結束它"
+        )
+    logger.warning(
+        "%s (pid %d, %s: %s) did not stand down in %.0fs; ending it",
+        holder.command,
+        holder.pid,
+        holder.caller.agent or "no agent named",
+        holder.caller.mission or "no mission given",
+        waited,
+    )
+    try:
+        process = psutil.Process(holder.pid)
+        process.terminate()
+    except psutil.NoSuchProcess:
+        return
+    try:
+        process.wait(timeout=10)
+    except psutil.TimeoutExpired:
+        process.kill()
+
 
 def read_state() -> RunnerState | None:
     """What the state file says; None when there is no file at all.
@@ -519,11 +709,12 @@ def _write_state(state: RunnerState) -> None:
 def claim(command: str, log: Path | None = None, caller: Caller | None = None) -> Iterator[None]:
     """Say that this process is driving the emulator, and who asked, and hand it back after.
 
-    Every command that touches the emulator takes one, short ones included: a
+    Every command that drives the emulator takes one, short ones included: a
     `collect` that runs for eight seconds still holds the screen for those
     eight, and a second session that reads the file wants the truth rather than
     only being told about the long runs. `read` takes none, since it parses a
-    PNG and never opens ADB.
+    PNG and never opens ADB, and neither do `capture` and a plain `world`,
+    which only look.
 
     **A claim this process already holds is left alone, and the outermost one
     owns the release.** The window runs every pass as its own `commands.*` call
@@ -539,27 +730,32 @@ def claim(command: str, log: Path | None = None, caller: Caller | None = None) -
     stoppable by nothing at all: `stop` would read the last run's `idle` and say
     there was nothing to stop, and deleting the file would not stop it either.
 
-    **It never refuses.** A second run started while one is going overwrites
-    this record and both then drive the same display, which is the thing the
-    file exists to let a session avoid rather than a thing it prevents: the
-    check belongs to whoever is about to start, and a lock that could refuse
-    would need to tell a live run from a killed one, which is a pid liveness
-    call this deliberately does not make.
+    **Another live run holding it is asked to stand down first**, and waited out;
+    see `take_over`. The decision to claim is taken again inside the lock,
+    because two commands can finish waiting on one holder in the same instant
+    and only one of them may win — the other goes back to asking.
     """
     global _held  # noqa: PLW0603 - process-wide by nature; see `_held`
     if _held is not None:
         yield
         return
-    mine = RunnerState(
-        status="running",
-        pid=os.getpid(),
-        command=command,
-        started=datetime.now().astimezone(),
-        log=log,
-        caller=caller or Caller(),
-    )
-    _write_state(mine)
-    _held = mine
+    who = caller or Caller()
+    while True:
+        take_over(who)
+        with _turn():
+            if holder() is None:
+                mine = RunnerState(
+                    status="running",
+                    pid=os.getpid(),
+                    pid_created=_started_at(os.getpid()),
+                    command=command,
+                    started=datetime.now().astimezone(),
+                    log=log,
+                    caller=who,
+                )
+                _write_state(mine)
+                _held = mine
+                break
     try:
         yield
     finally:
@@ -580,28 +776,32 @@ def _release(command: str, log: Path | None) -> None:
     believe a run is still winding down hours after it finished.
     """
     global _held  # noqa: PLW0603 - process-wide by nature; see `_held`
-    held = read_state()
-    if held is not None and held.pid not in (0, os.getpid()):
-        return
-    _write_state(
-        RunnerState(
-            status="idle",
-            pid=os.getpid(),
-            command=command,
-            # This process's own copy rather than the file's, because the file
-            # is gone whenever the run was stopped by deleting it, and that is
-            # the case where the record would otherwise lose its start time.
-            started=_held.started if _held else None,
-            ended=datetime.now().astimezone(),
-            log=log,
-            # Kept on `idle` so the last run stays attributable after it ends.
-            caller=_held.caller if _held else Caller(),
+    with _turn():
+        held = read_state()
+        if held is not None and held.pid not in (0, os.getpid()):
+            _held = None
+            return
+        _write_state(
+            RunnerState(
+                status="idle",
+                pid=os.getpid(),
+                command=command,
+                # This process's own copy rather than the file's, because the file
+                # is gone whenever the run was stopped by deleting it, and that is
+                # the case where the record would otherwise lose its start time.
+                started=_held.started if _held else None,
+                ended=datetime.now().astimezone(),
+                log=log,
+                # Kept on `idle` so the last run stays attributable after it ends,
+                # and so is who stopped it, for the agent whose run it was.
+                caller=_held.caller if _held else Caller(),
+                stop_by=held.stop_by if held else None,
+            )
         )
-    )
     _held = None
 
 
-def stop() -> str:
+def stop(caller: Caller | None = None) -> str:
     """Ask whichever command is driving the emulator to finish and stand down.
 
     Nothing here touches the game or looks for a process: this changes one field
@@ -615,10 +815,13 @@ def stop() -> str:
     do: it wrote a file whether or not anything was listening, so a stop that
     landed and one that fell on an idle machine read identically.
     """
-    state = read_state()
-    if state is None or state.status == "idle":
-        return "現在沒有指令在跑,沒有東西要停。"
-    _write_state(state.model_copy(update={"status": "stopping"}))
+    with _turn():
+        state = read_state()
+        if state is None or state.status == "idle":
+            return "現在沒有指令在跑,沒有東西要停。"
+        _write_state(
+            state.model_copy(update={"status": "stopping", "stop_by": caller or Caller()})
+        )
     return (
         f"已要求 {state.command}(pid {state.pid})收工,狀態寫在 {STATE_PATH}。"
         "它會做完手上這一件事才停。"
@@ -1891,8 +2094,12 @@ def world(go: World | None = None, keep: Path | None = None) -> WorldReport:
     on its loading screen honestly has no village on it, and `ai_coc launch` is
     the one that waits a cold start out. `keep` is where the frame goes when no
     village reads on it.
+
+    **Reading takes no claim and starts nothing** (`_attached`): it runs beside a
+    loop that holds the emulator without disturbing it. Crossing drives the game,
+    so it goes through `_controller` and the claim like any other command.
     """
-    adb = _controller()
+    adb = _controller() if go is not None else _attached()
     try:
         display = adb.display_for(COC_PACKAGE)
     except AdbControlError:
@@ -2226,8 +2433,11 @@ def capture(out_dir: Path, count: int = 1, gap: float = 1.5) -> list[Path]:
     A burst rather than a single shot: the screens worth measuring are the ones
     that only exist while something is happening, and those cannot be reached by
     asking for one frame at the right moment.
+
+    It only looks, so it takes no claim and starts nothing (`_attached`): a game
+    that is down is `ai_coc launch`'s to bring up.
     """
-    adb = _controller()
+    adb = _attached()
     display = adb.display_for(COC_PACKAGE)
     out_dir.mkdir(parents=True, exist_ok=True)
     saved: list[Path] = []

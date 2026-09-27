@@ -42,7 +42,7 @@ description: >-
 
 使用者沒交代就照設定檔跑. `--min-gold` 之類只在他明講要放寬時用, `0` 跟不給是兩件事 (見 `LootOverrides` 的 docstring). `--stop-at` 是**測試**用的: 對著剛打滿的村莊打一場來驗東西時給 `0`; 打資源不要用, 滿倉搶回來的進不去.
 
-**碰模擬器之前先讀 `~/.ai_coc/state.json`**: 有別人在跑就不要開, 查法在 `references/running.md` 的「絕對不要同時跑兩個」.
+**碰模擬器之前先讀 `~/.ai_coc/state.json`**: 有別人在跑, 你下會操作畫面的指令就會先把它停掉 (等它打完手上那一場); 不是你要的就不要下. 查法在 `references/running.md` 的「絕對不要同時跑兩個」.
 
 **每次開跑前先 `uv run ai_coc stock`, 不要憑上一次的印象** (使用者可能中間花掉了). 規矩見「開跑前先記下基準」. 它說滿了的世界, 開跑第一輪就會收工, 不是壞掉.
 
@@ -65,7 +65,7 @@ uv run ai_coc attack --repeat 0 --plan src/ai_coc/plans/night_flat.json
 
 **一個世界打不動就先去打另一個**, 為什麼卡住不重要: 耗在那邊等於另一個整晚沒打. 看進帳斜率而不是輪數: 主村 `Village holds gold=… elixir=… dark=…`, 夜世界 `Builder base holds gold=… elixir=…`, 連續幾輪幾乎沒動就是打不動. **夜世界倉庫滿了之後那行本來就不動** (在填聖水車), 看每五場一次的 `holding X of Y` 有沒有在長.
 
-**這種 run 不會自己結束** (到不了百分比就沒有 `stock_full`), 所以換世界要先 `uv run ai_coc stop`, **等它真的退出再開下一個**: 新的一輪會把 `state.json` claim 成自己的, 蓋掉前一個還沒讀到的停止請求, 變成兩個 run 搶畫面. 停止在打完手上那一場才生效, 可能好幾分鐘; `result.json` 寫出來或 `state.json` 的 `status` 回到 `idle` 就是退出了.
+**這種 run 不會自己結束** (到不了百分比就沒有 `stock_full`), 所以換世界要先停掉這一輪: 直接下 `world --go` 它也會先請那一輪收工, 等它打完手上那一場退出再坐船; 或者先 `uv run ai_coc stop`, 等背景指令結束. 停止在打完手上那一場才生效, 可能好幾分鐘; `result.json` 寫出來或 `state.json` 的 `status` 回到 `idle` 就是退出了.
 
 **兩邊都不等兵營**, 造兵是即時的; 夜世界的時間幾乎都在等真人配對.
 
@@ -98,7 +98,7 @@ uv run ai_coc attack --repeat 0 --plan src/ai_coc/plans/night_flat.json
 
 - **`run.log`** 便宜, 答「走到哪, 這輪結果是什麼」. 跨好幾次找同一個症狀用 `grep -r ~/.ai_coc/logs/*/run.log`
 - **`plans.jsonl`** (每次執行的目錄都有, 一場一行帶輪數) 答那一場的 AI 叫部隊往哪打. 一輪打得爛先看它, 再對 `run.log` 的實際發生: 對不上是迴圈的問題, 對得上是戰術的問題
-- **畫面**答 log 答不了的: 畫面長什麼樣, 兵有沒有在打, 判讀器讀的跟眼睛看的一不一樣. 迴圈在跑的時候看 `--record` 留下的 `frames/`, 或用 `repair-emulator` 的 `scripts/look.py` 截 (它只截圖, 不碰 `state.json`); **不要趁迴圈在跑下 `ai_coc capture`**, 理由在 `references/running.md` 的「絕對不要同時跑兩個」. 沒有迴圈在跑時才用 `uv run ai_coc capture --count N` 抓活著的遊戲 (`--label` 取名). `uv run ai_coc read <png>` 不碰模擬器, 隨時能跑, 看每個 parser 讀到什麼
+- **畫面**答 log 答不了的: 畫面長什麼樣, 兵有沒有在打, 判讀器讀的跟眼睛看的一不一樣. 迴圈在跑的時候看 `--record` 留下的 `frames/`, 或用 `uv run ai_coc capture --count N` (`--label` 取名)、`repair-emulator` 的 `scripts/look.py` 截 (兩個都只截圖, 不佔 `state.json`). `uv run ai_coc read <png>` 不碰模擬器, 隨時能跑, 看每個 parser 讀到什麼
 
 **看過的圖發一份給使用者.** 只要你看了並據此下判斷, 就用檔案傳送機制發出去, 不要只留路徑; 他看不到你的工具輸出. 你是 subagent 而發不出去, 就把路徑跟它說明了什麼寫進回報, 讓主 session 發.
 
@@ -273,4 +273,4 @@ uv run ai_coc attack --repeat 0 --plan src/ai_coc/plans/night_flat.json
 
 報當下的資源跟輪數就好, **不要停下迴圈**. 報告留到任務真的達成再交.
 
-數字從那次的 `run.log` 讀: 最近一行 `Village holds …` (夜世界 `Builder base holds …`) 跟 `Round N of`. **不要為了這個下 `ai_coc stock`**: 迴圈在跑的時候, 任何會碰模擬器的指令都跟它搶畫面, 還會把 `state.json` 蓋掉 (`references/running.md` 的「絕對不要同時跑兩個」).
+數字從那次的 `run.log` 讀: 最近一行 `Village holds …` (夜世界 `Builder base holds …`) 跟 `Round N of`. **不要為了這個下 `ai_coc stock`**: 迴圈在跑的時候, 會操作畫面的指令會先把它停掉 (`references/running.md` 的「絕對不要同時跑兩個」).

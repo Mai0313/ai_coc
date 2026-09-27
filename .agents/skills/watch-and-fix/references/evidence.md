@@ -30,7 +30,7 @@ uv run ai_coc read <png>
 uv run ai_coc capture --count 30 --gap 1.5 --label <這次在測什麼>
 ```
 
-量判讀器還讀不懂的新畫面用這個, 連拍才抓得到瞬間的畫面. 它會 claim `state.json`, 所以只在迴圈停著的時候用 (理由在 SKILL.md 的「誰在跑那個迴圈」). 存到那次執行的 `frames/`, 不能指定, 所以 `--label` 要寫. **畫面只留七天** (`FRAME_RETENTION_DAYS`): 過期的 `frames/` 由下一次開跑刪掉, `run.log` 跟 `result.json` 不動. 要跨好幾天對照就自己複製出去.
+量判讀器還讀不懂的新畫面用這個, 連拍才抓得到瞬間的畫面. 它只截圖, 不佔 `state.json`, 迴圈在跑的時候也能用. 存到那次執行的 `frames/`, 不能指定, 所以 `--label` 要寫. **畫面只留七天** (`FRAME_RETENTION_DAYS`): 過期的 `frames/` 由下一次開跑刪掉, `run.log` 跟 `result.json` 不動. 要跨好幾天對照就自己複製出去.
 
 **不要自己下裸的 `adb shell screencap`**: 不指定 display 截圖會解碼失敗, `input tap` 會點到 launcher. `ai_coc capture` 已經用 `AdbController.display_for(package)` 做對了.
 

@@ -216,7 +216,7 @@ That is the whole file. **A run that finds no file creates one only to write dow
 
 There are no ability or spell timings here any more. They were a table of per-hero constants, and editing them meant guessing how long an army takes to walk across a village nobody had looked at — which is the planner's job, done with the village on screen. Every clock lives on the plan now: see `plans/flat.json` for the shape, and `--plan` to replay one.
 
-Everything else lives in `~/.ai_coc`: the account JSON `ai_coc export` writes, the run logs, and `state.json` — which command is driving the emulator, its pid, its log directory, and who started it (`--agent`, `--session`, `--mission`, or `window`). It is kept after a run ends rather than removed, so the record says what the last run was instead of going blank; deleting it by hand asks whichever run wrote it to stand down, which is the way out when whatever started that run is gone.
+Everything else lives in `~/.ai_coc`: the account JSON `ai_coc export` writes, the run logs, and `state.json` — which command is driving the emulator, its pid, its log directory, and who started it (`--agent`, `--session`, `--mission`, or `window`). It is kept after a run ends rather than removed, so the record says what the last run was instead of going blank. It is also a lock: a command that drives the emulator asks the live run holding it to stand down and waits for it to finish, and takes over at once from a run whose process is gone.
 
 ## 🤝 Contributing
 

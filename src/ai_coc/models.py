@@ -1730,10 +1730,11 @@ class RunnerState(BaseModel):
     has an agent to ask nicely with, and reads as a stop for that reason.
 
     `pid` is what separates a run still going from one that was killed, and what
-    keeps a release from writing over a claim that is not its own. Nothing here
-    checks whether that process is alive: the next claim overwrites the record
-    anyway, so a stale one only ever misleads a reader, and one line of
-    `Get-Process` settles it for them without a platform call in here.
+    keeps a release from writing over a claim that is not its own. `pid_created`
+    is when that process started, which is what tells the holder from a later
+    process that happened to be handed the same pid: `commands.claim` treats the
+    file as a lock and waits out a live holder, so a stale record must not read
+    as one.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -1748,6 +1749,10 @@ class RunnerState(BaseModel):
     # records of one run in step, which is the arrangement that goes stale.
     log: Path | None = None
     caller: Caller = Field(default_factory=Caller)
+    pid_created: float | None = None
+    # Who asked this run to stand down, kept on the `idle` it ends with, so the
+    # agent whose run was stopped can read who took the emulator and why.
+    stop_by: Caller | None = None
 
 
 def _labelled(label: str) -> str:

@@ -29,7 +29,7 @@ description: >-
 
 這是使用者明講的規矩. 那天一個 `launch` 失敗從 logcat 推了很久推不出來, 改成每秒截一張, 馬上看到遊戲啟動時會先跳回桌面一兩秒.
 
-- **Android 裡的畫面**用這個 skill 的 `scripts/look.py`. `ai_coc capture` 跟 spend-loot 的 `eye.py` 都會先 `ensure_coc` 把模擬器跟遊戲開起來, 修的時候正好不能那樣
+- **Android 裡的畫面**用這個 skill 的 `scripts/look.py`. spend-loot 的 `eye.py` 會先 `ensure_coc` 把模擬器跟遊戲開起來, 修的時候正好不能那樣; `ai_coc capture` 只看不開, 但模擬器沒開它只會報錯, 不看 Android 的畫面
 
     ```bash
     uv run --no-sync python .agents/skills/repair-emulator/scripts/look.py <資料夾> 15 1
