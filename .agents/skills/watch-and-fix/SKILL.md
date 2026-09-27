@@ -44,7 +44,7 @@ description: >-
 
 **使用者指名就照他的**: 「你親自監督執行」是第一種, 不要為了省 context 轉包出去.
 
-**迴圈在跑的時候不要下 `ai_coc capture`.** 它跟每個碰模擬器的指令一樣會 claim `state.json`, 結束時寫回 `idle`, 之後 `ai_coc stop` 停不到背景那輪, 還沒生效的停止請求也被它的 claim 蓋掉 (見 `running.md` 的「絕對不要同時跑兩個」). 迴圈在跑時看當下的畫面, 用 `.agents/skills/repair-emulator/scripts/look.py` (不 claim, 也不開任何東西, 用法在檔案開頭) 或開跑時就加的 `--shot-every`; `capture` 留給迴圈停著的時候.
+**迴圈在跑的時候看畫面, 用 `ai_coc capture`、`.agents/skills/repair-emulator/scripts/look.py` 或開跑時就加的 `--shot-every`**: 都只截圖, 不佔 `state.json` 也不開任何東西. `stock`、`status` 這類要操作畫面的指令會先把迴圈停掉 (見 `running.md` 的「絕對不要同時跑兩個」), 除非你就是要停.
 
 **存畫面是事前決定, 看畫面是事後決定.** 問題幾乎都是事後才發現, 所以人不在現場時傾向開著 `--record`: 存了不看不花什麼, 沒存就得再賠一整場. 自己跑時可以不開, 臨時要看就用 `look.py`. 貴的是看: 一晚幾百張, 所以圖拿來確認, 不拿來巡邏, 順序見「卡住的時候先問對問題」.
 

@@ -80,8 +80,12 @@ RECORDABLE = (
 #
 # `export --last` is the same exception reached by a flag rather than by a name,
 # and `_claim_for` is where the two meet: the command drives the emulator, that
-# one invocation of it does not.
-WITHOUT_CLAIM = ("read", "stop")
+# one invocation of it does not. So is `world` without `--go`.
+#
+# `capture` only looks, and so does a plain `world`: both take screenshots and
+# nothing else, and the file is a lock now, so a claim there would stand a
+# farming loop down for one screenshot (#290).
+WITHOUT_CLAIM = ("read", "stop", "capture")
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -278,7 +282,7 @@ def _answer(arguments: argparse.Namespace, run: RunLog) -> BaseModel | str:
                 stop_at=a.stop_at,
             )
         ),
-        "stop": commands.stop,
+        "stop": lambda: commands.stop(_caller(a)),
         "walls": lambda: commands.walls(
             WallOptions(
                 frame_dir=run.frames,
@@ -388,7 +392,11 @@ def _claim_for(arguments: argparse.Namespace, run: RunLog) -> AbstractContextMan
     farming run had written, and release it as `idle` — which reads from
     outside as an emulator nobody is driving, while a battle is still going on.
     """
-    if arguments.command in WITHOUT_CLAIM or getattr(arguments, "last", False):
+    if (
+        arguments.command in WITHOUT_CLAIM
+        or getattr(arguments, "last", False)
+        or (arguments.command == "world" and arguments.go is None)
+    ):
         return nullcontext()
     return commands.claim(arguments.command, run.directory, _caller(arguments))
 

@@ -27,6 +27,7 @@ from ai_coc.models import (
     HeroOptions,
     NamedEntity,
     WallOptions,
+    WorldReport,
     AttackSeries,
     AttackOptions,
     CollectReport,
@@ -313,6 +314,27 @@ class DispatchTests(unittest.TestCase):
             _run_command(_args("export"), self.run)
             claimed.assert_called_once()
         assert [call.args[1] for call in exported.call_args_list] == [True, False]
+
+    def test_a_command_that_only_looks_takes_no_claim(self) -> None:
+        """The file is a lock, so a claim stands the loop holding it down. A
+        screenshot must not cost a farming run its night (#290); a crossing
+        drives the game and claims like anything else.
+        """
+        with (
+            patch.object(
+                commands,
+                "world",
+                return_value=WorldReport(found="day", world="day", outcome="here"),
+            ),
+            patch.object(commands, "capture", return_value=[]),
+            patch.object(commands, "claim") as claimed,
+            patch("sys.stdout", new_callable=io.StringIO),
+        ):
+            _run_command(_args("world"), self.run)
+            _run_command(_args("capture"), self.run)
+            claimed.assert_not_called()
+            _run_command(_args("world", "--go", "night"), self.run)
+            claimed.assert_called_once()
 
     def test_a_capture_run_records_without_being_asked(self) -> None:
         """Saving frames is the whole of what the command does, so it carries no
