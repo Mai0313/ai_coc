@@ -5,6 +5,7 @@ import math
 import time
 import logging
 from pathlib import Path
+from datetime import datetime, timedelta
 import tempfile
 import unittest
 from contextlib import AbstractContextManager
@@ -21,10 +22,12 @@ from ai_coc.ui import world as world_ui
 from ai_coc.ui import runner as shared
 from ai_coc.cli import _parser
 from ai_coc.models import (
+    Loan,
     World,
     Caller,
     RunLog,
     UiJobs,
+    LoanEnd,
     HeroCard,
     ProbeRay,
     WallMenu,
@@ -4869,11 +4872,18 @@ class RunnerStateTests(unittest.TestCase):
 
     FARMING = Caller(agent="codex", session="s1", mission="打日世界資源")
 
-    def _held_by(self, folder: str, caller: Caller = FARMING) -> RunnerState:
+    def _held_by(
+        self, folder: str, caller: Caller = FARMING, *, yields: bool = False
+    ) -> RunnerState:
         """Another process's live run holding the emulator, written to this test's file."""
         self.enterContext(patch.object(commands, "STATE_PATH", Path(folder) / "state.json"))
         held = RunnerState(
-            status="running", pid=424242, pid_created=100.0, command="attack", caller=caller
+            status="running",
+            pid=424242,
+            pid_created=100.0,
+            command="attack",
+            caller=caller,
+            yields=yields,
         )
         commands._write_state(held)
         return held
@@ -5041,6 +5051,179 @@ class RunnerStateTests(unittest.TestCase):
             after = commands.read_state()
         assert after is not None
         assert (after.status, after.caller, after.stop_by) == ("idle", self.FARMING, stopper)
+
+    BORROWING = Caller(agent="claude-code", session="s2", mission="測一個修正")
+
+    def _lent(self, *, ended: LoanEnd | None = None) -> Loan:
+        """A record whose borrower is between commands on a loan from `FARMING`."""
+        now = datetime.now().astimezone()
+        loan = Loan(
+            lender=self.FARMING,
+            borrower=self.BORROWING,
+            since=now,
+            until=now + timedelta(minutes=10),
+            ended=ended,
+        )
+        commands._write_state(
+            RunnerState(status="idle", pid=434343, caller=self.BORROWING, loan=loan)
+        )
+        return loan
+
+    def _released_on_sleep(self) -> list[RunnerState]:
+        """Patch `sleep` so the run holding the emulator releases at the first poll."""
+        seen: list[RunnerState] = []
+
+        def the_holder_releases(_seconds: float) -> None:
+            current = commands.read_state()
+            assert current is not None
+            seen.append(current)
+            commands._write_state(current.model_copy(update={"status": "idle"}))
+
+        self.enterContext(patch.object(commands, "_alive", return_value=True))
+        self.enterContext(patch.object(commands.time, "sleep", side_effect=the_holder_releases))
+        return seen
+
+    def test_a_yielding_run_is_lent_and_its_agent_told_before_it_ends(self) -> None:
+        """Agents in different runtimes cannot message each other, so the record
+        says the run was lent before its holder stands down, and the lender's
+        agent reads it the moment its run ends.
+        """
+        with tempfile.TemporaryDirectory() as folder:
+            self._held_by(folder, yields=True)
+            seen = self._released_on_sleep()
+            with commands.claim("walls", caller=self.BORROWING):
+                driving = commands.read_state()
+            after = commands.read_state()
+        loan = seen[0].loan
+        assert loan is not None
+        assert (loan.lender, loan.borrower, loan.until is not None) == (
+            self.FARMING,
+            self.BORROWING,
+            True,
+        )
+        assert driving is not None
+        assert driving.loan is not None
+        assert driving.loan.until is None
+        assert after is not None
+        assert after.loan is not None
+        assert (after.loan.ended, after.loan.until is not None) == (None, True)
+
+    def test_a_run_that_does_not_yield_is_stopped_not_lent(self) -> None:
+        """Nobody is lined up to start it again, so a loan would only keep
+        whatever queued behind it waiting for nothing.
+        """
+        with tempfile.TemporaryDirectory() as folder:
+            self._held_by(folder)
+            seen = self._released_on_sleep()
+            with commands.claim("walls", caller=self.BORROWING):
+                pass
+        assert (seen[0].status, seen[0].loan) == ("stopping", None)
+
+    def test_a_borrower_with_no_session_hands_back_when_its_command_ends(self) -> None:
+        """Nothing else it runs could be told apart as the same borrower, and a
+        blank session is nobody's, not everybody's.
+        """
+        assert not commands._same(Caller(), Caller())
+        with tempfile.TemporaryDirectory() as folder:
+            self._held_by(folder, yields=True)
+            self._released_on_sleep()
+            with commands.claim("stock"):
+                pass
+            after = commands.read_state()
+        assert after is not None
+        assert after.loan is not None
+        assert after.loan.ended == "returned"
+
+    def test_a_yielding_claim_queues_behind_a_loan_and_clears_it_once_back(self) -> None:
+        """Starting again, or a `world --go` between rounds, must not take the
+        emulator back off the borrower: that is the ping-pong a loan exists to end.
+        """
+        statuses: list[str] = []
+        self._lent()
+
+        def handed_back(_seconds: float) -> None:
+            current = commands.read_state()
+            assert current is not None
+            statuses.append(current.status)
+            commands.giveback()
+
+        with (
+            patch.object(commands.time, "sleep", side_effect=handed_back),
+            commands.claim("world", caller=self.FARMING, yields=True),
+        ):
+            mine = commands.read_state()
+        assert statuses == ["idle"]
+        assert mine is not None
+        assert (mine.status, mine.yields, mine.loan) == ("running", True, None)
+
+    def test_a_yielding_claim_stands_nobody_down(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            self._held_by(folder, self.BORROWING)
+            seen = self._released_on_sleep()
+            with commands.claim("attack", caller=self.FARMING, yields=True):
+                pass
+        assert [state.status for state in seen] == ["running"]
+
+    def test_a_borrower_is_never_queued_behind_the_loan(self) -> None:
+        """The next command of a live test goes straight in, and so does anybody
+        else's: only the lender's background work waits for the loan.
+        """
+        self._lent()
+        with patch.object(commands.time, "sleep") as slept:
+            with commands.claim("stock", caller=self.BORROWING):
+                driving = commands.read_state()
+            with commands.claim("stock", caller=Caller(agent="codex", session="s3")):
+                other = commands.read_state()
+        slept.assert_not_called()
+        assert driving is not None
+        assert driving.loan is not None
+        assert driving.loan.until is None
+        assert other is not None
+        assert other.loan is not None
+        assert other.loan.until is not None
+
+    def test_a_stop_cancels_the_loan_and_what_queued_behind_it_never_starts(self) -> None:
+        """A stop is a stop, not the lender's turn."""
+        self._lent()
+        with (
+            patch.object(commands.time, "sleep", side_effect=lambda _seconds: commands.stop()),
+            pytest.raises(commands.LoanCancelledError),
+            commands.claim("attack", caller=self.FARMING, yields=True),
+        ):
+            pass
+        after = commands.read_state()
+        assert after is not None
+        assert after.loan is not None
+        assert after.loan.ended == "cancelled"
+
+    def test_only_a_loan_still_standing_holds_the_emulator(self) -> None:
+        """One driven on stands while its borrower lives, so a long test is not
+        taken back halfway; an idle one lapses, and a returned one is over.
+        """
+        now = datetime.now().astimezone()
+        driving = RunnerState(status="running", pid=424242, loan=Loan(since=now))
+        with patch.object(commands, "_alive", return_value=True):
+            assert commands._standing(driving) is not None
+        with patch.object(commands, "_alive", return_value=False):
+            assert commands._standing(driving) is None
+        for until, ended, standing in (
+            (now + timedelta(minutes=1), None, True),
+            (now - timedelta(minutes=1), None, False),
+            (now + timedelta(minutes=1), "returned", False),
+        ):
+            loan = Loan(since=now, until=until, ended=ended)
+            record = RunnerState(status="idle", pid=424242, loan=loan)
+            assert (commands._standing(record) is not None) == standing
+
+    def test_giving_back_is_anyone_s_and_says_when_there_is_nothing(self) -> None:
+        """A borrower whose agent died would otherwise keep the lender waiting."""
+        assert "沒有東西要還" in commands.giveback()
+        self._lent()
+        assert "會自己開回去" in commands.giveback()
+        after = commands.read_state()
+        assert after is not None
+        assert after.loan is not None
+        assert after.loan.ended == "returned"
 
     def test_the_wall_command_answers_the_same_file(self) -> None:
         """One file for every long loop rather than a mechanism each."""

@@ -45,6 +45,7 @@ FRAMES = Path(__file__).parent / "frames"
 MINIMAL: dict[str, list[str]] = {
     "attack": [],
     "stop": [],
+    "giveback": [],
     "walls": [],
     "collect": [],
     "builders": [],
@@ -327,14 +328,25 @@ class DispatchTests(unittest.TestCase):
                 return_value=WorldReport(found="day", world="day", outcome="here"),
             ),
             patch.object(commands, "capture", return_value=[]),
+            patch.object(commands, "giveback", return_value=""),
             patch.object(commands, "claim") as claimed,
             patch("sys.stdout", new_callable=io.StringIO),
         ):
             _run_command(_args("world"), self.run)
             _run_command(_args("capture"), self.run)
+            _run_command(_args("giveback"), self.run)
             claimed.assert_not_called()
             _run_command(_args("world", "--go", "night"), self.run)
             claimed.assert_called_once()
+
+    def test_a_queue_a_stop_ended_answers_rather_than_crashes(self) -> None:
+        """`farm` reads a run with no `result.json` as a killed process."""
+        with (
+            patch.object(commands, "claim", side_effect=commands.LoanCancelledError("取消了")),
+            patch("sys.stdout", new_callable=io.StringIO) as shown,
+        ):
+            assert _run_command(_args("attack"), self.run) == 0
+        assert "取消了" in shown.getvalue()
 
     def test_a_capture_run_records_without_being_asked(self) -> None:
         """Saving frames is the whole of what the command does, so it carries no

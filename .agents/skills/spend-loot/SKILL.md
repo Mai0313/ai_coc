@@ -16,7 +16,7 @@ description: >-
 
 這裡是 `farm` 那個圈 (打到滿 → 花掉 → 回去打) 的另外半邊; 什麼時候該花, 什麼時候停手通知人, 在 `.agents/skills/farm/SKILL.md`.
 
-**動手之前先確認沒有別的迴圈在跑**: 有的話, 你的指令會先請它收工, 等它打完手上那一場才開始, 不是你要的就不要下. 怎麼停, 停完怎麼開回去, 還有 `walls` / `upgrade` / `hero` 這種會跑好幾分鐘的怎麼送到背景, 在 `.agents/skills/farm/references/running.md`.
+**動手之前先確認沒有別的迴圈在跑**: 有的話, 你的指令會借走它, 等它打完手上那一場才開始, 花完要 `uv run ai_coc giveback` 它才會接著打; 不是你要的就不要下. 怎麼借, 怎麼還, 還有 `walls` / `upgrade` / `hero` 這種會跑好幾分鐘的怎麼送到背景, 在 `.agents/skills/farm/references/running.md`.
 
 每個 `ai_coc` 指令都帶 `--agent`、`--session`、`--mission` (`AGENTS.md` 的 Say who is driving), 下面的例子為了好讀省略了; `eye.py` 不收這幾個旗標.
 

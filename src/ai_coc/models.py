@@ -1715,6 +1715,28 @@ class Caller(BaseModel):
     mission: str = ""
 
 
+LoanEnd = Literal["returned", "cancelled"]
+
+
+class Loan(BaseModel):
+    """The emulator taken from one agent's run by another, to be handed back.
+
+    Agents in different runtimes cannot message each other, so the lender learns
+    it was borrowed from, and when to start its run again, from this record
+    alone. `until` is None while the borrower is driving, and otherwise when an
+    idle loan lapses. Every field has a default, because a loan that fails to
+    validate would fail the whole record with it.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    lender: Caller = Field(default_factory=Caller)
+    borrower: Caller = Field(default_factory=Caller)
+    since: datetime | None = None
+    until: datetime | None = None
+    ended: LoanEnd | None = None
+
+
 class RunnerState(BaseModel):
     """Who is driving the emulator, kept between runs rather than during one.
 
@@ -1753,6 +1775,12 @@ class RunnerState(BaseModel):
     # Who asked this run to stand down, kept on the `idle` it ends with, so the
     # agent whose run was stopped can read who took the emulator and why.
     stop_by: Caller | None = None
+    # Background work (`--yield`): it stands nobody down, and is lent rather
+    # than stopped when anything else needs the emulator.
+    yields: bool = False
+    # Carried from record to record until the lender runs again or another
+    # loan replaces it, so a lender that looks late still finds out.
+    loan: Loan | None = None
 
 
 def _labelled(label: str) -> str:

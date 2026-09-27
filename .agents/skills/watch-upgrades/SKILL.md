@@ -66,7 +66,7 @@ uv run ai_coc status --label watch --agent <名字> --session <session id> --mis
 
 ## 算出時間, 不要輪詢
 
-兩個世界所有的 `remaining` 跟護盾倒數取**最小**, 就是下一件要講的事. 用 runtime 自己的排程能力 (或者使用者開的定時迴圈) 睡到那個時刻前後, 醒來再跑一次 `ai_coc status` 確認. 讀之前照 `AGENTS.md` 的 Look before driving 再看一次 `state.json`: 睡了幾個小時, 模擬器上可能已經有別的 run 在跑, 這時下 `status` 會先把那個 run 停掉 (見 `.agents/skills/farm/references/running.md` 的「絕對不要同時跑兩個」).
+兩個世界所有的 `remaining` 跟護盾倒數取**最小**, 就是下一件要講的事. 用 runtime 自己的排程能力 (或者使用者開的定時迴圈) 睡到那個時刻前後, 醒來再跑一次 `ai_coc status` 確認. 讀之前照 `AGENTS.md` 的 Look before driving 再看一次 `state.json`: 睡了幾個小時, 模擬器上可能已經有別的 run 在跑, 這時下 `status` 會借走它 (它帶 `--yield` 的話), 讀完馬上 `uv run ai_coc giveback`, 不然它要等 30 分鐘才接回去 (見 `.agents/skills/farm/references/running.md` 的「絕對不要同時跑兩個」).
 
 **不要每十分鐘戳一次**, 這是使用者自己否掉 `--watch` 的理由: 等待是算術不是觀察, 而 `--watch` 那種在程序裡睡的迴圈會佔住 `~/.ai_coc/state.json`, 讓別的 session 以為模擬器在忙. 一整晚一兩次讀取, 不是四十八次. 只有兩種情況密一點:
 

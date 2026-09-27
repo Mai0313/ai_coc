@@ -42,7 +42,7 @@ description: >-
 
 使用者沒交代就照設定檔跑. `--min-gold` 之類只在他明講要放寬時用, `0` 跟不給是兩件事 (見 `LootOverrides` 的 docstring). `--stop-at` 是**測試**用的: 對著剛打滿的村莊打一場來驗東西時給 `0`; 打資源不要用, 滿倉搶回來的進不去.
 
-**碰模擬器之前先讀 `~/.ai_coc/state.json`**: 有別人在跑, 你下會操作畫面的指令就會先把它停掉 (等它打完手上那一場); 不是你要的就不要下. 查法在 `references/running.md` 的「絕對不要同時跑兩個」.
+**碰模擬器之前先讀 `~/.ai_coc/state.json`, 而且每個指令都帶 `--yield`**: 有別人在跑就排隊等它跑完, 不會把它停掉; 別人要用時你的 run 是被借走, 開回去的指令會自己等到還回來. 查法在 `references/running.md` 的「絕對不要同時跑兩個」跟「被借走」.
 
 **每次開跑前先 `uv run ai_coc stock`, 不要憑上一次的印象** (使用者可能中間花掉了). 規矩見「開跑前先記下基準」. 它說滿了的世界, 開跑第一輪就會收工, 不是壞掉.
 
@@ -55,8 +55,8 @@ description: >-
 **沒特別交代就兩個世界都打完.** 不用先問哪邊有空間: 滿的世界第一輪就 `stock_full` (主村在付搜尋費前, 夜世界在進配對前), 代價只是幾秒. 他指定了一個才只打那一個. 夜世界是同一個指令, 多帶平鋪戰術 (為什麼見下面「夜世界不一樣的地方」):
 
 ```bash
-uv run ai_coc world --go night
-uv run ai_coc attack --repeat 0 --plan src/ai_coc/plans/night_flat.json
+uv run ai_coc world --go night --yield
+uv run ai_coc attack --repeat 0 --plan src/ai_coc/plans/night_flat.json --yield
 ```
 
 **順序: 他指定了照他的, 沒指定就先打當下所在的那個.** 「當下所在」是開跑前第一件事用 `ai_coc world` 問到的答案, 記下來. 切畫面就是他指定順序的方式 (想先打夜世界他會自己切過去), 不要推翻.
@@ -65,7 +65,7 @@ uv run ai_coc attack --repeat 0 --plan src/ai_coc/plans/night_flat.json
 
 **一個世界打不動就先去打另一個**, 為什麼卡住不重要: 耗在那邊等於另一個整晚沒打. 看進帳斜率而不是輪數: 主村 `Village holds gold=… elixir=… dark=…`, 夜世界 `Builder base holds gold=… elixir=…`, 連續幾輪幾乎沒動就是打不動. **夜世界倉庫滿了之後那行本來就不動** (在填聖水車), 看每五場一次的 `holding X of Y` 有沒有在長.
 
-**這種 run 不會自己結束** (到不了百分比就沒有 `stock_full`), 所以換世界要先停掉這一輪: 直接下 `world --go` 它也會先請那一輪收工, 等它打完手上那一場退出再坐船; 或者先 `uv run ai_coc stop`, 等背景指令結束. 停止在打完手上那一場才生效, 可能好幾分鐘; `result.json` 寫出來或 `state.json` 的 `status` 回到 `idle` 就是退出了.
+**這種 run 不會自己結束** (到不了百分比就沒有 `stock_full`), 所以換世界要先 `uv run ai_coc stop`, 等背景指令結束再 `world --go … --yield`: 帶 `--yield` 的指令不請任何人收工, 你自己那一輪也一樣, 只會排隊等它. 停止在打完手上那一場才生效, 可能好幾分鐘; `result.json` 寫出來或 `state.json` 的 `status` 回到 `idle` 就是退出了.
 
 **兩邊都不等兵營**, 造兵是即時的; 夜世界的時間幾乎都在等真人配對.
 
@@ -193,7 +193,7 @@ uv run ai_coc attack --repeat 0 --plan src/ai_coc/plans/night_flat.json
 
 回報裡寫三件事: 哪一輪, `run.log` 的哪幾行, 你當下看到的畫面. 那是 `watch-and-fix` 接手的起點; 繞過去不寫, 下一次還會撞上.
 
-要看活的畫面才判斷得出來: 只截圖看用 `look.py` 就好 (見「怎麼盯」), 迴圈不用停; 要動到遊戲或跑別的 `ai_coc` 指令才自己停迴圈, 用完自己開回去, 規矩在 `references/running.md` 的「你自己要用畫面」.
+要看活的畫面才判斷得出來: 只截圖看用 `look.py` 就好 (見「怎麼盯」), 迴圈不用停; 要動到遊戲或跑別的 `ai_coc` 指令才自己停迴圈 (`ai_coc stop`, 等它退出), 用完同一組旗標 (帶 `--yield`) 開回去.
 
 ## 任務報告
 

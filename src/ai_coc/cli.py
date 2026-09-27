@@ -67,8 +67,9 @@ RECORDABLE = (
 )
 
 # The sub-commands that hold no claim on the emulator, listed the way round
-# that fails safely: `read` parses a PNG off the disk and `stop` changes one
-# field of the state file, so neither ever opens ADB. Everything else claims,
+# that fails safely: `read` parses a PNG off the disk, and `stop` and
+# `giveback` each change one field of the state file, so none of them ever
+# opens ADB. Everything else claims,
 # short ones included — a `collect` holds the display for the eight seconds it
 # takes, and a session reading the state file to find out whether the screen is
 # free wants that as much as it wants to know about a farming run.
@@ -85,7 +86,7 @@ RECORDABLE = (
 # `capture` only looks, and so does a plain `world`: both take screenshots and
 # nothing else, and the file is a lock now, so a claim there would stand a
 # farming loop down for one screenshot (#290).
-WITHOUT_CLAIM = ("read", "stop", "capture")
+WITHOUT_CLAIM = ("read", "stop", "giveback", "capture")
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -133,6 +134,7 @@ def _parser() -> argparse.ArgumentParser:
     # longer a status check — the two compose.
     for name, note in (
         ("stop", "請正在跑的進攻迴圈打完這一場就收工"),
+        ("giveback", "把借來的模擬器還回去,借出的那一邊會自己開回去"),
         ("collect", "把採集器裡的資源全部收起來"),
         ("builders", "每個工人在蓋什麼、還要多久"),
         ("stock", "現在這個世界的倉庫水位跟容量,不切世界"),
@@ -252,6 +254,14 @@ def _parser() -> argparse.ArgumentParser:
             "--session", default="", metavar="ID", help="叫它的那個 agent 自己的 session id"
         )
         one.add_argument("--mission", default="", metavar="任務", help="這次在做什麼,一句話")
+        # Background work says so itself, since only its caller knows whether it
+        # will be started again: farming is, a live test is not.
+        one.add_argument(
+            "--yield",
+            dest="yields",
+            action="store_true",
+            help="背景工作: 不停掉別人, 等模擬器空出來才開始; 別人要用時借出去, 還回來再接著跑",
+        )
     return parser
 
 
@@ -283,6 +293,7 @@ def _answer(arguments: argparse.Namespace, run: RunLog) -> BaseModel | str:
             )
         ),
         "stop": lambda: commands.stop(_caller(a)),
+        "giveback": commands.giveback,
         "walls": lambda: commands.walls(
             WallOptions(
                 frame_dir=run.frames,
@@ -368,8 +379,13 @@ def _run_command(arguments: argparse.Namespace, run: RunLog) -> int:
     well, so the answer and the log explaining it are found together instead of
     that depending on whoever started the run having redirected stdout.
     """
-    with _claim_for(arguments, run):
-        answer = _answer(arguments, run)
+    try:
+        with _claim_for(arguments, run):
+            answer = _answer(arguments, run)
+    # A queue that a stop ended is an answer, not a crash: `farm` reads a run
+    # with no `result.json` as a killed process.
+    except commands.LoanCancelledError as cancelled:
+        answer = str(cancelled)
     # Outside the claim: writing the answer down and printing it touch no
     # emulator, and holding the screen across them would say this run is still
     # driving when it has finished.
@@ -398,7 +414,9 @@ def _claim_for(arguments: argparse.Namespace, run: RunLog) -> AbstractContextMan
         or (arguments.command == "world" and arguments.go is None)
     ):
         return nullcontext()
-    return commands.claim(arguments.command, run.directory, _caller(arguments))
+    return commands.claim(
+        arguments.command, run.directory, _caller(arguments), yields=arguments.yields
+    )
 
 
 def _spot(text: str) -> tuple[int, int]:

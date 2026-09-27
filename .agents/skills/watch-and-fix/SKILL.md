@@ -44,7 +44,7 @@ description: >-
 
 **使用者指名就照他的**: 「你親自監督執行」是第一種, 不要為了省 context 轉包出去.
 
-**迴圈在跑的時候看畫面, 用 `ai_coc capture`、`.agents/skills/repair-emulator/scripts/look.py` 或開跑時就加的 `--shot-every`**: 都只截圖, 不佔 `state.json` 也不開任何東西. `stock`、`status` 這類要操作畫面的指令會先把迴圈停掉 (見 `running.md` 的「絕對不要同時跑兩個」), 除非你就是要停.
+**迴圈在跑的時候看畫面, 用 `ai_coc capture`、`.agents/skills/repair-emulator/scripts/look.py` 或開跑時就加的 `--shot-every`**: 都只截圖, 不佔 `state.json` 也不開任何東西. `stock`、`status` 這類要操作畫面的指令會借走迴圈 (見 `running.md` 的「絕對不要同時跑兩個」), 用完要 `giveback`.
 
 **存畫面是事前決定, 看畫面是事後決定.** 問題幾乎都是事後才發現, 所以人不在現場時傾向開著 `--record`: 存了不看不花什麼, 沒存就得再賠一整場. 自己跑時可以不開, 臨時要看就用 `look.py`. 貴的是看: 一晚幾百張, 所以圖拿來確認, 不拿來巡邏, 順序見「卡住的時候先問對問題」.
 
@@ -112,7 +112,7 @@ uv run ai_coc attack --plan .runs/tuned.json
 - **一次只動一件事**, 跑幾輪看差別.
 - **流程照 `AGENTS.md` 的 `## Development flow`**, 不用另外問使用者.
 - **量到的新東西寫進常數旁邊的註解, 不寫進 `AGENTS.md`**: 那裡只收規則, 不變式跟未修的已知缺陷; 要加規則就直接寫, 不用先給使用者看.
-- 改的時候讓迴圈繼續跑. **要活的遊戲才驗得了的, 自己停掉迴圈, 驗完自己開回去**, 不用問, 規矩在 `.agents/skills/farm/references/running.md` 的「你自己要用畫面」那節. 驗證場對著的多半是打滿的村莊, 所以加 `--stop-at 0`; 驗的是日世界的行為, 就趁日世界剛打滿, 還沒坐船去夜世界之前驗, 省兩趟船.
+- 改的時候讓迴圈繼續跑. **要活的遊戲才驗得了的, 直接下驗證的指令借走迴圈, 驗完 `giveback`**, 不用問, 規矩在 `.agents/skills/farm/references/running.md` 的「你自己要用畫面」那節. 驗證場對著的多半是打滿的村莊, 所以加 `--stop-at 0`; 驗的是日世界的行為, 就趁日世界剛打滿, 還沒坐船去夜世界之前驗, 省兩趟船.
 - **merge 以後要讓迴圈用上.** 背景那輪跑的還是開跑時載入的程式碼. 在接縫停掉 (`ai_coc stop`, 等它真的退出), 主 checkout `git pull --ff-only` (帶進的 `pyproject.toml` 或 `uv.lock` 有變就趁停著 `uv sync`), 同一個世界同一組旗標開回去, 剩下的場次就是驗證. 迴圈是 farm subagent 在跑的話, 它的回報進來才算退出, 開回去是傳訊息給同一個 subagent, 見 `AGENTS.md` 的 Taking the game for a live test.
 
 ## 對照要怎麼做
