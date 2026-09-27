@@ -32,8 +32,8 @@ def main() -> None:
         source, box, out = sys.argv[2], sys.argv[3], Path(sys.argv[4])
         left, top, right, bottom = (int(part) for part in box.split(","))
         image = Image.open(source).crop((left, top, right, bottom))
-        # 放大到四倍上限, 但不超過一個對話裝得下的尺寸.
-        scale = min(4, 1400 // max(1, right - left))
+        # 放大到四倍上限, 但不超過一個對話裝得下的尺寸; 比那還寬的裁切就不放大.
+        scale = max(1, min(4, 1400 // max(1, right - left)))
         image.resize((image.width * scale, image.height * scale), Image.LANCZOS).save(out)
         # 倍率跟原點一起印出來, 因為在放大圖上量到的座標要換算回去才能拿來點,
         # 而倍率是隨裁切寬度變的, 讀圖的人沒辦法從輸出反推.

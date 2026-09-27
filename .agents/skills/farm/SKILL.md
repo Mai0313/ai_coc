@@ -14,6 +14,16 @@ description: >-
 
 代替使用者顧兩個村莊. 開跑, 盯著, 判斷, 回報. 這個 skill 不改程式碼.
 
+## 做完的樣子
+
+最後交給使用者的是下面三種之一, 看任務走到哪:
+
+- **任務達成** (他只說打資源: 該打的世界都到 `stop_at`; 他開口要花: 資源花不掉了; 他指定輪數: 輪數跑完): 照「樣板」寫的任務報告, 印在對話裡, 同一份寫到這次執行目錄的 `report.md`. 兩個世界都打了, 「資源」跟「戰績」各一份. 「需要你決定的」每一項同時用選擇題問出去, 交辦裡有「通知我」就推播跟選擇題兩條都發. 交之前查過背景沒有殘留, 查的結果寫進報告. 細節全在「任務報告」
+- **沒達成** (還沒達成就停了, 不管為什麼: 被中止, 「其他停手的理由」, `army_short` 或 `other_village` 收掉整個 series, 「一輪就要停下來的」那種, 途中撞到 bug): 不套樣板, 不寫檔案, 一段話, 見「沒達成的時候講什麼」. 各自要附的東西跟著那一條走, 例如 `army_short` 附軍隊畫面, 撞到 bug 附「途中撞到 bug」那三件事; 你是 subagent 而那個停不是你下的, 還要寫停在哪, 見 `references/running.md` 的「中止」
+- **中途被問進度**: 當下的資源跟輪數, 迴圈照跑, 見「中途被問進度」
+
+另外, 你看過而且拿來下判斷的每一張圖都發給使用者 (見「怎麼盯」). 你是 subagent 的話, 上面這些交回給派你的 session, 要問的題目跟他要求過的通知在回報裡寫明, 讓它去問.
+
 ## 三份文件的分工
 
 - **程式碼**說現在是什麼: 旗標看 `src/ai_coc/cli.py` 的 `_parser()`, 指令做什麼看 `src/ai_coc/commands.py` 對應的函式, 回報欄位看 `src/ai_coc/models.py` 的 `AttackReport` / `AttackSeries` / `WallReport`
@@ -32,13 +42,15 @@ description: >-
 
 使用者沒交代就照設定檔跑. `--min-gold` 之類只在他明講要放寬時用, `0` 跟不給是兩件事 (見 `LootOverrides` 的 docstring). `--stop-at` 是**測試**用的: 對著剛打滿的村莊打一場來驗東西時給 `0`; 打資源不要用, 滿倉搶回來的進不去.
 
+**碰模擬器之前先讀 `~/.ai_coc/state.json`**: 有別人在跑就不要開, 查法在 `references/running.md` 的「絕對不要同時跑兩個」.
+
 **每次開跑前先 `uv run ai_coc stock`, 不要憑上一次的印象** (使用者可能中間花掉了). 規矩見「開跑前先記下基準」. 它說滿了的世界, 開跑第一輪就會收工, 不是壞掉.
 
 **不用自己開模擬器或遊戲**: `commands._controller()` 會 `ensure_coc`.
 
 **這個遊戲有兩個村莊, 而遊戲會開在上次離開的那一個**: 日世界 (主村) 跟夜世界 (建築大師基地), 靠一艘船來回. `ai_coc world` 答現在在哪個世界, 不點任何東西; `ai_coc world --go day|night` 坐船切過去, 已經在那邊就什麼都不做.
 
-**沒有指令會自己換村莊, 每一個都做遊戲當下停著的那一個.** 先 `world --go` 再開 `attack`. `world --go` 回的不是那個村莊 (`crossing_failed`) 就不要開, 先去看畫面. 開跑後對一下 `run.log` 的 `Playing the day village, the one the game is on` (或 night): 兩邊容量差十倍, 打錯世界「還差多少」就全錯. 打到一半遊戲被換到另一個村莊 (例如使用者自己切), 那一輪回 `other_village`, 整批收工, 不會自己坐船回去.
+**沒有指令會自己換村莊, 每一個都做遊戲當下停著的那一個.** 先 `world --go` 再開 `attack`. `world --go` 回的不是那個村莊 (`crossing_failed`) 就不要開, 先去看畫面. 開跑後對一下 `run.log` 打的是哪一邊: 每一輪開頭 `Attack run starts` 是主村, `Builder base attack run starts` 是夜世界 (沒給 `--plan` 的那批第一輪前面還有一行 `Playing the day village, the one the game is on` (或 night); 給了 `--plan` 就打戰術檔寫的那個村莊, 沒有這行). 兩邊容量差十倍, 打錯世界「還差多少」就全錯. 打到一半遊戲被換到另一個村莊 (例如使用者自己切), 那一輪回 `other_village`, 整批收工, 不會自己坐船回去.
 
 **沒特別交代就兩個世界都打完.** 不用先問哪邊有空間: 滿的世界第一輪就 `stock_full` (主村在付搜尋費前, 夜世界在進配對前), 代價只是幾秒. 他指定了一個才只打那一個. 夜世界是同一個指令, 多帶平鋪戰術 (為什麼見下面「夜世界不一樣的地方」):
 
@@ -49,7 +61,7 @@ uv run ai_coc attack --repeat 0 --plan src/ai_coc/plans/night_flat.json
 
 **順序: 他指定了照他的, 沒指定就先打當下所在的那個.** 「當下所在」是開跑前第一件事用 `ai_coc world` 問到的答案, 記下來. 切畫面就是他指定順序的方式 (想先打夜世界他會自己切過去), 不要推翻.
 
-**一次只跑一個世界, 而「兩邊都打滿」是一個你要接的序列, 不是一個指令.** 同時開會搶同一個畫面. 最後一輪的 `AttackReport.stock_full` 是 `true` 就是這個世界打完了 (`result.json` 是陣列, 讀法在 `references/running.md`), 但那只是一半: 通知進來, 讀最後一輪確認是 `stock_full`, 就 `world --go` 換另一個, 開一樣的 `attack`, 它也 `stock_full` 才算達成 (日世界那半還要接「倉庫滿了」). 怎麼開才叫得醒你 (shell 層 detach 叫不醒), 通知進來看什麼, 在 `references/running.md` 的「開跑」跟「盯」. 哪幾種滿了、水位多少不在報告上: grep `run.log` 的 `Storage limit reached (gold/elixir); farming stops with 金幣 …／聖水 …`, 夜世界前面還有一行 `the cart held X of Y N battle(s) ago`; 不要從 `attacked` 推.
+**一次只跑一個世界, 而「兩邊都打滿」是一個你要接的序列, 不是一個指令.** 同時開會搶同一個畫面. 最後一輪的 `AttackReport.stock_full` 是 `true` 就是這個世界打完了 (`result.json` 是陣列, 讀法在 `references/running.md`), 但那只是一半: 通知進來, 讀最後一輪確認是 `stock_full`, 就 `world --go` 換另一個, 開一樣的 `attack`, 它也 `stock_full` 才算達成 (日世界那半還要接「倉庫滿了」). 怎麼開才叫得醒你 (shell 層 detach 叫不醒), 通知進來看什麼, 在 `references/running.md` 的「開跑」跟「盯」. 哪幾種滿了、水位多少不在報告上: grep `run.log` 的 `Storage limit reached`, 主村整行像 `Storage limit reached (金幣/聖水/黑水); farming stops with 金幣 …／聖水 …／黑水 …` (括號裡是讀得到容量而且都滿過 `stop_at` 的那幾項, 夜世界沒有黑水), 夜世界前面還有一行 `the cart held X of Y N battle(s) ago`; 不要從 `attacked` 推.
 
 **一個世界打不動就先去打另一個**, 為什麼卡住不重要: 耗在那邊等於另一個整晚沒打. 看進帳斜率而不是輪數: 主村 `Village holds gold=… elixir=… dark=…`, 夜世界 `Builder base holds gold=… elixir=…`, 連續幾輪幾乎沒動就是打不動. **夜世界倉庫滿了之後那行本來就不動** (在填聖水車), 看每五場一次的 `holding X of Y` 有沒有在長.
 
@@ -74,11 +86,11 @@ uv run ai_coc attack --repeat 0 --plan src/ai_coc/plans/night_flat.json
 
 ## 怎麼跑
 
-**背景跑.** 前景會把 session 卡住幾十分鐘, 使用者也插不了話. 機制跟目錄佈局讀 `references/running.md`.
+**主 session 背景跑, subagent 前景分段阻塞.** 前景會把主 session 卡住幾十分鐘, 使用者也插不了話; subagent 反過來, 把指令丟到背景再結束回合就再也醒不過來. 兩種各怎麼做, 目錄佈局, 以及每個指令都要帶的 `--agent`、`--session`、`--mission` 跟 subagent 要用的 `uv run --no-sync`, 都在 `references/running.md` 的「為什麼一定要背景跑」跟「開跑」; 這份 skill 裡的指令為了好讀都省略了.
 
 **預設 `--repeat 0`**: 倉庫滿了迴圈自己會 break, 正是「打到資源滿」. 使用者指定輪數就照他的.
 
-**要不要留畫面自己決定.** `--record` 存迴圈讀的每一張, `--shot-every` 加一條固定心跳; 一場幾十 MB. 會有東西要查就開, 單純掛機就不開, 臨時想看就 `uv run ai_coc capture`.
+**要不要留畫面自己決定.** `--record` 存迴圈讀的每一張, `--shot-every` 加一條固定心跳; 一張 PNG 平均兩 MB 多 (`AGENTS.md` 量過 11 456 張佔 27.2 GB). 會有東西要查就開, 單純掛機就不開, 臨時想看照「怎麼盯」的畫面那條.
 
 ## 怎麼盯
 
@@ -86,9 +98,9 @@ uv run ai_coc attack --repeat 0 --plan src/ai_coc/plans/night_flat.json
 
 - **`run.log`** 便宜, 答「走到哪, 這輪結果是什麼」. 跨好幾次找同一個症狀用 `grep -r ~/.ai_coc/logs/*/run.log`
 - **`plans.jsonl`** (每次執行的目錄都有, 一場一行帶輪數) 答那一場的 AI 叫部隊往哪打. 一輪打得爛先看它, 再對 `run.log` 的實際發生: 對不上是迴圈的問題, 對得上是戰術的問題
-- **畫面**答 log 答不了的: 畫面長什麼樣, 兵有沒有在打, 判讀器讀的跟眼睛看的一不一樣. `uv run ai_coc capture --count N` 抓活著的遊戲 (`--label` 取名), `uv run ai_coc read <png>` 看每個 parser 讀到什麼
+- **畫面**答 log 答不了的: 畫面長什麼樣, 兵有沒有在打, 判讀器讀的跟眼睛看的一不一樣. 迴圈在跑的時候看 `--record` 留下的 `frames/`, 或用 `repair-emulator` 的 `scripts/look.py` 截 (它只截圖, 不碰 `state.json`); **不要趁迴圈在跑下 `ai_coc capture`**, 理由在 `references/running.md` 的「絕對不要同時跑兩個」. 沒有迴圈在跑時才用 `uv run ai_coc capture --count N` 抓活著的遊戲 (`--label` 取名). `uv run ai_coc read <png>` 不碰模擬器, 隨時能跑, 看每個 parser 讀到什麼
 
-**看過的圖發一份給使用者.** 只要你看了並據此下判斷, 就用檔案傳送機制發出去, 不要只留路徑; 他看不到你的工具輸出.
+**看過的圖發一份給使用者.** 只要你看了並據此下判斷, 就用檔案傳送機制發出去, 不要只留路徑; 他看不到你的工具輸出. 你是 subagent 而發不出去, 就把路徑跟它說明了什麼寫進回報, 讓主 session 發.
 
 **幾分鐘看一次就夠**, 不要每幾秒讀一次, 也不要掛東西在 log 上等新行 (見 `references/running.md` 的「盯」). 空檔拿去做別的事.
 
@@ -141,7 +153,7 @@ uv run ai_coc attack --repeat 0 --plan src/ai_coc/plans/night_flat.json
 **一, 授權.** 建築照他那句話做, 城牆要他指名到「牆」, 英雄要他指名到哪一個.
 
 - **城牆要使用者指名, 預設不刷.** 使用者 2026-09-15 的常設交代, 原話是「默認是不升級牆壁, 除非我說」, 而他要的是被通知: 「待會不要升級牆壁 通知我就好」. 他沒講理由, **不要替他補一個**, 也不要因為這一趟划算就自己判斷. 籠統的「把資源花掉」不算指名到牆. 牆付錢當下就升好、工人立刻還回來, 那是它值得列成通知選項的原因, 不是可以自己跑的理由
-- **建築不用問, 但要有工人閒著** (`ai_coc builders` 說真的有): 倉庫滿了而工人發呆, 資源被丟掉, 工人也沒蓋東西
+- **建築不用問, 但要有工人閒著** (`ai_coc worker` 的 `free` 說真的有): 倉庫滿了而工人發呆, 資源被丟掉, 工人也沒蓋東西
 - **英雄要使用者指名.** 升級中的英雄不能上場, 升一個是拿幾天的進攻火力去換. `ai_coc hero` 不給 `--upgrade` 只讀不動, 讀出價格讓他挑 (用選擇題問)
 
 **二, 順序: 他指名要刷牆的那一趟, `walls` 先, `upgrade` 後.** 兩個搶同一個工人, 而 `ai_coc upgrade` 會把**每一個**閒置工人派去蓋好幾天的建築, 先跑它 `walls` 就只會撞「所有建築工人都在忙碌中」. 反過來不虧: 牆買完還有剩或被大本營卡住, 工人都還閒著, `upgrade` 接得上. 要花但沒指名到牆的那一趟只有 `upgrade` 會跑, 而它一跑牆這個出口就關好幾天: **通知照樣先發, 牆列成一個選項, 但講明它會在 `upgrade` 跑下去之後過期, 然後照樣跑 `upgrade`, 不要停下來等他回話** (「不要回頭問」那條, 先發通知也留不住任何一個工人). 他多半不在, 題目還常要經主 session 轉一手, 回覆幾乎一定落在工人被借走之後; 不要寫「已經幫你問過了」, 要寫: 要刷牆得等下一個工人空出來再說一次.
@@ -155,9 +167,9 @@ uv run ai_coc attack --repeat 0 --plan src/ai_coc/plans/night_flat.json
 
 **黑水只有升英雄能消化.** 黑水滿了而使用者沒指名英雄, 那一項就停在那裡, 回報要講出來.
 
-通知時附上工人狀況: `ai_coc builders` 說每個工人在蓋什麼、最快的一個還要多久, 決定要不要叫他等; 只要閒著幾個, 一張主村畫面丟 `uv run ai_coc read <png>` 看 `builders`.
+通知時附上工人狀況: `ai_coc worker` 說每個工人在蓋什麼 (`jobs` 的 `name`, 沒有 API key 時是空的) 跟各還要多久 (`remaining` 秒, 最快的自己取最小), 決定要不要叫他等; 手上已經有一張主村畫面而只要知道閒著幾個, 丟 `uv run ai_coc read <png>` 看 `builders`.
 
-**其他停手的理由**: 遊戲一直回不到村莊, 同一個錯誤連續三次以上, 一輪也沒打成過, **連續三輪 `模擬器沒有回應：…`** (log 說 `The emulator has not answered for 3 rounds`, 先看模擬器還活著沒有). 這些都停下來講, 不要一直重試: 失敗要吵.
+**其他停手的理由**: 遊戲一直回不到村莊, 同一個錯誤連續三次以上, 一輪也沒打成過, **連續三輪 `emulator_silent`** (log 說 `The emulator has not answered for 3 rounds`, 先看模擬器還活著沒有). 這些都停下來講, 不要一直重試: 失敗要吵.
 
 ## 停手之後就真的停手
 
@@ -169,6 +181,8 @@ uv run ai_coc attack --repeat 0 --plan src/ai_coc/plans/night_flat.json
 
 `donate` 也幾乎沒成本, 想跑就跑, 但只做主村 (夜世界回 `builder_base`).
 
+這兩個一樣**不跟背景那輪同時跑** (`references/running.md` 的「絕對不要同時跑兩個」): 等接縫 (換世界前, 收工前) 再跑, 或者先停迴圈, 跑完照同一個世界同一組旗標開回去 (停跟開回去的規矩在同一份的「你自己要用畫面」).
+
 `upgrade` 跟 `hero` **不要在打到一半插進去**: 要先停迴圈, 而且倉庫沒滿時 `upgrade` 挑得到的比較差. 它們的位置是倉庫滿了那個接縫, 授權跟順序見上一節.
 
 使用者指名要升某一樣東西, 換 `spend-loot`: `ai_coc upgrade` 不給 `--only` 只挑最貴而且買得起的, 怎麼指定在那份 skill 的「三個入口」那節.
@@ -179,7 +193,7 @@ uv run ai_coc attack --repeat 0 --plan src/ai_coc/plans/night_flat.json
 
 回報裡寫三件事: 哪一輪, `run.log` 的哪幾行, 你當下看到的畫面. 那是 `watch-and-fix` 接手的起點; 繞過去不寫, 下一次還會撞上.
 
-要看活的畫面才判斷得出來, 就自己停迴圈, 看完自己開回去, 規矩在 `references/running.md` 的「你自己要用畫面」.
+要看活的畫面才判斷得出來: 只截圖看用 `look.py` 就好 (見「怎麼盯」), 迴圈不用停; 要動到遊戲或跑別的 `ai_coc` 指令才自己停迴圈, 用完自己開回去, 規矩在 `references/running.md` 的「你自己要用畫面」.
 
 ## 任務報告
 
@@ -198,7 +212,7 @@ uv run ai_coc attack --repeat 0 --plan src/ai_coc/plans/night_flat.json
 
 - **對手擺出來的總量**寫「無此欄位」(`attacked` 是 `null`), 不要留空讓人以為是零
 - **戰績看 `phases`** (第二階段算第二次), 不是輪數; 沒有跳過那行
-- **聖水另外算推車**: 收工前跑一次 `uv run ai_coc collect`, 倉庫有空間它會倒進去; 打滿收工時它回 `locked_holding` 附 `held` 跟 `capacity`, 跟倉庫分開寫 (倉庫 X + 推車 Y)
+- **聖水另外算推車**: 收工前跑一次 `uv run ai_coc collect`, 倉庫有空間它會倒進去; 打滿收工時它的 `result.json` 在 `cart` 底下回 `locked_holding` 附 `held` 跟 `capacity`, 跟倉庫分開寫 (倉庫 X + 推車 Y)
 
 ### 開跑前先記下基準
 
@@ -252,7 +266,7 @@ uv run ai_coc attack --repeat 0 --plan src/ai_coc/plans/night_flat.json
 
 - **輪數 / 開打 / 空手 / 跳過**: `AttackSeries` 數出來, 空手的理由看那一輪的 `outcome`
 
-- **刷牆**: `WallReport.walls` 跟 `paid("gold")` / `paid("elixir")` 說買了多少, `WallReport.outcome` 說為什麼停
+- **刷牆**: `walls` 的 `result.json` 只有 `upgrades` (每批的 `unit` 單價、`count` 片數、`resource` 付哪一種) 跟 `outcome`. 片數是 `count` 的和, 各資源花多少是 `unit × count` 的和 (`WallReport.walls` 跟 `paid()` 算的就是這個, 但它們不寫進檔案); `run.log` 的 `Walls: … (金幣 X／聖水 Y)` 那行是現成的. `outcome` 說為什麼停
 
 - **工人**: `ai_coc worker`, 答的是當下站著的那個村莊 (見「倉庫滿了」開頭)
 
@@ -296,3 +310,5 @@ uv run ai_coc attack --repeat 0 --plan src/ai_coc/plans/night_flat.json
 ## 中途被問進度
 
 報當下的資源跟輪數就好, **不要停下迴圈**. 報告留到任務真的達成再交.
+
+數字從那次的 `run.log` 讀: 最近一行 `Village holds …` (夜世界 `Builder base holds …`) 跟 `Round N of`. **不要為了這個下 `ai_coc stock`**: 迴圈在跑的時候, 任何會碰模擬器的指令都跟它搶畫面, 還會把 `state.json` 蓋掉 (`references/running.md` 的「絕對不要同時跑兩個」).
