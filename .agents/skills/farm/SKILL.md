@@ -226,7 +226,7 @@ uv run ai_coc attack --repeat 0 --plan src/ai_coc/plans/night_flat.json --yield
 ```
 
 - **第一行**: 打完沒, 總共花多久. 只打一個世界就講那一個
-- **每個打了的世界一行**, 不加總: 幾場, 進帳, 現在的水位 (滿了寫「全滿」). 夜世界的聖水車另外寫 (推車 X → Y): 收工前跑一次 `uv run ai_coc collect`, 倉庫滿時它在 `cart` 底下回 `locked_holding` 附 `held` 跟 `capacity`
+- **每個打了的世界一行**, 不加總: 幾場, 進帳, 現在的水位 (滿了寫「全滿」). 夜世界的聖水車另外寫 (推車 X → Y): 收工前跑一次 `uv run ai_coc collect`, 倉庫滿時它在 `cart` 底下回 `locked_holding` 附 `held` 跟 `capacity`; 回 `locked`, `not_found`, `not_parked` 或 `wrong_world` 都是**沒讀到**, 寫「聖水車讀不到」, 不准寫成滿, 理由同上面 `stock_full` 那條
 - **最後一行**: 工人閒幾個 (閒著的話講最快那個還要多久), 日世界護盾剩多久 (讀不到就說讀不到)
 - **他開口要花的那一趟多一行**: 刷了幾片牆, 升了什麼, 各花多少
 - 數字用「萬」, 到萬為止
