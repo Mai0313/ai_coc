@@ -34,8 +34,10 @@ def _state_file_in_tmp(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
 
     `_held` goes back with it: it is module state that outlives one test, and
     left set by a test that claimed, the next test's `stop_requested` would read
-    its own empty directory as somebody having deleted the file.
+    its own empty directory as somebody having deleted the file. `_borrowed`
+    likewise, or the next test's claim would take a loan for its own.
     """
     monkeypatch.setattr(commands, "STATE_PATH", tmp_path / "state.json")
     monkeypatch.setattr(commands, "_held", None)
+    monkeypatch.setattr(commands, "_borrowed", None)
     monkeypatch.setattr(config, "data_root", lambda: tmp_path)

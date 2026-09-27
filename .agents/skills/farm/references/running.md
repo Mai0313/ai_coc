@@ -6,7 +6,7 @@
 
 一輪進攻四到五分鐘起跳, `--repeat 0` 打到倉庫滿可能是好幾個小時. **主 session 的角色是監督, 不是執行**: 迴圈在背景跑, 你在前景讀 log、改東西、回答使用者, 他隨時插得了話.
 
-**會跑很久的都用背景送出去, 這裡是唯一一份清單**: `attack`; `walls` (掃描加購買好幾分鐘); `upgrade` 跟 `hero` (找不到目標會退回 `_sweep`, 兩分半起跳); `donate --rounds 0`. 幾秒就回來的前景跑: `world`, `read`, `collect`, `capture`, `view`, `builders`; `world --go` 真的坐船約一分鐘, 也前景跑.
+**會跑很久的都用背景送出去, 這裡是唯一一份清單**: `attack`; `walls` (掃描加購買好幾分鐘); `upgrade` 跟 `hero` (找不到目標會退回 `_sweep`, 兩分半起跳); `donate --rounds 0`. 幾秒就回來的前景跑: `world`, `read`, `collect`, `capture`, `view`, `builders`; `world --go` 真的坐船約一分鐘, 也前景跑; 被借走之後開回去的那一次例外, 它可能要排隊很久, 見「被借走」.
 
 **你是 subagent 的話反過來, 在前景阻塞.** 背景指令跑完的通知只送到主對話, 也沒有人在跟你講話, 所以 subagent 把指令 (或等它的迴圈) 丟到背景再結束回合, 就會停在那裡不動. **subagent 要在前景阻塞**, 而一次阻塞的呼叫有 runtime 自己的 timeout 上限 (常見是十分鐘, 預設值往往更短), 所以分段等: 一段比那個上限短, **那次呼叫的 timeout 要設得比一段長** (沒設的話一段還沒等完就被砍), 等不到就再下一段. 每一段照「等待要有出口, 收工要清乾淨」寫, 不要只看 `result.json`:
 
@@ -14,7 +14,7 @@
 RUN=~/.ai_coc/logs/<這次的目錄>
 for i in 1 2 3; do   # 一段最多九分鐘
     [ -s "$RUN/result.json" ] && break
-    grep -q '"status": "idle"' ~/.ai_coc/state.json && break
+    grep -q '"status": "idle"' ~/.ai_coc/state.json && grep -qF "$(basename "$RUN")" ~/.ai_coc/state.json && break
     sleep 180
 done
 ```
@@ -23,18 +23,22 @@ done
 
 一輪四五分鐘, 所以 `--repeat 3` 要兩段左右, `--repeat 0` 要很多段. **每一段等完還沒結束, 就看 `state.json` 的 `pid` 還在不在**: 還在就是 run 還活著, 接著等下一段 (順便看 `run.log` 有沒有往前走); 不在了就是被砍掉 (這種 run 會一直停在 `running`), 停下來回報. 這個 pid 檢查就是整段等待的出口. 前景卡住對 subagent 沒有代價.
 
+**帶 `--yield` 的指令可能還在排隊**: `run.log` 最後一行是 `waiting for it to come back` (等借走模擬器的那一邊還回來) 或 `holds the emulator; waiting for it to finish` (等別人的指令跑完), `state.json` 上也還不是它, 所以上面那段只在 `state.json` 的 `log` 是這次的目錄時才算它收工. 照常分段等, 這兩行之後 log 不動是正常的, 不算下面說的卡死; 借用最久到借的那一邊最後一個指令跑完 30 分鐘, 有人 `giveback` 就更早.
+
 **pid 還在但 `run.log` 超過一場戰鬥的時間 (五分鐘上下; 夜世界配對最久量過五分半) 沒有新的一行, 是卡死了**, 只有一個例外: 最後一行是 `waiting for the server rather than tapping` 的話, 迴圈在等伺服器, 最久 45 分鐘不寫 log, 那是正常的, 照常等. 卡死的樣子是這樣: 模擬器重開之後停在 `Launching com.supercell.clashofclans` 九分鐘以上就出過, 那次模擬器已經掛了而等待一直沒結束. 不要再等下一段: 用 `repair-emulator` 的 `look.py` 看畫面 (它不佔用模擬器), 回報 pid, log 最後一行跟那張畫面.
 
 ## 開跑
 
 ```bash
-uv run ai_coc world --go day --agent <名字> --session <session id> --mission "打日世界資源"
-uv run ai_coc attack --repeat 0 --record --agent <名字> --session <session id> --mission "打日世界資源"
+uv run ai_coc world --go day --yield --agent <名字> --session <session id> --mission "打日世界資源"
+uv run ai_coc attack --repeat 0 --record --yield --agent <名字> --session <session id> --mission "打日世界資源"
 ```
 
 **你是跟開發同時跑的 farm subagent, 就在主 checkout (預設分支) 上跑, 每個指令都寫成 `uv run --no-sync ai_coc …`**, `stop` 也一樣: 開發在另一個 worktree 做, 理由在 `AGENTS.md` 的 The loop runs the main checkout. 真的要同步 (merge 帶進新的依賴, 指令 import 失敗) 就等手上的程序結束再 `uv sync`.
 
-**每一個 `ai_coc` 指令都帶 `--agent`、`--session`、`--mission`**, 其他 skill 裡寫的指令也一樣: 你自己的名字 (`claude-code`、`antigravity`、`codex`), 你自己的 session id, 這一趟在做什麼 (一句話). 每個指令都把它們寫進自己 `run.log` 的第二行; 會佔用模擬器的指令還會寫進 `state.json` 的 `caller`, 所以那裡記的永遠是開始這一輪的人, 而 `stop` 是誰下的要去翻 `*-stop` 那幾個執行目錄. 別的 session 就是靠這些查出是誰在開模擬器. 旗標是選填的, 那是留給使用者手動打指令; agent 一律要帶, 沒帶的話 log 會留一行 warning.
+**每一個 `ai_coc` 指令都帶 `--agent`、`--session`、`--mission`**, 其他 skill 裡寫的指令也一樣: 你自己的名字 (`claude-code`、`antigravity`、`codex`), 你自己的 session id, 這一趟在做什麼 (一句話). 每個指令都把它們寫進自己 `run.log` 的第二行; 會佔用模擬器的指令還會寫進 `state.json` 的 `caller`, 所以那裡記的永遠是開始這一輪的人, 誰叫停的記在 `stop_by`. 別的 session 就是靠這些查出是誰在開模擬器. 旗標是選填的, 那是留給使用者手動打指令; agent 一律要帶, 沒帶的話 log 會留一行 warning.
+
+**打資源的迴圈每個指令都帶 `--yield`**, `world --go` 跟 `attack` 都要: 那是背景工作, 不會把別人的 run 停掉, 模擬器有人在用就排隊等; 別人要用時它是被借走, 不是被停掉 (見「被借走」). 測試、驗證、花資源這些前景的事不帶.
 
 **先切到要打的村莊, 再開.** `attack` 打的是遊戲當下停著的村莊, 遊戲會開在上次離開的那一個, 而沒有指令會自己坐船. `world --go` 沒切成就不要開 `attack`. 夜世界是 `world --go night`, 前景跑.
 
@@ -77,7 +81,7 @@ jq '.[-1] | {world, outcome, stock_full, attacked}' ~/.ai_coc/logs/<run>/result.
 **通知進來, 先讀 `result.json` 的最後一個元素, 再決定下一步.** 檔案是空的, 或 exit code 不是 0: 程序被砍掉或崩掉, `run.log` 最後幾十行是唯一的線索, 遊戲多半停在回不了家的畫面, 先看畫面再決定. 檔案完整的話, 最後一個元素加上 `run.log` 最後幾行說它怎麼結束:
 
 - `stock_full` 是 `true`: 這個世界打滿了, **是接縫不是終點**. 兩個世界都要打就換另一個; 日世界要花的話照 `farm` 的「倉庫滿了」那節. 不要回頭問使用者要不要繼續
-- `run.log` 結尾有 `Stop requested`: 有人下了 `ai_coc stop` (停在回合之間或兩輪中間的等待都會留這一行). 誰停的看 log, 現在還有沒有人在跑看 `~/.ai_coc/state.json`. 不是你下的就不要自己開回去, 見「中止」
+- `run.log` 結尾有 `Stop requested`: 有人下了 `ai_coc stop` (停在回合之間或兩輪中間的等待都會留這一行). 誰停的看 `~/.ai_coc/state.json` 的 `stop_by`. 不是你下的, 先看同一份檔案有沒有 `loan`, 見「被借走」
 - 使用者指定的 `--repeat N` 跑完: 照他的交辦接下去或收工
 - 有幾輪 `outcome` 是 `emulator_silent`: 模擬器當下不理人, 夾在中間一兩輪不是事, 照常打. 但結尾是 `The emulator has not answered for 3 rounds; ending the series` 就是連續三輪, 整個 series 收工: 先看模擬器還活著沒有, 不要直接開下一個. 這種有完整的 `result.json`, 不要跟被砍掉的搞混
 - 都不是就是迴圈自己放棄了, `outcome` 跟最後一條 WARNING / ERROR 說原因, 例如打到一半遊戲跑到另一個村莊 (最後一個元素是 `other_village`, 多半是有人切過村莊, 例如使用者在手機上玩). 這幾種歸 `farm` 的「其他停手的理由」, 先把遊戲弄回村莊, 不要直接開下一個
@@ -102,6 +106,8 @@ jq '.[-1] | {world, outcome, stock_full, attacked}' ~/.ai_coc/logs/<run>/result.
 
 **跑 `uv run ai_coc stop`, 這是停止的唯一方式.** 它把 `~/.ai_coc/state.json` 的 `status` 改成 `stopping` 就秒回, 不碰遊戲也不找程序. 每個會碰模擬器的指令都讀同一份檔案, 所以不必先查在跑哪一個; 它會回你叫停的是什麼、pid 多少, 沒有人在跑就說沒有. 你帶的 `--agent`、`--session`、`--mission` 會記成 `stop_by`, 那一輪收工後的 `idle` 紀錄還留著, 被停的那一邊讀得到是誰、為什麼.
 
+**有借用的時候 `stop` 分兩層**: 借用方的指令在跑, 它只停那個指令, 借用留著, 出借方之後照樣開回去; 沒有指令在跑, 它取消借用, 出借方不會開回去, 排隊中的那個也不會開跑. 所以要連打資源一起停, 等指令停了再下一次.
+
 **不用再手動刪那份檔案.** 程序死掉留下的 `running` 不會卡住任何人: 下一個要用模擬器的指令查得出那個程序已經不在, 直接接手.
 
 停在每個迴圈最安全的接縫: `attack` 在回合之間跟對手之間, `walls` 在批次之間跟開場掃描村莊時. 所以**停不是立刻的**, 最久要等當下那一場戰鬥打完或那一批城牆買完 (量過一次 107 秒). 打到一半棄權會把軍隊丟在場上、遊戲停在回不了家的畫面, 比多等兩分鐘貴得多.
@@ -112,27 +118,35 @@ jq '.[-1] | {world, outcome, stock_full, attacked}' ~/.ai_coc/logs/<run>/result.
 
 **使用者說停, 停的是整件事而不是一個指令.** `state.json` 只停得下當下在跑的那個迴圈, 不知道你打算接著做什麼. 所以收到停止之後**不要再開下一個指令**, 除非使用者又說要繼續. 這一條沒有機制在管, 只有你.
 
-**你是 farm subagent 而那個停不是你下的**, 多半是主 session 要借模擬器去測 (`AGENTS.md` 的 Taking the game for a live test). 不要自己開回去, 馬上回報: 你的回報送到, 就是它知道畫面空出來的訊號. 回報寫明停在哪 (打的世界跟旗標, 執行目錄, 累計進帳), 基準留在你手上; 它之後傳話叫你接回去, 就是上面說的「又說要繼續」, 同一個世界同一組旗標開回去.
+**你是 farm subagent 而那個停不是你下的, 又沒有借用**, 是有人用 `ai_coc stop` 真的叫停. 不要自己開回去, 馬上回報停在哪 (打的世界跟旗標, 執行目錄, 累計進帳), 基準留在你手上; 之後有人傳話叫你接回去, 就是上面說的「又說要繼續」, 同一個世界同一組旗標開回去.
 
 **這一條只管使用者叫停.** 迴圈自己跑完 (倉庫滿了, 輪數跑完) 的通知是接縫不是終點, 自己接下一步, 判斷在 `.agents/skills/farm/SKILL.md` 的「倉庫滿了」那節. 差別是誰按的停.
 
-## 你自己要用畫面: 自己停, 用完自己開回去
+## 被借走
 
-**開發或驗證要動到活的遊戲, 就自己把背景那輪停掉, 不用問.** 這是使用者給過的授權, 原話是「測試時請自主停止打資源, 最後記得幫我重新開回去」. 只有一個模擬器, 沒有「小心一點同時跑」這個選項.
+**你的 run 被一個不是你下的停止收掉, 先讀 `~/.ai_coc/state.json` 的 `loan`.** 帶 `--yield` 的 run 被別的指令要走時是借出去, 不是停掉: 那個指令叫它收工的同時寫下 `loan` (`lender` 是你, `borrower` 是誰借走、為了什麼), 你那輪的 `run.log` 最後也有一行 `Lent to …`.
 
-停之前**先記下三件事**, 等一下要接回同一件工作:
+- `loan` 在, `lender` 是你, `ended` 不是 `cancelled`: **馬上開回去**, 同一個世界同一組旗標, 都帶 `--yield`, 而且**串成一個背景指令** (`world --go <那個世界> --yield … && attack … --yield …`): 借的那一邊可能把遊戲留在另一個村莊, 而排隊可能超過一次前景呼叫的上限. 它會自己等 `giveback` 或借用逾時才真的開跑, 你照常分段等. 不用等誰傳話, 最後的回報裡提一句被借走多久就好
+- 開回去的指令 `result.json` 是 `借用被 ai_coc stop 取消了,這個指令沒有開跑`: 有人在借用期間下了 `ai_coc stop`, 照「中止」處理, 不要再開
+- 沒有 `loan`, 或 `ended` 是 `cancelled`: 那是真的叫停, 照「中止」處理
 
-- 打的是哪個世界跟原本那組旗標. 世界從那次的 `run.log` 讀 (每輪開頭 `Attack run starts` 是主村, `Builder base attack run starts` 是夜世界), **不要趁迴圈還在跑下 `ai_coc world`** (見「絕對不要同時跑兩個」). 開回去之前先 `world --go` 切回那一邊, 你的測試可能把遊戲留在另一邊
-- 那次執行的目錄 (迴圈在跑時 `state.json` 的 `log`; `ls -t ~/.ai_coc/logs` 最上面的不一定是它), 累計進帳從它的 `result.json` 數
-- 停下來當下的倉庫水位 (迴圈退出之後跑 `ai_coc stock`), 那是下一段的起點
+## 你自己要用畫面: 直接借, 用完還
 
-然後 `uv run ai_coc stop`, **等它真的退出**再動遊戲 (見上一節).
+**開發或驗證要動到活的遊戲, 直接下你的指令, 不用先停也不用問.** 這是使用者給過的授權, 原話是「測試時請自主停止打資源, 最後記得幫我重新開回去」. 只有一個模擬器, 沒有「小心一點同時跑」這個選項.
+
+你的指令**不帶** `--yield`: 它會借走背景那輪, 等它打完手上那一場才開始 (最久一場戰鬥, 跟 `ai_coc stop` 一樣), 那輪的 agent 讀到借用會自己排隊開回去 (「被借走」). 迴圈剛好在兩個指令之間的話, 你的指令直接開跑, 它的下一個指令會等你跑完, 你再下一個才借走它.
+
+**借的指令最久要等一場戰鬥 (五分鐘上下) 才開始**: 前景跑的話那次呼叫的 timeout 至少給十分鐘. 被砍了就 `giveback`, 不然借用會留 30 分鐘, 迴圈白等.
+
+**測試要中途停**, `ai_coc stop` 只停你的指令, 借用還在, 用完一樣要還 (「中止」的兩層).
+
+**背景那輪是你自己開的** (你就是那輪的 agent, 例如親自監督的 `watch-and-fix`), 借走的就是你自己的迴圈: 它收工時先不要開回去, 不然開回去的指令會排在你自己的借用後面. 測完、還了, 再照「被借走」開回去.
 
 **要測的是一場戰鬥, 記得村莊多半是滿的**: `attack` 開場讀到每一項都滿過 `stop_at` 就收工, 連對手都不搜. 所以測試那一場給 `--stop-at 0`, 它只管這一次. 那是測試不是打資源, 搶回來的進不了滿倉.
 
-**用完一定要開回去**, 同一個世界同一組旗標. 這是那條授權的另一半: 忘了開回去, 模擬器從你測試之後就一直閒著, 使用者卻以為整晚在打, 沒有東西會提醒他. **每次測完就開回去, 不要攢著.**
+**用完一定要還**: 最後一個要用模擬器的指令跑完, 下 `uv run ai_coc giveback`, 背景那輪就接著打. 這是那條授權的另一半: 忘了還, 它要等你最後一個指令跑完 30 分鐘才自己接回去, 這段時間模擬器閒著, 使用者卻以為在打. **每次測完就還, 不要攢著.**
 
-開回去之後在回覆裡講一句「已經接回去了, 現在是第幾輪」, 使用者看不到背景指令的輸出.
+還了之後在回覆裡講一句「已經還了, 背景那輪會接著打」, 使用者看不到背景指令的輸出.
 
 ## 遊戲卡住, 或者根本沒開
 
@@ -154,11 +168,11 @@ log 裡的 `stopped moving after 2 swipe(s)` 是正常的. `camera was still mov
 
 `attack`, `walls`, `collect`, `upgrade`, `donate` 全都在驅動同一個模擬器的同一個 display. 兩個一起跑, 一邊點開選單, 另一邊截到那張圖判讀成完全不同的東西, 而且沒有任何機制會發現. 開下一個之前先確定上一個真的結束了.
 
-**`state.json` 是一把鎖.** 除了只看的指令 (`read`、`stop`、`export --last`、`capture`、不帶 `--go` 的 `world`), 每個 `ai_coc` 指令開跑時先看有沒有別的活著的程序佔著 (`cli.py` 的 `_claim_for`, `commands.py` 的 `claim` 跟 `take_over`): 有, 就照 `ai_coc stop` 的流程請它收工, 記下是你叫停的, 等它打完手上那一場退出才開始. 所以**迴圈在跑的時候下 `stock`、`status`、`worker` 這種要操作畫面的指令, 就是把那輪停掉**, 不是你要的就不要下. 只想看畫面, 用 `capture` 或 `repair-emulator` 的 `look.py` (`uv run --no-sync python .agents/skills/repair-emulator/scripts/look.py <資料夾>`): 都只截圖, 不佔鎖也不開任何東西, 代價是跟迴圈多搶一條 ADB, 跟下面 `--shot-every` 的心跳同一類.
+**`state.json` 是一把鎖.** 除了只看的指令 (`read`、`stop`、`giveback`、`export --last`、`capture`、不帶 `--go` 的 `world`), 每個 `ai_coc` 指令開跑時先看有沒有別的活著的程序佔著 (`cli.py` 的 `_claim_for`, `commands.py` 的 `claim` 跟 `take_over`): 有, 就照 `ai_coc stop` 的流程請它收工, 記下是你叫停的, 等它打完手上那一場退出才開始; 它是帶 `--yield` 開的 (打資源的迴圈都是) 就是借走, 用完要 `giveback`. 帶 `--yield` 的指令反過來, 誰都不請, 排隊等. 所以**迴圈在跑的時候下 `stock`、`status`、`worker` 這種要操作畫面的指令, 就是把那輪借走**, 不是你要的就不要下. 只想看畫面, 用 `capture` 或 `repair-emulator` 的 `look.py` (`uv run --no-sync python .agents/skills/repair-emulator/scripts/look.py <資料夾>`): 都只截圖, 不佔鎖也不開任何東西, 代價是跟迴圈多搶一條 ADB, 跟下面 `--shot-every` 的心跳同一類.
 
 **而「上一個」不一定是你開的**, 使用者可能同時開著另一個 session. 所以**開第一個會碰模擬器的指令之前, 先讀 `~/.ai_coc/state.json`**:
 
-- `status` 是 `running` 或 `stopping`: 有人在跑. `command` 是哪個指令, `log` 是它那次執行的目錄, `caller` 是誰為了什麼開的. 你下會操作畫面的指令就會停掉它; 不是你要的就不要下, 跟使用者說一聲
+- `status` 是 `running` 或 `stopping`: 有人在跑. `command` 是哪個指令, `log` 是它那次執行的目錄, `caller` 是誰為了什麼開的. 你下會操作畫面的指令就會停掉它 (`yields` 是 `true` 的話是借走); 不是你要的就不要下, 跟使用者說一聲
 - `status` 是 `idle`: 沒人在跑, `command` 跟 `ended` 說的是上一次. 可以開
 - 檔案不存在: 這台機器沒跑過, 或者有人剛手動刪掉它來叫停
 
@@ -166,7 +180,7 @@ log 裡的 `stopped moving after 2 swipe(s)` 是正常的. `camera was still mov
 
 **這個檔有兩件事看不到, 2026-09-21 兩件都出過事.**
 
-- **監控**: 被交辦盯工人的 session 每隔一陣子跑一次 `ai_coc worker`, 兩次之間檔案寫的是 `idle`, 從外面看不見. `ai_coc stop` 也碰不到它, 在迴圈的是 agent 不是程序, 只有殺掉那個 agent 才停得下來. 而且它每跑一次 `worker`, 都會把當下在跑的迴圈停掉 (上面那把鎖)
+- **監控**: 被交辦盯工人的 session 每隔一陣子跑一次 `ai_coc worker`, 兩次之間檔案寫的是 `idle`, 從外面看不見. `ai_coc stop` 也碰不到它, 在迴圈的是 agent 不是程序, 只有殺掉那個 agent 才停得下來. 而且它每跑一次 `worker` 都會借走當下在跑的迴圈, 沒 `giveback` 的話那輪要等 30 分鐘才接回去
 - **使用者本人**: 他用手機玩就會把模擬器踢下線, 在另一台模擬器 (MuMu 跟雷電登同一個帳號) 開遊戲也一樣. 那天一次 `builders` 把被踢下線的畫面當成普通遮擋, 花 61 秒按 `back` 跟答 `取消`, 回報 `畫面沒辦法回到村莊`; 重跑時 `ensure_coc` 又把登入搶回來, 把使用者再踢一次. **所以在人可能正在玩的時候回不到村莊, 是停下來講一聲的理由, 不是再試一次的理由.**
 
 `--shot-every` 的心跳是同一個程序裡的執行緒, 跟迴圈搶同一條 ADB 連線 (一張 `screencap -p` 0.6 到 0.8 秒), 有代價但可控; 兩個獨立的指令不是.
