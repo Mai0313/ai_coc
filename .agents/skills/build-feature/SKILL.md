@@ -89,7 +89,7 @@ uv run ai_coc read <png>                                          # 現有 parse
 
 改碼跟等測試的時間拿去打資源, 這是使用者明講的要求. 誰跑, 在哪跑, 照 `AGENTS.md` 的 Driving the game: 一個 `farm` subagent 在主 checkout 上跑迴圈, 你的改動在另一個 worktree 做, 那裡自己 `uv sync` (理由在 The loop runs the main checkout).
 
-- **絕對不能同時跑兩個指令**, 它們搶同一個模擬器畫面, `references/exploring.md` 的腳本也算一個. 要探索或驗證就直接下你的指令 (不帶 `--yield`), 不用問: 它會借走背景那輪, 等它打完手上那一場才開始, farm subagent 讀到借用會自己排隊開回去. **用完一定要 `uv run ai_coc giveback`**, 背景那輪才會接著打, 並在回覆裡講一聲, 使用者看不到它的輸出. `references/exploring.md` 的腳本不經過 claim, 借不到: 先跑一個會 claim 的指令 (例如 `ai_coc stock`) 借到模擬器, 它跑完再跑腳本, 最後 giveback. 細節在 `AGENTS.md` 的 Taking the game for a live test 跟 `.agents/skills/farm/references/running.md` 的「你自己要用畫面」
+- **絕對不能同時跑兩個指令**, 它們搶同一個模擬器畫面, `references/exploring.md` 的腳本也算一個. 要探索或驗證就直接下你的指令 (不帶 `--yield`), 不用問: 它會借走背景那輪, 等它打完手上那一場才開始, farm subagent 讀到借用會自己排隊開回去. **用完一定要 `uv run ai_coc giveback`**, 背景那輪才會接著打, 並在回覆裡講一聲, 使用者看不到它的輸出. `references/exploring.md` 的腳本不經過 claim, 借不到: 先跑一個會 claim 的指令 (例如 `ai_coc stock`) 借到模擬器, 確認 `state.json` 的 `loan` 在、`ended` 是 null、`borrower` 是你, 才跑腳本, 最後 giveback. 沒有 `loan` 是迴圈剛好在兩個指令之間, 你什麼都沒借到, 它會在你的指令跑完後接著開打, 要再借一次. 細節在 `AGENTS.md` 的 Taking the game for a live test 跟 `.agents/skills/farm/references/running.md` 的「你自己要用畫面」
 - **不要 kill 背景程序**: 背景送不進 Ctrl-C, 被 kill 會把軍隊留在戰場上, 遊戲停在下一輪回不了家的畫面
 - `walls` 是會花錢的迴圈裡最少被跑過的, 跑它就是在測它, 但**要使用者開口** (`farm` 的「倉庫滿了」那節). 他交辦裡點名要測牆 (像「順便測試升級牆壁」) 就算開口, 交辦 `farm` subagent 時把這句轉給它, 它看不到使用者的原話; 沒點名的話, 想拿它測就把牆列進倉庫滿了那則通知的選項, 不要自己跑
 - **城牆等級被大本營卡住時, `walls` 一批都買不成**: 約兩分鐘後回報 `WallReport.outcome` 是 `nothing_bought`, 不是 bug, 是牆在這個大本營等級到頂了 (`AGENTS.md` 的 Wall loop). 要等大本營升上去, 那是使用者的決定. 反過來 `nothing_bought` 不一定是大本營: 工人數讀不到也會落到這裡, 兩種的下一步相反, 看 `run.log` 每個位置停在哪一步 (`commands.py` 的 `WALL_LINES` 上面的註解)

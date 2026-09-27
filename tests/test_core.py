@@ -5156,13 +5156,65 @@ class RunnerStateTests(unittest.TestCase):
         assert mine is not None
         assert (mine.status, mine.yields, mine.loan) == ("running", True, None)
 
-    def test_a_yielding_claim_stands_nobody_down(self) -> None:
+    def test_a_yielding_claim_stands_nobody_down_and_says_what_it_waits_for(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
             self._held_by(folder, self.BORROWING)
             seen = self._released_on_sleep()
-            with commands.claim("attack", caller=self.FARMING, yields=True):
+            with (
+                self.assertLogs(commands.logger, "INFO") as logged,
+                commands.claim("attack", caller=self.FARMING, yields=True),
+            ):
                 pass
         assert [state.status for state in seen] == ["running"]
+        assert any("waiting for it to finish" in line for line in logged.output)
+
+    def test_the_lender_ends_its_run_with_the_loan_on_its_record(self) -> None:
+        """That record is the whole of what an agent in another runtime is told."""
+        with commands.claim("attack", caller=self.FARMING, yields=True):
+            mine = commands.read_state()
+            assert mine is not None
+            commands.ask_to_stand_down(mine, self.BORROWING)
+            # The ask came from another process, which is where it is recorded.
+            commands._borrowed = None
+            assert commands.stop_requested()
+        after = commands.read_state()
+        assert after is not None
+        assert after.loan is not None
+        assert (after.status, after.loan.lender, after.loan.ended) == ("idle", self.FARMING, None)
+
+    def test_a_loan_whose_borrower_died_driving_lapses_instead_of_passing_on(self) -> None:
+        """Passed along as it was, the next record's process would stand in for
+        the dead borrower and hold the loan open for as long as it lived.
+        """
+        loan = Loan(
+            lender=self.FARMING, borrower=self.BORROWING, since=datetime.now().astimezone()
+        )
+        commands._write_state(
+            RunnerState(status="running", pid=424242, caller=self.BORROWING, loan=loan)
+        )
+        with (
+            patch.object(commands, "_alive", return_value=False),
+            commands.claim("stock", caller=Caller(agent="codex", session="s3")),
+        ):
+            mine = commands.read_state()
+        assert mine is not None
+        assert mine.loan is not None
+        assert mine.loan.until is not None
+
+    def test_stopping_a_borrower_s_command_keeps_the_loan_until_a_second_stop(self) -> None:
+        """A test can be stopped without ending the farming it borrowed from."""
+        loan = self._lent().model_copy(update={"until": None})
+        commands._write_state(
+            RunnerState(status="running", pid=424242, caller=self.BORROWING, loan=loan)
+        )
+        with patch.object(commands, "_alive", return_value=True):
+            assert "借用還在" in commands.stop()
+        after = commands.read_state()
+        assert after is not None
+        assert after.loan is not None
+        assert (after.status, after.loan.ended) == ("stopping", None)
+        self._lent()
+        assert "借用也取消了" in commands.stop()
 
     def test_a_borrower_is_never_queued_behind_the_loan(self) -> None:
         """The next command of a live test goes straight in, and so does anybody

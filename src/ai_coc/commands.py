@@ -629,14 +629,21 @@ def _carried(state: RunnerState | None, caller: Caller, *, yields: bool) -> Loan
 
     The borrower's own claim marks it as driven on. A yielding claim only gets
     this far once no loan stands, and drops it, the lender being back at work.
-    Anyone else's passes it along untouched.
+    Anyone else's passes it along.
+
+    One still marked as driven on lost its driver without a release, or this
+    claim would not have got through; it lapses from now, as that release
+    would have had it. Passed along as it was, whatever process this record
+    names would stand in for the dead borrower and hold the loan open.
     """
     loan = state.loan if state else None
     if loan is None or yields:
         return None
-    if _standing(state) is not None and _borrows(caller, loan):
+    now = datetime.now().astimezone()
+    until = loan.until or now + LOAN_TIME
+    if loan.ended is None and now < until and _borrows(caller, loan):
         return loan.model_copy(update={"until": None})
-    return loan
+    return loan.model_copy(update={"until": until})
 
 
 def take_over(caller: Caller, wait: float | None = None) -> None:
@@ -848,7 +855,15 @@ def claim(
     while True:
         if yields:
             queued = _queue() or queued
-            while holder() is not None:
+            waited: tuple[int, datetime | None] | None = None
+            while (current := holder()) is not None:
+                if waited != (current.pid, current.started):
+                    logger.info(
+                        "%s (%s) holds the emulator; waiting for it to finish",
+                        current.command,
+                        current.caller.mission or "no mission given",
+                    )
+                    waited = (current.pid, current.started)
                 time.sleep(STOP_POLL)
         else:
             take_over(who)
@@ -956,31 +971,37 @@ def stop(caller: Caller | None = None) -> str:
     do: it wrote a file whether or not anything was listening, so a stop that
     landed and one that fell on an idle machine read identically.
 
-    **A loan still standing is cancelled**, idle between the borrower's commands
-    or not, so the lender does not start again and nothing queued behind it
-    starts either: a stop is a stop, not a turn of the emulator.
+    **A loan nobody is driving on is cancelled**, so the lender does not start
+    again and nothing queued behind it starts either: a stop is a stop, not a
+    turn of the emulator. A borrower's command still running is stopped like
+    any other and its loan kept, so a test can be stopped without ending the
+    farming it borrowed from; a second stop, with nothing running, cancels it.
     """
     with _turn():
         state = read_state()
         loan = _standing(state)
         if state is None or (state.status == "idle" and loan is None):
             return "現在沒有指令在跑,沒有東西要停。"
+        driven = loan is not None and loan.until is None
         update: dict[str, object] = {}
-        if loan is not None:
+        if loan is not None and not driven:
             update["loan"] = loan.model_copy(update={"ended": "cancelled"})
         if state.status != "idle":
             update |= {"status": "stopping", "stop_by": caller or Caller()}
         _write_state(state.model_copy(update=update))
-    cancelled = (
-        ""
-        if loan is None
-        else f"借用也取消了,{loan.lender.agent or '借出模擬器的那一邊'}不會自己開回去。"
-    )
+    after = ""
+    if loan is not None:
+        lender = loan.lender.agent or "借出模擬器的那一邊"
+        after = (
+            f"借用還在,{lender}之後會自己開回去;要連它一起停,等這個指令停了再下一次 ai_coc stop。"
+            if driven
+            else f"借用也取消了,{lender}不會自己開回去。"
+        )
     if state.status == "idle":
-        return f"現在沒有指令在跑;{cancelled}"
+        return f"現在沒有指令在跑;{after}"
     return (
         f"已要求 {state.command}(pid {state.pid})收工,狀態寫在 {STATE_PATH}。"
-        f"它會做完手上這一件事才停。{cancelled}"
+        f"它會做完手上這一件事才停。{after}"
     )
 
 
