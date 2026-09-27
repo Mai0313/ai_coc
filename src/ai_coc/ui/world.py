@@ -8,7 +8,10 @@ moves and what is under a coordinate changes with it.
 **What makes a remembered spot safe here is that the camera clamps.** The game
 will not pan past the edge of its own map, so swiping hard at one corner ends at
 the same view whatever the camera was doing before, and from that view each boat
-sits at one fixed pixel. **How many swipes that takes is not a constant**, which
+sits at one fixed pixel. That holds on the home village; the builder base's park
+ends anywhere along a band about 55 px wide depending on where the camera started
+(see `CART_SPOTS`), which its boat is big enough to absorb and its loot cart is
+not. **How many swipes that takes is not a constant**, which
 this file assumed for a long time and paid for in every crossing: see
 `park_camera`, which now swipes until the picture stops moving and says whether
 it got there.
@@ -190,8 +193,10 @@ def park_camera(adb: AdbController, display: DisplayTarget, world: World) -> boo
     after fourteen swipes. At the far limit the box is over the village and the
     whole walk is short: the home village's range along its crossing is
     **352 px**, one swipe crosses all of it and thirteen more move nothing, while
-    the builder base does not measurably pan at all and has its boat and loot
-    cart on screen from the start. **Five unchecked swipes were the old answer
+    the builder base has its boat and loot cart on screen from the start and
+    pans less than one `view_shift` step along its crossing — so it reads as
+    parked wherever along a band about 55 px wide the camera happened to start
+    (see `CART_SPOTS`). **Five unchecked swipes were the old answer
     and bought neither end.**
 
     **The one cover this has to shut itself is the plate panel**, and it is not
@@ -295,7 +300,22 @@ UNCOVER_SETTLE = 1.5
 # and then the sheet closed again, because it covers the middle of the village.
 # The first one this opened was holding 300 000 of what was then a 1 000 000
 # ceiling; `night_cart_locked.png` writes 135 843 / 1 600 000, so it grows.
-CART_SPOTS = ((1240, 610), (1218, 596), (1262, 624))
+#
+# **The cart does not sit in one place on the parked view**, so the spots are
+# spread evenly across the band it has been seen in, 28 px apart against a cart
+# about 70 px wide. Over 29 trips on LDPlayer, (1240, 610) opened the sheet on
+# 18 of the 21 up to 23:45 on 2026-09-27 and (1262, 624) on the other three;
+# from 23:59 on it was (1262, 624) on six of eight and nothing on two, while
+# (1218, 596) opened nothing on any of the 29. **Where the park ends depends on
+# where the camera started**, and every end reads as parked: parks from an
+# already parked camera put the cart's body at (1295-1300, 612-618), four more
+# pushes after one moved the picture by nothing and two more by 7 px, and yet a
+# park started from a camera shoved the other way stopped with the cart at
+# (1245, 622) — where the first spot used to find it — and (1268, 615) opened
+# the sheet there. Finding the cart on the frame instead is no easier: its
+# elixir bubble is dimmed at night to a khaki plate and a (110, 30, 200) drop,
+# which none of `collect_bubbles`' marker colours take.
+CART_SPOTS = ((1296, 617), (1268, 615), (1240, 610))
 CART_COLLECT = (1176, 760)
 CART_CLOSE = (1338, 89)
 CART_SETTLE = 1.5
