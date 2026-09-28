@@ -59,11 +59,11 @@ description: >-
 ## 開跑的旗標
 
 ```bash
-uv run ai_coc world --go day
-uv run ai_coc attack --repeat 0 --record --shot-every 5
+uv run ai_coc world --go day --yield
+uv run ai_coc attack --repeat 0 --record --shot-every 5 --yield
 ```
 
-指令都省略了 `--agent`、`--session`、`--mission`, 真的跑的時候每一個都要帶; 在主 checkout 跑一律寫成 `uv run --no-sync`.
+`--yield` 不能省: 沒帶的話, 你自己驗證用的指令會把這輪停掉而不是借走, 也沒有人會把它開回去. 指令都省略了 `--agent`、`--session`、`--mission`, 真的跑的時候每一個都要帶; 在主 checkout 跑一律寫成 `uv run --no-sync`.
 
 **先 `world --go`.** 遊戲會開在上次離開的那個村莊, 而每個指令都只做遊戲當下停著的那一個, 不會自己坐船; 只問在哪用 `ai_coc world`, 不動畫面也不點東西. 站錯村莊的症狀是「找不到」而不是「找錯」, 要好幾張截圖才發現. 中途被換到另一邊就回 `other_village` 整批收工, 不會自己切回來. 夜世界的旗標照 `farm` (平鋪戰術, 不叫 AI). **`--repeat 0` 是主線的形狀**: 打到倉庫滿自己收工; 固定輪數是做對照用的.
 
@@ -82,7 +82,7 @@ uv run ai_coc attack --plan .runs/tuned.json
 
 `outcome` 全是 `took_loot` 不代表迴圈沒事. 迴圈會自己救回來, 救的那一下只留在 log 裡: **每一行重試或修正都是上游某一步做錯了**, 結果對只說明救得回來. 一輪一輪數它們:
 
-- `After the burst: N of M one-off card(s) never landed` 而 N 不是 0 (這行每輪都有), `retry card(s) landed at`, `took nothing`, `still hold something`, `flank pushed out`: 出兵有東西被拒, 或被判成沒下去. 大部分輪都有就是上游的問題, 不是運氣
+- `After the burst: N of M one-off card(s) never landed` 而 N 不是 0 (主村每一場開打的都有, 夜世界沒有), `retry card(s) landed at`, `took nothing`, `still hold something`, `flank pushed out`: 出兵有東西被拒, 或被判成沒下去. 大部分輪都有就是上游的問題, 不是運氣
 - 每次都落在**同一個**重試點: 本來該分開的英雄被擠到一起, 攻城機器晚到
 - `WARNING`: 每一條都對一次畫面
 

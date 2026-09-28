@@ -51,7 +51,7 @@ uv run ai_coc bounds --record         # 實測地圖邊緣, 回推村莊範圍
 jq -c 'select(.round==2).plan' ~/.ai_coc/logs/<run>/plans.jsonl > .runs/tuned.json
 ```
 
-`--plan-out` 只寫最後一輪, 要事先加, 路徑放 `.runs/` 底下 (`.gitignore` 只認得那一個); 事後才要查哪一輪就用 `plans.jsonl`.
+`--plan-out` 只寫最後一輪, 要事先加, 路徑放 `.runs/` 底下 (`.gitignore` 為這種用途留的就是它); 事後才要查哪一輪就用 `plans.jsonl`.
 
 一份計畫是一串照順序的 `steps`: 攻城機具, 部隊 (下兵線兩端), 英雄落點, 開技能, 每一瓶法術的落點, 或 `wait` (從上一個動作做完開始算). 所有時序都在裡面, 手改 JSON 就是提出新戰術.
 
