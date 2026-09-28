@@ -232,3 +232,4 @@ Supercell's Terms of Service forbid automation software, emulators and bots, and
 ## 📄 License
 
 MIT, see `LICENSE`.
+
