@@ -3,6 +3,7 @@ import os
 import json
 import math
 import time
+import string
 import logging
 from pathlib import Path
 from datetime import datetime, timedelta
@@ -2623,6 +2624,19 @@ class PromptTests(unittest.TestCase):
         """`_plan` formats these in; losing them would ask for the wrong spell count."""
         assert "{rage_count}" in PROMPTS["attack_plan"]
         assert "{freeze_count}" in PROMPTS["attack_plan"]
+
+    def test_every_prompt_asks_for_exactly_what_its_caller_fills(self) -> None:
+        """A stray brace or an unfilled `{name}` breaks `str.format`, and the callers
+        catch that and carry on without the model (`_plan` falls back to the flat
+        plan every battle), so it has to fail here instead.
+        """
+        filled = {
+            "attack_plan": {"rage_count", "freeze_count"},
+            "find_targets": {"what", "notes", "count", "floor"},
+        }
+        for name, text in PROMPTS.items():
+            fields = {field for _, field, _, _ in string.Formatter().parse(text) if field}
+            assert fields == filled.get(name, set()), name
 
     def test_a_prompt_file_is_shipped_beside_the_module(self) -> None:
         """PyInstaller lays the bundle out this way, so the loader looks here."""
