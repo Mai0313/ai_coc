@@ -154,9 +154,10 @@ class WallRunner(GameRunner):
     def _candidates(self) -> list[WallCandidate]:
         """The walls to choose between, from whichever of three finders answers.
 
-        Named spots first, because a caller that went to the trouble of naming
-        them has already looked at the screen. Then Gemini, which looks at the
-        same frame and answers in seconds. The sweep is last and is the fallback
+        Named spots, when given, are the whole search, because a caller that went
+        to the trouble of naming them has already looked at the screen.
+        Otherwise Gemini, which looks at the same frame and answers in seconds.
+        The sweep is last and is the fallback
         rather than the default: it taps a blind grid for two and a half minutes
         and what it lands on is *a* wall rather than a cheap one — see
         `WALL_PITCH` for the run where every sample it took was a wall the town

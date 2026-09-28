@@ -276,7 +276,8 @@ def fitted_line(
     worked. The midpoint gets its own ray, so the line follows the village.
 
     None when any of the three rays never met the stroke, so the caller keeps the
-    flank it had and probes its way out as before.
+    flank it had, and the troop passes push it out if it proves too close
+    (`_spread_troops`, and `_spread_night` on the builder base).
 
     `centre` is where the village is sitting, which the attack loop moves when it
     drags a flank out from behind the card row.

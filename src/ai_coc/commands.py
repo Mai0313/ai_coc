@@ -2059,7 +2059,7 @@ COLLECT_LINES: dict[CollectOutcome, str] = {
 def collect_line(report: CollectReport) -> str:
     """The one line a person reads, from whichever village the run was on.
 
-    The builder base's trip has its own seven answers and they are not a subset
+    The builder base's trip has its own answers and they are not a subset
     of these, so the cart speaks for itself rather than being flattened into a
     vocabulary of collector markers.
     """
@@ -2087,7 +2087,7 @@ def collect(frame_dir: Path | None = None) -> CollectReport:
     most of its time doing nothing. This is the cheapest thing in the project to
     run and the one worth running most often.
 
-    **The builder base's cart has six answers and this used to give it two.**
+    **The builder base's cart has answers of its own, and this used to squash them into two.**
     See `CartReport`: a cart the game had locked was reported as an empty one,
     which is the opposite instruction.
     """

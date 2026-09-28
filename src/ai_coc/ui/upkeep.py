@@ -166,8 +166,8 @@ class UpkeepRunner(GameRunner):
     def _buildings(self) -> list[BuildCandidate]:
         """The upgrades to choose between, from whichever of three finders answers.
 
-        Named points first, then Gemini, then the sweep — the same order the wall
-        loop runs, and for the same reason: the sweep is a blind grid that takes
+        Named points, when given, are the whole search; otherwise Gemini, then
+        the sweep — the same as the wall loop, and for the same reason: the sweep is a blind grid that takes
         two and a half minutes and lands where it lands, so it is the fallback
         rather than the default. It stays underneath because a village whose
         buildings nobody can place still has buildings.

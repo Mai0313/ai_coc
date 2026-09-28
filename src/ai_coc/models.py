@@ -1261,8 +1261,8 @@ class ResourceBubble(BaseModel):
 
 # How one `collect` run ended on the **home village**. The builder base has no
 # collectors at all and one cart instead, which is why `cart` is its own answer
-# rather than five more values here: what happened there is `CartReport`'s to
-# say, and duplicating its seven outcomes would be the same answer in two
+# rather than more values here: what happened there is `CartReport`'s to
+# say, and duplicating its outcomes would be the same answer in two
 # vocabularies.
 CollectOutcome = Literal[
     "collected", "nothing_to_collect", "no_village", "builder_base", "stock_unread", "cart"

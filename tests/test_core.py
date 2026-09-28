@@ -4568,7 +4568,7 @@ class AttackTests(unittest.TestCase):
         # Every shared rung still follows, the probed midpoint included.
         assert aimed[1:] == shared
 
-    def test_a_refused_flank_leaves_the_other_three_to_try(self) -> None:
+    def test_a_refused_line_ranks_its_own_flank_first(self) -> None:
         """The plan's own side goes first behind its line, then the flanks it did not pick."""
         plan = AttackPlan(steps=[_step("troops", (25, 30), (75, 70))], deploy_from="bottom_right")
         # That line runs across the village, so only the named flanks are left.
