@@ -340,13 +340,17 @@ class DispatchTests(unittest.TestCase):
             claimed.assert_called_once()
 
     def test_a_queue_a_stop_ended_answers_rather_than_crashes(self) -> None:
-        """`farm` reads a run with no `result.json` as a killed process."""
+        """`farm` reads a run with no `result.json` as a killed process, so the
+        line is written; and a command chained after it with `&&` must not start,
+        so the exit is not zero.
+        """
         with (
             patch.object(commands, "claim", side_effect=commands.LoanCancelledError("取消了")),
             patch("sys.stdout", new_callable=io.StringIO) as shown,
         ):
-            assert _run_command(_args("attack"), self.run) == 0
+            assert _run_command(_args("attack"), self.run) != 0
         assert "取消了" in shown.getvalue()
+        assert "取消了" in (self.run.directory / "result.json").read_text(encoding="utf-8")
 
     def test_a_capture_run_records_without_being_asked(self) -> None:
         """Saving frames is the whole of what the command does, so it carries no

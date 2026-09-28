@@ -379,13 +379,15 @@ def _run_command(arguments: argparse.Namespace, run: RunLog) -> int:
     well, so the answer and the log explaining it are found together instead of
     that depending on whoever started the run having redirected stdout.
     """
+    cancelled = False
     try:
         with _claim_for(arguments, run):
             answer = _answer(arguments, run)
-    # A queue that a stop ended is an answer, not a crash: `farm` reads a run
-    # with no `result.json` as a killed process.
-    except commands.LoanCancelledError as cancelled:
-        answer = str(cancelled)
+    # A queue that a stop ended is written down like an answer, not left as a
+    # crash: `farm` reads a run with no `result.json` as a killed process. The
+    # exit below still says it did not run.
+    except commands.LoanCancelledError as error:
+        answer, cancelled = str(error), True
     # Outside the claim: writing the answer down and printing it touch no
     # emulator, and holding the screen across them would say this run is still
     # driving when it has finished.
@@ -397,7 +399,10 @@ def _run_command(arguments: argparse.Namespace, run: RunLog) -> int:
         _print_table(answer)
     else:
         sys.stdout.write(f"{result}\n")
-    return 0
+    # Still not zero, though: the stop meant nothing lined up behind the loan
+    # runs, and a command chained after this one with `&&` would otherwise
+    # start with no loan left to be cancelled.
+    return 1 if cancelled else 0
 
 
 def _claim_for(arguments: argparse.Namespace, run: RunLog) -> AbstractContextManager[None]:
