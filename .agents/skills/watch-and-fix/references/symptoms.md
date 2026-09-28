@@ -2,7 +2,7 @@
 
 這張表只指路, 不給結論; 來龍去脈在常數或函式旁邊的註解. 找到症狀, 拿關鍵字 grep `src/` (跟釘住它的 `tests/`), 規則面看 `AGENTS.md`, 再讀那個函式.
 
-整條路是 **開起遊戲 -> 站上要打的那個村莊 -> 打完一場 -> 回到村莊 -> 開下一輪**, 中間那段在 `src/ai_coc/ui/attack.py` 的 `AttackRunner`: 攻擊 -> 倉庫檢查 -> 尋找對戰目標 -> 兵力檢查 -> scout -> 縮放與置中 -> 規劃 -> 清側翼 -> 出兵 -> 排程 -> 等結束 -> 回營 (不等偵察倒數, 理由在「兵丟不出去」末尾). 下面照這個順序排.
+整條路是 **開起遊戲 -> 站上要打的那個村莊 -> 打完一場 -> 回到村莊 -> 開下一輪**, 中間那段在 `src/ai_coc/ui/attack.py` 的 `AttackRunner`: 攻擊 -> 倉庫檢查 -> 尋找對戰目標 -> 兵力檢查 -> scout -> 縮放與置中 -> 規劃 -> 清側翼 -> 照 plan 的步驟出兵、開技能、放法術 (`_play_tactic`) -> 等結束 -> 回營 (不等偵察倒數, 理由在「兵丟不出去」末尾). 下面照這個順序排.
 
 容易記反的兩處: **兵力檢查在尋找對戰目標之後** (兩步都在付搜尋費之前); **相機在規劃之前**, 先縮放再置中. 倉庫檢查在攻擊選單一開就做, 滿了整輪收工, 不搜對手.
 
@@ -14,7 +14,7 @@
 
 **`launch` 等村莊** (`_settle_game`) 有三處會出錯:
 
-- **等太短.** 冷開機時間差很多, `RESTART_POLLS` 照最壞情況抓; 每次 poll 寫下還在等哪個狀態.
+- **等太短.** 冷開機時間差很多, `RESTART_POLLS` 照最壞情況抓; 每次 poll 在 DEBUG 寫下還在等什麼 (要 `COC_LOG_LEVEL=DEBUG`), 平常只看得到放棄那一行冒號後面的最後狀態.
 - **鏡頭沒回到最遠處.** 重開成功, 然後連兩輪英雄一張都沒下去, 兵卡也都還有貨 (當時的 log 是 `0 of 4 hero card(s) landed` 跟 `3 troop card(s) still hold something`; 現在英雄那行寫成 `After the burst: N of N one-off card(s) never landed` 接 `0 of N retry card(s) landed at`). `launch` 收尾會 pinch, 沒 pinch 的是掉線後 `_open_attack_menu` 叫的 `restart_game`. 確認方法見「整場一隻兵都沒下去」.
 - **等的是畫完而不是哪個村莊.** `_settle_game` 只問 `current_world` 讀不讀得出 (不用 `read_stock`, 它在兩個世界都答得出來, 分不出是哪一個), 兩個世界都算; 落在另一邊 attack 回 `other_village`, 主村指令回 `builder_base`. 載入時倉庫水位是從零跑上來的動畫, 那時讀到的數字不能回報.
 
@@ -22,11 +22,11 @@
 
 **症狀**: `AttackReport.outcome` 是 `no_attack_menu`.
 
-看 `_open_attack_menu`, `attack_menu_open`, `ui/runner.py` 的 `_home` (共用的回家路徑, 分辨載入, 面板, 對話框, 掉線). 在乾淨的村莊上按 back 是災難, `AGENTS.md` 搜 `back` 跟 `確定退出遊戲嗎`.
+看 `_open_attack_menu` (它自己分辨掉線、載入、結算畫面, 讀不到村莊就交給 `ui/world.py` 的 `uncovered`) 跟 `attack_menu_open`. `ui/runner.py` 的 `_home` 是 `walls`、`upgrade` 那些 `GameRunner` 的回家路徑, 攻擊迴圈不走它. 在乾淨的村莊上按 back 是災難, `AGENTS.md` 搜 `back` 跟 `確定退出遊戲嗎`.
 
 三個常被懷疑的原因:
 
-- 掉線: `idle_disconnected` 認 (閒置跟 連線已中斷 都算), `restart_game` 重開並重新解析 display. 但每次重開連同接下來的載入畫面大約佔兩次 `HOME_ATTEMPTS`, 所以反覆掉線 (例如手機搶登) 三次左右就會報成 `no_attack_menu`.
+- 掉線: `idle_disconnected` 認 (閒置跟 連線已中斷 都算), `restart_game` 重開並重新解析 display. 但每次重開連同接下來的載入畫面大約佔兩次 `HOME_ATTEMPTS`, 所以反覆掉線三次左右就會報成 `no_attack_menu` (手機搶登是不是走這條沒量過).
 - 伺服器 (不會報成這個): `loading_screen` 認, `_wait_out_loading` 等 (每次載入一次, 最多 45 分鐘), outcome 是 `server_loading` 或 `server_flapping`.
 - 站錯村莊 (不會報成這個): `_open_attack_menu` 先問 `current_world`, 連兩張是另一個村莊就回 `other_village`, 不坐船.
 
@@ -35,7 +35,7 @@
 **全螢幕彈窗** (活動獎勵, 賽季通行證) 最貴: 攻擊鈕被蓋住, 重試全點在彈窗上, 實測卡過 40 分鐘. `current_world` 讀不出東西時 `uncovered` 會按 back, log 是 `Something is over the village; pressing back to get at it`. 沒這行就是彈窗被誤讀了, 有兩種形狀:
 
 - 讀成**結算畫面**: 量 `RETURN_HOME_BOX` 的綠色比例 (活動獎勵頁 0.2009, 真結算 0.3283).
-- 讀成**戰鬥**: log 是 `A battle is on screen; there is nothing here to press back at` 而不是在打仗. 丟 `ai_coc read` 看 `card_groups` 跟 `in_battle`: 前者有東西而後者 `false`, 就是面板 (探礦者, 商店 外觀 頁) 被讀成卡片列; `uncovered` 要兩個都成立才算戰鬥. `in_battle` 讀 `false` **不代表戰鬥結束**: 彈窗會壓暗那塊紅色, 建築大師基地開場倒數時不畫那顆按鈕.
+- 讀成**戰鬥**: log 是 `A battle is on screen; there is nothing here to press back at` 而不是在打仗. `uncovered` 要 `card_groups` 跟 `in_battle` 兩個都成立 (或 `battle_over`) 才寫這行, 所以是其中兩個一起誤判, 或 `battle_over` 誤判: 丟 `ai_coc read` 看是哪一個. 只有 `card_groups` 有東西而 `in_battle` 是 `false` 的面板 (探礦者, 商店 外觀 頁) 走不到這行, 會被按 `back`. `in_battle` 讀 `false` **不代表戰鬥結束**: 彈窗會壓暗那塊紅色, 建築大師基地開場倒數時不畫那顆按鈕.
 
 ## 坐船沒坐成
 
@@ -43,7 +43,7 @@
 
 沒有判讀器找船 (活動會換造型): 相機推到地圖角落夾住, 點固定像素, 再看世界變了沒. `park_camera` 滑到 `view_shift` 連兩次回 (0, 0) 為止; `camera was still moving` 的 warning 要查的是鏡頭, 不是船的座標. 它先 pinch 再滑, 因為拉近時 `view_shift` 沒東西可比而回 None. 在最遠處主村一下就滑到底, 夜世界根本滑不動, 而要連兩次沒動才算停, 所以 `stopped moving after 2 swipe(s)` (主村從別處滑過來是 3) 是正常的.
 
-點歪會打開那裡的建築, 面板會吞掉後面的點擊, 所以每個沒坐成的點後面 (跟第一下滑動之前) 補一次 `back`. `back` **絕對不按在戰鬥上** (被砍掉的執行會把遊戲留在戰鬥裡, 那會點到 放棄): `uncovered` 先認載入畫面, 再要 `card_groups` 跟 `in_battle` 兩個都成立 (或者是結算畫面) 才算戰鬥, 戰鬥回 `None`. 那個判讀的坑在上一節末尾.
+點歪會打開那裡的建築, 面板會吞掉後面的點擊, 所以每個沒坐成的點後面 (跟第一下滑動之前) 補一次 `uncovered` (畫面讀不出村莊才按 `back`, 最多 `UNCOVER_TRIES` 次). `back` **絕對不按在戰鬥上** (被砍掉的執行會把遊戲留在戰鬥裡, 那會點到 放棄): `uncovered` 先認載入畫面, 再要 `card_groups` 跟 `in_battle` 兩個都成立 (或者是結算畫面) 才算戰鬥, 戰鬥回 `None`. 那個判讀的坑在上一節末尾.
 
 分辨兩個村莊靠頂端面板徽章**的跨度而不是數量** (`AGENTS.md` 搜 `933`): 寶石雨動畫會蓋掉一格.
 
@@ -75,9 +75,9 @@
 
 ## 打完了但回不到村莊
 
-**症狀**: 一輪拖四分鐘左右, `_wait_out_battle` 等到超時 (`BATTLE_TIMEOUT`), 最後靠 `_home` 的 `back` 回村莊.
+**症狀**: 一輪拖四分鐘左右, `_wait_out_battle` 等到超時 (`BATTLE_TIMEOUT`), 最後靠下一輪 `_open_attack_menu` 交給 `uncovered` 的 `back` 回村莊.
 
-結算畫面靠綠色 回營 認 (`RETURN_HOME_GREEN`, `_leave_result`), 而遊戲畫兩種: 平常的在 `RETURN_HOME_BOX` 讀 0.3283, 打亮的讀 0.2488. 門檻高過打亮版就是這個症狀, 而只有平常版 fixture 的測試照樣綠 (打亮版是 `battle_result_lit.png`). 反方向是活動獎勵頁的綠勾勾讀 0.2009 (見「開不了攻擊選單」). 兩邊夾出 0.2057 到 0.2488, 門檻 0.23 放中間. 被打之後遊戲開場的 首領，歡迎回來 報告, 它唯一的 確定 就在 回營 的位置, 讀 0.5453, 所以 `battle_over` 另外靠 `welcome_back` 把它排除; 啟動或切世界停在這張報告上, 先看 `ai_coc read` 的這兩個欄位.
+結算畫面靠綠色 回營 認 (`RETURN_HOME_GREEN`, `_leave_result`), 而遊戲畫兩種: 平常的在 `RETURN_HOME_BOX` 讀 0.3283, 打亮的讀 0.2488. 門檻高過打亮版就是這個症狀, 而只有平常版 fixture 的測試照樣綠 (打亮版是 `battle_result_lit.png`). 反方向是活動獎勵頁的綠勾勾讀 0.2009 (見「開不了攻擊選單」). 兩邊夾出 0.2057 到 0.2488, 門檻 0.23 放中間. 被打之後遊戲開場的 首領，歡迎回來 報告, 它唯一的 確定 就在 回營 的位置, 綠色比例照樣過門檻, 所以 `battle_over` 另外靠 `welcome_back` 把它排除; 啟動或切世界停在這張報告上, 先看 `ai_coc read` 的這兩個欄位.
 
 `_leave_result` 點不動時**重讀一次再按 `back`**: 最後一下沒檢查而最可能有效, 剛回村莊的畫面上 `back` 開的是 確定退出遊戲嗎.
 
@@ -130,13 +130,13 @@
 
 卡片列尾端的虛線空槽在背景亮時會被切成一張卡, 當成多的英雄. 分辨靠等級徽章 (`parsers/scout.py` 的 `_badged`). `ai_coc read` 的 `card_groups` 跟 `selected` 說它切成幾張, 哪張選取中.
 
-`card_groups` 只在**完整**的卡片列上有效, 所以 `_scout` 把讀到的那張交給 `_deploy`, 不讓 `_deploy` 自己截.
+`card_groups` 只在**完整**的卡片列上有效, 所以 `_deploy` 只讀一次, 讀的是縮放 (跟置中) 之後自己截的那張, 在任何東西丟下去之前.
 
 ## 英雄沒下去
 
 `field_units` 讀卡片上方的血條, 靠藍色分辨血條跟草地. 英雄卡不會清空 (變成技能按鈕), 不能用 `card_drained`. 假陰性有代價: 重試再點那張卡就是放技能. 看 `_drop_singles`, `_landed`, `HERO_SETTLE`.
 
-第一次投放用 plan 那個 `siege` / `hero` 步驟自己的 `at`, 但點若正對著部隊實際那條線、在線的內側超過 `ONTO_LINE_SLACK`, `onto_line` 先把它搬到線上的垂足 (AI 照抄 prompt 的基準線, 部隊的線卻被 `_flank` 貼到真正的紅線上, 內側的點多半被拒); 線端外面的點不動, 那是清邊英雄的位置. 搬了會有一行 `aimed inside the line`, 所以 `plans.jsonl` 的座標跟畫面對不上時先找這行. 被拒的一律走 `single_spots` 的共用階梯重試, 從線的中點開始 (不是單純再往外, 理由同 `push_out`), 不再用 plan 的點.
+第一次投放用 plan 那個 `siege` / `hero` 步驟自己的 `at`, 但點若正對著部隊實際那條線、在線的內側 `ONTO_LINE_SLACK` 到 `ONTO_LINE_REACH` 之間 (更遠的當成刻意放在別處, 不動), `onto_line` 先把它搬到線上的垂足 (AI 照抄 prompt 的基準線, 部隊的線卻被 `_flank` 貼到真正的紅線上, 內側的點多半被拒); 線端外面的點不動, 那是清邊英雄的位置. 搬了會有一行 `aimed inside the line`, 所以 `plans.jsonl` 的座標跟畫面對不上時先找這行. 被拒的一律走 `single_spots` 的共用階梯重試, 從線的中點開始 (不是單純再往外, 理由同 `push_out`), 不再用 plan 的點.
 
 ## 英雄的技能被提早放掉
 
@@ -148,7 +148,7 @@
 
 **症狀**: 皇后的斗篷開在別人身上, 或某個英雄整場沒開大.
 
-哪張一次性卡片是攻城機具由 plan 有沒有 `siege` 步驟決定 (血條分不出來, 遊戲對攻城戰車也畫血條): `_deploy` 建 `BattleRow` 時有 `siege` 就把第一張當機具, 沒有就整排當英雄. 多寫或少寫一個 `siege`, 整排英雄的落點跟開大秒數就偏一格, **沒有下游會發現**. 對照那輪 `plans.jsonl` 有沒有 `siege` 跟 `--record` 的 `home` 畫面上有沒有攻城機具, 對不上就從 `prompts/attack_plan.md` 查.
+哪張一次性卡片是攻城機具由 plan 有沒有 `siege` 步驟決定 (血條分不出來, 遊戲對攻城戰車也畫血條): `_deploy` 建 `BattleRow` 時有 `siege` 就把第一張當機具, 沒有就整排當英雄. 多寫或少寫一個 `siege`, 整排英雄的落點跟開大秒數就偏一格, **沒有下游會發現**. 對照那輪 `plans.jsonl` 有沒有 `siege` 跟 `--record` 的 `zoomed` 畫面 (置中拖過鏡頭的話是之後那張 `camera`, `_deploy` 讀卡片列的就是它) 上有沒有攻城機具, 對不上就從 `prompts/attack_plan.md` 查.
 
 `siege` 對得上還是晚一格, 看戰鬥中途卡片列前面有沒有多出一張 (活動卡): `BattleRow` 記的是開場讀到的 x, 前面插一張, 後面每張都往右移, `ability` 跟 `_cast` 就點到隔壁那張. 這是 `AGENTS.md` 記著的已知缺陷.
 
@@ -195,7 +195,7 @@
 
 ## 刷牆停了
 
-**不在打資源這條路上**: 壞了照 SKILL.md 的「管到哪裡為止」記下來, 主線達成以後另開 PR. 但有個回報容易讀反: `WallReport.outcome` 是 **`nothing_bought`** 時**不能讀成牆全滿級**, 那是迴圈自己也說不上原因; 買牆時說得出原因的是 `cannot_afford` 跟 `builders_busy`. 不要比對 log 的句子, 那些字會改.
+**不在打資源這條路上**: 壞了照 SKILL.md 的「管到哪裡為止」記下來, 主線達成以後另開 PR. 但有個回報容易讀反: `WallReport.outcome` 是 **`nothing_bought`** 時**不能直接讀成牆全滿級**, 那是迴圈自己也說不上原因, 最可能是大本營把牆卡住, 但不確定; 買牆時說得出原因的是 `cannot_afford` 跟 `builders_busy`. 不要比對 log 的句子, 那些字會改.
 
 ## 夜世界特有的幾種
 

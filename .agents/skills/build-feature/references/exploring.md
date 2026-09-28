@@ -53,7 +53,7 @@ cross(adb, display, "night")  # 回傳最後停在哪個村莊; 已經在那邊�
 
 **不要點按鈕列上圖示像資源的那兩個**: 加速所有同類項目 (花魔法物品) 跟城牆戒指 (花戒指), 都在藍色底板上, `AGENTS.md` 搜 `blue plate`.
 
-**pinch 一定要帶 `display`**: 兩根手指落在其他 display 的 launcher 上會切換前景 app, 之後每個指令都對著桌布點. `AdbController.zoom` 拿到 `display` 就只送給那個 display 的觸控節點, 拿不到 (沒帶, 或者解析不出節點) 就送給每一個多點觸控節點, 而且不會報錯. 有帶 `package` 的話它事後會把遊戲叫回前景, 那是最後一道, 不是不帶 `display` 的理由.
+**pinch 一定要帶 `display`**: 兩根手指落在其他 display 的 launcher 上會切換前景 app, 之後每個指令都對著桌布點. `AdbController.zoom` 拿到 `display` 就只送給那個 display 的觸控節點, 拿不到 (沒帶, 或者解析不出節點) 就送給每一個多點觸控節點, 而且不會報錯. 節點解析不出來、手勢送給每一個節點的時候, 帶了 `package` 它事後才會把遊戲叫回前景, 那是最後一道, 不是不帶 `display` 的理由.
 
 ## 把一個新畫面量成常數
 

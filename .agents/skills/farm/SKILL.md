@@ -42,11 +42,11 @@ description: >-
 
 使用者沒交代就照設定檔跑. `--min-gold` 之類只在他明講要放寬時用, `0` 跟不給是兩件事 (見 `LootOverrides` 的 docstring). `--stop-at` 是**測試**用的: 對著剛打滿的村莊打一場來驗東西時給 `0`; 打資源不要用, 滿倉搶回來的進不去.
 
-**碰模擬器之前先讀 `~/.ai_coc/state.json`, 而且每個指令都帶 `--yield`**: 有別人在跑就排隊等它跑完, 不會把它停掉; 別人要用時你的 run 是被借走, 開回去的指令會自己等到還回來. 查法在 `references/running.md` 的「絕對不要同時跑兩個」跟「被借走」.
+**碰模擬器之前先讀 `~/.ai_coc/state.json`, 而且每個指令都帶 `--yield`**: 有別人在跑就排隊等它跑完, 不會把它停掉; 別人要用時你的 run 是被借走, 開回去的指令會自己等到還回來. 查法在 `references/running.md` 的「絕對不要同時跑兩個」跟「被借走」. **例外是別人已經在打資源**: 開工時佔著的是別的 agent 帶 `--yield` 的 run (`yields` 是 `true`, `caller` 不是你), 或者檔案上有一筆還沒結束的借用 (`loan.ended` 是 null) 而 `lender` 不是你, 就不要排在它後面, 兩個迴圈會在指令之間輪流搶到模擬器, 各自的 `world --go` 把對方下一輪的 `attack` 帶到錯的村莊. 不開跑, 回報誰 (`caller`) 在跑哪一個 (`command`, `log`).
 
 **每次開跑前先 `uv run ai_coc stock`, 不要憑上一次的印象** (使用者可能中間花掉了). 規矩見「開跑前先記下基準」. 它說滿了的世界, 開跑第一輪就會收工, 不是壞掉.
 
-**不用自己開模擬器或遊戲**: `commands._controller()` 會 `ensure_coc`.
+**不用自己開模擬器或遊戲**: 會操作畫面的指令 (`stock`、`attack`、`world --go` …) 走 `commands._controller()`, 它會 `ensure_coc`. 不帶 `--go` 的 `world` 跟 `capture` 只看不開, 模擬器沒開就報錯; 遊戲沒畫面時 `world` 回 `no_display`, `capture` 直接報錯. 那時先 `ai_coc launch`.
 
 **這個遊戲有兩個村莊, 而遊戲會開在上次離開的那一個**: 日世界 (主村) 跟夜世界 (建築大師基地), 靠一艘船來回. `ai_coc world` 答現在在哪個世界, 不點任何東西; `ai_coc world --go day|night` 坐船切過去, 已經在那邊就什麼都不做.
 
@@ -78,7 +78,7 @@ uv run ai_coc attack --repeat 0 --plan src/ai_coc/plans/night_flat.json --yield
 
 - **沒有門檻**: 沒有偵察畫面, 贏拿金幣輸拿聖水, 沒東西好跳過
 - **打資源用平鋪戰術, 不叫 AI** (使用者 2026-09-26 的交代): 贏輸都有進帳, 兩樣倉庫都要填, 挑哪一邊打差別不大, AI 規劃卻每個 stage 要 10 到 15 秒 (慢的時候 40 秒以上, 逾時一樣退回平鋪). 用 `--plan src/ai_coc/plans/night_flat.json` 蓋過它就好. **AI 規劃留在程式裡, 不要拿掉**, 兩個世界的邏輯要一樣; 主村照舊讓 AI 規劃
-- **搜尋要等真人** (量過四秒到五分半). 過了 `SEARCH_PATIENCE` 迴圈自己取消重搜, log 停在 searching 一兩分鐘是正常的
+- **搜尋要等真人** (量過四秒到五分半). 搜尋中 log 不寫東西, 最久兩分半 (`SEARCH_PATIENCE`) 會有一行 `No opponent in 150s; cancelling and searching again`, 重搜 `SEARCH_ATTEMPTS` 次都沒配到才回 `no_opponent`
 - **容量一整趟只讀一次** (`AttackRunner._settle_ceilings`), 只讀兩排 (沒有黑水, 第三排是寶石, 不點)
 - **聖水車也算一個倉庫.** 迴圈開跑第一輪跟之後每 `CART_EVERY` (五) 場去一次車子: 倉庫有空間就倒進去, 倉庫滿了就讀車上存多少. 倉庫滿了**而且**最近一次讀到車子也過同一個百分比才 `stock_full`, 所以車子剛滿之後最多還會多打四場. 同一趟看三次都讀不到車子, 就退回只看倉庫. 手動領是在夜世界跑 `uv run ai_coc collect`; 車子容量會跟著村莊長大 (現在 160 萬). 打完一輪記得確認有領到
 - **`CartReport.outcome` 有九種**, 收集鈕灰的三種在下一條: `collected` 領到了; `empty` 按了收集而儲量沒動; `not_found` 三個候選點都沒點開; `wrong_world` 不在夜世界; `not_parked` 鏡頭沒停好所以沒去找; `unreadable` 領了但有一邊的儲量條讀不到
@@ -97,7 +97,7 @@ uv run ai_coc attack --repeat 0 --plan src/ai_coc/plans/night_flat.json --yield
 **log 跟畫面都能用, 自己判斷**, log 講不清楚就截一張, 那很便宜.
 
 - **`run.log`** 便宜, 答「走到哪, 這輪結果是什麼」. 跨好幾次找同一個症狀用 `grep -r ~/.ai_coc/logs/*/run.log`
-- **`plans.jsonl`** (每次執行的目錄都有, 一場一行帶輪數) 答那一場的 AI 叫部隊往哪打. 一輪打得爛先看它, 再對 `run.log` 的實際發生: 對不上是迴圈的問題, 對得上是戰術的問題
+- **`plans.jsonl`** (`attack` 的目錄才有, 一場一行帶輪數) 答那一場照什麼戰術打: AI 規劃的, 或 `--plan` 交進去的那份. 一輪打得爛先看它, 再對 `run.log` 的實際發生: 對不上是迴圈的問題, 對得上是戰術的問題
 - **畫面**答 log 答不了的: 畫面長什麼樣, 兵有沒有在打, 判讀器讀的跟眼睛看的一不一樣. 迴圈在跑的時候看 `--record` 留下的 `frames/`, 或用 `uv run ai_coc capture --count N` (`--label` 取名)、`repair-emulator` 的 `scripts/look.py` 截 (兩個都只截圖, 不佔 `state.json`). `uv run ai_coc read <png>` 不碰模擬器, 隨時能跑, 看每個 parser 讀到什麼
 
 **看過的圖發一份給使用者.** 只要你看了並據此下判斷, 就用檔案傳送機制發出去, 不要只留路徑; 他看不到你的工具輸出. 你是 subagent 而發不出去, 就把路徑跟它說明了什麼寫進回報, 讓主 session 發.
@@ -108,10 +108,10 @@ uv run ai_coc attack --repeat 0 --plan src/ai_coc/plans/night_flat.json --yield
 
 **打了一場的五種**, 差別就是下一步往哪走:
 
-- `took_loot`: 打完回營而且倉庫真的動了. 正常的一輪, **只有主村會出現**
+- `took_loot`: 打完回營, 戰鬥中的戰利品面板比偵察時少了 (有搶到東西). 正常的一輪, **只有主村會出現**; 入庫多少照樣只看前後兩次 `stock`
 - `deployed`: **夜世界的正常一輪**. 不保證倉庫動了, 看進帳就比對前後的 `stock`
 - `loot_unread`: 整場讀不到戰利品面板, **無從判斷**, 不是失敗也不是成功
-- `no_loot`: 兵出去了而倉庫沒動, **戰術**的問題, 歸 watch-and-fix
+- `no_loot`: 兵出去了而戰利品面板整場沒動 (一點都沒搶到), **戰術**的問題, 歸 watch-and-fix
 - `nothing_deployed`: 一張卡都沒出去, **迴圈**的問題, 也歸 watch-and-fix, 查的地方完全不同
 
 **沒打到的十種**:
@@ -272,10 +272,10 @@ uv run ai_coc attack --repeat 0 --plan src/ai_coc/plans/night_flat.json --yield
 - 為什麼停 (被中止 / 一輪也沒打成 / 回不了村莊 / 同一個錯誤重複發生)
 - 要不要繼續, 以及繼續之前有沒有東西該先處理
 
-被砍掉的跑 `result.json` 是空的 (走 `uv run ai_coc stop` 停的不會), 那時從 `run.log` 數得出多少寫多少, 註明是從 log 數的. 它的 `state.json` 也會停在 `running`, 那是殘留, 拿 `pid` 查一下就知道.
+被砍掉的跑沒有 `result.json` (走 `uv run ai_coc stop` 停的會有), 那時從 `run.log` 數得出多少寫多少, 註明是從 log 數的. 它的 `state.json` 也會停在 `running`, 那是殘留, 拿 `pid` 查一下就知道.
 
 ## 中途被問進度
 
 報當下的資源跟輪數就好, **不要停下迴圈**. 報告留到任務真的達成再交.
 
-數字從那次的 `run.log` 讀: 最近一行 `Village holds …` (夜世界 `Builder base holds …`) 跟 `Round N of`. **不要為了這個下 `ai_coc stock`**: 迴圈在跑的時候, 會操作畫面的指令會先把它停掉 (`references/running.md` 的「絕對不要同時跑兩個」).
+數字從那次的 `run.log` 讀: 最近一行 `Village holds …` (夜世界 `Builder base holds …`) 跟 `Round N of`. **不要為了這個下 `ai_coc stock`**: 迴圈在跑的時候, 會操作畫面的指令不帶 `--yield` 就是把它借走, 帶了就排在它後面等到它收工 (`references/running.md` 的「絕對不要同時跑兩個」).
