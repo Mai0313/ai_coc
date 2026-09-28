@@ -78,7 +78,7 @@ jq '.[-1] | {world, outcome, stock_full, attacked}' ~/.ai_coc/logs/<run>/result.
 
 **每一次看都要讀完就回來.** 不要掛在 `run.log` 上等新行進來: 在 Windows 上那種讀法會一直握著檔案, 活得比開它的回合久, 那次執行的目錄就再也刪不掉, 要使用者自己開工作管理員去殺 (量過五個 session 留下的殘留壓著 11.2 GB). 要看新的就再讀一次.
 
-**通知進來, 先讀 `result.json` 的最後一個元素, 再決定下一步.** 沒有這個檔案, 或 exit code 不是 0: 程序被砍掉或崩掉, `run.log` 最後幾十行是唯一的線索, 遊戲多半停在回不了家的畫面, 先看畫面再決定. 檔案完整的話, 最後一個元素加上 `run.log` 最後幾行說它怎麼結束:
+**通知進來, 先讀 `result.json` 的最後一個元素, 再決定下一步.** exit code 不是 0 而 `result.json` 是 `借用被 ai_coc stop 取消了…` 那一行: 借用被取消, 照「被借走」那條處理. 其他情況下沒有這個檔案, 或 exit code 不是 0: 程序被砍掉或崩掉, `run.log` 最後幾十行是唯一的線索, 遊戲多半停在回不了家的畫面, 先看畫面再決定. 檔案完整的話, 最後一個元素加上 `run.log` 最後幾行說它怎麼結束:
 
 - `stock_full` 是 `true`: 這個世界打滿了, **是接縫不是終點**. 兩個世界都要打就換另一個; 日世界要花的話照 `farm` 的「倉庫滿了」那節. 不要回頭問使用者要不要繼續
 - `run.log` 結尾有 `Stop requested`: 有人下了 `ai_coc stop` (停在回合之間或兩輪中間的等待都會留這一行). 誰停的看 `~/.ai_coc/state.json` 的 `stop_by`. 不是你下的, 先看同一份檔案有沒有 `loan`, 見「被借走」
@@ -112,7 +112,7 @@ jq '.[-1] | {world, outcome, stock_full, attacked}' ~/.ai_coc/logs/<run>/result.
 
 停在每個迴圈最安全的接縫: `attack` 在回合之間跟對手之間, `walls` 在批次之間跟開場掃描村莊時. 所以**停不是立刻的**, 最久要等當下那一場戰鬥打完或那一批城牆買完 (量過一次 107 秒). 打到一半棄權會把軍隊丟在場上、遊戲停在回不了家的畫面, 比多等兩分鐘貴得多.
 
-**怎麼知道停好了.** 背景指令自己結束: exit code 0, `result.json` 有內容. `state.json` 的 `status` 是 `stopping` 表示收到了、還在打完手上那一場; 變成 `idle` (連同 `ended`) 才是真的收工.
+**怎麼知道停好了.** 背景指令自己結束: exit code 0, `result.json` 有內容 (排隊中被這個 stop 取消的指令例外: exit code 不是 0, `result.json` 是取消的那一行). `state.json` 的 `status` 是 `stopping` 表示收到了、還在打完手上那一場; 變成 `idle` (連同 `ended`) 才是真的收工.
 
 **不要去砍背景程序.** 砍掉的話迴圈的 `KeyboardInterrupt` 出口執行不到 (只有前景的 Ctrl-C 走得到), 軍隊留在場上, 遊戲停在回不了家的畫面, 沒有 `result.json`, 只剩 `run.log` 能數. **卡死的也不用你砍**: 別的**不帶 `--yield`** 的指令等滿 `TAKEOVER_WAIT` (約 12 分鐘) 還等不到它收工, 會自己結束它並在自己的 `run.log` 記下是誰的 run; 下一個指令照常把遊戲帶回村莊. 視窗跟沒有 `pid_created` 的舊紀錄例外, 不會被結束, 那個指令只會報錯; 視窗就請使用者在視窗按停止. 帶 `--yield` 的指令不會結束任何人, 排在卡死的 run 後面會一直等 (見「為什麼一定要背景跑」).
 
@@ -127,7 +127,7 @@ jq '.[-1] | {world, outcome, stock_full, attacked}' ~/.ai_coc/logs/<run>/result.
 **你的 run 被一個不是你下的停止收掉, 先讀 `~/.ai_coc/state.json` 的 `loan`.** 帶 `--yield` 的 run 被別的指令要走時是借出去, 不是停掉: 那個指令叫它收工的同時寫下 `loan` (`lender` 是你, `borrower` 是誰借走、為了什麼), 你那輪的 `run.log` 最後也有一行 `Lent to …`.
 
 - `loan` 在, `lender` 是你, `ended` 不是 `cancelled`: **馬上開回去**, 同一個世界同一組旗標, 都帶 `--yield`, 而且**串成一個背景指令** (`world --go <那個世界> --yield … && attack … --yield …`): 借的那一邊可能把遊戲留在另一個村莊, 而排隊可能超過一次前景呼叫的上限. 它會自己等 `giveback` 或借用逾時才真的開跑, 你照常分段等. 不用等誰傳話, 最後的回報裡提一句被借走多久就好
-- 開回去的指令 `result.json` 是 `借用被 ai_coc stop 取消了,這個指令沒有開跑`: 有人在借用期間下了 `ai_coc stop`, 照「中止」處理, 不要再開
+- 開回去的指令 `result.json` 是 `借用被 ai_coc stop 取消了,這個指令沒有開跑` (exit code 不是 0, 所以串在它後面的 `attack` 不會開跑): 有人在借用期間下了 `ai_coc stop`, 照「中止」處理, 不要再開
 - 沒有 `loan`, 或 `ended` 是 `cancelled`: 那是真的叫停, 照「中止」處理
 
 ## 你自己要用畫面: 直接借, 用完還
