@@ -24,8 +24,8 @@ permissions: write-all
 jobs:
   run_tests:
     name: Run Tests
-    # Windows, and not as a preference: `adapters/mumu.py` imports `winreg` at
-    # module scope and `commands.py` imports that, so on Linux `test_core.py`
+    # Windows, and not as a preference: `adapters/emulator.py` imports `winreg`
+    # at module scope and `commands.py` imports that, so on Linux `test_core.py`
     # fails to import at all. It did, silently, for as long as this matrix said
     # ubuntu — 208 tests never ran and the job still went green.
     runs-on: ${{ matrix.os }}

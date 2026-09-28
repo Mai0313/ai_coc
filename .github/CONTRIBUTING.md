@@ -222,9 +222,9 @@ These are documented in `pyproject.toml` comments and are not oversights:
 - ty excludes `cli.py`, `ui/main_window.py` and `ui/workers.py`, because PyQt5 ships inaccurate stubs
 - `allowed-confusables` carries `／` and `？` for the Chinese UI strings
 - The `build_release.yml` matrix is Windows-only, because nothing here runs elsewhere
-- **`test.yml`'s matrix is Windows-only for a harder reason**: `adapters/mumu.py` imports `winreg` at module scope, so on Linux `test_core.py` cannot be imported and its tests are silently skipped. That went unnoticed because `uv run pytest | tee` reported `tee`'s exit code rather than pytest's, so the job passed either way. Keep `set -o pipefail` in that step
+- **`test.yml`'s matrix is Windows-only for a harder reason**: `adapters/emulator.py` imports `winreg` at module scope, so on Linux `test_core.py` cannot be imported and its tests are silently skipped. That went unnoticed because `uv run pytest | tee` reported `tee`'s exit code rather than pytest's, so the job passed either way. Keep `set -o pipefail` in that step
 - Every other workflow still runs on Linux, and can: none of them imports `ai_coc`. ruff and ty read the source, and `gen_docs.py` parses it with `ast` while mkdocstrings goes through griffe. A new job that needs to *import* the package belongs on Windows
-- The CodeQL and dependency-review jobs are gated on the repository being public, because this one has no GitHub Advanced Security
+- The CodeQL and dependency-review jobs are gated on the repository being public, because on a private one both need GitHub Advanced Security
 
 UI strings, prompts and user-facing messages are Traditional Chinese; code, comments, commit messages and anything published to GitHub are English.
 
@@ -273,7 +273,7 @@ All workflows live in `.github/workflows/`.
 - **Build and Release** (`build_release.yml`): tags `v*` or manual dispatch. Builds a Windows x64 executable with PyInstaller plus the wheel and sdist, publishes to PyPI (needs the `UV_PUBLISH_TOKEN` secret) and uploads everything to the GitHub Release
 - **Publish Docker Image** (`build_image.yml`): push to `main` and tags `v*`. Pushes to GHCR: `ghcr.io/<owner>/<repo>`
 - **Release Drafter** (`release_drafter.yml`): push to `main` and PR events. Maintains a draft release from Conventional Commits
-- **Code Scanning** (`code_scan.yml`): push and PR. Runs gitleaks and trufflehog; the CodeQL job in the same file needs GitHub Advanced Security and stays skipped while the repo is private
+- **Code Scanning** (`code_scan.yml`): push and PR. Runs gitleaks and trufflehog; the CodeQL job in the same file needs GitHub Advanced Security on a private repository, so it runs only while the repo is public
 - **Dependabot Auto Merge** (`auto_review_merge.yml`): pull requests. Auto-merges Dependabot PRs, and carries the dependency-review job, which is gated on the same visibility check as CodeQL
 - **Semantic Pull Request** (`semantic-pull-request.yml`): PR open/edit/sync. Enforces Conventional Commit style PR titles
 

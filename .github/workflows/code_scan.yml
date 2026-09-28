@@ -41,8 +41,8 @@ jobs:
   codeql-scanning:
     name: CodeQL Scanning
     runs-on: ubuntu-latest
-    # CodeQL needs GitHub Advanced Security, which this private repo does not
-    # have. The gate opens by itself once the repo goes public or GHAS is on.
+    # CodeQL needs GitHub Advanced Security on a private repository, so the job
+    # runs only while this one is public.
     if: github.event.repository.visibility == 'public'
 
     steps:
