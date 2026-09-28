@@ -76,7 +76,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Every coordinate is the 1600x900 layout, the one `_apply_agent_action` assumes.
+# Every coordinate is the 1600x900 layout, the one every tap here assumes.
 HOME_ATTACK = (105, 830)
 FIND_MATCH = (272, 665)
 ARMY_ATTACK = (1411, 803)
@@ -667,13 +667,12 @@ def planned_line(
 def deploy_candidates(
     plan: AttackPlan | NightPlan | None,
 ) -> list[tuple[tuple[int, int], tuple[int, int]]]:
-    """Every line worth trying, best first: what the plan drew, its flank, then the rest.
+    """The lines in order of preference: what the plan drew, its flank, then the rest.
 
-    One flank is not enough. `push_out` runs out of room on a village whose
-    boundary reaches the screen edge, because the presets already hug the
-    playfield, and giving up there spends the whole battle with the army still
-    in the cards. A village only ever blocks the sides it grew towards, so the
-    remaining flanks are what turns that into a fought battle.
+    `_flank` plays the first and nothing tries the others: a flank the village
+    has grown over is answered by the troop passes pushing the line out
+    (`_spread_troops`, and `_spread_night` on the builder base), not by
+    switching sides.
     """
     sides = sorted(DEPLOY_LINES, key=lambda side: side != (plan.deploy_from if plan else ""))
     line = planned_line(plan)
@@ -1381,8 +1380,8 @@ class AttackRunner(ScreenRunner):
         """Tap 回營 until the result screen has actually gone.
 
         One tap was not enough and cost four runs in a row. The loot panel
-        vanishes as the result screen starts animating in, so the tap fired the
-        moment `_battle_view` reads nothing lands before the button is alive; the
+        vanishes as the result screen starts animating in, so a tap fired the
+        moment the panel stops reading lands before the button is alive; the
         village then stayed covered and every following run stood down with
         畫面不在主村 without ever attacking.
 
@@ -1468,8 +1467,9 @@ class AttackRunner(ScreenRunner):
         can still be on screen for a moment and is not a new opponent; see
         `NEXT_SETTLE`.
 
-        The frame comes back with the view because `card_groups` only holds on a
-        full card row, and this is the last moment one is guaranteed.
+        The frame comes back with the view because `_settle_zoom` measures the
+        village on it before the pinch; the card row is read later, off the
+        frame taken after the pinch.
 
         **An opponent whose loot will not read is not an empty search**, and
         waiting on one is the expensive way to find that out: the countdown is
@@ -1968,10 +1968,10 @@ class AttackRunner(ScreenRunner):
     def _clear_flank(self, frame: bytes, preset: tuple[tuple[int, int], ...]) -> bytes:
         """Drag the village clear of the card row so this flank has ground to drop on.
 
-        Which way comes from the flank about to be tried rather than from the
-        plan's own `deploy_from`, because the loop falls through to other flanks
-        when one is refused and the camera has to follow whichever is really
-        being used.
+        Which way comes from the line about to be played rather than from the
+        plan's own `deploy_from`, because that line is the plan's own drawing
+        whenever `planned_line` accepts it, and the camera has to follow
+        whichever is really being used.
 
         How much comes from where the village's own red line already reaches, so
         a village small enough to leave the flank room is left alone: dragging a

@@ -207,9 +207,10 @@ def gesture_script(events: list[tuple[int, int, int]], node: str, gap: float = P
     **The pacing is the other half, and without it there is no gesture.** The
     stream written in one go arrives with one timestamp and the game keeps the
     scale it started at — measured, a batch that moved the camera not at all,
-    0.199 to 0.195. A `sleep` between reports is what makes it a drag, and the
-    game reads the same zoom at every gap from 0 up to 0.02, so `gap` buys how
-    it looks rather than whether it works: MuMu draws a dot under every touch it
+    0.199 to 0.195. Writing each report on its own is what makes it a drag,
+    since a write alone takes about 6 ms, and the game reads the same zoom at
+    every added gap from 0 up to 0.02, so `gap` buys how it looks rather than
+    whether it works: MuMu draws a dot under every touch it
     receives, and a step every 14 ms at `PINCH_GAP` reads as a slide where one
     every 225 ms read as a series of jumps. The 0.28 s above is the ungapped
     figure, which is what the grouping bought; paced, the same gesture is 0.66 s.
