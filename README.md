@@ -71,7 +71,8 @@ ai_coc attack --repeat 0         # keep going until a storage fills up
 ai_coc stop                      # stand down after the battle in progress
 ai_coc giveback                  # hand a borrowed emulator back to the loop it came from
 ai_coc attack --stop-at 0        # attack however full the storages are
-ai_coc attack --repeat 0 --until-builder  # stop as well once a builder here is idle
+ai_coc attack --repeat 0 --until-idle  # stop as well once a builder or research slot here is idle
+ai_coc attack --repeat 0 --until-idle builder  # only the builders (`lab` for the laboratory)
 ```
 
 `stop` marks `~/.ai_coc/state.json` and returns at once. The loop reads it between battles and between opponents, never mid-battle, so the worst case is one more battle: abandoning one halfway would leave the army on the field and the game on a screen the next run cannot get home from. With nothing running it says so, rather than leaving a request nobody will take.

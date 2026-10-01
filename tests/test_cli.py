@@ -129,7 +129,7 @@ class DispatchTests(unittest.TestCase):
                     "0",
                     "--stop-at",
                     "0",
-                    "--until-builder",
+                    "--until-idle",
                     "--record",
                     "--shot-every",
                     "4",
@@ -149,8 +149,19 @@ class DispatchTests(unittest.TestCase):
             rounds=0,
             shot_every=4.0,
             stop_at=0,
-            until_builder=True,
+            until_idle=["builder", "lab"],
         )
+
+    def test_until_idle_watches_what_it_names_and_both_when_it_names_none(self) -> None:
+        for flags, watched in (
+            ((), []),
+            (("--until-idle",), ["builder", "lab"]),
+            (("--until-idle", "builder"), ["builder"]),
+            (("--until-idle", "lab"), ["lab"]),
+        ):
+            with patch.object(commands, "attack", return_value=AttackSeries()) as attacked:
+                _answer(_args("attack", *flags), self.run)
+            assert attacked.call_args.args[0].until_idle == watched, flags
 
     def test_an_omitted_flag_is_none_rather_than_zero(self) -> None:
         """None keeps the file's value and zero takes a threshold out; the parser must not merge them."""

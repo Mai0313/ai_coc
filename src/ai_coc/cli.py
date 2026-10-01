@@ -120,7 +120,11 @@ def _parser() -> argparse.ArgumentParser:
         help="每一種倉庫都滿到這個百分比就收工,蓋過設定檔,0 代表這次不管倉庫多滿都照打",
     )
     run.add_argument(
-        "--until-builder", action="store_true", help="這個村莊有工人閒著也收工,倉庫的收工條件照舊"
+        "--until-idle",
+        nargs="*",
+        choices=("builder", "lab"),
+        metavar="builder|lab",
+        help="這個村莊的工人或實驗室有空閒也收工,只給旗標就兩個都看,倉庫的收工條件照舊",
     )
     # Omitted means "whatever the config file says". Three zeros is how a run
     # being studied gets back to attacking the first opponent it is shown.
@@ -293,7 +297,7 @@ def _answer(arguments: argparse.Namespace, run: RunLog) -> BaseModel | str:
                 rounds=a.repeat,
                 shot_every=a.shot_every,
                 stop_at=a.stop_at,
-                until_builder=a.until_builder,
+                until_idle=[] if a.until_idle is None else a.until_idle or ["builder", "lab"],
             )
         ),
         "stop": lambda: commands.stop(_caller(a)),

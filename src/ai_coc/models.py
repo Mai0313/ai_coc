@@ -1070,9 +1070,10 @@ class NightPlan(BaseModel):
 # deliberate stand-downs, both before the search fee, and both end the whole
 # series rather than the round: a storage does not empty itself while a run is
 # going, and training is instant in the current game, so an army under the
-# threshold is a composition that cannot reach it. `builder_free` is a third,
-# only on a run asked to watch for it: an idle builder is the moment the player
-# wanted to hear about, and nothing a battle wins changes it. `no_opponent` is a
+# threshold is a composition that cannot reach it. `builder_free` and
+# `lab_free` are two more, only on a run asked to watch for them: an idle
+# builder or research slot is what the player wanted to hear about, and nothing
+# a battle wins changes it. `no_opponent` is a
 # matchmaker or a scout screen that never produced one, `all_skipped` is every
 # candidate under the thresholds, and `stopped` is somebody asking for the run
 # to end — including during the server wait. `no_attack_menu` is a screen the
@@ -1090,6 +1091,7 @@ AttackOutcome = Literal[
     "army_short",
     "stock_full",
     "builder_free",
+    "lab_free",
     "no_opponent",
     "all_skipped",
     "stopped",
@@ -1149,6 +1151,11 @@ class AttackReport(BaseModel):
         return self.outcome == "stock_full"
 
 
+# The plates `attack --until-idle` can be told to watch. The shield plate
+# counts nothing, so it is not one of them.
+IdleRole = Literal["builder", "lab"]
+
+
 class AttackOptions(BaseModel):
     """What one `attack` command was told to do, beyond the shared config file.
 
@@ -1179,9 +1186,10 @@ class AttackOptions(BaseModel):
     # filled needs — every storage is past the line, so the file's value would
     # end the series before it searched, and the code under test never runs.
     stop_at: int | None = None
-    # Also stands the series down once a builder on this village is idle, which
-    # is how a farming session waits on one without a clock of its own.
-    until_builder: bool = False
+    # Also stands the series down once one of these plates on this village
+    # shows an idle slot, which is how a farming session waits on a builder or
+    # the laboratory without a clock of its own. Empty watches neither.
+    until_idle: list[IdleRole] = Field(default_factory=list)
 
 
 class AttackSeries(RootModel[list[AttackReport]]):
@@ -1973,8 +1981,9 @@ World = Literal["day", "night"]
 
 
 # The plates along the top of either village, named for what each one counts.
-# `lab` is the research slots — the laboratory and, on the home village, the pet
-# house alongside it — and `builder` the workmen. `shield` is the home village's
+# `lab` is the research slots — on the home village two research jobs have been
+# seen running side by side, and the pet house is not on this plate at all —
+# and `builder` the workmen. `shield` is the home village's
 # alone: the builder base is real-time matchmaking against a live player, so a
 # shield there would contradict the mode's own design.
 PlateRole = Literal["lab", "builder", "shield"]
