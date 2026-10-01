@@ -14,11 +14,12 @@ from typing import TYPE_CHECKING
 import logging
 import itertools
 
-from pydantic import PrivateAttr
+from pydantic import Field, PrivateAttr
 
 from ai_coc import plans
 from ai_coc.models import (
     World,
+    IdleRole,
     BattleRow,
     LootOffer,
     NightPlan,
@@ -103,6 +104,10 @@ SEARCH_CANCEL = (798, 786)
 SEARCH_PATIENCE = 150
 SEARCH_ATTEMPTS = 4
 SEARCH_POLL = 3.0
+
+# The plates `--until-idle` watches, in the order they are read, and what each
+# one standing idle ends the series as. The shield plate counts nothing.
+FREED: dict[IdleRole, AttackOutcome] = {"builder": "builder_free", "lab": "lab_free"}
 
 # How often the machine is offered its ability, and how often the loop looks at
 # the battle while doing so. **The builder base's machine recharges instead of
@@ -965,9 +970,9 @@ class AttackRunner(ScreenRunner):
     # share of what that storage holds; 0 never stands one down. One number for
     # both villages, because the ceilings themselves are read off the game.
     stop_at: int = 0
-    # Whether an idle builder on this village stands the run down too; see
-    # `_stood_down`.
-    until_builder: bool = False
+    # Which plates on this village stand the run down too once one shows an
+    # idle slot; see `_stood_down`.
+    until_idle: list[IdleRole] = Field(default_factory=list)
     max_skips: int = 20
     # A plan settled before the run, which skips the Gemini call entirely. This is
     # what `--plan` fills, and it is how a hand-written tactic is replayed
@@ -1349,17 +1354,26 @@ class AttackRunner(ScreenRunner):
         return False
 
     def _stood_down(self, home: bytes) -> AttackReport | None:
-        """A report standing the run down on an idle builder or full storages, or None to carry on.
+        """A report standing the run down on an idle slot or full storages, or None to carry on.
 
-        **The builder only when the run was asked to watch for one**, and first,
-        because that is the answer the run was started to wait for. The plate
-        sits in the badge row this frame was just read as a village by, so
-        asking costs no capture; a plate that will not read plays the round,
-        for the same reason an unreadable storage does. Measured on the 66
-        frames two recorded home village series took here, every one read
-        `0/6`, and a live round on 2026-10-01 read `0/5` with the panel showing
-        five rows running. No real builder base frame with an idle builder has been read
-        yet: the two committed ones showing `1/3` are blacked out below the
+        **The builder and laboratory plates only where the run was asked to
+        watch them**, and first, because that is the answer the run was started
+        to wait for. They sit in the badge row this frame was just read as a
+        village by, so asking costs no capture; a plate that will not read
+        plays the round, for the same reason an unreadable storage does.
+
+        **Only the idle count decides, never the total**, because events add a
+        builder or a research slot (drawn with a goblin face) and take it away
+        again. **And any idle slot, not one more than the run started with**:
+        `farm` restarts this command around every loan and every side errand,
+        and a count remembered here would take whatever freed up in the gap for
+        the new starting line and never report it.
+
+        Measured on the 66 frames two recorded home village series took here,
+        every one read the builders as `0/6` and the laboratory as `0/2`, and a
+        live round on 2026-10-01 read `0/5` with the builder panel showing five
+        rows running. No real builder base frame with an idle builder has been
+        read yet: the two committed ones showing `1/3` are blacked out below the
         digits.
 
         Asked before the search rather than after it, on both villages: a
@@ -1376,17 +1390,21 @@ class AttackRunner(ScreenRunner):
         builder base reads two rows, because what sits at its third is the
         gems bar — and its cart is the third storage there, by `_cart_has_room`.
         """
-        if self.until_builder:
-            centre = plate_badges(home).get("builder")
-            counted = None if centre is None else plate_count(home, centre)
-            if counted is None:
-                logger.info("The builder plate would not read; playing the round")
-            elif counted[0] > 0:
-                logger.info("A builder is idle (%d/%d); farming stops", *counted)
-                self.adb.back(self.display)
-                return AttackReport(world=self.world, outcome="builder_free")
-            else:
-                logger.info("Every builder is busy (%d/%d); farming on", *counted)
+        if self.until_idle:
+            badges = plate_badges(home)
+            for role, freed in FREED.items():
+                if role not in self.until_idle:
+                    continue
+                centre = badges.get(role)
+                counted = None if centre is None else plate_count(home, centre)
+                if counted is None:
+                    logger.info("The %s plate would not read; playing the round", role)
+                    continue
+                if counted[0] > 0:
+                    logger.info("The %s plate reads %d/%d idle; farming stops", role, *counted)
+                    self.adb.back(self.display)
+                    return AttackReport(world=self.world, outcome=freed)
+                logger.info("The %s plate reads %d/%d idle; farming on", role, *counted)
         stock = (read_stock if self.world == "day" else read_builder_stock)(home)
         if stock is None:
             return None

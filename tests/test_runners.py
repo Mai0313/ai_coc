@@ -1055,20 +1055,22 @@ class StoodDownTests(unittest.TestCase):
             assert runner._stood_down(b"") is None
 
 
-class IdleBuilderTests(unittest.TestCase):
-    """`--until-builder`: an idle builder ends the series, read off the frame the storages are."""
+class FreedSlotTests(unittest.TestCase):
+    """`--until-idle`: an idle builder or research slot ends the series, read off the frame the storages are."""
 
     SHORT = VillageStock(gold=10, elixir=95, dark=95)
     FULL = VillageStock(gold=95, elixir=95, dark=95)
 
-    def _runner(self, world: str = "day", until_builder: bool = True) -> AttackRunner:
+    def _runner(
+        self, world: str = "day", until_idle: tuple[str, ...] = ("builder", "lab")
+    ) -> AttackRunner:
         runner = AttackRunner(
             adb=_adb(),
             display=DISPLAY,
             world=world,
             thresholds=LootThresholds(),
             stop_at=90,
-            until_builder=until_builder,
+            until_idle=list(until_idle),
         )
         runner._capacity = StorageCapacity(gold=100, elixir=100, dark=100)
         return runner
@@ -1089,28 +1091,48 @@ class IdleBuilderTests(unittest.TestCase):
     def test_an_idle_builder_stands_the_run_down_ahead_of_the_storages(self) -> None:
         """This plate reads 1/6, and the answer the run waits for comes first even on full storages."""
         runner = self._runner()
-        assert self._stood_down(runner, "day_shield_first_number_fused.png", self.SHORT) == (
-            "builder_free"
-        )
-        assert self._stood_down(runner, "day_shield_first_number_fused.png", self.FULL) == (
-            "builder_free"
-        )
+        for stock in (self.SHORT, self.FULL):
+            assert self._stood_down(runner, "day_shield_first_number_fused.png", stock) == (
+                "builder_free"
+            )
 
-    def test_busy_or_unread_builders_leave_it_to_the_storages(self) -> None:
-        """0/6 on the first frame; the second's plate will not read, which plays the round."""
+    def test_the_builders_are_read_before_the_laboratory(self) -> None:
+        """Builders 1/5 and laboratory 1/2 on one frame."""
+        runner = self._runner()
+        assert self._stood_down(runner, "home_marker_over_bars.png", self.SHORT) == "builder_free"
+
+    def test_an_idle_research_slot_stands_it_down_too(self) -> None:
+        runner = self._runner()
+        with patch.object(attack, "plate_count", side_effect=[(0, 5), (1, 2)]):
+            assert self._stood_down(runner, "day_lab_panel.png", self.SHORT) == "lab_free"
+
+    def test_a_run_watching_one_plate_never_reads_the_other(self) -> None:
+        """An unused event research slot leaves the laboratory at 1/2 all day; a builder-only wait farms on."""
+        runner = self._runner(until_idle=("builder",))
+        assert self._stood_down(runner, "home_marker_over_bars.png", self.SHORT) == "builder_free"
+        with patch.object(attack, "plate_count", return_value=(0, 5)) as counted:
+            assert self._stood_down(runner, "home_marker_over_bars.png", self.SHORT) is None
+        counted.assert_called_once()
+        runner = self._runner(until_idle=("lab",))
+        assert self._stood_down(runner, "home_marker_over_bars.png", self.SHORT) == "lab_free"
+
+    def test_busy_or_unread_plates_leave_it_to_the_storages(self) -> None:
+        """0/6 and 0/2 on the first frame; the second's builders will not read, which plays the round."""
         runner = self._runner()
         for frame in ("day_lab_panel.png", "world_day.png"):
             assert self._stood_down(runner, frame, self.SHORT) is None, frame
             assert self._stood_down(runner, frame, self.FULL) == "stock_full", frame
 
-    def test_a_run_not_asked_to_watch_farms_past_an_idle_builder(self) -> None:
-        runner = self._runner(until_builder=False)
-        assert self._stood_down(runner, "day_shield_first_number_fused.png", self.SHORT) is None
+    def test_a_run_not_asked_to_watch_never_reads_the_plates(self) -> None:
+        runner = self._runner(until_idle=())
+        with patch.object(attack, "plate_badges") as badges:
+            assert self._stood_down(runner, "day_lab_panel.png", self.SHORT) is None
+        badges.assert_not_called()
 
     def test_the_builder_base_reports_its_own_village(self) -> None:
         runner = self._runner(world="night")
         with (
-            patch.object(attack, "plate_badges", return_value={"builder": 830}),
+            patch.object(attack, "plate_badges", return_value={"lab": 628, "builder": 830}),
             patch.object(attack, "plate_count", return_value=(1, 3)),
             patch.object(AdbController, "back"),
         ):

@@ -80,8 +80,8 @@ jq '.[-1] | {world, outcome, stock_full, attacked}' ~/.ai_coc/logs/<run>/result.
 
 **通知進來, 先讀 `result.json` 的最後一個元素, 再決定下一步.** exit code 不是 0 而 `result.json` 是 `借用被 ai_coc stop 取消了…` 那一行: 借用被取消, 照「被借走」那條處理. 其他情況下沒有這個檔案, 或 exit code 不是 0: 程序被砍掉或崩掉, `run.log` 最後幾十行是唯一的線索, 遊戲多半停在回不了家的畫面, 先看畫面再決定. 檔案完整的話, 最後一個元素加上 `run.log` 最後幾行說它怎麼結束:
 
-- `stock_full` 是 `true`: 這個世界打滿了, **是接縫不是終點**. 兩個世界都要打就換另一個; 日世界要花的話照 `farm` 的「倉庫滿了」那節; 帶 `--until-builder` 的那一趟照 `farm` 的「打到工人空出來」. 不要回頭問使用者要不要繼續
-- `outcome` 是 `builder_free`: 這個村莊有工人閒著了, 只有帶 `--until-builder` 的那一趟會有. 照 `farm` 的「打到工人空出來」接
+- `stock_full` 是 `true`: 這個世界打滿了, **是接縫不是終點**. 兩個世界都要打就換另一個; 日世界要花的話照 `farm` 的「倉庫滿了」那節; 帶 `--until-idle` 的那一趟照 `farm` 的「打到有空閒」. 不要回頭問使用者要不要繼續
+- `outcome` 是 `builder_free` 或 `lab_free`: 這個村莊有工人或實驗室空出來了, 只有帶 `--until-idle` 的那一趟會有. 照 `farm` 的「打到有空閒」接
 - `run.log` 結尾有 `Stop requested`: 有人下了 `ai_coc stop` (停在回合之間或兩輪中間的等待都會留這一行). 誰停的看 `~/.ai_coc/state.json` 的 `stop_by`. 不是你下的, 先看同一份檔案有沒有 `loan`, 見「被借走」
 - 使用者指定的 `--repeat N` 跑完: 照他的交辦接下去或收工
 - 有幾輪 `outcome` 是 `emulator_silent`: 模擬器當下不理人, 夾在中間一兩輪不是事, 照常打. 但結尾是 `The emulator has not answered for 3 rounds; ending the series` 就是連續三輪, 整個 series 收工: 先看模擬器還活著沒有, 不要直接開下一個. 這種有完整的 `result.json`, 不要跟被砍掉的搞混

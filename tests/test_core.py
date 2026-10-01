@@ -5580,8 +5580,8 @@ class StopAtOverrideTests(unittest.TestCase):
         assert self._stop_at(AttackOptions(stop_at=100)) == 100
 
     def test_the_builder_watch_reaches_the_runner(self) -> None:
-        assert self._built(AttackOptions(until_builder=True))["until_builder"] is True
-        assert self._built(AttackOptions())["until_builder"] is False
+        assert self._built(AttackOptions(until_idle=["lab"]))["until_idle"] == ["lab"]
+        assert self._built(AttackOptions())["until_idle"] == []
 
 
 class LaunchTests(unittest.TestCase):

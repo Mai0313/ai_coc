@@ -71,7 +71,8 @@ ai_coc attack --repeat 0         # 一直打到某个仓库满为止
 ai_coc stop                      # 打完当下这一场就收工
 ai_coc giveback                  # 把借来的模拟器还给原本在跑的循环
 ai_coc attack --stop-at 0        # 不管仓库多满都照打
-ai_coc attack --repeat 0 --until-builder  # 这个村庄有工人闲着也收工
+ai_coc attack --repeat 0 --until-idle  # 这个村庄有工人或实验室闲着也收工
+ai_coc attack --repeat 0 --until-idle builder  # 只看工人 (`lab` 只看实验室)
 ```
 
 `stop` 在 `~/.ai_coc/state.json` 上做个记号就返回。循环在回合之间跟对手之间读它, 绝不会在战斗中途停, 所以最坏是多打一场: 打到一半弃权会把军队丢在场上, 游戏停在下一轮回不了家的画面。没有东西在跑的时候它会直接说没有, 而不是留一个没人会收的请求。
