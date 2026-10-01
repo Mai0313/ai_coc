@@ -5541,6 +5541,10 @@ class StopAtOverrideTests(unittest.TestCase):
 
     def _stop_at(self, options: AttackOptions) -> int:
         """Run one round and hand back the percentage the runner was built with."""
+        return self._built(options)["stop_at"]
+
+    def _built(self, options: AttackOptions) -> dict:
+        """Run one round and hand back what the runner was built with."""
         with (
             patch.object(commands, "_controller"),
             patch.object(commands, "current_world", return_value="day"),
@@ -5562,7 +5566,7 @@ class StopAtOverrideTests(unittest.TestCase):
                 outcome="took_loot",
             )
             commands.attack(options)
-        return runner.call_args.kwargs["stop_at"]
+        return runner.call_args.kwargs
 
     def test_zero_on_the_flag_is_not_the_same_as_leaving_it_out(self) -> None:
         """Omitting it keeps the file's percentage; zero never stands the run down.
@@ -5574,6 +5578,10 @@ class StopAtOverrideTests(unittest.TestCase):
         assert self._stop_at(AttackOptions()) == 85
         assert self._stop_at(AttackOptions(stop_at=0)) == 0
         assert self._stop_at(AttackOptions(stop_at=100)) == 100
+
+    def test_the_builder_watch_reaches_the_runner(self) -> None:
+        assert self._built(AttackOptions(until_builder=True))["until_builder"] is True
+        assert self._built(AttackOptions())["until_builder"] is False
 
 
 class LaunchTests(unittest.TestCase):

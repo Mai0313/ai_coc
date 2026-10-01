@@ -1070,7 +1070,9 @@ class NightPlan(BaseModel):
 # deliberate stand-downs, both before the search fee, and both end the whole
 # series rather than the round: a storage does not empty itself while a run is
 # going, and training is instant in the current game, so an army under the
-# threshold is a composition that cannot reach it. `no_opponent` is a
+# threshold is a composition that cannot reach it. `builder_free` is a third,
+# only on a run asked to watch for it: an idle builder is the moment the player
+# wanted to hear about, and nothing a battle wins changes it. `no_opponent` is a
 # matchmaker or a scout screen that never produced one, `all_skipped` is every
 # candidate under the thresholds, and `stopped` is somebody asking for the run
 # to end — including during the server wait. `no_attack_menu` is a screen the
@@ -1087,6 +1089,7 @@ AttackOutcome = Literal[
     "nothing_deployed",
     "army_short",
     "stock_full",
+    "builder_free",
     "no_opponent",
     "all_skipped",
     "stopped",
@@ -1176,6 +1179,9 @@ class AttackOptions(BaseModel):
     # filled needs — every storage is past the line, so the file's value would
     # end the series before it searched, and the code under test never runs.
     stop_at: int | None = None
+    # Also stands the series down once a builder on this village is idle, which
+    # is how a farming session waits on one without a clock of its own.
+    until_builder: bool = False
 
 
 class AttackSeries(RootModel[list[AttackReport]]):

@@ -37,6 +37,7 @@ from ai_coc.ui.world import uncovered, collect_cart
 from ai_coc.constants import COC_PACKAGE
 from ai_coc.ui.runner import ScreenRunner, restart_game
 from ai_coc.adapters.adb import ZOOM_PINCHES
+from ai_coc.parsers.home import plate_count, plate_badges
 from ai_coc.parsers.field import view_shift
 from ai_coc.parsers.scout import (
     PANEL_DRAWN_BRIGHTNESS,
@@ -964,6 +965,9 @@ class AttackRunner(ScreenRunner):
     # share of what that storage holds; 0 never stands one down. One number for
     # both villages, because the ceilings themselves are read off the game.
     stop_at: int = 0
+    # Whether an idle builder on this village stands the run down too; see
+    # `_stood_down`.
+    until_builder: bool = False
     max_skips: int = 20
     # A plan settled before the run, which skips the Gemini call entirely. This is
     # what `--plan` fills, and it is how a hand-written tactic is replayed
@@ -1345,7 +1349,18 @@ class AttackRunner(ScreenRunner):
         return False
 
     def _stood_down(self, home: bytes) -> AttackReport | None:
-        """A report standing the run down on full storages, or None to carry on.
+        """A report standing the run down on an idle builder or full storages, or None to carry on.
+
+        **The builder only when the run was asked to watch for one**, and first,
+        because that is the answer the run was started to wait for. The plate
+        sits in the badge row this frame was just read as a village by, so
+        asking costs no capture; a plate that will not read plays the round,
+        for the same reason an unreadable storage does. Measured on the 66
+        frames two recorded home village series took here, every one read
+        `0/6`, and a live round on 2026-10-01 read `0/5` with the panel showing
+        five rows running. No real builder base frame with an idle builder has been read
+        yet: the two committed ones showing `1/3` are blacked out below the
+        digits.
 
         Asked before the search rather than after it, on both villages: a
         village with every storage full has nowhere to put what this run would
@@ -1361,6 +1376,17 @@ class AttackRunner(ScreenRunner):
         builder base reads two rows, because what sits at its third is the
         gems bar — and its cart is the third storage there, by `_cart_has_room`.
         """
+        if self.until_builder:
+            centre = plate_badges(home).get("builder")
+            counted = None if centre is None else plate_count(home, centre)
+            if counted is None:
+                logger.info("The builder plate would not read; playing the round")
+            elif counted[0] > 0:
+                logger.info("A builder is idle (%d/%d); farming stops", *counted)
+                self.adb.back(self.display)
+                return AttackReport(world=self.world, outcome="builder_free")
+            else:
+                logger.info("Every builder is busy (%d/%d); farming on", *counted)
         stock = (read_stock if self.world == "day" else read_builder_stock)(home)
         if stock is None:
             return None

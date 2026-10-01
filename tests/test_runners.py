@@ -1055,6 +1055,70 @@ class StoodDownTests(unittest.TestCase):
             assert runner._stood_down(b"") is None
 
 
+class IdleBuilderTests(unittest.TestCase):
+    """`--until-builder`: an idle builder ends the series, read off the frame the storages are."""
+
+    SHORT = VillageStock(gold=10, elixir=95, dark=95)
+    FULL = VillageStock(gold=95, elixir=95, dark=95)
+
+    def _runner(self, world: str = "day", until_builder: bool = True) -> AttackRunner:
+        runner = AttackRunner(
+            adb=_adb(),
+            display=DISPLAY,
+            world=world,
+            thresholds=LootThresholds(),
+            stop_at=90,
+            until_builder=until_builder,
+        )
+        runner._capacity = StorageCapacity(gold=100, elixir=100, dark=100)
+        return runner
+
+    def _stood_down(self, runner: AttackRunner, frame: str, stock: VillageStock) -> str | None:
+        png = (FRAMES / frame).read_bytes()
+        with (
+            patch.object(attack, "read_stock", return_value=stock),
+            patch.object(AdbController, "back") as back,
+        ):
+            report = runner._stood_down(png)
+        if report is None:
+            back.assert_not_called()
+            return None
+        back.assert_called_once()
+        return report.outcome
+
+    def test_an_idle_builder_stands_the_run_down_ahead_of_the_storages(self) -> None:
+        """This plate reads 1/6, and the answer the run waits for comes first even on full storages."""
+        runner = self._runner()
+        assert self._stood_down(runner, "day_shield_first_number_fused.png", self.SHORT) == (
+            "builder_free"
+        )
+        assert self._stood_down(runner, "day_shield_first_number_fused.png", self.FULL) == (
+            "builder_free"
+        )
+
+    def test_busy_or_unread_builders_leave_it_to_the_storages(self) -> None:
+        """0/6 on the first frame; the second's plate will not read, which plays the round."""
+        runner = self._runner()
+        for frame in ("day_lab_panel.png", "world_day.png"):
+            assert self._stood_down(runner, frame, self.SHORT) is None, frame
+            assert self._stood_down(runner, frame, self.FULL) == "stock_full", frame
+
+    def test_a_run_not_asked_to_watch_farms_past_an_idle_builder(self) -> None:
+        runner = self._runner(until_builder=False)
+        assert self._stood_down(runner, "day_shield_first_number_fused.png", self.SHORT) is None
+
+    def test_the_builder_base_reports_its_own_village(self) -> None:
+        runner = self._runner(world="night")
+        with (
+            patch.object(attack, "plate_badges", return_value={"builder": 830}),
+            patch.object(attack, "plate_count", return_value=(1, 3)),
+            patch.object(AdbController, "back"),
+        ):
+            report = runner._stood_down(b"")
+        assert report is not None
+        assert (report.world, report.outcome) == ("night", "builder_free")
+
+
 class NightCartTests(unittest.TestCase):
     """The builder base's cart as its third storage, which full storages there do not end."""
 

@@ -71,6 +71,7 @@ ai_coc attack --repeat 0         # 一直打到某個倉庫滿為止
 ai_coc stop                      # 打完當下這一場就收工
 ai_coc giveback                  # 把借來的模擬器還給原本在跑的迴圈
 ai_coc attack --stop-at 0        # 不管倉庫多滿都照打
+ai_coc attack --repeat 0 --until-builder  # 這個村莊有工人閒著也收工
 ```
 
 `stop` 在 `~/.ai_coc/state.json` 上做個記號就回來。迴圈在回合之間跟對手之間讀它, 絕不會在戰鬥中途停, 所以最壞是多打一場: 打到一半棄權會把軍隊丟在場上, 遊戲停在下一輪回不了家的畫面。沒有東西在跑的時候它會直接說沒有, 而不是留一個沒人會收的請求。
