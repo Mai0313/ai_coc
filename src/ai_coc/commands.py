@@ -1236,6 +1236,7 @@ ROUND_LINES: dict[AttackOutcome, str] = {
     "nothing_deployed": "沒有任何一張卡片出得去,部隊沒有成功部署",
     "army_short": "兵力不足,沒付搜尋費就退出來",
     "stock_full": "倉庫都滿過設定的百分比,停止刷資源",
+    "builder_free": "這個村莊有工人閒著,停止刷資源",
     "no_opponent": "等不到對手,已放棄這一輪搜尋",
     "all_skipped": "跳過的對手都未達門檻,已結束搜尋",
     "stopped": "收到停止要求,未開打就離開",
@@ -1340,13 +1341,14 @@ def _lost_round(
 def _series_over(report: AttackReport, played: int) -> bool:
     """Whether this round's outcome stands the whole series down, and says why.
 
-    Three outcomes do, and all are read off the village before the search fee
+    Four outcomes do, and all are read off the village before the search fee
     is charged. A full storage is the goal being met, and `farm` owns where that
-    leads; there is nothing left for the round loop to farm for either way. The
-    game standing on the other village is the third: nothing here sails, so
-    every round after would find it there too.
+    leads; there is nothing left for the round loop to farm for either way. An
+    idle builder on a run asked to watch for one is the other goal. The game
+    standing on the other village is the third: nothing here sails, so every
+    round after would find it there too.
 
-    **An army short of the camp is the other one, and it is a fault rather than
+    **An army short of the camp is the last one, and it is a fault rather than
     a goal.** The wait between rounds was written for an army still training,
     where a round that backed out would have been over the line a few minutes
     later. Training is instant in the current game, so nothing about the camp
@@ -1360,7 +1362,7 @@ def _series_over(report: AttackReport, played: int) -> bool:
     if report.stock_full:
         logger.info("The storages are full; there is nothing left to farm for")
         return True
-    if report.outcome == "other_village":
+    if report.outcome in ("builder_free", "other_village"):
         return True
     if report.outcome == "army_short":
         logger.error(
@@ -1436,6 +1438,7 @@ def attack(
         # another on the builder base without anybody typing either number.
         # The flag overrides it for one run, like the loot thresholds above.
         stop_at=config.stop_at if options.stop_at is None else options.stop_at,
+        until_builder=options.until_builder,
         ai=None if plan else _planner(config),
         plan=plan,
         should_stop=should_stop,

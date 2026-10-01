@@ -129,6 +129,7 @@ class DispatchTests(unittest.TestCase):
                     "0",
                     "--stop-at",
                     "0",
+                    "--until-builder",
                     "--record",
                     "--shot-every",
                     "4",
@@ -148,6 +149,7 @@ class DispatchTests(unittest.TestCase):
             rounds=0,
             shot_every=4.0,
             stop_at=0,
+            until_builder=True,
         )
 
     def test_an_omitted_flag_is_none_rather_than_zero(self) -> None:

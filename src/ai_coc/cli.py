@@ -119,6 +119,9 @@ def _parser() -> argparse.ArgumentParser:
         metavar="%",
         help="每一種倉庫都滿到這個百分比就收工,蓋過設定檔,0 代表這次不管倉庫多滿都照打",
     )
+    run.add_argument(
+        "--until-builder", action="store_true", help="這個村莊有工人閒著也收工,倉庫的收工條件照舊"
+    )
     # Omitted means "whatever the config file says". Three zeros is how a run
     # being studied gets back to attacking the first opponent it is shown.
     for flag, resource in (("gold", "金幣"), ("elixir", "聖水"), ("dark", "黑水")):
@@ -290,6 +293,7 @@ def _answer(arguments: argparse.Namespace, run: RunLog) -> BaseModel | str:
                 rounds=a.repeat,
                 shot_every=a.shot_every,
                 stop_at=a.stop_at,
+                until_builder=a.until_builder,
             )
         ),
         "stop": lambda: commands.stop(_caller(a)),

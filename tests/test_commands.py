@@ -968,6 +968,7 @@ class RoundLineTests(unittest.TestCase):
             "nothing_deployed": "沒有任何一張卡片",
             "army_short": "兵力不足",
             "stock_full": "倉庫都滿過",
+            "builder_free": "有工人閒著",
             "no_opponent": "等不到對手",
             "all_skipped": "都未達門檻",
             "stopped": "收到停止要求",
@@ -1161,6 +1162,15 @@ class AttackSeriesArmyShortTests(unittest.TestCase):
             AttackReport(outcome="took_loot", attacked=LootOffer(gold=1, elixir=1, dark=1)),
         ])
         assert [report.outcome for report in rounds] == ["other_village"]
+        rest.assert_not_called()
+
+    def test_an_idle_builder_ends_the_series_too(self) -> None:
+        """It is what a run started with `--until-builder` was waiting for."""
+        rounds, rest = self._series([
+            AttackReport(outcome="builder_free"),
+            AttackReport(outcome="took_loot", attacked=LootOffer(gold=1, elixir=1, dark=1)),
+        ])
+        assert [report.outcome for report in rounds] == ["builder_free"]
         rest.assert_not_called()
 
     def test_a_round_that_found_nobody_still_comes_round_again(self) -> None:

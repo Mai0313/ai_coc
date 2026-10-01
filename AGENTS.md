@@ -14,7 +14,7 @@ A Windows-only PyQt5 desktop app that drives Clash of Clans inside MuMu Player 1
 
 Six skills under `.agents/skills/` own the judgement of driving the game, and they are the only copy of those rules; a rule written here as well would drift.
 
-- **`farm`** — run the loops on both villages and judge them. By default `stock_full` ends the run with a report; the loot is spent only when the user asked for that.
+- **`farm`** — run the loops on both villages and judge them. By default `stock_full` ends the run with a report, or an idle builder (`builder_free`) when the user asked to farm until one is free; the loot is spent only when the user asked for that.
 - **`spend-loot`** — walls, buildings and heroes, once the user asked; walls must be named even then.
 - **`watch-and-fix`** — farm and watch the same run, fix whatever breaks between launching the game and landing back on the village, and take the fix through to a merged PR.
 - **`build-feature`** — find what the game still does by hand, and automate it.
@@ -74,6 +74,7 @@ uv run ai_coc attack --plan-out used.json  # write down whichever plan actually 
 uv run ai_coc attack --min-gold 0 --min-elixir 0 --min-dark 0   # attack whatever comes up first
 uv run ai_coc attack --repeat 0            # keep attacking until stopped
 uv run ai_coc attack --stop-at 0           # attack however full the storages are, which a test against a farmed village needs
+uv run ai_coc attack --repeat 0 --until-builder   # also stand down once a builder on this village is idle
 uv run ai_coc attack --record --shot-every 4   # plus a frame every four seconds
 uv run ai_coc stop                        # ask whatever is driving the emulator to finish this battle and stand down
 uv run ai_coc attack --repeat 0 --yield   # background work: waits its turn, and is lent out rather than stopped
@@ -111,7 +112,7 @@ uv run ai_coc probe --record             # spend a battle measuring the real bou
 uv run ai_coc bounds --record            # spend a battle measuring where the map ends
 ```
 
-**Real battles are cheap evidence, and one battle is not evidence.** Training is instant and free and the search fee is negligible, so a battle that goes badly or deploys nothing costs only its wall-clock time, and a run spent entirely on probes is normal. Run five rounds back to back rather than reasoning from one sample: the opponent varies more than anything being changed. A round that fought nothing and did not end the series (`army_short`, `stock_full` and `other_village` end it) waits `IDLE_REST` before walking the menus again, unless a stop is pending.
+**Real battles are cheap evidence, and one battle is not evidence.** Training is instant and free and the search fee is negligible, so a battle that goes badly or deploys nothing costs only its wall-clock time, and a run spent entirely on probes is normal. Run five rounds back to back rather than reasoning from one sample: the opponent varies more than anything being changed. A round that fought nothing and did not end the series (`army_short`, `stock_full`, `builder_free` and `other_village` end it) waits `IDLE_REST` before walking the menus again, unless a stop is pending.
 
 **Every run gets its own directory** (`RunLog`, `~/.ai_coc/logs/<when>-<what>[-<label>]/`), from the CLI and the window alike, and the log line `This run is being kept in` names it (the first line, unless a frame cull was logged ahead of it). It holds `run.log`, `result.json`, `frames/` when asked for (`world` and `launch`, which have no `--record`, keep `frames/no_village.png` when they could not find a village on a frame, and log its path), and for `attack` a `plans.jsonl` with one line per round carrying the tactic that round played; `jq -c 'select(.round==2).plan'` pulls one back out for `--plan`. Nothing else records which line a round drew, so debug a bad battle from `plans.jsonl` before opening frames. There is no merged log: the directory listing is the history, and `grep -r ~/.ai_coc/logs/*/run.log` searches across runs. `--label` names the directory on every sub-command; anything not a letter, digit, underscore or hyphen is replaced.
 
@@ -181,6 +182,7 @@ The layers are directories. Imports across layers are absolute (`from ai_coc.mod
 **Around the battle.**
 
 - `army_strength` reads the camp off 我的軍隊 before the search fee is charged. Training is instant, so an army under `MIN_ARMY_RATIO` (0.5) cannot fill and ends the whole series (`army_short`) instead of resting. It is read twice, because a poor leading glyph turns `305/305` into `(5, 305)`.
+- `--until-builder` reads the builder plate (`plate_count`) off the same village frame `_stood_down` reads the storages from, ahead of them, and ends the series `builder_free` once one is idle; a plate that will not read plays the round. It is read once, so `farm` confirms it against the panel before telling anyone. Without the flag nothing reads it.
 - The tactic goes in as soon as the plan is back, inside the scout countdown: a drop there starts the battle, and the boundary is already drawn. Only `probe` and `bounds` still wait the countdown out (`_wait_for_battle`).
 - Every battle opens with a pinch out (`_settle_zoom`), because the game reports no zoom level. The boundary's height before the pinch warns on a clipped, zoomed-in home village. The builder base is smaller at every zoom, so the warning is the home village's alone, and a zoomed-in builder base goes undetected: no recorded frame has one to draw a floor from.
 - `_wait_out_battle`'s False is split two ways: `_seen` separates a panel that never read from one that never moved, and `_deployed` (set only where the loop watched a card give something up) separates an army that never left its cards from one that went in and took nothing.
