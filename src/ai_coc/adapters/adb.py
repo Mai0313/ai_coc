@@ -489,8 +489,14 @@ class AdbController(BaseModel):
         times: int = 1,
         package: str = "",
         display: DisplayTarget | None = None,
+        span: tuple[int, int] = (PINCH_NEAR, PINCH_FAR),
     ) -> None:
         """Pinch the camera in or out, however many times.
+
+        `span` is how far each finger sits from the middle at the two ends of
+        the gesture. The default runs as far as the game allows in one; a
+        shorter one is a step whose size is its ratio, measured 1.30 to 1.32 for
+        150 to 200.
 
         **Zooming out past the far limit does nothing at all**, which is what
         makes `out` safe to send without knowing where the camera currently is
@@ -512,8 +518,8 @@ class AdbController(BaseModel):
         everywhere after all.
         """
         node = self.touch_device_for(display) if display is not None else None
-        near = ((800 - PINCH_NEAR, PINCH_ROW), (800 + PINCH_NEAR, PINCH_ROW))
-        far = ((800 - PINCH_FAR, PINCH_ROW), (800 + PINCH_FAR, PINCH_ROW))
+        near = ((800 - span[0], PINCH_ROW), (800 + span[0], PINCH_ROW))
+        far = ((800 - span[1], PINCH_ROW), (800 + span[1], PINCH_ROW))
         # Fingers converging is the game zooming out, which widens the view.
         starts, ends = (far, near) if direction == "out" else (near, far)
         for _ in range(times):

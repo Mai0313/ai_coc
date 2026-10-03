@@ -62,7 +62,8 @@ correctly.
 
 Nothing here reads the boat. The boat is the only way to cross between the two,
 so it has to be *tapped*, but a boat is a sprite and the game dresses it up for
-events; `ui.world` taps at it and asks this module whether the tap worked.
+events; `ui.world` taps at it, or at the marker `parsers.home.boat_marker` finds
+over it, and asks this module whether the tap worked.
 """
 
 from __future__ import annotations

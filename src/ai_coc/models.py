@@ -2011,8 +2011,12 @@ class Crossing(BaseModel):
     `start` and `drift` are one drag of the map, repeated until the camera is
     clamped at the corner the boat is moored in; `spots` are the places to tap
     for it from that view, tried in turn. There is more than one because nothing
-    recognises the boat — it is a sprite the game dresses up for events — so a
-    miss and a hit look the same until the world is read again.
+    recognises the boat itself — it is a sprite the game dresses up for events —
+    so a miss and a hit look the same until the world is read again.
+
+    `marked` is whether the marker the game floats over the boat is in view
+    from there, and so is looked for ahead of `spots`, which were measured on
+    one scenery and miss on another.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -2020,6 +2024,7 @@ class Crossing(BaseModel):
     start: tuple[int, int]
     drift: tuple[int, int]
     spots: tuple[tuple[int, int], ...]
+    marked: bool
 
 
 # How one `world` command ended. `here` is a read, or a crossing already at its
