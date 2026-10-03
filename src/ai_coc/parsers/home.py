@@ -509,8 +509,8 @@ def boat_marker(png: bytes) -> tuple[int, int] | None:
     **A scenery bought from the shop zooms out further than the free ones, and
     past that point the game draws no markers at all** — measured on one, the
     far zoom hid this one and every collector's, and one pinch back in brought
-    them back. So None is an ordinary answer on such a scenery's far zoom, and
-    `ui.world.cross` zooms in a step and asks again.
+    them back. So None on a home village's park is how `ui.world.park_camera`
+    tells such a scenery apart, and it zooms in to where a free one stops.
     """
     image = open_frame(png).crop(VILLAGE_AREA)
     left, top = VILLAGE_AREA[:2]

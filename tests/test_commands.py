@@ -1483,8 +1483,10 @@ class CaptureAndViewTests(unittest.TestCase):
             # arrived, and `PARK_STILL` of them is what it swipes for.
             patch.object(world_ui, "view_shift", return_value=(0, 0)),
             # These fakes hand back a MagicMock rather than a frame, and the
-            # panel check reads pixels; `ParkCameraTests` is where it is tested.
+            # panel check and the boat's marker read pixels; `ParkCameraTests`
+            # is where both are tested.
             patch.object(world_ui, "plate_panel_open", return_value=None),
+            patch.object(world_ui, "boat_marker", return_value=(442, 542)),
         ):
             return adb, commands.view(zoom, times)
 

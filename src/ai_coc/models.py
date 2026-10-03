@@ -2005,6 +2005,20 @@ PlateRole = Literal["lab", "builder", "shield"]
 PlateOutcome = Literal["read", "idle", "no_badge", "panel_shut", "not_a_village"]
 
 
+class Pinch(BaseModel):
+    """One two-finger gesture along a row: each finger's distance from `centre` at either end.
+
+    The game zooms about the point between the fingers, so `centre` is the
+    pixel that stays put, and `far / near` is how much one gesture zooms.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    near: int
+    far: int
+    centre: tuple[int, int]
+
+
 class Crossing(BaseModel):
     """How to reach one village's boat, and where it sits once the camera stops.
 
