@@ -339,10 +339,13 @@ class GameRunner(ScreenRunner):
         could not get back to.
 
         **It is the loot panel's bright-theme failure arriving from the other
-        side, and it does not get the same answer.** There the ink floor had to
-        be raised (`_lit_floor`), because an opponent's village theme is not
-        ours to choose. This camera is, so what is fixed is the view rather
-        than the reader.
+        side, and it got both answers.** There the ink floor had to be raised
+        (`_lit_floor`), because an opponent's village theme is not ours to
+        choose. This camera is, so the view was fixed first; the reader was
+        fixed later as well, when `STOCK_BAR_SATURATION` left that pale
+        shoreline out of the ink and the frame above read its numbers. The
+        settle stays, since bright ground that is not pale can still fill the
+        gaps.
 
         **So the village test here is `current_world` as well as the storages,
         and widening it is the point rather than swapping it.** The plate row

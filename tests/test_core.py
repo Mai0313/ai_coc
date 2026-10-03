@@ -488,24 +488,44 @@ class WorldTests(unittest.TestCase):
         assert stock is not None
         assert (stock.gold, stock.elixir, stock.dark) == (14000000, 17254813, 460500)
 
-    def test_a_camera_the_storages_cannot_be_read_at_is_still_named_by_the_plate_row(self) -> None:
-        """The pair the camera settle rests on: one reader loses this frame and the other does not.
+    def test_a_marker_plate_behind_a_bar_neither_eats_nor_adds_a_leading_digit(self) -> None:
+        """Three parks of one village, each read wrong while the plate counted as ink.
+
+        A collector marker's cream plate seen through a bar's translucent end
+        is pale where the digits are white, and it joined the leading digit:
+        4 317 549 read as 317 549 on the jungle park, 8 780 030 as 780 030 on a
+        bought scenery's, and a scrap of plate in front of the 4 read as a
+        leading 1, 14 317 549.
+        """
+        cases = {
+            "stock_plates_behind_bars.png": (8756807, 4317549, 382282),
+            "stock_plates_behind_bars_bought.png": (8780030, 4337824, 382282),
+            "stock_plate_scrap_leading.png": (8756807, 4317549, 382282),
+            # Read None for the same reason before, a plate fused to the 1 of 10.
+            "day_shield_first_number_fused.png": (8522469, 10673893, 436817),
+        }
+        for name, (gold, elixir, dark) in cases.items():
+            stock = read_stock((FRAMES / name).read_bytes())
+            assert stock == VillageStock(gold=gold, elixir=elixir, dark=dark), name
+
+    def test_a_village_showing_through_the_bars_is_left_out_of_the_digits(self) -> None:
+        """Both readers name this frame now, and the plate row never depended on the camera.
 
         Measured live at a zoomed-in camera, one of seven pan positions out of
         seven. The bars are translucent where they are not full, so the map's
         shoreline showed through an elixir bar standing at 45% and filled the
         gaps between its digits: the `779` of 10 779 278 came through as one
-        55 px span, too wide to be a glyph, against three spans of 14 px each
-        on a frame of the same village taken moments earlier. All three
+        55 px span, too wide to be a glyph, and the frame read None. All three
         numbers are perfectly legible to the eye on it.
 
-        Loosening the reader is the wrong end to fix this from — that is the
-        trade this project treats as dangerous, an honest None for a truncated
-        number. What the plate row buys is somewhere else to ask from, since it
-        is UI at a fixed place and does not move with the camera.
+        Loosening the reader would have been the wrong end to fix this from —
+        that is the trade this project treats as dangerous, an honest None for
+        a truncated number. What fixed it is the other end: the shoreline is
+        paler than the digits are white, and `STOCK_BAR_SATURATION` leaves it
+        out of the ink.
         """
         frame = (FRAMES / "home_storages_camera_bleed.png").read_bytes()
-        assert read_stock(frame) is None
+        assert read_stock(frame) == VillageStock(gold=7508791, elixir=10779278, dark=400000)
         assert current_world(frame) == "day"
 
     def test_a_village_at_a_map_corner_still_reads_as_one(self) -> None:
@@ -6800,6 +6820,9 @@ class HomeHudTests(unittest.TestCase):
             "home_marker_over_bars.png",
             "home_marker_past_dark_edge.png",
             "home_markers_pale_plate.png",
+            "stock_plate_scrap_leading.png",
+            "stock_plates_behind_bars.png",
+            "stock_plates_behind_bars_bought.png",
             "wall_menu_elixir_only.png",
             "world_day_boat_marker.png",
             "world_day_occluded.png",

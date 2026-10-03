@@ -449,9 +449,12 @@ HERO_BAR_MAX_BLUE = 30
 # so what separates them is saturation rather than brightness, which the gloss
 # clears by a handful of levels. Measured, the gloss reads 56 to 62 while all
 # three rows of six recorded villages read the same number at every ceiling from
-# 20 to 55, so the line goes between with room on both sides. Scoped to these
-# rows because it is these bars the text is painted over; the loot panel and the
-# army screen are painted over other things and keep the shared ceiling.
+# 20 to 55, so the line went between with room on both sides. The bars' digits
+# have since moved to `STOCK_BAR_SATURATION`, lower still, because a village
+# showing through a bar reads 20 to 29; this one now holds the cart's held line
+# and the capacity tooltip, whose digits are painted the same way. The loot
+# panel and the army screen are painted over other things and keep the shared
+# ceiling.
 STOCK_LEFT, STOCK_RIGHT = 1300, 1512
 # **The dark row gets its own left edge, because its number is shorter.** Gold
 # and elixir cap at 24M and their eight figures reach back to about x 1338; dark
@@ -507,6 +510,17 @@ STOCK_TRIMMED_TOLERANCE = 20
 # the gem count itself instead of it with a 4 in front, and nothing compares it.
 STOCK_LEADING_TOLERANCE = 23
 STOCK_INK_SATURATION = 45
+# **The bars' own digits take a tighter ceiling still, because what the village
+# shows through them is pale rather than bright.** A collector marker's cream
+# plate seen through a bar's translucent end reads 20 to 29 here, under the
+# ceiling above, so it joined the leading digit: one park read 4 317 549 as
+# 317 549, another 8 780 030 as 780 030, and a third took a scrap of plate for a
+# leading 1 and read 14 317 549. The digits themselves sit at 0 to 14 bar a few
+# edge pixels. At 14 all four read right, two committed frames that read None
+# for the same reason read their numbers, and every other committed frame reads
+# what it read before. The cart's sheet and the capacity tooltip keep the
+# ceiling above: at 14 the cart's 1 600 000 read 1 600 008.
+STOCK_BAR_SATURATION = 14
 
 # 最大儲存量 on the tooltip a tapped storage bar drops open, which is the one
 # place the game writes down how much that storage holds. The panel hangs under
@@ -738,7 +752,7 @@ def _read_row(image: Image.Image, box: tuple[int, int, int, int], tolerance: int
     """One storage bar's number, read off the bar the game paints it on.
 
     The tighter saturation ceiling belongs to those bars rather than to rows in
-    general; see `STOCK_INK_SATURATION` for what it is holding back.
+    general; see `STOCK_BAR_SATURATION` for what it is holding back.
 
     **The village shows through to the left of the digits, so that is the one end
     a poor match is dropped from.** This is `_read_loot_row` mirrored, and the
@@ -765,7 +779,7 @@ def _read_row(image: Image.Image, box: tuple[int, int, int, int], tolerance: int
     to a closer match, since removing that glyph also removes the rule that one
     poor glyph fails the row.
     """
-    glyphs = list(row_glyphs(ink_mask(image.crop(box), saturation=STOCK_INK_SATURATION)))
+    glyphs = list(row_glyphs(ink_mask(image.crop(box), saturation=STOCK_BAR_SATURATION)))
     trimmed = False
     while glyphs and glyphs[0][1] > min(tolerance, STOCK_LEADING_TOLERANCE):
         # Only a glyph past `tolerance` takes the row-wide rule away. One the
