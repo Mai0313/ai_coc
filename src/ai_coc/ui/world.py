@@ -35,7 +35,7 @@ import time
 from typing import TYPE_CHECKING
 import logging
 
-from ai_coc.models import Crossing, CartReport
+from ai_coc.models import Pinch, Crossing, CartReport
 from ai_coc.constants import COC_PACKAGE
 from ai_coc.adapters.adb import ZOOM_PINCHES
 from ai_coc.parsers.home import boat_marker, plate_panel_open
@@ -252,6 +252,18 @@ def park_camera(adb: AdbController, display: DisplayTarget, world: World) -> boo
         logger.warning("The plate panel would not shut; the camera cannot be read through it")
         return False
     adb.zoom("out", ZOOM_PINCHES, COC_PACKAGE, display)
+    if (after := _walk(adb, display, world)) is None:
+        return False
+    if world == "day" and boat_marker(after) is None and not _free_scale(adb, display):
+        # The pinch did not bring the marker back, so this was no bought
+        # scenery's far zoom: the far park is what everything was measured on.
+        adb.zoom("out", ZOOM_PINCHES, COC_PACKAGE, display)
+        return _walk(adb, display, world) is not None
+    return True
+
+
+def _walk(adb: AdbController, display: DisplayTarget, world: World) -> bytes | None:
+    """Swipe into this village's corner until the picture stops; the frame it stopped on, or None."""
     # Keyed by the village being sailed to, so the push away from the village
     # being stood on is the other one's.
     crossing = CROSSINGS["night" if world == "day" else "day"]
@@ -275,12 +287,42 @@ def park_camera(adb: AdbController, display: DisplayTarget, world: World) -> boo
             # At INFO, because how far this village really walks is the number
             # nobody could see while it was a constant.
             logger.info("The %s camera stopped moving after %d swipe(s)", world, swipe)
-            return True
+            return after
     logger.warning(
         "The %s camera was still moving after %d swipes; every remembered coordinate is off",
         world,
         PARK_SWIPES,
     )
+    return None
+
+
+# **A scenery bought from the shop lets the camera out about twice as far as the
+# free ones, over a map much larger than the village, and at that far zoom the
+# game draws no markers at all** — not the boat's, not a collector's — so
+# `collect` found nothing and the crossing tapped scenery, while every
+# coordinate here was measured at a free scenery's far park. Measured on one
+# bought scenery against the jungle on the same village: the free far zoom is
+# 2.04 to 2.09 times the bought one (the village matched across the two, and
+# the distance between two labels over it), and from the bought park one
+# gesture of 150 to 309 about (780, 368) put the village at the jungle park's
+# size and pixels, its clan castle label on the same pixel.
+BOUGHT_PINCH = Pinch(near=150, far=309, centre=(780, 368))
+
+
+def _free_scale(adb: AdbController, display: DisplayTarget) -> bool:
+    """Zoom a park with no boat marker in to where a free scenery stops; whether the marker came back.
+
+    A free scenery's home park has the boat's marker on screen, and a bought
+    one's far zoom draws none, so its absence is what calls for this. Its coming
+    back is what confirms it: on a free scenery whose marker something covered,
+    this pinch carries the boat off the left edge, where none reads either. The
+    builder base has no scenery to buy.
+    """
+    logger.info("The far zoom drew no boat marker; zooming in to where a free scenery stops")
+    adb.zoom("in", 1, COC_PACKAGE, display, BOUGHT_PINCH)
+    if boat_marker(adb.screenshot(display)) is not None:
+        return True
+    logger.warning("The boat's marker did not come back; going back to the far zoom")
     return False
 
 
@@ -289,12 +331,6 @@ def park_camera(adb: AdbController, display: DisplayTarget, world: World) -> boo
 # case, since a crossing that already happened costs nothing to notice early.
 SAIL_POLLS = 8
 SAIL_GAP = 1.5
-
-# One pinch back in from the far zoom, for a scenery whose far zoom hides the
-# boat's marker. Measured on one: the camera came in 1.30 to 1.32 times, the
-# marker came back with its boat still on screen from the parked view, and
-# tapping it sailed.
-MARKER_PINCH = (150, 200)
 
 # How many times to press `back` at whatever is covering the village. A building
 # panel goes in one, and the ceiling is there because a game still loading takes
@@ -545,22 +581,18 @@ def _boat_spots(
 ) -> tuple[tuple[int, int], ...] | None:
     """Where to tap for the boat once the camera is parked; None when it never parked.
 
-    The marker is looked for first and a step closer if the far zoom hid it.
-    Without one the camera is parked again, since the measured spots mean
-    something only on the clamp and the step took it off.
+    The marker first, which the park leaves drawn on every scenery, and the
+    measured spots without one.
     """
     if not park_camera(adb, display, here):
         return None
     if not crossing.marked:
         return crossing.spots
-    if (spot := boat_marker(adb.screenshot(display))) is None:
-        adb.zoom("in", 1, COC_PACKAGE, display, MARKER_PINCH)
-        spot = boat_marker(adb.screenshot(display))
-    if spot is not None:
+    if (spot := boat_marker(adb.screenshot(display))) is not None:
         logger.info("The boat's marker is at %s", spot)
         return (spot,)
     logger.info("No marker over the boat; trying its measured spots")
-    return crossing.spots if park_camera(adb, display, here) else None
+    return crossing.spots
 
 
 def cross(adb: AdbController, display: DisplayTarget, want: World) -> World | None:

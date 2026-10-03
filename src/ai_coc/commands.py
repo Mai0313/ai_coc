@@ -1083,8 +1083,9 @@ def _settle_game(
 
     Two steps that always belong together, because every coordinate in this
     project was measured against one particular view: a village on screen, at
-    the game's far zoom limit. A caller that has one without the other has a
-    game that answers and misses everything it aims at.
+    a free scenery's far zoom limit, which the park brings a bought one back
+    to. A caller that has one without the other has a game that answers and
+    misses everything it aims at.
 
     **The scale and the position are two different things, and the park owns
     both.** This file used to say the far limit centred the village too, on the

@@ -9,7 +9,7 @@ import logging
 import adbutils
 from pydantic import BaseModel
 
-from ai_coc.models import TouchNode, AdbEndpoint, DisplayTarget
+from ai_coc.models import Pinch, TouchNode, AdbEndpoint, DisplayTarget
 
 logger = logging.getLogger(__name__)
 
@@ -77,6 +77,7 @@ PINCH_GAP = 0.008
 # layer — a caller in `ui` reaching the other way would be a cycle.
 PINCH_NEAR, PINCH_FAR = 150, 500
 PINCH_ROW = 450
+FULL_PINCH = Pinch(near=PINCH_NEAR, far=PINCH_FAR, centre=(800, PINCH_ROW))
 # How long the camera takes to settle after one. Swept from a camera zoomed
 # fully in, two `out` gestures reach the far limit at every settle from 1.5 s
 # down to none at all — 0.505 to 0.507 of bare ground in all five — so this is
@@ -489,14 +490,13 @@ class AdbController(BaseModel):
         times: int = 1,
         package: str = "",
         display: DisplayTarget | None = None,
-        span: tuple[int, int] = (PINCH_NEAR, PINCH_FAR),
+        gesture: Pinch = FULL_PINCH,
     ) -> None:
         """Pinch the camera in or out, however many times.
 
-        `span` is how far each finger sits from the middle at the two ends of
-        the gesture. The default runs as far as the game allows in one; a
-        shorter one is a step whose size is its ratio, measured 1.30 to 1.32 for
-        150 to 200.
+        The default `gesture` runs as far as the game allows in one; a shorter
+        one is a step whose size is its ratio, measured 1.30 to 1.32 for 150 to
+        200.
 
         **Zooming out past the far limit does nothing at all**, which is what
         makes `out` safe to send without knowing where the camera currently is
@@ -518,8 +518,9 @@ class AdbController(BaseModel):
         everywhere after all.
         """
         node = self.touch_device_for(display) if display is not None else None
-        near = ((800 - span[0], PINCH_ROW), (800 + span[0], PINCH_ROW))
-        far = ((800 - span[1], PINCH_ROW), (800 + span[1], PINCH_ROW))
+        x, y = gesture.centre
+        near = ((x - gesture.near, y), (x + gesture.near, y))
+        far = ((x - gesture.far, y), (x + gesture.far, y))
         # Fingers converging is the game zooming out, which widens the view.
         starts, ends = (far, near) if direction == "out" else (near, far)
         for _ in range(times):

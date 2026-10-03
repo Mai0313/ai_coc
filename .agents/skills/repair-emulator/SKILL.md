@@ -143,4 +143,4 @@ description: >-
 
 ## 修好的標準
 
-`uv run --no-sync ai_coc launch` 回 `at_village: true`, 而且你看過 `look.py` 截的那一張: 1600x900, 站在村莊上, 鏡頭拉到最遠. 發給使用者. 模擬器是從 farm subagent 手上拿來的, 就照 `AGENTS.md` 還回去, 並在回覆裡講一聲: 使用者看不到 subagent 的輸出.
+`uv run --no-sync ai_coc launch` 回 `at_village: true`, 而且你看過 `look.py` 截的那一張: 1600x900, 站在村莊上, 鏡頭停好 (拉到最遠; 花錢買的場景會再拉近一次, 回到免費場景的大小). 發給使用者. 模擬器是從 farm subagent 手上拿來的, 就照 `AGENTS.md` 還回去, 並在回覆裡講一聲: 使用者看不到 subagent 的輸出.

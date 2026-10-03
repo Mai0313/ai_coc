@@ -1190,17 +1190,63 @@ class NightAttackTests(unittest.TestCase):
 class ParkCameraTests(unittest.TestCase):
     """Running the camera into the map corner every remembered coordinate was measured from."""
 
-    def _park(self, shifts: list[tuple[int, int]], world: str = "day") -> tuple[MagicMock, bool]:
+    def _park(
+        self,
+        shifts: list[tuple[int, int]],
+        world: str = "day",
+        markers: tuple[tuple[int, int] | None, ...] = ((442, 542),),
+    ) -> tuple[MagicMock, bool]:
         adb = MagicMock()
         with (
             patch.object(world_ui.time, "sleep"),
             patch.object(world_ui, "view_shift", side_effect=shifts),
             patch.object(world_ui, "plate_panel_open", return_value=None),
+            patch.object(world_ui, "boat_marker", side_effect=markers) as self.looked,
         ):
             parked = world_ui.park_camera(
                 adb, DisplayTarget(logical_id="1", physical_id="2"), world
             )
         return adb, parked
+
+    looked: MagicMock
+
+    def test_a_bought_scenery_is_brought_back_to_where_a_free_one_parks(self) -> None:
+        """Its far zoom draws no markers at all, so nothing measured on a free one holds there.
+
+        Measured on one: from its park, this one gesture put the village at the
+        jungle park's size and pixels, and every marker came back.
+        """
+        adb, parked = self._park([(0, 0), (0, 0)], markers=(None, (467, 536)))
+        assert parked is True
+        assert adb.zoom.call_args_list[-1] == call(
+            "in",
+            1,
+            world_ui.COC_PACKAGE,
+            DisplayTarget(logical_id="1", physical_id="2"),
+            world_ui.BOUGHT_PINCH,
+        )
+
+    def test_a_pinch_that_brings_no_marker_back_is_undone(self) -> None:
+        """A free scenery whose marker something covered, which the pinch carries off screen.
+
+        Left in, every coordinate the run went on to tap would be off by twice
+        the scale with nothing saying so.
+        """
+        adb, parked = self._park([(0, 0)] * 4, markers=(None, None))
+        assert parked is True
+        assert [c.args[0] for c in adb.zoom.call_args_list] == ["out", "in", "out"]
+        assert adb.swipe.call_count == 2 * world_ui.PARK_STILL
+
+    def test_a_free_scenery_is_left_at_its_far_zoom(self) -> None:
+        """Its park has the boat's marker on screen, which is what tells the two apart."""
+        adb, _ = self._park([(0, 0), (0, 0)])
+        assert [c.args[0] for c in adb.zoom.call_args_list] == ["out"]
+
+    def test_the_builder_base_has_no_scenery_to_tell_apart(self) -> None:
+        """Its boat's marker sits under the button column at every park."""
+        adb, _ = self._park([(0, 0), (0, 0)], world="night", markers=())
+        self.looked.assert_not_called()
+        assert [c.args[0] for c in adb.zoom.call_args_list] == ["out"]
 
     def _panelled(self, captures: list[str], world: str = "day") -> tuple[MagicMock, bool]:
         """Park against real frames, so the panel check reads pixels rather than a stub."""
@@ -1212,6 +1258,7 @@ class ParkCameraTests(unittest.TestCase):
         with (
             patch.object(world_ui.time, "sleep"),
             patch.object(world_ui, "view_shift", return_value=(0, 0)),
+            patch.object(world_ui, "boat_marker", return_value=(442, 542)),
         ):
             parked = world_ui.park_camera(
                 adb, DisplayTarget(logical_id="1", physical_id="2"), world
@@ -1363,8 +1410,9 @@ class CrossingTests(unittest.TestCase):
             landed = world_ui.cross(adb, DisplayTarget(logical_id="1", physical_id="2"), want)
         return adb, landed
 
-    # What `boat_marker` answers on each look, the parked view's first.
-    markers: tuple[tuple[int, int] | None, ...] = (None, None)
+    # What `boat_marker` answers on each look: the park's own (a second one after
+    # its pinch, when the first found none), then the crossing's.
+    markers: tuple[tuple[int, int] | None, ...] = (None, None, None)
     looked: MagicMock
 
     def _leaving_home(self, *markers: tuple[int, int] | None) -> MagicMock:
@@ -1380,19 +1428,19 @@ class CrossingTests(unittest.TestCase):
         (640, 478) on the same parked view, and every measured spot tapped the
         scenery instead.
         """
-        adb = self._leaving_home((579, 441))
-        adb.tap.assert_called_once_with(579, 441, ANY)
-        assert call.zoom("in", 1, ANY, ANY, world_ui.MARKER_PINCH) not in adb.mock_calls
+        adb = self._leaving_home((442, 542), (442, 542))
+        adb.tap.assert_called_once_with(442, 542, ANY)
 
-    def test_a_far_zoom_that_hid_the_marker_is_pinched_in_a_step(self) -> None:
-        """A bought scenery zooms out past where the game draws markers at all."""
-        adb = self._leaving_home(None, (579, 441))
-        assert call.zoom("in", 1, ANY, ANY, world_ui.MARKER_PINCH) in adb.mock_calls
-        adb.tap.assert_called_once_with(579, 441, ANY)
+    def test_a_bought_scenery_finds_its_marker_once_the_park_brought_it_back(self) -> None:
+        """The park's own pinch is what makes the marker drawn; the crossing only reads it."""
+        adb = self._leaving_home(None, (467, 536), (467, 536))
+        assert call.zoom("in", 1, ANY, ANY, world_ui.BOUGHT_PINCH) in adb.mock_calls
+        adb.tap.assert_called_once_with(467, 536, ANY)
 
-    def test_no_marker_at_all_parks_again_for_the_measured_spots(self) -> None:
-        """They mean something only on the clamp, and the step in took the camera off it."""
-        adb = self._leaving_home(None, None)
+    def test_no_marker_at_all_taps_the_measured_spots_from_the_far_park(self) -> None:
+        """They mean something only on the clamp, so the park's undone pinch is what makes them worth tapping."""
+        adb = self._leaving_home(None, None, None)
+        assert [c.args[0] for c in adb.zoom.call_args_list] == ["out", "in", "out"]
         assert adb.swipe.call_count == 2 * world_ui.PARK_STILL
         adb.tap.assert_called_once_with(*world_ui.CROSSINGS["night"].spots[0], ANY)
 

@@ -309,7 +309,8 @@ class GameRunner(ScreenRunner):
         """Put the camera back at the far zoom, once per village these loops see.
 
         **Every one of these loops taps buildings by screen coordinate**, and
-        those were measured at the game's far zoom limit — the sweep grid, the
+        those were measured at a free scenery's far zoom limit, which
+        `park_camera` also brings a bought one back to — the sweep grid, the
         button row on an opened menu, a remembered `--at`. A camera that has
         drifted off that zoom sends all of them somewhere else, and the failure
         is silent: a tap lands on the ground and the loop simply reports that
