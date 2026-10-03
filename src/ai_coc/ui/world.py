@@ -16,12 +16,17 @@ this file assumed for a long time and paid for in every crossing: see
 `park_camera`, which now swipes until the picture stops moving and says whether
 it got there.
 
-**Nothing here recognises the boat.** It is a sprite and the game dresses it up
-for events, so it is tapped rather than looked for, and `parsers.world` is what
-says whether the tap worked. A tap that landed on the water instead simply
-leaves the world unchanged and the next candidate spot is tried. That is the
-pattern `hero --at` already uses on a building that two taps in a row select
-alternately.
+**Nothing here recognises the boat itself.** It is a sprite the game dresses up
+for events, and the scenery decides where it is moored: one bought scenery puts
+it on a tower nowhere near the spots measured on the jungle. What the home
+village's boat does have is the marker the game floats over it, which is drawn
+the same on every scenery and sails when tapped, so that is looked for first
+(`boat_marker`). The builder base's sits under the button column, and that
+village has no sceneries to move its boat, so it is tapped at its measured
+spots. Either way `parsers.world` is what says whether the tap worked. A tap
+that landed on the water instead simply leaves the world unchanged and the next
+candidate spot is tried. That is the pattern `hero --at` already uses on a
+building that two taps in a row select alternately.
 """
 
 from __future__ import annotations
@@ -33,7 +38,7 @@ import logging
 from ai_coc.models import Crossing, CartReport
 from ai_coc.constants import COC_PACKAGE
 from ai_coc.adapters.adb import ZOOM_PINCHES
-from ai_coc.parsers.home import plate_panel_open
+from ai_coc.parsers.home import boat_marker, plate_panel_open
 from ai_coc.parsers.field import view_shift
 from ai_coc.parsers.scout import (
     in_battle,
@@ -57,18 +62,26 @@ logger = logging.getLogger(__name__)
 # neither end of it lands on the game's own button columns, and points away from
 # the corner being revealed, because it is the map moving under a fixed finger.
 CROSSINGS: dict[World, Crossing] = {
-    # Leaving the home village: the boat is on the water off the bottom-left
-    # shore. The candidates stay up and left of the measured spot on purpose —
-    # the clan capital's own vessel is moored below and to the right of it, and
-    # tapping that one opens a village this project has no business in.
+    # Leaving the home village: on the jungle scenery the spots were measured
+    # on, the boat is on the water off the bottom-left shore. The candidates
+    # stay up and left of the measured spot on purpose — the clan capital's own
+    # vessel is moored below and to the right of it there, and tapping that one
+    # opens a village this project has no business in.
     "night": Crossing(
-        start=(500, 600), drift=(700, -350), spots=((400, 625), (382, 610), (416, 634))
+        start=(500, 600),
+        drift=(700, -350),
+        spots=((400, 625), (382, 610), (416, 634)),
+        marked=True,
     ),
     # Leaving the builder base: the boat is at the pier off the top-right. The
     # candidates stay left of the measured spot, because the game's right-hand
-    # button column starts at x 1490 and overlaps the boat's stern.
+    # button column starts at x 1490 and overlaps the boat's stern, and its
+    # marker with it.
     "day": Crossing(
-        start=(1100, 300), drift=(-700, 350), spots=((1440, 545), (1415, 555), (1432, 522))
+        start=(1100, 300),
+        drift=(-700, 350),
+        spots=((1440, 545), (1415, 555), (1432, 522)),
+        marked=False,
     ),
 }
 # **A fixed count was the bug.** The count stood in for the clamp: swipe enough
@@ -276,6 +289,12 @@ def park_camera(adb: AdbController, display: DisplayTarget, world: World) -> boo
 # case, since a crossing that already happened costs nothing to notice early.
 SAIL_POLLS = 8
 SAIL_GAP = 1.5
+
+# One pinch back in from the far zoom, for a scenery whose far zoom hides the
+# boat's marker. Measured on one: the camera came in 1.30 to 1.32 times, the
+# marker came back with its boat still on screen from the parked view, and
+# tapping it sailed.
+MARKER_PINCH = (150, 200)
 
 # How many times to press `back` at whatever is covering the village. A building
 # panel goes in one, and the ceiling is there because a game still loading takes
@@ -521,6 +540,29 @@ def uncovered(adb: AdbController, display: DisplayTarget) -> World | None:
     return current_world(adb.screenshot(display))
 
 
+def _boat_spots(
+    adb: AdbController, display: DisplayTarget, here: World, crossing: Crossing
+) -> tuple[tuple[int, int], ...] | None:
+    """Where to tap for the boat once the camera is parked; None when it never parked.
+
+    The marker is looked for first and a step closer if the far zoom hid it.
+    Without one the camera is parked again, since the measured spots mean
+    something only on the clamp and the step took it off.
+    """
+    if not park_camera(adb, display, here):
+        return None
+    if not crossing.marked:
+        return crossing.spots
+    if (spot := boat_marker(adb.screenshot(display))) is None:
+        adb.zoom("in", 1, COC_PACKAGE, display, MARKER_PINCH)
+        spot = boat_marker(adb.screenshot(display))
+    if spot is not None:
+        logger.info("The boat's marker is at %s", spot)
+        return (spot,)
+    logger.info("No marker over the boat; trying its measured spots")
+    return crossing.spots if park_camera(adb, display, here) else None
+
+
 def cross(adb: AdbController, display: DisplayTarget, want: World) -> World | None:
     """Sail to `want`, and answer which village the game was left on.
 
@@ -552,13 +594,13 @@ def cross(adb: AdbController, display: DisplayTarget, want: World) -> World | No
     # 130 px short put every one of them above the boat, and the three taps
     # spent about three minutes between them before the run reported that there
     # was no boat.
-    if not park_camera(adb, display, here):
+    if (spots := _boat_spots(adb, display, here, crossing)) is None:
         logger.warning("The camera never parked, so the boat is not where it is remembered")
         return here
     # What the village last read as, so a crossing with nothing to try answers
     # where it started rather than nothing at all.
     cleared = here
-    for spot in crossing.spots:
+    for spot in spots:
         adb.tap(spot[0], spot[1], display)
         for _ in range(SAIL_POLLS):
             time.sleep(SAIL_GAP)
@@ -573,7 +615,7 @@ def cross(adb: AdbController, display: DisplayTarget, want: World) -> World | No
         if (cleared := uncovered(adb, display)) is None:
             logger.warning("The village never came back; giving up on the crossing")
             return None
-    logger.warning("None of the %d candidate spots found the boat", len(crossing.spots))
+    logger.warning("None of the %d candidate spots found the boat", len(spots))
     # What the last spot's own check already read, rather than a capture asking
     # the same question again: one of those is 0.6-0.8 s here.
     return cleared

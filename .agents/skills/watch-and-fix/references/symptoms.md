@@ -41,7 +41,7 @@
 
 **症狀**: `ai_coc world --go night` 回「畫面還停在不明的畫面」, 或整輪在打錯的村莊.
 
-沒有判讀器找船 (活動會換造型): 相機推到地圖角落夾住, 點固定像素, 再看世界變了沒. `park_camera` 滑到 `view_shift` 連兩次回 (0, 0) 為止; `camera was still moving` 的 warning 要查的是鏡頭, 不是船的座標. 它先 pinch 再滑, 因為拉近時 `view_shift` 沒東西可比而回 None. 在最遠處主村一下就滑到底, 夜世界根本滑不動, 而要連兩次沒動才算停, 所以 `stopped moving after 2 swipe(s)` (主村從別處滑過來是 3) 是正常的.
+沒有判讀器找船本身 (活動會換造型, 主村換場景船就換地方停), 找的是遊戲浮在主村船上方的標誌 (`boat_marker`): 相機推到地圖角落夾住, 點標誌, 再看世界變了沒. 花錢買的場景拉到最遠時遊戲不畫任何標誌, 所以找不到會拉近一步 (`MARKER_PINCH`) 再找; 還是沒有才重新推回角落點量過的固定像素, 而那些像素只在量的那個場景上對. 夜世界的標誌被右側按鈕列蓋住, 那邊也沒有場景可換, 直接點固定像素. log 的 `The boat's marker is at` 跟 `No marker over the boat` 說走的是哪一條. `park_camera` 滑到 `view_shift` 連兩次回 (0, 0) 為止; `camera was still moving` 的 warning 要查的是鏡頭, 不是船的座標. 它先 pinch 再滑, 因為拉近時 `view_shift` 沒東西可比而回 None. 在最遠處主村一下就滑到底, 夜世界根本滑不動, 而要連兩次沒動才算停, 所以 `stopped moving after 2 swipe(s)` (主村從別處滑過來是 3) 是正常的.
 
 點歪會打開那裡的建築, 面板會吞掉後面的點擊, 所以每個沒坐成的點後面 (跟第一下滑動之前) 補一次 `uncovered` (畫面讀不出村莊才按 `back`, 最多 `UNCOVER_TRIES` 次). `back` **絕對不按在戰鬥上** (被砍掉的執行會把遊戲留在戰鬥裡, 那會點到 放棄): `uncovered` 先認載入畫面, 再要 `card_groups` 跟 `in_battle` 兩個都成立 (或者是結算畫面) 才算戰鬥, 戰鬥回 `None`. 那個判讀的坑在上一節末尾.
 

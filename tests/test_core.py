@@ -126,6 +126,7 @@ from ai_coc.parsers.hero import SCROLL_LEFT, SCROLL_RIGHT, can_scroll, hero_card
 from ai_coc.parsers.home import (
     _clear_rim,
     panel_jobs,
+    boat_marker,
     plate_count,
     builder_jobs,
     plate_badges,
@@ -1357,9 +1358,50 @@ class CrossingTests(unittest.TestCase):
             # it is remembered then.
             patch.object(world_ui, "view_shift", return_value=(0, 0) if parked else (65, -33)),
             patch.object(world_ui, "plate_panel_open", return_value=None),
+            patch.object(world_ui, "boat_marker", side_effect=self.markers) as self.looked,
         ):
             landed = world_ui.cross(adb, DisplayTarget(logical_id="1", physical_id="2"), want)
         return adb, landed
+
+    # What `boat_marker` answers on each look, the parked view's first.
+    markers: tuple[tuple[int, int] | None, ...] = (None, None)
+    looked: MagicMock
+
+    def _leaving_home(self, *markers: tuple[int, int] | None) -> MagicMock:
+        self.markers = markers
+        adb, landed = self._cross(["day", "night"], want="night")
+        assert landed == "night"
+        return adb
+
+    def test_the_marker_over_the_boat_is_tapped_rather_than_a_remembered_spot(self) -> None:
+        """A scenery moors the boat where it likes, and the marker over it is drawn on all of them.
+
+        Measured live: a bought scenery moved the boat from (400, 625) to about
+        (640, 478) on the same parked view, and every measured spot tapped the
+        scenery instead.
+        """
+        adb = self._leaving_home((579, 441))
+        adb.tap.assert_called_once_with(579, 441, ANY)
+        assert call.zoom("in", 1, ANY, ANY, world_ui.MARKER_PINCH) not in adb.mock_calls
+
+    def test_a_far_zoom_that_hid_the_marker_is_pinched_in_a_step(self) -> None:
+        """A bought scenery zooms out past where the game draws markers at all."""
+        adb = self._leaving_home(None, (579, 441))
+        assert call.zoom("in", 1, ANY, ANY, world_ui.MARKER_PINCH) in adb.mock_calls
+        adb.tap.assert_called_once_with(579, 441, ANY)
+
+    def test_no_marker_at_all_parks_again_for_the_measured_spots(self) -> None:
+        """They mean something only on the clamp, and the step in took the camera off it."""
+        adb = self._leaving_home(None, None)
+        assert adb.swipe.call_count == 2 * world_ui.PARK_STILL
+        adb.tap.assert_called_once_with(*world_ui.CROSSINGS["night"].spots[0], ANY)
+
+    def test_the_builder_base_boat_is_tapped_where_it_was_measured(self) -> None:
+        """Its marker sits under the button column, and that village has no scenery to move it."""
+        adb, landed = self._cross(["night", "day"])
+        assert landed == "day"
+        self.looked.assert_not_called()
+        adb.tap.assert_called_once_with(*world_ui.CROSSINGS["day"].spots[0], ANY)
 
     def test_being_there_already_costs_one_capture_and_nothing_else(self) -> None:
         """Which is what lets a caller ask on every run instead of working out whether to."""
@@ -6694,6 +6736,43 @@ class WallRunnerTests(unittest.TestCase):
 
 class HomeHudTests(unittest.TestCase):
     """The village's own overlay, masked down to what is read off it."""
+
+    def test_the_boat_marker_is_found_on_every_frame_that_carries_one_and_no_other(self) -> None:
+        """The same marker on the jungle and on a bought dark stone scenery.
+
+        Every other patch of its water's blue on a committed frame covers at
+        most 0.02 of the square above it with the plate's colour, against 0.15
+        for the marker on all of these.
+        """
+        carrying = {
+            "day_shield_first_number_fused.png",
+            "day_shield_rim_bare.png",
+            "day_village_shield.png",
+            "home_builders_busy.png",
+            "home_marker_over_bars.png",
+            "home_marker_past_dark_edge.png",
+            "home_markers_pale_plate.png",
+            "wall_menu_elixir_only.png",
+            "world_day_boat_marker.png",
+            "world_day_occluded.png",
+            "world_day_shield_only.png",
+        }
+        found = {
+            frame.name
+            for frame in FRAMES.glob("*.png")
+            if Image.open(frame).size == (1600, 900) and boat_marker(frame.read_bytes())
+        }
+        assert found == carrying
+
+    def test_the_marker_is_tapped_in_its_middle(self) -> None:
+        """Measured live: a tap here, on the bought scenery one pinch in, sailed."""
+        assert boat_marker((FRAMES / "world_day_boat_marker.png").read_bytes()) == (579, 441)
+
+    def test_a_bought_scenery_far_zoom_draws_no_marker(self) -> None:
+        """The boat is on screen and the game draws nothing over it, nor over any collector."""
+        frame = (FRAMES / "world_day_marker_hidden.png").read_bytes()
+        assert boat_marker(frame) is None
+        assert current_world(frame) == "day"
 
     def test_collector_markers_are_found_by_size_not_by_what_they_stand_on(self) -> None:
         """Colour alone answers the storage bars, the shop button and a spell factory.

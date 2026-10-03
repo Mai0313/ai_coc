@@ -116,6 +116,22 @@ PLATE_SHARE = 0.38
 # found by different passes and their middles sit a few pixels apart.
 DARK_APART = 30
 
+# The marker the game floats over the boat to the builder base: a pale plate
+# with a ship on it and a strip of water along its bottom. The boat itself is
+# scenery, moored wherever the scenery puts it, while this is drawn the same on
+# every one. The water strip is found first and the plate above it confirms it.
+# Measured: the strip reads (140, 229, 254) on a dark stone scenery and
+# (136, 222, 246) on the jungle one, and the plate (215, 220, 185) and
+# (212, 217, 182). The strip comes out 34 to 50 px across and 12 to 18 down,
+# growing as the camera zooms in, and the plate covers 0.15 of the square above
+# it on every one of 21 frames that carry it, against at most 0.02 for any other
+# patch of that blue on every committed frame and a night of recorded ones.
+BOAT_WATER = ((115, 165), (205, 255), (230, 255))
+BOAT_PLATE = ((195, 230), (200, 235), (160, 200))
+BOAT_ACROSS = (30, 56)
+BOAT_DOWN = (9, 22)
+BOAT_PLATE_SHARE = 0.08
+
 # 1/5 beside the builder's head, in the same white the storage bars use. The
 # slash between the two numbers is not a digit and that is how it is found:
 # swept over every recorded frame carrying this counter, a digit lands within 14
@@ -485,6 +501,31 @@ def collect_bubbles(png: bytes) -> list[ResourceBubble]:
             continue
         found.append(ResourceBubble(resource="dark", point=middle))
     return sorted(found, key=lambda bubble: (bubble.point[1], bubble.point[0]))
+
+
+def boat_marker(png: bytes) -> tuple[int, int] | None:
+    """The middle of the boat's marker, which sails when tapped; None where none is drawn.
+
+    **A scenery bought from the shop zooms out further than the free ones, and
+    past that point the game draws no markers at all** — measured on one, the
+    far zoom hid this one and every collector's, and one pinch back in brought
+    them back. So None is an ordinary answer on such a scenery's far zoom, and
+    `ui.world.cross` zooms in a step and asks again.
+    """
+    image = open_frame(png).crop(VILLAGE_AREA)
+    left, top = VILLAGE_AREA[:2]
+    width, height = image.size
+    for patch in patches(mask(image, BOAT_WATER), width, height):
+        across = patch.right - patch.left + 1
+        if not patch.sized(BOAT_ACROSS, BOAT_DOWN, 0):
+            continue
+        plate = mask(
+            image.crop((patch.left, max(0, patch.top - across), patch.right + 1, patch.top)),
+            BOAT_PLATE,
+        )
+        if plate and plate.count(255) / len(plate) >= BOAT_PLATE_SHARE:
+            return left + patch.left + across // 2, top + patch.top - across // 2
+    return None
 
 
 def _bar_tops(image: Image.Image, band: tuple[int, int]) -> list[int]:
