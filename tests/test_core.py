@@ -2431,13 +2431,23 @@ class StorageTipTests(unittest.TestCase):
     def test_the_builder_base_elixir_is_not_read_ten_times_over(self) -> None:
         """2 450 000, not 24 500 000, which is what a loose tolerance reads here.
 
-        The colon comes back as a `2` at 40 bits, and that ceiling is ten times
-        the real one — a village that could never fill it and a run that would
-        never stand down. This is `CAPACITY_TOLERANCE`'s own test: the digits it
-        has to accept sit at 3 bits and the character it has to reject at 40.
+        A scrap at the right end of the box comes back as one more 0 at 30 bits,
+        and that ceiling is ten times the real one — a village that could never
+        fill it and a run that would never stand down. This is the ceiling of
+        `CAPACITY_TOLERANCE`; the next test is its floor.
         """
         capacity = storage_capacity((FRAMES / "stock_tip_night_elixir.png").read_bytes(), 1)
         assert capacity == 2_450_000
+
+    def test_a_digit_the_bar_behind_shows_through_is_still_read(self) -> None:
+        """27 000 000, not 0, with the dark bar's digits behind the translucent panel.
+
+        They pushed the 7 to 16 bits, so the line was cut into 2 and 000000 and
+        the elixir ceiling read 0, which leaves elixir out of `full` altogether.
+        Blacked out outside the storage corner.
+        """
+        png = (FRAMES / "stock_tip_day_elixir_ghost.png").read_bytes()
+        assert storage_capacity(png, 1) == 27_000_000
 
     def test_a_frame_with_no_tooltip_open_reads_nothing(self) -> None:
         """Which is what leaves that resource out rather than guessing at one."""

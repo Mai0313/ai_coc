@@ -561,19 +561,26 @@ STOCK_BAR_CORE = 245
 #
 # The line reads 最大儲存量 ： 24 000 000, and what makes it readable is that
 # the label is not a number: swept over both villages, every real digit lands
-# within 3 bits of its template while the Chinese and the colon read 52 and up,
+# within 4 bits of its template while the Chinese and the colon read 46 and up,
 # so `split_numbers` cuts the line at the label and the capacity is the last
-# number left. `CAPACITY_TOLERANCE` goes well under that gap rather than beside
-# it, because a value read too generously is worse than none — at 40 the colon
-# came back as a 2 and the builder base's 2 450 000 read as 24 500 000, a
-# ceiling ten times the real one that no farming run could ever fill.
+# number left.
+#
+# **The panel is translucent, so the bar under it shows through**, and that is
+# what sets `CAPACITY_TOLERANCE` from below. On a full home village the dark
+# bar's 470 000 sat behind the elixir line and pushed the 7 of 27 000 000 to 16
+# bits; at 15 the line was cut into 2 and 000000, the elixir ceiling read 0, and
+# a ceiling of 0 drops that storage out of `StorageCapacity.full`. From above it
+# is 30: a scrap at the right end of the box, on most tooltips of both villages,
+# which at 30 joins the line as one more 0 and reads 2 450 000 as 24 500 000, a
+# ceiling ten times the real one that no farming run could ever fill. The line
+# goes midway, swept over the 5 committed tooltips and the 15 recorded here.
 #
 # The box starts left of where any of these numbers do. It reaches past the
 # label on the dark row, whose panel sits further right, and that costs nothing:
 # label glyphs are cut away by the same tolerance.
 CAPACITY_BOX = (1340, 103, 1585, 132)
 CAPACITY_PITCH = 84
-CAPACITY_TOLERANCE = 15
+CAPACITY_TOLERANCE = 23
 
 # The 回營 button on the battle result screen. It is the one screen a farming
 # loop reliably ends on and the one it could not get off: the button only comes
