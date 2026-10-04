@@ -521,6 +521,19 @@ STOCK_INK_SATURATION = 45
 # what it read before. The cart's sheet and the capacity tooltip keep the
 # ceiling above: at 14 the cart's 1 600 000 read 1 600 008.
 STOCK_BAR_SATURATION = 14
+# **And a digit's own white is purer than anything showing through the bar.** A
+# pink-white decoration behind the dark bar's empty end, reading up to 225 and
+# 4 to 7 in saturation, filled the gap of 114 647 and fused 4 and 6 into one span,
+# so the whole frame read None and a farming run stalled on its baseline. No
+# ceiling on saturation reaches it, and a brightness floor only clears it with
+# no room: 215 left it in, 225 took it out, and 230 already read a tooltip frame
+# as a village. What does separate them is shape: a digit's core is 253 to 255
+# and its anti-aliased edge touches that core, while what shows through rarely
+# reaches either. So a bar's ink also has to be, or touch, a pixel brighter than
+# this. Swept over every committed frame and 1 708 recorded ones, any core from
+# 240 to 250 and a reach of one or two pixels read the same: eight frames that
+# read None read their numbers, checked by eye, and nothing else changed.
+STOCK_BAR_CORE = 245
 
 # 最大儲存量 on the tooltip a tapped storage bar drops open, which is the one
 # place the game writes down how much that storage holds. The panel hangs under
@@ -748,6 +761,21 @@ def loading_screen(png: bytes) -> bool:
     )
 
 
+def _bar_ink(crop: Image.Image) -> list[list[bool]]:
+    """A storage bar's digits: ink that is a digit's white core or touches one."""
+    ink = ink_mask(crop, saturation=STOCK_BAR_SATURATION)
+    core = ink_mask(crop, STOCK_BAR_CORE, STOCK_BAR_SATURATION)
+    height, width = len(ink), len(ink[0])
+    across = [[any(row[max(0, x - 1) : x + 2]) for x in range(width)] for row in core]
+    return [
+        [
+            ink[y][x] and any(across[j][x] for j in range(max(0, y - 1), min(height, y + 2)))
+            for x in range(width)
+        ]
+        for y in range(height)
+    ]
+
+
 def _read_row(image: Image.Image, box: tuple[int, int, int, int], tolerance: int) -> int | None:
     """One storage bar's number, read off the bar the game paints it on.
 
@@ -779,7 +807,7 @@ def _read_row(image: Image.Image, box: tuple[int, int, int, int], tolerance: int
     to a closer match, since removing that glyph also removes the rule that one
     poor glyph fails the row.
     """
-    glyphs = list(row_glyphs(ink_mask(image.crop(box), saturation=STOCK_BAR_SATURATION)))
+    glyphs = list(row_glyphs(_bar_ink(image.crop(box))))
     trimmed = False
     while glyphs and glyphs[0][1] > min(tolerance, STOCK_LEADING_TOLERANCE):
         # Only a glyph past `tolerance` takes the row-wide rule away. One the

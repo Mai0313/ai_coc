@@ -508,6 +508,16 @@ class WorldTests(unittest.TestCase):
             stock = read_stock((FRAMES / name).read_bytes())
             assert stock == VillageStock(gold=gold, elixir=elixir, dark=dark), name
 
+    def test_white_scenery_in_a_gap_does_not_fuse_two_digits(self) -> None:
+        """A pale decoration behind the dark bar's empty end filled the gap of 114 647.
+
+        It is as unsaturated as the digits and only a few levels dimmer, so it
+        took the digits' core to tell them apart; without it the frame read
+        None and a farming run stalled on its baseline.
+        """
+        stock = read_stock((FRAMES / "stock_white_behind_dark_bar.png").read_bytes())
+        assert stock == VillageStock(gold=4354835, elixir=1965891, dark=114647)
+
     def test_a_village_showing_through_the_bars_is_left_out_of_the_digits(self) -> None:
         """Both readers name this frame now, and the plate row never depended on the camera.
 
@@ -6823,6 +6833,7 @@ class HomeHudTests(unittest.TestCase):
             "stock_plate_scrap_leading.png",
             "stock_plates_behind_bars.png",
             "stock_plates_behind_bars_bought.png",
+            "stock_white_behind_dark_bar.png",
             "wall_menu_elixir_only.png",
             "world_day_boat_marker.png",
             "world_day_occluded.png",

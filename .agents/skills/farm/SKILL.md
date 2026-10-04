@@ -228,6 +228,8 @@ uv run ai_coc attack --repeat 0 --plan src/ai_coc/plans/night_flat.json --yield
 
 它回**當下這個世界**的水位、容量跟百分比. 用百分比 (`stop_at` 就是百分比); 容量會隨倉庫升級變大, 每次問, 不要記.
 
+**`stock` 讀不出來 (`held` 是 null, log 寫 `this frame would not resolve the bars`) 不是停下來查的理由.** 照樣開跑, 基準改用那一趟 `run.log` 第一行 `Village holds …`; 那行也沒有就在報告寫「基準讀不到」, 進帳照「量不到的就寫量不到」. 讀不出來的那張畫面 (`capture` 一張) 留給 `watch-and-fix`, 打資源不等它.
+
 **它不會自己切世界.** 另一邊就 `ai_coc world --go` 之後再問一次; 回的 `world` 欄位說是哪個村莊. **兩個世界各讀各的, 不准混**: 兩組倉庫容量差十倍, 「金幣 + 金幣」沒有意義. 先讀要先打的那個世界.
 
 ### 樣板
