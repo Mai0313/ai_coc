@@ -287,7 +287,7 @@ CARD_SPAN = (100, 116)
 # recorded second stage, so it was offered no ability at all there.
 #
 # The wider ceiling is allowed only between two white columns, which a
-# fragment's own edges never are, and the sliver is only stepped over inside
+# fragment's own edges never are, and the sliver is always stepped over inside
 # such a card. Swept over 2 297 recorded frames that changes exactly the frames
 # holding a selected card — 124 with the machine, plus one home-village pass
 # whose selected card had been reading 12 px off-centre — and nothing else,
@@ -297,6 +297,25 @@ CARD_SPAN = (100, 116)
 CARD_SELECTED_SPAN = 120
 CARD_SELECTED_EDGE = 200
 CARD_SLIVER = 4
+# A resting card's own artwork can leave a sliver too. The home village's
+# siege machine with a white `!` painted on its cart reads as 44, 1 and 63 px
+# pieces, two 1 px seams either side of a lit column, so the 1 px piece kept
+# the other two from rejoining and the machine was gone from the row: `_deploy`
+# sent the first hero as the machine and left the real one in its card for the
+# whole battle, on 4 of the first 6 rounds of one run.
+#
+# Outside a selected card a sliver is stepped over only where it sits inside
+# the seam, no further than this from the fragment before it. Swept over the
+# same 2 550 frames (every one recorded here plus `tests/frames/`), stepping
+# over every sliver behind a fragment changed 616 of them: it invented a card
+# on 40, mostly the attack dialog, and lost one on 7 mid-battle rows, the
+# machine among them where a greyed card joined up beside it. Held to the seam
+# it changes 572, and 568 of those gain the machine; the only other change is a
+# card moving 5 to 7 px, on rows already part spent mid-battle and on
+# `night_village_after_cancel.png`, a village. 1 to 4 px change the same frames,
+# so this sits one past the measured seam. Every recorded run swept was the
+# home village's; the builder base's rows are only the committed frames.
+CARD_SEAM = 2
 CARD_LIT_BRIGHTNESS = 60
 # Every real card carries its level in a badge at the bottom-left corner. The
 # empty slot the row ends with does not: it is a dashed outline with the
@@ -1209,7 +1228,8 @@ def _rejoined(spans: list[tuple[int, int]], columns: bytes) -> list[tuple[int, i
     for left, right in spans:
         fragment = bool(joined) and joined[-1][1] - joined[-1][0] < CARD_SPAN[0]
         selected = fragment and columns[joined[-1][0]] >= CARD_SELECTED_EDGE
-        if selected and right - left < CARD_SLIVER:
+        seam = fragment and left - joined[-1][1] <= CARD_SEAM
+        if (selected or seam) and right - left < CARD_SLIVER:
             continue
         ceiling = CARD_SPAN[1]
         if selected and columns[right - 1] >= CARD_SELECTED_EDGE:

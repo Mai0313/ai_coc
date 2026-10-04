@@ -4771,6 +4771,28 @@ class AttackTests(unittest.TestCase):
         assert spells == [1181, 1302]
         assert [slot for slot in rest if slot not in spells] == [557, 683, 804, 925, 1046]
 
+    def test_a_machine_cut_into_three_pieces_is_still_a_card(self) -> None:
+        """Two 1 px seams around a lit column, left by the `!` on the cart.
+
+        The 1 px piece between them kept the other two from rejoining, so the
+        machine vanished, `_deploy` sent 弓箭女皇 in its place, and its card
+        stayed in hand for the whole battle. Blacked out outside the card row,
+        like `cards_dark_hero.png`.
+        """
+        png = (FRAMES / "cards_siege_seam.png").read_bytes()
+        groups = card_groups(png)
+        assert groups == [[172, 293, 413], [557, 683, 804, 925, 1048], [1181, 1302]]
+        rest = [slot for group in groups[1:] for slot in group]
+        assert counted_cards(png, rest) == [1181, 1302]
+
+    def test_a_sliver_clear_of_the_seam_is_not_stepped_over(self) -> None:
+        """Only a sliver inside the seam belongs to the card; one further out is ground."""
+        columns = bytes(1600)
+        seam = [(502, 546), (547, 548), (549, 612)]
+        assert scout_parser._rejoined(seam, columns) == [(502, 612)]
+        clear = [(502, 546), (550, 551), (553, 612)]
+        assert scout_parser._rejoined(clear, columns) == clear
+
     def test_spells_are_told_apart_from_heroes_by_their_count(self) -> None:
         """Spells carry an xN in the corner; heroes and the siege machine do not."""
         frame = (FRAMES / "cards_full.png").read_bytes()
