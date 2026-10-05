@@ -1161,23 +1161,28 @@ def loot_cart_load(png: bytes) -> tuple[int, int] | None:
     words: list[str] = []
     end: int | None = None
     for left, right in glyph_columns(mask):
-        if end is None or left - end > CART_SPACE:
-            words.append("")
-        end = right
+        # Two digits can touch and come through as one span: the line would not
+        # read on five looks in a row while the cart held 749 000, and the run
+        # stood down on the storages alone.
         if right - left > MAX_GLYPH_WIDTH and (
             halves := _split(mask, left, right, MIN_GLYPH_ROWS)
         ):
-            for digit, distance in halves:
-                words[-1] += digit if distance <= CART_HELD_TOLERANCE else "?"
+            read = "".join(
+                digit if distance <= CART_HELD_TOLERANCE else "?" for digit, distance in halves
+            )
+        elif (pattern := signature(mask, left, right)) is None:
             continue
-        pattern = signature(mask, left, right)
-        if pattern is None:
-            continue
-        digit, distance = nearest(pattern)
-        if right - left <= CART_ONE_WIDTH:
-            words[-1] += "1"
+        elif right - left <= CART_ONE_WIDTH:
+            read = "1"
         else:
-            words[-1] += digit if distance <= CART_HELD_TOLERANCE else "?"
+            digit, distance = nearest(pattern)
+            read = digit if distance <= CART_HELD_TOLERANCE else "?"
+        # Only ink that read as something moves the spacing, so a scrap too
+        # short to measure cannot open a word of its own.
+        if end is None or left - end > CART_SPACE:
+            words.append("")
+        end = right
+        words[-1] += read
     if len(words) != 3 or len(words[1]) != 1 or not (words[0] + words[2]).isdigit():
         return None
     held, capacity = int(words[0]), int(words[2])

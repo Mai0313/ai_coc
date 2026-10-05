@@ -14,7 +14,7 @@ from contextlib import AbstractContextManager
 from unittest.mock import ANY, MagicMock, call, patch
 from collections.abc import Callable
 
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageChops
 import pytest
 from pydantic import ValidationError
 
@@ -3166,14 +3166,28 @@ class LootCartTests(unittest.TestCase):
         assert loot_cart_load(png) == (0, 1_600_000)
 
     def test_touching_digits_are_split_on_cart_line(self) -> None:
-        """Touching digits such as slanted 7 and 4 are split rather than left unread."""
+        """Two digits that touch come through as one span, and are cut apart.
+
+        The 9 of 1 229 712 is laid back 3 px over the gap's own backdrop, ink
+        over ink, so it runs into the 2 before it; left whole, that span reads
+        as nothing and the line goes unread.
+        """
         scene = Image.open(FRAMES / "night_cart_holding.png").convert("RGB")
-        # Shift the 9 at 679 left by 4 pixels to touch the preceding 2 at 665.
-        digit = scene.crop((679, 740, 695, 775))
-        scene.paste(digit, (675, 740))
+        nine = scene.crop((685, 740, 701, 775))
+        scene.paste(scene.crop((738, 740, 748, 775)).resize((16, 35)), (685, 740))
+        moved = Image.new("RGB", scene.size)
+        moved.paste(nine, (682, 740))
+        raw = io.BytesIO()
+        ImageChops.lighter(scene, moved).save(raw, format="PNG")
+        assert loot_cart_load(raw.getvalue()) == (1_229_712, 1_600_000)
+
+    def test_a_scrap_too_short_to_read_does_not_open_a_word(self) -> None:
+        """Ink under a digit's height is skipped before it can move the spacing."""
+        scene = Image.open(FRAMES / "night_cart_holding.png").convert("RGB")
+        ImageDraw.Draw(scene).rectangle((1000, 755, 1003, 764), fill=(255, 255, 255))
         raw = io.BytesIO()
         scene.save(raw, format="PNG")
-        assert loot_cart_load(raw.getvalue()) == (1_219_712, 1_600_000)
+        assert loot_cart_load(raw.getvalue()) == (1_229_712, 1_600_000)
 
     def test_a_cart_holding_more_than_it_takes_is_unread(self) -> None:
         """A ceiling missing its last glyph is a tenth of the real one.
