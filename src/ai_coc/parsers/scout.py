@@ -26,6 +26,9 @@ from ai_coc.parsers.frame import open_frame
 # module now and this file is one of its four callers rather than its owner.
 from ai_coc.parsers.glyphs import (
     INK_BRIGHTNESS,
+    MIN_GLYPH_ROWS,
+    MAX_GLYPH_WIDTH,
+    _split,
     nearest,
     ink_mask,
     signature,
@@ -1158,12 +1161,18 @@ def loot_cart_load(png: bytes) -> tuple[int, int] | None:
     words: list[str] = []
     end: int | None = None
     for left, right in glyph_columns(mask):
-        pattern = signature(mask, left, right)
-        if pattern is None:
-            continue
         if end is None or left - end > CART_SPACE:
             words.append("")
         end = right
+        if right - left > MAX_GLYPH_WIDTH and (
+            halves := _split(mask, left, right, MIN_GLYPH_ROWS)
+        ):
+            for digit, distance in halves:
+                words[-1] += digit if distance <= CART_HELD_TOLERANCE else "?"
+            continue
+        pattern = signature(mask, left, right)
+        if pattern is None:
+            continue
         digit, distance = nearest(pattern)
         if right - left <= CART_ONE_WIDTH:
             words[-1] += "1"
