@@ -3165,6 +3165,16 @@ class LootCartTests(unittest.TestCase):
         assert loot_cart_ready(png) is False
         assert loot_cart_load(png) == (0, 1_600_000)
 
+    def test_touching_digits_are_split_on_cart_line(self) -> None:
+        """Touching digits such as slanted 7 and 4 are split rather than left unread."""
+        scene = Image.open(FRAMES / "night_cart_holding.png").convert("RGB")
+        # Shift the 9 at 679 left by 4 pixels to touch the preceding 2 at 665.
+        digit = scene.crop((679, 740, 695, 775))
+        scene.paste(digit, (675, 740))
+        raw = io.BytesIO()
+        scene.save(raw, format="PNG")
+        assert loot_cart_load(raw.getvalue()) == (1_219_712, 1_600_000)
+
     def test_a_cart_holding_more_than_it_takes_is_unread(self) -> None:
         """A ceiling missing its last glyph is a tenth of the real one.
 
