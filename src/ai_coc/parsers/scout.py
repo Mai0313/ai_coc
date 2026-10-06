@@ -12,7 +12,7 @@ holding — the loot panel, the army bar, the card row, the storage bars.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 import logging
 
 from PIL import Image
@@ -667,6 +667,25 @@ RETURN_HOME_GREEN = 0.23
 ABANDON_BOX = (20, 636, 200, 660)
 ABANDON_RED = 0.45
 
+# The speed button the game puts up on the right of a home battle once a minute
+# is left, labelled 1x or 4x; a tap toggles between the two. Measured live over
+# two recorded battles: it first showed at 1分鐘 0秒 (1分鐘 2秒 had none) and
+# stayed until the result screen, and three taps in a row read 4x, 1x, 4x.
+#
+# The plate reads 0.471 to 0.485 green with either label, against at most
+# 0.075 at this spot on 509 recorded frames without it. **Grass passes the same
+# green test**, so position alone keeps it out: the box slid over the field of
+# 302 recorded battles finds 1.9 million windows at 0.3 or more. None of them
+# holds more than 404 px of white ink, while the label is drawn pixel for pixel
+# the same each time at 621 px for 1x and 865 px for 4x. So the ink has to be
+# there too, and it is also what tells the two labels apart, each line sitting
+# between the readings either side of it.
+SPEED_BOX = (1488, 462, 1580, 560)
+SPEED_GREEN = 0.3
+SPEED_INK_BRIGHTNESS = 230
+SPEED_LABEL_INK = 500
+SPEED_FAST_INK = 740
+
 # 還在嗎 / 你因閒置過久而中斷連線. A loop that leaves the game sitting between
 # rounds will meet this, and nothing else clears it: the game stops responding to taps
 # until 重新登入遊戲 is pressed. Measured, its flat grey panel fills 0.97 of this
@@ -1210,6 +1229,18 @@ def in_battle(png: bytes) -> bool:
     is `battle_over`'s question and stays with it.
     """
     return _button_ratio(open_frame(png), ABANDON_BOX, "red") >= ABANDON_RED
+
+
+def battle_speed(png: bytes) -> Literal[1, 4] | None:
+    """The speed the battle's speed button says is playing, or None with no button up."""
+    image = open_frame(png)
+    if _button_ratio(image, SPEED_BOX, "green") < SPEED_GREEN:
+        return None
+    data = image.crop(SPEED_BOX).tobytes()
+    ink = sum(min(data[i : i + 3]) > SPEED_INK_BRIGHTNESS for i in range(0, len(data), 3))
+    if ink < SPEED_LABEL_INK:
+        return None
+    return 4 if ink >= SPEED_FAST_INK else 1
 
 
 def searching_opponent(png: bytes) -> bool:

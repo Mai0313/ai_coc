@@ -51,6 +51,7 @@ from ai_coc.parsers.scout import (
     battle_over,
     card_groups,
     field_units,
+    battle_speed,
     card_drained,
     freeze_cards,
     skip_offered,
@@ -85,6 +86,7 @@ ARMY_ATTACK = (1411, 803)
 NEXT_TARGET = (1450, 630)
 END_BATTLE = (118, 670)
 RETURN_HOME = (798, 768)
+SPEED_UP = (1535, 510)
 
 # The builder base's own way into a battle, which is two buttons where the home
 # village's is three: its 攻擊 sits in the same corner and opens 開始進攻, whose
@@ -2440,6 +2442,10 @@ class AttackRunner(ScreenRunner):
             # The result screen is the first one with no loot panel on it.
             if self._battle_ended("battle"):
                 break
+            # The button toggles, so it is pressed only while it reads 1x.
+            if battle_speed(self._last) == 1:
+                logger.info("Playing the last minute at 4x")
+                self._tap(SPEED_UP)
             self._dump_leftovers()
         self._leave_result()
         return self._seen is not None and self._seen != opening
