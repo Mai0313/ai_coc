@@ -1510,6 +1510,7 @@ class BattleWaitTests(unittest.TestCase):
             patch.object(attack.time, "sleep"),
             patch.object(runner, "_tap") as tapped,
             patch.object(runner, "_frame", return_value=b""),
+            patch.object(attack, "_matched", return_value=False),
         ):
             assert runner._find_opponent() is None
         assert [call.args[0] for call in tapped.call_args_list] == [NIGHT_FIND, SEARCH_CANCEL]
@@ -1562,6 +1563,18 @@ class BattleWaitTests(unittest.TestCase):
         with (
             patch.object(attack.time, "sleep"),
             patch.object(attack, "SEARCH_PATIENCE", 0),
+            patch.object(runner, "_tap") as tapped,
+            patch.object(runner, "_frame", return_value=b"battle"),
+            patch.object(attack, "_matched", return_value=True),
+        ):
+            assert runner._find_opponent() == b"battle"
+        assert [call.args[0] for call in tapped.call_args_list] == [NIGHT_FIND, SEARCH_CANCEL]
+
+    def test_a_match_that_opened_under_a_stop_is_played_out(self) -> None:
+        """Returned as nothing, it ran its whole timer with every card in hand (#344)."""
+        runner = self._runner(world="night", should_stop=lambda: True)
+        with (
+            patch.object(attack.time, "sleep"),
             patch.object(runner, "_tap") as tapped,
             patch.object(runner, "_frame", return_value=b"battle"),
             patch.object(attack, "_matched", return_value=True),

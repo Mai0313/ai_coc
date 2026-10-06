@@ -2577,8 +2577,9 @@ class AttackRunner(ScreenRunner):
                 time.sleep(SEARCH_POLL)
                 if self.should_stop():
                     logger.info("Stop pressed while the matchmaker was still looking")
-                    self._tap(SEARCH_CANCEL)
-                    return None
+                    # A battle that opened anyway is played out, as any
+                    # committed battle is, and the stop is taken after it.
+                    return self._cancel_search()
                 png = self._frame("searching")
                 if _matched(png):
                     logger.info(
@@ -2586,16 +2587,22 @@ class AttackRunner(ScreenRunner):
                     )
                     return png
             logger.info("No opponent in %.0fs; cancelling and searching again", SEARCH_PATIENCE)
-            self._tap(SEARCH_CANCEL)
-            time.sleep(2)
-            # A match can open in the second before 取消 lands, and then the
-            # tap hits the card row rather than the button: that is a battle to
-            # play, not a dialog to reopen.
-            png = self._frame("cancelled")
-            if _matched(png):
-                logger.info("Matched as the search was being cancelled")
+            if (png := self._cancel_search()) is not None:
                 return png
         logger.warning("Nobody was matched in %d searches", SEARCH_ATTEMPTS)
+        return None
+
+    def _cancel_search(self) -> bytes | None:
+        """Press 取消, and hand back the battle when a match opened before it landed."""
+        self._tap(SEARCH_CANCEL)
+        time.sleep(2)
+        # A match can open in the second before 取消 lands, and then the
+        # tap hits the card row rather than the button: that is a battle to
+        # play, not a dialog to reopen.
+        png = self._frame("cancelled")
+        if _matched(png):
+            logger.info("Matched as the search was being cancelled")
+            return png
         return None
 
     def _reopen_search(self) -> bool:
