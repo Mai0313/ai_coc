@@ -2908,6 +2908,9 @@ class AttackRunner(ScreenRunner):
                 logger.info("The card row was repainted; this stage is over")
                 return
             shot = following
+            if battle_speed(shot) == 1:
+                logger.info("Playing the last minute at 4x")
+                self._tap(SPEED_UP)
             self._offer_for(ABILITY_POLL, machines)
         logger.warning("The battle never ended; leaving it to the result screen")
 

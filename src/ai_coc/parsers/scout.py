@@ -667,10 +667,12 @@ RETURN_HOME_GREEN = 0.23
 ABANDON_BOX = (20, 636, 200, 660)
 ABANDON_RED = 0.45
 
-# The speed button the game puts up on the right of a home battle once a minute
-# is left, labelled 1x or 4x; a tap toggles between the two. Measured live over
-# two recorded battles: it first showed at 1分鐘 0秒 (1分鐘 2秒 had none) and
-# stayed until the result screen, and three taps in a row read 4x, 1x, 4x.
+# The speed button the game puts up on the right of a battle once a minute is
+# left, labelled 1x or 4x; a tap toggles between the two. Measured live over
+# two recorded home battles: it first showed at 1分鐘 0秒 (1分鐘 2秒 had none) and
+# stayed until the result screen, and three taps in a row read 4x, 1x, 4x. A
+# builder base stage draws the same button in the same place at its own 59秒,
+# reading the same 0.485 and 621 below, with nothing deployed at all.
 #
 # The plate reads 0.471 to 0.485 green with either label, against at most
 # 0.075 at this spot on 509 recorded frames without it. **Grass passes the same
