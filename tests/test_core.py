@@ -76,6 +76,7 @@ from ai_coc.ui.hero import HeroRunner
 from ai_coc.ui.walls import WallRunner
 from ai_coc.constants import DEFAULT_LITE_MODEL
 from ai_coc.ui.attack import (
+    SPEED_UP,
     PLAYFIELD,
     RAGE_SPAN,
     CARD_ROW_Y,
@@ -140,11 +141,13 @@ from ai_coc.logging_setup import _attach_run, configure_logging
 from ai_coc.parsers.field import view_shift
 from ai_coc.parsers.frame import open_frame
 from ai_coc.parsers.scout import (
+    SPEED_BOX,
     CART_PLANK,
     PANEL_LEFT,
     ROW_BOUNDS,
     STOCK_LEFT,
     PANEL_RIGHT,
+    SPEED_GREEN,
     STOCK_RIGHT,
     STOCK_DARK_LEFT,
     CART_COLLECT_BOX,
@@ -165,10 +168,12 @@ from ai_coc.parsers.scout import (
     field_units,
     panel_drawn,
     _plank_ratio,
+    battle_speed,
     card_drained,
     freeze_cards,
     skip_offered,
     welcome_back,
+    _button_ratio,
     _dimmed_floor,
     army_strength,
     counted_cards,
@@ -2172,6 +2177,24 @@ class ScoutTests(unittest.TestCase):
         for path in FRAMES.glob("*.png"):
             if path.name != "welcome_back.png":
                 assert not welcome_back(path.read_bytes()), path.name
+
+    def test_the_speed_button_is_read_by_its_label(self) -> None:
+        """It toggles between 1x and 4x, so which one it says decides whether to tap."""
+        assert battle_speed((FRAMES / "battle_speed_1x.png").read_bytes()) == 1
+        assert battle_speed((FRAMES / "battle_speed_4x.png").read_bytes()) == 4
+        for path in FRAMES.glob("*.png"):
+            if not path.name.startswith("battle_speed_"):
+                assert battle_speed(path.read_bytes()) is None, path.name
+
+    def test_grass_under_the_speed_button_is_not_one(self) -> None:
+        """Grass passes the plate's green test; the label's ink is what keeps it out."""
+        image = open_frame((FRAMES / "battle_in_progress.png").read_bytes())
+        x0, y0, x1, y1 = SPEED_BOX
+        image.paste(image.crop((x0 - 190, y0, x1 - 190, y1)), (x0, y0))
+        assert _button_ratio(image, SPEED_BOX, "green") >= SPEED_GREEN
+        buffer = io.BytesIO()
+        image.save(buffer, format="PNG")
+        assert battle_speed(buffer.getvalue()) is None
 
     def test_only_the_card_that_lost_one_shows_it(self) -> None:
         """A drop is judged on the card's own corner, which repaints when it loses one.
@@ -4221,11 +4244,28 @@ class AttackTests(unittest.TestCase):
                 "battle_over",
                 side_effect=[view is None for view in readings] + [False] * RESULT_ATTEMPTS,
             ),
+            patch.object(attack, "battle_speed", return_value=None),
             patch.object(attack.time, "sleep"),
         ):
             # Whatever the abilities saw counts too, which is the whole point.
             runner._battle_ended("ability")
             return runner._wait_out_battle(opening), runner
+
+    def test_the_last_minute_is_put_on_4x_once(self) -> None:
+        """The button toggles, so a second tap would put the battle back on 1x."""
+        runner = self._runner()
+        panel = ScoutView(loot=LootOffer(gold=1, elixir=1, dark=1), can_skip=False)
+        with (
+            patch.object(AttackRunner, "_frame", return_value=b""),
+            patch.object(AttackRunner, "_tap") as tapped,
+            patch.object(attack, "read_scout", return_value=panel),
+            # Four polls of the battle, the result screen, and it gone on the first tap.
+            patch.object(attack, "battle_over", side_effect=[False] * 4 + [True, False]),
+            patch.object(attack, "battle_speed", side_effect=[None, 1, 4, 4]),
+            patch.object(attack.time, "sleep"),
+        ):
+            runner._wait_out_battle(panel.loot)
+        assert [c.args[0] for c in tapped.call_args_list].count(SPEED_UP) == 1
 
     def test_a_battle_won_before_the_first_poll_still_counts(self) -> None:
         """100% three stars, but over so fast that only the ability check saw the loot fall."""
