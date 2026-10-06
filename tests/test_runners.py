@@ -808,7 +808,9 @@ class OpenAttackMenuTests(unittest.TestCase):
             patch.object(attack, "uncovered") as cleared,
             patch.object(attack, "restart_game", return_value=DISPLAY) as restarted,
             patch.object(runner, "_settle_ceilings") as ceilings,
-            patch.object(runner, "_visit_cart") as visited,
+            patch.object(
+                runner, "_visit_cart", side_effect=screens.get("trip") or (lambda home: home)
+            ) as visited,
             patch.object(runner, "_leave_result") as left,
             patch.object(runner, "_tap") as tapped,
             patch.object(attack, "attack_menu_open", return_value=screens.get("day_menu", True)),
@@ -840,8 +842,13 @@ class OpenAttackMenuTests(unittest.TestCase):
     def test_the_cart_is_looked_in_before_the_attack_tap(self) -> None:
         """The cart is a place on the map, and past the 攻擊 tap the dialog is over it."""
         _, seen = self._open("night", ["night"])
-        seen["visited"].assert_called_once_with()
+        seen["visited"].assert_called_once_with(b"home")
         assert [name for name, *_ in seen["order"].mock_calls] == ["visit", "tap"]
+
+    def test_the_village_comes_back_as_the_cart_trip_left_it(self) -> None:
+        """`_stood_down` reads the storages off this frame, and the trip just paid into them."""
+        got, _ = self._open("night", ["night"], trip=lambda home: b"after the payout")
+        assert got == b"after the payout"
 
     def test_the_other_village_ends_the_round_rather_than_being_sailed_to(self) -> None:
         """Nothing here sails; crossing is `ai_coc world --go`, which the module does not even import."""
@@ -1190,9 +1197,12 @@ class NightCartTests(unittest.TestCase):
         self, runner: AttackRunner, battles: int, trips: list[CartReport] | None = None
     ) -> MagicMock:
         """Open the attack menu for this many rounds, each one a battle, counting trips."""
-        with patch.object(attack, "collect_cart", side_effect=trips or [self.EMPTY] * 10) as trip:
+        with (
+            patch.object(attack, "collect_cart", side_effect=trips or [self.EMPTY] * 10) as trip,
+            patch.object(runner, "_frame", return_value=b"home"),
+        ):
             for _ in range(battles):
-                runner._visit_cart()
+                runner._visit_cart(b"home")
                 # What a matched battle does to the count, as `_run_night` does.
                 if runner._since_cart is not None:
                     runner._since_cart += 1
@@ -1235,6 +1245,18 @@ class NightCartTests(unittest.TestCase):
         assert trip.call_count == attack.CART_LOOKS
         assert self._stood_down(runner, runner._cart)
 
+    def test_a_trip_hands_back_the_village_as_the_payout_left_it(self) -> None:
+        """Measured on #341: the frame from before the trip read 610 566 elixir after a 427 000 payout."""
+        runner = self._runner()
+        paid = CartReport(outcome="collected", elixir=427_000)
+        with (
+            patch.object(attack, "collect_cart", return_value=paid),
+            patch.object(runner, "_frame", return_value=b"after"),
+        ):
+            assert runner._visit_cart(b"before") == b"after"
+            # The next round has no trip due, so the frame it brought stands.
+            assert runner._visit_cart(b"before") == b"before"
+
     def test_the_home_village_has_no_cart_to_look_in(self) -> None:
         runner = self._runner()
         runner.world = "day"
@@ -1249,7 +1271,7 @@ class NightCartTests(unittest.TestCase):
             patch.object(attack, "collect_cart", side_effect=AdbControlError("status -2")),
             pytest.raises(AdbControlError),
         ):
-            runner._visit_cart()
+            runner._visit_cart(b"home")
         assert runner._since_cart == attack.CART_EVERY
         self._visits(runner, 1).assert_called_once()
 

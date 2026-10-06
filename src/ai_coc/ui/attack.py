@@ -1119,8 +1119,11 @@ class AttackRunner(ScreenRunner):
             return
         self._capacity = self.read_ceilings(world)
 
-    def _visit_cart(self) -> None:
+    def _visit_cart(self, home: bytes) -> bytes:
         """Go to the builder base's cart on a run's first round and every `CART_EVERY` battles.
+
+        Hands back the village as the trip left it, since a payout moves elixir
+        into the storages, or `home` itself when no trip was due.
 
         **The cart is that village's third storage.** Every battle there pays
         its defence reward into it, and it waits there until 收集 is pressed —
@@ -1142,9 +1145,9 @@ class AttackRunner(ScreenRunner):
         and a count kept here would start from nothing each time.
         """
         if self.world != "night":
-            return
+            return home
         if self._since_cart is not None and self._since_cart < CART_EVERY:
-            return
+            return home
         for look in range(1, CART_LOOKS + 1):
             self._cart = collect_cart(self.adb, self.display)
             # Only once a trip came back: one the emulator broke off raises
@@ -1152,10 +1155,11 @@ class AttackRunner(ScreenRunner):
             # decide a full village's stop on a cart nobody read.
             self._since_cart = 0
             if self._cart.capacity or self._cart.outcome == "collected":
-                return
+                break
             logger.warning(
                 "Look %d at the cart did not say how full it is (%s)", look, self._cart.outcome
             )
+        return self._frame("home")
 
     def _cart_has_room(self) -> bool:
         """Whether the builder base's cart can still bank what a battle wins, by its last trip.
@@ -1291,8 +1295,9 @@ class AttackRunner(ScreenRunner):
             self._settle_ceilings(here)
             # The builder base's cart is looked in here for the same reason: it
             # is a place on that village's map, and past this tap the dialog is
-            # over it.
-            self._visit_cart()
+            # over it. A trip moves elixir into the storages, and `_stood_down`
+            # reads them off the frame this hands back.
+            home = self._visit_cart(home)
             self._tap(HOME_ATTACK)
             time.sleep(2)
             opened = attack_menu_open if here == "day" else night_attack_menu
