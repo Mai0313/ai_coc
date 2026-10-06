@@ -83,9 +83,9 @@
 
 ## 最後一分鐘沒變 4x
 
-**症狀**: 主村戰鬥剩一分鐘之後還是 1x, `run.log` 沒有 `Playing the last minute at 4x`, 或同一場出現好幾次.
+**症狀**: 戰鬥 (夜世界是每一階段) 剩一分鐘之後還是 1x, `run.log` 沒有 `Playing the last minute at 4x`, 或同一場出現好幾次.
 
-剩一分鐘時右邊出現綠色速度按鈕, 點一下在 1x 跟 4x 之間切換, 所以 `_wait_out_battle` 只在 `battle_speed` 讀到 1x 時點 (`SPEED_BOX`, 白字多寡分 1x 跟 4x). 同一場好幾次就是標籤讀錯, 一直切回 1x; 完全沒有就是綠色底板或標籤的白字沒讀到 (草地也過得了綠色那關, 所以白字少於 `SPEED_LABEL_INK` 不算按鈕). 先拿那一場的畫面跑 `battle_speed`, 再看 `SPEED_BOX` 旁邊的量測. 夜世界沒量過, 迴圈不點.
+剩一分鐘時右邊出現綠色速度按鈕, 點一下在 1x 跟 4x 之間切換, 所以 `_wait_out_battle` (夜世界是 `_wait_out_night`) 只在 `battle_speed` 讀到 1x 時點 (`SPEED_BOX`, 白字多寡分 1x 跟 4x). 同一場好幾次就是標籤讀錯, 一直切回 1x; 完全沒有就是綠色底板或標籤的白字沒讀到 (草地也過得了綠色那關, 所以白字少於 `SPEED_LABEL_INK` 不算按鈕). 先拿那一場的畫面跑 `battle_speed`, 再看 `SPEED_BOX` 旁邊的量測. 夜世界一個階段多半撐不到剩一分鐘 (中位數是出兵後 45 秒就打完), 那種本來就看不到按鈕.
 
 ## 兵丟不出去
 

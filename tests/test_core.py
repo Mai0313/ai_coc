@@ -969,6 +969,7 @@ class NightAttackTests(unittest.TestCase):
             patch.object(runner, "_frame", return_value=b""),
             patch.object(attack, "battle_over", return_value=False),
             patch.object(attack, "card_drained", side_effect=[[], [307]]),
+            patch.object(attack, "battle_speed", return_value=None),
             patch.object(AdbController, "tap_many") as tapped,
         ):
             runner._wait_out_night([164], [307])
@@ -993,9 +994,24 @@ class NightAttackTests(unittest.TestCase):
             patch.object(attack.time, "sleep"),
             patch.object(runner, "_frame", return_value=b""),
             patch.object(attack, "battle_over", side_effect=[False, True]),
+            patch.object(attack, "battle_speed", return_value=None),
             patch.object(AdbController, "tap_many"),
         ):
             runner._wait_out_night([164], [])
+
+    def test_the_last_minute_of_a_stage_is_put_on_4x_once(self) -> None:
+        """The same toggle as the home village's, so a second tap would undo it."""
+        runner = self._runner()
+        with (
+            patch.object(attack.time, "sleep"),
+            patch.object(runner, "_frame", return_value=b""),
+            patch.object(runner, "_tap") as tapped,
+            patch.object(attack, "battle_over", side_effect=[False] * 3 + [True]),
+            patch.object(attack, "battle_speed", side_effect=[1, 4, 4]),
+            patch.object(AdbController, "tap_many"),
+        ):
+            runner._wait_out_night([164], [])
+        tapped.assert_called_once_with(SPEED_UP)
 
     def test_the_flank_keeps_moving_until_something_lands(self) -> None:
         """Reading the pass index instead gave it exactly one push.
@@ -2182,6 +2198,7 @@ class ScoutTests(unittest.TestCase):
         """It toggles between 1x and 4x, so which one it says decides whether to tap."""
         assert battle_speed((FRAMES / "battle_speed_1x.png").read_bytes()) == 1
         assert battle_speed((FRAMES / "battle_speed_4x.png").read_bytes()) == 4
+        assert battle_speed((FRAMES / "battle_speed_night_1x.png").read_bytes()) == 1
         for path in FRAMES.glob("*.png"):
             if not path.name.startswith("battle_speed_"):
                 assert battle_speed(path.read_bytes()) is None, path.name
