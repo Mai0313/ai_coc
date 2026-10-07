@@ -6327,6 +6327,19 @@ class WallMenuTests(unittest.TestCase):
         assert menu is not None
         assert menu.price == 8_500_000
 
+    def test_the_plates_sheen_under_a_price_is_not_ink(self) -> None:
+        """A bright neutral streak under 24 000 000 joined the 2 and the 4 into one span.
+
+        The elixir price stopped reading and the menu was not taken for a wall.
+        The streak has no pure white in it, which every digit has at its core.
+        """
+        frame = (FRAMES / "wall_menu_plate_sheen.png").read_bytes()
+        prices = [(button.resource, button.price) for button in upgrade_buttons(frame)]
+        assert prices == [("gold", 24_000_000), ("elixir", 24_000_000)]
+        menu = wall_menu(frame)
+        assert menu is not None
+        assert menu.price == 24_000_000
+
     def test_a_menu_on_its_own_is_not_a_dialog(self) -> None:
         assert game_dialog((FRAMES / "wall_menu_plain.png").read_bytes()) is None
 
