@@ -735,6 +735,8 @@ WELCOME_SHEET_PALE = 0.9
 # `uncovered` refused to press `back` at it, which left `ai_coc stock` reading
 # nothing. Read off the purple ribbon its title is written on: 0.889 of this box
 # against at most 0.242 over 966 recorded frames, that one a 勝利之星 reward sheet.
+# `back` closes it, checked live: the sheet read here, `uncovered` pressed back,
+# and the home village read again.
 SHIELD_RIBBON_BOX = (620, 255, 980, 315)
 SHIELD_RIBBON_PURPLE = 0.6
 
