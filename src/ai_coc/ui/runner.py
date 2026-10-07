@@ -25,6 +25,7 @@ from ai_coc.prompts import render
 from ai_coc.constants import COC_PACKAGE
 from ai_coc.adapters.ai import GeminiClient
 from ai_coc.adapters.adb import ZOOM_PINCHES, AdbController, AdbControlError
+from ai_coc.parsers.home import STORAGE_BARS
 from ai_coc.parsers.scout import (
     read_stock,
     loading_screen,
@@ -85,6 +86,14 @@ SPOT_FLOOR = SWEEP_LIMIT[1] * 100 // 900
 # scan had found opened nothing; the shield's opens a sheet whose 移除 removes the
 # shield. The scan's neighbours step up to y 95, and Gemini has answered y 101.
 PLATE_FLOOR = 105
+
+
+def on_top_ui(point: tuple[int, int]) -> bool:
+    """Whether a tap here lands on the plate row or the storage bars rather than the map."""
+    x, y = point
+    return y < PLATE_FLOOR or (x >= STORAGE_BARS[0] and y < STORAGE_BARS[3])
+
+
 # One call against one still frame. Long enough for a slow answer, short enough
 # that a hung one falls through to the sweep rather than holding the run.
 SPOT_TIMEOUT = 60
@@ -556,8 +565,8 @@ class GameRunner(ScreenRunner):
             if self.should_stop():
                 logger.info("Stop requested; ending the %s walk", label)
                 return
-            if spot[1] < PLATE_FLOOR:
-                logger.info("Skipping (%d, %d): that is the plate row, not the map", *spot)
+            if on_top_ui(spot):
+                logger.info("Skipping (%d, %d): that is the top row's UI, not the map", *spot)
                 continue
             png = self._after_tap(spot, f"{label}_{spot[0]:04d}_{spot[1]:04d}")
             if read_stock(png) is None:
@@ -642,6 +651,11 @@ class GameRunner(ScreenRunner):
             # trying. The instruction is the optimisation; this is the guarantee.
             if point[1] > SWEEP_LIMIT[1]:
                 logger.info("Dropping (%d, %d): that is the button row, not the map", *point)
+                continue
+            # The same at the top, here as well as in `_opened`, because the hero
+            # hall's search taps these points without walking through it.
+            if on_top_ui(point):
+                logger.info("Dropping (%d, %d): that is the top row's UI, not the map", *point)
                 continue
             spots.append(point)
         logger.info("Gemini put %d of %s at %s", len(spots), what, spots)

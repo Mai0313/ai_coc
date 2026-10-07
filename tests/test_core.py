@@ -7842,6 +7842,18 @@ class TargetFinderTests(unittest.TestCase):
             spots = runner._spotted("城牆", "散開", 3)
         assert spots == [(800, 423), (960, 270)]
 
+    def test_a_point_on_the_top_rows_ui_is_dropped_too(self) -> None:
+        """The hero hall's search taps these points without walking through `_opened`."""
+        runner = self._runner(ai=GeminiClient(api_key="not-a-real-key", settings=GeminiSetting()))
+        # 11% of 900 is 99, under the plate row; (82%, 20%) is the storage bars.
+        answer = self._answer((40, 11), (82, 20), (60, 30))
+        with (
+            patch.object(GeminiClient, "generate_structured", return_value=answer),
+            patch.object(WallRunner, "_frame", return_value=b""),
+        ):
+            spots = runner._spotted("城牆", "散開", 3)
+        assert spots == [(960, 270)]
+
     def test_no_client_answers_nothing_so_the_sweep_still_runs(self) -> None:
         """Without a key every loop here works exactly as it did before this
         existed, which is what keeps the sweep underneath rather than beside it.

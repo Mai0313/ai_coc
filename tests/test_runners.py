@@ -200,7 +200,10 @@ class OpenedWalkTests(unittest.TestCase):
             patch.object(runner, "_after_tap", return_value=b"") as tapped,
             patch.object(shared, "read_stock", return_value=STOCK),
         ):
-            opened = list(runner._opened([(580, 95), (580, shared.PLATE_FLOOR)], "near"))
+            opened = list(
+                runner._opened([(580, 95), (1265, 140), (580, shared.PLATE_FLOOR)], "near")
+            )
+        # The plate row, then the storage bars a pitch right of the grid's last column.
         assert [spot for spot, _ in opened] == [(580, shared.PLATE_FLOOR)]
         assert tapped.call_count == 1
 

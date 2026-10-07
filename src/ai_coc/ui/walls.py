@@ -137,10 +137,10 @@ class WallRunner(GameRunner):
         as a wall, which is what `_opened` is for.
 
         Only the top needs bounds-checking, and `_opened` does it: the grid's
-        top row is y 140, a pitch above that is the plate row's reach, and
-        `PLATE_FLOOR` skips it. Every other edge is more than a pitch away: the
-        lowest row is y 500 against the button row at 622, and the columns run
-        260 to 1220 on a 1600 px screen.
+        top row is y 140, a pitch above that is the plate row's reach, and a
+        pitch right of its last column is the storage bars, both of which
+        `on_top_ui` skips. The bottom is more than a pitch away: the lowest row
+        is y 500 against the button row at 622.
         """
         around = [
             (point[0] + dx, point[1] + dy)
