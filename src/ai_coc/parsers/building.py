@@ -109,7 +109,12 @@ INK_WHITE_SPREAD = 10
 # A digit's grey is its own edge fading out, so it sits within this reach of the
 # pure white core; the sheen has no core and never reaches 245.
 INK_WHITE_CORE = 245
-INK_RIM_REACH = 2
+# One pixel, not two. Right after 新增城牆 is tapped the whole row is lit, the
+# plate above the digits goes nearly neutral, and at two pixels its top edge was
+# taken into a 6 of 16 000 000: the glyph read 37 bits off against 25 a moment
+# later, and the elixir price stopped reading. Swept over 908 frames, one pixel
+# changes only those readings, each to the right number.
+INK_RIM_REACH = 1
 INK_RED_LEVEL = 200
 INK_RED_MARGIN = 80
 # Swept over the recorded menus, every digit that read correctly landed within 24

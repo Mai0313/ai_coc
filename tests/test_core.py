@@ -6340,6 +6340,13 @@ class WallMenuTests(unittest.TestCase):
         assert menu is not None
         assert menu.price == 24_000_000
 
+    def test_a_row_still_lit_from_the_tap_keeps_its_plate_out_of_the_digits(self) -> None:
+        """Just after 新增城牆 the plate above 16 000 000 is near neutral and touches the 6."""
+        frame = (FRAMES / "wall_menu_lit_row.png").read_bytes()
+        menu = wall_menu(frame)
+        assert menu is not None
+        assert menu.price == 16_000_000
+
     def test_a_menu_on_its_own_is_not_a_dialog(self) -> None:
         assert game_dialog((FRAMES / "wall_menu_plain.png").read_bytes()) is None
 
