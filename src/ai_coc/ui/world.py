@@ -156,8 +156,25 @@ SWIPE_SETTLE = 1.2
 # its own clamp, which is the one thing this is for.
 
 
-def park_camera(adb: AdbController, display: DisplayTarget, world: World) -> bool:
-    """Run this village's camera into its own map corner, where it stops.
+def park_camera(
+    adb: AdbController, display: DisplayTarget, world: World, *, corner: bool = False
+) -> bool:
+    """Run this village's camera into its own map corner, then drag the village to the middle.
+
+    **The corner is where the park starts, not where it ends**, unless `corner`
+    asks for it. Pushed into its corner the home village of a bought scenery
+    kept its wall block and collector row off the top of the screen or under
+    the storage bars, and the pinch back to the free scale moved it by up to
+    100 px from one park to the next, so nothing it found stayed where it was
+    found. Dragged to the middle at the far zoom first and pinched in about the
+    middle after, the pinch can only change the size: measured over four parks
+    from scrambled cameras, the village landed within about 30 px and 2% of
+    itself, with 13 to 17 collector markers on screen against 0 to 2 in the
+    corner. A free scenery and the builder base are already at the measured
+    scale, so they get their own drag and no pinch: the jungle's corner showed
+    1 collector marker and the same drag brought 15. The crossing is the one
+    caller that asks for the corner, since the builder base's boat is under the
+    storage bars once its village is centred.
 
     **Answers whether it got there**, which a fixed number of swipes could not.
     This said there was nothing to check against — the game reports no camera
@@ -254,12 +271,39 @@ def park_camera(adb: AdbController, display: DisplayTarget, world: World) -> boo
     adb.zoom("out", ZOOM_PINCHES, COC_PACKAGE, display)
     if (after := _walk(adb, display, world)) is None:
         return False
-    if world == "day" and boat_marker(after) is None and not _free_scale(adb, display):
+    if world == "day" and boat_marker(after) is not None:
+        if not corner:
+            _to_middle(adb, display, CENTRE_DRAGS["free"])
+        return True
+    if world == "day" and not _free_scale(adb, display):
         # The pinch did not bring the marker back, so this was no bought
         # scenery's far zoom: the far park is what everything was measured on.
         adb.zoom("out", ZOOM_PINCHES, COC_PACKAGE, display)
         return _walk(adb, display, world) is not None
+    return corner or _centre(adb, display, world)
+
+
+def _centre(adb: AdbController, display: DisplayTarget, world: World) -> bool:
+    """Drag the village from its far corner to the middle, and pinch a bought scenery in about it."""
+    if world == "night":
+        _to_middle(adb, display, CENTRE_DRAGS["night"])
+        return True
+    # A bought scenery, now that the marker said so; back to its far corner, so
+    # the pinch can be made about the middle the drag puts it in.
+    adb.zoom("out", ZOOM_PINCHES, COC_PACKAGE, display)
+    if _walk(adb, display, world) is None:
+        return False
+    _to_middle(adb, display, CENTRE_DRAGS["bought"])
+    adb.zoom("in", 1, COC_PACKAGE, display, CENTRED_PINCH)
     return True
+
+
+def _to_middle(
+    adb: AdbController, display: DisplayTarget, drag: tuple[tuple[int, int], tuple[int, int]]
+) -> None:
+    """One slow drag from the corner, which lands the village 1:1 where it was aimed."""
+    adb.swipe(*drag, CENTRE_MS, display)
+    time.sleep(SWIPE_SETTLE)
 
 
 def _walk(adb: AdbController, display: DisplayTarget, world: World) -> bytes | None:
@@ -307,6 +351,23 @@ def _walk(adb: AdbController, display: DisplayTarget, world: World) -> bytes | N
 # gesture of 150 to 309 about (780, 368) put the village at the jungle park's
 # size and pixels, its clan castle label on the same pixel.
 BOUGHT_PINCH = Pinch(near=150, far=309, centre=(780, 368))
+# **The drag from each far corner that puts the village in the middle of the
+# screen**, measured on 2026-10-07 on one bought scenery, the jungle and the
+# builder base: the usable middle is (800, 490), between the plate row and the
+# bottom, and the drags put the far views' village middles there — about
+# (880, 300) on the bought scenery's far zoom and (970, 955) on the builder
+# base's. The jungle's is the bought one's at the free scale, read off where its
+# clan castle label lands on both. Slow enough to land 1:1, measured: a 1500 ms
+# drag moved the picture exactly its own length with no fling after it. Then the
+# bought scenery is pinched back to the free scale about that middle, which is
+# what keeps a pinch that varies from moving the village (see `park_camera`).
+CENTRE_DRAGS: dict[str, tuple[tuple[int, int], tuple[int, int]]] = {
+    "bought": ((840, 305), (760, 495)),
+    "free": ((830, 315), (770, 485)),
+    "night": ((885, 632), (715, 167)),
+}
+CENTRE_MS = 1500
+CENTRED_PINCH = Pinch(near=BOUGHT_PINCH.near, far=BOUGHT_PINCH.far, centre=(800, 490))
 
 
 def _free_scale(adb: AdbController, display: DisplayTarget) -> bool:
@@ -370,7 +431,14 @@ UNCOVER_SETTLE = 1.5
 # the sheet there. Finding the cart on the frame instead is no easier: its
 # elixir bubble is dimmed at night to a khaki plate and a (110, 30, 200) drop,
 # which none of `collect_bubbles`' marker colours take.
-CART_SPOTS = ((1296, 617), (1268, 615), (1240, 610))
+#
+# **Those were measured in the corner, and the park now drags the village to the
+# middle**, so the spots below are those three carried by the builder base's
+# centring drag of (-170, -465): (1296, 617), (1268, 615) and (1240, 610). The
+# drag lands 1:1, so they keep the spread the band needed. On the centred view
+# the cart's marker read at (1110, 95) and (1105, 90) on two parks, and a tap at
+# (1105, 130) opened the sheet.
+CART_SPOTS = ((1126, 152), (1098, 150), (1070, 145))
 CART_COLLECT = (1176, 760)
 CART_CLOSE = (1338, 89)
 CART_SETTLE = 1.5
@@ -581,10 +649,18 @@ def _boat_spots(
 ) -> tuple[tuple[int, int], ...] | None:
     """Where to tap for the boat once the camera is parked; None when it never parked.
 
-    The marker first, which the park leaves drawn on every scenery, and the
-    measured spots without one.
+    The marker first, on the centred park every other caller uses, and then in
+    the corner, which the measured spots were taken on. The builder base goes
+    straight to its corner: centred, its boat is under the storage bars.
     """
-    if not park_camera(adb, display, here):
+    if crossing.marked:
+        if not park_camera(adb, display, here):
+            return None
+        if (spot := boat_marker(adb.screenshot(display))) is not None:
+            logger.info("The boat's marker is at %s", spot)
+            return (spot,)
+        logger.info("No marker over the boat on the centred view; parking in the corner")
+    if not park_camera(adb, display, here, corner=True):
         return None
     if not crossing.marked:
         return crossing.spots
