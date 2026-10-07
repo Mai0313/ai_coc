@@ -101,6 +101,20 @@ PRICE_BOX = (-66, 634, 52, 666)
 # unaffordable wall price reach 28.
 INK_WHITE = 180
 INK_WHITE_SPREAD = 10
+# **A grey only counts as ink beside a pure white one.** The button's plate
+# carries a neutral sheen, measured at 210 to 239 with a spread of 5 to 9 under
+# the digits, which passes the two lines above, and on a batch of 24 000 000 it
+# ran up under the 2 and the 4 and joined them into one span too wide to read:
+# the elixir price came back as nothing and the menu was not taken for a wall.
+# A digit's grey is its own edge fading out, so it sits within this reach of the
+# pure white core; the sheen has no core and never reaches 245.
+INK_WHITE_CORE = 245
+# One pixel, not two. Right after 新增城牆 is tapped the whole row is lit, the
+# plate above the digits goes nearly neutral, and at two pixels its top edge was
+# taken into a 6 of 16 000 000: the glyph read 37 bits off against 25 a moment
+# later, and the elixir price stopped reading. Swept over 908 frames, one pixel
+# changes only those readings, each to the right number.
+INK_RIM_REACH = 1
 INK_RED_LEVEL = 200
 INK_RED_MARGIN = 80
 # Swept over the recorded menus, every digit that read correctly landed within 24
@@ -197,20 +211,32 @@ def _price_mask(band: Image.Image) -> list[list[bool]]:
     # `ink` rather than `mask`, which is the name this module now imports from
     # `parsers.regions`; the same collision in `parsers.home` reads the same way.
     ink: list[list[bool]] = []
+    grey: list[list[bool]] = []
+    core: set[tuple[int, int]] = set()
     for y in range(height):
         row: list[bool] = []
-        for offset in range(y * width * 3, (y + 1) * width * 3, 3):
+        greys: list[bool] = []
+        for x in range(width):
+            offset = (y * width + x) * 3
             red, green, blue = data[offset], data[offset + 1], data[offset + 2]
             low, high = min(red, green, blue), max(red, green, blue)
+            white = low > INK_WHITE and high - low < INK_WHITE_SPREAD
+            if white and low > INK_WHITE_CORE:
+                core.add((x, y))
+            greys.append(white)
             row.append(
-                (low > INK_WHITE and high - low < INK_WHITE_SPREAD)
-                or (
-                    red > INK_RED_LEVEL
-                    and red - green > INK_RED_MARGIN
-                    and red - blue > INK_RED_MARGIN
-                )
+                red > INK_RED_LEVEL
+                and red - green > INK_RED_MARGIN
+                and red - blue > INK_RED_MARGIN
             )
         ink.append(row)
+        grey.append(greys)
+    reach = range(-INK_RIM_REACH, INK_RIM_REACH + 1)
+    for x, y in core:
+        for dy in reach:
+            for dx in reach:
+                if 0 <= y + dy < height and 0 <= x + dx < width and grey[y + dy][x + dx]:
+                    ink[y + dy][x + dx] = True
     return ink
 
 
