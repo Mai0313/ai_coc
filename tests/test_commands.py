@@ -1521,11 +1521,11 @@ class CaptureAndViewTests(unittest.TestCase):
         every map coordinate valid until the next thing that moved the camera.
         """
         adb, report = self._view("day")
-        assert adb.swipe.call_count == world_ui.PARK_STILL
         crossing = world_ui.CROSSINGS["night"]
         landing = (crossing.start[0] + crossing.drift[0], crossing.start[1] + crossing.drift[1])
-        for call in adb.swipe.call_args_list:
-            assert call.args[:2] == (crossing.start, landing)
+        assert [call.args[:2] for call in adb.swipe.call_args_list] == [
+            (crossing.start, landing)
+        ] * world_ui.PARK_STILL + [world_ui.CENTRE_DRAGS["free"]]
         assert (report.outcome, report.world) == ("parked", "day")
 
     def test_the_builder_base_is_parked_into_its_own_corner(self) -> None:
@@ -1538,9 +1538,10 @@ class CaptureAndViewTests(unittest.TestCase):
         adb, _ = self._view("night")
         crossing = world_ui.CROSSINGS["day"]
         landing = (crossing.start[0] + crossing.drift[0], crossing.start[1] + crossing.drift[1])
-        assert adb.swipe.call_count == world_ui.PARK_STILL
-        for call in adb.swipe.call_args_list:
-            assert call.args[:2] == (crossing.start, landing)
+        # Into the corner first, then the one drag that brings the village to the middle.
+        assert [call.args[:2] for call in adb.swipe.call_args_list] == [
+            (crossing.start, landing)
+        ] * world_ui.PARK_STILL + [world_ui.CENTRE_DRAGS["night"]]
 
     def test_a_screen_that_is_not_a_village_keeps_the_zoom_and_nothing_else(self) -> None:
         """A killed run leaves the game mid-battle, and that is when this gets reached for.
