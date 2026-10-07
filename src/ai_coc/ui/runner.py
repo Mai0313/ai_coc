@@ -25,6 +25,7 @@ from ai_coc.prompts import render
 from ai_coc.constants import COC_PACKAGE
 from ai_coc.adapters.ai import GeminiClient
 from ai_coc.adapters.adb import ZOOM_PINCHES, AdbController, AdbControlError
+from ai_coc.parsers.home import STORAGE_BARS
 from ai_coc.parsers.scout import (
     read_stock,
     loading_screen,
@@ -77,6 +78,22 @@ SWEEP_LIMIT = (SWEEP_X[-1], 620)
 # the model about it works (0 of 14 on the next run), and the filter below is
 # what makes that a guarantee rather than an improvement.
 SPOT_FLOOR = SWEEP_LIMIT[1] * 100 // 900
+# How high a tap may go before it lands on the plate row along the top rather
+# than on the map. Measured 2026-10-07 under the laboratory, builder and shield
+# plates: a tap at y 100 opened each plate's panel and one at y 105 opened none.
+# The laboratory's panel then opened a full-screen research page under the next
+# tap, backing out of it left the camera on the laboratory, and every wall the
+# scan had found opened nothing; the shield's opens a sheet whose 移除 removes the
+# shield. The scan's neighbours step up to y 95, and Gemini has answered y 101.
+PLATE_FLOOR = 105
+
+
+def on_top_ui(point: tuple[int, int]) -> bool:
+    """Whether a tap here lands on the plate row or the storage bars rather than the map."""
+    x, y = point
+    return y < PLATE_FLOOR or (x >= STORAGE_BARS[0] and y < STORAGE_BARS[3])
+
+
 # One call against one still frame. Long enough for a slow answer, short enough
 # that a hung one falls through to the sweep rather than holding the run.
 SPOT_TIMEOUT = 60
@@ -548,6 +565,9 @@ class GameRunner(ScreenRunner):
             if self.should_stop():
                 logger.info("Stop requested; ending the %s walk", label)
                 return
+            if on_top_ui(spot):
+                logger.info("Skipping (%d, %d): that is the top row's UI, not the map", *spot)
+                continue
             png = self._after_tap(spot, f"{label}_{spot[0]:04d}_{spot[1]:04d}")
             if read_stock(png) is None:
                 logger.info("The tap at (%d, %d) covered the village; backing out", *spot)
@@ -631,6 +651,11 @@ class GameRunner(ScreenRunner):
             # trying. The instruction is the optimisation; this is the guarantee.
             if point[1] > SWEEP_LIMIT[1]:
                 logger.info("Dropping (%d, %d): that is the button row, not the map", *point)
+                continue
+            # The same at the top, here as well as in `_opened`, because the hero
+            # hall's search taps these points without walking through it.
+            if on_top_ui(point):
+                logger.info("Dropping (%d, %d): that is the top row's UI, not the map", *point)
                 continue
             spots.append(point)
         logger.info("Gemini put %d of %s at %s", len(spots), what, spots)
