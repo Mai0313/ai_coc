@@ -1740,7 +1740,7 @@ class DeploymentTests(unittest.TestCase):
             runner._act(_step("rage", (30, 30), (45, 30), (30, 43)), row, line)
             runner._act(_step("freeze", (50, 46), (60, 46)), row, line)
         dropped.assert_called_once_with([400], (400, 243))
-        poured.assert_called_once_with([100, 200], line, b"")
+        poured.assert_called_once_with([100, 200], line, b"", 1)
         # Two bottles' worth of rage against three points asked for, and a
         # freeze card holding three against the two it was given.
         assert len(cast.call_args_list[0].args[1]) == 2
@@ -1824,6 +1824,27 @@ class DeploymentTests(unittest.TestCase):
         ):
             runner._pour([100, 200], line, b"")
         assert [len(call.args[0]) for call in tapped.call_args_list] == [4, DROPS_PER_PASS]
+
+    def test_troops_split_over_two_steps_pour_half_then_the_rest(self) -> None:
+        """An even share first, rounded up; the last step empties with its one tap of slack.
+
+        A card whose count will not read cannot be shared, so it all goes on the last step.
+        """
+        runner = self._runner()
+        line = deploy_line(LINE_POINTS)
+        with (
+            patch.object(
+                attack, "card_count", side_effect=lambda _frame, card: {100: 5}.get(card)
+            ),
+            patch.object(runner, "_tap"),
+            patch.object(AdbController, "tap_many") as tapped,
+        ):
+            runner._pour([100, 200], line, b"", 2)
+            first = [len(call.args[0]) for call in tapped.call_args_list]
+            tapped.reset_mock()
+            runner._pour([100, 200], line, b"", 1)
+        assert first == [3]
+        assert [len(call.args[0]) for call in tapped.call_args_list] == [3, DROPS_PER_PASS]
 
     def test_the_one_reading_sends_what_never_landed_again_and_spreads_what_is_still_held(
         self,

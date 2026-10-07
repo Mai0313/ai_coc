@@ -2,6 +2,23 @@
   "deploy_from": "top_left",
   "steps": [
     {
+      "act": "hero",
+      "who": "queen",
+      "at": [
+        {
+          "x_pct": 25.9,
+          "y_pct": 27.2
+        }
+      ],
+      "seconds": 0
+    },
+    {
+      "act": "ability",
+      "who": "queen",
+      "at": [],
+      "seconds": 0
+    },
+    {
       "act": "siege",
       "who": "unknown",
       "at": [
@@ -42,7 +59,19 @@
       "act": "wait",
       "who": "unknown",
       "at": [],
-      "seconds": 4
+      "seconds": 5
+    },
+    {
+      "act": "ability",
+      "who": "unknown",
+      "at": [],
+      "seconds": 0
+    },
+    {
+      "act": "wait",
+      "who": "unknown",
+      "at": [],
+      "seconds": 5
     },
     {
       "act": "rage",
@@ -53,31 +82,7 @@
           "y_pct": 33.33
         },
         {
-          "x_pct": 47.5,
-          "y_pct": 33.33
-        },
-        {
-          "x_pct": 32.5,
-          "y_pct": 46.67
-        },
-        {
-          "x_pct": 47.5,
-          "y_pct": 46.67
-        },
-        {
-          "x_pct": 62.5,
-          "y_pct": 33.33
-        },
-        {
-          "x_pct": 62.5,
-          "y_pct": 46.67
-        },
-        {
           "x_pct": 40.0,
-          "y_pct": 20.0
-        },
-        {
-          "x_pct": 55.0,
           "y_pct": 20.0
         }
       ],
@@ -87,7 +92,7 @@
       "act": "wait",
       "who": "unknown",
       "at": [],
-      "seconds": 15
+      "seconds": 10
     },
     {
       "act": "freeze",
@@ -96,22 +101,49 @@
         {
           "x_pct": 50.0,
           "y_pct": 46.67
+        },
+        {
+          "x_pct": 40.0,
+          "y_pct": 33.33
+        },
+        {
+          "x_pct": 60.0,
+          "y_pct": 33.33
         }
       ],
       "seconds": 0
     },
     {
-      "act": "wait",
+      "act": "rage",
       "who": "unknown",
-      "at": [],
-      "seconds": 1
-    },
-    {
-      "act": "ability",
-      "who": "unknown",
-      "at": [],
+      "at": [
+        {
+          "x_pct": 47.5,
+          "y_pct": 46.67
+        },
+        {
+          "x_pct": 47.5,
+          "y_pct": 33.33
+        },
+        {
+          "x_pct": 62.5,
+          "y_pct": 46.67
+        },
+        {
+          "x_pct": 62.5,
+          "y_pct": 33.33
+        },
+        {
+          "x_pct": 32.5,
+          "y_pct": 46.67
+        },
+        {
+          "x_pct": 55.0,
+          "y_pct": 20.0
+        }
+      ],
       "seconds": 0
     }
   ],
-  "reason": "平鋪：攻城機具開路，部隊沿著左上外緣撒開，英雄跟在後面。等四秒讓部隊走到牆邊才放狂暴，冰凍留到十五秒後蓋中央，最後才開英雄技能。不指名英雄，所以每一張卡都落在線的中點。"
+  "reason": "平鋪：第一張英雄卡（通常是女王）先下場並馬上開技能，接著攻城機具跟所有部隊沿左上外緣撒開，其他英雄全部跟上。英雄卡認不出誰是誰，所以除了第一張，其他英雄一起下、一起在五秒後開技能，有英雄休息也不會讓大守護者太早開。再五秒在外圍放兩瓶狂暴，十秒後冰凍分開蓋三處，最後把剩下的狂暴放在更靠中心的地方。"
 }

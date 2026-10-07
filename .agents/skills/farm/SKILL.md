@@ -77,7 +77,7 @@ uv run ai_coc attack --repeat 0 --plan src/ai_coc/plans/night_flat.json --yield
 夜世界不一樣的地方:
 
 - **沒有門檻**: 沒有偵察畫面, 贏拿金幣輸拿聖水, 沒東西好跳過
-- **打資源用平鋪戰術, 不叫 AI** (使用者 2026-09-26 的交代): 贏輸都有進帳, 兩樣倉庫都要填, 挑哪一邊打差別不大, AI 規劃卻每個 stage 要 10 到 15 秒 (慢的時候 40 秒以上, 逾時一樣退回平鋪). 用 `--plan src/ai_coc/plans/night_flat.json` 蓋過它就好. **AI 規劃留在程式裡, 不要拿掉**, 兩個世界的邏輯要一樣; 主村照舊讓 AI 規劃
+- **打資源用平鋪戰術, 不叫 AI** (使用者 2026-09-26 的交代): 贏輸都有進帳, 兩樣倉庫都要填, 挑哪一邊打差別不大, AI 規劃卻每個 stage 要 10 到 15 秒 (慢的時候 40 秒以上, 逾時一樣退回平鋪). 用 `--plan src/ai_coc/plans/night_flat.json` 蓋過它就好. **AI 規劃留在程式裡, 不要拿掉**, 兩個世界的邏輯要一樣; 主村照舊讓 AI 規劃. 使用者說主村也用平鋪 (例如「幫我打日夜世界資源, 全部用平鋪就好」), 主村就帶 `--plan src/ai_coc/plans/flat.json`, 只管那一趟
 - **搜尋要等真人** (量過四秒到五分半). 搜尋中 log 不寫東西, 最久兩分半 (`SEARCH_PATIENCE`) 會有一行 `No opponent in 150s; cancelling and searching again`, 重搜 `SEARCH_ATTEMPTS` 次都沒配到才回 `no_opponent`
 - **容量一整趟只讀一次** (`AttackRunner._settle_ceilings`), 只讀兩排 (沒有黑水, 第三排是寶石, 不點)
 - **聖水車也算一個倉庫.** 迴圈開跑第一輪跟之後每 `CART_EVERY` (五) 場去一次車子: 倉庫有空間就倒進去, 倉庫滿了就讀車上存多少. 倉庫滿了**而且**最近一次讀到車子也過同一個百分比才 `stock_full`, 所以車子剛滿之後最多還會多打四場. 同一趟看三次都讀不到車子, 就退回只看倉庫. 手動領是在夜世界跑 `uv run ai_coc collect`; 車子容量會跟著村莊長大 (現在 160 萬). 打完一輪記得確認有領到
