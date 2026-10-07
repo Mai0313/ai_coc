@@ -6205,6 +6205,31 @@ class WallMenuTests(unittest.TestCase):
         assert menu is not None
         assert menu.price == 11_200_000
 
+    def test_a_small_white_five_is_not_read_as_a_nine(self) -> None:
+        """A batch of three affordable in gold only: white beside red, one price.
+
+        Read as pure white alone, the gold price lost the grey edge of each 5 and
+        came back 29 900 000, so the two buttons disagreed and the batch was not
+        taken for a wall.
+        """
+        frame = (FRAMES / "wall_menu_white_five.png").read_bytes()
+        prices = [(button.resource, button.price) for button in upgrade_buttons(frame)]
+        assert prices == [("gold", 25_500_000), ("elixir", 25_500_000)]
+        menu = wall_menu(frame)
+        assert menu is not None
+        assert menu.price == 25_500_000
+
+    def test_two_white_prices_cannot_agree_on_the_same_wrong_five(self) -> None:
+        """Both buttons white, so both lost the same edge and read 8 900 000.
+
+        The two prices agreeing is no check when one misread made both, which
+        is what made this the dangerous half: the menu was taken for a wall at
+        the wrong price.
+        """
+        menu = wall_menu((FRAMES / "wall_menu_white_seven_figures.png").read_bytes())
+        assert menu is not None
+        assert menu.price == 8_500_000
+
     def test_a_menu_on_its_own_is_not_a_dialog(self) -> None:
         assert game_dialog((FRAMES / "wall_menu_plain.png").read_bytes()) is None
 

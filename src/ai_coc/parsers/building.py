@@ -79,13 +79,28 @@ ICON_TOLERANCE = 8
 # The price sits between a button's left edge and its icon. The plate behind it
 # is a pale khaki — measured (237, 238, 220) — and the digits are either pure
 # white or a flat red, so neither brightness nor saturation separates ink from
-# plate on its own: white ink is 255 in all three channels where the plate never
-# reaches 245 in its blue, and red ink runs (255, 137, 128), which no part of the
-# plate comes near. Red is the game saying the village cannot afford this, and it
-# is read rather than skipped: the loop does its own arithmetic, and a price it
-# cannot read at all is one it cannot size a batch against.
+# plate on its own: white ink is bright *and* neutral where the plate is yellow,
+# and red ink runs (255, 137, 128), which no part of the plate comes near. Red is
+# the game saying the village cannot afford this, and it is read rather than
+# skipped: the loop does its own arithmetic, and a price it cannot read at all is
+# one it cannot size a batch against.
 PRICE_BOX = (-66, 634, 52, 666)
-INK_WHITE = 245
+# White ink fades into its dark outline through greys whose three channels stay
+# within 5 of each other, while the plate, wherever it is brighter than the floor,
+# is 14 to 19 apart. These were 245 and no spread, pure white only, which shaved
+# those greys off, and a price of seven or eight figures is drawn small enough for
+# the shaving to change the digit. A wall at 8 500 000 read 8 900 000 on both
+# buttons, which then agreed and were believed. On a batch of 25 500 000 the white
+# 5s came out 27 bits from "9" against 32 from "5", the gold button read
+# 29 900 000 beside the red elixir one's 25 500 000, and the menu was not taken
+# for a wall at all. Swept
+# over 335 frames, the committed ones and every recorded run then on disk, these
+# change only that run's white prices, each to the right number, and the worst
+# glyph any reading keeps drops from 27 bits to 23; a floor of 150 lets a hero
+# hall glyph reach 30, 210 lets a 15 300 000 reach 28, and a spread of 6 lets an
+# unaffordable wall price reach 28.
+INK_WHITE = 180
+INK_WHITE_SPREAD = 10
 INK_RED_LEVEL = 200
 INK_RED_MARGIN = 80
 # Swept over the recorded menus, every digit that read correctly landed within 24
@@ -186,8 +201,9 @@ def _price_mask(band: Image.Image) -> list[list[bool]]:
         row: list[bool] = []
         for offset in range(y * width * 3, (y + 1) * width * 3, 3):
             red, green, blue = data[offset], data[offset + 1], data[offset + 2]
+            low, high = min(red, green, blue), max(red, green, blue)
             row.append(
-                min(red, green, blue) > INK_WHITE
+                (low > INK_WHITE and high - low < INK_WHITE_SPREAD)
                 or (
                     red > INK_RED_LEVEL
                     and red - green > INK_RED_MARGIN
