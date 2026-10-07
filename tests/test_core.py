@@ -5748,7 +5748,7 @@ class RunnerStateTests(unittest.TestCase):
                 patch.object(commands, "STATE_PATH", state),
                 patch.object(commands, "_controller"),
                 patch.object(commands, "current_world", return_value="day"),
-                patch.object(commands, "park_camera", return_value=True),
+                patch.object(commands, "park_camera") as parked,
                 patch.object(commands, "_planner", return_value=None),
                 patch.object(commands.ConfigStore, "load", return_value=AppConfig()),
                 patch.object(commands, "FrameTicker"),
@@ -5758,6 +5758,8 @@ class RunnerStateTests(unittest.TestCase):
                 runner.return_value.played = None
                 commands.attack(AttackOptions(rounds=1))
             assert runner.call_args.kwargs["should_stop"] is commands.stop_requested
+            # It taps no map coordinate before its battle, so it only zooms out.
+            parked.assert_not_called()
 
 
 class InRoundRestartTests(unittest.TestCase):
@@ -5823,9 +5825,8 @@ class PlanLogTests(unittest.TestCase):
         with (
             patch.object(commands, "_controller"),
             patch.object(commands, "current_world", return_value="day"),
-            # `_settle_game` parks, and the park reads its own frames now.
-            # None of these tests is about the park itself.
-            patch.object(commands, "park_camera", return_value=True),
+            # The attack only zooms out before its battle, so nothing here parks.
+            patch.object(commands, "park_camera", side_effect=AssertionError("parked")),
             patch.object(commands, "_planner", return_value=None),
             patch.object(commands.ConfigStore, "load", return_value=AppConfig()),
             patch.object(commands, "FrameTicker"),
@@ -5898,9 +5899,8 @@ class StopAtOverrideTests(unittest.TestCase):
         with (
             patch.object(commands, "_controller"),
             patch.object(commands, "current_world", return_value="day"),
-            # `_settle_game` parks, and the park reads its own frames now.
-            # None of these tests is about the park itself.
-            patch.object(commands, "park_camera", return_value=True),
+            # The attack only zooms out before its battle, so nothing here parks.
+            patch.object(commands, "park_camera", side_effect=AssertionError("parked")),
             patch.object(commands, "_planner", return_value=None),
             patch.object(commands.ConfigStore, "load", return_value=AppConfig(stop_at=85)),
             patch.object(commands, "FrameTicker"),

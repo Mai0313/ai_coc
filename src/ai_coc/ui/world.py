@@ -301,6 +301,7 @@ def _centre(adb: AdbController, display: DisplayTarget, world: World) -> None:
     if world == "night":
         _to_middle(adb, display, CENTRE_DRAGS["night"])
         return
+    logger.info("The far zoom drew no boat marker; centring a bought scenery and zooming in")
     _to_middle(adb, display, CENTRE_DRAGS["bought"])
     adb.zoom("in", 1, COC_PACKAGE, display, CENTRED_PINCH)
 
