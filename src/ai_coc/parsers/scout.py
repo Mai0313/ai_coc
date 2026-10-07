@@ -730,6 +730,15 @@ WELCOME_RIBBON_BOX = (240, 80, 620, 145)
 WELCOME_SHEET_BOX = (270, 705, 700, 800)
 WELCOME_RIBBON_RED = 0.5
 WELCOME_SHEET_PALE = 0.9
+# 魔法護盾, the sheet a tap on the shield's plate opens. Its 繼續 is green and
+# sits in `RETURN_HOME_BOX` too, so `battle_over` took it for a result screen and
+# `uncovered` refused to press `back` at it, which left `ai_coc stock` reading
+# nothing. Read off the purple ribbon its title is written on: 0.889 of this box
+# against at most 0.242 over 966 recorded frames, that one a 勝利之星 reward sheet.
+# `back` closes it, checked live: the sheet read here, `uncovered` pressed back,
+# and the home village read again.
+SHIELD_RIBBON_BOX = (620, 255, 980, 315)
+SHIELD_RIBBON_PURPLE = 0.6
 
 
 def battle_over(png: bytes) -> bool:
@@ -741,7 +750,7 @@ def battle_over(png: bytes) -> bool:
     )
     if green / (len(data) // 3) < RETURN_HOME_GREEN:
         return False
-    return not welcome_back(png)
+    return not welcome_back(png) and not shield_sheet(png)
 
 
 def welcome_back(png: bytes) -> bool:
@@ -762,6 +771,19 @@ def welcome_back(png: bytes) -> bool:
         for i in range(0, len(sheet), 3)
     )
     return pale / (len(sheet) // 3) >= WELCOME_SHEET_PALE
+
+
+def shield_sheet(png: bytes) -> bool:
+    """Whether the 魔法護盾 sheet is covering the village."""
+    ribbon = open_frame(png).crop(SHIELD_RIBBON_BOX).tobytes()
+    purple = sum(
+        ribbon[i + 2] > 140
+        and ribbon[i + 1] < 60
+        and 60 < ribbon[i] < 140
+        and ribbon[i + 2] - ribbon[i] > 50
+        for i in range(0, len(ribbon), 3)
+    )
+    return purple / (len(ribbon) // 3) >= SHIELD_RIBBON_PURPLE
 
 
 def idle_disconnected(png: bytes) -> bool:

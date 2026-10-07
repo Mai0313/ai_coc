@@ -171,6 +171,7 @@ from ai_coc.parsers.scout import (
     battle_speed,
     card_drained,
     freeze_cards,
+    shield_sheet,
     skip_offered,
     welcome_back,
     _button_ratio,
@@ -1620,6 +1621,17 @@ class CrossingTests(unittest.TestCase):
         assert here == "night"
         assert adb.back.call_count == 1
 
+    def test_the_shield_sheet_is_pressed_away(self) -> None:
+        """Its 繼續 sits where 回營 does, and a result screen is never pressed at."""
+        adb = MagicMock()
+        adb.screenshot.side_effect = [
+            (FRAMES / name).read_bytes() for name in ("shield_sheet.png", "world_day.png")
+        ]
+        with patch.object(world_ui.time, "sleep"):
+            here = world_ui.uncovered(adb, DisplayTarget(logical_id="1", physical_id="2"))
+        assert here == "day"
+        assert adb.back.call_count == 1
+
     def test_a_loading_screen_is_never_pressed_at(self) -> None:
         """Nothing on it answers a press, and the presses were noise in the one log that matters."""
         adb, landed = self._cross([None], loading=True)
@@ -2239,6 +2251,19 @@ class ScoutTests(unittest.TestCase):
         for path in FRAMES.glob("*.png"):
             if path.name != "welcome_back.png":
                 assert not welcome_back(path.read_bytes()), path.name
+
+    def test_the_shield_sheet_is_not_a_result_screen(self) -> None:
+        """魔法護盾, whose green 繼續 sits where 回營 does.
+
+        Read as a result screen, `uncovered` refused to press `back` at it and
+        `ai_coc stock` read nothing beneath it.
+        """
+        png = (FRAMES / "shield_sheet.png").read_bytes()
+        assert shield_sheet(png)
+        assert not battle_over(png)
+        for path in FRAMES.glob("*.png"):
+            if path.name != "shield_sheet.png":
+                assert not shield_sheet(path.read_bytes()), path.name
 
     def test_the_speed_button_is_read_by_its_label(self) -> None:
         """It toggles between 1x and 4x, so which one it says decides whether to tap."""
