@@ -36,6 +36,8 @@ uv run ai_coc attack --repeat 0 --record --yield --agent <名字> --session <ses
 
 **你是跟開發同時跑的 farm subagent, 就在主 checkout (預設分支) 上跑, 每個指令都寫成 `uv run --no-sync ai_coc …`**, `stop` 也一樣: 開發在另一個 worktree 做, 理由在 `AGENTS.md` 的 The loop runs the main checkout. 真的要同步 (merge 帶進新的依賴, 指令 import 失敗) 就等手上的程序結束再 `uv sync`.
 
+**merge 進來的修正, 迴圈不會自己用上**: 它跑的是主 checkout 開跑時的程式碼. 開發那邊 merge 之後會傳話叫你拉, 你就在兩個指令之間 `git -C <主 checkout> pull --ff-only` (拉進來的 `pyproject.toml` 或 `uv.lock` 有變才 `uv sync`), 下一個指令起就是新的. 修正要馬上驗證的話是 `watch-and-fix` 的做法: 主 session 自己 `ai_coc stop`, 等你回報收工, 自己拉, 再叫你同一組旗標開回去.
+
 **每一個 `ai_coc` 指令都帶 `--agent`、`--session`、`--mission`**, 其他 skill 裡寫的指令也一樣: 你自己的名字 (`claude-code`、`antigravity`、`codex`), 你自己的 session id, 這一趟在做什麼 (一句話). 每個指令都把它們寫進自己 `run.log` 裡寫目錄的那一行的下一行; 會佔用模擬器的指令還會寫進 `state.json` 的 `caller`, 所以那裡記的永遠是開始這一輪的人, 誰叫停的記在 `stop_by`. 別的 session 就是靠這些查出是誰在開模擬器. 旗標是選填的, 那是留給使用者手動打指令; agent 一律要帶, 沒帶的話 log 會留一行 warning.
 
 **打資源的迴圈每個指令都帶 `--yield`**, `world --go` 跟 `attack` 都要: 那是背景工作, 不會把別人的 run 停掉, 模擬器有人在用就排隊等; 別人要用時它是被借走, 不是被停掉 (見「被借走」). 測試、驗證、花資源這些前景的事不帶.
