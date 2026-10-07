@@ -2574,15 +2574,16 @@ class PlanTests(unittest.TestCase):
         assert plan.deploy_end is not None
         played = [step.act for step in plan.steps]
         assert set(played) == {"siege", "troops", "hero", "ability", "rage", "freeze", "wait"}
-        # The machine opens the path, the troops follow it, and no spell goes
-        # down before there are troops for it to cover.
+        # The first hero opens with its ability, the machine and the troops
+        # follow, and no spell goes down before there are troops for it to cover.
+        assert played[:2] == ["hero", "ability"]
         assert played.index("siege") < played.index("troops") < played.index("rage")
-        assert played.index("rage") < played.index("freeze")
+        assert played.index("rage") < played.index("freeze") < len(played) - 1
         # As many bottles as an unreadable rage card is assumed to hold, so the
         # fallback tactic can place everything the loop asks it to.
-        assert len(plan.acts("rage")[0].at) == attack.RAGE_BOTTLES
+        assert sum(len(step.at) for step in plan.acts("rage")) == attack.RAGE_BOTTLES
         # A tactic with no pause in it is one where every clock is zero.
-        assert [step.seconds for step in plan.acts("wait")] == [4, 15, 1]
+        assert [step.seconds for step in plan.acts("wait")] == [5, 5, 10]
 
     def test_the_flat_plan_draws_the_line_the_loop_used_to_hold_in_constants(self) -> None:
         """It has to reproduce the old fallback, or the default quietly changed."""
@@ -3643,7 +3644,9 @@ class AttackTests(unittest.TestCase):
             acts.append("settle")
             runner._sending = {}
 
-        def act(step: AttackStep, _row: BattleRow, _line: list[tuple[int, int]]) -> None:
+        def act(
+            step: AttackStep, _row: BattleRow, _line: list[tuple[int, int]], **_: object
+        ) -> None:
             acts.append(step.act)
             if step.act in ("siege", "hero"):
                 runner._sending.update(
@@ -3712,7 +3715,7 @@ class AttackTests(unittest.TestCase):
             steps=[_step("troops", *_LINE_ENDS), _step("wait", seconds=6), _step("rage", (40, 40))]
         )
 
-        def act(step: AttackStep, *_: object) -> None:
+        def act(step: AttackStep, *_: object, **__: object) -> None:
             # Putting the army down is not free, and the pause after it is not
             # what should be paying for that.
             clock[0] += 5
@@ -3773,7 +3776,9 @@ class AttackTests(unittest.TestCase):
             steps=[_step("troops", *_LINE_ENDS), _step("wait", seconds=4), _step("rage", (40, 40))]
         )
         with (
-            patch.object(AttackRunner, "_act", side_effect=lambda step, *a: acts.append(step.act)),
+            patch.object(
+                AttackRunner, "_act", side_effect=lambda step, *a, **k: acts.append(step.act)
+            ),
             patch.object(AttackRunner, "_battle_ended", return_value=True),
             patch.object(attack.time, "sleep"),
         ):
@@ -3893,6 +3898,25 @@ class AttackTests(unittest.TestCase):
         # excluding it by the x it sat at when the row was read is exactly what
         # a row that has since grown a card makes wrong.
         assert poured == [[171, 939]]
+
+    def test_a_split_spell_left_holding_is_still_emptied_after_the_tactic(self) -> None:
+        """The live frame already shows what the early cast took, so it is not taken off again."""
+        runner = self._runner()
+        runner._line = deploy_line(LINE_POINTS, *DEPLOY_LINES["top_left"])
+        runner._spent = {939: 2}
+        with (
+            patch.object(attack, "in_battle", return_value=True),
+            patch.object(attack, "card_groups", return_value=[[939]]),
+            patch.object(attack, "counted_cards", return_value=[939]),
+            patch.object(attack, "card_count", return_value=1),
+            patch.object(attack, "live_cards", return_value=()),
+            patch.object(AttackRunner, "_frame", return_value=b""),
+            patch.object(attack.time, "sleep"),
+            patch.object(AttackRunner, "_tap") as tapped,
+            patch.object(AdbController, "tap_many"),
+        ):
+            runner._dump_leftovers()
+        assert tapped.call_args.args[0] == (939, CARD_ROW_Y)
 
     def test_nothing_left_in_a_card_is_left_alone(self) -> None:
         """The ordinary case, and it must not tap anything at all."""
@@ -4637,6 +4661,32 @@ class AttackTests(unittest.TestCase):
         assert tapped.call_args.args[:2] == (939, attack.CARD_ROW_Y)
         assert placed.call_args.args[0] == [targets[0], targets[1]]
 
+    def test_a_spell_cast_twice_leaves_the_later_step_the_rest(self) -> None:
+        """Half the rage now and the rest later, across two cards of two bottles each.
+
+        The first step takes exactly its points and reads nothing back; the
+        last empties what is left, which is one card and one bottle of slack.
+        """
+        runner = self._runner()
+        early = ((500, 300), (700, 300), (500, 420))
+        late = ((700, 420), (900, 300), (900, 420))
+        with (
+            patch.object(attack.time, "sleep"),
+            patch.object(AttackRunner, "_frame", return_value=b""),
+            patch.object(attack, "in_battle", return_value=True),
+            patch.object(attack, "card_count", return_value=2),
+            patch.object(attack, "live_cards", return_value=()),
+            patch.object(AdbController, "tap") as tapped,
+            patch.object(AdbController, "tap_many") as placed,
+        ):
+            runner._cast_some([939, 1060], early, b"")
+            assert [c.args[0] for c in placed.call_args_list] == [list(early[:2]), [early[2]]]
+            tapped.reset_mock()
+            placed.reset_mock()
+            runner._cast([939, 1060], late, b"")
+        assert [c.args[:2] for c in tapped.call_args_list] == [(1060, attack.CARD_ROW_Y)]
+        assert placed.call_args.args[0] == [late[0], late[1]]
+
     def test_a_planned_bottle_landing_inside_another_is_moved_off_it(self) -> None:
         """The planner is given the footprint and overlaps its points regardless.
 
@@ -4745,9 +4795,10 @@ class AttackTests(unittest.TestCase):
 
     def test_the_flat_plans_grid_is_already_spaced(self) -> None:
         """The fallback tactic's bottles must not crowd each other, or it loses half its cargo."""
-        grid = [point.pixels() for point in plans.flat().acts("rage")[0].at]
+        grid = [point.pixels() for step in plans.flat().acts("rage") for point in step.at]
         assert spaced(grid) == grid
-        assert grid[1][0] - grid[0][0] == RAGE_SPAN[0]
+        # The second cast starts one bottle further in from the first.
+        assert grid[2][0] - grid[0][0] == RAGE_SPAN[0]
 
     def _casts(self, alive: list[list[int]], fighting: bool = True) -> int:
         """How many passes `_cast` makes, given what the row reads after each one."""

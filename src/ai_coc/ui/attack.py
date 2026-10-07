@@ -13,6 +13,7 @@ import time
 from typing import TYPE_CHECKING
 import logging
 import itertools
+from collections import Counter
 
 from pydantic import Field, PrivateAttr
 
@@ -1028,6 +1029,9 @@ class AttackRunner(ScreenRunner):
     # Which card each named hero was sent to, so its own `ability` step can find
     # it again. The row itself says nothing about who is on which card.
     _named: dict[str, int] = PrivateAttr(default_factory=dict)
+    # What an earlier step of the tactic took from each troop or spell card,
+    # which the last step of that kind takes off the count read at the opening.
+    _spent: dict[int, int] = PrivateAttr(default_factory=dict)
     # The last frame `_battle_ended` looked at, and the line the tactic is being
     # played along. Both are here so the battle poll can spend the frame it was
     # taking anyway on a second question: is anything still sitting in a card.
@@ -2159,7 +2163,10 @@ class AttackRunner(ScreenRunner):
         self._line = line
         steps = merged(plan.steps)
         self._sending, self._unsent, self._onfield = {}, list(row.heroes), []
-        self._named = {}
+        self._named, self._spent = {}, {}
+        # How many steps of each act are still to play, so a troop or spell step
+        # knows whether a later one of its kind should be left the rest.
+        left = Counter(step.act for step in steps)
         opened = done = time.monotonic()
         settled = False
         for step in steps:
@@ -2171,15 +2178,19 @@ class AttackRunner(ScreenRunner):
                 # else, which is why nothing between two taps looks at anything.
                 if step.seconds >= CHECK_BUDGET:
                     if self._sending:
-                        self._settle_drops(row.troops, line, anchors)
-                        settled = True
+                        # A troop card a later step still has a share of is
+                        # holding on purpose, so only an emptied row is judged,
+                        # and the row still owes its reading until it is.
+                        self._settle_drops([] if left["troops"] else row.troops, line, anchors)
+                        settled = not left["troops"]
                     elif self._battle_ended("playing"):
                         logger.info("The battle ended with %d step(s) still to play", len(steps))
                         return
                 if (remaining := done + step.seconds - time.monotonic()) > 0:
                     time.sleep(remaining)
                 continue
-            self._act(step, row, line)
+            self._act(step, row, line, remaining=left[step.act])
+            left[step.act] -= 1
             logger.info("Played %s, %.0fs in", step.act, time.monotonic() - opened)
             done = time.monotonic()
         # Whatever the last pause was too short to cover, or a tactic that ended
@@ -2201,12 +2212,18 @@ class AttackRunner(ScreenRunner):
         if self._sending or (row.troops and not settled):
             self._settle_drops(row.troops, line, anchors)
 
-    def _act(self, step: AttackStep, row: BattleRow, line: list[tuple[int, int]]) -> None:
+    def _act(
+        self, step: AttackStep, row: BattleRow, line: list[tuple[int, int]], remaining: int = 1
+    ) -> None:
         """One step of a tactic, as taps, with nothing read back.
 
         A step naming a card the row does not carry is skipped rather than
         shifting everything after it: an upgrading hero has no card at all, so a
         plan naming one is an ordinary thing to be handed rather than a fault.
+
+        `remaining` is how many steps of this act are still to play, this one
+        included. Before the last, a troop step pours an even share of each card
+        and a spell step one bottle per point; the last of each empties the cards.
         """
         points = self._onscreen(tuple(point.pixels() for point in step.at))
         middle = line[len(line) // 2]
@@ -2263,7 +2280,7 @@ class AttackRunner(ScreenRunner):
                 self.display,
             )
         elif step.act == "troops":
-            self._pour(row.troops, line, row.frame)
+            self._pour(row.troops, line, row.frame, remaining)
         elif step.act in ("rage", "freeze"):
             cards = row.rages if step.act == "rage" else row.freezes
             # Bottles, not cards, and the same number the planner was asked to
@@ -2275,7 +2292,10 @@ class AttackRunner(ScreenRunner):
             # the fallback below covers — so `targets` is never empty, `wanted`
             # is at least one, and the slice always carries something.
             targets = tuple(spaced(list(points))) or (middle,)
-            self._cast(cards, targets[:wanted], row.frame)
+            if remaining == 1:
+                self._cast(cards, targets[:wanted], row.frame)
+            else:
+                self._cast_some(cards, targets[:wanted], row.frame)
 
     def _drop_at(self, cards: list[int], spot: tuple[int, int]) -> None:
         """Send every card in one shell round trip, and write down where they went."""
@@ -2290,18 +2310,34 @@ class AttackRunner(ScreenRunner):
         self._sending.update(dict.fromkeys(cards, spot))
         self._sent_at = time.monotonic()
 
-    def _pour(self, troops: list[int], line: list[tuple[int, int]], frame: bytes) -> None:
-        """Empty every troop card along the line, one card at a time, reading nothing.
+    def _pour(
+        self, troops: list[int], line: list[tuple[int, int]], frame: bytes, remaining: int = 1
+    ) -> None:
+        """Pour every troop card along the line, one card at a time, reading nothing.
 
         How many taps a card takes is its own `xN` from the opening frame plus
         one for slack, clamped to `DROPS_PER_PASS` — the same arithmetic the
         checked version used, minus the capture between cards. A card the
         artwork swallowed falls back to the ceiling, which is what that constant
         has always been for.
+
+        With `remaining` steps of troops still to play, this one included, a
+        card gives this step an even share of what it has left, rounded up, and
+        the last step empties it. A card whose count will not read cannot be
+        shared, so it waits for the last step.
         """
         for seed, card in enumerate(troops):
             count = card_count(frame, card)
-            taps = min(count + 1, DROPS_PER_PASS) if count else DROPS_PER_PASS
+            left = max((count or 0) - self._spent.get(card, 0), 0)
+            if remaining > 1:
+                taps = min(-(-left // remaining), DROPS_PER_PASS)
+                self._spent[card] = self._spent.get(card, 0) + taps
+            elif count:
+                taps = min(left + 1, DROPS_PER_PASS) if left else 0
+            else:
+                taps = DROPS_PER_PASS
+            if not taps:
+                continue
             self._tap((card, CARD_ROW_Y))
             self.adb.tap_many(drop_points(line, seed, taps), self.display)
 
@@ -2388,18 +2424,19 @@ class AttackRunner(ScreenRunner):
         do. `live_cards` answers the question that was meant all along, since a
         spent card goes fully greyscale and a card with one bottle left does not.
         """
-        pending = list(cards)
+        # A card an earlier step already emptied is not selected again.
+        pending = [x for x in cards if not card_count(frame, x) or self._left(frame, x)]
         for _attempt in range(SPELL_ATTEMPTS):
             if not pending:
                 return
             for index, x in enumerate(pending):
-                count = card_count(frame, x)
+                count = self._left(frame, x)
                 cast_count = count + 1 if count else len(targets)
                 cells = [targets[(index + i) % len(targets)] for i in range(cast_count)]
                 self._tap((x, CARD_ROW_Y))
                 time.sleep(SPELL_SELECT_DELAY)
                 self.adb.tap_many(cells, self.display, gap=SPELL_PLACE_GAP)
-                logger.info("Spell card at %d held %s, tapped %d", x, count, cast_count)
+                logger.info("Spell card at %d held %s, tapped %d", x, count or None, cast_count)
             time.sleep(DROP_SETTLE)
             # One reading for the whole row rather than one per card: `live_cards`
             # decodes the frame it is handed, so asking it per card decodes it
@@ -2420,6 +2457,33 @@ class AttackRunner(ScreenRunner):
                 logger.info("%d spell card(s) held on to their bottles", len(pending))
         for x in pending:
             logger.warning("The spell card at %d never cast; its bottles stay in it", x)
+
+    def _left(self, frame: bytes, x: int) -> int:
+        """What this spell card held at the opening, less what earlier steps cast; 0 if unread."""
+        return max((card_count(frame, x) or 0) - self._spent.get(x, 0), 0)
+
+    def _cast_some(
+        self, cards: list[int], targets: tuple[tuple[int, int], ...], frame: bytes
+    ) -> None:
+        """One bottle per target, leaving the rest in the cards for a later step.
+
+        Nothing is read back, because a card still holding bottles is the point
+        here; the later step empties the cards and checks they emptied. A card
+        whose count will not read is taken to hold enough.
+        """
+        cells = list(targets)
+        for x in cards:
+            taps = min(self._left(frame, x) if card_count(frame, x) else len(cells), len(cells))
+            if not taps:
+                continue
+            self._tap((x, CARD_ROW_Y))
+            time.sleep(SPELL_SELECT_DELAY)
+            self.adb.tap_many(cells[:taps], self.display, gap=SPELL_PLACE_GAP)
+            self._spent[x] = self._spent.get(x, 0) + taps
+            logger.info("Spell card at %d cast %d of its bottles", x, taps)
+            del cells[:taps]
+            if not cells:
+                return
 
     def _wait_out_battle(self, opening: LootOffer) -> bool:
         """Sit through the battle and leave through 回營; False if no loot ever moved.
@@ -2487,6 +2551,9 @@ class AttackRunner(ScreenRunner):
         """
         if not self._line:
             return
+        # The counts here are read off this frame, which already shows what the
+        # tactic's earlier steps took; subtracting that again would skip a card.
+        self._spent = {}
         # **`card_groups` off a frame that is not a battle invents cards, and
         # this is the caller that then taps them.** Measured live: a battle that
         # had already ended left the shop's 外觀 page on screen, its rows of
