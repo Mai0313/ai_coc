@@ -90,7 +90,7 @@ from ai_coc.adapters.ai import GeminiClient
 # A runtime import rather than a TYPE_CHECKING one: `FrameTicker` declares it as
 # a field, and a model whose field type is only importable to a type checker
 # cannot be built at all.
-from ai_coc.adapters.adb import AdbController, AdbControlError
+from ai_coc.adapters.adb import ZOOM_PINCHES, AdbController, AdbControlError
 from ai_coc.parsers.clan import donatable_cards
 from ai_coc.parsers.hero import hero_cards
 from ai_coc.parsers.home import builder_jobs, free_builders, collect_bubbles
@@ -1076,8 +1076,19 @@ RESTART_POLLS = 45
 RESTART_POLL_GAP = 4.0
 
 
+def _place_camera(adb: AdbController, display: DisplayTarget, world: World, park: bool) -> None:
+    """Park the camera, or only take it to the far zoom when nothing will tap the map."""
+    if park:
+        park_camera(adb, display, world)
+    else:
+        adb.zoom("out", ZOOM_PINCHES, COC_PACKAGE, display)
+
+
 def _settle_game(
-    adb: AdbController, polls: int, should_stop: Callable[[], bool] = lambda: False
+    adb: AdbController,
+    polls: int,
+    should_stop: Callable[[], bool] = lambda: False,
+    park: bool = True,
 ) -> DisplayTarget | None:
     """Wait for a village that can be tapped, then put the camera where the coordinates are.
 
@@ -1099,6 +1110,10 @@ def _settle_game(
 
     None means the village never appeared. Whether that is worth giving up over
     is the caller's decision, not this one's.
+
+    `park` False leaves the camera where it is at the far zoom: the attack taps
+    no map coordinate before its battle, which measures its own camera, and a
+    park there only came before the cart visit's own on the builder base.
     """
     waiting = "nothing was tried"
     restarted = False
@@ -1143,7 +1158,7 @@ def _settle_game(
                 # it — the attack menu is a fixed screen corner and the battle
                 # camera is measured per battle by `_settle_camera`. The park
                 # logs its own warning, which is where that belongs.
-                park_camera(adb, display, world)
+                _place_camera(adb, display, world, park)
                 return display
             # A session the server dropped would otherwise sit under its dialog
             # for the whole wait, since nothing else here answers one. Once,
@@ -1427,9 +1442,11 @@ def attack(
     # `_controller` is satisfied by a pid, so a run started right after a launch
     # reaches here with the loading screen still up — measured, one did so three
     # seconds in, read no village at all, and ended the whole series before round
-    # one. This is the same wait a restart already does, and it leaves the camera
-    # at the far zoom on the way past, which every coordinate below wants anyway.
-    display = _settle_game(adb, WORLD_SETTLE_POLLS, should_stop) or adb.display_for(COC_PACKAGE)
+    # one. This is the same wait a restart already does, at the far zoom the
+    # storage bars read best at, and without the park: nothing below taps the map.
+    display = _settle_game(adb, WORLD_SETTLE_POLLS, should_stop, park=False) or adb.display_for(
+        COC_PACKAGE
+    )
     runner = AttackRunner(
         adb=adb,
         display=display,

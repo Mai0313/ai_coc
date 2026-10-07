@@ -275,27 +275,34 @@ def park_camera(
         if not corner:
             _to_middle(adb, display, CENTRE_DRAGS["free"])
         return True
+    if not corner:
+        _centre(adb, display, world)
+        return True
     if world == "day" and not _free_scale(adb, display):
         # The pinch did not bring the marker back, so this was no bought
         # scenery's far zoom: the far park is what everything was measured on.
         adb.zoom("out", ZOOM_PINCHES, COC_PACKAGE, display)
         return _walk(adb, display, world) is not None
-    return corner or _centre(adb, display, world)
+    return True
 
 
-def _centre(adb: AdbController, display: DisplayTarget, world: World) -> bool:
-    """Drag the village from its far corner to the middle, and pinch a bought scenery in about it."""
+def _centre(adb: AdbController, display: DisplayTarget, world: World) -> None:
+    """Drag the village from its far corner to the middle, and pinch a bought scenery in about it.
+
+    **A home village with no boat marker at the far corner is taken for a
+    bought scenery without pinching to confirm it.** The confirmation pinched
+    in at the corner, zoomed back out and walked again before the drag, which
+    the user watched as the camera settling three times over a park that had
+    landed the first time. What it guarded is a free scenery whose marker
+    something covered for that one frame, which then gets pinched to twice its
+    scale until the next park; the corner park the crossing takes still
+    confirms, since its measured spots are worth nothing at the wrong scale.
+    """
     if world == "night":
         _to_middle(adb, display, CENTRE_DRAGS["night"])
-        return True
-    # A bought scenery, now that the marker said so; back to its far corner, so
-    # the pinch can be made about the middle the drag puts it in.
-    adb.zoom("out", ZOOM_PINCHES, COC_PACKAGE, display)
-    if _walk(adb, display, world) is None:
-        return False
+        return
     _to_middle(adb, display, CENTRE_DRAGS["bought"])
     adb.zoom("in", 1, COC_PACKAGE, display, CENTRED_PINCH)
-    return True
 
 
 def _to_middle(

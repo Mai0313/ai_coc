@@ -1269,7 +1269,7 @@ class ParkCameraTests(unittest.TestCase):
         Pinched in from the corner, the same gesture left the village up to
         100 px from one park to the next.
         """
-        adb, parked = self._park([(0, 0)] * 4, markers=(None, (467, 536)))
+        adb, parked = self._park([(0, 0)] * 2, markers=(None,))
         assert parked is True
         drag = call.swipe(
             *world_ui.CENTRE_DRAGS["bought"],
@@ -1284,8 +1284,10 @@ class ParkCameraTests(unittest.TestCase):
             world_ui.CENTRED_PINCH,
         )
         assert adb.mock_calls.index(drag) < adb.mock_calls.index(pinch)
-        # The marker the first pinch brought back is what says the scenery was bought.
-        assert [c.args[0] for c in adb.zoom.call_args_list] == ["out", "in", "out", "in"]
+        # No marker at the far corner is what says the scenery was bought, and
+        # the park settles once: no pinch at the corner to confirm it first.
+        assert [c.args[0] for c in adb.zoom.call_args_list] == ["out", "in"]
+        assert adb.swipe.call_count == world_ui.PARK_STILL + 1
 
     def test_the_builder_base_is_dragged_to_the_middle_and_not_pinched(self) -> None:
         """It has no scenery to buy, so its far zoom is the scale everything was measured at."""
@@ -1315,7 +1317,7 @@ class ParkCameraTests(unittest.TestCase):
         Left in, every coordinate the run went on to tap would be off by twice
         the scale with nothing saying so.
         """
-        adb, parked = self._park([(0, 0)] * 4, markers=(None, None))
+        adb, parked = self._park([(0, 0)] * 4, markers=(None, None), corner=True)
         assert parked is True
         assert [c.args[0] for c in adb.zoom.call_args_list] == ["out", "in", "out"]
         assert adb.swipe.call_count == 2 * world_ui.PARK_STILL
@@ -1524,22 +1526,15 @@ class CrossingTests(unittest.TestCase):
 
     def test_a_marker_the_centred_view_hides_is_looked_for_in_the_corner(self) -> None:
         """Centred, the boat sits by the bottom-left buttons, which covered its marker live."""
-        adb = self._leaving_home(None, (494, 517), None, None, (494, 517), (494, 517))
+        adb = self._leaving_home(None, None, None, (494, 517), (494, 517))
         assert call.zoom("in", 1, ANY, ANY, world_ui.CENTRED_PINCH) in adb.mock_calls
         adb.tap.assert_called_once_with(494, 517, ANY)
 
     def test_no_marker_at_all_taps_the_measured_spots_from_the_far_park(self) -> None:
         """They mean something only on the clamp, so the park's undone pinch is what makes them worth tapping."""
-        adb = self._leaving_home(None, None, None, None, None, None)
-        assert [c.args[0] for c in adb.zoom.call_args_list] == [
-            "out",
-            "in",
-            "out",
-            "out",
-            "in",
-            "out",
-        ]
-        assert adb.swipe.call_count == 4 * world_ui.PARK_STILL
+        adb = self._leaving_home(None, None, None, None, None)
+        assert [c.args[0] for c in adb.zoom.call_args_list] == ["out", "in", "out", "in", "out"]
+        assert adb.swipe.call_count == 3 * world_ui.PARK_STILL + 1
         adb.tap.assert_called_once_with(*world_ui.CROSSINGS["night"].spots[0], ANY)
 
     def test_the_builder_base_boat_is_tapped_where_it_was_measured(self) -> None:

@@ -1198,6 +1198,7 @@ class SettleGameTests(unittest.TestCase):
         displays: list[object] | None = None,
         polls: int = 3,
         stop: bool = False,
+        park: bool = True,
         **screens: list[bool],
     ) -> tuple[MagicMock, DisplayTarget | None]:
         """Poll against canned readings; `dropped`, `welcome` and `loading` are what each frame reads as."""
@@ -1223,7 +1224,7 @@ class SettleGameTests(unittest.TestCase):
         ):
             adb.restarted = restarted
             adb.parked = parked
-            return adb, commands._settle_game(adb, polls, lambda: stop)
+            return adb, commands._settle_game(adb, polls, lambda: stop, park=park)
 
     def test_either_village_ends_the_wait_and_the_camera_goes_out(self) -> None:
         """The park carries the pinch now, so one call settles both scale and position."""
@@ -1231,6 +1232,17 @@ class SettleGameTests(unittest.TestCase):
         assert display == DISPLAY
         assert adb.screenshot.call_count == 2
         adb.parked.assert_called_once_with(adb, DISPLAY, "night")
+
+    def test_the_attack_takes_the_far_zoom_without_the_park(self) -> None:
+        """It taps no map coordinate before its battle, which measures its own camera.
+
+        On the builder base the park it used to make came straight before the
+        cart visit's own, so the camera settled twice in a row.
+        """
+        adb, display = self._settle(["night"], park=False)
+        assert display == DISPLAY
+        adb.parked.assert_not_called()
+        assert adb.zoom.call_args.args[0] == "out"
 
     def test_a_game_with_no_window_yet_is_waited_on(self) -> None:
         adb, display = self._settle(["day"], displays=[AdbControlError("not yet"), DISPLAY])

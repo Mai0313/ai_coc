@@ -159,7 +159,7 @@ jq '.[-1] | {world, outcome, stock_full, attacked}' ~/.ai_coc/logs/<run>/result.
 
 那種時候 `uv run ai_coc launch --restart game` 重開遊戲而不動模擬器, `--restart emulator` 連模擬器一起重開.
 
-**`launch` 三種 scope 都會等村莊畫出來再把鏡頭放好**: 輪詢到村莊畫出來 (最久三分鐘, 等不到就放棄), pinch 回最遠, 再用 `park_camera` 滑到地圖角落, 從那裡把村莊拖到畫面中間停好 (pinch 不移動鏡頭, 所以兩步都要; 花錢買的場景拖好後會以畫面中間為準再拉近一次, 回到免費場景的大小). `LaunchReport.at_village` 說村莊有沒有出現, `outcome` 說沒出現是等到放棄 (`no_village`) 還是等的時候收到 `ai_coc stop` (`stopped`). 其他指令等得短得多: 會等村莊的 (`attack`、`stock`、`worker`、`lab`、`status`、`export` 走同一段 `_settle_game`, 走 `GameRunner._home` 的那幾個迴圈走自己的) 最多半分鐘上下, 等到了也會把鏡頭拉遠停好; `capture` 跟不帶 `--go` 的 `world` 不等也不動鏡頭, `world --go` 不等村莊, 但真的要坐船時會先 pinch 再 `park_camera`. 所以遊戲剛開而村莊還沒出來, 修法是 `launch` 而不是重跑原本的指令.
+**`launch` 三種 scope 都會等村莊畫出來再把鏡頭放好**: 輪詢到村莊畫出來 (最久三分鐘, 等不到就放棄), pinch 回最遠, 再用 `park_camera` 滑到地圖角落, 從那裡把村莊拖到畫面中間停好 (pinch 不移動鏡頭, 所以兩步都要; 花錢買的場景拖好後會以畫面中間為準再拉近一次, 回到免費場景的大小). `LaunchReport.at_village` 說村莊有沒有出現, `outcome` 說沒出現是等到放棄 (`no_village`) 還是等的時候收到 `ai_coc stop` (`stopped`). 其他指令等得短得多: 會等村莊的 (`attack`、`stock`、`worker`、`lab`、`status`、`export` 走同一段 `_settle_game`, 走 `GameRunner._home` 的那幾個迴圈走自己的) 最多半分鐘上下, 等到了也會把鏡頭拉遠停好 (`attack` 只拉遠不停, 它開打前不點地圖, 夜世界看聖水車時自己停); `capture` 跟不帶 `--go` 的 `world` 不等也不動鏡頭, `world --go` 不等村莊, 但真的要坐船時會先 pinch 再 `park_camera`. 所以遊戲剛開而村莊還沒出來, 修法是 `launch` 而不是重跑原本的指令.
 
 log 裡的 `stopped moving after 2 swipe(s)` 是正常的. `camera was still moving` 的 warning 是鏡頭沒停好: 坐船跟收聖水車會因此收工, `launch` 跟攻擊迴圈的 `_settle_game` 不會 (後面點的是固定的畫面角落), 所以看到這行而指令仍回報成功不是矛盾.
 
