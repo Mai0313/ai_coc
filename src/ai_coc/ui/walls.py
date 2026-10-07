@@ -136,10 +136,11 @@ class WallRunner(GameRunner):
         so each is a tap and a capture. A neighbour can be a barracks as easily
         as a wall, which is what `_opened` is for.
 
-        Nothing needs bounds-checking, though. The sweep's own grid stops more
-        than a pitch inside every edge these offsets could step over: its lowest
-        row is y 500 against the button row at 622, and its columns run 260 to
-        1220 on a 1600 px screen.
+        Only the top needs bounds-checking, and `_opened` does it: the grid's
+        top row is y 140, a pitch above that is the plate row's reach, and
+        `PLATE_FLOOR` skips it. Every other edge is more than a pitch away: the
+        lowest row is y 500 against the button row at 622, and the columns run
+        260 to 1220 on a 1600 px screen.
         """
         around = [
             (point[0] + dx, point[1] + dy)

@@ -148,10 +148,10 @@ class OpenedWalkTests(unittest.TestCase):
             patch.object(shared, "read_stock", side_effect=[STOCK, None, STOCK]),
             patch.object(runner, "_home", return_value=STOCK) as home,
         ):
-            opened = list(runner._opened([(1, 1), (2, 2), (3, 3)], "named"))
-        assert [spot for spot, _ in opened] == [(1, 1), (3, 3)]
+            opened = list(runner._opened([(1, 201), (2, 202), (3, 203)], "named"))
+        assert [spot for spot, _ in opened] == [(1, 201), (3, 203)]
         home.assert_called_once()
-        assert tapped.call_args_list[1].args[1] == "named_0002_0002"
+        assert tapped.call_args_list[1].args[1] == "named_0002_0202"
 
     def test_a_village_that_cannot_be_got_back_ends_the_walk(self) -> None:
         runner = self._runner()
@@ -160,8 +160,8 @@ class OpenedWalkTests(unittest.TestCase):
             patch.object(shared, "read_stock", side_effect=[STOCK, None, STOCK]),
             patch.object(runner, "_home", return_value=None),
         ):
-            opened = list(runner._opened([(1, 1), (2, 2), (3, 3)], "named"))
-        assert [spot for spot, _ in opened] == [(1, 1)]
+            opened = list(runner._opened([(1, 201), (2, 202), (3, 203)], "named"))
+        assert [spot for spot, _ in opened] == [(1, 201)]
 
     def test_a_stop_ends_the_walk_where_the_last_tap_was_already_backed_out_of(self) -> None:
         """The one place a sweep can be interrupted, and so every finder's.
@@ -179,8 +179,8 @@ class OpenedWalkTests(unittest.TestCase):
             patch.object(runner, "_after_tap", return_value=b"") as tapped,
             patch.object(shared, "read_stock", return_value=STOCK),
         ):
-            opened = list(runner._opened([(1, 1), (2, 2), (3, 3), (4, 4)], "named"))
-        assert [spot for spot, _ in opened] == [(1, 1), (2, 2)]
+            opened = list(runner._opened([(1, 201), (2, 202), (3, 203), (4, 204)], "named"))
+        assert [spot for spot, _ in opened] == [(1, 201), (2, 202)]
         assert tapped.call_count == 2
 
     def test_a_walk_nobody_stopped_taps_every_point_it_was_given(self) -> None:
@@ -189,9 +189,20 @@ class OpenedWalkTests(unittest.TestCase):
             patch.object(runner, "_after_tap", return_value=b"") as tapped,
             patch.object(shared, "read_stock", return_value=STOCK),
         ):
-            opened = list(runner._opened([(1, 1), (2, 2), (3, 3)], "named"))
-        assert [spot for spot, _ in opened] == [(1, 1), (2, 2), (3, 3)]
+            opened = list(runner._opened([(1, 201), (2, 202), (3, 203)], "named"))
+        assert [spot for spot, _ in opened] == [(1, 201), (2, 202), (3, 203)]
         assert tapped.call_count == 3
+
+    def test_a_point_on_the_plate_row_is_never_tapped(self) -> None:
+        """Above `PLATE_FLOOR` a tap opens a plate's panel, the shield's among them."""
+        runner = self._runner()
+        with (
+            patch.object(runner, "_after_tap", return_value=b"") as tapped,
+            patch.object(shared, "read_stock", return_value=STOCK),
+        ):
+            opened = list(runner._opened([(580, 95), (580, shared.PLATE_FLOOR)], "near"))
+        assert [spot for spot, _ in opened] == [(580, shared.PLATE_FLOOR)]
+        assert tapped.call_count == 1
 
     def test_the_sweep_is_that_walk_over_the_grid_with_the_staggered_points_held_to_the_limit(
         self,

@@ -77,6 +77,14 @@ SWEEP_LIMIT = (SWEEP_X[-1], 620)
 # the model about it works (0 of 14 on the next run), and the filter below is
 # what makes that a guarantee rather than an improvement.
 SPOT_FLOOR = SWEEP_LIMIT[1] * 100 // 900
+# How high a tap may go before it lands on the plate row along the top rather
+# than on the map. Measured 2026-10-07 under the laboratory, builder and shield
+# plates: a tap at y 100 opened each plate's panel and one at y 105 opened none.
+# The laboratory's panel then opened a full-screen research page under the next
+# tap, backing out of it left the camera on the laboratory, and every wall the
+# scan had found opened nothing; the shield's opens a sheet whose 移除 removes the
+# shield. The scan's neighbours step up to y 95, and Gemini has answered y 101.
+PLATE_FLOOR = 105
 # One call against one still frame. Long enough for a slow answer, short enough
 # that a hung one falls through to the sweep rather than holding the run.
 SPOT_TIMEOUT = 60
@@ -548,6 +556,9 @@ class GameRunner(ScreenRunner):
             if self.should_stop():
                 logger.info("Stop requested; ending the %s walk", label)
                 return
+            if spot[1] < PLATE_FLOOR:
+                logger.info("Skipping (%d, %d): that is the plate row, not the map", *spot)
+                continue
             png = self._after_tap(spot, f"{label}_{spot[0]:04d}_{spot[1]:04d}")
             if read_stock(png) is None:
                 logger.info("The tap at (%d, %d) covered the village; backing out", *spot)
