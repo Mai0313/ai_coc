@@ -1930,7 +1930,7 @@ class RunLog(BaseModel):
     def no_village(self) -> Path:
         """Where `world` and `launch` keep the frame they could not find a village on.
 
-        Unconditional where `frames` is not: neither command has a `--record`,
+        Unconditional where `frames` is not: neither command has a `--debug`,
         and this is one PNG written only on that failure, which is exactly the
         one that needs a frame to be debugged from.
         """

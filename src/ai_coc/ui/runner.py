@@ -222,12 +222,15 @@ class ScreenRunner(BaseModel):
         Every screenshot a loop reads comes through here, so a recorded run is
         the whole of it in the order the loop saw it, each frame named for what
         it was being asked. Afterwards that is the only thing separating a frame
-        the parser misread from a tap that never landed.
+        the parser misread from a tap that never landed. Each one is named in
+        the log as it is saved, so the lines around it say what was read off it.
         """
         png = self.adb.screenshot(self.display)
         if self.frame_dir is not None:
             self._captures += 1
-            (self.frame_dir / f"{self._captures:04d}_{label}.png").write_bytes(png)
+            name = f"{self._captures:04d}_{label}.png"
+            (self.frame_dir / name).write_bytes(png)
+            logger.info("Saved frame %s", name)
         return png
 
     def read_storages(self) -> tuple[World | None, VillageStock | None]:

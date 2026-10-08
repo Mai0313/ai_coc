@@ -107,3 +107,7 @@ def configure_logging(run: RunLog | None = None) -> None:
     # google-genai logs the whole request body, including the base64 screenshot.
     logging.getLogger("google_genai").setLevel(logging.WARNING)
     logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
+    # Pillow logs two chunk lines per PNG it decodes, and every parser decodes
+    # its frame again: under `--debug` they buried the project's own lines.
+    logging.getLogger("PIL").setLevel(logging.INFO)

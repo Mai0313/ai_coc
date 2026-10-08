@@ -1565,7 +1565,7 @@ class AttackRunner(ScreenRunner):
                 # Said out loud and with its number, because `read_scout` has
                 # already logged the loot this is about to throw away and a
                 # silent refusal leaves a log showing a reading that was
-                # believed. Only `--record` would answer it afterwards, and
+                # believed. Only `--debug` would answer it afterwards, and
                 # that is off by default. The peak is what makes the line worth
                 # more than the fact: a run whose refusals all sit near the
                 # line is a threshold to argue with, one at 120 is a fade.

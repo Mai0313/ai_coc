@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import math
 from pathlib import Path
+import tempfile
 import unittest
 import itertools
 from unittest.mock import MagicMock, patch
@@ -96,6 +97,27 @@ def _duke(price: int | None = 56_000) -> HeroCard:
         resource=None if price is None else "dark",
         upgradable=price is not None,
     )
+
+
+class FrameTests(unittest.TestCase):
+    """A recorded frame is named in the log, so the lines around it say what was read off it."""
+
+    def test_a_saved_frame_is_named_in_the_log(self) -> None:
+        with (
+            tempfile.TemporaryDirectory() as folder,
+            patch.object(AdbController, "screenshot", return_value=b"png"),
+            self.assertLogs(shared.logger) as logs,
+        ):
+            ScreenRunner(adb=_adb(), display=DISPLAY, frame_dir=Path(folder))._frame("scout")
+            assert (Path(folder) / "0001_scout.png").read_bytes() == b"png"
+        assert logs.output == ["INFO:ai_coc.ui.runner:Saved frame 0001_scout.png"]
+
+    def test_an_unrecorded_frame_names_nothing(self) -> None:
+        with (
+            patch.object(AdbController, "screenshot", return_value=b"png"),
+            self.assertNoLogs(shared.logger),
+        ):
+            ScreenRunner(adb=_adb(), display=DISPLAY)._frame("scout")
 
 
 class ReadStoragesTests(unittest.TestCase):

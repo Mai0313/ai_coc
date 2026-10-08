@@ -1305,6 +1305,7 @@ class FrameTickerTests(unittest.TestCase):
         with (
             tempfile.TemporaryDirectory() as folder,
             patch.object(AdbController, "screenshot", return_value=b"png"),
+            self.assertLogs("ai_coc.commands") as logged,
         ):
             with self._ticker(Path(folder), 0.01):
                 time.sleep(0.1)
@@ -1312,6 +1313,8 @@ class FrameTickerTests(unittest.TestCase):
             assert ticks
             assert ticks[0].name == "tick_00000.0s.png"
             assert all(tick.read_bytes() == b"png" for tick in ticks)
+        # Each named in the log as it lands, which is what lines it up with the run.
+        assert logged.output[0] == "INFO:ai_coc.commands:Saved frame tick_00000.0s.png"
 
     def test_a_failed_capture_is_a_gap_in_the_recording_rather_than_the_end_of_the_run(
         self,
@@ -1329,7 +1332,7 @@ class RunPlumbingTests(unittest.TestCase):
     """The small pieces `attack` is built from, each with its own reason to exist."""
 
     def test_a_heartbeat_with_nowhere_to_write_is_refused(self) -> None:
-        with pytest.raises(ValueError, match="--record"):
+        with pytest.raises(ValueError, match="--debug"):
             commands._prepare_frames(AttackOptions(shot_every=1))
         with tempfile.TemporaryDirectory() as folder:
             frames = Path(folder) / "frames"

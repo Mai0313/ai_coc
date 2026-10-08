@@ -87,8 +87,8 @@ ai_coc attack --min-gold 0 --min-elixir 0 --min-dark 0    # attack whoever comes
 A run can keep everything it looked at, which is what makes a battle worth arguing with afterwards:
 
 ```bash
-ai_coc attack --record                # every frame the loop reads, named for what it was asking
-ai_coc attack --record --shot-every 4 # plus one frame every four seconds
+ai_coc attack --debug                # every frame the loop reads, named for what it was asking, and a DEBUG log
+ai_coc attack --debug --shot-every 4 # plus one frame every four seconds
 ```
 
 A tactic is a file rather than a set of constants, so a battle worth repeating can be repeated and one worth arguing with can be edited. Replaying one calls Gemini not at all:
@@ -161,7 +161,7 @@ Every run gets a directory of its own, whichever side of the app started it:
 ├── run.log        # this run's log, and nothing else
 ├── result.json    # what the command answered
 ├── plans.jsonl    # ai_coc attack only: one line per round, the tactic it played
-└── frames/        # only with --record
+└── frames/        # only with --debug
 ```
 
 The first line of every run says which directory it is, and the name is `<when>-<what>` so a listing reads as a history. `--label` adds a third part on any command (`2026-08-29-011423-attack-baseline`) for a run you want to find again. There is no second file mixing every run together — `grep -r ~/.ai_coc/logs/*/run.log` answers across runs and tells you which one each hit came from.
@@ -215,7 +215,7 @@ That is the whole file. **A run that finds no file creates one only to write dow
 - **stop_at**: how full every storage has to be before a run stands down, as a percentage. **One number for both villages**, because the loop reads each storage's real ceiling off the game — tap a storage bar and it writes 最大儲存量 on the spot. Every storage has to reach it, not just one of them: a battle brings home three, so one at the ceiling is no reason to stop earning the other two. On the builder base the elixir cart counts as one more: past a full elixir storage it keeps banking each battle's defence reward, so a run there stands down only once the cart has reached the same share of the ceiling written on it. `0` never stands a run down, and a storage whose ceiling would not read is left out of the count. `--stop-at` overrides it for one run, `0` included, which is what a test battle against a village that farming has just filled needs
 - **adb_serial**: which emulator instance to drive, by the serial `adb devices` shows (`127.0.0.1:16384`, `127.0.0.1:5555`, or `emulator-5554`, which is the same LDPlayer instance as `127.0.0.1:5555`). Left empty, the first run takes the instance with the game running, MuMu's where both have it, and writes its serial here; picking an instance in the window's emulator list writes it too. A serial no installed emulator answers to is an error rather than a guess
 - **gemini**: which model answers each kind of call. `main` is asked once per run against a whole screenshot — the attack plan, the target finder — so nothing there is racing anything and the better model is simply the right one. `lite` is asked once per candidate against a cropped strip, which is a classification rather than a judgement and is where a cheaper model earns its place. `base_url` empty means Google's own endpoint. `api_key` is the one key both tiers use, kept in plain text; the settings tab's 儲存設定 writes it, and while it is empty a `GEMINI_API_KEY` from the environment or a `.env` stands in
-- **ui**: what only the window reads, and the last thing that was not in this file. It lived in the Windows registry, where no editor opens it and no `ai_coc` sub-command can reach it, on the rule that a setting no terminal command asks for does not belong in a shared file — which is how the one part of this app nobody could edit by hand turned out to be the window's own behaviour. `jobs` is which of the five commands the window's cycle round-robins, named for the sub-commands themselves, so `"walls": true` runs the same job `ai_coc walls` does, one pass of it per turn rather than until the storages will not stretch. `cycle_minutes` only ever paces a cycle that found nothing to do, because a finished job queues the next pass straight away. `live_view` is the live preview in the 主控 tab, and `record_frames` is the checkbox form of `--record`
+- **ui**: what only the window reads, and the last thing that was not in this file. It lived in the Windows registry, where no editor opens it and no `ai_coc` sub-command can reach it, on the rule that a setting no terminal command asks for does not belong in a shared file — which is how the one part of this app nobody could edit by hand turned out to be the window's own behaviour. `jobs` is which of the five commands the window's cycle round-robins, named for the sub-commands themselves, so `"walls": true` runs the same job `ai_coc walls` does, one pass of it per turn rather than until the storages will not stretch. `cycle_minutes` only ever paces a cycle that found nothing to do, because a finished job queues the next pass straight away. `live_view` is the live preview in the 主控 tab, and `record_frames` is the checkbox form of the frames `--debug` keeps
 
 There are no ability or spell timings here any more. They were a table of per-hero constants, and editing them meant guessing how long an army takes to walk across a village nobody had looked at — which is the planner's job, done with the village on screen. Every clock lives on the plan now: see `plans/flat.json` for the shape, and `--plan` to replay one.
 

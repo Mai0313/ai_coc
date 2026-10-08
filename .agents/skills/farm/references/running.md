@@ -31,7 +31,7 @@ done
 
 ```bash
 uv run ai_coc world --go day --yield --agent <名字> --session <session id> --mission "打日世界資源"
-uv run ai_coc attack --repeat 0 --record --yield --agent <名字> --session <session id> --mission "打日世界資源"
+uv run ai_coc attack --repeat 0 --yield --agent <名字> --session <session id> --mission "打日世界資源"
 ```
 
 **你是跟開發同時跑的 farm subagent, 就在主 checkout (預設分支) 上跑, 每個指令都寫成 `uv run --no-sync ai_coc …`**, `stop` 也一樣: 開發在另一個 worktree 做, 理由在 `AGENTS.md` 的 The loop runs the main checkout. 真的要同步 (merge 帶進新的依賴, 指令 import 失敗) 就等手上的程序結束再 `uv sync`.
@@ -51,7 +51,7 @@ uv run ai_coc attack --repeat 0 --record --yield --agent <名字> --session <ses
 ├── run.log        # 這次執行的完整紀錄, 純文字
 ├── result.json    # 這次的答案, 跑完才會有這個檔案
 ├── plans.jsonl    # 只有 attack 有: 一場一行, 那一場的整份戰術
-└── frames/        # 迴圈自己讀的畫面要開 --record; capture 一定會有; world 跟 launch 截得到畫面卻找不到村莊時留 no_village.png (log 會寫路徑)
+└── frames/        # 迴圈自己讀的畫面要開 --debug; capture 一定會有; world 跟 launch 截得到畫面卻找不到村莊時留 no_village.png (log 會寫路徑)
 ```
 
 **目錄在開跑開頭那行 log** (`This run is being kept in ...`). 名字是「時間-指令」, `ls -t ~/.ai_coc/logs` 最上面是最近已經建好的一次 (剛開跑的那一次可能還沒建好). 任何指令加 `--label <名字>` 會接在後面 (`…-attack-baseline`), 給之後要找回來的那一次用.
@@ -66,7 +66,7 @@ jq '.[-1] | {world, outcome, stock_full, attacked}' ~/.ai_coc/logs/<run>/result.
 
 `jq '.stock_full'` 對陣列直接報錯, 別的讀法多半拿到不是 `true` 的東西, 讀起來像「還沒滿」. 其他指令 (`walls`, `collect`, `world` ...) 多半寫單一個物件; `stop`、`giveback`、`capture` 跟被取消的借用寫的是純文字.
 
-`--record` 留下迴圈讀的每一張 (每一張都是模擬器的一次 PNG 編碼, 平均兩 MB 多: `AGENTS.md` 量過 11 456 張佔 27.2 GB), 這批會有東西要查就開. `--shot-every` 另加一條固定心跳 (`tick_00012.3s.png`), 要搭配 `--record`, 補兩張之間看不到的那段.
+`--debug` 留下迴圈讀的每一張 (每一張都是模擬器的一次 PNG 編碼, 平均兩 MB 多: `AGENTS.md` 量過 11 456 張佔 27.2 GB), 開不開是派工的人決定 (`farm` 的「要不要留畫面」). 存下的每一張, `run.log` 都有一行 `Saved frame <檔名>`. `--shot-every` 另加一條固定心跳 (`tick_00012.3s.png`), 要搭配 `--debug`, 補兩張之間看不到的那段.
 
 ## 盯
 

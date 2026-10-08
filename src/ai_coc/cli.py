@@ -108,7 +108,7 @@ def _parser() -> argparse.ArgumentParser:
         type=float,
         default=0.0,
         metavar="秒",
-        help="除了迴圈自己讀的畫面之外,每隔這麼多秒再存一張,需要搭配 --record",
+        help="除了迴圈自己讀的畫面之外,每隔這麼多秒再存一張,需要搭配 --debug",
     )
     # Omitted means "whatever the config file says", like the loot thresholds
     # below; 0 is how a test run attacks a village the farming has already
@@ -236,7 +236,9 @@ def _parser() -> argparse.ArgumentParser:
     village.add_argument("--last", action="store_true", help="不碰遊戲,直接讀上一次匯出的結果")
     for name in RECORDABLE:
         sub.choices[name].add_argument(
-            "--record", action="store_true", help="把這次讀到的每一張畫面存進這次的紀錄資料夾"
+            "--debug",
+            action="store_true",
+            help="把這次讀到的每一張畫面存進這次的紀錄資料夾,log 也記到 DEBUG",
         )
     # Every sub-command, because why a session names a run — to find it again
     # afterwards — has nothing to do with which one it ran.
@@ -444,13 +446,18 @@ def main() -> int:
     # Opened after parsing, so `--help` and a rejected flag leave no empty
     # directory behind, and so its name can say which command it holds.
     # `capture` records by definition — saving frames is the command — so it
-    # carries no `--record` of its own and turns it on here instead.
+    # carries no `--debug` of its own and turns recording on here instead.
     run = RunLog.open(
         arguments.command or "app",
-        recording=getattr(arguments, "record", False) or arguments.command == "capture",
+        recording=getattr(arguments, "debug", False) or arguments.command == "capture",
         label=getattr(arguments, "label", ""),
     )
     configure_logging(run)
+    # One switch for a run someone means to debug: the frames it reads, and the
+    # lines too bulky to keep for every run (each raw ADB call, Gemini's whole
+    # prompt and reply).
+    if getattr(arguments, "debug", False):
+        logging.getLogger().setLevel(logging.DEBUG)
     # First line of every run, because a directory nobody can name is one nobody
     # goes back to: this is what a session reads to find the frames afterwards.
     logger.info("This run is being kept in %s", run.directory)

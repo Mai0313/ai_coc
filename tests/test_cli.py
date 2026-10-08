@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import io
 import sys
+import logging
 from pathlib import Path
 import argparse
 import tempfile
@@ -89,12 +90,12 @@ class ParserTests(unittest.TestCase):
             bare = _args(name, *extra)
             assert (bare.agent, bare.session, bare.mission) == ("", "", ""), name
 
-    def test_record_is_only_offered_where_a_loop_reads_frames(self) -> None:
+    def test_debug_is_only_offered_where_a_loop_reads_frames(self) -> None:
         for name in RECORDABLE:
-            assert _args(name, "--record").record, name
+            assert _args(name, "--debug").debug, name
         # `world` reads one frame and keeps nothing, so it has no such flag.
         with pytest.raises(SystemExit):
-            _args("world", "--record")
+            _args("world", "--debug")
 
     def test_a_spot_is_two_integers(self) -> None:
         assert _spot("260,140") == (260, 140)
@@ -130,7 +131,7 @@ class DispatchTests(unittest.TestCase):
                     "--stop-at",
                     "0",
                     "--until-idle",
-                    "--record",
+                    "--debug",
                     "--shot-every",
                     "4",
                     "--plan",
@@ -227,7 +228,7 @@ class DispatchTests(unittest.TestCase):
             _answer(_args("launch", "--restart", "game"), self.run)
             _answer(_args("launch"), self.run)
         viewed.assert_called_once_with("in", 2)
-        # Both keep the frame no village read on; neither has a `--record` to ask for it.
+        # Both keep the frame no village read on; neither has a `--debug` to ask for it.
         assert [call.args for call in asked.call_args_list] == [
             ("day", self.run.no_village),
             (None, self.run.no_village),
@@ -243,7 +244,7 @@ class DispatchTests(unittest.TestCase):
         for name in ("collect", "builders", "probe", "bounds"):
             with patch.object(commands, name) as ran:
                 _answer(_args(name), self.run)
-                _answer(_args(name, "--record"), self.recorded)
+                _answer(_args(name, "--debug"), self.recorded)
             assert [call.args for call in ran.call_args_list] == [
                 (None,),
                 (self.recorded.frames,),
@@ -367,7 +368,7 @@ class DispatchTests(unittest.TestCase):
 
     def test_a_capture_run_records_without_being_asked(self) -> None:
         """Saving frames is the whole of what the command does, so it carries no
-        `--record` and there is nothing for a caller to forget. Reached through
+        `--debug` and there is nothing for a caller to forget. Reached through
         `main`, because that is where the two are joined and where a `--label`
         also has to arrive.
         """
@@ -384,6 +385,29 @@ class DispatchTests(unittest.TestCase):
         assert frames is not None
         assert frames.name == "frames"
         assert frames.parent.name.endswith("-capture-baseline")
+
+    def test_debug_keeps_the_frames_and_logs_at_debug(self) -> None:
+        root = logging.getLogger()
+        level = root.level
+        try:
+            with (
+                tempfile.TemporaryDirectory() as folder,
+                patch.object(models, "LOG_DIR", Path(folder)),
+                patch.object(sys, "argv", ["ai_coc", "stock", "--debug"]),
+                patch.object(commands, "stock", return_value="") as stocked,
+                patch.object(commands, "claim"),
+                # Setting up the log puts the level back to INFO, as the real
+                # one does, so `--debug` only holds if it is applied afterwards.
+                patch.object(
+                    cli, "configure_logging", side_effect=lambda _: root.setLevel("INFO")
+                ),
+                patch("sys.stdout", new_callable=io.StringIO),
+            ):
+                assert cli.main() == 0
+                assert root.level == logging.DEBUG
+            assert stocked.call_args.args[0] is not None
+        finally:
+            root.setLevel(level)
 
     def test_who_asked_reaches_the_claim(self) -> None:
         with (
