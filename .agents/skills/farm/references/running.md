@@ -19,9 +19,9 @@ for i in 1 2 3; do   # 一段最多九分鐘
 done
 ```
 
-`RUN` 從這次執行 log 開頭那行 `This run is being kept in ...` 拿 (通常是第一行; 那次剛好刪了過期畫面的話, 前面多一行 `Deleted the frames of …`), 不要拿 `ls -t` 最上面那個: 新目錄還沒建好之前, 最上面的是上一次, 它的 `result.json` 已經有內容, 等待會立刻結束, 接著你就在還在跑的那一輪上面再開一輪.
+`RUN` 從這次執行 log 開頭那行 `This run is being kept in ...` 拿 (通常是第一行; 那次剛好刪了過期畫面的話, 前面多一行 `Deleted the frames of …`), 不要拿 `ls -t` 最上面那個: 新目錄還沒建好之前, 最上面的是上一次, 它的 `result.json` 已經有內容, 等待會立刻結束, 接著你就在還在跑的那一輪上面再開一輪. 用時間猜 (`ls -dt` 加上開跑那一分鐘的字樣) 一樣會猜錯. **最不會拿錯的是每一次開跑都帶一個沒用過的 `--label`**, 例如第幾圈、哪一步、第幾次開 (`--label day3-c2-walls-1`; 被借走後同一組旗標開回去就換成 `-2`): 目錄名稱就是 `<時間>-walls-day3-c2-walls-1`, `ls -d ~/.ai_coc/logs/*-day3-c2-walls-1` 出現了就是它. 列出不只一個目錄就是標籤用過了. 標籤只留前 40 個字, 所以不要放整串 session id.
 
-一輪四五分鐘, 所以 `--repeat 3` 要兩段左右, `--repeat 0` 要很多段. **每一段等完還沒結束, 而 `state.json` 的 `log` 是這次的目錄, 就看它的 `pid` 還在不在** (還不是這次的目錄是還在排隊, 見下一段): 還在就是 run 還活著, 接著等下一段 (順便看 `run.log` 有沒有往前走); 不在了就是被砍掉 (這種 run 會一直停在 `running`), 停下來回報. 這個 pid 檢查就是整段等待的出口. 前景卡住對 subagent 沒有代價.
+一輪四五分鐘, 所以 `--repeat 3` 要兩段左右, `--repeat 0` 要很多段. **每一段等完還沒結束, 而 `state.json` 的 `log` 是這次的目錄, 就看它的 `pid` 還在不在** (還不是這次的目錄是還在排隊, 見下一段): 還在就是 run 還活著, 接著等下一段 (順便看 `run.log` 有沒有往前走); 不在了就是被砍掉 (這種 run 會一直停在 `running`), 停下來回報. 這個 pid 檢查就是整段等待的出口, `walls` 也一樣: 不要等滿固定幾段就當它跑完往下走, Gemini 找不到牆而退回掃網格的那一次, 光掃描就要好幾分鐘. 前景卡住對 subagent 沒有代價.
 
 **帶 `--yield` 的指令可能還在排隊**: `run.log` 最後一行是 `waiting for it to come back` (等借走模擬器的那一邊還回來) 或 `holds the emulator; waiting for it to finish` (等別人的指令跑完), `state.json` 上也還不是它, 所以上面那段只在 `state.json` 的 `log` 是這次的目錄時才算它收工. 照常分段等, 這兩行之後 log 不動是正常的, 不算下面說的卡死; 借用最久到借的那一邊最後一個指令跑完 30 分鐘, 有人 `giveback` 就更早. **但排在一個卡死的 run 後面會永遠等下去**: 帶 `--yield` 的指令不會請任何人收工, 也不會結束任何人. 所以停在 `holds the emulator; waiting for it to finish` 的時候, 去看佔著的那個 run (`state.json` 的 `log`) 的 `run.log` 還有沒有在動, 超過一場戰鬥沒動就照下一段的卡死處理, 停下來回報.
 
