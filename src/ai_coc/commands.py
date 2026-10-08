@@ -465,6 +465,17 @@ STOP_POLL = 2.0
 # number measured here.
 ADAPTER_FAILURES = 3
 
+# How many rounds in a row may fail to open the attack menu before the series
+# gives up. Measured 2026-10-08: an event's story dialog that `back` does not
+# close covered the home village, and a `--repeat 0` series came back
+# `no_attack_menu` eleven times in a row, an `IDLE_REST` between each, for about
+# 25 minutes until the agent driving it noticed and stopped it. The floor is a
+# battle left running, which `uncovered` will not press at and which ends by
+# itself: a run in #344 met one, came back `no_attack_menu` twice and attacked on
+# its third round. So the rounds have to outlast a whole battle, rests included,
+# rather than borrow the three `ADAPTER_FAILURES` uses.
+MENU_FAILURES = BATTLE_TIMEOUT // IDLE_REST + 1
+
 
 # The claim this process wrote, or None while it holds none. Two things need it.
 #
@@ -1395,6 +1406,25 @@ def _series_over(report: AttackReport, played: int) -> bool:
     return False
 
 
+def _menu_out_of_reach(series: AttackSeries) -> bool:
+    """Whether the last few rounds all failed to open the attack menu, which ends the series.
+
+    Whatever stood in the way outlasted a whole battle, so every round after
+    would walk into it again. It can be a screen `back` will not close, a session
+    that keeps dropping or somebody playing on a phone; this cannot tell which,
+    so the line says only that the series ended, and each round's own lines say
+    what it met. The last round keeps its `no_attack_menu`, as `emulator_silent`
+    does when its own run ends a series.
+    """
+    last = series.root[-MENU_FAILURES:]
+    if len(last) < MENU_FAILURES or any(report.outcome != "no_attack_menu" for report in last):
+        return False
+    logger.error(
+        "The attack menu has not opened for %d rounds in a row; ending the series", MENU_FAILURES
+    )
+    return True
+
+
 def _handed_plan(options: AttackOptions) -> tuple[AttackPlan | NightPlan | None, World | None]:
     """The plan `--plan` handed in, and the village it was written for, which the series plays."""
     if options.plan is None:
@@ -1515,7 +1545,11 @@ def attack(
             logger.info("Attack finished: %s", round_line(report))
             _write_plan(options.plan_out, runner.played)
             _log_plan(options.plan_log, len(series.root), runner.played)
-            if _series_over(report, len(series.root)):
+            # A stop is let through first, so the series ends on its own line
+            # and a loan reads as one rather than as a run that gave up.
+            if _series_over(report, len(series.root)) or (
+                not should_stop() and _menu_out_of_reach(series)
+            ):
                 break
             # A stop that arrived mid-search comes back here having attacked
             # nothing, and a run about to walk away has no reason to wait

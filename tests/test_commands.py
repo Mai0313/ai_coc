@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 import math
 import time
-from typing import get_args
+from typing import TYPE_CHECKING, get_args
 from pathlib import Path
 from datetime import UTC, datetime
 import tempfile
@@ -72,6 +72,9 @@ from ai_coc.models import (
 from ai_coc.constants import COC_PACKAGE
 from ai_coc.ui.runner import ScreenRunner
 from ai_coc.adapters.adb import AdbController, AdbControlError
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 FRAMES = Path(__file__).parent / "frames"
 DISPLAY = DisplayTarget(logical_id="2", physical_id="9")
@@ -1116,6 +1119,83 @@ class AttackSeriesAdapterFailureTests(unittest.TestCase):
         assert rounds[-1].stock_full
 
 
+class AttackSeriesMenuTests(unittest.TestCase):
+    """A series that keeps failing to open the attack menu ends instead of resting on it.
+
+    Measured 2026-10-08: an event dialog `back` does not close covered the home
+    village, and a `--repeat 0` series came back `no_attack_menu` eleven times in
+    a row until the agent driving it noticed and stopped it.
+    """
+
+    def _series(
+        self,
+        played: list[AttackReport] | Callable[[], AttackReport],
+        should_stop: MagicMock | None = None,
+    ) -> list:
+        runner = MagicMock(name="AttackRunner")
+        runner.run.side_effect = played
+        runner.lost = 0
+        runner.world = "day"
+        with (
+            patch.object(commands, "_controller", return_value=_adb()),
+            patch.object(commands.ConfigStore, "load", return_value=AppConfig()),
+            patch.object(commands, "_planner", return_value=None),
+            patch.object(commands, "_settle_game", return_value=DISPLAY),
+            patch.object(commands, "FrameTicker"),
+            patch.object(commands, "AttackRunner", return_value=runner),
+            patch.object(commands, "_rest", return_value=False),
+        ):
+            series = commands.attack(
+                AttackOptions(rounds=0), should_stop or MagicMock(return_value=False)
+            )
+        return series.root
+
+    def test_a_run_of_them_ends_the_series(self) -> None:
+        stuck = AttackReport(outcome="no_attack_menu")
+        with self.assertLogs("ai_coc.commands", "ERROR") as logged:
+            rounds = self._series([
+                AttackReport(outcome="took_loot"),
+                *[stuck] * (commands.MENU_FAILURES + 2),
+            ])
+        assert [report.outcome for report in rounds] == [
+            "took_loot",
+            *["no_attack_menu"] * commands.MENU_FAILURES,
+        ]
+        assert f"{commands.MENU_FAILURES} rounds in a row" in logged.output[-1]
+
+    def test_the_run_outlasts_a_battle_left_on_screen(self) -> None:
+        """A battle a killed run left behind ends by itself, and the rests between
+        the rounds that met it have to add up to more than one.
+        """
+        assert (commands.MENU_FAILURES - 1) * commands.IDLE_REST >= commands.BATTLE_TIMEOUT
+
+    def test_a_round_that_opened_the_menu_starts_the_count_again(self) -> None:
+        """Consecutive, not total: stuck rounds either side of a battle are not a stuck game."""
+        stuck = AttackReport(outcome="no_attack_menu")
+        rounds = self._series([
+            *[stuck] * (commands.MENU_FAILURES - 1),
+            AttackReport(outcome="took_loot"),
+            *[stuck] * (commands.MENU_FAILURES - 1),
+            AttackReport(outcome="stock_full"),
+        ])
+        assert len(rounds) == 2 * commands.MENU_FAILURES
+        assert rounds[-1].stock_full
+
+    def test_a_stop_on_the_last_of_them_ends_as_a_stop(self) -> None:
+        """A loan or a stop arriving then reads as one, not as a series that gave up."""
+        stuck = AttackReport(outcome="no_attack_menu")
+        played: list[AttackReport] = []
+
+        def run() -> AttackReport:
+            played.append(stuck)
+            return stuck
+
+        stopping = MagicMock(side_effect=lambda: len(played) >= commands.MENU_FAILURES)
+        with self.assertNoLogs("ai_coc.commands", "ERROR"):
+            rounds = self._series(run, should_stop=stopping)
+        assert len(rounds) == commands.MENU_FAILURES
+
+
 class AttackSeriesArmyShortTests(unittest.TestCase):
     """An army under the threshold ends the series instead of resting on it.
 
@@ -1176,7 +1256,8 @@ class AttackSeriesArmyShortTests(unittest.TestCase):
             rest.assert_not_called()
 
     def test_a_round_that_found_nobody_still_comes_round_again(self) -> None:
-        """Only those end it: every other empty round rests and retries.
+        """Only those end it, besides a run of rounds that never opened the menu
+        (`MENU_FAILURES`): every other empty round rests and retries.
 
         No opponent above the thresholds is a matchmaker that will offer a
         different set next time, which is exactly what the wait is still for.
