@@ -3002,7 +3002,8 @@ class AttackRunner(ScreenRunner):
         shortcut: the ability recharges for the whole battle, so there is no
         single moment worth finding and a tap the game is not ready for costs
         one `input` call. A card whose unit never made it onto the field answers
-        the same tap by selecting itself, which does nothing at all. Only the
+        the same tap by selecting itself, which deploys nothing but does repaint
+        its corner, so the stage-end test below sets that aside. Only the
         capture is paced, at `ABILITY_POLL`, because that is what costs.
         """
         deadline = time.monotonic() + BATTLE_TIMEOUT
@@ -3023,7 +3024,21 @@ class AttackRunner(ScreenRunner):
             # against none at all in between; the run without a second stage
             # moved them once. `_next_stage` is what tells the two apart.
             following = self._frame("night-battle")
-            if troops and card_drained(shot, following, troops):
+            moved = card_drained(shot, following, troops) if troops else []
+            # **A card that was selected or let go repaints its corner too**, and
+            # the ability taps below move the selection. Measured over one run's 54
+            # stage endings, every real one repainted cards whose selection stayed
+            # put; the one false ending was a single troop card losing the
+            # selection to an ability tap, with the second stage still in its
+            # countdown, and the next three rounds met that battle on screen.
+            if moved:
+                swapped = set(selected_cards(shot, moved)) ^ set(selected_cards(following, moved))
+                if swapped:
+                    logger.info(
+                        "Card(s) %s only changed selection; the stage goes on", sorted(swapped)
+                    )
+                moved = [card for card in moved if card not in swapped]
+            if moved:
                 logger.info("The card row was repainted; this stage is over")
                 return
             shot = following

@@ -221,5 +221,5 @@
 
 只能看 log 的兩件:
 
-- **第二階段**: 第一場打到 100% 才可能有, 不是每次. `_wait_out_night` 看卡片列的數量角被重畫 (`0x` 變回倖存兵數) 就算這階段結束, `_next_stage` 分辨結算還是下一階段. log 依序是 `The card row was repainted; this stage is over` 跟 `共出兵 2 次`.
+- **第二階段**: 第一場打到 100% 才可能有, 不是每次. `_wait_out_night` 看卡片列的數量角被重畫 (`0x` 變回倖存兵數) 就算這階段結束, 但選取框剛換過的卡不算 (按技能會移動選取框, 角落也跟著重畫, 曾經在第二階段還在倒數時就誤判結束), `_next_stage` 分辨結算還是下一階段. log 依序是 `The card row was repainted; this stage is over` 跟 `共出兵 2 次`.
 - **聖水沒入庫不是 bug**: 夜世界聖水進推車, 看 `The loot cart paid N elixir`. 沒那行就看 `CartReport.outcome`: **`locked_holding`** 是車上有東西領不出來 (`held` 是面板數字), 幾乎一定是聖水倉庫滿了; **`locked_empty`** 是車空; **`locked`** 是按鈕灰而數字讀不到. 數字**要先確認面板開著才能讀** (卡片 `xN` 角落壓在同一排). `not_found` 是三個候選點都沒點開, `wrong_world` 是不在夜世界.
