@@ -96,6 +96,7 @@ from ai_coc.parsers.hero import hero_cards
 from ai_coc.parsers.home import builder_jobs, free_builders, collect_bubbles
 from ai_coc.adapters.mumu import MuMuAdapter
 from ai_coc.parsers.scout import (
+    NIGHT_COUNT_WHITE_RATIO,
     in_battle,
     card_count,
     live_cards,
@@ -2748,6 +2749,7 @@ def read(png: bytes) -> FrameReading:
         export_row=export_row(png),
         card_groups=groups,
         counted=counted_cards(png, slots),
+        night_counted=counted_cards(png, slots, NIGHT_COUNT_WHITE_RATIO),
         freezes=freeze_cards(png, slots),
         live=live_cards(png, slots),
         on_field=field_units(png, slots),

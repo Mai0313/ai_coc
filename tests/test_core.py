@@ -157,6 +157,7 @@ from ai_coc.parsers.scout import (
     CART_PLANK_BESIDE,
     LOOT_INK_BRIGHTNESS,
     STOCK_DIGIT_TOLERANCE,
+    NIGHT_COUNT_WHITE_RATIO,
     _read_row,
     in_battle,
     _lit_floor,
@@ -685,7 +686,7 @@ class NightAttackTests(unittest.TestCase):
             patch.object(AttackRunner, "_settle_camera", return_value=b""),
             patch.object(AttackRunner, "_settle_zoom", return_value=b""),
             patch.object(attack, "card_groups", return_value=[[164], [307]]),
-            patch.object(attack, "counted_cards", return_value=[307]),
+            patch.object(attack, "counted_cards", return_value=[307]) as counted,
             patch.object(attack, "live_cards", return_value=[164]),
             patch.object(AttackRunner, "_night_plan", return_value=plans.night_flat()),
             patch.object(AttackRunner, "_flank", return_value=DEPLOY_LINES["top_left"]),
@@ -701,6 +702,8 @@ class NightAttackTests(unittest.TestCase):
         ):
             assert runner._deploy_night(b"") == ([164], [307])
         assert order == ["machine", "hold", "troops"]
+        # Troops are told from the machine on the builder base's own line.
+        assert counted.call_args.args[2] == NIGHT_COUNT_WHITE_RATIO
 
     def test_the_flat_plan_loads_and_carries_no_spells(self) -> None:
         plan = plans.night_flat()
@@ -1161,6 +1164,25 @@ class NightAttackTests(unittest.TestCase):
         slots = [slot for group in groups for slot in group]
         assert counted_cards(png, slots) == [307, 433, 560, 686, 813, 939]
         assert live_cards(png, [164]) == [164]
+
+    def test_the_builder_base_counts_a_troop_card_the_home_line_would_call_a_machine(self) -> None:
+        """Its counts read lower, and a troop card taken for a machine is never spread.
+
+        Measured 2026-10-08: every `1x` survivor read 0.1474, under the home line,
+        and was tapped for an ability once a second instead; a selected troop
+        card reads lower again. The machine, selected or not, stays out.
+        """
+        selected = (FRAMES / "battle_speed_night_1x.png").read_bytes()
+        assert 804 not in counted_cards(selected, [804])
+        assert counted_cards(selected, [804], NIGHT_COUNT_WHITE_RATIO) == [804]
+        reading = commands.read(selected)
+        assert 804 in reading.night_counted
+        assert 804 not in reading.counted
+        stage2 = (FRAMES / "night_stage2_cards.png").read_bytes()
+        assert counted_cards(stage2, [164, 307, 939], NIGHT_COUNT_WHITE_RATIO) == [307, 939]
+        for name, machine in (("night_cards.png", 164), ("night_battle.png", 163)):
+            png = (FRAMES / name).read_bytes()
+            assert counted_cards(png, [machine], NIGHT_COUNT_WHITE_RATIO) == [], name
 
     def test_every_live_machine_is_offered_its_ability_whatever_the_drop_read_said(self) -> None:
         """`field_units` misses a machine whose health bar is no longer green.
@@ -5110,24 +5132,18 @@ class AttackTests(unittest.TestCase):
         card still holding something: measured live, four rounds of twelve taps
         poured into that hero card, 56 seconds of a battle whose army was
         already down. The reading is 0.1386, over the 0.10 the line used to sit
-        at and under the 0.1835 of the faintest real count.
+        at and under the 0.2067 of the faintest home village count.
         """
         assert counted_cards((FRAMES / "battle_in_progress.png").read_bytes(), [804]) == []
 
     def test_the_faintest_real_count_still_reads_as_one(self) -> None:
         """The other side of that line, and the frame that sets it.
 
-        A builder base second stage draws the faintest `xN` of every committed
-        frame — 0.1835 at slot 686, against 0.2059 for the countdown and 0.2067
-        for the lowest home village card. It is also where losing one costs the
-        most, since `_run_night` reads an uncounted card as a machine. So this
-        is the guard on the ratio being raised, and it has to be this frame:
-        picked off any other, a nudge upward would pass it and still lose a
-        second stage.
+        Slot 413 here reads 0.2067, the faintest count of any home village card
+        on a committed frame, so this is the guard on the ratio being raised.
+        The builder base reads its cards against a line of its own.
         """
-        frame = (FRAMES / "night_stage2_cards.png").read_bytes()
-        slots = [307, 433, 560, 686, 813, 939]
-        assert counted_cards(frame, slots) == slots
+        assert counted_cards((FRAMES / "cards_partly_spent.png").read_bytes(), [413]) == [413]
 
     def test_a_spell_card_reports_how_many_it_holds(self) -> None:
         frame = (FRAMES / "cards_full.png").read_bytes()
