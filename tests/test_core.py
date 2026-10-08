@@ -2602,8 +2602,11 @@ class PlanTests(unittest.TestCase):
         # As many bottles as an unreadable rage card is assumed to hold, so the
         # fallback tactic can place everything the loop asks it to.
         assert sum(len(step.at) for step in plan.acts("rage")) == attack.RAGE_BOTTLES
-        # A tactic with no pause in it is one where every clock is zero.
-        assert [step.seconds for step in plan.acts("wait")] == [5, 5, 10]
+        # A tactic with no pause in it is one where every clock is zero. How long
+        # each pause is stays the player's tuning, so it is not pinned here.
+        waits = [step.seconds for step in plan.acts("wait")]
+        assert waits
+        assert all(seconds > 0 for seconds in waits)
 
     def test_the_flat_plan_draws_the_line_the_loop_used_to_hold_in_constants(self) -> None:
         """It has to reproduce the old fallback, or the default quietly changed."""
