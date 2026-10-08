@@ -1810,6 +1810,7 @@ class AttackRunner(ScreenRunner):
         """
         landed: list[int] = []
         onfield: list[int] = []
+        skipped: list[int] = []
         pending = list(cards)
         shared = [
             spot
@@ -1829,6 +1830,22 @@ class AttackRunner(ScreenRunner):
             if not pending:
                 break
             before = self._frame("before-drop")
+            # A card already grey has nothing left to send: its unit is on the
+            # field, or died there, under a bar `field_units` did not read as one.
+            # Measured 2026-10-08, a queen that landed straight into a red bar was
+            # retried four times on her grey card, twelve seconds the abilities
+            # and every spell after them waited out.
+            live = live_cards(before, pending)
+            spent = [card for card in pending if card not in live]
+            if spent:
+                logger.info(
+                    "%d %s card(s) already spent, not sent again: %s", len(spent), what, spent
+                )
+                landed += spent
+                skipped += spent
+                pending = [card for card in pending if card in live]
+                if not pending:
+                    break
             self.adb.tap_many(
                 [tap for card in pending for tap in ((card, CARD_ROW_Y), aim[card])],
                 self.display,
@@ -1857,7 +1874,16 @@ class AttackRunner(ScreenRunner):
                 )
         for card in pending:
             logger.warning("The %s card at %d never landed; its unit stays put", what, card)
-        logger.info("%d of %d %s card(s) landed at %s", len(landed), len(cards), what, worked)
+        # Only the cards actually sent: a spent one never went to `worked`, and
+        # its own line above already says so.
+        if len(cards) > len(skipped):
+            logger.info(
+                "%d of %d %s card(s) landed at %s",
+                len(landed) - len(skipped),
+                len(cards) - len(skipped),
+                what,
+                worked,
+            )
         return landed, onfield
 
     def _wait_for_battle(self) -> bytes | None:
