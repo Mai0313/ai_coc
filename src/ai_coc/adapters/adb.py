@@ -353,13 +353,22 @@ class AdbController(BaseModel):
         round that went wrong, and the same shape is reachable from other
         callers that build their list by filtering. The log line stays ahead of
         the return so `Tapping 0 points` survives as the signature to grep for.
+
+        **The line names every point**, because nothing else records where a
+        burst landed: `plans.jsonl` holds where the plan aimed, and each drop is
+        pushed out, clamped and fitted to the boundary on its way here.
         """
+        spots = [(int(x), int(y)) for x, y in points]
         logger.info(
-            "Tapping %d points on %s display %s", len(points), self.serial, display.logical_id
+            "Tapping %d points on %s display %s: %s",
+            len(spots),
+            self.serial,
+            display.logical_id,
+            " ".join(f"({x}, {y})" for x, y in spots),
         )
-        if not points:
+        if not spots:
             return
-        taps = [f"input -d {display.logical_id} tap {int(x)} {int(y)}" for x, y in points]
+        taps = [f"input -d {display.logical_id} tap {x} {y}" for x, y in spots]
         self.shell(f";sleep {gap};".join(taps), timeout=len(points) * (gap + 0.5) + 15)
 
     def swipe(

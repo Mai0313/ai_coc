@@ -390,7 +390,8 @@ class FrameTicker(BaseModel):
     The loop's own captures are the ones it reads, and it only looks where it has
     a question; between them a battle can go badly with nothing recorded at all.
     This is the other view — a fixed heartbeat, each frame named by how far into
-    the run it was taken, so a recording lines up against the log afterwards.
+    the run it was taken and named in the log as it is saved, so a recording
+    lines up against the log afterwards.
 
     It costs the emulator a PNG encode every tick and competes with the loop for
     the same ADB connection, which is why it is off unless asked for.
@@ -429,7 +430,9 @@ class FrameTicker(BaseModel):
                 # than the gap in the recording.
                 logger.warning("A heartbeat capture failed", exc_info=True)
             else:
-                (self.out_dir / f"tick_{elapsed:07.1f}s.png").write_bytes(png)
+                name = f"tick_{elapsed:07.1f}s.png"
+                (self.out_dir / name).write_bytes(png)
+                logger.info("Saved frame %s", name)
             self._stop.wait(self.seconds)
 
 
@@ -1201,7 +1204,7 @@ def _prepare_frames(options: AttackOptions) -> None:
     if options.frame_dir is not None:
         options.frame_dir.mkdir(parents=True, exist_ok=True)
     elif options.shot_every > 0:
-        raise ValueError("--shot-every 要搭配 --record，不然心跳畫面沒有地方放")
+        raise ValueError("--shot-every 要搭配 --debug，不然心跳畫面沒有地方放")
 
 
 def _write_plan(path: Path | None, plan: AttackPlan | NightPlan | None) -> None:
@@ -2529,6 +2532,7 @@ def _copy_village(
         png = adb.screenshot(display)
         if frame_dir is not None:
             (frame_dir / f"{label}.png").write_bytes(png)
+            logger.info("Saved frame %s.png", label)
         return png
 
     adb.tap(*SETTINGS_GEAR, display)

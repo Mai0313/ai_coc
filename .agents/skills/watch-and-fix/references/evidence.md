@@ -4,7 +4,7 @@
 
 ## 三種畫面
 
-**迴圈自己讀的那些** (`--record`): 檔名是迴圈當下在問的問題 (`0006_scout`, `0010_pass`, `0018_dropped`; 標籤是 `_frame` (`ui/runner.py` 的 `ScreenRunner`, `AttackRunner` 繼承它) 的呼叫端給的, 現有哪些 grep `self._frame(`). 這是判讀器真的看過的那一張, 判讀錯的證據在這裡.
+**迴圈自己讀的那些** (`--debug`): 檔名是迴圈當下在問的問題 (`0006_scout`, `0010_pass`, `0018_dropped`; 標籤是 `_frame` (`ui/runner.py` 的 `ScreenRunner`, `AttackRunner` 繼承它) 的呼叫端給的, 現有哪些 grep `self._frame(`). 這是判讀器真的看過的那一張, 判讀錯的證據在這裡. 存下時 `run.log` 有一行 `Saved frame <檔名>`, 它前後的 log 就是讀這張的那一步; 出兵連點的每一個座標也在 `run.log` (`Tapping N points …: (x, y) …`), 不用開 `--debug` 也有.
 
 **判英雄有沒有下去的那幾張**: 第一波出兵後只判一次, 是 `settled` (`_settle_drops`); 沒下去的重試 (跟夜世界送機器) 是一對 `before-drop` 跟 `dropped` (`_drop_singles`). 比的是卡片上有沒有畫出血條, 有沒有變灰. 查英雄有沒有下去看這幾張, 不看戰場, 也不看 log.
 
@@ -37,8 +37,8 @@ uv run ai_coc capture --count 30 --gap 1.5 --label <這次在測什麼>
 ## 花一場戰鬥去量
 
 ```bash
-uv run ai_coc probe --record          # 實測出兵邊界, 對照判讀器的說法
-uv run ai_coc bounds --record         # 實測地圖邊緣, 回推村莊範圍
+uv run ai_coc probe --debug          # 實測出兵邊界, 對照判讀器的說法
+uv run ai_coc bounds --debug         # 實測地圖邊緣, 回推村莊範圍
 ```
 
 各丟一場戰鬥換一組數字. 值得跑的時機: 遊戲更新後, 村莊換主題後, 或連續好幾場在同一處出兵失敗而畫面看不出原因. 細節在 `AGENTS.md` (`probe`) 跟 `parsers/boundary.py` 的註解 (`bounds`). 它們用 `LootThresholds()` 不用設定檔, 要的是任何一場戰鬥.

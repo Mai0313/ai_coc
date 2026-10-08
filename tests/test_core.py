@@ -5999,7 +5999,7 @@ class LaunchTests(unittest.TestCase):
         assert "村莊沒有出現" in commands.launch_line(report)
 
     def test_a_village_that_never_painted_leaves_its_frame(self) -> None:
-        """`launch` has no `--record`, and this failure is the one that needs a frame."""
+        """`launch` has no `--debug`, and this failure is the one that needs a frame."""
         mumu = self._mumu()
         mumu.controller.return_value.screenshot.return_value = b"frame"
         self.settled.return_value = None

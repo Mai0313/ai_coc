@@ -40,13 +40,13 @@ description: >-
 你自己決定, 中途也可以換:
 
 - **自己跑**: 用 runtime 自己管的背景執行送出去 (見 `running.md` 的「開跑」), 前景讀 log 改東西. `--repeat 0` 整批跑完才通知一次, 不是每一輪, 所以代價只是你自己去讀 log 的那幾次. 迴圈照樣跑在主 checkout 上 (`uv run --no-sync`), 改東西在另一個 worktree, 理由在 `AGENTS.md` 的 The loop runs the main checkout.
-- **交給 subagent**: 照 `AGENTS.md` 那段派一個跑 `farm` 的 subagent (降一級模型, 降 thinking budget), 你只讀它留下的檔案. 省下盯的成本, 代價是你不在現場.
+- **交給 subagent**: 照 `AGENTS.md` 那段派一個跑 `farm` 的 subagent (降一級模型, 降 thinking budget), 你只讀它留下的檔案. 省下盯的成本, 代價是你不在現場. 交辦寫明 `--debug` (要看戰鬥過程再加 `--shot-every`), 並交代它帶上就好、圖不用看, 圖由你看 (`farm` 的「要不要留畫面」).
 
 **使用者指名就照他的**: 「你親自監督執行」是第一種, 不要為了省 context 轉包出去.
 
-**迴圈在跑的時候看畫面, 用 `ai_coc capture`、`.agents/skills/repair-emulator/scripts/look.py` 或開跑時就加的 `--shot-every`**: 都只截圖, 不佔 `state.json` 也不開任何東西. `stock`、`status` 這類要操作畫面的指令會借走迴圈 (見 `running.md` 的「絕對不要同時跑兩個」), 用完要 `giveback`.
+**迴圈在跑的時候看畫面, 看迴圈自己存的** (`--debug`、`--shot-every`, 開跑時就決定): 跟 `run.log` 在同一個目錄, 每存一張 log 就有一行 `Saved frame <檔名>`, 一張對得上一步. `ai_coc capture`、`.agents/skills/repair-emulator/scripts/look.py` 只留給迴圈自己沒在拍的時候 (卡在某個畫面不動、開跑時沒開 `--debug`): 它們存在別的地方, 時間對不上這輪的 log, 還跟迴圈搶 ADB. 這兩個只截圖, 不佔 `state.json` 也不開任何東西. `stock`、`status` 這類要操作畫面的指令會借走迴圈 (見 `running.md` 的「絕對不要同時跑兩個」), 用完要 `giveback`.
 
-**存畫面是事前決定, 看畫面是事後決定.** 問題幾乎都是事後才發現, 所以人不在現場時傾向開著 `--record`: 存了不看不花什麼, 沒存就得再賠一整場. 自己跑時可以不開, 臨時要看就用 `look.py`. 貴的是看: 一晚幾百張, 所以圖拿來確認, 不拿來巡邏, 順序見「卡住的時候先問對問題」.
+**存畫面是事前決定, 看畫面是事後決定.** 問題幾乎都是事後才發現, 而這個 skill 本來就在找問題, 所以迴圈一律開著 `--debug`: 存了不看不花什麼, 沒存就得再賠一整場. 貴的是看: 一晚幾百張, 所以圖拿來確認, 不拿來巡邏, 順序見「卡住的時候先問對問題」.
 
 ## 三份文件的分工
 
@@ -60,14 +60,14 @@ description: >-
 
 ```bash
 uv run ai_coc world --go day --yield
-uv run ai_coc attack --repeat 0 --record --shot-every 5 --yield
+uv run ai_coc attack --repeat 0 --debug --shot-every 5 --yield
 ```
 
 `--yield` 不能省: 沒帶的話, 你自己驗證用的指令會把這輪停掉而不是借走, 也沒有人會把它開回去. 指令都省略了 `--agent`、`--session`、`--mission`, 真的跑的時候每一個都要帶; 在主 checkout 跑一律寫成 `uv run --no-sync`.
 
 **先 `world --go`.** 遊戲會開在上次離開的那個村莊, 而每個指令都只做遊戲當下停著的那一個, 不會自己坐船; 只問在哪用 `ai_coc world`, 不動畫面也不點東西. 站錯村莊的症狀是「找不到」而不是「找錯」, 要好幾張截圖才發現. 中途被換到另一邊就回 `other_village` 整批收工, 不會自己切回來. 夜世界的旗標照 `farm` (平鋪戰術, 不叫 AI). **`--repeat 0` 是主線的形狀**: 打到倉庫滿自己收工; 固定輪數是做對照用的.
 
-`--record` 存迴圈自己讀的畫面, `--shot-every` 存定時的畫面. **分辨「判讀器讀錯」跟「點下去沒生效」只有畫面辦得到** (兩者在 log 上一模一樣), 所以查這類問題兩種都開. 怎麼讀在 `references/evidence.md`.
+`--debug` 存迴圈自己讀的畫面, `--shot-every` 存定時的畫面. **分辨「判讀器讀錯」跟「點下去沒生效」只有畫面辦得到** (兩者在 log 上一模一樣), 所以查這類問題兩種都開. 怎麼讀在 `references/evidence.md`.
 
 畫面, `run.log`, `result.json` 跟 `plans.jsonl` 都在這次執行的目錄底下, 路徑是開跑第一行 log, 不必自己重導向. **`plans.jsonl` 不用開旗標**: 一場一行, 是 AI 那一場的劇本 (照順序的步驟, 誰下在哪, 等幾秒). 把某一輪拉出來重播:
 

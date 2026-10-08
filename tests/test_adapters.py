@@ -239,6 +239,14 @@ class AdbConnectionTests(unittest.TestCase):
             _controller().tap_many([], DISPLAY)
         shell.assert_not_called()
 
+    def test_a_burst_names_every_point_it_taps(self) -> None:
+        """`plans.jsonl` says where the plan aimed; only this line says where the taps went."""
+        with patch.object(AdbController, "shell"), self.assertLogs(adb_module.logger) as logs:
+            _controller().tap_many([(1, 2), (3, 4)], DISPLAY, gap=0.1)
+        assert logs.output[-1].endswith(
+            "Tapping 2 points on 127.0.0.1:16384 display 2: (1, 2) (3, 4)"
+        )
+
     def test_the_display_is_found_through_both_id_schemes(self) -> None:
         with patch.object(AdbController, "shell", side_effect=[WINDOW_DISPLAYS, DISPLAY_DEVICES]):
             assert _controller().display_for(COC_PACKAGE) == DISPLAY

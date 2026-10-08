@@ -106,4 +106,4 @@ uv run ai_coc read <png>                                          # 現有 parse
 
 探索途中看到但這次沒做的題目, 接在回覆後面一條一個編號問他下次要不要做, 各附代價跟風險. 交回覆的時候發一則推播, 他多半不在電腦前.
 
-看過的圖用檔案傳送機制發給使用者, 不要只留路徑. 迴圈開 `--record` 才留畫面, 跟你 `capture` 的一樣進那次執行的 `~/.ai_coc/logs/<when>-<what>/frames/`, 路徑不能指定, 用 `--label` 取名才找得回來. **畫面只留七天, log 永久留**, 要長期留的證據自己複製出來 (當 fixture 的進 `tests/frames/`). 證據用完就照 `AGENTS.md` 的 Frames are the only thing worth culling 把這次的 `frames/` 刪掉, log 留著; 之後還要用的那幾張先複製出來.
+看過的圖用檔案傳送機制發給使用者, 不要只留路徑. 迴圈開 `--debug` 才留畫面, 跟你 `capture` 的一樣進那次執行的 `~/.ai_coc/logs/<when>-<what>/frames/`, 路徑不能指定, 用 `--label` 取名才找得回來. **畫面只留七天, log 永久留**, 要長期留的證據自己複製出來 (當 fixture 的進 `tests/frames/`). 證據用完就照 `AGENTS.md` 的 Frames are the only thing worth culling 把這次的 `frames/` 刪掉, log 留著; 之後還要用的那幾張先複製出來.

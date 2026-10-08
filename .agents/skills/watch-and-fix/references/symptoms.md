@@ -154,7 +154,7 @@
 
 **症狀**: 皇后的斗篷開在別人身上, 或某個英雄整場沒開大.
 
-哪張一次性卡片是攻城機具由 plan 有沒有 `siege` 步驟決定 (血條分不出來, 遊戲對攻城戰車也畫血條): `_deploy` 建 `BattleRow` 時有 `siege` 就把第一張當機具, 沒有就整排當英雄. 多寫或少寫一個 `siege`, 整排英雄的落點跟開大秒數就偏一格, **沒有下游會發現**. 對照那輪 `plans.jsonl` 有沒有 `siege` 跟 `--record` 的 `zoomed` 畫面 (置中拖過鏡頭的話是之後那張 `camera`, `_deploy` 讀卡片列的就是它) 上有沒有攻城機具, 對不上就從 `prompts/attack_plan.md` 查.
+哪張一次性卡片是攻城機具由 plan 有沒有 `siege` 步驟決定 (血條分不出來, 遊戲對攻城戰車也畫血條): `_deploy` 建 `BattleRow` 時有 `siege` 就把第一張當機具, 沒有就整排當英雄. 多寫或少寫一個 `siege`, 整排英雄的落點跟開大秒數就偏一格, **沒有下游會發現**. 對照那輪 `plans.jsonl` 有沒有 `siege` 跟 `--debug` 的 `zoomed` 畫面 (置中拖過鏡頭的話是之後那張 `camera`, `_deploy` 讀卡片列的就是它) 上有沒有攻城機具, 對不上就從 `prompts/attack_plan.md` 查.
 
 `siege` 對得上還是晚一格, 看戰鬥中途卡片列前面有沒有多出一張 (活動卡): `BattleRow` 記的是開場讀到的 x, 前面插一張, 後面每張都往右移, `ability` 跟 `_cast` 就點到隔壁那張. 這是 `AGENTS.md` 記著的已知缺陷.
 
@@ -215,7 +215,7 @@
 
 **出兵是帶狀** (`night_drops`, `NIGHT_LANES`): 三條線, 每條往外多一個 `PUSH_STEP`, 每一下換一條 lane, 濺射才打不到好幾隻. lane 只往外 (往內是基地, 被拒絕的點不消耗兵). 端點會被 `DEPLOY_BOUND` 夾住, 上面兩條側翼的第一個錨點在 lane 1 跟 2 重疊. 兵還擠成一坨, 先看是不是 lane 被夾掉, 再考慮動 `NIGHT_LANES`.
 
-**機器技能每秒盲按一次** (`ABILITY_TAP`), 每 `ABILITY_POLL` 拍一張看階段結束沒. 驗證就開 `--record` 看機器卡片**上方**的技能條: 洋紅是充飽, 青色由短變長是充能中 (約 14 秒), 都沒有是機器死了或還在卡片裡. 連續好幾張洋紅而 log 有在點, 才是沒按到.
+**機器技能每秒盲按一次** (`ABILITY_TAP`), 每 `ABILITY_POLL` 拍一張看階段結束沒. 驗證就開 `--debug` 看機器卡片**上方**的技能條: 洋紅是充飽, 青色由短變長是充能中 (約 14 秒), 都沒有是機器死了或還在卡片裡. 連續好幾張洋紅而 log 有在點, 才是沒按到.
 
 **第二階段開場倖存的機器卡片是選取中的** (白邊, 較寬), 所以點地面不點卡片, 白邊還在就換下一個落點 (`_send_selected`, 最多五個). log 是 `The machine came through from the stage before, preselected` 接 `still in its card after`; 五個都被吞是 `never left its card` 的 WARNING. 又看到 `took nothing` 五次接 `never landed` (點到技能鍵), 或 `0 machine card(s) still alive` 而機器明明活著 (`card_groups` 讀不到選取中的卡, `CARD_SELECTED_SPAN`), 就是這條被改壞了.
 
