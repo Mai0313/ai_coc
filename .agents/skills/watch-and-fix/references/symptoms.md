@@ -142,7 +142,7 @@
 
 `field_units` 讀卡片上方的血條, 靠藍色分辨血條跟草地. 英雄卡不會清空 (變成技能按鈕), 不能用 `card_drained`. 假陰性有代價: 重試再點那張卡就是放技能. 看 `_drop_singles`, `_landed`, `HERO_SETTLE`.
 
-第一次投放用 plan 那個 `siege` / `hero` 步驟自己的 `at`, 但點若正對著部隊實際那條線、在線的內側 `ONTO_LINE_SLACK` 到 `ONTO_LINE_REACH` 之間 (更遠的當成刻意放在別處, 不動), `onto_line` 先把它搬到線上的垂足 (AI 照抄 prompt 的基準線, 部隊的線卻被 `_flank` 貼到真正的紅線上, 內側的點多半被拒); 線端外面的點不動, 那是清邊英雄的位置. 搬了會有一行 `aimed inside the line`, 所以 `plans.jsonl` 的座標跟畫面對不上時先找這行. 被拒的一律走 `single_spots` 的共用階梯重試, 從線的中點開始 (不是單純再往外, 理由同 `push_out`), 不再用 plan 的點; 但離剛被拒的那個點 `REFUSED_NEAR` 以內的階梯會跳過 (平鋪的英雄瞄的就是線的中點, 中點那一階等於同一塊被拒的地), 所以 log 的重試座標可能直接是往外推的那一階.
+第一次投放用 plan 那個 `siege` / `hero` 步驟自己的 `at`, 但點若正對著部隊實際那條線、在線的內側 `ONTO_LINE_SLACK` 到 `ONTO_LINE_REACH` 之間 (更遠的當成刻意放在別處, 不動), `onto_line` 先把它搬到線上的垂足 (AI 照抄 prompt 的基準線, 部隊的線卻被 `_flank` 貼到真正的紅線上, 內側的點多半被拒); 線端外面的點不動, 那是清邊英雄的位置. 搬了會有一行 `aimed inside the line`, 所以 `plans.jsonl` 的座標跟畫面對不上時先找這行. 被拒的一律走 `single_spots` 的共用階梯重試, 從線的中點開始 (不是單純再往外, 理由同 `push_out`), 不再用 plan 的點; 但離剛被拒的那個點 `REFUSED_NEAR` 以內的階梯會跳過 (平鋪的英雄瞄的就是線的中點, 中點那一階等於同一塊被拒的地), 所以 log 的重試座標可能直接是往外推的那一階. 重試前卡片已經灰掉的不再送 (`already spent, not sent again`): 單位已經在場上或死在場上, 只是血條一下場就掉到紅色, `field_units` 沒認到綠條.
 
 ## 英雄的技能被提早放掉
 

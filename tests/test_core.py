@@ -4906,6 +4906,7 @@ class AttackTests(unittest.TestCase):
         with (
             patch.object(AttackRunner, "_frame", return_value=b""),
             patch.object(AttackRunner, "_landed", return_value=([], [])),
+            patch.object(attack, "live_cards", side_effect=lambda _png, slots: list(slots)),
             patch.object(AdbController, "tap_many", autospec=True, side_effect=refuse),
             patch.object(attack.time, "sleep"),
         ):
@@ -4935,12 +4936,54 @@ class AttackTests(unittest.TestCase):
         with (
             patch.object(AttackRunner, "_frame", return_value=b""),
             patch.object(AttackRunner, "_landed", return_value=([], [])),
+            patch.object(attack, "live_cards", side_effect=lambda _png, slots: list(slots)),
             patch.object(AdbController, "tap_many", autospec=True, side_effect=refuse),
             patch.object(attack.time, "sleep"),
         ):
             runner._drop_singles([700], line, "retry", refused=[refused])
         assert shared[0] not in aimed
         assert aimed == [spot for spot in shared if math.dist(spot, refused) > REFUSED_NEAR]
+
+    def test_a_card_already_grey_is_not_sent_again(self) -> None:
+        """Its unit is on the field, or died there, under a bar no reader saw.
+
+        Measured 2026-10-08: a queen that landed straight into a red bar read as
+        refused, and four retries tapped her grey card for twelve seconds.
+        """
+        runner = self._runner()
+        line = deploy_line(LINE_POINTS)
+        sent: list[int] = []
+
+        def tap(
+            _self: object, taps: list[tuple[int, int]], display: object, gap: float = 0
+        ) -> None:
+            sent.extend(x for x, _ in taps[0::2])
+
+        with (
+            patch.object(AttackRunner, "_frame", return_value=b""),
+            patch.object(AttackRunner, "_landed", return_value=([], [])),
+            patch.object(attack, "live_cards", return_value=[557]),
+            patch.object(AdbController, "tap_many", autospec=True, side_effect=tap),
+            patch.object(attack.time, "sleep"),
+        ):
+            landed, _ = runner._drop_singles([683, 557], line, "retry")
+        assert landed == [683]
+        assert 683 not in sent
+        assert 557 in sent
+
+    def test_a_round_of_only_spent_cards_names_no_landing_spot(self) -> None:
+        """Nothing was tapped, so no point on the map was where anything landed."""
+        runner = self._runner()
+        with (
+            patch.object(AttackRunner, "_frame", return_value=b""),
+            patch.object(attack, "live_cards", return_value=[]),
+            patch.object(AdbController, "tap_many", autospec=True) as tapped,
+            self.assertLogs("ai_coc.ui.attack") as logged,
+        ):
+            landed, _ = runner._drop_singles([683], deploy_line(LINE_POINTS), "retry")
+        assert landed == [683]
+        tapped.assert_not_called()
+        assert not any("landed at" in line for line in logged.output)
 
     def test_a_refused_line_ranks_its_own_flank_first(self) -> None:
         """The plan's own side goes first behind its line, then the flanks it did not pick."""
