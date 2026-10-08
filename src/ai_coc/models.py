@@ -2529,6 +2529,9 @@ class FrameReading(BaseModel):
     export_row: tuple[int, int] | None = None
     card_groups: list[list[int]] = Field(default_factory=list)
     counted: list[int] = Field(default_factory=list)
+    # The same question at the builder base's own line, which the night loop
+    # asks instead: its `1x` is too small to clear `counted`'s.
+    night_counted: list[int] = Field(default_factory=list)
     freezes: list[int] = Field(default_factory=list)
     live: list[int] = Field(default_factory=list)
     on_field: list[int] = Field(default_factory=list)
