@@ -175,7 +175,7 @@ uv run ai_coc attack --repeat 0 --plan src/ai_coc/plans/night_flat.json --yield
 
 通知時附上工人狀況: `ai_coc worker` 說每個工人在蓋什麼 (`jobs` 的 `name`, 沒有 API key 時是空的) 跟各還要多久 (`remaining` 秒, 最快的自己取最小), 決定要不要叫他等; 手上已經有一張主村畫面而只要知道閒著幾個, 丟 `uv run ai_coc read <png>` 看 `builders`.
 
-**其他停手的理由**: 遊戲一直回不到村莊, 同一個錯誤連續三次以上, 一輪也沒打成過, **連續三輪 `emulator_silent`** (log 說 `The emulator has not answered for 3 rounds`, 先看模擬器還活著沒有). 這些都停下來講, 不要一直重試: 失敗要吵.
+**其他停手的理由**: 遊戲一直回不到村莊, 同一個錯誤連續三次以上, 一輪也沒打成過, **連續三輪 `emulator_silent`** (log 說 `The emulator has not answered for 3 rounds`, 先看模擬器還活著沒有), **連續 `MENU_FAILURES` 輪 `no_attack_menu`** (現在是 5 輪, 比一整場戰鬥長, 所以留在畫面上的那場打完不會誤判; log 說 `The attack menu has not opened for 5 rounds in a row; ending the series`, 迴圈自己收工. 原因看每一輪自己的 log: 蓋住遊戲的畫面 (活動的劇情對話框), 一直掉線, 或有人在手機上玩, 先看畫面). 這些都停下來講, 不要一直重試: 失敗要吵.
 
 ## 打到有空閒
 

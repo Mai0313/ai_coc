@@ -87,6 +87,7 @@ jq '.[-1] | {world, outcome, stock_full, attacked}' ~/.ai_coc/logs/<run>/result.
 - `run.log` 結尾有 `Stop requested`: 有人下了 `ai_coc stop` (停在回合之間或兩輪中間的等待都會留這一行). 誰停的看 `~/.ai_coc/state.json` 的 `stop_by`. 不是你下的, 先看同一份檔案有沒有 `loan`, 見「被借走」
 - 使用者指定的 `--repeat N` 跑完: 照他的交辦接下去或收工
 - 有幾輪 `outcome` 是 `emulator_silent`: 模擬器當下不理人, 夾在中間一兩輪不是事, 照常打. 但結尾是 `The emulator has not answered for 3 rounds; ending the series` 就是連續三輪, 整個 series 收工: 先看模擬器還活著沒有, 不要直接開下一個. 這種有完整的 `result.json`, 不要跟被砍掉的搞混
+- 結尾是 `The attack menu has not opened for 5 rounds in a row; ending the series`: 連續 `MENU_FAILURES` 輪 `no_attack_menu`, 整個 series 自己收工. 每一輪自己的 log 說它遇到什麼 (迴圈按 `back` 關不掉的畫面、一直掉線、有人在手機上玩). 先看畫面 (`look.py`), 照 `farm` 的「其他停手的理由」停下來講, 不要直接開下一個
 - 都不是就是迴圈自己放棄了, `outcome` 跟最後一條 WARNING / ERROR 說原因, 例如打到一半遊戲跑到另一個村莊 (最後一個元素是 `other_village`, 多半是有人切過村莊, 例如使用者在手機上玩). 這幾種歸 `farm` 的「其他停手的理由」, 先把遊戲弄回村莊, 不要直接開下一個
 
 一個 run 結束而你什麼都沒接, 模擬器就閒著, 使用者卻以為還在打.
