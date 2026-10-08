@@ -257,7 +257,7 @@ uv run ai_coc attack --repeat 0 --plan src/ai_coc/plans/night_flat.json --yield
 
 - **進帳**: `run.log` 的 `holds` 那幾行, 算法見「進帳從 `run.log` 算」. **不是**每輪 `AttackReport.attacked` 的加總: 那是偵察畫面上對手擺出來的可搶量, 跟入庫一定對不上 (比平常大得多的落差是要往上報的訊號, 見「值得警覺的樣態」)
 - **現在的水位**: 那個世界最後一行 `holds`; 收工時跑的 `ai_coc status` 讀的是同一個世界的話, 用它的 `stock`, 那份比較新
-- **場數**: `AttackSeries` 裡真的開打的輪數; 主村看 `attacked` 不是 `None`, 夜世界看 `phases` 大於 0
+- **場數**: `AttackSeries` 裡真的開打的輪數; 主村看 `attacked` 不是 `None` (`jq '[.[] | select(.attacked != null)] | length' result.json`), 夜世界看 `phases` 大於 0 (`select(.phases > 0)`). 不是 `Attack finished` 的行數, 沒開打的那一輪 (例如最後那一輪 `stock_full`) 也有這一行
 - **花掉的**: 刷牆看 `walls` 的 `result.json`, 只有 `upgrades` (每批的 `unit` 單價、`count` 片數、`resource` 付哪一種) 跟 `outcome`. 片數是 `count` 的和, 各資源花多少是 `unit × count` 的和 (`WallReport.walls` 跟 `paid()` 算的就是這個, 但它們不寫進檔案); `run.log` 的 `Walls: … (金幣 X／聖水 Y)` 那行是現成的. 升建築跟英雄看花之前跟花之後兩次讀到的倉庫差額
 - **工人跟護盾**: `ai_coc status` (或 `worker`), 答的是當下站著的那個村莊 (見「倉庫滿了」開頭); 夜世界沒有護盾
 - **時長**: `run.log` 第一行跟最後一行的時間戳; 沒有日期, 跨午夜看目錄名
