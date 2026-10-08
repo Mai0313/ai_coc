@@ -89,6 +89,7 @@ from ai_coc.ui.attack import (
     DEPLOY_LINES,
     DEPLOY_START,
     PLAN_TIMEOUT,
+    REFUSED_NEAR,
     ABANDON_BUTTON,
     DROPS_PER_PASS,
     DEPLOY_ATTEMPTS,
@@ -4912,6 +4913,34 @@ class AttackTests(unittest.TestCase):
         assert aimed[0] == (123, 456)
         # Every shared rung still follows, the probed midpoint included.
         assert aimed[1:] == shared
+
+    def test_a_retry_skips_the_ground_the_card_was_just_refused_on(self) -> None:
+        """On a flat plan the heroes aim at the line's middle, the ladder's first rung.
+
+        Measured on two recorded rounds, that rung sat 20 px from where the cards
+        had just been refused, was refused again, and cost three seconds apiece
+        before the push out landed.
+        """
+        runner = self._runner()
+        line = deploy_line(LINE_POINTS)
+        shared = single_spots(line, runner._middle)
+        refused = (shared[0][0] + 16, shared[0][1] - 12)
+        aimed: list[tuple[int, int]] = []
+
+        def refuse(
+            _self: object, taps: list[tuple[int, int]], display: object, gap: float = 0
+        ) -> None:
+            aimed.extend(taps[1::2])
+
+        with (
+            patch.object(AttackRunner, "_frame", return_value=b""),
+            patch.object(AttackRunner, "_landed", return_value=([], [])),
+            patch.object(AdbController, "tap_many", autospec=True, side_effect=refuse),
+            patch.object(attack.time, "sleep"),
+        ):
+            runner._drop_singles([700], line, "retry", refused=[refused])
+        assert shared[0] not in aimed
+        assert aimed == [spot for spot in shared if math.dist(spot, refused) > REFUSED_NEAR]
 
     def test_a_refused_line_ranks_its_own_flank_first(self) -> None:
         """The plan's own side goes first behind its line, then the flanks it did not pick."""
