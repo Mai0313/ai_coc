@@ -1900,6 +1900,8 @@ class DeploymentTests(unittest.TestCase):
         assert runner._onfield == [500, 600]
         spread.assert_called_once_with([100], DEPLOY_LINES["top_left"], 0)
         assert singles.call_args.args[0] == [600]
+        # Where it was refused goes along, so the retry does not aim there again.
+        assert singles.call_args.kwargs["refused"] == [(2, 2)]
 
     def test_the_one_reading_gives_the_last_drop_its_health_bar_first(self) -> None:
         """Read the instant a pause opens, a hero that landed has no bar yet.

@@ -323,6 +323,13 @@ DEPLOY_ATTEMPTS = 5
 # clamped straight back onto it: measured live, four pushes in a row of a point
 # already on the map's edge came back within two pixels of each other.
 SPOT_APART = 20
+# How near the spot a one-off card was just refused at a retry may sit before it
+# is the same refused ground. On a flat plan the heroes and the machine aim at the
+# middle of the troops' line, so the retry ladder's first rung, that middle, sat
+# 20 px from the refused spot on three recorded rounds: refused again twice, and
+# each cost a retry of about three seconds before a push out landed. The one rung
+# further away, 52 px out, took all five cards the first time.
+REFUSED_NEAR = 40
 # How far inside the troops' line a siege machine or hero has to be aimed before
 # `onto_line` moves it onto the line. Over eleven recorded rounds the spots 1 to
 # 9 px inside all landed and refusals began at 13. The line is not the boundary,
@@ -1766,6 +1773,7 @@ class AttackRunner(ScreenRunner):
         line: list[tuple[int, int]],
         what: str,
         wanted: dict[int, tuple[int, int]] | None = None,
+        refused: list[tuple[int, int]] | None = None,
     ) -> tuple[list[int], list[int]]:
         """Every one-off card onto its own spot at once, retried as a group where refused.
 
@@ -1795,11 +1803,19 @@ class AttackRunner(ScreenRunner):
         second tap on a hero already on the field is its ability, so a drop
         wrongly called refused burns the cloak or the tome and leaves the
         schedule tapping a card that has nothing left to give.
+
+        `refused` is where these cards were already turned away, and a rung
+        within `REFUSED_NEAR` of one is skipped: the midpoint's evidence is the
+        troops landing there, and a card refused a tile away is evidence against.
         """
         landed: list[int] = []
         onfield: list[int] = []
         pending = list(cards)
-        shared = single_spots(line, self._middle)
+        shared = [
+            spot
+            for spot in single_spots(line, self._middle)
+            if all(math.dist(spot, gone) > REFUSED_NEAR for gone in refused or [])
+        ]
         # Where every card goes on each attempt in turn. A card the plan did not
         # name falls straight through to the shared spot of that round.
         rounds = [dict.fromkeys(cards, spot) for spot in shared]
@@ -2368,7 +2384,8 @@ class AttackRunner(ScreenRunner):
         """
         time.sleep(max(0.0, self._sent_at + HERO_SETTLE - time.monotonic()))
         after = self._frame("settled")
-        sent = list(self._sending)
+        spots = dict(self._sending)
+        sent = list(spots)
         # Emptied here rather than by the caller, because that is what makes a
         # tactic dropping heroes *after* its first pause work: the check fires
         # whenever anything is waiting on one, so a later drop gets read too. It
@@ -2395,7 +2412,9 @@ class AttackRunner(ScreenRunner):
         if holding:
             self._spread_troops(holding, anchors, 0)
         if missing:
-            again, _ = self._drop_singles(missing, line, "retry")
+            again, _ = self._drop_singles(
+                missing, line, "retry", refused=[spots[card] for card in missing]
+            )
             self._onfield += again
             self._deployed |= bool(again)
 
