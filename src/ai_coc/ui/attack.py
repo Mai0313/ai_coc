@@ -43,6 +43,7 @@ from ai_coc.parsers.home import plate_count, plate_badges
 from ai_coc.parsers.field import view_shift
 from ai_coc.parsers.scout import (
     PANEL_DRAWN_BRIGHTNESS,
+    NIGHT_COUNT_WHITE_RATIO,
     in_battle,
     card_count,
     live_cards,
@@ -2816,7 +2817,7 @@ class AttackRunner(ScreenRunner):
             logger.warning("No cards found on the battle row; nothing to deploy")
             return None
         slots = [slot for group in groups for slot in group]
-        troops = counted_cards(frame, slots)
+        troops = counted_cards(frame, slots, NIGHT_COUNT_WHITE_RATIO)
         # **A machine that died in the stage before cannot be sent out again**,
         # and that is a real state rather than a corner case: the second stage
         # opens with whatever survived, so a machine that tanked the first one

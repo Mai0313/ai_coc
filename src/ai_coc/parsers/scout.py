@@ -356,6 +356,15 @@ BADGE_LIT = 0.05
 COUNT_TOP, COUNT_BOTTOM = 748, 772
 COUNT_LEFT, COUNT_RIGHT = 6, 58
 COUNT_WHITE_RATIO = 0.16
+# **The builder base draws its counts in a smaller hand, and has no hero to
+# mistake for one**, so it gets a line of its own. Measured 2026-10-08 on one
+# night's run, a `1x` reads 0.1474 every time, under the home line, and every
+# such card was taken for a machine: 30 of them across 14 second stages, never
+# spread and tapped once a second for an ability, which moved the selection
+# and once ended a stage still in its countdown (#368). A selected troop card
+# reads lower again, 0.0857 to 0.1050, and the machines, selected or not, read
+# 0 to 0.0353 on every committed frame; this sits midway between the two.
+NIGHT_COUNT_WHITE_RATIO = 0.06
 # The count itself is readable on a card with a dark, saturated illustration and
 # not on a pale one, so `card_count` reports a failed read rather than a guess.
 # It needs a higher floor than the loot panel: the card art is brighter than a
@@ -1364,11 +1373,12 @@ def card_groups(png: bytes) -> list[list[int]]:
     return groups
 
 
-def counted_cards(png: bytes, slots: Sequence[int]) -> list[int]:
+def counted_cards(png: bytes, slots: Sequence[int], floor: float = COUNT_WHITE_RATIO) -> list[int]:
     """Which of these cards show an `xN` count, which is to say troops or spells.
 
     Heroes and the siege machine are the ones without it, which is what lets the
-    attack loop drop those and leave spells alone.
+    attack loop drop those and leave spells alone. `floor` is the builder
+    base's own line there; see `NIGHT_COUNT_WHITE_RATIO`.
     """
     image = open_frame(png)
     counted: list[int] = []
@@ -1385,7 +1395,7 @@ def counted_cards(png: bytes, slots: Sequence[int]) -> list[int]:
             < 60
             for i in range(0, len(data), 3)
         )
-        if white / (len(data) // 3) >= COUNT_WHITE_RATIO:
+        if white / (len(data) // 3) >= floor:
             counted.append(centre)
     return counted
 
