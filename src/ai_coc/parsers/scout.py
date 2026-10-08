@@ -397,7 +397,10 @@ ARMY_DIGIT_TOLERANCE = 22
 # gives that can be trusted. A counted card repaints its `xN` corner, and it does
 # so even where the number itself will not read: measured live, a corner whose
 # card lost something differs in 368 to 1139 of its pixels, and one whose card
-# did not differs in exactly none, selecting the card included.
+# did not differs in exactly none. Selecting a card was among those once, but a
+# builder base troop card losing the selection moved 598 on 2026-10-08, inside
+# that range, so whoever compares corners across a selection change has to set
+# it aside (`_wait_out_night` does).
 #
 # The red banner used to stand in for this and cannot. Measured live, a troop
 # tapped inside the boundary is as often swallowed in silence as it is answered

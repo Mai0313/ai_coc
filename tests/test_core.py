@@ -971,12 +971,34 @@ class NightAttackTests(unittest.TestCase):
             patch.object(runner, "_frame", return_value=b""),
             patch.object(attack, "battle_over", return_value=False),
             patch.object(attack, "card_drained", side_effect=[[], [307]]),
+            patch.object(attack, "selected_cards", return_value=[]),
             patch.object(attack, "battle_speed", return_value=None),
             patch.object(AdbController, "tap_many") as tapped,
         ):
             runner._wait_out_night([164], [307])
         # Two passes: the quiet one, then the repaint that ends it. The quiet
         # one offers the ability once a second for the length of the poll.
+        assert tapped.call_count == round(attack.ABILITY_POLL / attack.ABILITY_TAP)
+
+    def test_a_card_losing_the_selection_does_not_end_the_stage(self) -> None:
+        """An ability tap moves the selection, which repaints a card's corner too.
+
+        Measured 2026-10-08: a troop card let go of by one ended a second stage
+        still in its countdown, and the next three rounds met that battle.
+        """
+        runner = self._runner()
+        with (
+            patch.object(attack.time, "sleep"),
+            patch.object(runner, "_frame", return_value=b""),
+            patch.object(attack, "battle_over", return_value=False),
+            patch.object(attack, "card_drained", side_effect=[[1052], [1052]]),
+            # Selected in the first frame and not the second, then at rest in both.
+            patch.object(attack, "selected_cards", side_effect=[[1052], [], [], []]),
+            patch.object(attack, "battle_speed", return_value=None),
+            patch.object(AdbController, "tap_many") as tapped,
+        ):
+            runner._wait_out_night([164], [1052])
+        # The let-go is played through, and the repaint after it ends the stage.
         assert tapped.call_count == round(attack.ABILITY_POLL / attack.ABILITY_TAP)
 
     def test_the_head_start_offers_the_ability_every_second(self) -> None:
