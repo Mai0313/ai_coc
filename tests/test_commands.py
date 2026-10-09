@@ -981,6 +981,7 @@ class RoundLineTests(unittest.TestCase):
             "server_flapping": "又回到載入畫面",
             "emulator_silent": "模擬器沒有回應",
             "other_village": "遊戲停在另一個村莊",
+            "session_taken": "另一部裝置登入",
         }
         assert set(own) == set(get_args(AttackOutcome))
         for outcome, fragment in own.items():
@@ -1255,6 +1256,18 @@ class AttackSeriesArmyShortTests(unittest.TestCase):
             assert [report.outcome for report in rounds] == [freed]
             rest.assert_not_called()
 
+    def test_another_device_logging_in_ends_the_series_from_wherever_it_was_read(self) -> None:
+        """The player is on, and the next round's restart would log them out."""
+        fought = LootOffer(gold=1, elixir=1, dark=1)
+        rounds, rest = self._series([
+            AttackReport(outcome="took_loot", attacked=fought),
+            commands.SessionTakenError("taken"),
+            AttackReport(outcome="took_loot", attacked=fought),
+        ])
+        assert [report.outcome for report in rounds] == ["took_loot", "session_taken"]
+        assert rounds[-1].world == "day"
+        rest.assert_not_called()
+
     def test_a_round_that_found_nobody_still_comes_round_again(self) -> None:
         """Only those end it, besides a run of rounds that never opened the menu
         (`MENU_FAILURES`): every other empty round rests and retries.
@@ -1282,7 +1295,7 @@ class SettleGameTests(unittest.TestCase):
         park: bool = True,
         **screens: list[bool],
     ) -> tuple[MagicMock, DisplayTarget | None]:
-        """Poll against canned readings; `dropped`, `welcome` and `loading` are what each frame reads as."""
+        """Poll against canned readings; `dropped`, `taken`, `welcome` and `loading` are what each frame reads as."""
         adb = _adb()
         if displays is not None:
             adb.display_for.side_effect = displays
@@ -1292,6 +1305,7 @@ class SettleGameTests(unittest.TestCase):
             patch.object(
                 commands, "idle_disconnected", side_effect=screens.get("dropped") or [False] * 9
             ),
+            patch.object(commands, "refuse_taken", side_effect=screens.get("taken")),
             patch.object(
                 commands, "welcome_back", side_effect=screens.get("welcome") or [False] * 9
             ),
@@ -1368,6 +1382,11 @@ class SettleGameTests(unittest.TestCase):
         assert display is None
         assert adb.restarted.call_count == 1
         assert "session is dropped" in logged.output[-1]
+
+    def test_another_devices_session_is_left_to_it(self) -> None:
+        """The restart that answers the other dropped sessions would log the player out."""
+        with pytest.raises(commands.SessionTakenError):
+            self._settle([None], dropped=[True], taken=commands.SessionTakenError("taken"))
 
 
 class FrameTickerTests(unittest.TestCase):

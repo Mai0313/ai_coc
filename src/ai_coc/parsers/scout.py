@@ -710,6 +710,19 @@ SPEED_FAST_INK = 740
 IDLE_DIALOG_BOX = (400, 340, 1200, 560)
 IDLE_DIALOG_DARK = 0.7
 
+# 與伺服器連線中斷 / 另一部裝置正在連接到這座村莊, which is what the game shows when
+# the same account opens it somewhere else: the player's phone, or the other
+# emulator. It is the same sheet again, so `idle_disconnected` reads it too, and
+# the restart that answers the other two logs the other device out. The title
+# tells it apart: measured live on 2026-10-09 by opening the game on MuMu under
+# LDPlayer, once on the village and once mid-battle, its ink reaches x 658 on
+# every frame, against 531 for 還在嗎？ and 568 for 連線已中斷. The line closes
+# above too, because three committed fixtures painted black over the box read
+# as the sheet with other ink crossing the title row, at 1061 to 1197.
+SESSION_TITLE_BOX = (400, 360, 1200, 405)
+SESSION_TITLE_INK = 170
+SESSION_TAKEN_REACH = (613, 700)
+
 # 正在載入. The bar the game draws while it connects, which is where a game sits
 # when the server will not answer: measured twice in one night at 25 to 40
 # minutes each, with the fill never moving off 1%. The bar is UI painted over a
@@ -802,7 +815,8 @@ def idle_disconnected(png: bytes) -> bool:
     Two dialogs read here and both mean the same thing to a caller: the idle
     one (還在嗎, with 重新登入遊戲) and the lost-connection one (連線已中斷, with
     再試一次). Either way the session is gone and restarting the game is what
-    gets it back.
+    gets it back. A third reads here too and must not be restarted out of: see
+    `session_taken`.
     """
     data = open_frame(png).crop(IDLE_DIALOG_BOX).tobytes()
     panel = sum(
@@ -811,6 +825,26 @@ def idle_disconnected(png: bytes) -> bool:
         for i in range(0, len(data), 3)
     )
     return panel / (len(data) // 3) >= IDLE_DIALOG_DARK
+
+
+def session_taken(png: bytes) -> bool:
+    """Whether another device has logged in to this account and taken the session.
+
+    Answered by standing down, never by a restart: logging in again here is
+    what logs the player out of their phone. See `SESSION_TITLE_BOX`.
+    """
+    crop = open_frame(png).crop(SESSION_TITLE_BOX)
+    data = crop.tobytes()
+    reach = max(
+        (
+            i // 3 % crop.width
+            for i in range(0, len(data), 3)
+            if min(data[i], data[i + 1], data[i + 2]) > SESSION_TITLE_INK
+        ),
+        default=0,
+    )
+    low, high = SESSION_TAKEN_REACH
+    return low < SESSION_TITLE_BOX[0] + reach < high and idle_disconnected(png)
 
 
 def _purple(r: int, g: int, b: int) -> bool:

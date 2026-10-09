@@ -598,7 +598,7 @@ class MainWindow(QMainWindow):
         """
         if not self._stopping() or not self.automation_active:
             return False
-        logger.info("收到外部的停止要求(ai_coc stop)")
+        logger.info("收到外部的停止要求(ai_coc stop,或另一部裝置登入)")
         self.stop_automation()
         self.stop_seen = False
         return True
@@ -688,7 +688,13 @@ class MainWindow(QMainWindow):
             # the state file reads `running` across the three seconds between
             # one pass and the next instead of flickering to `idle` in each gap.
             with commands.claim(what, run.directory, WINDOW_CALLER):
-                return task(run)
+                try:
+                    return task(run)
+                # Latched like a stop, since the next pass's launch would log
+                # the player back in; `finished` then stands the cycle down.
+                except commands.SessionTakenError:
+                    self.stop_seen = True
+                    raise
 
         logger.info("%s", label)
         self.run_async(label, driving, answered, finished)
@@ -763,15 +769,16 @@ class MainWindow(QMainWindow):
                 logger.info("這一輪沒有打成任何一場")
                 return
             report = series.root[-1]
-            # Two outcomes end the run rather than the round, and the next pass
+            # Three outcomes end the run rather than the round, and the next pass
             # would only read the same village and come back here: a full
             # storage is the threshold being met, and an army under half the
             # camp is one only the player can re-arm, since training is instant.
+            # Another device logging in is the player being on, and the next
+            # pass's launch would log them out.
             # This is the only line saying why the automation switched itself
             # off — so it is the outcome's own sentence without the counts
-            # `round_line` appends, which neither round has anyway: both return
-            # before any opponent is scouted.
-            if report.stock_full or report.outcome == "army_short":
+            # `round_line` appends.
+            if report.stock_full or report.outcome in ("army_short", "session_taken"):
                 logger.info("%s", commands.ROUND_LINES[report.outcome])
                 self.stop_automation()
                 return

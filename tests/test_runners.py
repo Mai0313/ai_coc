@@ -63,7 +63,7 @@ from ai_coc.ui.attack import (
     onto_line,
     deploy_line,
 )
-from ai_coc.ui.runner import GameRunner, ScreenRunner
+from ai_coc.ui.runner import GameRunner, ScreenRunner, SessionTakenError
 from ai_coc.ui.upkeep import UpkeepRunner
 from ai_coc.adapters.ai import GeminiClient
 from ai_coc.adapters.adb import AdbController, AdbControlError
@@ -836,6 +836,7 @@ class OpenAttackMenuTests(unittest.TestCase):
             patch.object(
                 attack, "idle_disconnected", side_effect=screens.get("idle") or [False] * 20
             ),
+            patch.object(attack, "refuse_taken", side_effect=screens.get("taken")),
             patch.object(
                 attack, "loading_screen", side_effect=screens.get("loading") or [False] * 20
             ),
@@ -982,6 +983,11 @@ class OpenAttackMenuTests(unittest.TestCase):
         assert got == b"home"
         assert seen["runner"]._stuck is None
         seen["restarted"].assert_called_once()
+
+    def test_another_device_logging_in_is_refused_before_the_restart(self) -> None:
+        """The same sheet as a dropped session, whose restart would log the player out."""
+        with pytest.raises(SessionTakenError):
+            self._open("day", [], idle=[True], taken=SessionTakenError("taken"))
 
 
 class WaitOutLoadingTests(unittest.TestCase):
