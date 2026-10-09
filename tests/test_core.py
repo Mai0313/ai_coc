@@ -728,6 +728,25 @@ class NightAttackTests(unittest.TestCase):
         assert (report.world, report.phases) == ("night", 1)
         assert deployed.call_count == 1
 
+    def test_the_stages_played_before_another_device_took_over_still_count(self) -> None:
+        """`farm` counts this village's battles by `phases`.
+
+        Measured 2026-10-09: a round taken over in its second stage reported 0.
+        """
+        runner = self._runner()
+        with (
+            patch.object(AttackRunner, "_open_attack_menu", return_value=b""),
+            patch.object(attack, "read_builder_stock", return_value=None),
+            patch.object(AttackRunner, "_find_opponent", return_value=b""),
+            patch.object(AttackRunner, "_deploy_night", return_value=([164], [307])),
+            patch.object(
+                AttackRunner, "_wait_out_night", side_effect=[None, SessionTakenError("taken")]
+            ),
+            patch.object(AttackRunner, "_next_stage", return_value=b""),
+        ):
+            report = runner.run()
+        assert (report.outcome, report.phases) == ("session_taken", 2)
+
     def test_a_stage_another_device_took_over_is_left_at_once(self) -> None:
         """The card row shows through the dialog, which would read as a second stage."""
         runner = self._runner()
@@ -4360,6 +4379,27 @@ class AttackTests(unittest.TestCase):
             report = runner._run_day()
         assert [c.kwargs["leaving"] for c in scouted.call_args_list] == [None, poor.loot]
         assert report.attacked == rich.loot
+
+    def test_a_battle_another_device_took_over_still_counts_as_fought(self) -> None:
+        """`farm` counts the rounds that fought by `attacked`."""
+        runner = self._runner()
+        rich = ScoutView(loot=LootOffer(gold=900_000, elixir=900_000, dark=1), can_skip=False)
+        with (
+            patch.object(AttackRunner, "_open_attack_menu", return_value=b"home"),
+            patch.object(AttackRunner, "_stood_down", return_value=None),
+            patch.object(AttackRunner, "_army_short", return_value=False),
+            patch.object(AttackRunner, "_tap"),
+            patch.object(AttackRunner, "_scout", return_value=(rich, b"")),
+            patch.object(AttackRunner, "_deploy"),
+            patch.object(AttackRunner, "_wait_out_battle", side_effect=SessionTakenError("taken")),
+            patch.object(attack.time, "sleep"),
+        ):
+            report = runner._run_day()
+        assert (report.outcome, report.attacked, report.forced) == (
+            "session_taken",
+            rich.loot,
+            True,
+        )
 
     def test_a_search_that_ran_out_on_a_fading_frame_still_leaves_through_the_button(self) -> None:
         """A frame refused for still fading is an opponent all the same.

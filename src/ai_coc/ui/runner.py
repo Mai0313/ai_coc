@@ -158,6 +158,10 @@ class SessionTakenError(RuntimeError):
     """Another device logged in to the account, and the command stood down rather than log it out."""
 
 
+# What a command that stood down on it hands back as its answer.
+SESSION_TAKEN = "另一部裝置登入了這個帳號,沒有把登入搶回來"
+
+
 def refuse_taken(png: bytes) -> None:
     """Stand down on a session another device took, ahead of the restart a dropped one gets.
 
@@ -167,7 +171,7 @@ def refuse_taken(png: bytes) -> None:
     """
     if session_taken(png):
         logger.warning("Another device has logged in to this account; leaving the session to it")
-        raise SessionTakenError("另一部裝置登入了這個帳號,沒有把登入搶回來")
+        raise SessionTakenError(SESSION_TAKEN)
 
 
 def restart_game(adb: AdbController, display: DisplayTarget) -> DisplayTarget:
