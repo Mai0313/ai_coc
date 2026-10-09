@@ -67,6 +67,7 @@ from ai_coc.ui.runner import GameRunner, ScreenRunner, SessionTakenError
 from ai_coc.ui.upkeep import UpkeepRunner
 from ai_coc.adapters.ai import GeminiClient
 from ai_coc.adapters.adb import AdbController, AdbControlError
+from ai_coc.parsers.frame import open_frame
 
 FRAMES = Path(__file__).parent / "frames"
 DISPLAY = DisplayTarget(logical_id="1", physical_id="2")
@@ -309,6 +310,44 @@ class OpenedWalkTests(unittest.TestCase):
             assert shared.restart_game(adb, DISPLAY) == DISPLAY
         adb.stop_app.assert_called_with(COC_PACKAGE)
         adb.launch_app.assert_called_with(COC_PACKAGE)
+
+    def test_a_dropped_session_is_logged_in_through_its_own_button(self) -> None:
+        """A restart can bring LDPlayer's 儲值 promotion up; a tap keeps the game running."""
+        adb = MagicMock()
+        with (
+            patch.object(shared, "idle_disconnected", return_value=False),
+            patch.object(shared.time, "sleep"),
+        ):
+            assert shared.relogin(adb, DISPLAY) == DISPLAY
+        adb.tap.assert_called_once_with(*shared.RELOGIN_BUTTON, DISPLAY)
+        adb.stop_app.assert_not_called()
+
+    def test_a_button_that_did_not_clear_the_dialog_falls_back_on_a_restart(self) -> None:
+        adb = MagicMock()
+        fresh = DisplayTarget(logical_id="3", physical_id="4")
+        adb.display_for.return_value = fresh
+        with (
+            patch.object(shared, "idle_disconnected", return_value=True),
+            patch.object(shared, "session_taken", return_value=False),
+            patch.object(shared.time, "sleep"),
+        ):
+            assert shared.relogin(adb, DISPLAY) == fresh
+        adb.stop_app.assert_called_with(COC_PACKAGE)
+
+    def test_a_login_elsewhere_during_the_wait_is_not_restarted_over(self) -> None:
+        """The tap's own login logs the phone out, and the player can log straight back in."""
+        adb = MagicMock()
+        adb.screenshot.return_value = (FRAMES / "session_taken_battle.png").read_bytes()
+        with patch.object(shared.time, "sleep"), pytest.raises(SessionTakenError):
+            shared.relogin(adb, DISPLAY)
+        adb.stop_app.assert_not_called()
+
+    def test_the_button_is_where_both_dialogs_write_it(self) -> None:
+        x, y = shared.RELOGIN_BUTTON
+        for name in ("idle_dialog", "connection_lost"):
+            image = open_frame((FRAMES / f"{name}.png").read_bytes())
+            ink = [x0 for x0 in range(x - 30, x + 30) if min(image.getpixel((x0, y))) > 170]
+            assert ink, name
 
 
 class ClanRunnerTests(unittest.TestCase):
@@ -843,7 +882,7 @@ class OpenAttackMenuTests(unittest.TestCase):
             patch.object(attack, "battle_over", side_effect=screens.get("result") or [False] * 20),
             patch.object(attack, "current_world", side_effect=worlds),
             patch.object(attack, "uncovered") as cleared,
-            patch.object(attack, "restart_game", return_value=DISPLAY) as restarted,
+            patch.object(attack, "relogin", return_value=DISPLAY) as restarted,
             patch.object(runner, "_settle_ceilings") as ceilings,
             patch.object(
                 runner, "_visit_cart", side_effect=screens.get("trip") or (lambda home: home)
@@ -967,9 +1006,9 @@ class OpenAttackMenuTests(unittest.TestCase):
         seen["tapped"].assert_not_called()
 
     def test_a_restart_boots_through_the_loading_screen_and_that_is_a_fresh_wait(self) -> None:
-        """A wait that ended on the dropped-session dialog is answered with a restart.
+        """A wait that ended on the dropped-session dialog is answered with a login.
 
-        `restart_game` returns a couple of seconds before the village paints,
+        When `relogin` had to restart, it returns before the village paints,
         so the frame after it is 正在載入 again — a new load, not a loaded game
         dropped back, and refusing it there ended the round with a message
         about a server that had in fact just come back.

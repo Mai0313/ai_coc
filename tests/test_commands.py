@@ -1312,7 +1312,7 @@ class SettleGameTests(unittest.TestCase):
             patch.object(
                 commands, "loading_screen", side_effect=screens.get("loading") or [False] * 9
             ),
-            patch.object(commands, "restart_game", return_value=DISPLAY) as restarted,
+            patch.object(commands, "relogin", return_value=DISPLAY) as restarted,
             # `_settle_game` parks, and the park reads its own frames now.
             # None of these tests is about the park itself.
             patch.object(commands, "park_camera", return_value=True) as parked,

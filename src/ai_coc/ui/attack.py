@@ -37,7 +37,7 @@ from ai_coc.models import (
 from ai_coc.prompts import PROMPTS
 from ai_coc.ui.world import uncovered, collect_cart
 from ai_coc.constants import COC_PACKAGE
-from ai_coc.ui.runner import ScreenRunner, SessionTakenError, refuse_taken, restart_game
+from ai_coc.ui.runner import ScreenRunner, SessionTakenError, relogin, refuse_taken
 from ai_coc.adapters.adb import ZOOM_PINCHES
 from ai_coc.parsers.home import plate_count, plate_badges
 from ai_coc.parsers.field import view_shift
@@ -473,10 +473,8 @@ BATTLE_TIMEOUT = 240
 # left open by a stray tap, which back closes, and the idle-disconnect dialog,
 # which a loop that leaves the game sitting between rounds will certainly meet.
 # That one is
-# answered by restarting the game rather than by tapping its 重新登入遊戲 button:
-# the button reloads the game anyway, so the two cost the same seconds, and the
-# tap also costs a hard-coded position belonging to this emulator's resolution
-# alone. `ui.runner` owns the restart.
+# answered by its own 重新登入遊戲 button, with a restart only when the tap did not
+# clear it; `ui.runner`'s `relogin` owns both.
 # A battle that pays out a reward covers the village with it, and the card tears
 # itself open over about fifteen seconds before its 繼續 button appears. Nothing
 # can be read off those frames — measured over one payout, `battle_over`,
@@ -1252,12 +1250,12 @@ class AttackRunner(ScreenRunner):
             if idle_disconnected(home):
                 refuse_taken(home)
                 logger.info(
-                    "The session was dropped (idle, or the connection was lost); restarting"
+                    "The session was dropped (idle, or the connection was lost); logging in again"
                 )
-                self.display = restart_game(self.adb, self.display)
-                # A restart boots through 正在載入, and `restart_game` returns
-                # a couple of seconds before the village paints, so the next
-                # frame here is that screen: a fresh load, not a loaded game
+                self.display = relogin(self.adb, self.display)
+                # A login boots through 正在載入, and when `relogin` had to
+                # restart, it returns before the village paints, so the next
+                # frame here can be that screen: a fresh load, not a loaded game
                 # dropped back, and it gets a fresh wait. The attempts bound
                 # the round, not the stop.
                 waited = False

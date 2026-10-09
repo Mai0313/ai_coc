@@ -120,10 +120,20 @@ LOADING_PATIENCE = 10
 LOAD_WAIT = 2.0
 BACK_SETTLE = 1.2
 # Closing the game and opening it again, which is what the idle-disconnect
-# dialog is answered with. How long to leave between the two, and how much of
-# the reload to sit through before looking at the screen again.
+# dialog falls back on when its own button did not clear it. How long to leave
+# between the two, and how much of the reload to sit through before looking at
+# the screen again.
 RESTART_SETTLE = 2.0
 RELOAD_WAIT = 15.0
+# That button: 重新登入遊戲 on the idle dialog and 再試一次 on the lost-connection
+# one, written from the same left edge on the same row. Their text spans x
+# 421-544 and 421-502 at y 515-545 on `idle_dialog.png` and `connection_lost.png`.
+# Measured live on 2026-10-09 by tapping it on LDPlayer (on the takeover sheet,
+# whose 重新登入 is the same button): the sheet was gone 3.3 s later and the
+# village up at 5.3 s, with the game never restarted. The wait leaves room over
+# the 3.3 before the sheet still standing is taken for a tap that did nothing.
+RELOGIN_BUTTON = (460, 528)
+RELOGIN_WAIT = 8.0
 
 
 # Where to tap to drop a storage bar's 最大儲存量 tooltip open, one per bar down
@@ -174,14 +184,27 @@ def refuse_taken(png: bytes) -> None:
         raise SessionTakenError(SESSION_TAKEN)
 
 
+def relogin(adb: AdbController, display: DisplayTarget) -> DisplayTarget:
+    """Log a dropped session in again through its own button, restarting only when that did not.
+
+    A restart needs no coordinates, which is why it used to be the whole answer,
+    but a restarted game can come back under LDPlayer's 儲值 promotion, and the
+    user asked on 2026-10-09 for the button instead. The game keeps running
+    through a tap, so the display only moves when the restart was needed.
+    """
+    adb.tap(*RELOGIN_BUTTON, display)
+    time.sleep(RELOGIN_WAIT)
+    if not idle_disconnected(png := adb.screenshot(display)):
+        return display
+    # The player can log in elsewhere during the wait, the tap's own login
+    # having just logged them out, and the restart would take it back.
+    refuse_taken(png)
+    logger.info("The dialog's button did not clear it; restarting the game")
+    return restart_game(adb, display)
+
+
 def restart_game(adb: AdbController, display: DisplayTarget) -> DisplayTarget:
     """Close the game and open it again, and say which display it came back on.
-
-    This is how a dropped session is answered. The dialog offers 重新登入遊戲 and
-    tapping it does exactly this — the game reloads either way, so the two cost
-    the same seconds. What tapping it also costs is a hard-coded button position,
-    which belongs to this emulator at this resolution and to nothing else; going
-    through the package needs no coordinates at all.
 
     The display is resolved again because MuMu opens the game on a display of its
     own choosing and nothing promises it picks the same one. One that is not up
@@ -331,11 +354,11 @@ class GameRunner(ScreenRunner):
     """Captures, taps, and getting back to a village that can be tapped."""
 
     # Whether a village has ever read on this runner, which is what says the game
-    # has finished starting. Cleared when the game is restarted, since that is the
-    # one moment a cold launch can be under way again.
+    # has finished starting. Cleared when a dropped session is logged in again,
+    # since its reload is the one moment a launch can be under way again.
     _seen_village: bool = PrivateAttr(default=False)
     # Whether the camera has been put back this run. Cleared alongside the flag
-    # above and for the same reason: a restarted game does not come back at the
+    # above and for the same reason: a reloaded game does not come back at the
     # zoom everything was measured at.
     _settled: bool = PrivateAttr(default=False)
     # Whether `_home` gave up because the game is on the builder base, which is
@@ -485,16 +508,16 @@ class GameRunner(ScreenRunner):
         stay perfectly legible to the eye. A dialog gets 取消 — any dialog, since
         the only one that can be standing here is that exit prompt and 取消 is
         the harmless answer to every other one the game raises too. A dropped
-        session gets the game restarted; see `restart_game` for why not its own
-        button. One another device took is refused instead (`refuse_taken`).
+        session is logged in again (`relogin`). One another device took is
+        refused instead (`refuse_taken`).
         """
         night = False
         for attempt in range(HOME_TRIES):
             png = self._frame("home")
             if idle_disconnected(png):
                 refuse_taken(png)
-                logger.info("The session was dropped for idling; restarting the game")
-                self.display = restart_game(self.adb, self.display)
+                logger.info("The session was dropped; logging in again")
+                self.display = relogin(self.adb, self.display)
                 self._seen_village = False
                 self._settled = False
                 continue

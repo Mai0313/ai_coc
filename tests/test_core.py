@@ -6895,7 +6895,7 @@ class HomeTests(unittest.TestCase):
             patch.object(shared, "game_dialog", return_value=None),
             patch.object(shared, "read_stock", side_effect=[None, None, held]),
             patch.object(shared, "current_world", side_effect=[None, None, "day", "day"]),
-            patch.object(shared, "restart_game", return_value=run.display),
+            patch.object(shared, "relogin", return_value=run.display),
             patch.object(shared.GameRunner, "_settle_zoom") as settle,
             patch.object(AdbController, "back") as back,
         ):
@@ -6913,7 +6913,7 @@ class HomeTests(unittest.TestCase):
             patch.object(run, "_frame", return_value=b""),
             patch.object(shared, "idle_disconnected", return_value=True),
             patch.object(shared, "session_taken", return_value=True),
-            patch.object(shared, "restart_game") as restarted,
+            patch.object(shared, "relogin") as restarted,
             patch.object(AdbController, "back") as back,
             patch.object(AdbController, "tap") as tapped,
             pytest.raises(SessionTakenError),
