@@ -144,9 +144,9 @@ from .ui.runner import (
     SESSION_TAKEN,
     ScreenRunner,
     SessionTakenError,
+    relogin,
     spell_out,
     refuse_taken,
-    restart_game,
 )
 from .ui.upkeep import UpkeepRunner
 
@@ -1138,7 +1138,7 @@ def _settle_game(
     park there only came before the cart visit's own on the builder base.
     """
     waiting = "nothing was tried"
-    restarted = False
+    relogged = False
     for _ in range(polls):
         # Checked inside the wait rather than only around it: this is the
         # longest stretch of a run where nothing else reads the state, and a
@@ -1184,18 +1184,18 @@ def _settle_game(
                 return display
             # A session the server dropped would otherwise sit under its dialog
             # for the whole wait, since nothing else here answers one. Once,
-            # because a restart that lands back on the dialog is the server
+            # because a login that lands back on the dialog is the server
             # still down, and the loading screen after it is the state to wait
             # in rather than restart out of: measured across two outages,
             # neither a game nor an emulator restart shortened one.
             if idle_disconnected(png):
                 refuse_taken(png)
-                waiting = "the session is dropped and the one restart did not clear it"
-                if not restarted:
-                    logger.warning("The session was dropped; restarting the game")
-                    restart_game(adb, display)
-                    restarted = True
-                    waiting = "the game is being restarted"
+                waiting = "the session is dropped and the one login did not clear it"
+                if not relogged:
+                    logger.warning("The session was dropped; logging in again")
+                    relogin(adb, display)
+                    relogged = True
+                    waiting = "the game is logging in again"
             # The raid report the game opens on after the village was attacked,
             # which nothing else here answers either.
             elif welcome_back(png):

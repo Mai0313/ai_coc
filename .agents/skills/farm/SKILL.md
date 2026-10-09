@@ -132,7 +132,7 @@ uv run ai_coc attack --repeat 0 --plan src/ai_coc/plans/night_flat.json --yield
 
 - 每輪 `skipped` 都是幾十: 門檻對現在的獎盃區間太高, 提一句
 - **入庫的進帳遠小於 `attacked`**: 進攻打不動人家, 是 watch-and-fix 的題目, 這裡只報告. 看落差而不是 `attacked` 大不大 (它只說對手**擺出**多少, 見「數字從哪來, 不准編」)
-- `The session was dropped`: `ui/runner.py` 的 `restart_game` 自己會重開遊戲回到村莊 (閒置斷線跟 連線已中斷 都是). 一直重複才要查
+- `The session was dropped`: `ui/runner.py` 的 `relogin` 自己會點對話框的按鈕重新登入回到村莊, 點了沒用才重開遊戲 (閒置斷線跟 連線已中斷 都是; log 有 `did not clear it; restarting the game` 就是重開了). 一直重複才要查
 - `waiting for the server rather than tapping`: 卡在載入畫面, 伺服器的事. 迴圈每次載入最多等 45 分鐘; 等不到的那輪是 `server_loading` (等滿) 或 `server_flapping` (載入完又掉回去). **不要**重開遊戲或模擬器, 量過兩次都是自己回來的. 連續兩輪都是這兩種再停下來講
 - `The camera was not at the far zoom` (**只在主村**): 那一輪多半白打. 迴圈每場自己會 pinch 回去, 連著出現才去看畫面; 手動修是先停迴圈再 `ai_coc view --zoom out`. 夜世界不做這個判斷, 沒這條不代表那邊的鏡頭是對的
 

@@ -15,7 +15,7 @@
 **`launch` 等村莊** (`_settle_game`) 有三處會出錯:
 
 - **等太短.** 冷開機時間差很多, `RESTART_POLLS` 照最壞情況抓; 每次 poll 在 DEBUG 寫下還在等什麼 (要 `COC_LOG_LEVEL=DEBUG`), 平常只看得到放棄那一行冒號後面的最後狀態.
-- **鏡頭沒回到最遠處.** 重開成功, 然後連兩輪英雄一張都沒下去, 兵卡也都還有貨 (當時的 log 是 `0 of 4 hero card(s) landed` 跟 `3 troop card(s) still hold something`; 現在英雄那行寫成 `After the burst: N of N one-off card(s) never landed` 接 `0 of N retry card(s) landed at`). `launch` 收尾會 pinch, 沒 pinch 的是掉線後 `_open_attack_menu` 叫的 `restart_game`. 確認方法見「整場一隻兵都沒下去」.
+- **鏡頭沒回到最遠處.** 重開成功, 然後連兩輪英雄一張都沒下去, 兵卡也都還有貨 (當時的 log 是 `0 of 4 hero card(s) landed` 跟 `3 troop card(s) still hold something`; 現在英雄那行寫成 `After the burst: N of N one-off card(s) never landed` 接 `0 of N retry card(s) landed at`). `launch` 收尾會 pinch, 沒 pinch 的是掉線後 `_open_attack_menu` 叫的 `relogin` (點按鈕重新登入跟重開遊戲都會重新載入). 確認方法見「整場一隻兵都沒下去」.
 - **等的是畫完而不是哪個村莊.** `_settle_game` 只問 `current_world` 讀不讀得出 (不用 `read_stock`, 它在兩個世界都答得出來, 分不出是哪一個), 兩個世界都算; 落在另一邊 attack 回 `other_village`, 主村指令回 `builder_base`. 載入時倉庫水位是從零跑上來的動畫, 那時讀到的數字不能回報.
 
 ## 開不了攻擊選單
@@ -26,7 +26,7 @@
 
 三個常被懷疑的原因:
 
-- 掉線: `idle_disconnected` 認 (閒置跟 連線已中斷 都算), `restart_game` 重開並重新解析 display. 但每次重開連同接下來的載入畫面大約佔兩次 `HOME_ATTEMPTS`, 所以反覆掉線三次左右就會報成 `no_attack_menu`. 手機搶登不走這條: 同一張對話框, `session_taken` 認得出來, 不重開, 報成 `session_taken`.
+- 掉線: `idle_disconnected` 認 (閒置跟 連線已中斷 都算), `relogin` 點對話框的按鈕重新登入, 點了沒用才 `restart_game` 重開並重新解析 display. 但每次重新登入連同接下來的載入畫面大約佔兩次 `HOME_ATTEMPTS`, 所以反覆掉線三次左右就會報成 `no_attack_menu`. 手機搶登不走這條: 同一張對話框, `session_taken` 認得出來, 不重開, 報成 `session_taken`.
 - 伺服器 (不會報成這個): `loading_screen` 認, `_wait_out_loading` 等 (每次載入一次, 最多 45 分鐘), outcome 是 `server_loading` 或 `server_flapping`.
 - 站錯村莊 (不會報成這個): `_open_attack_menu` 先問 `current_world`, 連兩張是另一個村莊就回 `other_village`, 不坐船.
 
@@ -120,7 +120,7 @@
 
 先在 log 找 `The camera was not at the far zoom`: 所有座標都在最遠的 zoom 量, 鏡頭拉近就全部安靜地落空. **這條警告只在主村問** (高度門檻拿主村量的, 夜世界每張都比它短, 換門檻也分不開), 夜世界沒有它不代表鏡頭沒問題, 直接看下面兩段.
 
-**`launch` 不是嫌疑人** (收尾會 pinch); 沒 pinch 的是 `restart_game` 跟任何在迴圈外動過鏡頭的東西.
+**`launch` 不是嫌疑人** (收尾會 pinch); 沒 pinch 的是 `relogin` 跟任何在迴圈外動過鏡頭的東西.
 
 遊戲不報 zoom, 所以 `_settle_zoom` 每場先拉遠一次, 順手量村莊高度: 被上下切掉就偏矮, 健康 500 到 572, 出事那輪 411. 寬度不能用, 對手本來就不一樣寬.
 
