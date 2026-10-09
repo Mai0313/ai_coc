@@ -1682,6 +1682,21 @@ class SurveyRunnerTests(unittest.TestCase):
     def _map(self) -> commands._MapSurvey:
         return commands._MapSurvey(adb=_controller(), display=DISPLAY, thresholds=LootThresholds())
 
+    def test_a_survey_another_device_took_over_stands_down(self) -> None:
+        """Otherwise it hands back rays measured under the dialog and exits 0."""
+        taken = AttackReport(outcome="session_taken")
+        for command, survey in (
+            (commands.probe, commands._BoundarySurvey),
+            (commands.bounds, commands._MapSurvey),
+        ):
+            with (
+                patch.object(commands, "_session", return_value=(_controller(), DISPLAY)),
+                patch.object(commands, "_village_now", return_value="day"),
+                patch.object(survey, "run", return_value=taken),
+                pytest.raises(commands.SessionTakenError),
+            ):
+                command()
+
     def test_a_ray_agrees_when_the_inside_drop_is_refused_and_the_outside_one_lands(self) -> None:
         runner = self._boundary()
         with (

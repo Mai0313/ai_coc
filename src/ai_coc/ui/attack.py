@@ -37,7 +37,7 @@ from ai_coc.models import (
 from ai_coc.prompts import PROMPTS
 from ai_coc.ui.world import uncovered, collect_cart
 from ai_coc.constants import COC_PACKAGE
-from ai_coc.ui.runner import ScreenRunner, refuse_taken, restart_game
+from ai_coc.ui.runner import ScreenRunner, SessionTakenError, refuse_taken, restart_game
 from ai_coc.adapters.adb import ZOOM_PINCHES
 from ai_coc.parsers.home import plate_count, plate_badges
 from ai_coc.parsers.field import view_shift
@@ -2632,6 +2632,17 @@ class AttackRunner(ScreenRunner):
         logger.info("%d card(s) still hold something; emptying them", len(extra))
         self._cast(extra, tuple(self._line), self._last)
 
+    def _fought(self, opening: LootOffer) -> AttackOutcome:
+        """How the battle went, a takeover by another device included.
+
+        Answered here rather than left to `commands._round`, so the round still
+        carries the opponent it fought: `farm` counts battles by `attacked`.
+        """
+        try:
+            return self._outcome(self._wait_out_battle(opening))
+        except SessionTakenError:
+            return "session_taken"
+
     def _outcome(self, took: bool) -> AttackOutcome:
         """How a battle that was actually fought is reported.
 
@@ -3114,7 +3125,12 @@ class AttackRunner(ScreenRunner):
             if deployed is None:
                 break
             played += 1
-            self._wait_out_night(*deployed)
+            # The stages already played count, as `phases` is what `farm`
+            # counts this village's battles by.
+            try:
+                self._wait_out_night(*deployed)
+            except SessionTakenError:
+                return AttackReport(world="night", phases=played, outcome="session_taken")
             following = self._next_stage()
             if following is None:
                 break
@@ -3253,12 +3269,11 @@ class AttackRunner(ScreenRunner):
                 # it — restating `can_skip` here would be the same bit twice.
                 logger.info("Attacking after %d skips (forced=%s)", skipped, forced)
                 self._deploy(frame)
-                took = self._wait_out_battle(view.loot)
                 return AttackReport(
                     skipped=skipped + self._swapped,
                     attacked=view.loot,
                     forced=forced,
-                    outcome=self._outcome(took),
+                    outcome=self._fought(view.loot),
                 )
             if stopping or skipped >= self.max_skips:
                 self._tap(END_BATTLE)

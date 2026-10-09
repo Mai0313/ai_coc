@@ -140,7 +140,14 @@ from .ui.walls import WallRunner
 from .ui.world import cross, uncovered, park_camera, collect_cart
 from .ui.attack import CARD_ROW_Y, DROP_SETTLE, BATTLE_TIMEOUT, SINGLE_DROP_DELAY, AttackRunner
 from .ui.plates import PlateRunner
-from .ui.runner import ScreenRunner, SessionTakenError, spell_out, refuse_taken, restart_game
+from .ui.runner import (
+    SESSION_TAKEN,
+    ScreenRunner,
+    SessionTakenError,
+    spell_out,
+    refuse_taken,
+    restart_game,
+)
 from .ui.upkeep import UpkeepRunner
 
 if TYPE_CHECKING:
@@ -1318,7 +1325,8 @@ def _round(runner: AttackRunner, series: AttackSeries) -> AttackReport | None:
         return None
     except AdbControlError as exc:
         return _lost_round(runner, series, exc)
-    # From anywhere in the round, a battle included; `_series_over` ends on it.
+    # Read before the battle; one read during it the runner reports itself, so
+    # the round keeps the battle it fought. `_series_over` ends on either.
     except SessionTakenError:
         return AttackReport(world=runner.world, outcome="session_taken")
     runner.lost = 0
@@ -1647,6 +1655,17 @@ class _BoundarySurvey(AttackRunner):
             )
 
 
+def _survey_battle(runner: AttackRunner) -> None:
+    """Spend a survey's battle, standing down like any other command if another device takes it.
+
+    The round reports a takeover as an outcome, which a survey would otherwise
+    ignore: it handed back rays measured under the dialog and exited 0, leaving
+    a borrower nothing that says to run `ai_coc stop` rather than give back.
+    """
+    if runner.run().outcome == "session_taken":
+        raise SessionTakenError(SESSION_TAKEN)
+
+
 def probe(frame_dir: Path | None = None) -> BoundarySurvey:
     """Survey where drops are really accepted, and compare it to what the reader says.
 
@@ -1661,7 +1680,7 @@ def probe(frame_dir: Path | None = None) -> BoundarySurvey:
     runner = _BoundarySurvey(
         adb=adb, display=display, thresholds=LootThresholds(), frame_dir=frame_dir
     )
-    runner.run()
+    _survey_battle(runner)
     logger.info(
         "Boundary survey: %s", SURVEY_LINES["surveyed"].format(result=runner.survey.agreement)
     )
@@ -1755,7 +1774,7 @@ def bounds(frame_dir: Path | None = None) -> MapSurvey:
         logger.warning("Map survey: %s", SURVEY_LINES[survey.outcome])
         return survey
     runner = _MapSurvey(adb=adb, display=display, thresholds=LootThresholds(), frame_dir=frame_dir)
-    runner.run()
+    _survey_battle(runner)
     logger.info("Map survey: %s", SURVEY_LINES["surveyed"].format(result=runner.survey.summary))
     return runner.survey
 
