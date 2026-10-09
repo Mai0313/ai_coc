@@ -109,7 +109,7 @@ description: >-
 
 先認得正常的樣子: 那天連拍到的遊戲啟動, 頭十幾秒依序是 Play 遊戲的登入橫幅、SUPERCELL 標誌, **大約第 9 秒會跳回桌面一兩秒**, 然後遊戲自己回來. 所以一張桌面不代表失敗, 連拍十幾秒再判斷.
 
-處理: log 前面有 `The session was dropped; restarting the game` 的話, 先問使用者是不是正在手機上玩: 重跑會把登入搶回來, 把他踢掉 (`AGENTS.md` 的 Driving the game). 不是, 就再跑一次 `ai_coc launch`. 那天出事的那一次就有這一行, 而且剛好是設定剛被洗成新機器之後; 當時沒留畫面, 原因沒查到, 之後重跑都正常. 再遇到就連拍留證據.
+處理: log 前面有 `The session was dropped; logging in again` 的話 (那天的版本寫的是 `The session was dropped; restarting the game`), 先問使用者是不是正在手機上玩: 重跑會把登入搶回來, 把他踢掉 (`AGENTS.md` 的 Driving the game). 不是, 就再跑一次 `ai_coc launch`. 那天出事的那一次就有這一行, 而且剛好是設定剛被洗成新機器之後; 當時沒留畫面, 原因沒查到, 之後重跑都正常. 再遇到就連拍留證據.
 
 ## 乾淨的重開
 
