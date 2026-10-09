@@ -718,7 +718,8 @@ IDLE_DIALOG_DARK = 0.7
 # LDPlayer, once on the village and once mid-battle, its ink reaches x 658 on
 # every frame, against 531 for 還在嗎？ and 568 for 連線已中斷. The line closes
 # above too, because three committed fixtures painted black over the box read
-# as the sheet with other ink crossing the title row, at 1061 to 1197.
+# as the sheet with other ink crossing the title row, at 1061 to 1197. `back`
+# pressed at the sheet does nothing, tried live the same day.
 SESSION_TITLE_BOX = (400, 360, 1200, 405)
 SESSION_TITLE_INK = 170
 SESSION_TAKEN_REACH = (613, 700)
