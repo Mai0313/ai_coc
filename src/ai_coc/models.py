@@ -1081,7 +1081,9 @@ class NightPlan(BaseModel):
 # the whole 45-minute wait and `server_flapping` is it loading and dropping
 # back. `emulator_silent` is ADB not answering, and `other_village` is the game
 # standing on the village this series does not play, which ends it: nothing here
-# sails, and `ai_coc world --go` is how the game gets moved.
+# sails, and `ai_coc world --go` is how the game gets moved. `session_taken` is
+# another device logging in to the account, between rounds or mid-battle, which
+# ends the series too: the player is on, and logging back in would log them out.
 AttackOutcome = Literal[
     "took_loot",
     "deployed",
@@ -1100,6 +1102,7 @@ AttackOutcome = Literal[
     "server_flapping",
     "emulator_silent",
     "other_village",
+    "session_taken",
 ]
 
 

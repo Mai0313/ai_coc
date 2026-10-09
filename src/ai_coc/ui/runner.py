@@ -28,6 +28,7 @@ from ai_coc.adapters.adb import ZOOM_PINCHES, AdbController, AdbControlError
 from ai_coc.parsers.home import STORAGE_BARS
 from ai_coc.parsers.scout import (
     read_stock,
+    session_taken,
     loading_screen,
     storage_capacity,
     idle_disconnected,
@@ -151,6 +152,22 @@ def spell_out(seconds: int) -> str:
     if hours:
         return f"{hours} 小時 {minutes} 分鐘"
     return f"{minutes} 分鐘"
+
+
+class SessionTakenError(RuntimeError):
+    """Another device logged in to the account, and the command stood down rather than log it out."""
+
+
+def refuse_taken(png: bytes) -> None:
+    """Stand down on a session another device took, ahead of the restart a dropped one gets.
+
+    The sheet is the dropped session's, and that restart is what would log the
+    player out of their phone. Raised rather than returned, because it ends the
+    whole command from wherever it is read, a battle included.
+    """
+    if session_taken(png):
+        logger.warning("Another device has logged in to this account; leaving the session to it")
+        raise SessionTakenError("另一部裝置登入了這個帳號,沒有把登入搶回來")
 
 
 def restart_game(adb: AdbController, display: DisplayTarget) -> DisplayTarget:
@@ -465,12 +482,13 @@ class GameRunner(ScreenRunner):
         the only one that can be standing here is that exit prompt and 取消 is
         the harmless answer to every other one the game raises too. A dropped
         session gets the game restarted; see `restart_game` for why not its own
-        button.
+        button. One another device took is refused instead (`refuse_taken`).
         """
         night = False
         for attempt in range(HOME_TRIES):
             png = self._frame("home")
             if idle_disconnected(png):
+                refuse_taken(png)
                 logger.info("The session was dropped for idling; restarting the game")
                 self.display = restart_game(self.adb, self.display)
                 self._seen_village = False

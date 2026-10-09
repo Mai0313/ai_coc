@@ -140,7 +140,7 @@ from .ui.walls import WallRunner
 from .ui.world import cross, uncovered, park_camera, collect_cart
 from .ui.attack import CARD_ROW_Y, DROP_SETTLE, BATTLE_TIMEOUT, SINGLE_DROP_DELAY, AttackRunner
 from .ui.plates import PlateRunner
-from .ui.runner import ScreenRunner, spell_out, restart_game
+from .ui.runner import ScreenRunner, SessionTakenError, spell_out, refuse_taken, restart_game
 from .ui.upkeep import UpkeepRunner
 
 if TYPE_CHECKING:
@@ -1182,6 +1182,7 @@ def _settle_game(
             # in rather than restart out of: measured across two outages,
             # neither a game nor an emulator restart shortened one.
             if idle_disconnected(png):
+                refuse_taken(png)
                 waiting = "the session is dropped and the one restart did not clear it"
                 if not restarted:
                     logger.warning("The session was dropped; restarting the game")
@@ -1277,6 +1278,7 @@ ROUND_LINES: dict[AttackOutcome, str] = {
     "server_flapping": "遊戲又回到載入畫面,伺服器可能還連不上,這一輪停手",
     "emulator_silent": "模擬器沒有回應",
     "other_village": "遊戲停在另一個村莊,這一批不打那邊;換村莊用 ai_coc world --go",
+    "session_taken": "另一部裝置登入了這個帳號,沒有把登入搶回來,停止刷資源",
 }
 
 
@@ -1300,7 +1302,7 @@ def round_line(report: AttackReport) -> str:
 
 
 def _round(runner: AttackRunner, series: AttackSeries) -> AttackReport | None:
-    """One round, with both of the ways it can end badly folded in. None ends the series.
+    """One round, with the ways it can end badly folded in. None ends the series.
 
     The two are not the same kind of thing and they are here together because
     the caller does the same thing with either: a `KeyboardInterrupt` is a
@@ -1316,6 +1318,9 @@ def _round(runner: AttackRunner, series: AttackSeries) -> AttackReport | None:
         return None
     except AdbControlError as exc:
         return _lost_round(runner, series, exc)
+    # From anywhere in the round, a battle included; `_series_over` ends on it.
+    except SessionTakenError:
+        return AttackReport(world=runner.world, outcome="session_taken")
     runner.lost = 0
     return report
 
@@ -1373,13 +1378,14 @@ def _lost_round(
 def _series_over(report: AttackReport, played: int) -> bool:
     """Whether this round's outcome stands the whole series down, and says why.
 
-    Five outcomes do, and all are read off the village before the search fee
-    is charged. A full storage is the goal being met, and `farm` owns where that
-    leads; there is nothing left for the round loop to farm for either way. An
-    idle builder or research slot on a run asked to watch them is the other
-    goal. The game
+    Six outcomes do. A full storage is the goal being met, and `farm` owns where
+    that leads; there is nothing left for the round loop to farm for either
+    way. An idle builder or research slot on a run asked to watch them is the
+    other goal. The game
     standing on the other village is the third: nothing here sails, so every
-    round after would find it there too.
+    round after would find it there too. Another device logging in, the one of
+    these that can come mid-battle, is the fourth: the player is on, and the
+    next round would log them out.
 
     **An army short of the camp is the last one, and it is a fault rather than
     a goal.** The wait between rounds was written for an army still training,
@@ -1395,7 +1401,7 @@ def _series_over(report: AttackReport, played: int) -> bool:
     if report.stock_full:
         logger.info("The storages are full; there is nothing left to farm for")
         return True
-    if report.outcome in ("builder_free", "lab_free", "other_village"):
+    if report.outcome in ("builder_free", "lab_free", "other_village", "session_taken"):
         return True
     if report.outcome == "army_short":
         logger.error(

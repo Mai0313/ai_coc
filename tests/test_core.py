@@ -106,7 +106,7 @@ from ai_coc.ui.attack import (
     single_spots,
     deploy_candidates,
 )
-from ai_coc.ui.runner import SWEEP_X, SWEEP_Y, SWEEP_LIMIT, SWEEP_STAGGER
+from ai_coc.ui.runner import SWEEP_X, SWEEP_Y, SWEEP_LIMIT, SWEEP_STAGGER, SessionTakenError
 from ai_coc.ui.upkeep import UpkeepRunner
 from ai_coc.adapters.ai import GeminiClient
 from ai_coc.adapters.adb import (
@@ -180,6 +180,7 @@ from ai_coc.parsers.scout import (
     _dimmed_floor,
     army_strength,
     counted_cards,
+    session_taken,
     loading_screen,
     loot_cart_load,
     loot_cart_open,
@@ -727,6 +728,22 @@ class NightAttackTests(unittest.TestCase):
         assert (report.world, report.phases) == ("night", 1)
         assert deployed.call_count == 1
 
+    def test_a_stage_another_device_took_over_is_left_at_once(self) -> None:
+        """The card row shows through the dialog, which would read as a second stage."""
+        runner = self._runner()
+        with (
+            patch.object(attack.time, "sleep"),
+            patch.object(runner, "_frame", return_value=b""),
+            patch.object(attack, "battle_over", return_value=False),
+            patch.object(attack, "refuse_taken", side_effect=SessionTakenError("taken")),
+            patch.object(attack, "card_drained") as drained,
+            patch.object(AdbController, "tap_many") as tapped,
+            pytest.raises(SessionTakenError),
+        ):
+            runner._wait_out_night([164], [307])
+        drained.assert_not_called()
+        tapped.assert_not_called()
+
     def test_a_second_stage_puts_the_army_down_again(self) -> None:
         """**Nothing predicts it.** The game offers a second base after a first attack
 
@@ -973,6 +990,7 @@ class NightAttackTests(unittest.TestCase):
             patch.object(attack.time, "sleep"),
             patch.object(runner, "_frame", return_value=b""),
             patch.object(attack, "battle_over", return_value=False),
+            patch.object(attack, "refuse_taken"),
             patch.object(attack, "card_drained", side_effect=[[], [307]]),
             patch.object(attack, "selected_cards", return_value=[]),
             patch.object(attack, "battle_speed", return_value=None),
@@ -994,6 +1012,7 @@ class NightAttackTests(unittest.TestCase):
             patch.object(attack.time, "sleep"),
             patch.object(runner, "_frame", return_value=b""),
             patch.object(attack, "battle_over", return_value=False),
+            patch.object(attack, "refuse_taken"),
             patch.object(attack, "card_drained", side_effect=[[1052], [1052]]),
             # Selected in the first frame and not the second, then at rest in both.
             patch.object(attack, "selected_cards", side_effect=[[1052], [], [], []]),
@@ -1021,6 +1040,7 @@ class NightAttackTests(unittest.TestCase):
             patch.object(attack.time, "sleep"),
             patch.object(runner, "_frame", return_value=b""),
             patch.object(attack, "battle_over", side_effect=[False, True]),
+            patch.object(attack, "refuse_taken"),
             patch.object(attack, "battle_speed", return_value=None),
             patch.object(AdbController, "tap_many"),
         ):
@@ -1034,6 +1054,7 @@ class NightAttackTests(unittest.TestCase):
             patch.object(runner, "_frame", return_value=b""),
             patch.object(runner, "_tap") as tapped,
             patch.object(attack, "battle_over", side_effect=[False] * 3 + [True]),
+            patch.object(attack, "refuse_taken"),
             patch.object(attack, "battle_speed", side_effect=[1, 4, 4]),
             patch.object(AdbController, "tap_many"),
         ):
@@ -2262,6 +2283,22 @@ class ScoutTests(unittest.TestCase):
         png = (FRAMES / "connection_lost.png").read_bytes()
         assert idle_disconnected(png)
         assert not loading_screen(png)
+
+    def test_another_device_logging_in_is_told_apart_from_a_dropped_session(self) -> None:
+        """與伺服器連線中斷 / 另一部裝置正在連接到這座村莊 is the same sheet again.
+
+        Captured live on 2026-10-09, mid-battle, by opening the game on MuMu
+        under LDPlayer. Its title is the long one, and every other fixture that
+        reads as the sheet, the two dialogs a restart answers included, is not
+        this.
+        """
+        taken = (FRAMES / "session_taken_battle.png").read_bytes()
+        assert idle_disconnected(taken)
+        assert session_taken(taken)
+        for path in FRAMES.glob("*.png"):
+            if path.name != "session_taken_battle.png":
+                assert not session_taken(path.read_bytes()), path.name
+        assert idle_disconnected((FRAMES / "idle_dialog.png").read_bytes())
 
     def test_an_event_reward_page_is_not_a_result_screen(self) -> None:
         """A page of green tick marks, one of which lands in the 回營 box.
@@ -4393,6 +4430,7 @@ class AttackTests(unittest.TestCase):
         with (
             patch.object(AttackRunner, "_frame", return_value=b""),
             patch.object(AttackRunner, "_tap"),
+            patch.object(attack, "refuse_taken"),
             patch.object(attack, "read_scout", side_effect=readings),
             patch.object(
                 attack,
@@ -4406,6 +4444,26 @@ class AttackTests(unittest.TestCase):
             runner._battle_ended("ability")
             return runner._wait_out_battle(opening), runner
 
+    def test_a_battle_another_device_took_over_is_left_at_once(self) -> None:
+        """Measured 2026-10-09: waited out, it took 240 s and was reported as having taken loot."""
+        runner = self._runner()
+        panel = ScoutView(loot=LootOffer(gold=1, elixir=1, dark=1), can_skip=False)
+        with (
+            patch.object(AttackRunner, "_frame", return_value=b""),
+            patch.object(AttackRunner, "_tap") as tapped,
+            patch.object(AttackRunner, "_leave_result") as left,
+            patch.object(attack, "read_scout", return_value=panel),
+            patch.object(attack, "battle_over", return_value=False),
+            patch.object(attack, "refuse_taken", side_effect=[None, SessionTakenError("taken")]),
+            patch.object(attack, "battle_speed", return_value=None),
+            patch.object(attack.time, "sleep") as slept,
+            pytest.raises(SessionTakenError),
+        ):
+            runner._wait_out_battle(panel.loot)
+        assert slept.call_count == 2
+        tapped.assert_not_called()
+        left.assert_not_called()
+
     def test_the_last_minute_is_put_on_4x_once(self) -> None:
         """The button toggles, so a second tap would put the battle back on 1x."""
         runner = self._runner()
@@ -4413,6 +4471,7 @@ class AttackTests(unittest.TestCase):
         with (
             patch.object(AttackRunner, "_frame", return_value=b""),
             patch.object(AttackRunner, "_tap") as tapped,
+            patch.object(attack, "refuse_taken"),
             patch.object(attack, "read_scout", return_value=panel),
             # Four polls of the battle, the result screen, and it gone on the first tap.
             patch.object(attack, "battle_over", side_effect=[False] * 4 + [True, False]),
@@ -6791,6 +6850,7 @@ class HomeTests(unittest.TestCase):
             patch.object(
                 shared, "idle_disconnected", side_effect=[True, False, False, False, False]
             ),
+            patch.object(shared, "session_taken", return_value=False),
             patch.object(shared, "loading_screen", return_value=False),
             patch.object(shared, "game_dialog", return_value=None),
             patch.object(shared, "read_stock", side_effect=[None, None, held]),
@@ -6805,6 +6865,23 @@ class HomeTests(unittest.TestCase):
         # at the zoom everything was measured at, and the run above had
         # already settled it once.
         assert settle.call_count == 1
+
+    def test_another_devices_session_is_left_to_it(self) -> None:
+        """The restart that answers the other dropped sessions would log the player out."""
+        run = self._runner()
+        with (
+            patch.object(run, "_frame", return_value=b""),
+            patch.object(shared, "idle_disconnected", return_value=True),
+            patch.object(shared, "session_taken", return_value=True),
+            patch.object(shared, "restart_game") as restarted,
+            patch.object(AdbController, "back") as back,
+            patch.object(AdbController, "tap") as tapped,
+            pytest.raises(SessionTakenError),
+        ):
+            run._home()
+        restarted.assert_not_called()
+        back.assert_not_called()
+        tapped.assert_not_called()
 
 
 class WallOutcomeTests(unittest.TestCase):

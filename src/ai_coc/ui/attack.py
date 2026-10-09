@@ -37,7 +37,7 @@ from ai_coc.models import (
 from ai_coc.prompts import PROMPTS
 from ai_coc.ui.world import uncovered, collect_cart
 from ai_coc.constants import COC_PACKAGE
-from ai_coc.ui.runner import ScreenRunner, restart_game
+from ai_coc.ui.runner import ScreenRunner, refuse_taken, restart_game
 from ai_coc.adapters.adb import ZOOM_PINCHES
 from ai_coc.parsers.home import plate_count, plate_badges
 from ai_coc.parsers.field import view_shift
@@ -1250,6 +1250,7 @@ class AttackRunner(ScreenRunner):
         for _ in range(HOME_ATTEMPTS):
             home = self._frame("home")
             if idle_disconnected(home):
+                refuse_taken(home)
                 logger.info(
                     "The session was dropped (idle, or the connection was lost); restarting"
                 )
@@ -2557,6 +2558,10 @@ class AttackRunner(ScreenRunner):
             # The result screen is the first one with no loot panel on it.
             if self._battle_ended("battle"):
                 break
+            # The battle carries on under the dialog with nobody here to see it,
+            # and the loot panel read through the dimming, so waiting it out
+            # reported a round the player took over as one that took loot.
+            refuse_taken(self._last)
             # The button toggles, so it is pressed only while it reads 1x.
             if battle_speed(self._last) == 1:
                 logger.info("Playing the last minute at 4x")
@@ -3025,6 +3030,7 @@ class AttackRunner(ScreenRunner):
             # against none at all in between; the run without a second stage
             # moved them once. `_next_stage` is what tells the two apart.
             following = self._frame("night-battle")
+            refuse_taken(following)
             moved = card_drained(shot, following, troops) if troops else []
             # **A card that was selected or let go repaints its corner too**, and
             # the ability taps below move the selection. Measured over one run's 54

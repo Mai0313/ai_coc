@@ -395,8 +395,9 @@ def _run_command(arguments: argparse.Namespace, run: RunLog) -> int:
             answer = _answer(arguments, run)
     # A queue that a stop ended is written down like an answer, not left as a
     # crash: `farm` reads a run with no `result.json` as a killed process. The
-    # exit below still says it did not run.
-    except commands.LoanCancelledError as error:
+    # exit below still says it did not run. So is a command that stood down
+    # because another device logged in, which can happen to any of them.
+    except (commands.LoanCancelledError, commands.SessionTakenError) as error:
         answer, cancelled = str(error), True
     # Outside the claim: writing the answer down and printing it touch no
     # emulator, and holding the screen across them would say this run is still
