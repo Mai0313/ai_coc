@@ -26,7 +26,7 @@
 
 三個常被懷疑的原因:
 
-- 掉線: `idle_disconnected` 認 (閒置跟 連線已中斷 都算), `restart_game` 重開並重新解析 display. 但每次重開連同接下來的載入畫面大約佔兩次 `HOME_ATTEMPTS`, 所以反覆掉線三次左右就會報成 `no_attack_menu` (手機搶登是不是走這條沒量過).
+- 掉線: `idle_disconnected` 認 (閒置跟 連線已中斷 都算), `restart_game` 重開並重新解析 display. 但每次重開連同接下來的載入畫面大約佔兩次 `HOME_ATTEMPTS`, 所以反覆掉線三次左右就會報成 `no_attack_menu`. 手機搶登不走這條: 同一張對話框, `session_taken` 認得出來, 不重開, 報成 `session_taken`.
 - 伺服器 (不會報成這個): `loading_screen` 認, `_wait_out_loading` 等 (每次載入一次, 最多 45 分鐘), outcome 是 `server_loading` 或 `server_flapping`.
 - 站錯村莊 (不會報成這個): `_open_attack_menu` 先問 `current_world`, 連兩張是另一個村莊就回 `other_village`, 不坐船.
 
@@ -95,7 +95,7 @@
 
 - `nothing_deployed`: 一張卡都出不去, 迴圈的問題, 看這一節
 - `no_loot`: 兵下去了, 位置不對, **戰術**的問題, 先讀那一輪的 `plans.jsonl`, 再照 SKILL.md 的調整階梯從戰術檔開始 (實測過: 32%, 卡全清空, 英雄全落地, 打進了沒有倉庫的那一側). 從哪一側打是使用者定的, 見階梯第三層
-- `no_loot` 而且那一輪拖滿四分鐘, 戰鬥中每十秒一行 `No battle on screen; nothing here is a card to empty`: 戰鬥畫面不見了而結算畫面也沒出來, 迴圈沒有這個狀態, 只能等 `BATTLE_TIMEOUT` 用完. 最常見的是打到一半登入被搶走了 (使用者在手機或另一台模擬器上開遊戲); 彈出視窗蓋住戰鬥也會這樣. 先看那一輪的畫面, 是被登出就問他是不是在玩, 不要調戰術
+- `no_loot` 而且那一輪拖滿四分鐘, 戰鬥中每十秒一行 `No battle on screen; nothing here is a card to empty`: 戰鬥畫面不見了而結算畫面也沒出來, 迴圈沒有這個狀態, 只能等 `BATTLE_TIMEOUT` 用完. 彈出視窗蓋住戰鬥會這樣; 打到一半登入被搶走以前也是, 現在報成 `session_taken`, 所以畫面上是被擠掉的對話框的話, 是 `session_taken` 沒認出來. 先看那一輪的畫面, 不要調戰術
 
 依序看:
 

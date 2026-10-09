@@ -64,7 +64,7 @@ uv run ai_coc attack --repeat 0 --yield --agent <名字> --session <session id> 
 jq '.[-1] | {world, outcome, stock_full, attacked}' ~/.ai_coc/logs/<run>/result.json
 ```
 
-`jq '.stock_full'` 對陣列直接報錯, 別的讀法多半拿到不是 `true` 的東西, 讀起來像「還沒滿」. 其他指令 (`walls`, `collect`, `world` ...) 多半寫單一個物件; `stop`、`giveback`、`capture` 跟被取消的借用寫的是純文字.
+`jq '.stock_full'` 對陣列直接報錯, 別的讀法多半拿到不是 `true` 的東西, 讀起來像「還沒滿」. 其他指令 (`walls`, `collect`, `world` ...) 多半寫單一個物件; `stop`、`giveback`、`capture`、被取消的借用跟遇到別的裝置登入而收手的指令寫的是純文字.
 
 `--debug` 留下迴圈讀的每一張 (每一張都是模擬器的一次 PNG 編碼, 平均兩 MB 多: `AGENTS.md` 量過 11 456 張佔 27.2 GB), 開不開是派工的人決定 (`farm` 的「要不要留畫面」). 存下的每一張, `run.log` 都有一行 `Saved frame <檔名>`. `--shot-every` 另加一條固定心跳 (`tick_00012.3s.png`), 要搭配 `--debug`, 補兩張之間看不到的那段.
 
@@ -80,7 +80,7 @@ jq '.[-1] | {world, outcome, stock_full, attacked}' ~/.ai_coc/logs/<run>/result.
 
 **每一次看都要讀完就回來.** 不要掛在 `run.log` 上等新行進來: 在 Windows 上那種讀法會一直握著檔案, 活得比開它的回合久, 那次執行的目錄就再也刪不掉, 要使用者自己開工作管理員去殺 (量過五個 session 留下的殘留壓著 11.2 GB). 要看新的就再讀一次.
 
-**通知進來, 先讀 `result.json` 的最後一個元素, 再決定下一步.** exit code 不是 0 而 `result.json` 是 `借用被 ai_coc stop 取消了…` 那一行: 借用被取消, 照「被借走」那條處理. 其他情況下沒有這個檔案, 或 exit code 不是 0: 程序被砍掉或崩掉, `run.log` 最後幾十行是唯一的線索, 遊戲多半停在回不了家的畫面, 先看畫面再決定. 檔案完整的話, 最後一個元素加上 `run.log` 最後幾行說它怎麼結束:
+**通知進來, 先讀 `result.json` 的最後一個元素, 再決定下一步.** exit code 不是 0 而 `result.json` 是 `借用被 ai_coc stop 取消了…` 那一行: 借用被取消, 照「被借走」那條處理. 是 `另一部裝置登入了這個帳號…` 那一行: 他在手機上登入了, 照 `farm` 的「一輪就要停下來的」. 其他情況下沒有這個檔案, 或 exit code 不是 0: 程序被砍掉或崩掉, `run.log` 最後幾十行是唯一的線索, 遊戲多半停在回不了家的畫面, 先看畫面再決定. 檔案完整的話, 最後一個元素加上 `run.log` 最後幾行說它怎麼結束:
 
 - `stock_full` 是 `true`: 這個世界打滿了, **是接縫不是終點**. 兩個世界都要打就換另一個; 日世界要花的話照 `farm` 的「倉庫滿了」那節; 帶 `--until-idle` 的那一趟照 `farm` 的「打到有空閒」. 不要回頭問使用者要不要繼續
 - `outcome` 是 `builder_free` 或 `lab_free`: 這個村莊有工人或實驗室空出來了, 只有帶 `--until-idle` 的那一趟會有. 照 `farm` 的「打到有空閒」接
@@ -88,6 +88,7 @@ jq '.[-1] | {world, outcome, stock_full, attacked}' ~/.ai_coc/logs/<run>/result.
 - 使用者指定的 `--repeat N` 跑完: 照他的交辦接下去或收工
 - 有幾輪 `outcome` 是 `emulator_silent`: 模擬器當下不理人, 夾在中間一兩輪不是事, 照常打. 但結尾是 `The emulator has not answered for 3 rounds; ending the series` 就是連續三輪, 整個 series 收工: 先看模擬器還活著沒有, 不要直接開下一個. 這種有完整的 `result.json`, 不要跟被砍掉的搞混
 - 結尾是 `The attack menu has not opened for 5 rounds in a row; ending the series`: 連續 `MENU_FAILURES` 輪 `no_attack_menu`, 整個 series 自己收工. 每一輪自己的 log 說它遇到什麼 (迴圈按 `back` 關不掉的畫面、一直掉線、有人在手機上玩). 先看畫面 (`look.py`), 照 `farm` 的「其他停手的理由」停下來講, 不要直接開下一個
+- 最後一個元素是 `session_taken`: 他在手機 (或另一台模擬器) 登入了, 迴圈沒有搶回來就收工. 照 `farm` 的「一輪就要停下來的」: 交回報、發推播, 他說可以之前一個指令都不要下, 也不要先把遊戲弄回村莊
 - 都不是就是迴圈自己放棄了, `outcome` 跟最後一條 WARNING / ERROR 說原因, 例如打到一半遊戲跑到另一個村莊 (最後一個元素是 `other_village`, 多半是有人切過村莊, 例如使用者在手機上玩). 這幾種歸 `farm` 的「其他停手的理由」, 先把遊戲弄回村莊, 不要直接開下一個
 
 一個 run 結束而你什麼都沒接, 模擬器就閒著, 使用者卻以為還在打.
@@ -167,7 +168,7 @@ jq '.[-1] | {world, outcome, stock_full, attacked}' ~/.ai_coc/logs/<run>/result.
 
 **要測的是一場戰鬥, 記得村莊多半是滿的**: `attack` 開場讀到每一項都滿過 `stop_at` 就收工, 連對手都不搜. 所以測試那一場給 `--stop-at 0`, 它只管這一次. 那是測試不是打資源, 搶回來的進不了滿倉.
 
-**用完一定要還**: 最後一個要用模擬器的指令跑完, 下 `uv run ai_coc giveback`, 背景那輪就接著打. 這是那條授權的另一半: 忘了還, 它要等你最後一個指令跑完 30 分鐘才自己接回去, 這段時間模擬器閒著, 使用者卻以為在打. **每次測完就還, 不要攢著.**
+**用完一定要還**: 最後一個要用模擬器的指令跑完, 下 `uv run ai_coc giveback`, 背景那輪就接著打. 這是那條授權的另一半: 忘了還, 它要等你最後一個指令跑完 30 分鐘才自己接回去, 這段時間模擬器閒著, 使用者卻以為在打. **每次測完就還, 不要攢著.** 唯一的例外是你的指令遇到別的裝置登入 (`另一部裝置登入了這個帳號…`): 不還, 改下 `ai_coc stop` 取消借用. 還了或借用逾時, 打資源那一邊排著的指令就開跑, 它一開遊戲就把使用者踢下線.
 
 還了之後在回覆裡講一句「已經還了, 背景那輪會接著打」, 使用者看不到背景指令的輸出.
 
