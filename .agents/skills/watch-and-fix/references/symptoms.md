@@ -26,7 +26,7 @@
 
 三個常被懷疑的原因:
 
-- 掉線: `idle_disconnected` 認 (閒置跟 連線已中斷 都算), `relogin` 點對話框的按鈕重新登入, 點了沒用才 `restart_game` 重開並重新解析 display. 但每次重新登入連同接下來的載入畫面大約佔兩次 `HOME_ATTEMPTS`, 所以反覆掉線三次左右就會報成 `no_attack_menu`. 手機搶登不走這條: 同一張對話框, `session_taken` 認得出來, 不重開, 報成 `session_taken`.
+- 掉線: `idle_disconnected` 認 (閒置跟 連線已中斷 都算), `relogin` 點對話框的按鈕重新登入, 點了沒用才 `restart_game` 重開並重新解析 display. 但每次重新登入連同接下來的載入畫面大約佔兩次 `HOME_ATTEMPTS`, 所以反覆掉線三次左右就會報成 `no_attack_menu`. 手機搶登不走這條: 同一張對話框, `session_taken` 認得出來, 不重開, 報成 `session_taken`. 要重現它不必等使用者: 在另一台模擬器開遊戲就會把這台擠掉 (MuMu 跟雷電登同一個帳號, 例如 `MuMuAdapter().ensure_coc(<index>)`), 2026-10-09 就是這樣量的. 先用自己的指令把模擬器借到 (打資源的迴圈分不出是你擠的還是他在玩, 會照搶登停下來等他), 擠掉是你自己弄的, 所以測完照常 `giveback`, 不是 `ai_coc stop`; 迴圈下一個指令就會登回來, 把另一台擠掉. 這台登回來時, 擠過來的那一邊 (包括他的手機) 都會被踢掉.
 - 伺服器 (不會報成這個): `loading_screen` 認, `_wait_out_loading` 等 (每次載入一次, 最多 45 分鐘), outcome 是 `server_loading` 或 `server_flapping`.
 - 站錯村莊 (不會報成這個): `_open_attack_menu` 先問 `current_world`, 連兩張是另一個村莊就回 `other_village`, 不坐船.
 
