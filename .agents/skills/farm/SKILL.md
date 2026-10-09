@@ -59,7 +59,7 @@ uv run ai_coc world --go night --yield
 uv run ai_coc attack --repeat 0 --plan src/ai_coc/plans/night_flat.json --yield
 ```
 
-**順序: 他指定了照他的, 沒指定就先打當下所在的那個.** 「當下所在」是開跑前第一件事用 `ai_coc world` 問到的答案, 記下來. 切畫面就是他指定順序的方式 (想先打夜世界他會自己切過去), 不要推翻.
+**順序: 他指定了照他的, 沒指定就日世界先.** 使用者 2026-10-09 的交代: 他比較在意日世界, 而夜世界通常要打兩三個小時, 先打夜世界日世界就要等那麼久. 遊戲停在夜世界也一樣: 先 `world --go day` (已經在日世界就什麼都不做, 在夜世界坐船一分鐘). 以前的規則是先打當下所在的那個, 他說那樣也不算錯, 但能選的時候盡量日世界先.
 
 **一次只跑一個世界, 而「兩邊都打滿」是一個你要接的序列, 不是一個指令.** 同時開會搶同一個畫面. 最後一輪的 `AttackReport.stock_full` 是 `true` 就是這個世界打完了 (`result.json` 是陣列, 讀法在 `references/running.md`), 但那只是一半: 通知進來, 讀最後一輪確認是 `stock_full`, 就 `world --go` 換另一個, 開一樣的 `attack`, 它也 `stock_full` 才算達成 (日世界那半還要接「倉庫滿了」). 怎麼開才叫得醒你 (shell 層 detach 叫不醒), 通知進來看什麼, 在 `references/running.md` 的「開跑」跟「盯」. 哪幾種滿了、水位多少不在報告上: grep `run.log` 的 `Storage limit reached`, 主村整行像 `Storage limit reached (金幣/聖水/黑水); farming stops with 金幣 …／聖水 …／黑水 …` (括號裡是讀得到容量而且都滿過 `stop_at` 的那幾項, 夜世界沒有黑水), 夜世界前面還有一行 `the cart held X of Y N battle(s) ago`; 不要從 `attacked` 推.
 
