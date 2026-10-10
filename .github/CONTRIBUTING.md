@@ -179,7 +179,8 @@ Allowed types:
 | `perf`     | Performance improvement                                 |
 | `style`    | Formatting or stylistic changes                         |
 | `test`     | Adding or correcting tests                              |
-| `chore`    | Build, tooling, or auxiliary changes                    |
+| `build`    | Build system changes                                    |
+| `chore`    | Tooling or auxiliary changes                            |
 | `ci`       | Continuous integration changes                          |
 | `revert`   | Reverting a previous commit                             |
 
