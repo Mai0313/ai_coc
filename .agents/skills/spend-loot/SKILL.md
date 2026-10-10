@@ -97,7 +97,7 @@ uv run ai_coc hero --upgrade duke         # 真的派一個工人去升這一個
 **這一節的前提是他這一趟開口要花**, 開口是他講的, 不是你判斷出來的 (farm 的「倉庫滿了」那節). 只問在哪, 是什麼, 多少錢的, 什麼都不花.
 
 - **城牆: 要使用者指名, 預設不刷.** 使用者 2026-09-15 的常設交代, 原話是「默認是不升級牆壁, 除非我說」. 籠統的「把資源花掉」不算指名到牆. 牆要一個閒著的工人但買完立刻還回來, 那不是自己跑的理由
-- **建築: 工人閒著 (`ai_coc worker` 說的) 就不用問**, 因為滿倉加上發呆的工人是雙重浪費. 但**它挑得沒有你準** (`_pick` 的 docstring: which building is worth raising is a judgement about the base rather than about the price): 使用者指名的時候一定用 `--only`, 沒指名時「最貴而且買得起的」只是能拿到的最好預設
+- **建築: 工人閒著 (`ai_coc status` 的 `builder.free` 說的) 就不用問**, 因為滿倉加上發呆的工人是雙重浪費. 但**它挑得沒有你準** (`_pick` 的 docstring: which building is worth raising is a judgement about the base rather than about the price): 使用者指名的時候一定用 `--only`, 沒指名時「最貴而且買得起的」只是能拿到的最好預設
 - **英雄: 要使用者指名.** `hero` 不給 `--upgrade` 只讀不動是刻意的: **升級中的英雄不能上場**, 升一個是拿接下來幾天的進攻火力去換, 而這個專案的主線是打資源, 所以那是使用者的取捨, 價格答不了. 讀出價格列給他挑 (規矩在 `farm` 的「通知跟要他拍板的事」)
 
 寶石跟現金在任何情況下都不碰, 見「按下去」.
@@ -106,7 +106,7 @@ uv run ai_coc hero --upgrade duke         # 真的派一個工人去升這一個
 
 錢跟工人怎麼讀:
 
-- `uv run ai_coc worker`: 閒著幾個 (`free`/`total`), 每一個在蓋什麼 (`jobs`, 每列帶 `name` 跟 `remaining` 秒數), 不切世界. 最快的還要多久要自己對 `remaining` 取最小, 答案裡沒有那一句, `run.log` 裡才有
+- `uv run ai_coc status`: 遊戲停著那個世界閒著幾個 (`builder.free`/`builder.total`), 兩個世界每件升級實際幾點好 (`timers`, 每件帶 `world`、`role`、`name`、`done_at`, 加速算進去, 由早到晚), 不切世界
 - `uv run ai_coc stock`: 當下這個世界的水位, 容量跟百分比, 鏡頭它自己放好
 - `uv run ai_coc read <png>` 的 `stock`: 手上已經有一張圖才用, 那條路的鏡頭是碰運氣的
 
@@ -122,7 +122,7 @@ uv run ai_coc hero --upgrade duke         # 真的派一個工人去升這一個
 
 ## 夜世界只能自己看
 
-**主村的指令在夜世界什麼都不做, 也不會坐船**: `walls` / `upgrade` / `hero` / `donate` / `builders` 回 `builder_base` 就結束, 遊戲留在原地. 要花主村的就先 `ai_coc world --go day`. 夜世界的工人用 `ai_coc worker` 讀, 連在蓋什麼都答; `ai_coc collect` 在那邊收的是聖水推車.
+**主村的指令在夜世界什麼都不做, 也不會坐船**: `walls` / `upgrade` / `hero` / `donate` 回 `builder_base` 就結束, 遊戲留在原地. 要花主村的就先 `ai_coc world --go day`. 夜世界的工人用 `ai_coc status` 讀, 連在蓋什麼都答; `ai_coc collect` 在那邊收的是聖水推車.
 
 看圖反而更好找: `uv run ai_coc view --zoom out` 停好鏡頭後整個基地在畫面中間, 大約 x 360 到 1410, y 110 到 870 (2026-10-07 量的), 不用拖鏡頭, 下緣也看得到. 選單一樣是標題寫名稱跟等級, 按鈕列左起 `資訊`, 然後是帶價格跟資源圖示的 `升級`. 差別是:
 

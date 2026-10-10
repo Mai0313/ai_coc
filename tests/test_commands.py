@@ -33,12 +33,14 @@ from ai_coc.models import (
     AttackPlan,
     CartReport,
     HeroReport,
+    PlateCount,
     PlayedPlan,
     AdbEndpoint,
     BuildReport,
     CartOutcome,
     HeroOptions,
     HeroOutcome,
+    NamedEntity,
     PlateReport,
     ShieldState,
     ViewOutcome,
@@ -49,11 +51,11 @@ from ai_coc.models import (
     DonateReport,
     LaunchReport,
     RestartScope,
+    StatusReport,
     VillageStock,
     WorldOutcome,
     AttackOptions,
     AttackOutcome,
-    BuilderReport,
     CollectReport,
     DisplayTarget,
     DonateOptions,
@@ -63,11 +65,11 @@ from ai_coc.models import (
     LaunchOutcome,
     SurveyOutcome,
     VillageExport,
-    BuilderOutcome,
     CollectOutcome,
     LootThresholds,
     UpgradeOptions,
     StorageCapacity,
+    PlateCountOutcome,
 )
 from ai_coc.constants import COC_PACKAGE
 from ai_coc.ui.runner import ScreenRunner
@@ -443,66 +445,97 @@ class PlateLineTests(unittest.TestCase):
 
 
 class StatusCommandTests(unittest.TestCase):
-    """The four readings taken off one village in one pass, and never the other one.
+    """The plates, the storages and the shield off the village on screen, the timers off the export.
 
-    Untested until the sentence came off the model: what `status` contributes of
-    its own is the composition and the one retry, and both used to be checked
-    only by whatever the joined message happened to read.
+    The export walk itself is patched out on every test here, along with the
+    names, so nothing reaches the real account directory, the mapping download
+    or the clipboard.
     """
 
     def _status(
-        self, plates: list[PlateReport], under: str | None = None
-    ) -> tuple[MagicMock, object]:
+        self,
+        counts: list[tuple[PlateCount, PlateCount]],
+        under: str | None = None,
+        settled: DisplayTarget | None = DISPLAY,
+        exported: VillageExport | None = None,
+    ) -> tuple[MagicMock, MagicMock, MagicMock, StatusReport]:
+        walk = MagicMock(
+            return_value=exported or VillageExport(tag="", exported_at="", outcome="settings_shut")
+        )
         with (
             # A real controller, because `ScreenRunner` validates the one it is given.
             patch.object(commands, "_controller", return_value=_controller()),
-            patch.object(commands, "_settle_game", return_value=DISPLAY),
-            patch.object(commands, "_namer", return_value=None),
-            patch.object(commands.PlateRunner, "read", side_effect=plates),
+            patch.object(commands, "_settle_game", return_value=settled),
+            patch.object(AdbController, "display_for", return_value=DISPLAY),
+            patch.object(commands, "_entity_names", return_value={}),
+            patch.object(commands, "_exported", walk),
+            patch.object(commands.PlateRunner, "counts", side_effect=counts),
             patch.object(commands.PlateRunner, "shield", return_value=None),
             patch.object(commands, "stock_of", return_value=commands.StockReport(world="night")),
             patch.object(commands, "uncovered", return_value=under) as pressed,
+            patch.object(commands, "_planner") as planner,
         ):
-            return pressed, commands.status()
+            report = commands.status()
+        return pressed, walk, planner, report
 
-    def _plate(self, role: str, world: str | None, outcome: str) -> PlateReport:
-        return PlateReport(role=role, world=world, outcome=outcome)
-
-    def test_the_four_readings_come_back_on_one_report(self) -> None:
-        pressed, report = self._status([
-            self._plate("builder", "night", "idle"),
-            self._plate("lab", "night", "read"),
-        ])
-        assert (report.world, report.builder.outcome, report.lab.outcome) == (
-            "night",
-            "idle",
-            "read",
+    def _counts(
+        self, world: str | None, outcome: str = "counted"
+    ) -> tuple[PlateCount, PlateCount]:
+        free = {"free": 0, "total": 5} if outcome == "counted" else {}
+        return (
+            PlateCount(role="builder", world=world, outcome=outcome, **free),
+            PlateCount(role="lab", world=world, outcome=outcome, **free),
         )
+
+    def test_the_readings_come_back_on_one_report_and_no_model_is_asked(self) -> None:
+        pressed, walk, planner, report = self._status([self._counts("night")])
+        assert (report.world, report.builder.free, report.lab.total) == ("night", 0, 5)
         assert report.stock.world == "night"
         assert report.shield is None
+        assert report.export == "settings_shut"
         pressed.assert_not_called()
+        walk.assert_called_once()
+        planner.assert_not_called()
 
-    def test_a_panel_over_the_village_is_cleared_once_and_the_plate_read_again(self) -> None:
+    def test_a_panel_over_the_village_is_cleared_once_and_the_plates_read_again(self) -> None:
         """The first reading is the check, so a covered village costs a retry and no capture."""
-        pressed, report = self._status(
-            [
-                self._plate("builder", None, "not_a_village"),
-                self._plate("builder", "day", "read"),
-                self._plate("lab", "day", "read"),
-            ],
-            under="day",
+        pressed, walk, _, report = self._status(
+            [self._counts(None, "not_a_village"), self._counts("day")], under="day"
         )
-        assert (report.world, report.builder.outcome) == ("day", "read")
+        assert (report.world, report.builder.outcome) == ("day", "counted")
         pressed.assert_called_once()
+        walk.assert_called_once()
 
-    def test_the_world_falls_back_through_whichever_reading_found_one(self) -> None:
-        """No plate placing itself is not the same as no village: the bars may still say."""
-        _, report = self._status([
-            self._plate("builder", None, "not_a_village"),
-            self._plate("lab", None, "not_a_village"),
-        ])
+    def test_no_village_is_never_walked_through_the_settings(self) -> None:
+        """Every tap of the walk is a fixed place, and one on a battle can deploy a card."""
+        _, walk, _, report = self._status([self._counts(None, "not_a_village")] * 2)
+        walk.assert_not_called()
+        assert report.export == "no_village"
+        assert not report.timers
         # `stock_of` read the builder base even though neither plate did.
         assert report.world == "night"
+        _, walk, _, report = self._status([self._counts("day")], settled=None)
+        walk.assert_not_called()
+        assert report.export == "no_village"
+
+    def test_the_timers_are_worked_out_of_a_successful_export(self) -> None:
+        exported = VillageExport(
+            tag="#TEST",
+            exported_at="2026-10-10T09:55:01+00:00",
+            timestamp=1791626101,
+            entities=[
+                NamedEntity(data_id=28000000, section="heroes", name="Archer Queen", timer=28614),
+                NamedEntity(data_id=1000039, section="buildings2", name="Clock Tower"),
+            ],
+            boosts={"builder_boost": 4606, "clocktower_cooldown": 79754},
+            outcome="exported",
+        )
+        _, _, _, report = self._status([self._counts("day")], exported=exported)
+        assert report.export == "exported"
+        assert report.boosts.builder_boost == 4606
+        assert [(timer.name, timer.seconds) for timer in report.timers] == [("Archer Queen", 2862)]
+        assert report.clock_tower is not None
+        assert report.clock_tower.ready_in == 79754
 
 
 class CollectCommandTests(unittest.TestCase):
@@ -718,17 +751,6 @@ class LoopCommandTests(unittest.TestCase):
         assert named["ai"] is None
         assert found["ai"] is main
 
-    def test_builders_is_a_single_read(self) -> None:
-        with (
-            patch.object(commands, "_controller", return_value=_adb()),
-            patch.object(commands, "UpkeepRunner") as runner,
-        ):
-            runner.return_value.builders.return_value = BuilderReport(
-                free=1, total=5, outcome="read"
-            )
-            report = commands.builders()
-        assert (report.free, report.total) == (1, 5)
-
     def test_a_caller_with_its_own_stop_reaches_the_wall_runner_and_the_report(self) -> None:
         """What lets the window run this function: it has a button, not a terminal.
 
@@ -814,18 +836,16 @@ class UpkeepLineTests(unittest.TestCase):
             tuple(one for one in get_args(CollectOutcome) if one != "cart"),
         )
 
-    def test_every_builder_outcome_has_a_line_of_its_own(self) -> None:
+    def test_every_plate_count_outcome_has_a_line_of_its_own(self) -> None:
         self._each(
-            commands.BUILDER_LINES,
+            commands.COUNT_LINES,
             {
-                "read": "個升級在跑",
-                "idle": "沒有在跑的升級",
-                "no_village": "畫面沒辦法回到村莊",
-                "builder_base": "這裡讀的是主村的工人",
-                "count_unread": "讀不到工人數量",
-                "panel_shut": "工人面板打不開",
+                "counted": "{free}/{total}",
+                "unread": "數字讀不到",
+                "no_badge": "看不到",
+                "not_a_village": "不在村莊",
             },
-            get_args(BuilderOutcome),
+            get_args(PlateCountOutcome),
         )
 
     def test_every_upgrade_outcome_has_a_line_of_its_own(self) -> None:
@@ -1869,7 +1889,7 @@ class ExportTests(unittest.TestCase):
         # The game's own export time, not this machine's clock.
         assert report.exported_at == datetime.fromtimestamp(1788624472, UTC).isoformat()
         assert report.timestamp == 1788624472
-        assert report.boosts == {"clocktower_cooldown": 77842}
+        assert report.boosts.clocktower_cooldown == 77842
         names = {entity.data_id: entity.name for entity in report.entities}
         # Mapped where the community table has it, None where it does not —
         # never the number written into the name.

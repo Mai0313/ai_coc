@@ -114,10 +114,9 @@ ai_coc hero --upgrade queen           # 真的派一個工人去升那個英雄
 
 ```bash
 ai_coc collect                        # 把有東西的採集器全部收掉
-ai_coc builders                       # 每個工人在蓋什麼、還要多久
-ai_coc worker                         # 同樣的東西，但看當下那個世界，不切世界
+ai_coc worker                         # 當下那個世界的工人在蓋什麼、還要多久，不切世界
 ai_coc lab                            # 那個世界的實驗室在研究什麼、還要多久
-ai_coc status                         # 工人、實驗室、倉庫跟護盾，一次讀完
+ai_coc status                         # 兩個世界的升級實際幾點好（藥水算進去），加上這個世界的倉庫
 ai_coc donate                         # 部落裡有人要兵就捐
 ai_coc donate --dry-run               # 走完整個流程但停在真的捐出去之前
 ```

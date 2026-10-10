@@ -23,7 +23,7 @@ import time
 from typing import TYPE_CHECKING
 import logging
 
-from ai_coc.models import PlateJob, PlateReport, PlateJobNames
+from ai_coc.models import PlateJob, PlateCount, PlateReport, PlateJobNames
 from ai_coc.prompts import render
 from ai_coc.ui.runner import MENU_SETTLE, SPOT_TIMEOUT, ScreenRunner
 from ai_coc.adapters.ai import GeminiClient
@@ -44,7 +44,7 @@ logger = logging.getLogger(__name__)
 
 # How many times to tap a plate before calling the panel shut. The button
 # toggles, so a panel somebody left open closes on the first tap and opens on
-# the second; `UpkeepRunner.builders` has paid for this one already.
+# the second.
 PANEL_TRIES = 2
 
 
@@ -57,6 +57,26 @@ class PlateRunner(ScreenRunner):
     # waiting on a builder needs, and the names are what makes the report
     # readable.
     namer: GeminiClient | None = None
+
+    def counts(self) -> tuple[PlateCount, PlateCount]:
+        """The builders' and the research slots' own digits, off one frame and no tap."""
+        png = self._frame("plates")
+        world = current_world(png)
+        badges = plate_badges(png) if world else {}
+        found: list[PlateCount] = []
+        for role in ("builder", "lab"):
+            if world is None:
+                found.append(PlateCount(role=role, outcome="not_a_village"))
+            elif (centre := badges.get(role)) is None:
+                found.append(PlateCount(world=world, role=role, outcome="no_badge"))
+            elif (counted := plate_count(png, centre)) is None:
+                found.append(PlateCount(world=world, role=role, outcome="unread"))
+            else:
+                free, total = counted
+                found.append(
+                    PlateCount(world=world, role=role, free=free, total=total, outcome="counted")
+                )
+        return found[0], found[1]
 
     def read(self, role: PlateRole) -> PlateReport:
         """What this plate counts, and what its panel says is running.
@@ -100,8 +120,7 @@ class PlateRunner(ScreenRunner):
             # closed, open, closed — and a third would open it. That matters
             # beyond a dirty screen: the panel sits over the middle of the map,
             # so it pins `view_shift` at no-move-at-all and every park under one
-            # reports a camera that never started. `UpkeepRunner.builders`
-            # returns here for the same reason. It does **not** hide the badge
+            # reports a camera that never started. It does **not** hide the badge
             # row — measured on all four panel frames, that reads through — so
             # the next `status` finds the village and parks under the panel
             # rather than failing loudly.

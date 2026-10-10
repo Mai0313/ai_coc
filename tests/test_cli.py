@@ -49,7 +49,6 @@ MINIMAL: dict[str, list[str]] = {
     "giveback": [],
     "walls": [],
     "collect": [],
-    "builders": [],
     "stock": [],
     "worker": [],
     "lab": [],
@@ -241,7 +240,7 @@ class DispatchTests(unittest.TestCase):
 
     def test_the_frame_only_commands_get_this_runs_frame_directory(self) -> None:
         """None when nothing is recorded, which every loop reads as "do not save"."""
-        for name in ("collect", "builders", "probe", "bounds"):
+        for name in ("collect", "probe", "bounds"):
             with patch.object(commands, name) as ran:
                 _answer(_args(name), self.run)
                 _answer(_args(name, "--debug"), self.recorded)
