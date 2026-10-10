@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Any, get_args
 import logging
 from pathlib import Path
 import argparse
+from datetime import datetime
 from contextlib import nullcontext
 
 from rich.table import Table
@@ -85,7 +86,7 @@ RECORDABLE = (
 # `capture` only looks, and so does a plain `world`: both take screenshots and
 # nothing else, and the file is a lock now, so a claim there would stand a
 # farming loop down for one screenshot (#290).
-WITHOUT_CLAIM = ("read", "stop", "giveback", "capture")
+WITHOUT_CLAIM = ("read", "stop", "giveback", "capture", "watch")
 
 
 # Every sub-command and the line `--help` gives it, in the order a person
@@ -99,6 +100,7 @@ COMMANDS = (
     # cannot send it a Ctrl-C, and killing it leaves the game mid-battle.
     ("stop", "請正在用模擬器的指令做完手上這件事就收工"),
     ("giveback", "把借來的模擬器還回去，借出的那一邊會自己接著跑"),
+    ("watch", "在狀態檔記下誰在盯升級、下次幾點醒來；--done 收掉"),
     (
         "status",
         "兩個世界每件升級實際幾點好（藥水和鐘塔已算進去），加上這個村莊的閒置人數、倉庫和護盾",
@@ -120,6 +122,19 @@ COMMANDS = (
     ("probe", "花一場戰鬥實測部署邊界，對照判讀器的結果"),
     ("bounds", "花一場戰鬥實測地圖邊緣，推回村莊範圍"),
 )
+
+
+def _watch_flags(watcher: argparse.ArgumentParser) -> None:
+    """`watch` never claims and never opens ADB: it only puts the watcher on the
+    state file, so a second agent sees somebody is watching and `stop` reaches it.
+
+    Its own function only because `_parser` is at Ruff's statement limit.
+    """
+    watcher.add_argument(
+        "--next", type=datetime.fromisoformat, metavar="時間", help="下次幾點醒來，ISO 格式"
+    )
+    watcher.add_argument("--about", default="", metavar="說明", help="在等什麼，一句話")
+    watcher.add_argument("--done", action="store_true", help="盯完了，把這筆收掉")
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -182,6 +197,7 @@ def _parser() -> argparse.ArgumentParser:
     where.add_argument(
         "--go", choices=get_args(World), help="開船到這個世界，已經在那邊就什麼都不做"
     )
+    _watch_flags(sub.choices["watch"])
     upgrade = sub.choices["walls"]
     upgrade.add_argument("--keep-gold", type=int, default=0, help="留下這麼多金幣不花")
     upgrade.add_argument("--keep-elixir", type=int, default=0, help="留下這麼多聖水不花")
@@ -326,6 +342,13 @@ def _answer(arguments: argparse.Namespace, run: RunLog) -> BaseModel | str:
         ),
         "stop": lambda: commands.stop(_caller(a)),
         "giveback": commands.giveback,
+        "watch": lambda: (
+            commands.unwatch(_caller(a))
+            if a.done
+            else commands.watch(_caller(a), a.next, a.about)
+            if a.next
+            else "要給 --next 時間,或 --done"
+        ),
         "walls": lambda: commands.walls(
             WallOptions(
                 frame_dir=run.frames,

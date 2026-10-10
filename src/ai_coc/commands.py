@@ -27,6 +27,7 @@ from pydantic import BaseModel, PrivateAttr
 from ai_coc import plans
 from ai_coc.models import (
     Loan,
+    Watch,
     World,
     Caller,
     MapEdge,
@@ -905,6 +906,7 @@ def claim(
                     caller=who,
                     yields=yields,
                     loan=_carried(state, who, yields=yields),
+                    watch=state.watch if state else None,
                 )
                 _write_state(mine)
                 _held = mine
@@ -974,6 +976,7 @@ def _release(command: str, log: Path | None) -> None:
                 caller=_held.caller if _held else Caller(),
                 stop_by=held.stop_by if held else None,
                 loan=loan,
+                watch=held.watch if held else None,
             )
         )
     _held = _borrowed = None
@@ -1002,7 +1005,8 @@ def stop(caller: Caller | None = None) -> str:
     with _turn():
         state = read_state()
         loan = _standing(state)
-        if state is None or (state.status == "idle" and loan is None):
+        watching = state.watch if state else None
+        if state is None or (state.status == "idle" and loan is None and watching is None):
             return "現在沒有指令在跑,沒有東西要停。"
         driven = loan is not None and loan.until is None
         update: dict[str, object] = {}
@@ -1010,6 +1014,12 @@ def stop(caller: Caller | None = None) -> str:
             update["loan"] = loan.model_copy(update={"ended": "cancelled"})
         if state.status != "idle":
             update |= {"status": "stopping", "stop_by": caller or Caller()}
+        # A stop is the user taking the game back, so whoever is watching the
+        # timers stands down too: it finds its record gone when it next wakes.
+        # Stopping a borrower's command keeps it, like the loan.
+        cleared = watching if not driven else None
+        if cleared is not None:
+            update["watch"] = None
         _write_state(state.model_copy(update=update))
     after = ""
     if loan is not None:
@@ -1019,6 +1029,8 @@ def stop(caller: Caller | None = None) -> str:
             if driven
             else f"借用也取消了,{lender}不會自己開回去。"
         )
+    if cleared is not None:
+        after += f"{cleared.caller.agent or '盯升級的那一邊'}的盯升級也收掉了。"
     if state.status == "idle":
         return f"現在沒有指令在跑;{after}"
     return (
@@ -1043,6 +1055,70 @@ def giveback() -> str:
             state.model_copy(update={"loan": loan.model_copy(update={"ended": "returned"})})
         )
     return f"還了,{loan.lender.agent or '借出模擬器的那一邊'}會自己開回去。"
+
+
+# How long past its own wake time a watch still stands: a watcher that wakes a
+# little late is still watching, and one this late has gone.
+WATCH_GRACE = timedelta(minutes=30)
+
+
+def _watching(state: RunnerState | None) -> Watch | None:
+    """The watch on the record, unless its watcher is long past its own wake time."""
+    found = state.watch if state else None
+    if found is None or found.next_at is None:
+        return found
+    return found if found.next_at + WATCH_GRACE > datetime.now().astimezone() else None
+
+
+def watch(caller: Caller | None, next_at: datetime, about: str) -> str:
+    """Record that this agent is watching the upgrade timers, and when it next wakes.
+
+    Nothing here touches the game: it only puts the watcher on the state file,
+    where every agent and the window already look, so a second agent does not
+    start a second watch and `ai_coc stop` reaches this one too. Another
+    session's watch that is still live is left alone and named; this session's
+    own, or one whose watcher is long gone, is replaced. A missing or unreadable
+    file is left alone: writing a fresh record over a deleted one would undo
+    that stop, and over a torn read would replace the live holder.
+    """
+    who = caller or Caller()
+    with _turn():
+        state = read_state()
+        if state is None or state == RunnerState(status="running", pid=os.getpid()):
+            return f"讀不到 {STATE_PATH},這次沒有記下"
+        held = _watching(state)
+        mine = held is not None and _same(held.caller, who)
+        if held is not None and not mine:
+            return (
+                f"{held.caller.agent or '另一個 agent'}已經在盯升級"
+                f"({held.about or '沒寫在等什麼'},下次 {held.next_at:%m-%d %H:%M}),這次沒有記下"
+            )
+        now = datetime.now().astimezone()
+        record = Watch(
+            caller=who,
+            since=held.since if mine and held is not None else now,
+            next_at=next_at if next_at.tzinfo else next_at.astimezone(),
+            about=about,
+        )
+        _write_state(state.model_copy(update={"watch": record}))
+    return f"記下了:{about or '盯升級'},下次 {record.next_at:%m-%d %H:%M} 醒來"
+
+
+def unwatch(caller: Caller | None) -> str:
+    """Take this session's watch off the state file, or one whose watcher is long gone.
+
+    Another session's live watch is left alone: a watcher whose own record was
+    taken over would otherwise end the new one's. `ai_coc stop` takes any off.
+    """
+    with _turn():
+        state = read_state()
+        held = state.watch if state else None
+        if state is None or held is None:
+            return "現在沒有人在盯升級。"
+        if _watching(state) is not None and not _same(held.caller, caller or Caller()):
+            return f"{held.caller.agent or '另一個 agent'}在盯升級,不是這個 session 的,沒有收;要收掉用 ai_coc stop"
+        _write_state(state.model_copy(update={"watch": None}))
+    return f"{held.caller.agent or '盯升級的那一邊'}的盯升級收掉了。"
 
 
 def stop_requested() -> bool:
