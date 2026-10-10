@@ -88,26 +88,70 @@ RECORDABLE = (
 WITHOUT_CLAIM = ("read", "stop", "giveback", "capture")
 
 
+# Every sub-command and the line `--help` gives it, in the order a person
+# reaches for them, which is the order the help lists them in: farming, the
+# readings, spending, the rest of the village, the emulator and its camera, the
+# export, then the tools for working on the parsers.
+COMMANDS = (
+    ("attack", "進攻遊戲當下所在的村莊，預設打一輪"),
+    # Its own command rather than a flag on `attack`, because the run being
+    # stopped is a different process: whatever put that one in the background
+    # cannot send it a Ctrl-C, and killing it leaves the game mid-battle.
+    ("stop", "請正在用模擬器的指令做完手上這件事就收工"),
+    ("giveback", "把借來的模擬器還回去，借出的那一邊會自己接著跑"),
+    (
+        "status",
+        "兩個世界每件升級實際幾點好（藥水和鐘塔已算進去），加上這個村莊的閒置人數、倉庫和護盾",
+    ),
+    ("stock", "這個村莊的倉庫存量和容量"),
+    ("worker", "這個村莊的工人在升什麼、還要多久，加上面板上的建議升級"),
+    ("lab", "這個村莊的實驗室在研究什麼、還要多久，加上面板上的建議升級"),
+    ("world", "看遊戲停在日世界還是夜世界，加 --go 就開船過去"),
+    ("walls", "用倉庫的資源升級城牆"),
+    ("upgrade", "派閒著的工人去升級建築，預設挑買得起的最貴那棟"),
+    ("hero", "看每個英雄升下一級要多少，加 --upgrade 才真的升"),
+    ("collect", "收掉採集器裡的資源；在夜世界收的是聖水車"),
+    ("donate", "部落有人要兵就捐"),
+    ("launch", "開模擬器和部落衝突，停在村莊畫面"),
+    ("view", "把村莊鏡頭拉遠或拉近"),
+    ("export", "從遊戲匯出整個村莊的資料，對上名稱後存起來"),
+    ("capture", "連續截圖，存進這次的紀錄資料夾"),
+    ("read", "不碰遊戲，把一張截圖交給每個判讀器，印出各自讀到什麼"),
+    ("probe", "花一場戰鬥實測部署邊界，對照判讀器的結果"),
+    ("bounds", "花一場戰鬥實測地圖邊緣，推回村莊範圍"),
+)
+
+
 def _parser() -> argparse.ArgumentParser:
     """Every argument the entry point takes; no sub-command means open the window."""
-    parser = argparse.ArgumentParser(prog="ai_coc", description=APP_NAME)
-    sub = parser.add_subparsers(dest="command")
+    parser = argparse.ArgumentParser(
+        prog="ai_coc",
+        description=(
+            "在模擬器上自動玩部落衝突。不帶指令就開視窗。"
+            "每個指令只處理遊戲當下停著的那個村莊，換村莊用 world --go。"
+        ),
+    )
+    # A metavar instead of the default brace list, which printed every name
+    # twice over on one unbroken line.
+    sub = parser.add_subparsers(dest="command", title="指令", metavar="<指令>")
+    for name, note in COMMANDS:
+        sub.add_parser(name, help=note)
     # It plays whichever village the game is on and never sails there itself:
     # crossing is `world --go`, which is the one command that moves the game.
-    run = sub.add_parser("attack", help="跑進攻迴圈,打遊戲當下所在的村莊")
+    run = sub.choices["attack"]
     run.add_argument(
         "--plan",
         type=Path,
-        help="照這份戰術 JSON 打,完全不呼叫 AI;戰術寫明是哪個村莊的,遊戲停在另一邊就不打",
+        help="照這份戰術 JSON 打，完全不問 AI；戰術寫明是哪個村莊的，遊戲停在另一邊就不打",
     )
-    run.add_argument("--plan-out", type=Path, help="把這一場實際用的計畫寫成 JSON")
-    run.add_argument("--repeat", type=int, default=1, help="連打幾輪,0 代表打到手動中止為止")
+    run.add_argument("--plan-out", type=Path, help="把實際用的戰術寫成 JSON")
+    run.add_argument("--repeat", type=int, default=1, help="打幾輪，0 代表打到叫停為止")
     run.add_argument(
         "--shot-every",
         type=float,
         default=0.0,
         metavar="秒",
-        help="除了迴圈自己讀的畫面之外,每隔這麼多秒再存一張,需要搭配 --debug",
+        help="除了迴圈自己讀的畫面，每隔這麼多秒再存一張（要搭配 --debug）",
     )
     # Omitted means "whatever the config file says", like the loot thresholds
     # below; 0 is how a test run attacks a village the farming has already
@@ -116,66 +160,53 @@ def _parser() -> argparse.ArgumentParser:
         "--stop-at",
         type=int,
         metavar="%",
-        help="每一種倉庫都滿到這個百分比就收工,蓋過設定檔,0 代表這次不管倉庫多滿都照打",
+        help="每種倉庫都滿到這個百分比就收工，蓋過設定檔；0 代表不管倉庫多滿都照打",
     )
     run.add_argument(
         "--until-idle",
         nargs="*",
         choices=("builder", "lab"),
         metavar="builder|lab",
-        help="這個村莊的工人或實驗室有空閒也收工,只給旗標就兩個都看,倉庫的收工條件照舊",
+        help="這個村莊有工人或實驗室閒著也收工；只給旗標就兩個都看，倉庫的收工條件照舊",
     )
     # Omitted means "whatever the config file says". Three zeros is how a run
     # being studied gets back to attacking the first opponent it is shown.
     for flag, resource in (("gold", "金幣"), ("elixir", "聖水"), ("dark", "黑水")):
         run.add_argument(
-            f"--min-{flag}", type=int, help=f"只打{resource}至少這麼多的對手,蓋過設定檔"
+            f"--min-{flag}", type=int, help=f"只打{resource}至少這麼多的對手，蓋過設定檔"
         )
-    # Its own command rather than a flag on `attack`, because the run being
-    # stopped is a different process: whatever put that one in the background
-    # cannot send it a Ctrl-C, and killing it leaves the game mid-battle.
-    # The ones that take nothing of their own beyond the shared flags below, as
-    # a table rather than a statement each: `stock` is deliberately among them,
-    # since crossing is `world --go` and a status check that sails a boat is no
-    # longer a status check — the two compose.
-    for name, note in (
-        ("stop", "請正在跑的進攻迴圈打完這一場就收工"),
-        ("giveback", "把借來的模擬器還回去,借出的那一邊會自己開回去"),
-        ("collect", "把採集器裡的資源全部收起來"),
-        ("stock", "現在這個世界的倉庫水位跟容量,不切世界"),
-        ("worker", "現在這個世界的工人在蓋什麼、還要多久,不切世界"),
-        ("lab", "現在這個世界的實驗室在研究什麼、還要多久,不切世界"),
-        ("status", "兩個世界的升級各幾點好(加速算進去),加上這個世界的工人數、倉庫跟護盾,不切世界"),
-        ("probe", "花一場戰鬥實測邊界，對照判讀器說的"),
-        ("bounds", "花一場戰鬥實測地圖邊緣，回推村莊範圍"),
-    ):
-        sub.add_parser(name, help=note)
-    upgrade = sub.add_parser("walls", help="把儲量拿去升級城牆")
-    upgrade.add_argument("--keep-gold", type=int, default=0, help="留下這麼多金幣不要花")
-    upgrade.add_argument("--keep-elixir", type=int, default=0, help="留下這麼多聖水不要花")
-    upgrade.add_argument("--rounds", type=int, default=0, help="最多買幾批,0 代表買到資源不夠為止")
+    # The game reopens on whichever village it was closed on, so no other
+    # command can assume which one it is looking at. Reading is the default and
+    # crossing is what `--go` asks for.
+    where = sub.choices["world"]
+    where.add_argument(
+        "--go", choices=get_args(World), help="開船到這個世界，已經在那邊就什麼都不做"
+    )
+    upgrade = sub.choices["walls"]
+    upgrade.add_argument("--keep-gold", type=int, default=0, help="留下這麼多金幣不花")
+    upgrade.add_argument("--keep-elixir", type=int, default=0, help="留下這麼多聖水不花")
+    upgrade.add_argument(
+        "--rounds", type=int, default=0, help="最多買幾批，0 代表買到資源不夠為止"
+    )
     upgrade.add_argument(
         "--at",
         metavar="X,Y",
         action="append",
-        help="這個座標上的城牆是候選之一,跳過整個村莊的掃描;可以給很多次,最便宜的那片先買",
+        help="這個座標上的城牆列為候選，跳過整個村莊的掃描；可以給很多次，最便宜的先買",
     )
-    build = sub.add_parser("upgrade", help="把閒著的工人派去升級建築")
-    build.add_argument("--keep-gold", type=int, default=0, help="留下這麼多金幣不要花")
-    build.add_argument("--keep-elixir", type=int, default=0, help="留下這麼多聖水不要花")
+    build = sub.choices["upgrade"]
+    build.add_argument("--keep-gold", type=int, default=0, help="留下這麼多金幣不花")
+    build.add_argument("--keep-elixir", type=int, default=0, help="留下這麼多聖水不花")
     build.add_argument(
         "--at",
         metavar="X,Y",
         action="append",
-        help="這個座標上的建築是候選之一,跳過尋找;可以給很多次,最貴而且買得起的先升",
+        help="這個座標上的建築列為候選，跳過尋找；可以給很多次，買得起的最貴那棟先升",
     )
     build.add_argument(
-        "--only",
-        metavar="名稱",
-        default="",
-        help="只升名字含這幾個字的建築,例如 --only 金礦;不給就升最貴而且買得起的",
+        "--only", metavar="名稱", default="", help="只升名字含這幾個字的建築，例如 --only 金礦"
     )
-    champions = sub.add_parser("hero", help="讀英雄殿堂,把閒著的工人派去升級指定的英雄")
+    champions = sub.choices["hero"]
     # Reading is the default and starting an upgrade is the exception, because
     # only one of the two spends anything. Which hero is worth a builder is a
     # judgement about the village, so nothing here picks one on its own.
@@ -183,60 +214,53 @@ def _parser() -> argparse.ArgumentParser:
         "--upgrade",
         metavar="英雄",
         choices=[kind for kind in get_args(HeroKind) if kind != "unknown"],
-        help="真的把這個英雄送去升級,不給就只讀不動",
+        help="真的把這個英雄送去升級；不給就只看價錢",
     )
-    champions.add_argument("--at", metavar="X,Y", help="直接點這個座標上的建築,跳過整個村莊的掃描")
-    # The game reopens on whichever village it was closed on, so no other
-    # command can assume which one it is looking at. Reading is the default and
-    # crossing is what `--go` asks for.
-    where = sub.add_parser("world", help="現在在日世界還是夜世界,也可以切過去")
-    where.add_argument(
-        "--go", choices=get_args(World), help="切到這個世界,已經在那邊就什麼都不做;不給就只讀不切"
+    champions.add_argument(
+        "--at", metavar="X,Y", help="直接點這個座標上的建築，跳過整個村莊的掃描"
     )
-    camera = sub.add_parser("view", help="拉遠或拉近村莊鏡頭")
-    camera.add_argument(
-        "--zoom",
-        choices=("out", "in"),
-        default="out",
-        help="out 是拉遠回到所有座標量測時的視野,in 是拉近,預設 out",
-    )
-    camera.add_argument("--times", type=int, default=3, help="做幾次,已經到底的話多做無害")
+    give = sub.choices["donate"]
+    give.add_argument("--dry-run", action="store_true", help="走完流程但不真的捐，只回報能捐什麼")
+    give.add_argument("--rounds", type=int, default=0, help="最多捐幾次，0 代表捐到不能捐為止")
     # Every other command assumes the game is up and gives up when it is not, so
     # this is the one that puts it there. The scopes exist because neither an
     # emulator nor a game that has stopped answering looks any different from a
     # working one down here; only whoever is watching the screen can tell.
-    boot = sub.add_parser("launch", help="開模擬器並啟動部落衝突")
+    boot = sub.choices["launch"]
     boot.add_argument(
         "--restart",
         choices=get_args(RestartScope),
         default="none",
-        help="要重開到哪一層: none 只確保遊戲在跑,game 重開遊戲但不動模擬器,emulator 連模擬器一起重開,預設 none",
+        help="要重開到哪一層：none 只確保遊戲在跑，game 只重開遊戲，emulator 連模擬器一起重開；預設 none",
     )
-    give = sub.add_parser("donate", help="有人請求增援就捐兵")
-    give.add_argument(
-        "--dry-run", action="store_true", help="走完流程但不真的捐,只回報畫面上能捐什麼"
+    camera = sub.choices["view"]
+    camera.add_argument(
+        "--zoom",
+        choices=("out", "in"),
+        default="out",
+        help="out 拉遠到所有座標量測時的視野，in 拉近；預設 out",
     )
-    give.add_argument("--rounds", type=int, default=0, help="最多捐幾次,0 代表捐到不能捐為止")
+    camera.add_argument("--times", type=int, default=3, help="做幾次，已經到底的話多做無害")
+    # The game's own village export, which is the only complete account of what
+    # the village holds and far more than any screen reader can see.
+    village = sub.choices["export"]
+    village.add_argument(
+        "--table", action="store_true", help="印成表格給人看；不給就跟其他指令一樣輸出 JSON"
+    )
+    village.add_argument("--last", action="store_true", help="不碰遊戲，直接讀上一次匯出的結果")
     # No directory argument: it writes into this run's own `frames/` like every
     # other command that saves what it saw. Whoever ran it used to invent a
     # path, and `--label` is what that need becomes.
-    shot = sub.add_parser("capture", help="從遊戲連續存畫面")
-    shot.add_argument("--count", type=int, default=1)
-    shot.add_argument("--gap", type=float, default=1.5)
-    frame = sub.add_parser("read", help="把一張畫面丟給每個 parser,印出各自讀到什麼")
-    frame.add_argument("png", type=Path)
-    # The game's own village export, which is the only complete account of what
-    # the village holds and far more than any screen reader can see.
-    village = sub.add_parser("export", help="從遊戲裡取得村莊資訊,對照名稱後存起來")
-    village.add_argument(
-        "--table", action="store_true", help="印成表格給人看,不給的話跟其他指令一樣吐 JSON"
-    )
-    village.add_argument("--last", action="store_true", help="不碰遊戲,直接讀上一次匯出的結果")
+    shot = sub.choices["capture"]
+    shot.add_argument("--count", type=int, default=1, help="存幾張")
+    shot.add_argument("--gap", type=float, default=1.5, metavar="秒", help="每張間隔幾秒")
+    frame = sub.choices["read"]
+    frame.add_argument("png", type=Path, help="要判讀的截圖")
     for name in RECORDABLE:
         sub.choices[name].add_argument(
             "--debug",
             action="store_true",
-            help="把這次讀到的每一張畫面存進這次的紀錄資料夾,log 也記到 DEBUG",
+            help="把這次讀到的每張畫面存進紀錄資料夾，log 也降到 DEBUG",
         )
     # Every sub-command, because why a session names a run — to find it again
     # afterwards — has nothing to do with which one it ran.
@@ -245,7 +269,7 @@ def _parser() -> argparse.ArgumentParser:
             "--label",
             default="",
             metavar="名稱",
-            help="在這次的紀錄資料夾名字後面加上這個,方便之後認出是哪一次",
+            help="加在這次紀錄資料夾名字的後面，方便之後認出是哪一次",
         )
         # Who asked, for the same reason on every sub-command: `stop` and `read`
         # included, since the log is where a stop somebody issued gets traced.
@@ -255,19 +279,19 @@ def _parser() -> argparse.ArgumentParser:
             "--agent",
             default="",
             metavar="名稱",
-            help="是誰叫的,例如 claude-code、antigravity、codex",
+            help="是誰叫的，例如 claude-code、antigravity、codex",
         )
         one.add_argument(
-            "--session", default="", metavar="ID", help="叫它的那個 agent 自己的 session id"
+            "--session", default="", metavar="ID", help="叫它的 agent 自己的 session id"
         )
-        one.add_argument("--mission", default="", metavar="任務", help="這次在做什麼,一句話")
+        one.add_argument("--mission", default="", metavar="任務", help="這次在做什麼，一句話")
         # Background work says so itself, since only its caller knows whether it
         # will be started again: farming is, a live test is not.
         one.add_argument(
             "--yield",
             dest="yields",
             action="store_true",
-            help="背景工作: 不停掉別人, 等模擬器空出來才開始; 別人要用時借出去, 還回來再接著跑",
+            help="背景工作：不停掉別人，等模擬器空出來才開始；別人要用時借出去，還回來再接著跑",
         )
     return parser
 
