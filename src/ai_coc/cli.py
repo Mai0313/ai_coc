@@ -90,8 +90,8 @@ WITHOUT_CLAIM = ("read", "stop", "giveback", "capture")
 
 # Every sub-command and the line `--help` gives it, in the order a person
 # reaches for them, which is the order the help lists them in: farming, the
-# readings, spending, the rest of the village, the emulator, then the tools for
-# working on the parsers.
+# readings, spending, the rest of the village, the emulator and its camera, the
+# export, then the tools for working on the parsers.
 COMMANDS = (
     ("attack", "進攻遊戲當下所在的村莊，預設打一輪"),
     # Its own command rather than a flag on `attack`, because the run being
@@ -110,7 +110,7 @@ COMMANDS = (
     ("walls", "用倉庫的資源升級城牆"),
     ("upgrade", "派閒著的工人去升級建築，預設挑買得起的最貴那棟"),
     ("hero", "看每個英雄升下一級要多少，加 --upgrade 才真的升"),
-    ("collect", "收掉採集器裡的資源，在夜世界也收聖水車"),
+    ("collect", "收掉採集器裡的資源；在夜世界收的是聖水車"),
     ("donate", "部落有人要兵就捐"),
     ("launch", "開模擬器和部落衝突，停在村莊畫面"),
     ("view", "把村莊鏡頭拉遠或拉近"),
