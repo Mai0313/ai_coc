@@ -47,6 +47,7 @@ from ai_coc.models import (
     UiSettings,
     WallReport,
     AdbEndpoint,
+    NamedEntity,
     RunnerState,
     ScreenPoint,
     ScreenSpots,
@@ -62,6 +63,7 @@ from ai_coc.models import (
     GeminiSetting,
     LootOverrides,
     UpgradeButton,
+    VillageExport,
     WallCandidate,
     BoundarySurvey,
     BuildCandidate,
@@ -197,7 +199,7 @@ from ai_coc.parsers.world import info_badges, current_world
 from ai_coc.parsers.glyphs import nearest, ink_mask, signature, digits_from, glyph_columns
 from ai_coc.ui.main_window import LIVE_INTERVAL, MainWindow
 from ai_coc.adapters.config import ConfigStore, dotenv_value
-from ai_coc.parsers.village import parse_village, parse_village_text
+from ai_coc.parsers.village import clock_tower, parse_village, upgrade_timers, parse_village_text
 from ai_coc.parsers.boundary import DEPLOY_BOUND, fitted_line, village_box, boundary_reach
 from ai_coc.parsers.building import (
     PRICE_TOLERANCE,
@@ -356,7 +358,17 @@ class CoreTests(unittest.TestCase):
             json.dumps({"tag": "#TEST", "timestamp": 1788624472, "boosts": {"clocktower": 77842}})
         ).raw
         assert document.timestamp == 1788624472
-        assert document.boosts == {"clocktower": 77842}
+        assert document.boosts.model_dump() == {"clocktower": 77842}
+
+    def test_a_timer_on_a_row_is_a_declared_field_and_only_written_where_it_is(self) -> None:
+        snapshot = parse_village_text(
+            json.dumps({
+                "tag": "#TEST",
+                "heroes": [{"data": 28000001, "lvl": 13, "timer": 29199}, {"data": 28000000}],
+            })
+        )
+        assert [entity.timer for entity in snapshot.entities] == [29199, None]
+        assert "timer" not in snapshot.entities[1].model_dump()
 
     def test_display_lookup_picks_the_game_over_the_launcher(self) -> None:
         logical = focused_display(WINDOW_DISPLAYS, "com.supercell.clashofclans")
@@ -369,6 +381,92 @@ class CoreTests(unittest.TestCase):
     def test_display_lookup_is_empty_when_the_package_has_no_window(self) -> None:
         assert focused_display(WINDOW_DISPLAYS, "com.example.absent") == ""
         assert physical_display(DISPLAY_DEVICES, "9") == ""
+
+
+def _exported(*rows: tuple[str, int, int | None], **boosts: int) -> VillageExport:
+    """An export at a fixed moment, one row per (section, data_id, timer)."""
+    return VillageExport(
+        tag="#TEST",
+        exported_at="",
+        timestamp=1791626042,
+        entities=[
+            NamedEntity(data_id=data_id, section=section, timer=timer)
+            for section, data_id, timer in rows
+        ],
+        boosts=boosts,
+        outcome="exported",
+    )
+
+
+class UpgradeTimerTests(unittest.TestCase):
+    """The export's normal-speed timers worked through whatever speed-up is running.
+
+    The numbers are the 2026-10-10 export taken with all four speed-ups on.
+    """
+
+    def _seconds(self, export: VillageExport) -> dict[str, int]:
+        return {timer.section: timer.seconds for timer in upgrade_timers(export)}
+
+    def test_each_speed_up_runs_its_own_slots_at_its_own_rate(self) -> None:
+        export = _exported(
+            ("heroes", 28000001, 29199),
+            ("units", 4000110, 417558),
+            ("pets", 73000011, 272446),
+            ("heroes2", 28000000, 220905),
+            builder_boost=4665,
+            lab_boost=3406,
+            pet_boost=3539,
+            clocktower_boost=613,
+        )
+        assert self._seconds(export) == {
+            # Done inside the potion: a tenth of the timer, rounded up.
+            "heroes": 2920,
+            # Outlasts it: 24 times faster for 3406 s, then at normal speed.
+            "units": 3406 + 417558 - 24 * 3406,
+            "pets": 3539 + 272446 - 24 * 3539,
+            # The clock tower speeds the builder base up ten times.
+            "heroes2": 613 + 220905 - 10 * 613,
+        }
+
+    def test_a_slot_with_no_speed_up_running_takes_its_timer(self) -> None:
+        export = _exported(("buildings", 1000011, 96192), ("units2", 4000033, 5227))
+        [first, second] = upgrade_timers(export)
+        assert (first.section, first.seconds, first.boost) == ("units2", 5227, None)
+        assert (second.world, second.role, second.seconds) == ("day", "builder", 96192)
+
+    def test_a_section_nobody_has_seen_timed_is_reported_unboosted(self) -> None:
+        [timer] = upgrade_timers(
+            _exported(("a_section_added_next2", 99000001, 4000), clocktower_boost=600)
+        )
+        assert (timer.world, timer.role, timer.seconds, timer.boost) == ("night", None, 4000, None)
+
+    def test_a_trap_holds_a_builder_and_a_siege_machine_a_research_slot(self) -> None:
+        export = _exported(
+            ("traps", 12000000, 20000), ("siege_machines", 4000051, 48000), builder_boost=3600
+        )
+        roles = {timer.section: (timer.role, timer.seconds) for timer in upgrade_timers(export)}
+        assert roles == {"traps": ("builder", 2000), "siege_machines": ("lab", 48000)}
+
+    def test_the_finish_is_the_export_moment_plus_the_real_time(self) -> None:
+        [timer] = upgrade_timers(_exported(("heroes", 28000001, 29199), builder_boost=4665))
+        finished = datetime.fromisoformat(timer.done_at).timestamp()
+        assert finished == 1791626042 + 2920
+
+    def test_rows_with_no_timer_are_not_upgrades(self) -> None:
+        assert upgrade_timers(_exported(("buildings", 1000015, None))) == []
+
+    def test_the_clock_tower_is_ready_when_neither_of_its_counters_is_running(self) -> None:
+        tower = ("buildings2", 1000039, None)
+        ready = clock_tower(_exported(tower))
+        assert ready is not None
+        assert (ready.ready_in, ready.boosting) == (0, None)
+        cooling = clock_tower(_exported(tower, clocktower_boost=613, clocktower_cooldown=79813))
+        assert cooling is not None
+        assert (cooling.ready_in, cooling.boosting) == (79813, 613)
+
+    def test_no_clock_tower_or_one_being_upgraded_says_nothing(self) -> None:
+        assert clock_tower(_exported(("buildings2", 1000034, None))) is None
+        assert clock_tower(_exported(("buildings2", 1000039, 3600))) is None
 
 
 class SettingsMenuTests(unittest.TestCase):
@@ -6846,7 +6944,7 @@ class HomeTests(unittest.TestCase):
         assert run._lost() == "no_village"
 
     def test_every_home_village_command_names_the_builder_base(self) -> None:
-        """Six entry points share `_home`, and each carries the reason into its own report."""
+        """Five entry points share `_home`, and each carries the reason into its own report."""
         where = {
             "adb": AdbController(endpoint=AdbEndpoint(port=16384)),
             "display": DisplayTarget(logical_id="1", physical_id="2"),
@@ -6854,7 +6952,6 @@ class HomeTests(unittest.TestCase):
         entries = [
             WallRunner(**where).run,
             UpkeepRunner(**where).collect,
-            UpkeepRunner(**where).builders,
             UpkeepRunner(**where).upgrade,
             HeroRunner(**where).run,
             ClanRunner(**where).donate,

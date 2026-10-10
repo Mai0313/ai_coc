@@ -76,7 +76,7 @@ dependencies = [
     "google-genai>=2.3.0",
     "pillow>=11.0",
     "psutil>=7.2.2",
-    "pydantic>=2.9",
+    "pydantic>=2.12",
     "PyQt5>=5.15,<6",
     "PyQt5-Qt5==5.15.2; sys_platform == 'win32'",
     "rich>=13.9",

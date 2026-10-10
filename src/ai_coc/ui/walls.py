@@ -13,7 +13,7 @@ live on a village at 0/5, every batch was confirmed and then not charged for, th
 game answering 所有建築工人都在忙碌中 and offering to finish something with gems
 — one wall at 1 600 000 refused exactly as an eight-wall batch at 12 800 000 was.
 So the loop stops on that rather than walking the rest of the village at forty
-seconds a wall, and `ai_coc builders` is what says how long the wait is.
+seconds a wall, and `ai_coc status` is what says how long the wait is.
 
 The game does most of the work. Tapping a wall opens its menu; 升級更多 turns
 that into a batch and 新增城牆 grows it, with the game itself deciding which

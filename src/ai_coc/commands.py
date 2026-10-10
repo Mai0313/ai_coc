@@ -38,6 +38,7 @@ from ai_coc.models import (
     AttackPlan,
     CartReport,
     HeroReport,
+    PlateCount,
     PlayedPlan,
     ViewReport,
     WallReport,
@@ -66,7 +67,6 @@ from ai_coc.models import (
     WorldOutcome,
     AttackOptions,
     AttackOutcome,
-    BuilderReport,
     CollectReport,
     DisplayTarget,
     DonateOptions,
@@ -77,12 +77,12 @@ from ai_coc.models import (
     VillageEntity,
     VillageExport,
     BoundarySurvey,
-    BuilderOutcome,
     CollectOutcome,
     LootThresholds,
     UpgradeOptions,
     StorageCapacity,
     EmulatorInstance,
+    PlateCountOutcome,
 )
 from ai_coc.constants import STATE_PATH, COC_PACKAGE, ACCOUNT_JSON_DIR
 from ai_coc.adapters.ai import GeminiClient
@@ -125,7 +125,7 @@ from ai_coc.parsers.scout import (
 )
 from ai_coc.parsers.world import current_world
 from ai_coc.adapters.config import ConfigStore, gemini_key
-from ai_coc.parsers.village import parse_village_text
+from ai_coc.parsers.village import clock_tower, upgrade_timers, parse_village_text
 from ai_coc.adapters.mapping import fetch_entity_mapping
 from ai_coc.parsers.boundary import PLAYFIELD, VILLAGE_CENTRE, village_box, boundary_reach
 from ai_coc.parsers.building import wall_menu, game_dialog, upgrade_sheet, upgrade_buttons
@@ -1792,7 +1792,7 @@ WALL_LINES: dict[WallOutcome, str] = {
     "bought": "升級了 {walls} 面城牆",
     "nothing_bought": "每一個位置都沒有買成,而這個迴圈說不出原因;紀錄裡有各自停在哪一步",
     "cannot_afford": "剩下的資源買不起下一批城牆",
-    "builders_busy": "工人都在忙,遊戲不讓升級城牆;跑 ai_coc builders 看最快的還要多久",
+    "builders_busy": "工人都在忙,遊戲不讓升級城牆;跑 ai_coc status 看最快的還要多久",
     "no_walls_found": "找不到任何城牆",
     "no_village": "畫面沒辦法回到村莊,城牆升級沒有開始",
     "builder_base": "遊戲停在夜世界,城牆只在主村升;要升先跑 ai_coc world --go day",
@@ -1843,41 +1843,6 @@ def walls(options: WallOptions, should_stop: Callable[[], bool] = stop_requested
         report.paid("gold"),
         report.paid("elixir"),
     )
-    return report
-
-
-BUILDER_LINES: dict[BuilderOutcome, str] = {
-    "read": "工人 {free}/{total},{running} 個升級在跑,最快的還要 {soonest}",
-    "idle": "工人 {free}/{total},沒有在跑的升級",
-    "no_village": "畫面沒辦法回到村莊,讀不到工人",
-    "builder_base": "遊戲停在夜世界,這裡讀的是主村的工人;夜世界的用 ai_coc worker",
-    "count_unread": "讀不到工人數量,先停下來",
-    "panel_shut": "工人 {free}/{total},但工人面板打不開",
-}
-
-
-def builder_line(report: BuilderReport) -> str:
-    """The one line a person reads off a builder panel."""
-    remaining = report.queue.remaining
-    return BUILDER_LINES[report.outcome].format(
-        free=report.free,
-        total=report.total,
-        running=report.queue.running,
-        soonest=spell_out(remaining[0]) if remaining else "",
-    )
-
-
-def builders(frame_dir: Path | None = None) -> BuilderReport:
-    """Say who is building what and how much longer, with no window in the way.
-
-    The one thing a village cannot be talked out of is a busy builder, and until
-    now nothing here could see past the 1/5 to how long that would last. It is
-    read-only and costs three captures, so it is cheap enough to ask before
-    deciding whether a run is worth starting at all.
-    """
-    adb, display = _session(frame_dir)
-    report = UpkeepRunner(adb=adb, display=display, frame_dir=frame_dir).builders()
-    logger.info("Builders: %s", builder_line(report))
     return report
 
 
@@ -1987,10 +1952,10 @@ def _plate(role: PlateRole, frame_dir: Path | None) -> PlateReport:
 def worker(frame_dir: Path | None = None) -> PlateReport:
     """Who is building what on the village that is up, and how long each has left.
 
-    **`ai_coc builders` is the home village's own version of this and stays
-    that way.** It goes through `GameRunner._home`, which answers the builder
-    base with `builder_base` and reads nothing there. This one reads whichever
-    village is on screen and reports which that turned out to be.
+    It reads whichever village is on screen and reports which that turned out
+    to be. `status` is where the timers of both villages come from now, worked
+    through any speed-up; the countdowns here are the panel's own, at normal
+    speed.
     """
     return _plate("builder", frame_dir)
 
@@ -2006,40 +1971,100 @@ def lab(frame_dir: Path | None = None) -> PlateReport:
     return _plate("lab", frame_dir)
 
 
-def status(frame_dir: Path | None = None) -> StatusReport:
-    """Everything one village says about itself, in one pass and without crossing.
+def _entity_names() -> dict[int, str]:
+    """The community mapping's names, or none at all where it cannot be had.
 
-    The three readings a session takes before deciding anything — who is
-    building, what is being researched, how full the storages are — plus the
-    shield, which is the one countdown here that costs something when it runs
-    out. Settling the game once for all four is the whole of what this saves
-    over running the commands separately.
+    `status` wants the names to make its timers readable and nothing more, so a
+    machine offline with no cached copy still gets every timer, unnamed, rather
+    than losing the whole reading to the download.
     """
+    try:
+        return fetch_entity_mapping().names()
+    except OSError:
+        logger.warning("No name mapping to be had; the timers come back unnamed", exc_info=True)
+        return {}
+
+
+def status(frame_dir: Path | None = None) -> StatusReport:
+    """When every upgrade on both villages finishes, and what the village on screen holds.
+
+    The timers come off the game's own export, worked through whatever
+    speed-ups are running, so both villages are read without sailing and no
+    model is asked anything. The plates' idle counts, the storages and the
+    shield come off the village on screen, which is the only one that draws
+    them.
+    """
+    names = _entity_names()
     adb = _controller()
-    display = _settle_game(adb, WORLD_SETTLE_POLLS) or adb.display_for(COC_PACKAGE)
-    runner = PlateRunner(adb=adb, display=display, frame_dir=frame_dir, namer=_namer())
+    settled = _settle_game(adb, WORLD_SETTLE_POLLS)
+    display = settled or adb.display_for(COC_PACKAGE)
+    runner = PlateRunner(adb=adb, display=display, frame_dir=frame_dir)
     # **The first reading is the check**, so there is no capture to take ahead
-    # of it: `read` already answers `not_a_village` for a panel over the village,
-    # and clearing one then costs one retry rather than a capture on every run.
-    # It only has to happen once — whatever was covering the village is gone by
-    # the time the other three look.
-    builder = runner.read("builder")
+    # of it: the plates answer `not_a_village` for a panel over the village, and
+    # clearing one then costs one retry rather than a capture on every run.
+    builder, lab = runner.counts()
     if builder.outcome == "not_a_village" and uncovered(adb, display) is not None:
-        builder = runner.read("builder")
+        builder, lab = runner.counts()
+    shield = runner.shield()
+    # **Only on a village**, because every tap of the walk aims at a fixed place
+    # and `uncovered` leaves a battle alone on purpose: one of those taps on a
+    # battle can deploy the card selected there. And **ahead of the storages**,
+    # whose ceilings are read by opening a tooltip on each bar that can be left
+    # standing over the gear.
+    exported = (
+        _exported(adb, display, frame_dir, names)
+        if settled is not None and builder.world is not None
+        else VillageExport(tag="", exported_at="", outcome="no_village")
+    )
     report = StatusReport(
         builder=builder,
-        lab=runner.read("lab"),
+        lab=lab,
         stock=stock_of(runner, adb, display),
-        shield=runner.shield(),
+        shield=shield,
+        export=exported.outcome,
     )
-    report.world = report.builder.world or report.lab.world or report.stock.world
+    if exported.outcome == "exported":
+        report.exported_at = exported.exported_at
+        report.boosts = exported.boosts
+        report.timers = upgrade_timers(exported)
+        report.clock_tower = clock_tower(exported)
+    report.world = builder.world or lab.world or report.stock.world
     logger.info(
-        "Status: %s；%s；%s",
-        _plate_line(report.builder),
-        _plate_line(report.lab),
+        "Status: %s；%s；%s；%s",
+        _count_line(builder),
+        _count_line(lab),
+        _timers_line(report),
         _shield_line(report.shield, report.world),
     )
     return report
+
+
+# One line per way a plate's count can come back, for `run.log`.
+COUNT_LINES: dict[PlateCountOutcome, str] = {
+    "counted": "{held} {free}/{total}",
+    "unread": "{held}的牌子在,數字讀不到",
+    "no_badge": "這個畫面上看不到{held}的牌子",
+    "not_a_village": "畫面不在村莊,讀不到上排的牌子",
+}
+
+
+def _count_line(count: PlateCount) -> str:
+    """One plate's count as a line for a person."""
+    return COUNT_LINES[count.outcome].format(
+        held=PLATE_NAMES[count.role], free=count.free, total=count.total
+    )
+
+
+def _timers_line(report: StatusReport) -> str:
+    """The soonest upgrade to finish, or why there is none to name."""
+    if report.export != "exported":
+        return EXPORT_LINES[report.export].format(tag="", count=0)
+    if not report.timers:
+        return "兩個世界都沒有在升的"
+    soonest = report.timers[0]
+    return (
+        f"最快好的是 {soonest.world} 的 {soonest.name or soonest.section},{soonest.done_at[11:16]}"
+    )
 
 
 # Only ever used to build a log line, which is why these live here rather than
@@ -2672,6 +2697,19 @@ def export(frame_dir: Path | None = None, last: bool = False) -> VillageExport:
     display = _settle_game(adb, WORLD_SETTLE_POLLS)
     if display is None:
         return VillageExport(tag="", exported_at="", outcome="no_village")
+    return _exported(adb, display, frame_dir, names)
+
+
+def _exported(
+    adb: AdbController, display: DisplayTarget, frame_dir: Path | None, names: dict[int, str]
+) -> VillageExport:
+    """The walk through the settings menus and everything after it, on a village already up.
+
+    Shared with `status`, which reads its timers off the same payload. The
+    caller is the one that knows a village is on screen: every tap here aims at
+    a fixed place, and one aimed at a battle can deploy whatever card is
+    selected there.
+    """
     if frame_dir is not None:
         frame_dir.mkdir(parents=True, exist_ok=True)
     try:

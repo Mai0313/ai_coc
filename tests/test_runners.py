@@ -29,7 +29,6 @@ from ai_coc.models import (
     ScoutView,
     AttackPlan,
     AttackStep,
-    BuildQueue,
     CartReport,
     GameDialog,
     AdbEndpoint,
@@ -485,50 +484,7 @@ class CollectTests(unittest.TestCase):
         assert report.outcome == "stock_unread"
 
 
-class BuildersTests(unittest.TestCase):
-    def _runner(self) -> UpkeepRunner:
-        return UpkeepRunner(adb=_adb(), display=DISPLAY)
-
-    def _builders(
-        self, counted: tuple[int, int] | None, panels: list[BuildQueue | None]
-    ) -> tuple[object, MagicMock, MagicMock]:
-        runner = self._runner()
-        with (
-            patch.object(upkeep.time, "sleep"),
-            patch.object(runner, "_home", return_value=STOCK),
-            patch.object(runner, "_frame", return_value=b""),
-            patch.object(runner, "_after_tap", return_value=b"") as opened,
-            patch.object(runner, "_tap") as tapped,
-            patch.object(upkeep, "free_builders", return_value=counted),
-            patch.object(upkeep, "builder_jobs", side_effect=panels),
-        ):
-            return runner.builders(), opened, tapped
-
-    def test_the_panel_is_read_and_shut_again_behind_the_run(self) -> None:
-        queue = BuildQueue(running=2, remaining=[600, 7200])
-        report, opened, tapped = self._builders((1, 5), [queue])
-        assert (report.free, report.total, report.queue) == (1, 5, queue)
-        assert report.outcome == "read"
-        opened.assert_called_once()
-        tapped.assert_called_once_with(upkeep.BUILDER_BUTTON)
-
-    def test_a_button_that_toggles_is_worth_a_second_tap(self) -> None:
-        """A panel left open by an earlier run closes on the first tap."""
-        queue = BuildQueue(running=1, remaining=[90_000])
-        report, opened, _ = self._builders((0, 5), [None, queue])
-        assert opened.call_count == 2
-        assert report.queue == queue
-
-    def test_a_panel_that_will_not_open_and_a_counter_that_will_not_read_both_say_so(self) -> None:
-        report, _, _ = self._builders((0, 5), [None, None])
-        assert report.outcome == "panel_shut"
-        report, _, _ = self._builders(None, [])
-        assert report.outcome == "count_unread"
-
-    def test_no_upgrade_running_is_its_own_outcome(self) -> None:
-        report, _, _ = self._builders((5, 5), [BuildQueue()])
-        assert report.outcome == "idle"
-
+class SpellOutTests(unittest.TestCase):
     def test_a_countdown_is_spelt_the_way_the_game_writes_it(self) -> None:
         assert shared.spell_out(90_000) == "1 天 1 小時"
         assert shared.spell_out(3_660) == "1 小時 1 分鐘"
@@ -2013,6 +1969,27 @@ class PlateRunnerTests(unittest.TestCase):
             patch.object(plates, "panel_rows", side_effect=panels or [[600, 7200]]),
         ):
             return runner.read(role), opened, tapped
+
+    def test_the_counts_come_off_one_frame_with_nothing_tapped(self) -> None:
+        """What `status` asks for: the plates' own digits, and no panel opened for them."""
+        runner = plates.PlateRunner(adb=_adb(), display=DISPLAY)
+        with (
+            patch.object(runner, "_frame", return_value=b"") as captured,
+            patch.object(runner, "_tap") as tapped,
+            patch.object(plates, "current_world", return_value="night"),
+            patch.object(plates, "plate_badges", return_value={"builder": 846}),
+            patch.object(plates, "plate_count", return_value=(1, 3)),
+        ):
+            builder, lab = runner.counts()
+        assert (builder.outcome, builder.free, builder.total) == ("counted", 1, 3)
+        assert (lab.world, lab.outcome) == ("night", "no_badge")
+        captured.assert_called_once()
+        tapped.assert_not_called()
+        with (
+            patch.object(runner, "_frame", return_value=b""),
+            patch.object(plates, "current_world", return_value=None),
+        ):
+            assert [count.outcome for count in runner.counts()] == ["not_a_village"] * 2
 
     def test_the_panel_is_read_and_shut_again_behind_the_run(self) -> None:
         report, opened, tapped = self._read("builder", counted=(1, 3), panels=[[600, 7200]])

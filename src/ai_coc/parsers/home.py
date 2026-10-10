@@ -247,8 +247,6 @@ def plate_button(centre: int) -> tuple[int, int]:
     return centre + PLATE_BUTTON[0], PLATE_BUTTON[1]
 
 
-BUILDER_BUTTON = plate_button(719)
-
 # Each running upgrade gets a progress bar with its remaining time drawn over
 # it, and **the bar is the only thing that says which rows those are**. The panel
 # carries two more sections under them, 建議升級 and 其他升級, whose rows carry a

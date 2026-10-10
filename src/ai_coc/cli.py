@@ -53,7 +53,6 @@ RECORDABLE = (
     "attack",
     "walls",
     "collect",
-    "builders",
     "stock",
     "worker",
     "lab",
@@ -143,11 +142,10 @@ def _parser() -> argparse.ArgumentParser:
         ("stop", "請正在跑的進攻迴圈打完這一場就收工"),
         ("giveback", "把借來的模擬器還回去,借出的那一邊會自己開回去"),
         ("collect", "把採集器裡的資源全部收起來"),
-        ("builders", "每個工人在蓋什麼、還要多久"),
         ("stock", "現在這個世界的倉庫水位跟容量,不切世界"),
         ("worker", "現在這個世界的工人在蓋什麼、還要多久,不切世界"),
         ("lab", "現在這個世界的實驗室在研究什麼、還要多久,不切世界"),
-        ("status", "現在這個世界的工人、實驗室、倉庫跟護盾,一次讀完,不切世界"),
+        ("status", "兩個世界的升級各幾點好(加速算進去),加上這個世界的工人數、倉庫跟護盾,不切世界"),
         ("probe", "花一場戰鬥實測邊界，對照判讀器說的"),
         ("bounds", "花一場戰鬥實測地圖邊緣，回推村莊範圍"),
     ):
@@ -314,7 +312,6 @@ def _answer(arguments: argparse.Namespace, run: RunLog) -> BaseModel | str:
             )
         ),
         "collect": lambda: commands.collect(run.frames),
-        "builders": lambda: commands.builders(run.frames),
         "stock": lambda: commands.stock(run.frames),
         "worker": lambda: commands.worker(run.frames),
         "lab": lambda: commands.lab(run.frames),

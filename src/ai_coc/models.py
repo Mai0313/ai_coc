@@ -307,6 +307,9 @@ class VillageEntry(BaseModel):
     data_id: int = Field(validation_alias=AliasChoices("data", "data_id", "id"))
     level: int | None = Field(default=None, validation_alias=AliasChoices("lvl", "level"))
     count: int = Field(default=1, validation_alias=AliasChoices("cnt", "count"))
+    # Seconds still to run at normal speed, on a row being upgraded; the game
+    # writes it on those rows alone, and so does the file this is saved back to.
+    timer: int | None = Field(default=None, exclude_if=lambda value: value is None)
 
     @field_validator("level", mode="before")
     @classmethod
@@ -325,6 +328,29 @@ class VillageEntity(VillageEntry):
     section: str
 
 
+def _absent(value: int | None) -> bool:
+    return value is None
+
+
+class Boosts(BaseModel):
+    """The export's `boosts`: seconds left on each speed-up that is running.
+
+    A key is there only while its speed-up runs, so a missing one is a potion
+    not drunk rather than a zero, and the file keeps writing them that way.
+    `clocktower_cooldown` is the one that is not a speed-up: it is how long
+    until the builder base's clock tower can be started again. Keys the game
+    adds later survive as extras.
+    """
+
+    model_config = TOLERANT
+
+    builder_boost: int | None = Field(default=None, exclude_if=_absent)
+    lab_boost: int | None = Field(default=None, exclude_if=_absent)
+    pet_boost: int | None = Field(default=None, exclude_if=_absent)
+    clocktower_boost: int | None = Field(default=None, exclude_if=_absent)
+    clocktower_cooldown: int | None = Field(default=None, exclude_if=_absent)
+
+
 class VillageDocument(BaseModel):
     """A Village JSON export; sections the game adds later survive as extras."""
 
@@ -335,7 +361,7 @@ class VillageDocument(BaseModel):
     # own export time is what says a payload is this export and not the last
     # one, and the boosts are the only counters that belong to no section.
     timestamp: int | None = None
-    boosts: dict[str, int] = Field(default_factory=dict)
+    boosts: Boosts = Field(default_factory=Boosts)
 
     @field_validator("tag", mode="before")
     @classmethod
@@ -423,7 +449,7 @@ class VillageExport(BaseModel):
     exported_at: str
     timestamp: int | None = None
     entities: list[NamedEntity] = Field(default_factory=list)
-    boosts: dict[str, int] = Field(default_factory=dict)
+    boosts: Boosts = Field(default_factory=Boosts)
     # Required, and an export written before this field existed therefore reads
     # back as `wrong_format` rather than as one that cannot say how it ended.
     # Re-running the command is a few taps, which is cheaper than a file that
@@ -1391,24 +1417,6 @@ class BuildQueue(BaseModel):
     remaining: list[int] = Field(default_factory=list)
 
 
-# How one `builders` reading ended. The same five states `PlateOutcome` names
-# minus the badge, because this one taps a button at a fixed place rather than
-# finding a plate: `idle` is inferred from the counter the way it is there, and
-# `panel_shut` is the honest answer when the counter would not read either.
-BuilderOutcome = Literal[
-    "read", "idle", "no_village", "builder_base", "count_unread", "panel_shut"
-]
-
-
-class BuilderReport(BaseModel):
-    """Who is busy and for how long, for a run deciding whether to wait."""
-
-    free: int = 0
-    total: int = 0
-    queue: BuildQueue = BuildQueue()
-    outcome: BuilderOutcome
-
-
 class ShieldState(BaseModel):
     """Whether a shield is up over the home village, and for how much longer.
 
@@ -1448,8 +1456,8 @@ class ShieldState(BaseModel):
         """Whether a shield is up at all, which is exactly a countdown having read.
 
         **Computed rather than stored**, on `RoundReport.stock_full`'s reasoning:
-        the name is what `.agents/skills/watch-upgrades` reads out of
-        `result.json`, so it stays in the file, while the state the docstring
+        the name is what a reader of `result.json` looks for, so it stays in
+        the file, while the state the docstring
         above rules out stops being expressible at all.
 
         The model is what carries the third answer, not this: a caller with no
@@ -1575,34 +1583,106 @@ class StockReport(BaseModel):
     filled: dict[str, str] = Field(default_factory=dict)
 
 
+# How one plate's count came back, read off the village frame without opening
+# anything. `unread` and `no_badge` both leave a village and no numbers, which
+# is why this is a field: the first is a plate that is there and would not
+# resolve, the second one this frame did not show at all.
+PlateCountOutcome = Literal["counted", "unread", "no_badge", "not_a_village"]
+
+
+class PlateCount(BaseModel):
+    """What one plate's own digits say: how many slots are idle, out of how many.
+
+    The village on screen only, since the plates are drawn on the village they
+    count; the timers on `StatusReport` cover both.
+    """
+
+    world: World | None = None
+    role: PlateRole = "builder"
+    free: int | None = None
+    total: int | None = None
+    outcome: PlateCountOutcome
+
+
+# Who an upgrade is waiting on: a builder, a research slot, or the pet house.
+UpgradeRole = Literal["builder", "lab", "pet"]
+
+
+class UpgradeTimer(BaseModel):
+    """One upgrade still running, and when it really finishes.
+
+    `timer` is what the export says, which is seconds at normal speed — the
+    same number the panel draws, and the one a potion leaves alone while it
+    makes the clock run faster. `seconds` is that worked through the speed-up
+    the export says is running, from the export's own moment, and `done_at` is
+    the same instant on the clock. `role` is None for a section nobody has seen
+    carry a timer yet, which is reported unboosted rather than dropped.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    world: World
+    role: UpgradeRole | None
+    section: str
+    data_id: int
+    name: str | None = None
+    level: int | None = None
+    timer: int
+    boost: str | None = None
+    seconds: int
+    done_at: str
+
+
+class ClockTower(BaseModel):
+    """When the builder base's clock tower can be started again.
+
+    `ready_in` 0 is a tower that can be started now. `boosting` is the seconds
+    left on one running, which the cooldown counts through rather than after.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    ready_in: int
+    ready_at: str
+    boosting: int | None = None
+
+
 class StatusReport(BaseModel):
-    """Everything one village says about itself, without touching the other one.
+    """Where both villages' upgrades stand, and what the village on screen holds.
 
-    The three readings a session actually asks for before deciding anything —
-    who is building, what is being researched, and how full the storages are —
-    taken off one village in one pass rather than three commands and three
-    settles.
+    **The timers come out of the game's own export, for both villages at once.**
+    The panels used to be read instead, one village at a time with a model
+    naming each row, and they draw the countdown at normal speed whatever is
+    running — a builder potion left a job reading six hours that finished in
+    forty minutes. The export carries every running upgrade and every speed-up,
+    so `timers` is that worked through, soonest first, and nothing sails.
 
-    **Nothing of its own to report, so no field of its own beyond the world.**
-    Each part already says how it went, and the sentence that used to sit here
-    was those parts' own sentences joined with a semicolon — the same answer
-    twice, in a form nothing could read back.
+    What the export does not carry comes off the village on screen: the plates'
+    idle counts, the storages, and the shield. `export` says whether the timers
+    were read at all, since an empty list is also a village with nothing
+    running.
     """
 
     # Built on demand rather than at class definition: an annotation resolves
     # later but a default is evaluated where it is written, and `World` is
     # defined further down this file than any of these.
     world: World | None = None
-    builder: PlateReport = Field(
-        default_factory=lambda: PlateReport(role="builder", outcome="not_a_village")
+    builder: PlateCount = Field(
+        default_factory=lambda: PlateCount(role="builder", outcome="not_a_village")
     )
-    lab: PlateReport = Field(
-        default_factory=lambda: PlateReport(role="lab", outcome="not_a_village")
+    lab: PlateCount = Field(
+        default_factory=lambda: PlateCount(role="lab", outcome="not_a_village")
     )
     stock: StockReport = Field(default_factory=StockReport)
     # None on the builder base, which has no shield plate at all rather than one
     # saying there is no shield.
     shield: ShieldState | None = None
+    export: ExportOutcome
+    exported_at: str | None = None
+    boosts: Boosts = Field(default_factory=Boosts)
+    timers: list[UpgradeTimer] = Field(default_factory=list)
+    # None where the export has no clock tower, or one being upgraded.
+    clock_tower: ClockTower | None = None
 
 
 class BuildingName(BaseModel):
@@ -1978,7 +2058,7 @@ RestartScope = Literal["none", "game", "emulator"]
 # The game's two villages. Supercell calls them the Home Village and the Builder
 # Base; this project calls them day and night because that is what the player
 # calls them, and because `builder` already means the workman here — `ai_coc
-# builders` reads the panel saying which of the five are free, and a
+# worker` reads the panel saying which of the five are free, and a
 # `world --go builder` standing next to it would be read as belonging to that.
 World = Literal["day", "night"]
 
@@ -2335,7 +2415,7 @@ class WallUpgrade(BaseModel):
 # `bought` and `nothing_bought` are both a run that walked its whole list —
 # `upgrades` says which. `cannot_afford` means go and farm; `builders_busy`
 # means the game refuses every batch until one workman is idle, which
-# `ai_coc builders` dates; `nothing_bought` is the one where the loop cannot say
+# `ai_coc status` dates; `nothing_bought` is the one where the loop cannot say
 # why, and the likeliest reason is the town hall capping every wall it found,
 # which is a decision for the player rather than for the loop. The rest are the
 # run not getting started: `no_walls_found` found none — swept, or verified the
