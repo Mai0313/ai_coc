@@ -38,11 +38,13 @@ from ai_coc.models import (
     VillageStock,
     DisplayTarget,
     GeminiSetting,
+    PlateJobNames,
     UpgradeButton,
     BuildCandidate,
     LootThresholds,
     ResourceBubble,
     StorageCapacity,
+    SuggestedUpgrade,
 )
 from ai_coc.ui.clan import ClanRunner
 from ai_coc.ui.hero import HeroRunner
@@ -1952,7 +1954,7 @@ class PlateRunnerTests(unittest.TestCase):
         world: str | None = "night",
         counted: tuple[int, int] | None = (0, 3),
         panels: list[list[int | None] | None] | None = None,
-        names: list[str] | None = None,
+        read: PlateJobNames | None = None,
     ) -> tuple[object, MagicMock, MagicMock]:
         runner = plates.PlateRunner(adb=_adb(), display=DISPLAY)
         # The builder base's own row: two plates, and no shield plate at all.
@@ -1962,7 +1964,7 @@ class PlateRunnerTests(unittest.TestCase):
             patch.object(runner, "_frame", return_value=b""),
             patch.object(runner, "_after_tap", return_value=b"") as opened,
             patch.object(runner, "_tap") as tapped,
-            patch.object(runner, "_names", return_value=names or []),
+            patch.object(runner, "_names", return_value=read),
             patch.object(plates, "current_world", return_value=world),
             patch.object(plates, "plate_badges", return_value=found),
             patch.object(plates, "plate_count", return_value=counted),
@@ -2067,10 +2069,22 @@ class PlateRunnerTests(unittest.TestCase):
         assert report.outcome == "no_badge"
         opened.assert_not_called()
 
+    def test_the_suggested_rows_come_back_beside_the_running_ones(self) -> None:
+        offer = SuggestedUpgrade(name="聖水收集器", price=60_000, resource="gold")
+        report, _, _ = self._read(
+            "builder", panels=[[600]], read=PlateJobNames(names=["X連弩"], suggested=[offer])
+        )
+        assert report.suggested == [offer]
+        assert [job.name for job in report.jobs] == ["X連弩"]
+        report, _, _ = self._read("builder", panels=[[600]])
+        assert (report.suggested, [job.name for job in report.jobs]) == ([], [""])
+
     def test_a_name_is_matched_to_the_row_it_was_read_beside(self) -> None:
         """Order, not sorting: a short answer leaves later rows unnamed."""
         report, _, _ = self._read(
-            "builder", panels=[[7200, 600, None]], names=["奧托哨所", "X連弩"]
+            "builder",
+            panels=[[7200, 600, None]],
+            read=PlateJobNames(names=["奧托哨所", "X連弩"], suggested=[]),
         )
         assert [(job.name, job.remaining) for job in report.jobs] == [
             ("奧托哨所", 7200),
