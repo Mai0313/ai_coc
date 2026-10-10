@@ -90,7 +90,7 @@ uv run ai_coc attack --repeat 0 --plan src/ai_coc/plans/night_flat.json --yield
 
 - **先看 `state.json` 的 `watch`**: 另一個 session 的 `watch` 還在 (`next_at` 沒過超過半小時) 就是已經有人在盯, 這一節不做 (不開第二個盯, 打資源照打), 回報講一聲是誰 (`caller`) 在盯
 - **開跑前跑一次 `uv run ai_coc status`, 每一趟都重讀**: 之前讀到的時間不沿用, 他在遊戲裡動過什麼 (寶石加速, 開藥水, 新的升級) 不一定會講. 他講了就再讀一次, 排好的計時全部換掉. `timers` 是兩個世界每件升級實際幾點好 (`done_at`, 加速已經算進去), 由早到晚; `clock_tower` 是鐘塔下次幾點能開 (`ready_in` 0 是現在就能開, 講一次就好, 不要每次醒來都講)
-- **排一個背景計時**, 照 `watch-upgrades` 的「算出時間, 不要輪詢」: 最早的那一件的五分鐘前. 排好就 `uv run ai_coc watch --next <醒來的時間, ISO> --about "<在等什麼>"`, 把自己記在 `state.json` 上: 別的 agent 跟工具才看得到有人在盯, `ai_coc stop` 也才碰得到你 (它會把這筆清掉). 每排一次就記一次. 記完讀 `state.json`, `watch.caller.session` 是你的才算記上, 不要看它回的那句話
+- **排一個背景計時**, 照 `watch-upgrades` 的「算出時間, 不要輪詢」: 最早的那一件的五分鐘前. 排好就 `uv run ai_coc watch --next <醒來的時間, ISO> --about "<在等什麼>"`, 把自己記在 `state.json` 上: 別的 agent 跟工具才看得到有人在盯, `ai_coc stop` 也才碰得到你 (沒有指令在跑時的 stop 會把這筆清掉). 每排一次就記一次. 記完讀 `state.json`, `watch.caller.session` 是你的才算記上, 不要看它回的那句話
 - **醒來先讀 `state.json`**: 沒有 `watch`, 或不是你這個 session 的, 是有人叫停或接手了, 什麼都不講, 這一節收工
 - **時間到就發問, 不只推播** (使用者 2026-10-11: 有些 agent, 例如 Antigravity, 只有發問才彈得出通知): 用 runtime 自己問使用者的工具, 不再讀時間, 也不停打資源. **有些 runtime 發問時整個回合停在那裡等回答**, 所以讓打資源繼續的事都先做完再問: 排好下一件的計時、記好 `watch`、借來的模擬器 `giveback`、該派的下一個 subagent 派出去
     - **工人**: 先跑 `ai_coc worker` (它讀遊戲停著的那個世界, 會借走打資源的 run, 讀完 `giveback` 自己一步). 它回的 `world` 是這次要好的那個世界, 而 `suggested` (面板上的建議升級: 名字、價錢、資源) 不是空的, 就一個一個列成選項, 最後加「先不要動」. 世界不對, 或 `suggested` 是空的, 就只問要不要現在處理, 問題裡講明為什麼沒有清單. 價錢是模型讀的, 拿來給他挑可以, 花之前照 `spend-loot` 再確認, 而且等工人真的空出來

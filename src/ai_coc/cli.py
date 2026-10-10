@@ -130,11 +130,12 @@ def _watch_flags(watcher: argparse.ArgumentParser) -> None:
 
     Its own function only because `_parser` is at Ruff's statement limit.
     """
-    watcher.add_argument(
+    when = watcher.add_mutually_exclusive_group(required=True)
+    when.add_argument(
         "--next", type=datetime.fromisoformat, metavar="時間", help="下次幾點醒來，ISO 格式"
     )
+    when.add_argument("--done", action="store_true", help="盯完了，把這筆收掉")
     watcher.add_argument("--about", default="", metavar="說明", help="在等什麼，一句話")
-    watcher.add_argument("--done", action="store_true", help="盯完了，把這筆收掉")
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -343,11 +344,7 @@ def _answer(arguments: argparse.Namespace, run: RunLog) -> BaseModel | str:
         "stop": lambda: commands.stop(_caller(a)),
         "giveback": commands.giveback,
         "watch": lambda: (
-            commands.unwatch(_caller(a))
-            if a.done
-            else commands.watch(_caller(a), a.next, a.about)
-            if a.next
-            else "要給 --next 時間,或 --done"
+            commands.unwatch(_caller(a)) if a.done else commands.watch(_caller(a), a.next, a.about)
         ),
         "walls": lambda: commands.walls(
             WallOptions(

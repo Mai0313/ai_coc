@@ -1001,6 +1001,9 @@ def stop(caller: Caller | None = None) -> str:
     turn of the emulator. A borrower's command still running is stopped like
     any other and its loan kept, so a test can be stopped without ending the
     farming it borrowed from; a second stop, with nothing running, cancels it.
+    The watch on the timers goes the same way: only a stop that finds nothing
+    running takes it off, because the skills stop their own loop to cross or
+    to pick up a fix, and that is not the user taking the game back.
     """
     with _turn():
         state = read_state()
@@ -1014,10 +1017,9 @@ def stop(caller: Caller | None = None) -> str:
             update["loan"] = loan.model_copy(update={"ended": "cancelled"})
         if state.status != "idle":
             update |= {"status": "stopping", "stop_by": caller or Caller()}
-        # A stop is the user taking the game back, so whoever is watching the
-        # timers stands down too: it finds its record gone when it next wakes.
-        # Stopping a borrower's command keeps it, like the loan.
-        cleared = watching if not driven else None
+        # Whoever is watching the timers finds its record gone when it next
+        # wakes, and stands down.
+        cleared = watching if state.status == "idle" else None
         if cleared is not None:
             update["watch"] = None
         _write_state(state.model_copy(update=update))

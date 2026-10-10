@@ -1639,7 +1639,7 @@ class WatchTests(unittest.TestCase):
         assert after.watch is not None
         assert held.watch.caller == after.watch.caller == self.MINE
 
-    def test_a_stop_takes_the_watch_down_too(self) -> None:
+    def test_a_stop_with_nothing_running_takes_the_watch_down(self) -> None:
         """A watcher sleeps between reads, so a stop reaches it only through the file."""
         commands.watch(self.MINE, self._soon(), "工人")
         line = commands.stop()
@@ -1649,25 +1649,24 @@ class WatchTests(unittest.TestCase):
         assert state is not None
         assert state.watch is None
 
-    def test_stopping_a_borrower_s_command_keeps_the_watch_until_a_second_stop(self) -> None:
-        """The first stop of a test leaves the farming it borrowed from, and so its watcher."""
+    def test_stopping_a_running_command_keeps_the_watch_until_a_second_stop(self) -> None:
+        """The skills stop their own loop to cross or to pick up a fix, a borrower
+        stops its test, and none of that is the user ending the watch.
+        """
         commands.watch(self.MINE, self._soon(), "工人")
         state = commands.read_state()
         assert state is not None
         lent = Loan(lender=self.MINE, borrower=self.THEIRS, since=self._soon(0))
-        commands._write_state(
-            state.model_copy(update={"status": "running", "pid": 424242, "loan": lent})
-        )
-        with patch.object(commands, "_alive", return_value=True):
-            assert "盯升級" not in commands.stop()
-        kept = commands.read_state()
-        assert kept is not None
-        assert kept.watch is not None
-        commands._write_state(
-            kept.model_copy(
-                update={"status": "idle", "loan": lent.model_copy(update={"until": self._soon()})}
+        for loan in (None, lent):
+            commands._write_state(
+                state.model_copy(update={"status": "running", "pid": 424242, "loan": loan})
             )
-        )
+            with patch.object(commands, "_alive", return_value=True):
+                assert "盯升級" not in commands.stop()
+            kept = commands.read_state()
+            assert kept is not None
+            assert kept.watch is not None
+        commands._write_state(state)
         assert "盯升級也收掉了" in commands.stop()
 
 

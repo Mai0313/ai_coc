@@ -72,7 +72,7 @@ uv run ai_coc status --label watch --agent <名字> --session <session id> --mis
 
 他要看的每一件 (`timers` 裡 `world` 跟 `role` 對得上的) 跟鐘塔取**最早**的, 睡到它的**五分鐘前**, 醒來就講. **鐘塔每次都盯**, 不用他交代 (使用者 2026-10-10 要的, 鐘塔每天能開一次, 以後要做成自動開); 講過「現在能開」之後就不再算進最早的那一個, 直到之後的讀數又是 `ready_in` 大於 0. 講完還要繼續盯, 就照同一份讀數排下一件, 不用重讀.
 
-**每排好一次醒來, 就把自己記在 `state.json` 上**: `uv run ai_coc watch --next <醒來的時間, ISO> --about "<在等什麼>"` (帶 `--agent`、`--session`、`--mission`). 它不碰模擬器. 這樣別的 agent 跟工具看得到有人在盯, `ai_coc stop` 也碰得到你: 它會把這筆清掉. 所以**醒來先讀 `state.json`**, 沒有 `watch`, 或不是你這個 session 的, 就是有人叫停或接手了, 什麼都不講, 直接收工.
+**每排好一次醒來, 就把自己記在 `state.json` 上**: `uv run ai_coc watch --next <醒來的時間, ISO> --about "<在等什麼>"` (帶 `--agent`、`--session`、`--mission`). 它不碰模擬器. 這樣別的 agent 跟工具看得到有人在盯, `ai_coc stop` 也碰得到你: 沒有指令在跑時的 stop 會把這筆清掉. 所以**醒來先讀 `state.json`**, 沒有 `watch`, 或不是你這個 session 的, 就是有人叫停或接手了, 什麼都不講, 直接收工.
 
 用 runtime 自己的排程能力 (或者使用者開的定時迴圈) 睡. 要再讀之前 (讀不到要重來, 或他說動過遊戲) 照 `AGENTS.md` 的 Look before driving 先看 `state.json`: 模擬器上可能已經有別的 run 在跑, 這時下 `status` 會借走它 (它帶 `--yield` 的話), 讀完馬上 `uv run ai_coc giveback` (使用者叫停時例外, 見 `.agents/skills/farm/references/running.md` 的「用完一定要還」), 不然它要等 30 分鐘才接回去 (見 `.agents/skills/farm/references/running.md` 的「絕對不要同時跑兩個」).
 
@@ -91,7 +91,7 @@ uv run ai_coc status --label watch --agent <名字> --session <session id> --mis
 ## 什麼時候收工
 
 - 他要看的那件事問完了就收工, 下 `uv run ai_coc watch --done` 把自己從 `state.json` 收掉 (它只收你這個 session 的)
-- 他說停: 下 `ai_coc stop`, 它也會清掉你的 `watch`; 停的是別人借去跑的指令時不清, 跟借用一樣要等第二次 stop
+- 他說停: 下 `ai_coc stop`. 有指令在跑的話它只停那個指令, 等它停了再下一次, 才會清掉 `watch`
 - **讀到一次不是村莊就停**: `export` 是 `no_village`, 或兩塊牌子的 `outcome` 都是 `not_a_village`. 常見的原因是使用者正在手機上玩, 模擬器那邊被登出了, 而每跑一次 `ai_coc status` 都會經過 `ensure_coc` 把遊戲搶回來, 等於把他從手機上踢掉 (`AGENTS.md` 的 Driving the game). 所以不重試: 停下來, 發推播問他玩完了沒 (見「講給使用者聽」), 他說可以了再讀. 看欄位不要看句子, 那句話只在 `run.log` 裡
 - 排到的下一次醒來超過他交代的範圍 (他說「盯到今天晚上」而最快的要三天), 就直接講還要多久, 不要排一個他沒要的鬧鐘
 
