@@ -300,7 +300,9 @@ TIME_HEIGHT = 26
 # reading a label, where a name cut in half would be.
 NAMES_LEFT = 300
 NAMES_ABOVE = 40
-NAMES_BELOW = 20
+# How far past a bar's right end a 建議升級 price reaches: on the four committed
+# panels the last digit ends within a few pixels of the bar's own right edge.
+PRICE_RIGHT = 20
 # Midway between the worst digit that resolves and the nearest thing that is not
 # one. This said the gap was 16 against 49 and it is not: swept over 15 rows
 # across five panels, a digit lands within **19** while 小 comes back **exactly
@@ -626,7 +628,7 @@ def panel_rows(png: bytes, world: World, role: PlateRole) -> list[int | None] | 
 
 
 def jobs_strip(png: bytes, world: World, role: PlateRole) -> bytes | None:
-    """The 升級中 block as its own PNG, for a model to read the names off.
+    """The 升級中 block and the 建議升級 block under it as one PNG, for a model to read.
 
     Cropped rather than read, the same bargain `parsers.building.name_strip`
     makes: what is being raised is written in Chinese, no parser here reads any,
@@ -645,7 +647,12 @@ def jobs_strip(png: bytes, world: World, role: PlateRole) -> bytes | None:
     tops = _bar_tops(image, band)
     if not tops:
         return None
-    box = (band[0] - NAMES_LEFT, tops[0] - NAMES_ABOVE, band[1], tops[-1] + NAMES_BELOW)
+    # **Down to the bottom of the panel**, so the suggestions come along with
+    # the running rows; their prices end a few pixels right of the bars. The
+    # 其他升級 rows under them only show in full once the panel is scrolled, so
+    # they are left to the model to skip rather than read, until the panel is
+    # walked row by row to locate a building.
+    box = (band[0] - NAMES_LEFT, tops[0] - NAMES_ABOVE, band[1] + PRICE_RIGHT, PANEL_BOTTOM)
     out = io.BytesIO()
     image.crop(box).save(out, format="PNG")
     return out.getvalue()

@@ -136,11 +136,13 @@ class PlateRunner(ScreenRunner):
             return report
         self._tap(plate_button(centre))
         time.sleep(MENU_SETTLE)
-        named = self._names(opened, world, role)
+        read = self._names(opened, world, role)
+        named = read.names if read else []
         report.jobs = [
             PlateJob(name=named[index] if index < len(named) else "", remaining=seconds)
             for index, seconds in enumerate(rows)
         ]
+        report.suggested = list(read.suggested) if read else []
         # Unconditional, because `panel_rows` has no empty answer: a band with no
         # bars in it comes back None and is handled above, so reaching here is a
         # panel with at least one row on it.
@@ -148,28 +150,27 @@ class PlateRunner(ScreenRunner):
         logger.info("%s: %s/%s with %d running", role, report.free, report.total, len(report.jobs))
         return report
 
-    def _names(self, png: bytes, world: World, role: PlateRole) -> list[str]:
-        """What each running row is, or nothing at all without a model to ask.
+    def _names(self, png: bytes, world: World, role: PlateRole) -> PlateJobNames | None:
+        """What each running row is and what the game suggests next, or None without a model.
 
-        Empty is an ordinary answer and every caller treats it as one: the names
+        None is an ordinary answer and every caller treats it as one: the names
         are what makes a report readable, and the countdowns underneath them are
         what a caller waiting on a builder actually acts on. A miscount is worse
         than a blank, so a short answer leaves the rows after it unnamed rather
         than shifting the ones it did read onto the wrong countdowns.
         """
         if self.namer is None:
-            return []
+            return None
         strip = jobs_strip(png, world, role)
         if strip is None:
-            return []
+            return None
         try:
-            answer = self.namer.generate_structured(
-                render("read_plate_jobs"), PlateJobNames, strip, SPOT_TIMEOUT
+            return self.namer.generate_structured(
+                render("read_plate_jobs", world=world), PlateJobNames, strip, SPOT_TIMEOUT
             )
         except Exception:
             logger.warning("The names on the %s panel could not be read", role, exc_info=True)
-            return []
-        return answer.names
+            return None
 
     def shield(self) -> ShieldState | None:
         """Whether a shield is up, for the village on screen.

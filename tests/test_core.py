@@ -128,7 +128,12 @@ from ai_coc.adapters.adb import (
 from ai_coc.parsers.clan import panel_top, donatable_cards, reinforce_button
 from ai_coc.parsers.hero import SCROLL_LEFT, SCROLL_RIGHT, can_scroll, hero_cards, hall_buttons
 from ai_coc.parsers.home import (
+    NAMES_LEFT,
+    PANEL_BANDS,
+    PRICE_RIGHT,
+    PANEL_BOTTOM,
     _clear_rim,
+    jobs_strip,
     panel_jobs,
     boat_marker,
     plate_count,
@@ -3072,6 +3077,7 @@ class PromptTests(unittest.TestCase):
         filled = {
             "attack_plan": {"rage_count", "freeze_count"},
             "find_targets": {"what", "notes", "count", "floor"},
+            "read_plate_jobs": {"world"},
         }
         for name, text in PROMPTS.items():
             fields = {field for _, field, _, _ in string.Formatter().parse(text) if field}
@@ -7662,6 +7668,21 @@ class HomeHudTests(unittest.TestCase):
             assert queue is not None, frame
             assert queue.running == running, frame
             assert queue.remaining == times, frame
+
+    def test_the_strip_for_the_model_reaches_down_through_the_suggestions(self) -> None:
+        """The 建議升級 rows sit under the running ones, so the crop runs to the panel's foot."""
+        for frame, world, role in (
+            ("day_builder_panel.png", "day", "builder"),
+            ("day_lab_panel.png", "day", "lab"),
+            ("night_builder_panel.png", "night", "builder"),
+            ("night_lab_panel.png", "night", "lab"),
+        ):
+            strip = jobs_strip((FRAMES / frame).read_bytes(), world, role)
+            assert strip is not None, frame
+            band = PANEL_BANDS[(world, role)]
+            width, height = Image.open(io.BytesIO(strip)).size
+            assert width == band[1] - band[0] + NAMES_LEFT + PRICE_RIGHT, frame
+            assert height > PANEL_BOTTOM - 260, frame
 
     def test_the_bars_agree_with_the_plate_that_opened_them(self) -> None:
         """Busy builders and running bars are the same number, counted two ways.

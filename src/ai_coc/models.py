@@ -1483,18 +1483,37 @@ class PlateJob(BaseModel):
     remaining: int | None = None
 
 
-class PlateJobNames(BaseModel):
-    """What a model read off the 升級中 rows, in the order the panel draws them.
+class SuggestedUpgrade(BaseModel):
+    """One row of a panel's 建議升級 block: what the game suggests raising, and for how much.
 
-    One call per panel rather than one per row, so the order is what matches a
-    name to its countdown. A row it could not make out comes back as an empty
-    string and still takes its place, since a short list would shift every name
-    after it onto the wrong row.
+    **The price is read by the model, not by the digit templates**, so it is
+    good for telling a person what is on offer and not yet for deciding to
+    spend: before anything buys off it, it is checked against a crop of the
+    row the way a building menu's price is. `price` is None where the row's
+    price would not read.
     """
 
     model_config = ConfigDict(frozen=True)
 
-    names: list[str] = Field(default_factory=list)
+    name: str
+    price: int | None
+    resource: Literal["gold", "elixir", "dark", "other"]
+
+
+class PlateJobNames(BaseModel):
+    """What a model read off a plate's panel: the 升級中 names, and the 建議升級 rows.
+
+    One call per panel rather than one per row, so the order is what matches a
+    name to its countdown. A row it could not make out comes back as an empty
+    string and still takes its place, since a short list would shift every name
+    after it onto the wrong row. Neither field has a default, because a model
+    leaves out a field that has one.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    names: list[str]
+    suggested: list[SuggestedUpgrade]
 
 
 class PlateReport(BaseModel):
@@ -1532,6 +1551,9 @@ class PlateReport(BaseModel):
     free: int | None = None
     total: int | None = None
     jobs: list[PlateJob] = Field(default_factory=list)
+    # The panel's 建議升級 rows, empty without a model to read them or on a
+    # panel with nothing running, whose open state nothing here can confirm.
+    suggested: list[SuggestedUpgrade] = Field(default_factory=list)
     outcome: PlateOutcome
 
     def soonest(self) -> int | None:
