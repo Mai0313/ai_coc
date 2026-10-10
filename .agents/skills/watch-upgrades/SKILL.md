@@ -70,7 +70,7 @@ uv run ai_coc status --label watch --agent <名字> --session <session id> --mis
 
 他要看的每一件 (`timers` 裡 `world` 跟 `role` 對得上的) 跟鐘塔取**最早**的, 睡到它的**五分鐘前**, 醒來就講. **鐘塔每次都盯**, 不用他交代 (使用者 2026-10-10 要的, 鐘塔每天能開一次, 以後要做成自動開); 講過「現在能開」之後就不再算進最早的那一個, 直到之後的讀數又是 `ready_in` 大於 0. 講完還要繼續盯, 就照同一份讀數排下一件, 不用重讀.
 
-用 runtime 自己的排程能力 (或者使用者開的定時迴圈) 睡. 要再讀之前 (讀不到要重來, 或他說動過遊戲) 照 `AGENTS.md` 的 Look before driving 先看 `state.json`: 模擬器上可能已經有別的 run 在跑, 這時下 `status` 會借走它 (它帶 `--yield` 的話), 讀完馬上 `uv run ai_coc giveback`, 不然它要等 30 分鐘才接回去 (見 `.agents/skills/farm/references/running.md` 的「絕對不要同時跑兩個」).
+用 runtime 自己的排程能力 (或者使用者開的定時迴圈) 睡. 要再讀之前 (讀不到要重來, 或他說動過遊戲) 照 `AGENTS.md` 的 Look before driving 先看 `state.json`: 模擬器上可能已經有別的 run 在跑, 這時下 `status` 會借走它 (它帶 `--yield` 的話), 讀完馬上 `uv run ai_coc giveback` (使用者叫停時例外, 見 `.agents/skills/farm/references/running.md` 的「用完一定要還」), 不然它要等 30 分鐘才接回去 (見 `.agents/skills/farm/references/running.md` 的「絕對不要同時跑兩個」).
 
 **不要每十分鐘戳一次**, 這是使用者自己否掉 `--watch` 的理由: 等待是算術不是觀察, 而 `--watch` 那種在程序裡睡的迴圈會佔住 `~/.ai_coc/state.json`, 讓別的 session 以為模擬器在忙. 一整晚一次讀取, 不是四十八次; 只有讀不到的時候 (上一節說過要再讀的那幾種) 過幾分鐘再讀.
 
