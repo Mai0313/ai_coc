@@ -13,7 +13,7 @@ import math
 import time
 from typing import TYPE_CHECKING, get_args
 from pathlib import Path
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 import tempfile
 import unittest
 from unittest.mock import MagicMock, patch
@@ -24,6 +24,9 @@ from pydantic import ValidationError
 from ai_coc import plans, commands
 from ai_coc.ui import world as world_ui
 from ai_coc.models import (
+    Loan,
+    Watch,
+    Caller,
     MapEdge,
     PlateJob,
     ProbeRay,
@@ -42,6 +45,7 @@ from ai_coc.models import (
     HeroOutcome,
     NamedEntity,
     PlateReport,
+    RunnerState,
     ShieldState,
     ViewOutcome,
     WallOptions,
@@ -1531,6 +1535,139 @@ class RunPlumbingTests(unittest.TestCase):
             assert commands.stop_requested()
         with commands.claim("automation"):
             assert not commands.stop_requested()
+
+
+class WatchTests(unittest.TestCase):
+    """The upgrade watcher on the state file, which nothing else could show.
+
+    The state file lives in this test's tmp directory (conftest), so nothing
+    here touches the real one.
+    """
+
+    MINE = Caller(agent="claude-code", session="a", mission="盯升級")
+    THEIRS = Caller(agent="antigravity", session="b", mission="盯升級")
+
+    def setUp(self) -> None:
+        commands._write_state(RunnerState())
+
+    def _soon(self, hours: float = 1) -> datetime:
+        return datetime.now().astimezone() + timedelta(hours=hours)
+
+    def test_a_watch_is_recorded_with_who_and_when(self) -> None:
+        wake = self._soon()
+        line = commands.watch(self.MINE, wake, "日世界 Archer Queen")
+        state = commands.read_state()
+        assert state is not None
+        assert state.watch is not None
+        assert (state.watch.caller, state.watch.next_at, state.watch.about) == (
+            self.MINE,
+            wake,
+            "日世界 Archer Queen",
+        )
+        assert "Archer Queen" in line
+
+    def test_another_session_s_live_watch_is_left_alone_and_named(self) -> None:
+        commands.watch(self.THEIRS, self._soon(), "鐘塔")
+        line = commands.watch(self.MINE, self._soon(), "工人")
+        assert "antigravity" in line
+        state = commands.read_state()
+        assert state is not None
+        assert state.watch is not None
+        assert state.watch.caller == self.THEIRS
+
+    def test_a_watch_long_past_its_wake_time_is_replaced(self) -> None:
+        commands._write_state(
+            RunnerState(watch=Watch(caller=self.THEIRS, next_at=self._soon(-2), about="鐘塔"))
+        )
+        commands.watch(self.MINE, self._soon(), "工人")
+        state = commands.read_state()
+        assert state is not None
+        assert state.watch is not None
+        assert state.watch.caller == self.MINE
+
+    def test_this_session_s_own_watch_moves_on_and_keeps_its_start(self) -> None:
+        commands.watch(self.MINE, self._soon(1), "工人")
+        first = commands.read_state()
+        commands.watch(self.MINE, self._soon(5), "實驗室")
+        second = commands.read_state()
+        assert first is not None
+        assert first.watch is not None
+        assert second is not None
+        assert second.watch is not None
+        assert (second.watch.about, second.watch.since) == ("實驗室", first.watch.since)
+
+    def test_a_missing_or_unreadable_file_records_nothing(self) -> None:
+        """A fresh record over a deleted file would undo that stop."""
+        commands.STATE_PATH.unlink()
+        assert "沒有記下" in commands.watch(self.MINE, self._soon(), "工人")
+        assert not commands.STATE_PATH.exists()
+        commands.STATE_PATH.write_text("{", encoding="utf-8")
+        assert "沒有記下" in commands.watch(self.MINE, self._soon(), "工人")
+        assert commands.STATE_PATH.read_text(encoding="utf-8") == "{"
+
+    def test_done_takes_it_off_and_says_when_there_was_none(self) -> None:
+        commands.watch(self.MINE, self._soon(), "工人")
+        assert "claude-code" in commands.unwatch(self.MINE)
+        state = commands.read_state()
+        assert state is not None
+        assert state.watch is None
+        assert "沒有人在盯升級" in commands.unwatch(self.MINE)
+
+    def test_done_leaves_another_session_s_live_watch_alone(self) -> None:
+        """A watcher whose stale record was taken over must not end the new one's."""
+        commands.watch(self.THEIRS, self._soon(), "鐘塔")
+        assert "ai_coc stop" in commands.unwatch(self.MINE)
+        state = commands.read_state()
+        assert state is not None
+        assert state.watch is not None
+        commands._write_state(
+            RunnerState(watch=Watch(caller=self.THEIRS, next_at=self._soon(-2), about="鐘塔"))
+        )
+        commands.unwatch(self.MINE)
+        state = commands.read_state()
+        assert state is not None
+        assert state.watch is None
+
+    def test_claims_and_releases_carry_the_watch(self) -> None:
+        commands.watch(self.MINE, self._soon(), "工人")
+        with commands.claim("stock", caller=self.THEIRS):
+            held = commands.read_state()
+        after = commands.read_state()
+        assert held is not None
+        assert held.watch is not None
+        assert after is not None
+        assert after.watch is not None
+        assert held.watch.caller == after.watch.caller == self.MINE
+
+    def test_a_stop_with_nothing_running_takes_the_watch_down(self) -> None:
+        """A watcher sleeps between reads, so a stop reaches it only through the file."""
+        commands.watch(self.MINE, self._soon(), "工人")
+        line = commands.stop()
+        assert "沒有東西要停" not in line
+        assert "盯升級也收掉了" in line
+        state = commands.read_state()
+        assert state is not None
+        assert state.watch is None
+
+    def test_stopping_a_running_command_keeps_the_watch_until_a_second_stop(self) -> None:
+        """The skills stop their own loop to cross or to pick up a fix, a borrower
+        stops its test, and none of that is the user ending the watch.
+        """
+        commands.watch(self.MINE, self._soon(), "工人")
+        state = commands.read_state()
+        assert state is not None
+        lent = Loan(lender=self.MINE, borrower=self.THEIRS, since=self._soon(0))
+        for loan in (None, lent):
+            commands._write_state(
+                state.model_copy(update={"status": "running", "pid": 424242, "loan": loan})
+            )
+            with patch.object(commands, "_alive", return_value=True):
+                assert "盯升級" not in commands.stop()
+            kept = commands.read_state()
+            assert kept is not None
+            assert kept.watch is not None
+        commands._write_state(state)
+        assert "盯升級也收掉了" in commands.stop()
 
 
 class ReadCommandTests(unittest.TestCase):

@@ -47,6 +47,7 @@ MINIMAL: dict[str, list[str]] = {
     "attack": [],
     "stop": [],
     "giveback": [],
+    "watch": ["--done"],
     "walls": [],
     "collect": [],
     "stock": [],
@@ -342,12 +343,14 @@ class DispatchTests(unittest.TestCase):
             ),
             patch.object(commands, "capture", return_value=[]),
             patch.object(commands, "giveback", return_value=""),
+            patch.object(commands, "unwatch", return_value=""),
             patch.object(commands, "claim") as claimed,
             patch("sys.stdout", new_callable=io.StringIO),
         ):
             _run_command(_args("world"), self.run)
             _run_command(_args("capture"), self.run)
             _run_command(_args("giveback"), self.run)
+            _run_command(_args("watch", "--done"), self.run)
             claimed.assert_not_called()
             _run_command(_args("world", "--go", "night"), self.run)
             claimed.assert_called_once()

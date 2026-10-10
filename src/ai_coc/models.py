@@ -1856,6 +1856,23 @@ class Loan(BaseModel):
     ended: LoanEnd | None = None
 
 
+class Watch(BaseModel):
+    """An agent watching the upgrade timers, which drives nothing between its reads.
+
+    It sleeps between reads, so no process stands for it and the run fields
+    above cannot show it: without this record a second agent starts a second
+    watch, and `ai_coc stop` reaches nobody. `next_at` is when it next wakes,
+    which is also what says a record is stale once its agent has gone.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    caller: Caller = Field(default_factory=Caller)
+    since: datetime | None = None
+    next_at: datetime | None = None
+    about: str = ""
+
+
 class RunnerState(BaseModel):
     """Who is driving the emulator, kept between runs rather than during one.
 
@@ -1900,6 +1917,9 @@ class RunnerState(BaseModel):
     # Carried from record to record until the lender runs again or another
     # loan replaces it, so a lender that looks late still finds out.
     loan: Loan | None = None
+    # Who is watching the upgrade timers, carried from record to record like
+    # the loan until the watcher clears it or a stop does.
+    watch: Watch | None = None
 
 
 def _labelled(label: str) -> str:

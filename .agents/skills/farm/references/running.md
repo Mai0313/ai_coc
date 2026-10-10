@@ -120,11 +120,11 @@ jq '.[-1] | {world, outcome, stock_full, attacked}' ~/.ai_coc/logs/<run>/result.
 
 ## 中止
 
-**使用者叫停, 誰收到誰自己下 `ai_coc stop`.** 主 session 收到就自己跑, 不要只傳話給打資源的 subagent: subagent 卡在一個指令裡的時候, 要等那個指令回來才讀得到訊息, 那段時間迴圈照打. subagent 自己收到也一樣照下. 兩邊都收得到的時候, 使用者偏好主 session 自己下.
+**使用者叫停, 誰收到誰自己下 `ai_coc stop`.** 主 session 收到就自己跑, 不要只傳話給打資源的 subagent: subagent 卡在一個指令裡的時候, 要等那個指令回來才讀得到訊息, 那段時間迴圈照打. subagent 自己收到也一樣照下. 兩邊都收得到的時候, 使用者偏好主 session 自己下. 指令停了之後再下一次, 把盯升級的 `watch` (跟還在的借用) 一起收掉, 理由在下面的兩層.
 
 **跑 `uv run ai_coc stop`, 這是停止的唯一方式.** 它把 `~/.ai_coc/state.json` 的 `status` 改成 `stopping` 就秒回, 不碰遊戲也不找程序. 每個會碰模擬器的指令都讀同一份檔案, 所以不必先查在跑哪一個; 它會回你叫停的是什麼、pid 多少, 沒有人在跑就說沒有. 你帶的 `--agent`、`--session`、`--mission` 會記成 `stop_by`, 那一輪收工後的 `idle` 紀錄還留著, 被停的那一邊讀得到是誰、為什麼.
 
-**有借用的時候 `stop` 分兩層**: 借用方的指令在跑, 它只停那個指令, 借用留著, 出借方之後照樣開回去; 沒有指令在跑, 它取消借用, 出借方不會開回去, 排隊中的那個也不會開跑. 所以要連打資源一起停, 等指令停了再下一次.
+**`stop` 分兩層**: 有指令在跑, 它只停那個指令, 借用跟盯升級的 `watch` 都留著, 出借方之後照樣開回去 (skill 自己為了換世界、拉修正而停迴圈, 也不該把盯升級停掉); 沒有指令在跑, 它取消借用、清掉 `watch`, 出借方不會開回去, 排隊中的那個也不會開跑, 盯升級的那一邊醒來讀到也會收工. 所以要連打資源跟盯升級一起停, 等指令停了再下一次.
 
 **不用再手動刪那份檔案.** 程序死掉留下的 `running` 不會卡住任何人: 下一個要用模擬器的指令查得出那個程序已經不在, 直接接手.
 
@@ -140,7 +140,7 @@ jq '.[-1] | {world, outcome, stock_full, attacked}' ~/.ai_coc/logs/<run>/result.
 
 **被叫停看 exit code 看不出來, 所以每一步跑完、開下一步之前都讀 `state.json`.** 在回合之間被停掉的 `attack` 照樣 exit 0, `result.json` 最後一個元素是那一輪自己的 `outcome` (多半是 `took_loot`), 不是 `stopped`; `world --go` 根本不讀叫停, 坐船時被停也照樣跑完. 看得出來的只有 `run.log` 結尾的 `Stop requested`, 跟 `state.json` 那筆 `idle` 紀錄上的 `stop_by`, 而下一個指令一 claim 就把 `stop_by` 蓋掉了. 所以只看剛跑完的那一步: `state.json` 的 `log` 是它的目錄, 而 `stop_by` 有值又不是你下的, 就是它被收掉了, 接著照「被借走」那三條分辨是借走還是叫停. `log` 不是剛跑完那一步的目錄, 那筆 `stop_by` 就是更早以前的 (使用者上一次叫停留下的會一直留到下一個指令 claim), 不算. **每一步各自一次呼叫, 不要把幾步寫成一支只看 exit code 的腳本** (`world --go … && attack … && walls …`): 2026-10-08 一個 subagent 這樣跑, 兩次 `ai_coc stop` 之後又刷了兩次牆、開了一場進攻.
 
-**`ai_coc stop` 剛好下在兩步之間就什麼都不會寫**: 沒有指令在跑, 它只回 `現在沒有指令在跑`, subagent 的下一步照常開跑. 下 stop 的那一邊看到這句, 要馬上傳話給打資源的 subagent; 它一步一次呼叫的話, 下一步之前就收得到.
+**`ai_coc stop` 剛好下在兩步之間就不會叫停任何指令**: 沒有指令在跑, 它只回 `現在沒有指令在跑` (有人在盯升級的話, 只把那筆 `watch` 清掉), subagent 的下一步照常開跑. 下 stop 的那一邊看到這句, 要馬上傳話給打資源的 subagent; 它一步一次呼叫的話, 下一步之前就收得到.
 
 **這一條只管使用者叫停.** 迴圈自己跑完 (倉庫滿了, 輪數跑完) 的通知是接縫不是終點, 自己接下一步, 判斷在 `.agents/skills/farm/SKILL.md` 的「倉庫滿了」那節. 差別是誰按的停.
 
@@ -192,7 +192,7 @@ log 裡的 `stopped moving after 2 swipe(s)` 是正常的. `camera was still mov
 
 `attack`, `walls`, `collect`, `upgrade`, `donate` 全都在驅動同一個模擬器的同一個 display. 兩個一起跑, 一邊點開選單, 另一邊截到那張圖判讀成完全不同的東西, 而且沒有任何機制會發現. 開下一個之前先確定上一個真的結束了.
 
-**`state.json` 是一把鎖.** 除了只看的指令 (`read`、`stop`、`giveback`、`export --last`、`capture`、不帶 `--go` 的 `world`), 每個 `ai_coc` 指令開跑時先看有沒有別的活著的程序佔著 (`cli.py` 的 `_claim_for`, `commands.py` 的 `claim` 跟 `take_over`): 有, 就照 `ai_coc stop` 的流程請它收工, 記下是你叫停的, 等它打完手上那一場退出才開始; 它是帶 `--yield` 開的 (打資源的迴圈都是) 就是借走, 用完要 `giveback`. 帶 `--yield` 的指令反過來, 誰都不請, 排隊等. 所以**迴圈在跑的時候下 `stock`、`status`、`worker` 這種要操作畫面的指令, 就是把那輪借走**, 不是你要的就不要下. 只想看畫面, 用 `capture` 或 `repair-emulator` 的 `look.py` (`uv run --no-sync python .agents/skills/repair-emulator/scripts/look.py <資料夾>`): 都只截圖, 不佔鎖也不開任何東西, 代價是跟迴圈多搶一條 ADB, 跟下面 `--shot-every` 的心跳同一類.
+**`state.json` 是一把鎖.** 除了只看的指令 (`read`、`stop`、`giveback`、`watch`、`export --last`、`capture`、不帶 `--go` 的 `world`), 每個 `ai_coc` 指令開跑時先看有沒有別的活著的程序佔著 (`cli.py` 的 `_claim_for`, `commands.py` 的 `claim` 跟 `take_over`): 有, 就照 `ai_coc stop` 的流程請它收工, 記下是你叫停的, 等它打完手上那一場退出才開始; 它是帶 `--yield` 開的 (打資源的迴圈都是) 就是借走, 用完要 `giveback`. 帶 `--yield` 的指令反過來, 誰都不請, 排隊等. 所以**迴圈在跑的時候下 `stock`、`status`、`worker` 這種要操作畫面的指令, 就是把那輪借走**, 不是你要的就不要下. 只想看畫面, 用 `capture` 或 `repair-emulator` 的 `look.py` (`uv run --no-sync python .agents/skills/repair-emulator/scripts/look.py <資料夾>`): 都只截圖, 不佔鎖也不開任何東西, 代價是跟迴圈多搶一條 ADB, 跟下面 `--shot-every` 的心跳同一類.
 
 **而「上一個」不一定是你開的**, 使用者可能同時開著另一個 session. 所以**開第一個會碰模擬器的指令之前, 先讀 `~/.ai_coc/state.json`**:
 
@@ -204,7 +204,7 @@ log 裡的 `stopped moving after 2 swipe(s)` 是正常的. `camera was still mov
 
 **這個檔有兩件事看不到, 2026-09-21 兩件都出過事.**
 
-- **監控**: 被交辦盯工人的 session 每隔一陣子跑一次 `ai_coc status`, 兩次之間檔案寫的是 `idle`, 從外面看不見. `ai_coc stop` 也碰不到它, 在迴圈的是 agent 不是程序, 只有殺掉那個 agent 才停得下來. 而且它每跑一次 `status` 都會借走當下在跑的迴圈, 沒 `giveback` 的話那輪要等 30 分鐘才接回去
+- **監控**: 被交辦盯工人的 session 每隔一陣子跑一次 `ai_coc status`, 兩次之間檔案寫的是 `idle`, 在迴圈的是 agent 不是程序. 現在它用 `ai_coc watch` 把自己記在 `watch` 上, `ai_coc stop` 清掉這筆, 醒來會讀檔的監控就自己收工; 不記、不讀的監控照舊只有殺掉那個 agent 才停得下來. 而且它每跑一次 `status` 都會借走當下在跑的迴圈, 沒 `giveback` 的話那輪要等 30 分鐘才接回去
 - **使用者本人**: 他用手機玩就會把模擬器踢下線, 在另一台模擬器 (MuMu 跟雷電登同一個帳號) 開遊戲也一樣. 那天一次 `builders` 把被踢下線的畫面當成普通遮擋, 花 61 秒按 `back` 跟答 `取消`, 回報 `畫面沒辦法回到村莊`; 重跑時 `ensure_coc` 又把登入搶回來, 把使用者再踢一次. **所以在人可能正在玩的時候回不到村莊, 是停下來講一聲的理由, 不是再試一次的理由.**
 
 `--shot-every` 的心跳是同一個程序裡的執行緒, 跟迴圈搶同一條 ADB 連線 (一張 `screencap -p` 0.6 到 0.8 秒), 有代價但可控; 兩個獨立的指令不是.
