@@ -74,7 +74,7 @@ uv run ai_coc status --label watch --agent <名字> --session <session id> --mis
 
 **每排好一次醒來, 就把自己記在 `state.json` 上**: `uv run ai_coc watch --next <醒來的時間, ISO> --about "<在等什麼>"` (帶 `--agent`、`--session`、`--mission`). 它不碰模擬器. 這樣別的 agent 跟工具看得到有人在盯, `ai_coc stop` 也碰得到你: 沒有指令在跑時的 stop 會把這筆清掉. 所以**醒來先讀 `state.json`**, 沒有 `watch`, 或不是你這個 session 的, 就是有人叫停或接手了, 什麼都不講, 直接收工.
 
-用 runtime 自己的排程能力 (或者使用者開的定時迴圈) 睡. 要再讀之前 (讀不到要重來, 或他說動過遊戲) 照 `AGENTS.md` 的 Look before driving 先看 `state.json`: 模擬器上可能已經有別的 run 在跑, 這時下 `status` 會借走它 (它帶 `--yield` 的話), 讀完馬上 `uv run ai_coc giveback` (使用者叫停時例外, 見 `.agents/skills/farm/references/running.md` 的「用完一定要還」), 不然它要等 30 分鐘才接回去 (見 `.agents/skills/farm/references/running.md` 的「絕對不要同時跑兩個」).
+用 runtime 自己的排程能力 (或者使用者開的定時迴圈) 睡; 兩樣都沒有, 就開一個睡到那時候的背景指令, runtime 管的那種, 跑完的通知會叫醒你 (`.agents/skills/farm/references/running.md` 的「開跑」). **`ai_coc watch` 只是那一筆紀錄, 不是計時**, 叫不醒任何人; 排不出計時就不記, 回覆裡講明到時候沒有人會回來看. 要再讀之前 (讀不到要重來, 或他說動過遊戲) 照 `AGENTS.md` 的 Look before driving 先看 `state.json`: 模擬器上可能已經有別的 run 在跑, 這時下 `status` 會借走它 (它帶 `--yield` 的話), 讀完馬上 `uv run ai_coc giveback` (使用者叫停時例外, 見 `.agents/skills/farm/references/running.md` 的「用完一定要還」), 不然它要等 30 分鐘才接回去 (見 `.agents/skills/farm/references/running.md` 的「絕對不要同時跑兩個」).
 
 **不要每十分鐘戳一次**, 這是使用者自己否掉 `--watch` 的理由: 等待是算術不是觀察, 而 `--watch` 那種在程序裡睡的迴圈會佔住 `~/.ai_coc/state.json`, 讓別的 session 以為模擬器在忙. 一整晚一次讀取, 不是四十八次; 只有讀不到的時候 (上一節說過要再讀的那幾種) 過幾分鐘再讀.
 
