@@ -42,7 +42,7 @@ description: >-
 
 使用者沒交代就照設定檔跑. `--min-gold` 之類只在他明講要放寬時用, `0` 跟不給是兩件事 (見 `LootOverrides` 的 docstring). `--stop-at` 是**測試**用的: 對著剛打滿的村莊打一場來驗東西時給 `0`; 打資源不要用, 滿倉搶回來的進不去.
 
-**碰模擬器之前先讀 `~/.ai_coc/state.json`, 而且每個指令都帶 `--yield`**: 有別人在跑就排隊等它跑完, 不會把它停掉; 別人要用時你的 run 是被借走, 開回去的指令會自己等到還回來. 查法在 `references/running.md` 的「絕對不要同時跑兩個」跟「被借走」. **例外是別人已經在打資源**: 開工時佔著的是別的 agent 帶 `--yield` 的 run (`yields` 是 `true`, `caller` 不是你), 或者檔案上有一筆還沒結束的借用 (`loan.ended` 是 null) 而 `lender` 不是你, 就不要排在它後面, 兩個迴圈會在指令之間輪流搶到模擬器, 各自的 `world --go` 把對方下一輪的 `attack` 帶到錯的村莊. 不開跑, 回報誰 (`caller`) 在跑哪一個 (`command`, `log`).
+**碰模擬器之前先讀 `~/.ai_coc/state.json`, 而且每個指令都帶 `--yield`**: 有別人在跑就排隊等它跑完, 不會把它停掉; 別人要用時你的 run 是被借走, 開回去的指令會自己等到還回來. 查法在 `references/running.md` 的「絕對不要同時跑兩個」跟「被借走」. **例外是別人已經在打資源**: 開工時佔著的是別的 agent 帶 `--yield` 的 run (`emulator` 那一塊的 `yields` 是 `true`, `caller` 不是你), 或者那一塊有一筆還沒結束的借用 (`loan.ended` 是 null) 而 `lender` 不是你, 就不要排在它後面, 兩個迴圈會在指令之間輪流搶到模擬器, 各自的 `world --go` 把對方下一輪的 `attack` 帶到錯的村莊. 不開跑, 回報誰 (`caller`) 在跑哪一個 (`command`, `log`).
 
 **開跑前不用先讀倉庫**: `attack` 每一輪開打前自己讀一次, 寫成 `run.log` 的 `Village holds …` (夜世界 `Builder base holds …`), 進帳就從這些行算 (「數字從哪來, 不准編」). 已經滿了的世界, 開跑第一輪就會收工, 不是壞掉.
 
@@ -65,7 +65,7 @@ uv run ai_coc attack --repeat 0 --plan src/ai_coc/plans/night_flat.json --yield
 
 **一個世界打不動就先去打另一個**, 為什麼卡住不重要: 耗在那邊等於另一個整晚沒打. 看進帳斜率而不是輪數: 主村 `Village holds gold=… elixir=… dark=…`, 夜世界 `Builder base holds gold=… elixir=…`, 連續幾輪幾乎沒動就是打不動. **夜世界倉庫滿了之後那行本來就不動** (在填聖水車), 看每五場一次的 `holding X of Y` 有沒有在長.
 
-**這種 run 不會自己結束** (到不了百分比就沒有 `stock_full`), 所以換世界要先 `uv run ai_coc stop`, 等背景指令結束再 `world --go … --yield`: 帶 `--yield` 的指令不請任何人收工, 你自己那一輪也一樣, 只會排隊等它. 停止在打完手上那一場才生效, 可能好幾分鐘; `result.json` 寫出來或 `state.json` 的 `status` 回到 `idle` 就是退出了.
+**這種 run 不會自己結束** (到不了百分比就沒有 `stock_full`), 所以換世界要先 `uv run ai_coc stop emulator` (只停迴圈; 不帶 `emulator` 會連盯升級一起停), 等背景指令結束再 `world --go … --yield`: 帶 `--yield` 的指令不請任何人收工, 你自己那一輪也一樣, 只會排隊等它. 停止在打完手上那一場才生效, 可能好幾分鐘; `result.json` 寫出來或 `state.json` 的 `emulator.status` 回到 `idle` 就是退出了.
 
 **兩邊都不等兵營**, 造兵是即時的; 夜世界的時間幾乎都在等真人配對.
 
@@ -88,17 +88,16 @@ uv run ai_coc attack --repeat 0 --plan src/ai_coc/plans/night_flat.json --yield
 
 **每一趟打資源都順便盯工人、實驗室跟鐘塔**, 不用他交代 (使用者 2026-10-10 的常設交代). 這一節是**派工的那個 session** 的事: 打資源的 subagent 卡在 `attack` 裡, 看不到時間也發不了推播, 它不讀這些時間, 只管打資源. 你就是那個 subagent 的話跳過這一節.
 
-- **先看 `state.json` 的 `watch`**: 另一個 session 的 `watch` 還在 (`next_at` 沒過超過半小時) 就是已經有人在盯, 這一節不做 (不開第二個盯, 打資源照打), 回報講一聲是誰 (`caller`) 在盯
 - **開跑前跑一次 `uv run ai_coc status`, 每一趟都重讀**: 之前讀到的時間不沿用, 他在遊戲裡動過什麼 (寶石加速, 開藥水, 新的升級) 不一定會講. 他講了就再讀一次, 排好的計時全部換掉. `timers` 是兩個世界每件升級實際幾點好 (`done_at`, 加速已經算進去), 由早到晚; `clock_tower` 是鐘塔下次幾點能開 (`ready_in` 0 是現在就能開, 講一次就好, 不要每次醒來都講)
-- **排一個背景計時**, 照 `watch-upgrades` 的「算出時間, 不要輪詢」: 最早的那一件的五分鐘前. 計時是到點會叫醒這個 session 的東西: runtime 的排程工具, 或一個睡到那時候的背景指令 (跟背景跑 `attack` 同一種, 跑完的通知叫醒你, 見 `references/running.md` 的「開跑」). **`ai_coc watch` 不是計時**, 它只在 `state.json` 記一筆, 叫不醒任何人: 2026-10-11 一個 session 只記了它, 回報「已設置升級監控」就結束回合, 到點沒有人回來. 計時排好了才 `uv run ai_coc watch --next <醒來的時間, ISO> --about "<在等什麼>"` (帶 `--agent`、`--session`、`--mission`: 沒帶的那筆不屬於任何 session, 你自己也換不掉、收不掉), 把自己記在 `state.json` 上: 別的 agent 跟工具才看得到有人在盯, `ai_coc stop` 也才碰得到你 (沒有指令在跑時的 stop 會把這筆清掉). 每排一次就記一次. 記完讀 `state.json`, `watch.caller.session` 是你的才算記上, 不要看它回的那句話. 排不出計時就不記, 回覆裡講明到時候沒有人會回來看
-- **醒來先讀 `state.json`**: 沒有 `watch`, 或不是你這個 session 的, 是有人叫停或接手了, 什麼都不講, 這一節收工
-- **時間到就發問, 不只推播** (使用者 2026-10-11: 有些 agent, 例如 Antigravity, 只有發問才彈得出通知): 用 runtime 自己問使用者的工具, 不再讀時間, 也不停打資源. **有些 runtime 發問時整個回合停在那裡等回答**, 所以讓打資源繼續的事都先做完再問: 排好下一件的計時、記好 `watch`、借來的模擬器 `giveback`、該派的下一個 subagent 派出去
+- **把 `ai_coc watch` 丟到背景, 它就是計時器**: `uv run ai_coc watch --next <最早那一件的五分鐘前, ISO> --about "<在等什麼>"` (帶 `--agent`、`--session`、`--mission`), 用 runtime 自己管的背景執行開 (跟背景跑 `attack` 同一種, 見 `references/running.md` 的「開跑」). 它睡到 `--next` 才結束, 結束的通知就是叫醒你的那一下; 睡的時候它把自己記在 `state.json` 的 `watch` 那一塊, 別的 agent 看得到有人在盯, `ai_coc stop` 也停得到它. 不要另外排 sleep 或排程: 以前記錄跟計時是兩件事, 2026-10-11、10-12 都有 agent 只記不睡, 到點沒有人回來. 別人的 watch 還活著也照開: 它會先請那一個收工 (`stop_by` 記成你) 再接手, 你剛被交辦, 那一邊醒來讀到是你接手就收工. 回報講一聲接手了誰
+- **醒來先看它的輸出** (`result.json` 跟背景任務印的是同一份 `WatchReport`): `outcome` 是 `due` 就是時間到了; 是 `stopped` 就是有人叫停或接手了, `stop_by` 是誰、他的 `mission` 是為什麼, 什麼都不講, 這一節收工. 例外是 `stop_by.session` 是你自己的: 那是你重讀時間後開的新 watch 接手了舊的, 照常等新的那個
+- **時間到就發問, 不只推播** (使用者 2026-10-11: 有些 agent, 例如 Antigravity, 只有發問才彈得出通知): 用 runtime 自己問使用者的工具, 不再讀時間, 也不停打資源. **有些 runtime 發問時整個回合停在那裡等回答**, 所以讓打資源繼續的事都先做完再問: 下一件的 `ai_coc watch` 丟到背景、借來的模擬器 `giveback`、該派的下一個 subagent 派出去
     - **工人**: 先跑 `ai_coc worker` (它讀遊戲停著的那個世界, 會借走打資源的 run, 讀完 `giveback` 自己一步). 它回的 `world` 是這次要好的那個世界, 而 `suggested` (面板上的建議升級: 名字、價錢、資源) 不是空的, 就一個一個列成選項, 最後加「先不要動」. 世界不對, 或 `suggested` 是空的, 就只問要不要現在處理, 問題裡講明為什麼沒有清單. 價錢是模型讀的, 拿來給他挑可以, 花之前照 `spend-loot` 再確認, 而且等工人真的空出來
     - **實驗室**: 沒有指令能研究, 所以不讓他挑: 同樣讀一次 `lab`, 把 `suggested` 寫進問題裡給他參考, 選項只放一個「知道了」
     - **鐘塔**: 還沒有能替他做的事, 選項只放一個「知道了」, 這一問是為了把通知彈出來
     - **`worker` / `lab` 讀到不是村莊** (`outcome` 是 `not_a_village`): 他可能正拿手機在玩, 不重讀, 不列清單照樣問, 問題裡講明. 是另一部裝置登入的話照 `AGENTS.md` 的 Driving the game, 他說可以之前什麼都不再跑
     - runtime 沒有發問的工具才推播. 不管他回不回, 迴圈照打; 他挑了要升的, 那是 `spend-loot` 的事
-- **`stock_full` 收工之後**, 還沒問的那一件照樣等到問完才收工 (使用者選的), 之後不再排, 下 `uv run ai_coc watch --done` 把自己收掉
+- **`stock_full` 收工之後**, 還沒問的那一件照樣等到問完才收工 (使用者選的), 之後就不再開下一個 `ai_coc watch`
 - **這不是「打到有空閒」**: 不帶 `--until-idle`, 迴圈不會因為工人空了停下來. 那是他開口要「打到有空閒通知我」才有的終點, 見那一節
 
 ## 怎麼跑
@@ -208,7 +207,7 @@ uv run ai_coc attack --repeat 0 --plan src/ai_coc/plans/night_flat.json --yield
 
 ## 停手之後就真的停手
 
-**打完不要留任何東西在背景跑**, 包括為了讓村莊「有人在線上」: 現在有沒有人看畫面都照樣被打, 保護村莊的是被打之後遊戲自己給的護盾. 資源花不掉就交報告、停手. 唯一的例外是「工人快空出來就講」還沒問的那一個計時, 問完就收, 同時 `ai_coc watch --done`.
+**打完不要留任何東西在背景跑**, 包括為了讓村莊「有人在線上」: 現在有沒有人看畫面都照樣被打, 保護村莊的是被打之後遊戲自己給的護盾. 資源花不掉就交報告、停手. 唯一的例外是「工人快空出來就講」還沒問的那一個 `ai_coc watch`, 問完就不再開.
 
 ## 順手做的事
 
@@ -228,7 +227,7 @@ uv run ai_coc attack --repeat 0 --plan src/ai_coc/plans/night_flat.json --yield
 
 回報裡寫三件事: 哪一輪, `run.log` 的哪幾行, 你當下看到的畫面. 那是 `watch-and-fix` 接手的起點; 繞過去不寫, 下一次還會撞上.
 
-要看活的畫面才判斷得出來: 只截圖看用 `look.py` 就好 (見「怎麼盯」), 迴圈不用停; 要動到遊戲或跑別的 `ai_coc` 指令才自己停迴圈 (`ai_coc stop`, 等它退出), 用完同一組旗標 (帶 `--yield`) 開回去.
+要看活的畫面才判斷得出來: 只截圖看用 `look.py` 就好 (見「怎麼盯」), 迴圈不用停; 要動到遊戲或跑別的 `ai_coc` 指令才自己停迴圈 (`ai_coc stop emulator`, 等它退出), 用完同一組旗標 (帶 `--yield`) 開回去.
 
 ## 任務報告
 

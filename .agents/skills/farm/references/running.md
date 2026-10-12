@@ -2,11 +2,13 @@
 
 `farm`, `watch-and-fix`, `build-feature`, `spend-loot`, `watch-upgrades` 五個 skill 共用這一份, 路徑是 `.agents/skills/farm/references/running.md`.
 
+**`~/.ai_coc/state.json` 分兩塊**: `emulator` 是佔著模擬器的那個指令, `watch` 是睡著等升級的 `ai_coc watch`. 這份跟其他 skill 講到 `status`、`pid`、`log`、`command`、`caller`、`stop_by`、`yields`、`loan` 而沒說是哪一塊的, 都是 `emulator` 那一塊.
+
 ## 為什麼一定要背景跑
 
 一輪進攻四到五分鐘起跳, `--repeat 0` 打到倉庫滿可能是好幾個小時. **主 session 的角色是監督, 不是執行**: 迴圈在背景跑, 你在前景讀 log、改東西、回答使用者, 他隨時插得了話.
 
-**會跑很久的都用背景送出去, 這裡是唯一一份清單**: `attack`; `walls` (掃描加購買好幾分鐘); `upgrade` 跟 `hero` (找不到目標會退回 `_sweep`, 兩分半起跳); `donate --rounds 0`. 幾秒就回來的前景跑: `world`, `read`, `collect`, `capture`, `view`, `status`; `world --go` 真的坐船約一分鐘, 也前景跑; 被借走之後開回去的那一次例外, 它可能要排隊很久, 見「被借走」.
+**會跑很久的都用背景送出去, 這裡是唯一一份清單**: `attack`; `walls` (掃描加購買好幾分鐘); `upgrade` 跟 `hero` (找不到目標會退回 `_sweep`, 兩分半起跳); `donate --rounds 0`. `watch` 睡到 `--next` 才結束, 一定背景跑. 幾秒就回來的前景跑: `world`, `read`, `collect`, `capture`, `view`, `status`; `world --go` 真的坐船約一分鐘, 也前景跑; 被借走之後開回去的那一次例外, 它可能要排隊很久, 見「被借走」.
 
 **你是 subagent 的話反過來, 在前景阻塞.** 沒有人在跟你講話, 背景指令跑完也不保證叫得醒一個已經結束回合的 subagent, 所以 subagent 把指令 (或等它的迴圈) 丟到背景再結束回合, 就會停在那裡不動. **subagent 要在前景阻塞**, 而一次阻塞的呼叫有 runtime 自己的 timeout 上限 (常見是十分鐘, 預設值往往更短), 所以分段等: 一段比那個上限短, **那次呼叫的 timeout 要設得比一段長** (沒設的話一段還沒等完就被砍), 等不到就再下一段. **分段的只有等待, 指令本身用 runtime 自己的背景執行開**, 在另外幾次前景呼叫裡等它: `attack` 一跑就超過一次呼叫的上限 (`walls` 平常一兩分鐘, 排隊或退回掃網格時也會超過), 而指令被砍等於把軍隊丟在場上 (見「中止」的「不要去砍背景程序」). 所以不要替它包 `timeout`, 也不要用 shell 的 `&` 或 `nohup` 丟出去 (exit code 跟輸出都回不來); 2026-10-08 一個 subagent 用 `timeout 590` 包住 `attack`, 時間一到就砍在一輪中間, 沒有 `result.json`, 那次已經打完的五輪只剩 `run.log` 數得出來. 每一段照「等待要有出口, 收工要清乾淨」寫, 不要只看 `result.json`:
 
@@ -14,7 +16,7 @@
 RUN=~/.ai_coc/logs/<這次的目錄>
 for i in 1 2 3; do   # 一段最多九分鐘
     [ -s "$RUN/result.json" ] && break
-    grep -q '"status": "idle"' ~/.ai_coc/state.json && grep -qF "$(basename "$RUN")" ~/.ai_coc/state.json && break
+    jq -e --arg run "$(basename "$RUN")" '.emulator.status == "idle" and (.emulator.log // "" | contains($run))' ~/.ai_coc/state.json >/dev/null && break
     sleep 180
 done
 ```
@@ -36,7 +38,7 @@ uv run ai_coc attack --repeat 0 --yield --agent <名字> --session <session id> 
 
 **你是跟開發同時跑的 farm subagent, 就在主 checkout (預設分支) 上跑, 每個指令都寫成 `uv run --no-sync ai_coc …`**, `stop` 也一樣: 開發在另一個 worktree 做, 理由在 `AGENTS.md` 的 The loop runs the main checkout. 真的要同步 (merge 帶進新的依賴, 指令 import 失敗) 就等手上的程序結束再 `uv sync`.
 
-**merge 進來的修正, 迴圈不會自己用上**: 它跑的是主 checkout 開跑時的程式碼. 開發那邊 merge 之後會傳話叫你拉, 你就在兩個指令之間 `git -C <主 checkout> pull --ff-only` (拉進來的 `pyproject.toml` 或 `uv.lock` 有變才 `uv sync`), 下一個指令起就是新的. 修正要馬上驗證的話是 `watch-and-fix` 的做法: 主 session 自己 `ai_coc stop`, 等你回報收工, 自己拉, 再叫你同一組旗標開回去.
+**merge 進來的修正, 迴圈不會自己用上**: 它跑的是主 checkout 開跑時的程式碼. 開發那邊 merge 之後會傳話叫你拉, 你就在兩個指令之間 `git -C <主 checkout> pull --ff-only` (拉進來的 `pyproject.toml` 或 `uv.lock` 有變才 `uv sync`), 下一個指令起就是新的. 修正要馬上驗證的話是 `watch-and-fix` 的做法: 主 session 自己 `ai_coc stop emulator`, 等你回報收工, 自己拉, 再叫你同一組旗標開回去.
 
 **每一個 `ai_coc` 指令都帶 `--agent`、`--session`、`--mission`**, 其他 skill 裡寫的指令也一樣: 你自己的名字 (`claude-code`、`antigravity`、`codex`), 你自己的 session id, 這一趟在做什麼 (一句話). 每個指令都把它們寫進自己 `run.log` 裡寫目錄的那一行的下一行; 會佔用模擬器的指令還會寫進 `state.json` 的 `caller`, 所以那裡記的永遠是開始這一輪的人, 誰叫停的記在 `stop_by`. 別的 session 就是靠這些查出是誰在開模擬器. 旗標是選填的, 那是留給使用者手動打指令; agent 一律要帶, 沒帶的話 log 會留一行 warning.
 
@@ -120,11 +122,11 @@ jq '.[-1] | {world, outcome, stock_full, attacked}' ~/.ai_coc/logs/<run>/result.
 
 ## 中止
 
-**使用者叫停, 誰收到誰自己下 `ai_coc stop`.** 主 session 收到就自己跑, 不要只傳話給打資源的 subagent: subagent 卡在一個指令裡的時候, 要等那個指令回來才讀得到訊息, 那段時間迴圈照打. subagent 自己收到也一樣照下. 兩邊都收得到的時候, 使用者偏好主 session 自己下. 指令停了之後再下一次, 把盯升級的 `watch` (跟還在的借用) 一起收掉, 理由在下面的兩層.
+**使用者叫停, 誰收到誰自己下 `ai_coc stop`.** 主 session 收到就自己跑, 不要只傳話給打資源的 subagent: subagent 卡在一個指令裡的時候, 要等那個指令回來才讀得到訊息, 那段時間迴圈照打. subagent 自己收到也一樣照下. 兩邊都收得到的時候, 使用者偏好主 session 自己下. 一次就連盯升級的 `ai_coc watch` 一起停; 借用要等借的那個指令停了再下一次才取消, 見下面的兩層.
 
-**跑 `uv run ai_coc stop`, 這是停止的唯一方式.** 它把 `~/.ai_coc/state.json` 的 `status` 改成 `stopping` 就秒回, 不碰遊戲也不找程序. 每個會碰模擬器的指令都讀同一份檔案, 所以不必先查在跑哪一個; 它會回你叫停的是什麼、pid 多少, 沒有人在跑就說沒有. 你帶的 `--agent`、`--session`、`--mission` 會記成 `stop_by`, 那一輪收工後的 `idle` 紀錄還留著, 被停的那一邊讀得到是誰、為什麼.
+**跑 `uv run ai_coc stop`, 這是停止的唯一方式.** 它把 `~/.ai_coc/state.json` 兩塊的 `status` 改成 `stopping` 就秒回, 不碰遊戲也不找程序. 每個會碰模擬器的指令都讀同一份檔案, 所以不必先查在跑哪一個; 它會回你叫停的是什麼、pid 多少, 沒有人在跑就說沒有. 你帶的 `--agent`、`--session`、`--mission` 會記成 `stop_by`, 那一輪收工後的 `idle` 紀錄還留著, 被停的那一邊讀得到是誰、為什麼.
 
-**`stop` 分兩層**: 有指令在跑, 它只停那個指令, 借用跟盯升級的 `watch` 都留著, 出借方之後照樣開回去 (skill 自己為了換世界、拉修正而停迴圈, 也不該把盯升級停掉); 沒有指令在跑, 它取消借用、清掉 `watch`, 出借方不會開回去, 排隊中的那個也不會開跑, 盯升級的那一邊醒來讀到也會收工. 所以要連打資源跟盯升級一起停, 等指令停了再下一次.
+**`stop` 一次停兩塊**: 模擬器上在跑的指令, 跟睡著的 `ai_coc watch` (它幾秒內醒來, 叫醒盯升級的那個 agent, 那一邊讀到 `stop_by` 就收工). 只停一塊就帶目標: `ai_coc stop emulator` 只停指令, skill 自己為了換世界、拉修正、中途停測試而停迴圈都用這個, 不然會把盯升級一起停掉; `ai_coc stop watch` 只停盯升級. **借用照舊分兩層**: 借的那一邊的指令還在跑, 第一次只停那個指令, 借用留著, 出借方之後照樣開回去; 沒有指令在跑時再下一次, 才取消借用, 出借方不會開回去, 排隊中的那個也不會開跑. 所以使用者叫停而有人借著模擬器, 等指令停了再下一次.
 
 **不用再手動刪那份檔案.** 程序死掉留下的 `running` 不會卡住任何人: 下一個要用模擬器的指令查得出那個程序已經不在, 直接接手.
 
@@ -140,7 +142,7 @@ jq '.[-1] | {world, outcome, stock_full, attacked}' ~/.ai_coc/logs/<run>/result.
 
 **被叫停看 exit code 看不出來, 所以每一步跑完、開下一步之前都讀 `state.json`.** 在回合之間被停掉的 `attack` 照樣 exit 0, `result.json` 最後一個元素是那一輪自己的 `outcome` (多半是 `took_loot`), 不是 `stopped`; `world --go` 根本不讀叫停, 坐船時被停也照樣跑完. 看得出來的只有 `run.log` 結尾的 `Stop requested`, 跟 `state.json` 那筆 `idle` 紀錄上的 `stop_by`, 而下一個指令一 claim 就把 `stop_by` 蓋掉了. 所以只看剛跑完的那一步: `state.json` 的 `log` 是它的目錄, 而 `stop_by` 有值又不是你下的, 就是它被收掉了, 接著照「被借走」那三條分辨是借走還是叫停. `log` 不是剛跑完那一步的目錄, 那筆 `stop_by` 就是更早以前的 (使用者上一次叫停留下的會一直留到下一個指令 claim), 不算. **每一步各自一次呼叫, 不要把幾步寫成一支只看 exit code 的腳本** (`world --go … && attack … && walls …`): 2026-10-08 一個 subagent 這樣跑, 兩次 `ai_coc stop` 之後又刷了兩次牆、開了一場進攻.
 
-**`ai_coc stop` 剛好下在兩步之間就不會叫停任何指令**: 沒有指令在跑, 它只回 `現在沒有指令在跑` (有人在盯升級的話, 只把那筆 `watch` 清掉), subagent 的下一步照常開跑. 下 stop 的那一邊看到這句, 要馬上傳話給打資源的 subagent; 它一步一次呼叫的話, 下一步之前就收得到.
+**`ai_coc stop` 剛好下在兩步之間就不會叫停任何指令**: 沒有指令在跑, 它只回 `現在沒有指令在跑` (有人在盯升級的話, 盯升級照樣停), subagent 的下一步照常開跑. 下 stop 的那一邊看到這句, 要馬上傳話給打資源的 subagent; 它一步一次呼叫的話, 下一步之前就收得到.
 
 **這一條只管使用者叫停.** 迴圈自己跑完 (倉庫滿了, 輪數跑完) 的通知是接縫不是終點, 自己接下一步, 判斷在 `.agents/skills/farm/SKILL.md` 的「倉庫滿了」那節. 差別是誰按的停.
 
@@ -162,7 +164,7 @@ jq '.[-1] | {world, outcome, stock_full, attacked}' ~/.ai_coc/logs/<run>/result.
 
 **不 claim 的腳本自己借不到**: `spend-loot` 的 `eye.py` 跟 `build-feature` 的 `references/exploring.md` 那段腳本走 `commands._controller()`, 不碰 `state.json`, 迴圈在跑的時候照樣點得下去, 兩邊搶同一個畫面. 所以先用一個會 claim 的指令 (例如 `ai_coc stock`) 借到, 看 `state.json` 的 `loan` 在、`loan.ended` 是 null、`loan.borrower` 是你 (頂層的 `ended` 是你那個指令收工的時間, 不用看), 才跑腳本. 沒有 `loan` 是迴圈剛好在兩個指令之間, 什麼都沒借到, 再借一次. 那個指令要帶 `--session`: 沒帶的話它一跑完就把借用還回去. 借用從你最後一個會 claim 的指令跑完起算, 過了 `LOAN_TIME` (30 分鐘) 就失效, 腳本用得久就中間再跑一次續上. 用完照樣 `giveback`.
 
-**你自己決定測試要中途停**, `ai_coc stop` 只停你的指令, 借用還在, 用完一樣要還 (「中止」的兩層). 是使用者叫停就不還, 見下面「用完一定要還」的例外.
+**你自己決定測試要中途停**, 下 `ai_coc stop emulator`: 只停你的指令, 盯升級不動, 借用還在, 用完一樣要還 (「中止」的兩層). 是使用者叫停就不還, 見下面「用完一定要還」的例外.
 
 **背景那輪是你自己開的** (你就是那輪的 agent, 例如親自監督的 `watch-and-fix`), 借走的就是你自己的迴圈: 它收工時先不要開回去, 不然開回去的指令會排在你自己的借用後面. 測完、還了, 再照「被借走」開回去.
 
@@ -202,9 +204,9 @@ log 裡的 `stopped moving after 2 swipe(s)` 是正常的. `camera was still mov
 
 **`running` 有可能是殘留**, 程序被砍掉的話沒有人把它寫回 `idle`. 不用自己查 pid: 指令開跑時會查 (pid 還在, 是 Python 或 `ai_coc`, 而且就是寫那筆紀錄的那個程序), 殘留就直接接手. **讀檔這一步每次開工都做**, 為的是知道你要停掉的是誰的 run.
 
-**這個檔有兩件事看不到, 2026-09-21 兩件都出過事.**
+**這個檔有兩件事要另外注意, 2026-09-21 兩件都出過事.**
 
-- **監控**: 被交辦盯工人的 session 每隔一陣子跑一次 `ai_coc status`, 兩次之間檔案寫的是 `idle`, 在迴圈的是 agent 不是程序. 現在它用 `ai_coc watch` 把自己記在 `watch` 上, `ai_coc stop` 清掉這筆, 醒來會讀檔的監控就自己收工; 不記、不讀的監控照舊只有殺掉那個 agent 才停得下來. 而且它每跑一次 `status` 都會借走當下在跑的迴圈, 沒 `giveback` 的話那輪要等 30 分鐘才接回去
+- **監控**: 盯工人的 session 兩次讀時間之間睡在 `ai_coc watch` 上, 那個程序記在 `watch` 那一塊, `ai_coc stop` 停得到它. 沒用 `ai_coc watch` 而自己排 sleep 的監控照舊看不到, 只有殺掉那個 agent 才停得下來. 而且它每跑一次 `status` 都會借走當下在跑的迴圈, 沒 `giveback` 的話那輪要等 30 分鐘才接回去
 - **使用者本人**: 他用手機玩就會把模擬器踢下線, 在另一台模擬器 (MuMu 跟雷電登同一個帳號) 開遊戲也一樣. 那天一次 `builders` 把被踢下線的畫面當成普通遮擋, 花 61 秒按 `back` 跟答 `取消`, 回報 `畫面沒辦法回到村莊`; 重跑時 `ensure_coc` 又把登入搶回來, 把使用者再踢一次. **所以在人可能正在玩的時候回不到村莊, 是停下來講一聲的理由, 不是再試一次的理由.**
 
 `--shot-every` 的心跳是同一個程序裡的執行緒, 跟迴圈搶同一條 ADB 連線 (一張 `screencap -p` 0.6 到 0.8 秒), 有代價但可控; 兩個獨立的指令不是.
