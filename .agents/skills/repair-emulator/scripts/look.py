@@ -1,6 +1,6 @@
 """看模擬器現在的畫面, 不開任何東西.
 
-spend-loot 的 `eye.py` 先經過 `_controller()`, 也就是 `ensure_coc`: 模擬器沒開就
+spend-loot 自己寫的點擊腳本先經過 `_controller()`, 也就是 `ensure_coc`: 模擬器沒開就
 開模擬器, 遊戲沒開就開遊戲. 修模擬器的時候那正是不能做的事. `ai_coc capture` 不開
 東西, 但它只截遊戲所在的 display, 遊戲不在任何 display 上就報錯. 所以這支只找出
 設定裡那台的 ADB, 截圖, 印出前景視窗, 其他什麼都不碰.
