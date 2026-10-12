@@ -75,7 +75,7 @@ ai_coc attack --repeat 0 --until-idle  # stop as well once a builder or research
 ai_coc attack --repeat 0 --until-idle builder  # only the builders (`lab` for the laboratory)
 ```
 
-`stop` marks `~/.ai_coc/state.json` and returns at once. The loop reads it between battles and between opponents, never mid-battle, so the worst case is one more battle: abandoning one halfway would leave the army on the field and the game on a screen the next run cannot get home from. With nothing running it says so, rather than leaving a request nobody will take.
+`stop` marks `~/.ai_coc/state.json` and returns at once. The loop reads it between battles and between opponents, never mid-battle, so the worst case is one more battle: abandoning one halfway would leave the army on the field and the game on a screen the next run cannot get home from. It stops the upgrade watch in the same go; `ai_coc stop emulator` or `ai_coc stop watch` stops only one. With nothing running it says so, rather than leaving a request nobody will take.
 
 Loot thresholds come from the settings file, and can be overridden for one run. Passing `0` is different from leaving a flag out: out means "use the configured value", `0` means "take this threshold out entirely":
 
@@ -117,7 +117,7 @@ ai_coc collect                        # empty every collector that has something
 ai_coc worker                         # what each builder on the village that is up is on, and how long is left
 ai_coc lab                            # what that village is researching, and how long is left
 ai_coc status                         # when every upgrade on both villages really finishes, potions included, plus this village's storages
-ai_coc watch --next <time> --about "..."   # put on state.json who is watching the upgrades and when it wakes next; --done takes it off
+ai_coc watch --next <time> --about "..."   # sleep until then as the one watching the upgrades, named on state.json; run it in the background
 ai_coc donate                         # give troops to whoever in the clan is asking
 ai_coc donate --dry-run               # walk the whole path and stop before giving anything
 ```
@@ -219,7 +219,7 @@ That is the whole file. **A run that finds no file creates one only to write dow
 
 There are no ability or spell timings here any more. They were a table of per-hero constants, and editing them meant guessing how long an army takes to walk across a village nobody had looked at — which is the planner's job, done with the village on screen. Every clock lives on the plan now: see `plans/flat.json` for the shape, and `--plan` to replay one.
 
-Everything else lives in `~/.ai_coc`: the account JSON `ai_coc export` writes, the run logs, and `state.json` — which command is driving the emulator, its pid, its log directory, and who started it (`--agent`, `--session`, `--mission`, or `window`). It is kept after a run ends rather than removed, so the record says what the last run was instead of going blank. It is also a lock: a command that drives the emulator asks the live run holding it to stand down and waits for it to finish, and takes over at once from a run whose process is gone. A run started with `--yield` is background work: it never stands anything down, and when something else needs the emulator it is lent out instead of stopped, and its agent starts it again once `ai_coc giveback` hands the emulator back, or half an hour after the borrower's last command. An agent watching the upgrade timers puts itself there with `ai_coc watch`, and an `ai_coc stop` that finds nothing running takes it off, the way it cancels a loan.
+Everything else lives in `~/.ai_coc`: the account JSON `ai_coc export` writes, the run logs, and `state.json` — which command is driving the emulator, its pid, its log directory, and who started it (`--agent`, `--session`, `--mission`, or `window`). It is kept after a run ends rather than removed, so the record says what the last run was instead of going blank. It is also a lock: a command that drives the emulator asks the live run holding it to stand down and waits for it to finish, and takes over at once from a run whose process is gone. A run started with `--yield` is background work: it never stands anything down, and when something else needs the emulator it is lent out instead of stopped, and its agent starts it again once `ai_coc giveback` hands the emulator back, or half an hour after the borrower's last command. The file has a second section, `watch`: the `ai_coc watch` process an agent sleeps on until an upgrade comes due, with its own pid, so whether anyone is watching is whether that process is alive. A new watch stops a live one and takes its place, and `ai_coc stop` ends it.
 
 ## 🤝 Contributing
 

@@ -18,7 +18,7 @@ import logging
 from pathlib import Path
 from datetime import UTC, datetime, timedelta
 import threading
-from contextlib import contextmanager
+from contextlib import suppress, contextmanager
 
 import psutil
 from filelock import Timeout, FileLock
@@ -36,11 +36,13 @@ from ai_coc.models import (
     MapSurvey,
     NightPlan,
     PlateRole,
+    StateFile,
     AttackPlan,
     CartReport,
     HeroReport,
     PlateCount,
     PlayedPlan,
+    StopTarget,
     ViewReport,
     WallReport,
     AdbEndpoint,
@@ -56,6 +58,7 @@ from ai_coc.models import (
     ViewOutcome,
     WallOptions,
     WallOutcome,
+    WatchReport,
     WorldReport,
     AttackReport,
     AttackSeries,
@@ -530,6 +533,13 @@ WINDOW_AGENT = "window"
 # while its borrower is still waiting for the lender's battle to end.
 LOAN_TIME = timedelta(minutes=30)
 
+# How often a write tries again when Windows refuses to replace the file, and
+# how far apart. It refuses while any other process has the file open, and the
+# loops and the watch each open it to read every `STOP_POLL`; a read is open for
+# a moment, so a few tries a moment apart get past one.
+REPLACE_TRIES = 10
+REPLACE_GAP = 0.05
+
 # The loan this process wrote when it stood a run down. A borrower with no
 # session has nothing else to recognise its own loan by.
 _borrowed: datetime | None = None
@@ -537,6 +547,15 @@ _borrowed: datetime | None = None
 
 class LoanCancelledError(RuntimeError):
     """`ai_coc stop` cancelled the loan a claim was queued behind."""
+
+
+class NoStateFileError(RuntimeError):
+    """`ai_coc watch` found no state file to put itself on.
+
+    Deleting the file by hand is a stop to the emulator's holder, which reads it
+    only at its next seam, and a watch that wrote the file back in between would
+    hide that stop. Any command that drives the emulator writes it afresh.
+    """
 
 
 @contextmanager
@@ -569,7 +588,7 @@ def _started_at(pid: int) -> float | None:
         return None
 
 
-def _alive(state: RunnerState) -> bool:
+def _alive(state: RunnerState | Watch) -> bool:
     """Whether the process a record names is still the one that wrote it.
 
     Never `os.kill(pid, 0)`: on Windows signal 0 is `CTRL_C_EVENT`, so it sends
@@ -771,6 +790,26 @@ def _end(holder: RunnerState, waited: float) -> None:
 
 
 def read_state() -> RunnerState | None:
+    """The emulator's section of the state file; None when there is no file at all."""
+    found = _read_file()
+    return found.emulator if found else None
+
+
+def read_watch() -> Watch | None:
+    """The upgrade watch's section of the state file; None when there is no file at all."""
+    found = _read_file()
+    return found.watch if found else None
+
+
+def _torn() -> StateFile:
+    """What a read that failed answers: both sections running, and this process's."""
+    return StateFile(
+        emulator=RunnerState(status="running", pid=os.getpid()),
+        watch=Watch(status="running", pid=os.getpid()),
+    )
+
+
+def _read_file() -> StateFile | None:
     """What the state file says; None when there is no file at all.
 
     **Nothing in here raises, which is the whole point.** `should_stop` is
@@ -798,15 +837,41 @@ def read_state() -> RunnerState | None:
         # Windows holds a file open against another process's write, so this is
         # a moment rather than a fault. Answering "no stop" costs one more poll.
         logger.warning("%s could not be read; carrying on", STATE_PATH)
-        return RunnerState(status="running", pid=os.getpid())
+        return _torn()
     try:
-        return RunnerState.model_validate_json(text)
+        return StateFile.model_validate_json(text)
     except ValueError:
         logger.warning("%s will not parse; carrying on as if nobody had asked", STATE_PATH)
-        return RunnerState(status="running", pid=os.getpid())
+        return _torn()
+
+
+def _kept() -> StateFile:
+    """The file as it stands, so a write of one section carries the other over.
+
+    A torn read is read again, since writing it back would hand the other
+    section to this process; one that stays torn puts that section back to idle,
+    which a live holder of it rewrites at its next claim or release.
+    """
+    for _ in range(TORN_READS):
+        found = _read_file()
+        if found != _torn():
+            return found or StateFile()
+        time.sleep(TORN_GAP)
+    logger.warning("%s would not read; the other section of it goes back to idle", STATE_PATH)
+    return StateFile()
 
 
 def _write_state(state: RunnerState) -> None:
+    """Write the emulator's section, keeping the watch's as the file holds it."""
+    _write_file(_kept().model_copy(update={"emulator": state}))
+
+
+def _write_watch(watch: Watch) -> None:
+    """Write the watch's section, keeping the emulator's as the file holds it."""
+    _write_file(_kept().model_copy(update={"watch": watch}))
+
+
+def _write_file(state: StateFile) -> None:
     """Replace the file rather than rewrite it, so no reader sees it half-built.
 
     `write_text` truncates before it writes, and something reads this every few
@@ -825,7 +890,15 @@ def _write_state(state: RunnerState) -> None:
     """
     scratch = STATE_PATH.with_name(f"{STATE_PATH.name}.{os.getpid()}.tmp")
     scratch.write_text(state.model_dump_json(indent=2), encoding="utf-8")
-    os.replace(scratch, STATE_PATH)
+    for attempt in range(REPLACE_TRIES):
+        try:
+            os.replace(scratch, STATE_PATH)
+        except PermissionError:
+            if attempt == REPLACE_TRIES - 1:
+                raise
+            time.sleep(REPLACE_GAP)
+        else:
+            return
 
 
 @contextmanager
@@ -906,7 +979,6 @@ def claim(
                     caller=who,
                     yields=yields,
                     loan=_carried(state, who, yields=yields),
-                    watch=state.watch if state else None,
                 )
                 _write_state(mine)
                 _held = mine
@@ -976,16 +1048,15 @@ def _release(command: str, log: Path | None) -> None:
                 caller=_held.caller if _held else Caller(),
                 stop_by=held.stop_by if held else None,
                 loan=loan,
-                watch=held.watch if held else None,
             )
         )
     _held = _borrowed = None
 
 
-def stop(caller: Caller | None = None) -> str:
-    """Ask whichever command is driving the emulator to finish and stand down.
+def stop(caller: Caller | None = None, target: StopTarget = "all") -> str:
+    """Ask the command driving the emulator, and the upgrade watch, to stand down.
 
-    Nothing here touches the game or looks for a process: this changes one field
+    Nothing here touches the game or looks for a process: this changes fields
     and ends. What actually stops is the loop, when it next looks, and where
     that is belongs to each of them — `attack` between rounds and between
     opponents, `walls` between batches and during the opening scan. Never
@@ -996,33 +1067,40 @@ def stop(caller: Caller | None = None) -> str:
     do: it wrote a file whether or not anything was listening, so a stop that
     landed and one that fell on an idle machine read identically.
 
+    **One stop reaches both sections**, the user's call of 2026-10-12: a stop
+    is everything this project has running. `target` narrows it to one, which
+    is how the skills stop their own loop to cross or to pick up a fix without
+    ending the watch.
+    """
+    who = caller or Caller()
+    said: list[str] = []
+    with _turn():
+        if target != "watch":
+            said.append(_stop_emulator(read_state(), who))
+        if target != "emulator":
+            said.append(_stop_watch(read_watch(), who))
+    return "".join(said)
+
+
+def _stop_emulator(state: RunnerState | None, who: Caller) -> str:
+    """Mark the emulator's holder `stopping`, and settle its loan.
+
     **A loan nobody is driving on is cancelled**, so the lender does not start
     again and nothing queued behind it starts either: a stop is a stop, not a
     turn of the emulator. A borrower's command still running is stopped like
     any other and its loan kept, so a test can be stopped without ending the
     farming it borrowed from; a second stop, with nothing running, cancels it.
-    The watch on the timers goes the same way: only a stop that finds nothing
-    running takes it off, because the skills stop their own loop to cross or
-    to pick up a fix, and that is not the user taking the game back.
     """
-    with _turn():
-        state = read_state()
-        loan = _standing(state)
-        watching = state.watch if state else None
-        if state is None or (state.status == "idle" and loan is None and watching is None):
-            return "現在沒有指令在跑,沒有東西要停。"
-        driven = loan is not None and loan.until is None
-        update: dict[str, object] = {}
-        if loan is not None and not driven:
-            update["loan"] = loan.model_copy(update={"ended": "cancelled"})
-        if state.status != "idle":
-            update |= {"status": "stopping", "stop_by": caller or Caller()}
-        # Whoever is watching the timers finds its record gone when it next
-        # wakes, and stands down.
-        cleared = watching if state.status == "idle" else None
-        if cleared is not None:
-            update["watch"] = None
-        _write_state(state.model_copy(update=update))
+    loan = _standing(state)
+    if state is None or (state.status == "idle" and loan is None):
+        return "現在沒有指令在跑,沒有東西要停。"
+    driven = loan is not None and loan.until is None
+    update: dict[str, object] = {}
+    if loan is not None and not driven:
+        update["loan"] = loan.model_copy(update={"ended": "cancelled"})
+    if state.status != "idle":
+        update |= {"status": "stopping", "stop_by": who}
+    _write_state(state.model_copy(update=update))
     after = ""
     if loan is not None:
         lender = loan.lender.agent or "借出模擬器的那一邊"
@@ -1031,14 +1109,20 @@ def stop(caller: Caller | None = None) -> str:
             if driven
             else f"借用也取消了,{lender}不會自己開回去。"
         )
-    if cleared is not None:
-        after += f"{cleared.caller.agent or '盯升級的那一邊'}的盯升級也收掉了。"
     if state.status == "idle":
         return f"現在沒有指令在跑;{after}"
     return (
         f"已要求 {state.command}(pid {state.pid})收工,狀態寫在 {STATE_PATH}。"
         f"它會做完手上這一件事才停。{after}"
     )
+
+
+def _stop_watch(watching: Watch | None, who: Caller) -> str:
+    """Mark a live upgrade watch `stopping`; it wakes within a `STOP_POLL`."""
+    if watching is None or watching.status == "idle" or not _alive(watching):
+        return "沒有人在盯升級。"
+    _write_watch(watching.model_copy(update={"status": "stopping", "stop_by": who}))
+    return f"已要求{watching.caller.agent or '盯升級的那一邊'}的盯升級收工。"
 
 
 def giveback() -> str:
@@ -1059,68 +1143,126 @@ def giveback() -> str:
     return f"還了,{loan.lender.agent or '借出模擬器的那一邊'}會自己開回去。"
 
 
-# How long past its own wake time a watch still stands: a watcher that wakes a
-# little late is still watching, and one this late has gone.
-WATCH_GRACE = timedelta(minutes=30)
+# How long a new watch gives the one it replaces to let go before ending it. A
+# watch reads the file every `STOP_POLL` while it sleeps, so one still holding
+# on after this many polls is not reading it at all.
+WATCH_TAKEOVER = 15 * STOP_POLL
 
 
-def _watching(state: RunnerState | None) -> Watch | None:
-    """The watch on the record, unless its watcher is long past its own wake time."""
-    found = state.watch if state else None
-    if found is None or found.next_at is None:
-        return found
-    return found if found.next_at + WATCH_GRACE > datetime.now().astimezone() else None
+def watch(
+    caller: Caller | None, next_at: datetime, about: str, log: Path | None = None
+) -> WatchReport:
+    """Sleep until `next_at` as the one process watching the upgrade timers.
 
+    The agent runs this in the background and is woken by it ending, so the
+    record of a watch and the wake are one thing: a record whose process is
+    gone is nobody watching, read off its pid like the emulator's holder. It
+    used to be a record and nothing else, and an agent wrote one with nothing
+    scheduled to wake it while every other agent took the timers for watched.
+    Nothing here touches the game.
 
-def watch(caller: Caller | None, next_at: datetime, about: str) -> str:
-    """Record that this agent is watching the upgrade timers, and when it next wakes.
-
-    Nothing here touches the game: it only puts the watcher on the state file,
-    where every agent and the window already look, so a second agent does not
-    start a second watch and `ai_coc stop` reaches this one too. Another
-    session's watch that is still live is left alone and named; this session's
-    own, or one whose watcher is long gone, is replaced. A missing or unreadable
-    file is left alone: writing a fresh record over a deleted one would undo
-    that stop, and over a torn read would replace the live holder.
+    **A live watch already there is stopped and taken over**, this session's
+    own included, the user's call of 2026-10-12: the newest request comes from
+    a session the user has just been talking to, and the one replaced wakes,
+    reads who stopped it and why off its own answer, and stands down.
     """
     who = caller or Caller()
-    with _turn():
-        state = read_state()
-        if state is None or state == RunnerState(status="running", pid=os.getpid()):
-            return f"讀不到 {STATE_PATH},這次沒有記下"
-        held = _watching(state)
-        mine = held is not None and _same(held.caller, who)
-        if held is not None and not mine:
-            return (
-                f"{held.caller.agent or '另一個 agent'}已經在盯升級"
-                f"({held.about or '沒寫在等什麼'},下次 {held.next_at:%m-%d %H:%M}),這次沒有記下"
-            )
-        now = datetime.now().astimezone()
-        record = Watch(
-            caller=who,
-            since=held.since if mine and held is not None else now,
-            next_at=next_at if next_at.tzinfo else next_at.astimezone(),
-            about=about,
-        )
-        _write_state(state.model_copy(update={"watch": record}))
-    return f"記下了:{about or '盯升級'},下次 {record.next_at:%m-%d %H:%M} 醒來"
+    wake = next_at if next_at.tzinfo else next_at.astimezone()
+    mine = _take_watch(who, wake, about, log)
+    logger.info("Watching the upgrade timers until %s: %s", f"{wake:%m-%d %H:%M}", about)
+    try:
+        while (left := (wake - datetime.now().astimezone()).total_seconds()) > 0:
+            current = read_watch()
+            if current is None or current.status == "stopping" or current.pid != mine.pid:
+                break
+            time.sleep(min(STOP_POLL, left))
+    except KeyboardInterrupt:
+        logger.info("Interrupted; letting the watch go")
+    return _let_watch_go(mine, wake)
 
 
-def unwatch(caller: Caller | None) -> str:
-    """Take this session's watch off the state file, or one whose watcher is long gone.
+def _take_watch(who: Caller, wake: datetime, about: str, log: Path | None) -> Watch:
+    """Stand any live watch down, naming `who`, and put this process in its place.
 
-    Another session's live watch is left alone: a watcher whose own record was
-    taken over would otherwise end the new one's. `ai_coc stop` takes any off.
+    The decision is taken inside the turn, as a claim's is, so two newcomers
+    finishing their wait together cannot both write themselves in.
     """
+    asked: tuple[int, datetime | None] | None = None
+    deadline = 0.0
+    while True:
+        with _turn():
+            current = read_watch()
+            if current is None:
+                raise NoStateFileError(
+                    f"{STATE_PATH} 不在(手動刪掉是叫停),這次沒有開始盯升級;"
+                    "先跑一個會操作模擬器的指令(例如 ai_coc status)再開"
+                )
+            if current.status == "idle" or not _alive(current):
+                mine = Watch(
+                    status="running",
+                    pid=os.getpid(),
+                    pid_created=_started_at(os.getpid()),
+                    started=datetime.now().astimezone(),
+                    log=log,
+                    caller=who,
+                    next_at=wake,
+                    about=about,
+                )
+                _write_watch(mine)
+                return mine
+            if asked != (current.pid, current.started):
+                _write_watch(current.model_copy(update={"status": "stopping", "stop_by": who}))
+                logger.info(
+                    "%s is watching (%s); asked it to stand down",
+                    current.caller.agent or "an agent with no name given",
+                    current.about,
+                )
+                asked = (current.pid, current.started)
+                deadline = time.monotonic() + WATCH_TAKEOVER
+        # Only a record that names its start time, since a pid alone may have
+        # been handed to another process since.
+        if time.monotonic() >= deadline and current.pid_created is not None:
+            logger.warning(
+                "The watch at pid %d did not stand down in %.0fs; ending it",
+                current.pid,
+                WATCH_TAKEOVER,
+            )
+            with suppress(psutil.Error):
+                psutil.Process(current.pid).terminate()
+        time.sleep(STOP_POLL)
+
+
+def _let_watch_go(mine: Watch, wake: datetime) -> WatchReport:
+    """Put this watch back to idle, unless another has replaced it, and say how it ended.
+
+    A file deleted by hand is not written back: that deletion is a stop to the
+    emulator's holder as well, and a file back in place before it looks would
+    hide it.
+    """
+    now = datetime.now().astimezone()
     with _turn():
-        state = read_state()
-        held = state.watch if state else None
-        if state is None or held is None:
-            return "現在沒有人在盯升級。"
-        if _watching(state) is not None and not _same(held.caller, caller or Caller()):
-            return f"{held.caller.agent or '另一個 agent'}在盯升級,不是這個 session 的,沒有收;要收掉用 ai_coc stop"
-        _write_state(state.model_copy(update={"watch": None}))
-    return f"{held.caller.agent or '盯升級的那一邊'}的盯升級收掉了。"
+        current = read_watch()
+        ours = current is not None and current.pid == mine.pid
+        stop_by = None if current is None else current.stop_by if ours else current.caller
+        if ours:
+            _write_watch(
+                mine.model_copy(update={"status": "idle", "ended": now, "stop_by": stop_by})
+            )
+    stopped = not ours or (current is not None and current.status == "stopping") or now < wake
+    report = WatchReport(
+        caller=mine.caller,
+        next_at=wake,
+        about=mine.about,
+        ended=now,
+        stop_by=stop_by,
+        outcome="stopped" if stopped else "due",
+    )
+    logger.info(
+        "The watch ended %s%s",
+        report.outcome,
+        f", stopped by {stop_by.agent or 'nobody named'} ({stop_by.mission})" if stop_by else "",
+    )
+    return report
 
 
 def stop_requested() -> bool:

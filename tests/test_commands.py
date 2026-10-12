@@ -8,6 +8,7 @@ it builds. The runners themselves are tested in `test_runners.py`.
 
 from __future__ import annotations
 
+import os
 import json
 import math
 import time
@@ -24,7 +25,6 @@ from pydantic import ValidationError
 from ai_coc import plans, commands
 from ai_coc.ui import world as world_ui
 from ai_coc.models import (
-    Loan,
     Watch,
     Caller,
     MapEdge,
@@ -1538,136 +1538,187 @@ class RunPlumbingTests(unittest.TestCase):
 
 
 class WatchTests(unittest.TestCase):
-    """The upgrade watcher on the state file, which nothing else could show.
+    """The upgrade watch, which is the sleeping process its own record names.
 
     The state file lives in this test's tmp directory (conftest), so nothing
-    here touches the real one.
+    here touches the real one. A watch and a stop run in one process here,
+    and `_alive` never counts this process as somebody else's, so the tests
+    that need a live watcher patch it.
     """
 
     MINE = Caller(agent="claude-code", session="a", mission="盯升級")
-    THEIRS = Caller(agent="antigravity", session="b", mission="盯升級")
+    THEIRS = Caller(agent="antigravity", session="b", mission="打資源")
+    OTHER_PID = 424242
 
     def setUp(self) -> None:
         commands._write_state(RunnerState())
+        self.enterContext(patch.object(commands, "STOP_POLL", 0.01))
 
-    def _soon(self, hours: float = 1) -> datetime:
-        return datetime.now().astimezone() + timedelta(hours=hours)
+    def _soon(self, seconds: float = 0.05) -> datetime:
+        return datetime.now().astimezone() + timedelta(seconds=seconds)
 
-    def test_a_watch_is_recorded_with_who_and_when(self) -> None:
+    def _theirs(self) -> Watch:
+        return Watch(
+            status="running",
+            pid=self.OTHER_PID,
+            pid_created=1.0,
+            started=self._soon(-60),
+            caller=self.THEIRS,
+            next_at=self._soon(3600),
+            about="鐘塔",
+        )
+
+    def test_it_sleeps_until_its_time_and_says_it_came_due(self) -> None:
         wake = self._soon()
-        line = commands.watch(self.MINE, wake, "日世界 Archer Queen")
-        state = commands.read_state()
-        assert state is not None
-        assert state.watch is not None
-        assert (state.watch.caller, state.watch.next_at, state.watch.about) == (
-            self.MINE,
-            wake,
-            "日世界 Archer Queen",
-        )
-        assert "Archer Queen" in line
-
-    def test_another_session_s_live_watch_is_left_alone_and_named(self) -> None:
-        commands.watch(self.THEIRS, self._soon(), "鐘塔")
-        line = commands.watch(self.MINE, self._soon(), "工人")
-        assert "antigravity" in line
-        state = commands.read_state()
-        assert state is not None
-        assert state.watch is not None
-        assert state.watch.caller == self.THEIRS
-
-    def test_a_watch_long_past_its_wake_time_is_replaced(self) -> None:
-        commands._write_state(
-            RunnerState(watch=Watch(caller=self.THEIRS, next_at=self._soon(-2), about="鐘塔"))
-        )
-        commands.watch(self.MINE, self._soon(), "工人")
-        state = commands.read_state()
-        assert state is not None
-        assert state.watch is not None
-        assert state.watch.caller == self.MINE
-
-    def test_this_session_s_own_watch_moves_on_and_keeps_its_start(self) -> None:
-        commands.watch(self.MINE, self._soon(1), "工人")
-        first = commands.read_state()
-        commands.watch(self.MINE, self._soon(5), "實驗室")
-        second = commands.read_state()
-        assert first is not None
-        assert first.watch is not None
-        assert second is not None
-        assert second.watch is not None
-        assert (second.watch.about, second.watch.since) == ("實驗室", first.watch.since)
-
-    def test_a_missing_or_unreadable_file_records_nothing(self) -> None:
-        """A fresh record over a deleted file would undo that stop."""
-        commands.STATE_PATH.unlink()
-        assert "沒有記下" in commands.watch(self.MINE, self._soon(), "工人")
-        assert not commands.STATE_PATH.exists()
-        commands.STATE_PATH.write_text("{", encoding="utf-8")
-        assert "沒有記下" in commands.watch(self.MINE, self._soon(), "工人")
-        assert commands.STATE_PATH.read_text(encoding="utf-8") == "{"
-
-    def test_done_takes_it_off_and_says_when_there_was_none(self) -> None:
-        commands.watch(self.MINE, self._soon(), "工人")
-        assert "claude-code" in commands.unwatch(self.MINE)
-        state = commands.read_state()
-        assert state is not None
-        assert state.watch is None
-        assert "沒有人在盯升級" in commands.unwatch(self.MINE)
-
-    def test_done_leaves_another_session_s_live_watch_alone(self) -> None:
-        """A watcher whose stale record was taken over must not end the new one's."""
-        commands.watch(self.THEIRS, self._soon(), "鐘塔")
-        assert "ai_coc stop" in commands.unwatch(self.MINE)
-        state = commands.read_state()
-        assert state is not None
-        assert state.watch is not None
-        commands._write_state(
-            RunnerState(watch=Watch(caller=self.THEIRS, next_at=self._soon(-2), about="鐘塔"))
-        )
-        commands.unwatch(self.MINE)
-        state = commands.read_state()
-        assert state is not None
-        assert state.watch is None
-
-    def test_claims_and_releases_carry_the_watch(self) -> None:
-        commands.watch(self.MINE, self._soon(), "工人")
-        with commands.claim("stock", caller=self.THEIRS):
-            held = commands.read_state()
-        after = commands.read_state()
-        assert held is not None
-        assert held.watch is not None
+        report = commands.watch(self.MINE, wake, "日世界 Archer Queen")
+        assert (report.outcome, report.stop_by) == ("due", None)
+        assert report.ended >= wake
+        after = commands.read_watch()
         assert after is not None
-        assert after.watch is not None
-        assert held.watch.caller == after.watch.caller == self.MINE
+        assert (after.status, after.caller, after.next_at) == ("idle", self.MINE, wake)
 
-    def test_a_stop_with_nothing_running_takes_the_watch_down(self) -> None:
-        """A watcher sleeps between reads, so a stop reaches it only through the file."""
-        commands.watch(self.MINE, self._soon(), "工人")
-        line = commands.stop()
-        assert "沒有東西要停" not in line
-        assert "盯升級也收掉了" in line
-        state = commands.read_state()
-        assert state is not None
-        assert state.watch is None
+    def test_while_it_sleeps_the_record_is_its_own_process(self) -> None:
+        seen: list[Watch | None] = []
+        with patch.object(
+            commands.time, "sleep", side_effect=lambda _s: seen.append(commands.read_watch())
+        ):
+            commands.watch(self.MINE, self._soon(0.2), "工人")
+        held = seen[0]
+        assert held is not None
+        assert (held.status, held.pid, held.caller, held.about) == (
+            "running",
+            os.getpid(),
+            self.MINE,
+            "工人",
+        )
+        assert held.pid_created is not None
 
-    def test_stopping_a_running_command_keeps_the_watch_until_a_second_stop(self) -> None:
-        """The skills stop their own loop to cross or to pick up a fix, a borrower
-        stops its test, and none of that is the user ending the watch.
+    def test_a_stop_wakes_it_and_it_says_who(self) -> None:
+        with (
+            patch.object(commands, "_alive", return_value=True),
+            patch.object(
+                commands.time, "sleep", side_effect=lambda _s: commands.stop(self.THEIRS)
+            ),
+        ):
+            report = commands.watch(self.MINE, self._soon(3600), "工人")
+        assert (report.outcome, report.stop_by) == ("stopped", self.THEIRS)
+        after = commands.read_watch()
+        assert after is not None
+        assert (after.status, after.stop_by) == ("idle", self.THEIRS)
+
+    def test_a_new_watch_stops_a_live_one_and_takes_its_place(self) -> None:
+        """Like an emulator claim: the old one is asked, named, and waited out."""
+        commands._write_watch(self._theirs())
+        asked: list[Watch | None] = []
+
+        def old_one_lets_go(_seconds: float) -> None:
+            asked.append(commands.read_watch())
+            commands._write_watch(self._theirs().model_copy(update={"status": "idle"}))
+
+        with (
+            patch.object(commands, "_alive", side_effect=lambda w: w.pid == self.OTHER_PID),
+            patch.object(commands.time, "sleep", side_effect=old_one_lets_go),
+        ):
+            report = commands.watch(self.MINE, self._soon(-1), "工人")
+        assert asked[0] is not None
+        assert (asked[0].status, asked[0].stop_by) == ("stopping", self.MINE)
+        assert report.outcome == "due"
+        after = commands.read_watch()
+        assert after is not None
+        assert after.caller == self.MINE
+
+    def test_a_record_whose_process_is_gone_is_taken_over_at_once(self) -> None:
+        commands._write_watch(self._theirs())
+        with patch.object(commands.time, "sleep", side_effect=AssertionError("waited")):
+            commands.watch(self.MINE, self._soon(-1), "工人")
+        after = commands.read_watch()
+        assert after is not None
+        assert after.caller == self.MINE
+
+    def test_a_deleted_file_is_a_stop_and_is_not_written_back(self) -> None:
+        """The deletion is a stop to the emulator's holder too, which a file back
+        in place before it looked would hide.
         """
-        commands.watch(self.MINE, self._soon(), "工人")
-        state = commands.read_state()
-        assert state is not None
-        lent = Loan(lender=self.MINE, borrower=self.THEIRS, since=self._soon(0))
-        for loan in (None, lent):
-            commands._write_state(
-                state.model_copy(update={"status": "running", "pid": 424242, "loan": loan})
-            )
+        with patch.object(
+            commands.time, "sleep", side_effect=lambda _s: commands.STATE_PATH.unlink()
+        ):
+            report = commands.watch(self.MINE, self._soon(3600), "工人")
+        assert (report.outcome, report.stop_by) == ("stopped", None)
+        assert not commands.STATE_PATH.exists()
+
+    def test_the_emulator_s_claims_and_releases_leave_the_watch_alone(self) -> None:
+        theirs = self._theirs()
+        commands._write_watch(theirs)
+        with commands.claim("stock", caller=self.MINE):
+            held = commands.read_watch()
+        assert held == commands.read_watch() == theirs
+
+    def test_one_stop_reaches_both_and_a_target_reaches_one(self) -> None:
+        running = RunnerState(status="running", pid=self.OTHER_PID, command="attack")
+        for target, emulator, watch in (
+            ("emulator", "stopping", "running"),
+            ("watch", "running", "stopping"),
+            ("all", "stopping", "stopping"),
+        ):
+            commands._write_state(running)
+            commands._write_watch(self._theirs())
             with patch.object(commands, "_alive", return_value=True):
-                assert "盯升級" not in commands.stop()
-            kept = commands.read_state()
-            assert kept is not None
-            assert kept.watch is not None
-        commands._write_state(state)
-        assert "盯升級也收掉了" in commands.stop()
+                commands.stop(self.MINE, target)
+            state, watching = commands.read_state(), commands.read_watch()
+            assert state is not None
+            assert watching is not None
+            assert (state.status, watching.status) == (emulator, watch), target
+
+    def test_a_stop_with_nothing_running_says_so_for_both(self) -> None:
+        line = commands.stop()
+        assert "沒有東西要停" in line
+        assert "沒有人在盯升級" in line
+
+    def test_a_file_written_before_the_split_reads_as_the_emulator_s_record(self) -> None:
+        """So a run of the old code still holding the emulator is not read as idle.
+        Its watch, a record with no process behind it, is dropped, whether it
+        was one or `null`, which is how most were left.
+        """
+        for watch in ({"caller": {"agent": "antigravity"}, "since": None, "about": "鐘塔"}, None):
+            commands.STATE_PATH.write_text(
+                json.dumps({
+                    "status": "running",
+                    "pid": self.OTHER_PID,
+                    "command": "attack",
+                    "watch": watch,
+                }),
+                encoding="utf-8",
+            )
+            state, watching = commands.read_state(), commands.read_watch()
+            assert state is not None
+            assert watching is not None
+            assert (state.status, state.pid, watching.status) == (
+                "running",
+                self.OTHER_PID,
+                "idle",
+            )
+
+    def test_a_watch_will_not_write_back_a_deleted_file(self) -> None:
+        """Deleting it is a stop the emulator's holder has not read yet."""
+        commands.STATE_PATH.unlink()
+        with pytest.raises(commands.NoStateFileError):
+            commands.watch(self.MINE, self._soon(), "工人")
+        assert not commands.STATE_PATH.exists()
+
+    def test_a_write_tries_again_while_another_process_has_the_file_open(self) -> None:
+        replace = os.replace
+        refusals = iter([PermissionError("in use")])
+
+        def busy_once(source: Path, target: Path) -> None:
+            if (refusal := next(refusals, None)) is not None:
+                raise refusal
+            replace(source, target)
+
+        with patch.object(commands.os, "replace", side_effect=busy_once):
+            commands._write_watch(self._theirs())
+        watching = commands.read_watch()
+        assert watching is not None
+        assert watching.caller == self.THEIRS
 
 
 class ReadCommandTests(unittest.TestCase):

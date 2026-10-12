@@ -47,7 +47,7 @@ MINIMAL: dict[str, list[str]] = {
     "attack": [],
     "stop": [],
     "giveback": [],
-    "watch": ["--done"],
+    "watch": ["--next", "2026-10-12T23:10"],
     "walls": [],
     "collect": [],
     "stock": [],
@@ -101,6 +101,18 @@ class ParserTests(unittest.TestCase):
         assert _spot("260,140") == (260, 140)
         with pytest.raises(ValueError, match="invalid literal"):
             _spot("260")
+
+    def test_stop_reaches_both_sections_unless_told_which(self) -> None:
+        assert _args("stop").target == "all"
+        assert _args("stop", "watch").target == "watch"
+        assert _args("stop", "emulator").target == "emulator"
+        with pytest.raises(SystemExit):
+            _args("stop", "attack")
+
+    def test_a_watch_says_when_it_wakes(self) -> None:
+        """It is the timer now, so one with no wake time has nothing to sleep until."""
+        with pytest.raises(SystemExit):
+            _args("watch")
 
     def test_hero_only_names_a_real_hero(self) -> None:
         """`unknown` is a `HeroKind` for the planner's benefit, not a hero to raise."""
@@ -343,14 +355,14 @@ class DispatchTests(unittest.TestCase):
             ),
             patch.object(commands, "capture", return_value=[]),
             patch.object(commands, "giveback", return_value=""),
-            patch.object(commands, "unwatch", return_value=""),
+            patch.object(commands, "watch", return_value=""),
             patch.object(commands, "claim") as claimed,
             patch("sys.stdout", new_callable=io.StringIO),
         ):
             _run_command(_args("world"), self.run)
             _run_command(_args("capture"), self.run)
             _run_command(_args("giveback"), self.run)
-            _run_command(_args("watch", "--done"), self.run)
+            _run_command(_args("watch", "--next", "2026-10-12T23:10"), self.run)
             claimed.assert_not_called()
             _run_command(_args("world", "--go", "night"), self.run)
             claimed.assert_called_once()

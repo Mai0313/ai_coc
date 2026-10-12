@@ -15,6 +15,7 @@ from pydantic import (
     AliasChoices,
     computed_field,
     field_validator,
+    model_validator,
 )
 
 from .constants import (
@@ -1857,20 +1858,52 @@ class Loan(BaseModel):
 
 
 class Watch(BaseModel):
-    """An agent watching the upgrade timers, which drives nothing between its reads.
+    """The `ai_coc watch` process an agent sleeps on until an upgrade comes due.
 
-    It sleeps between reads, so no process stands for it and the run fields
-    above cannot show it: without this record a second agent starts a second
-    watch, and `ai_coc stop` reaches nobody. `next_at` is when it next wakes,
-    which is also what says a record is stale once its agent has gone.
+    It drives nothing, so it has a section of the state file to itself rather
+    than the emulator's lock. It used to be a record with no process behind it,
+    and an agent wrote one with nothing scheduled to wake it: every other agent
+    then took the timers for watched, and nobody woke (2026-10-12). Now the
+    record is the sleeping process, so whether anyone is watching is whether its
+    pid is alive, read the same way as the emulator's holder. Its fields mean
+    what the emulator record's do; `next_at` is when it wakes.
     """
 
     model_config = ConfigDict(frozen=True)
 
+    status: RunnerStatus = "idle"
+    pid: int = 0
+    pid_created: float | None = None
+    started: datetime | None = None
+    ended: datetime | None = None
+    log: Path | None = None
     caller: Caller = Field(default_factory=Caller)
-    since: datetime | None = None
+    stop_by: Caller | None = None
     next_at: datetime | None = None
     about: str = ""
+
+
+WatchOutcome = Literal["due", "stopped"]
+# What `ai_coc stop` reaches: both sections of the state file, or one of them.
+StopTarget = Literal["all", "emulator", "watch"]
+
+
+class WatchReport(BaseModel):
+    """How one `ai_coc watch` ended: it reached `next_at`, or somebody stopped it.
+
+    `stop_by` is the stopper's own `--mission` as well as its name, and it is
+    carried here because the state file's watch section is overwritten the
+    moment a newcomer takes it over: the agent this wakes reads why from this.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    caller: Caller
+    next_at: datetime
+    about: str
+    ended: datetime
+    stop_by: Caller | None = None
+    outcome: WatchOutcome
 
 
 class RunnerState(BaseModel):
@@ -1917,9 +1950,33 @@ class RunnerState(BaseModel):
     # Carried from record to record until the lender runs again or another
     # loan replaces it, so a lender that looks late still finds out.
     loan: Loan | None = None
-    # Who is watching the upgrade timers, carried from record to record like
-    # the loan until the watcher clears it or a stop does.
-    watch: Watch | None = None
+
+
+class StateFile(BaseModel):
+    """The whole state file: the emulator's lock, and the upgrade watch beside it.
+
+    Two sections because they are two processes with nothing in common but the
+    agents reading them: a command driving the emulator, and a watch sleeping
+    on the timers while farming borrows and lends the emulator around it. Each
+    is written only by its own process and by `ai_coc stop`, and a write of one
+    section carries the other over as the file held it. A file written before
+    the split was the emulator's record alone, and is read as that section, so
+    a run of the old code still holding the emulator is not read as idle.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    emulator: RunnerState = Field(default_factory=RunnerState)
+    watch: Watch = Field(default_factory=Watch)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _before_the_split(cls, data: object) -> object:
+        # Its `watch` was a record with no process behind it, so it is dropped
+        # rather than carried over; `RunnerState` ignores the key.
+        if isinstance(data, dict) and "emulator" not in data:
+            return {"emulator": data}
+        return data
 
 
 def _labelled(label: str) -> str:
