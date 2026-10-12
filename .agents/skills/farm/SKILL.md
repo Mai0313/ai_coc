@@ -99,7 +99,7 @@ uv run ai_coc attack --repeat 0 --plan src/ai_coc/plans/night_flat.json --yield
 
 ## 怎麼跑
 
-**主 session 背景跑, subagent 前景分段阻塞.** 兩種各怎麼做, 目錄佈局, 以及每個指令都要帶的 `--agent`、`--session`、`--mission` 跟 subagent 要用的 `uv run --no-sync`, 都在 `references/running.md` 的「為什麼一定要背景跑」跟「開跑」; 這份 skill 裡的指令為了好讀都省略了.
+**迴圈交給一個 farm subagent 跑, 它前景分段阻塞** (`AGENTS.md` 的 Every session farms while it works); **主 session 自己把迴圈送背景, 只在 `watch-and-fix` 決定親自監督的時候.** 兩種各怎麼做, 目錄佈局, 以及每個指令都要帶的 `--agent`、`--session`、`--mission` 跟 subagent 要用的 `uv run --no-sync`, 都在 `references/running.md` 的「為什麼一定要背景跑」跟「開跑」; 這份 skill 裡的指令為了好讀都省略了.
 
 **預設 `--repeat 0`**: 倉庫滿了迴圈自己會 break, 正是「打到資源滿」. 使用者指定輪數就照他的.
 
