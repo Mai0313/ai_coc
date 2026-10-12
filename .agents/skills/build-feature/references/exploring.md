@@ -35,7 +35,7 @@ PY
 
 方法的完整清單在 `src/ai_coc/adapters/adb.py` 的 `AdbController`, docstring 都值得讀, 尤其是 `tap_many`.
 
-**先確認在哪個村莊**: 腳本裡問 `current_world(png)` (讀上排牌子, 不點東西也不動鏡頭). 要換過去用 `ui.world.cross` (`ai_coc world --go` 用的就是它), 它會把鏡頭滑到角落再點船:
+**先確認在哪個村莊**: 腳本裡問 `current_world(png)` (讀上排牌子, 不點東西也不動鏡頭). 要換過去用 `ui.world.cross` (`ai_coc world --go` 用的就是它): 從主村出發它先在置中停好的畫面上找船上的標誌, 找不到才把鏡頭滑到角落; 從夜世界出發直接滑到角落, 再點船:
 
 ```python
 from ai_coc.parsers.world import current_world
@@ -70,7 +70,6 @@ cross(adb, display, "night")  # 回傳最後停在哪個村莊; 已經在那邊�
 - **有紅點或數字徽章的地方**: 遊戲自己在說這裡有事情待處理
 - **需要重複點很多下的地方**: 那就是自動化的定義
 - **有計時器的地方**: 結束的那一刻可以被自動接手
-- **`ai_coc read` 每個欄位都是 `None`、空的或 `false` 的畫面**: 沒有任何判讀器認得, 完全沒開發過
 
 ## 讀 UI 而不讀底下的東西, 為什麼
 

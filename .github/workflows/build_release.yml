@@ -30,6 +30,8 @@ jobs:
     # onedir ships a folder next to an `_internal/`; onefile unpacks the whole
     # bundle into a temp dir on every launch, which costs seconds of startup.
     # A tag build takes the fast one; pick the other from the dispatch form.
+    # Measured: onedir reached its first log line in 1.4-3.1 s against 6.6-7.0 s
+    # for onefile, which is one 76 MB file instead of a 174 MB folder.
     env:
       PACKAGE_MODE: ${{ inputs.package_mode || 'onedir' }}
 

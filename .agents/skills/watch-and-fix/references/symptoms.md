@@ -12,10 +12,9 @@
 
 `ai_coc launch` 的收工條件是**站在村莊上而且鏡頭停好了** (最遠處; 花錢買的場景是拉近回免費場景大小的那一格), 不是 pid (`ensure_coc` 只看 `pidof`): 看 `LaunchReport.at_village`. 重開範圍 `none` / `game` / `emulator` 在 `AGENTS.md` 搜 `RestartScope`; `emulator` 要等實例真的倒下 (`_await_shutdown`).
 
-**`launch` 等村莊** (`_settle_game`) 有三處會出錯:
+**`launch` 等村莊** (`_settle_game`) 有兩處會出錯:
 
 - **等太短.** 冷開機時間差很多, `RESTART_POLLS` 照最壞情況抓; 每次 poll 在 DEBUG 寫下還在等什麼 (要 `COC_LOG_LEVEL=DEBUG`), 平常只看得到放棄那一行冒號後面的最後狀態.
-- **鏡頭沒回到最遠處.** 重開成功, 然後連兩輪英雄一張都沒下去, 兵卡也都還有貨 (當時的 log 是 `0 of 4 hero card(s) landed` 跟 `3 troop card(s) still hold something`; 現在英雄那行寫成 `After the burst: N of N one-off card(s) never landed` 接 `0 of N retry card(s) landed at`). `launch` 收尾會 pinch, 沒 pinch 的是掉線後 `_open_attack_menu` 叫的 `relogin` (點按鈕重新登入跟重開遊戲都會重新載入). 確認方法見「整場一隻兵都沒下去」.
 - **等的是畫完而不是哪個村莊.** `_settle_game` 只問 `current_world` 讀不讀得出 (不用 `read_stock`, 它在兩個世界都答得出來, 分不出是哪一個), 兩個世界都算; 落在另一邊 attack 回 `other_village`, 主村指令回 `builder_base`. 載入時倉庫水位是從零跑上來的動畫, 那時讀到的數字不能回報.
 
 ## 開不了攻擊選單
@@ -26,7 +25,7 @@
 
 三個常被懷疑的原因:
 
-- 掉線: `idle_disconnected` 認 (閒置跟 連線已中斷 都算), `relogin` 點對話框的按鈕重新登入, 點了沒用才 `restart_game` 重開並重新解析 display. 但每次重新登入連同接下來的載入畫面大約佔兩次 `HOME_ATTEMPTS`, 所以反覆掉線三次左右就會報成 `no_attack_menu`. 手機搶登不走這條: 同一張對話框, `session_taken` 認得出來, 不重開, 報成 `session_taken`. 要重現它不必等使用者: 在另一台模擬器開遊戲就會把這台擠掉 (MuMu 跟雷電登同一個帳號, 例如 `MuMuAdapter().ensure_coc(<index>)`), 2026-10-09 就是這樣量的. 先用自己的指令把模擬器借到 (打資源的迴圈分不出是你擠的還是他在玩, 會照搶登停下來等他), 擠掉是你自己弄的, 所以測完照常 `giveback`, 不是 `ai_coc stop`; 迴圈下一個指令就會登回來, 把另一台擠掉. 這台登回來時, 擠過來的那一邊 (包括他的手機) 都會被踢掉.
+- 掉線: `idle_disconnected` 認 (閒置跟 連線已中斷 都算), `relogin` 點對話框的按鈕重新登入, 點了沒用才 `restart_game` 重開並重新解析 display. 每次掉線佔一次 `HOME_ATTEMPTS` (點了按鈕, 村莊多半在 `RELOGIN_WAIT` 內就回來), 要重開的才連同接下來的載入畫面佔兩次, 所以同一輪反覆掉線五次 (要重開的話三次) 左右才會報成 `no_attack_menu`. 手機搶登不走這條: 同一張對話框, `session_taken` 認得出來, 不重開, 報成 `session_taken`. 要重現它不必等使用者: 在另一台模擬器開遊戲就會把這台擠掉 (MuMu 跟雷電登同一個帳號, 例如 `MuMuAdapter().ensure_coc(<index>)`), 2026-10-09 就是這樣量的. 先用自己的指令把模擬器借到 (打資源的迴圈分不出是你擠的還是他在玩, 會照搶登停下來等他), 擠掉是你自己弄的, 所以測完照常 `giveback`, 不是 `ai_coc stop`; 迴圈下一個指令就會登回來, 把另一台擠掉. 這台登回來時, 擠過來的那一邊 (包括他的手機) 都會被踢掉.
 - 伺服器 (不會報成這個): `loading_screen` 認, `_wait_out_loading` 等 (每次載入一次, 最多 45 分鐘), outcome 是 `server_loading` 或 `server_flapping`.
 - 站錯村莊 (不會報成這個): `_open_attack_menu` 先問 `current_world`, 連兩張是另一個村莊就回 `other_village`, 不坐船.
 
@@ -45,13 +44,13 @@
 
 點歪會打開那裡的建築, 面板會吞掉後面的點擊, 所以每個沒坐成的點後面 (跟第一下滑動之前) 補一次 `uncovered` (畫面讀不出村莊才按 `back`, 最多 `UNCOVER_TRIES` 次). `back` **絕對不按在戰鬥上** (被砍掉的執行會把遊戲留在戰鬥裡, 那會點到 放棄): `uncovered` 先認載入畫面, 再要 `card_groups` 跟 `in_battle` 兩個都成立 (或者是結算畫面) 才算戰鬥, 戰鬥回 `None`. 那個判讀的坑在上一節末尾.
 
-分辨兩個村莊靠頂端面板徽章**的跨度而不是數量** (`AGENTS.md` 搜 `933`): 寶石雨動畫會蓋掉一格.
+分辨兩個村莊靠頂端面板徽章**的跨度而不是數量** (`parsers/world.py` 搜 `933`): 寶石雨動畫會蓋掉一格.
 
 ## 兵力不足, 而且整個 series 停了
 
 看 `army_strength` 跟 `MIN_ARMY_RATIO`. 在付搜尋費之前擋, 不花錢, 不是 bug, 而且**一輪就收掉整個 series**, 不等 `IDLE_REST`: 造兵不花時間, 擋下來就是已儲存的軍隊配置湊不到兵營一半 (2026-09-22 活動結束拿掉活動兵, 剩 20/340), 要人進遊戲改.
 
-所以**看軍隊畫面然後告訴使用者**, 不是查判讀器: 抓一張丟 `ai_coc read` 看 `army`, 跟眼睛比對, 對得上就把圖發給他. 門檻是一半不是九成, 因為兵營升級完忘了改配置的軍隊 (比方 320/360) 照樣打得動.
+所以**看軍隊畫面然後告訴使用者**, 不是查判讀器: 抓一張丟 `ai_coc read` 看 `army`, 跟眼睛比對, 對得上就把圖發給他.
 
 ## 一直跳過對手
 
@@ -65,7 +64,7 @@
 
 **症狀**: 100 萬讀成 10 萬, 或同一個對手在不同畫面讀出不同數字.
 
-看 `parsers/scout.py` 的 `read_scout` (面板在哪), 再看 `parsers/glyphs.py` 切數字那段 (四個判讀器共用). `AGENTS.md` 搜 `1 047 758`: 中間字元配不上整行放棄, 只丟右端的差配對, 超過 18 px 的區塊要切開而且切點要可信.
+看 `parsers/scout.py` 的 `read_scout` (面板在哪), 再看 `parsers/glyphs.py` 切數字那段 (四個判讀器共用). `parsers/scout.py` 搜 `1 047 758`: 中間字元配不上整行放棄, 只丟右端的差配對, 超過 18 px 的區塊要切開而且切點要可信.
 
 ## 迴圈走出還在打的戰鬥
 
@@ -77,7 +76,7 @@
 
 **症狀**: 一輪拖四分鐘左右, `_wait_out_battle` 等到超時 (`BATTLE_TIMEOUT`), 最後靠下一輪 `_open_attack_menu` 交給 `uncovered` 的 `back` 回村莊.
 
-結算畫面靠綠色 回營 認 (`RETURN_HOME_GREEN`, `_leave_result`), 而遊戲畫兩種: 平常的在 `RETURN_HOME_BOX` 讀 0.3283, 打亮的讀 0.2488. 門檻高過打亮版就是這個症狀, 而只有平常版 fixture 的測試照樣綠 (打亮版是 `battle_result_lit.png`). 反方向是活動獎勵頁的綠勾勾讀 0.2009 (見「開不了攻擊選單」). 兩邊夾出 0.2057 到 0.2488, 門檻 0.23 放中間. 被打之後遊戲開場的 首領，歡迎回來 報告, 它唯一的 確定 就在 回營 的位置, 綠色比例照樣過門檻, 所以 `battle_over` 另外靠 `welcome_back` 把它排除; 啟動或切世界停在這張報告上, 先看 `ai_coc read` 的這兩個欄位.
+結算畫面靠綠色 回營 認 (`RETURN_HOME_GREEN`, `_leave_result`), 而遊戲畫兩種: 平常的在 `RETURN_HOME_BOX` 讀 0.3283, 打亮的讀 0.2488. 門檻高過打亮版就是這個症狀, 而只有平常版 fixture 的測試照樣綠 (打亮版是 `battle_result_lit.png`). 反方向是活動獎勵頁的綠勾勾讀 0.2009 (見「開不了攻擊選單」). 被打之後遊戲開場的 首領，歡迎回來 報告, 它唯一的 確定 就在 回營 的位置, 綠色比例照樣過門檻, 所以 `battle_over` 另外靠 `welcome_back` 把它排除; 啟動或切世界停在這張報告上, 先看 `ai_coc read` 的這兩個欄位.
 
 `_leave_result` 點不動時**重讀一次再按 `back`**: 最後一下沒檢查而最可能有效, 剛回村莊的畫面上 `back` 開的是 確定退出遊戲嗎.
 
@@ -102,9 +101,9 @@
 - `_flank` 不花兵, 只讓開卡片列, 把線彎到紅線上
 - `_spread_troops` 在整個 pass 沒消耗時把線往外推 (村莊外圍**不是凸的**, 兩端在外面的線中間仍可能穿過去)
 - `push_out` 推到 `DEPLOY_BOUND` 邊緣就不動, 一直推同一點是可能的
-- `boundary_reach` 跟 `fitted_line` 把預設側翼彎到真實邊界, 三個錨點的理由 `AGENTS.md` 搜 `chord`
+- `boundary_reach` 跟 `fitted_line` 把 plan 自己畫的線 (`planned_line` 拒絕時才是它指名的預設側翼) 彎到真實邊界, 三個錨點的理由 `ui/attack.py` 搜 `chord`
 
-出兵成不成功看 `card_drained`, 不看畫面上有沒有兵 (紅色橫幅不能用, `AGENTS.md` 搜 `你無法在紅線區域內派遣部隊`). 偵察倒數中丟兵會直接開打 (2026-09-26 實測), 所以攻擊不等倒數; 只有 `probe` 跟 `bounds` 還用 `_wait_for_battle` 等.
+偵察倒數中丟兵會直接開打 (2026-09-26 實測), 所以攻擊不等倒數; 只有 `probe` 跟 `bounds` 還用 `_wait_for_battle` 等.
 
 ## 下兵線畫穿村莊
 
@@ -118,13 +117,9 @@
 
 **症狀**: `After the burst: N of N one-off card(s) never landed`, 重試也是 `0 of N retry card(s) landed at`, 而且兵卡都還有貨 (`troop card(s) still hold something`), 連著幾輪.
 
-先在 log 找 `The camera was not at the far zoom`: 所有座標都在最遠的 zoom 量, 鏡頭拉近就全部安靜地落空. **這條警告只在主村問** (高度門檻拿主村量的, 夜世界每張都比它短, 換門檻也分不開), 夜世界沒有它不代表鏡頭沒問題, 直接看下面兩段.
-
-**`launch` 不是嫌疑人** (收尾會 pinch); 沒 pinch 的是 `relogin` 跟任何在迴圈外動過鏡頭的東西.
+log 的 `The camera was not at the far zoom` 量的是拉遠之前的鏡頭, 只是回報: 所有座標都在最遠的 zoom 量, 而 `_settle_zoom` 每場 (夜世界每個階段) 讀卡片之前都先拉遠 (`ZOOM_PINCHES` 兩下, 從拉到最近也到得了最遠), 所以它不會讓這場落空. 拉遠有沒有生效看 `--debug` 的 `zoomed` 畫面. **這條警告只在主村問** (高度門檻拿主村量的, 夜世界每張都比它短, 換門檻也分不開).
 
 遊戲不報 zoom, 所以 `_settle_zoom` 每場先拉遠一次, 順手量村莊高度: 被上下切掉就偏矮, 健康 500 到 572, 出事那輪 411. 寬度不能用, 對手本來就不一樣寬.
-
-手動修法: 停掉迴圈, 跑 `ai_coc view --zoom out`. 偶爾一條不算事, 連著出現才是.
 
 ## 座標整個對不上
 
@@ -166,7 +161,7 @@
 
 ## 怒吼丟在空地上
 
-**先分「畫錯」還是「被搬走」.** 在那一輪 `plans.jsonl` 找 `act` 是 `rage` 的步驟, `at` 乘上 (16, 9) 換成像素, 跟畫面上的圈比:
+**先分「畫錯」還是「被搬走」.** 在那一輪 `plans.jsonl` 找 `act` 是 `rage` 的步驟, `at` 乘上 (16, 9) 換成像素, 加上鏡頭拖過的量 (`_onscreen`; `_clear_flank` 幾乎每場都拖, 量在 `run.log` 的 `now (x, y) off where the battle opened`), 跟畫面上的圈比:
 
 - **對得上, 位置不好**: prompt 的問題. 查 `src/ai_coc/prompts/attack_plan.md` 有沒有要它挑**這一側防禦最密的一團**, 排成**方塊** (四瓶排一橫排比村莊還寬).
 - **對不上, 或瓶數比 plan 少**: `spaced` 動過它. 太密的點推到橢圓邊緣, 推不動 (被 `clear_of_controls` 壓回, 或要推超過一個覆蓋範圍) 才丟掉, **不補位**. 從 plan 的座標對回去看是哪一點.
@@ -175,7 +170,7 @@
 
 ## 法術下得太晚
 
-**不要用 log 那行判斷**: `Played rage, 18s in` 在 `_cast` 跑完才寫, 包含驗證截圖, 比落地晚約一秒半.
+**不要用 log 那行判斷**: `Played rage, 18s in` 在那一步跑完才寫. 同一種法術的最後一步走 `_cast`, 包含驗證截圖, 比落地晚約一秒半; 拆成好幾步時, 前面幾步走 `_cast_some`, 不截圖.
 
 **用遊戲自己的倒數量**: 開 `--shot-every`, `tick_*.png` 寫著 `離戰鬥結束剩下 X分Y秒`, 180 減掉就是戰鬥時鐘. 秒數是相對的: 從 `Played troops` 數到 `Played rage`, 跟計畫裡 `wait` 的 `seconds` 比, 對得上就是執行沒問題.
 
@@ -188,7 +183,7 @@
 
 ## 出兵太慢
 
-整支軍隊該在**兩秒左右**下完, 過程中什麼都不讀 (一次判讀 0.9 秒), 順序全由 plan 決定. 看 `_play_tactic`, `_act`; 落地後那次判讀是 `_settle_drops`, 躲在第一個夠長的 `wait` 裡 (`CHECK_BUDGET`), 截圖之前先讓最後一個投下的英雄等滿 `HERO_SETTLE` 把血條畫出來 (太早讀會把落地的英雄判成沒下去, 重點卡片就是放技能). `DROP_SETTLE` 是放完法術, 推線重下, 夜世界第二階段送預選的機器 (`_send_selected`; 第一階段的機器跟英雄一樣等 `HERO_SETTLE`)跟夜世界每一趟出兵之後等卡片角落重畫的時間, 不在第一波出兵裡 (英雄的重試等的是 `HERO_SETTLE`); `TAP_GAP` 住在 `adapters/adb.py`. 改前改後的秒數在 `AGENTS.md` 搜 `7 seconds`.
+整支軍隊該在**兩秒左右**下完, 過程中什麼都不讀 (一次判讀 0.9 秒), 順序全由 plan 決定. 看 `_play_tactic`, `_act`; 落地後那次判讀是 `_settle_drops`, 躲在第一個夠長的 `wait` 裡 (`CHECK_BUDGET`), 截圖之前先讓最後一個投下的英雄等滿 `HERO_SETTLE` 把血條畫出來 (太早讀會把落地的英雄判成沒下去, 重點卡片就是放技能). `DROP_SETTLE` 是放完法術, 推線重下, 夜世界第二階段送預選的機器 (`_send_selected`; 第一階段的機器跟英雄一樣等 `HERO_SETTLE`)跟夜世界每一趟出兵之後等卡片角落重畫的時間, 不在第一波出兵裡 (英雄的重試等的是 `HERO_SETTLE`). 改前改後的秒數在 `AGENTS.md` 搜 `7 seconds`.
 
 ## 一張卡的兵全堆在一起, 或者某張卡點個不停
 
@@ -201,7 +196,7 @@
 
 ## 刷牆停了
 
-**不在打資源這條路上**: 壞了照 SKILL.md 的「管到哪裡為止」記下來, 主線達成以後另開 PR. 但有個回報容易讀反: `WallReport.outcome` 是 **`nothing_bought`** 時**不能直接讀成牆全滿級**, 那是迴圈自己也說不上原因, 最可能是大本營把牆卡住, 但不確定; 買牆時說得出原因的是 `cannot_afford` 跟 `builders_busy`. 不要比對 log 的句子, 那些字會改.
+**不在打資源這條路上**: 壞了照 SKILL.md 的「管到哪裡為止」記下來, 主線達成以後另開 PR.
 
 ## 夜世界特有的幾種
 

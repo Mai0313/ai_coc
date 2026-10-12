@@ -18,7 +18,7 @@ description: >-
 
 **動手之前先確認沒有別的迴圈在跑**: 有的話, 你的指令會借走它, 等它打完手上那一場才開始, 花完要 `uv run ai_coc giveback` 它才會接著打; 不是你要的就不要下. 怎麼借, 怎麼還, 還有 `walls` / `upgrade` / `hero` 這種會跑好幾分鐘的怎麼送到背景, 在 `.agents/skills/farm/references/running.md`.
 
-每個 `ai_coc` 指令都帶 `--agent`、`--session`、`--mission` (`AGENTS.md` 的 Say who is driving), 下面的例子為了好讀省略了; `eye.py` 不收這幾個旗標.
+每個 `ai_coc` 指令都帶 `--agent`、`--session`、`--mission` (`AGENTS.md` 的 Say who is driving), 下面的例子為了好讀省略了.
 
 ## 做完的樣子
 
@@ -65,13 +65,11 @@ uv run ai_coc hero                        # 六個英雄各自的下一級要多
 uv run ai_coc hero --upgrade duke         # 真的派一個工人去升這一個
 ```
 
-**找目標共用 `GameRunner._spotted`**: Gemini 回一批座標, **每一個都點開驗過才算數**, 所以回來的點比需要的多是刻意的.
-
-**`--at` 是手上剛好已經有截圖時的捷徑**, 不是常態. 城牆跟建築的 `--at` **要給很多次**, 因為 `_pick` 靠比價挑, 只給一個座標等於沒得比. **那張截圖要在鏡頭停好之後拍**, 先 `uv run ai_coc view --zoom out` 再 `shot`: 指令開跑會先把鏡頭拉遠停好 (`GameRunner._settle_zoom`, 它的 docstring 把 `--at` 算在內), 而坐船 (`world --go`) 之後的鏡頭是遊戲給的, 在沒停好的畫面上量的點, 指令一停鏡頭就偏了. 偏了在 `walls`, `hero` 跟帶 `--only` 的 `upgrade` 只是那一點驗不過; **不帶 `--only` 的 `upgrade --at` 會把偏到的那一棟照樣比價, 買得起就買** (`_offer` 不核對打開的是不是瞄準的那棟), 所以指名的建築一定帶 `--only`.
+**`--at` 是手上剛好已經有截圖時的捷徑**, 不是常態. 城牆跟建築的 `--at` **要給很多次**, 因為 `_pick` 靠比價挑, 只給一個座標等於沒得比. **那張截圖要在鏡頭停好之後拍**, 先 `uv run ai_coc view --zoom out` 再截圖: 指令開跑會先把鏡頭拉遠停好 (`GameRunner._settle_zoom`, 它的 docstring 把 `--at` 算在內), 而坐船 (`world --go`) 之後的鏡頭是遊戲給的, 在沒停好的畫面上量的點, 指令一停鏡頭就偏了. 偏了在 `walls`, `hero` 跟帶 `--only` 的 `upgrade` 只是那一點驗不過; **不帶 `--only` 的 `upgrade --at` 會把偏到的那一棟照樣比價, 買得起就買** (`_offer` 不核對打開的是不是瞄準的那棟), 所以指名的建築一定帶 `--only`.
 
 **`--only` 是包含比對** (標籤帶著等級), 而且**名字讀不出來的建築一律不匹配**, 因為工人稀缺, 不能花在猜的東西上. 名字由 `gemini` 設定的 `lite` tier 從按鈕列正上方那條帶子讀出來.
 
-**代價是它會安靜地什麼都不升**: 沒設模型或帶子讀不出來時, `--only 儲金罐` 回 `only_no_match` 可能是真的沒有, 名字對上了但買不起, 也可能是名字全讀不出來. 報告裡沒有候選的名字, 要看 `run.log` 的 `Upgrade at (x, y): <名稱> asking …` 那幾行: 名稱全是 `?` 就是讀不出來, 改成自己看畫面找座標再 `--at`. 名稱裡夾著模型自言自語不影響比對.
+**代價是它會安靜地什麼都不升**: 沒設模型或帶子讀不出來時, `--only 儲金罐` 回 `only_no_match` 可能是真的沒有, 名字對上了但買不起, 也可能是名字全讀不出來. 報告裡沒有候選的名字, 要看 `run.log` 的 `Upgrade at (x, y): <名稱> asking …` 那幾行: 名稱全是 `?` 就是讀不出來. 有沒有 `--at` 都照樣讀名字, 所以這時 `--at` 加 `--only` 一樣是 `only_no_match`: 改成自己看畫面, 照「什麼時候換成你自己看」做, 那條路點開之後會讀選單標題確認是他指名的那棟才按.
 
 ## 花的順序: 牆先, 工人的活後
 
@@ -133,23 +131,13 @@ uv run ai_coc hero --upgrade duke         # 真的派一個工人去升這一個
 
 ## 原語
 
-`ai_coc` 沒有「點這裡然後給我看」這種指令, 這個 skill 自己帶一個:
+`ai_coc` 沒有「點這裡然後給我看」這種指令, 點一下要自己寫幾行 Python: `ai_coc.commands._controller()` 給 `AdbController`, `adb.display_for(COC_PACKAGE)` (`COC_PACKAGE` 在 `ai_coc.constants`) 給遊戲所在的 display, `tap(x, y, display)` 跟 `screenshot(display)` 每次都帶它. **不要下裸的 `adb shell input` 或 `screencap`**: MuMu 的遊戲不在 display 0, 沒指定 display 的截圖解碼失敗, 點擊安靜地落在 launcher 上. 只要一張現在的畫面就用 `uv run ai_coc capture`, 它印出存檔的路徑.
 
-```bash
-uv run python .agents/skills/spend-loot/scripts/eye.py shot <out.png>
-uv run python .agents/skills/spend-loot/scripts/eye.py tap <x,y> <out.png>
-uv run python .agents/skills/spend-loot/scripts/eye.py zoom <in.png> <l,t,r,b> <out.png>
-```
+點完等一秒多再截, 選單滑出來要時間, 太早截會拍到一半的動畫. 存下來的圖要裁一塊放大再看; **這步不要省**, 整張 1600x900 裡一棟建築只剩幾十像素. 放大最多四倍, 而且放大後寬度留在約 1400 px 內: 再大, 對話會把圖縮小顯示, 量到的座標就跟倍率對不上. 放大圖上量到的位置要除以倍率再加回裁切框的左上角, 才是可以拿去 `tap` 的座標, 算錯就點到隔壁那棟.
 
-`tap` 點完會等選單滑出來再截. `zoom` 不碰遊戲, 只把存下來的圖裁一塊放大; **這步不要省**, 整張 1600x900 裡一棟建築只剩幾十像素. 四個數字是**原圖的像素座標**, 左上右下. 它會印出放大倍率: 放大圖上量到的位置要除以倍率再加回裁切框的左上角, 才是可以拿去 `tap` 的座標, 算錯就點到隔壁那棟.
-
-**遊戲沒開不用管**, 腳本走 `commands._controller()`, 它會自己 `ensure_coc`. **但它不碰 `state.json`, 迴圈在跑的時候 `tap` 會跟迴圈搶同一個畫面**: 先用會 claim 的指令借到模擬器再用, 做法在 `running.md` 的「你自己要用畫面」.
+**遊戲沒開不用管**, `_controller()` 會自己 `ensure_coc`. **但它不碰 `state.json`, 迴圈在跑的時候 `tap` 會跟迴圈搶同一個畫面**: 先用會 claim 的指令借到模擬器再用, 做法在 `running.md` 的「你自己要用畫面」.
 
 ## 找
-
-1. `shot` 一張村莊畫面
-2. 讀進來看. 認不出來就 `zoom` 分區放大, 一次一塊
-3. 挑出候選, 記下座標
 
 **第一張拍到的不一定是村莊.** 上一次留下的選單要關就 `tap` 一塊空地 (畫面邊緣的樹林或水面), **不要按 back**: 在村莊上按 back 會跳出「確定退出遊戲嗎」, 它的綠色「確定」跟升級的確認鍵長得一樣, 位置也一樣. 畫面是戰鬥或某個全螢幕頁面的話, 停下來告訴使用者, 不要亂點.
 
@@ -171,10 +159,6 @@ uv run python .agents/skills/spend-loot/scripts/eye.py zoom <in.png> <l,t,r,b> <
 **剛載入的遊戲, 資源數字是會動的**: 儲量條從 0 跑上去要幾秒, 中途讀到的是假的, 要拿它做決定就等畫面靜下來再讀一次.
 
 ## 點開, 然後確認點對了
-
-```bash
-uv run python .agents/skills/spend-loot/scripts/eye.py tap 1157,500 pick.png
-```
 
 **選單標題會寫建築名稱跟等級**, 像「儲金罐(14級)」「英雄殿堂(10級)」. 這是驗證的唯一可靠依據, 每次點完都讀一次標題再往下走.
 

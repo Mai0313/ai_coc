@@ -146,7 +146,10 @@ class TouchNode(BaseModel):
     it as zero pressure, a hover rather than a touch, and the game ignores it —
     observed on LDPlayer (0 to 2), a tap written to the node that did nothing
     until it carried one. MuMu's node lists the axis with a range of 0 to 0 and
-    takes a finger without it, so a range of nothing counts as no axis.
+    takes a finger without it, so a range of nothing counts as no axis. A gesture
+    missing it went unnoticed only while a real mouse click had left a pressure
+    behind, so a pinch that works right after someone clicked in the emulator
+    proves nothing about this.
     """
 
     model_config = ConfigDict(frozen=True)

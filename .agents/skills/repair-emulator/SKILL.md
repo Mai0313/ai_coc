@@ -12,8 +12,6 @@ description: >-
 
 # 修模擬器
 
-目標只有一個: `uv run --no-sync ai_coc launch` 回 `at_village: true`, 而且你自己看過那張畫面 (怎麼驗在「修好的標準」). 這個 skill 不改程式碼.
-
 ## 做完的樣子
 
 一趟只有四種收尾, 回覆裡講是哪一種:
@@ -29,7 +27,7 @@ description: >-
 
 這是使用者明講的規矩. 那天一個 `launch` 失敗從 logcat 推了很久推不出來, 改成每秒截一張, 馬上看到遊戲啟動時會先跳回桌面一兩秒.
 
-- **Android 裡的畫面**用這個 skill 的 `scripts/look.py`. spend-loot 的 `eye.py` 會先 `ensure_coc` 把模擬器跟遊戲開起來, 修的時候正好不能那樣; `ai_coc capture` 只看不開, 但模擬器沒開它只會報錯, 不看 Android 的畫面
+- **Android 裡的畫面**用這個 skill 的 `scripts/look.py`. spend-loot 那種走 `commands._controller()` 的截圖會先 `ensure_coc` 把模擬器跟遊戲開起來, 修的時候正好不能那樣; `ai_coc capture` 只看不開, 但模擬器沒開、還在開機 (port 0) 或遊戲不在任何 display 上, 它都只會報錯, 不看 Android 的畫面
 
     ```bash
     uv run --no-sync python .agents/skills/repair-emulator/scripts/look.py <資料夾> 15 1
@@ -57,7 +55,7 @@ description: >-
 
 - `ldconsole list2`: 一行一個 instance, 欄位順序在 `models.py` 的 `LDPlayerInstanceInfo`. 要看的是第 5 欄 Android (0 關著, 2 開機中, 1 起來了), 第 6 欄雷電視窗的 pid (-1 是沒在跑), 最後三欄寬、高、dpi, 應該是 `1600,900,240`
 - `ldconsole isrunning --index 0`: `running` 或 `stop`
-- 程序: `dnplayer.exe` 是雷電的視窗, 命令列 `index=0|`, 多了 `from=repairer` 的是雷電的修復工具重開的; `Ld9BoxHeadless.exe` 是 VM 本體. 命令列用 `Get-CimInstance Win32_Process` 看
+- 程序: `dnplayer.exe` 是雷電的視窗, 命令列 `index=0|`, 多了 `from=repairer` 的是雷電的修復工具重開的; `Ld9BoxHeadless.exe` 是 VM 本體
 - ADB: `look.py` 截得到圖就是通的
 - 設定檔是安裝目錄的 `vms\config\leidian0.config`, **只讀不改** (理由見第 3 種). 看 `advancedSettings.resolution` 跟 `resolutionDpi`, `basicSettings.adbDebug` (沒有這一行就是 ADB 關著), `statusSettings.isNewPlayer`
 
@@ -85,7 +83,7 @@ description: >-
 
 **截不到圖就不要跑 `ai_coc launch`**: ADB 不通時它照 `list2` 當成關著, `isrunning` 又說 `stop`, `ensure_coc` 就會在舊的 `dnplayer.exe` 跟 `Ld9BoxHeadless.exe` 還在的時候下 `ldconsole launch` (`adapters/emulator.py` 的 `ensure_coc` 跟 `ldplayer.py` 的 `launch_instance`), 正是「不要做的事」擋的那一條. 這時才往下處理.
 
-處理: **不要結束任何程序, 請人.** 把 `look.py` 的結果連同 `list2` 那一行跟程序清單交給使用者, 也說清楚強制結束的代價: 那天兩次強制結束有一次把設定洗掉了 (第 3 種). 要不要重開、怎麼重開由他決定. 他同意由你來做的話: `Stop-Process` 那個 `dnplayer.exe` 跟 `Ld9BoxHeadless.exe`, 等兩個都不見了再多等十秒 (`QUIT_SETTLE` 的理由), `ldconsole launch --index 0`, 然後照第 1 種等滿三分鐘, 中間不要 `quit`, 也不要再開一次. 那天這樣做過兩次, 一次 82 秒後正常起來; 另一次重開之後沒多久就被 `quit` 過, 重開的那台 `list2` 一樣看不到. 結束程序對雷電來說就是一次閃退, 也可能變成第 3 種.
+處理: **不要結束任何程序, 請人.** 把 `look.py` 的結果連同 `list2` 那一行跟程序清單交給使用者, 也說清楚強制結束的代價: 那天兩次強制結束有一次把設定洗掉了 (第 3 種). 要不要重開、怎麼重開由他決定. 他同意由你來做的話: `Stop-Process` 那個 `dnplayer.exe` 跟 `Ld9BoxHeadless.exe`, 等兩個都不見了再多等十秒 (`QUIT_SETTLE` 的理由), `ldconsole launch --index 0`, 然後照第 1 種等滿三分鐘, 中間不要 `quit`, 也不要再開一次. 那天這樣做過兩次, 一次 82 秒後正常起來; 另一次重開之後沒多久就被 `quit` 過, 重開的那台 `list2` 一樣看不到.
 
 ### 3. 設定被洗掉
 
@@ -109,7 +107,7 @@ description: >-
 
 先認得正常的樣子: 那天連拍到的遊戲啟動, 頭十幾秒依序是 Play 遊戲的登入橫幅、SUPERCELL 標誌, **大約第 9 秒會跳回桌面一兩秒**, 然後遊戲自己回來. 所以一張桌面不代表失敗, 連拍十幾秒再判斷.
 
-處理: log 前面有 `The session was dropped; logging in again` 的話 (那天的版本寫的是 `The session was dropped; restarting the game`), 先問使用者是不是正在手機上玩: 重跑會把登入搶回來, 把他踢掉 (`AGENTS.md` 的 Driving the game). 不是, 就再跑一次 `ai_coc launch`. 那天出事的那一次就有這一行, 而且剛好是設定剛被洗成新機器之後; 當時沒留畫面, 原因沒查到, 之後重跑都正常. 再遇到就連拍留證據.
+處理: 再跑一次 `ai_coc launch`. 那天出事的那一次 log 有 `The session was dropped; restarting the game` (當時的程式還分不出是不是另一部裝置登入), 而且剛好是設定剛被洗成新機器之後; 當時沒留畫面, 原因沒查到, 之後重跑都正常. 再遇到就連拍留證據.
 
 ## 乾淨的重開
 
@@ -130,7 +128,7 @@ description: >-
 - 不要手改 `leidian0.config`, 理由在第 3 種
 - 不要在 `dnplayer.exe` 或 `Ld9BoxHeadless.exe` 還在的時候 `ldconsole launch`. 那天有三台雷電開出來就沒有視窗、使用者叫不出來: 兩次開的時候舊的確定還在或剛被結束十秒, 第三次舊的 VM 已經關了一分多鐘, 舊的 `dnplayer.exe` 在不在沒記到. 等兩個都不見了才開的那次有視窗
 - 不要自己下 `adb connect` / `adb disconnect`, 看 ADB 用 `look.py`: 每次 connect 都在雷電那端開一條新連線, 雷電的 port forward 曾經因此整個掛掉 (`AGENTS.md` 的 Adapters)
-- 同一招不要連試. 乾淨的重開只做一次 (見「乾淨的重開」)
+- 同一招不要連試
 
 ## 什麼時候請人
 
@@ -138,6 +136,7 @@ description: >-
 - 第 2 種而 `look.py` 截不到圖的時候
 - 一次乾淨的重開之後還是站不上村莊, 或者 `quit` 了一分鐘程序還在
 - 看不到的東西: 模擬器視窗上的對話框, 截桌面沒被授權
+- 指令回 `另一部裝置登入了這個帳號,沒有把登入搶回來` (exit code 不是 0, log 有 `Another device has logged in to this account`): 不是模擬器壞了, 他多半正在手機上玩. 重跑會把登入搶回來, 把他踢掉 (`AGENTS.md` 的 Driving the game), 告訴他, 他說可以才跑
 
 請人的時候講清楚四件事: 看到什麼 (附圖), 試過什麼, 要他改哪裡、改成什麼, 他改完你怎麼確認. 他說改好了, 照下一節驗.
 
