@@ -107,7 +107,7 @@ description: >-
 
 先認得正常的樣子: 那天連拍到的遊戲啟動, 頭十幾秒依序是 Play 遊戲的登入橫幅、SUPERCELL 標誌, **大約第 9 秒會跳回桌面一兩秒**, 然後遊戲自己回來. 所以一張桌面不代表失敗, 連拍十幾秒再判斷.
 
-處理: log 裡有 `Another device has logged in to this account; leaving the session to it` 的話 (指令回的是 `另一部裝置登入了這個帳號,沒有把登入搶回來`), 他多半正在手機上玩: 重跑會把登入搶回來, 把他踢掉 (`AGENTS.md` 的 Driving the game), 先告訴他, 他說可以才跑. 沒有, 就再跑一次 `ai_coc launch`. 那天出事的那一次 log 有 `The session was dropped; restarting the game` (當時的程式還分不出是不是另一部裝置登入), 而且剛好是設定剛被洗成新機器之後; 當時沒留畫面, 原因沒查到, 之後重跑都正常. 再遇到就連拍留證據.
+處理: 再跑一次 `ai_coc launch`. 那天出事的那一次 log 有 `The session was dropped; restarting the game` (當時的程式還分不出是不是另一部裝置登入), 而且剛好是設定剛被洗成新機器之後; 當時沒留畫面, 原因沒查到, 之後重跑都正常. 再遇到就連拍留證據.
 
 ## 乾淨的重開
 
@@ -136,6 +136,7 @@ description: >-
 - 第 2 種而 `look.py` 截不到圖的時候
 - 一次乾淨的重開之後還是站不上村莊, 或者 `quit` 了一分鐘程序還在
 - 看不到的東西: 模擬器視窗上的對話框, 截桌面沒被授權
+- 指令回 `另一部裝置登入了這個帳號,沒有把登入搶回來` (exit code 不是 0, log 有 `Another device has logged in to this account`): 不是模擬器壞了, 他多半正在手機上玩. 重跑會把登入搶回來, 把他踢掉 (`AGENTS.md` 的 Driving the game), 告訴他, 他說可以才跑
 
 請人的時候講清楚四件事: 看到什麼 (附圖), 試過什麼, 要他改哪裡、改成什麼, 他改完你怎麼確認. 他說改好了, 照下一節驗.
 
