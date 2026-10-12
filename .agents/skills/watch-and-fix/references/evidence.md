@@ -45,7 +45,7 @@ uv run ai_coc bounds --debug         # 實測地圖邊緣, 回推村莊範圍
 
 夠用的路徑, 不是規定:
 
-1. `result.json` 這一輪的 `AttackReport`: 有沒有開打, 對手**擺出**多少 (`attacked` 是偵察讀的可搶量, 不是帶回家的量), `outcome` (十八種, 清單在 `models.py` 的 `AttackOutcome`)
+1. `result.json` 這一輪的 `AttackReport` (迴圈還在跑的話還沒有這個檔, 整個 series 收工才寫; 那時看 `run.log` 那一輪的 `Attack finished:` 跟 `plans.jsonl`): 有沒有開打, 對手**擺出**多少 (`attacked` 是偵察讀的可搶量, 不是帶回家的量), `outcome` (十八種, 清單在 `models.py` 的 `AttackOutcome`)
 2. `run.log` 這一輪: 走到哪一步, 哪一步發了 WARNING
 3. 那一步的畫面, 用檔名找
 4. 丟進 `ai_coc read`, 看 parser 讀到什麼
