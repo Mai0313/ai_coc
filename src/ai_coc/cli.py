@@ -20,6 +20,7 @@ from ai_coc.models import (
     Caller,
     RunLog,
     HeroKind,
+    StopTarget,
     HeroOptions,
     WallOptions,
     RestartScope,
@@ -98,9 +99,15 @@ COMMANDS = (
     # Its own command rather than a flag on `attack`, because the run being
     # stopped is a different process: whatever put that one in the background
     # cannot send it a Ctrl-C, and killing it leaves the game mid-battle.
-    ("stop", "請正在用模擬器的指令做完手上這件事就收工"),
+    (
+        "stop",
+        "請正在用模擬器的指令做完手上這件事就收工，盯升級的也一起停；後面加 emulator 或 watch 只停一個",
+    ),
     ("giveback", "把借來的模擬器還回去，借出的那一邊會自己接著跑"),
-    ("watch", "在狀態檔記下誰在盯升級、下次幾點醒來；--done 收掉"),
+    (
+        "watch",
+        "睡到 --next 那個時間才結束，期間在狀態檔記下是誰在盯升級；丟到背景跑，結束時叫醒你",
+    ),
     (
         "status",
         "兩個世界每件升級實際幾點好（藥水和鐘塔已算進去），加上這個村莊的閒置人數、倉庫和護盾",
@@ -124,18 +131,28 @@ COMMANDS = (
 )
 
 
-def _watch_flags(watcher: argparse.ArgumentParser) -> None:
-    """`watch` never claims and never opens ADB: it only puts the watcher on the
-    state file, so a second agent sees somebody is watching and `stop` reaches it.
+def _watch_flags(watcher: argparse.ArgumentParser, stopper: argparse.ArgumentParser) -> None:
+    """`watch` never claims and never opens ADB: it sleeps on its own section of
+    the state file, where a second agent sees somebody is watching and `stop`
+    reaches it. `stop` reaches both sections unless told which.
 
     Its own function only because `_parser` is at Ruff's statement limit.
     """
-    when = watcher.add_mutually_exclusive_group(required=True)
-    when.add_argument(
-        "--next", type=datetime.fromisoformat, metavar="時間", help="下次幾點醒來，ISO 格式"
+    watcher.add_argument(
+        "--next",
+        type=datetime.fromisoformat,
+        required=True,
+        metavar="時間",
+        help="睡到幾點醒來，ISO 格式",
     )
-    when.add_argument("--done", action="store_true", help="盯完了，把這筆收掉")
     watcher.add_argument("--about", default="", metavar="說明", help="在等什麼，一句話")
+    stopper.add_argument(
+        "target",
+        nargs="?",
+        choices=get_args(StopTarget),
+        default="all",
+        help="只停模擬器上的指令（emulator）或只停盯升級（watch）；不給就兩個都停",
+    )
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -198,7 +215,7 @@ def _parser() -> argparse.ArgumentParser:
     where.add_argument(
         "--go", choices=get_args(World), help="開船到這個世界，已經在那邊就什麼都不做"
     )
-    _watch_flags(sub.choices["watch"])
+    _watch_flags(sub.choices["watch"], sub.choices["stop"])
     upgrade = sub.choices["walls"]
     upgrade.add_argument("--keep-gold", type=int, default=0, help="留下這麼多金幣不花")
     upgrade.add_argument("--keep-elixir", type=int, default=0, help="留下這麼多聖水不花")
@@ -341,11 +358,9 @@ def _answer(arguments: argparse.Namespace, run: RunLog) -> BaseModel | str:
                 until_idle=[] if a.until_idle is None else a.until_idle or ["builder", "lab"],
             )
         ),
-        "stop": lambda: commands.stop(_caller(a)),
+        "stop": lambda: commands.stop(_caller(a), a.target),
         "giveback": commands.giveback,
-        "watch": lambda: (
-            commands.unwatch(_caller(a)) if a.done else commands.watch(_caller(a), a.next, a.about)
-        ),
+        "watch": lambda: commands.watch(_caller(a), a.next, a.about, run.directory),
         "walls": lambda: commands.walls(
             WallOptions(
                 frame_dir=run.frames,
@@ -437,8 +452,13 @@ def _run_command(arguments: argparse.Namespace, run: RunLog) -> int:
     # A queue that a stop ended is written down like an answer, not left as a
     # crash: `farm` reads a run with no `result.json` as a killed process. The
     # exit below still says it did not run. So is a command that stood down
-    # because another device logged in, which can happen to any of them.
-    except (commands.LoanCancelledError, commands.SessionTakenError) as error:
+    # because another device logged in, which can happen to any of them, and a
+    # watch that found no state file to sit on.
+    except (
+        commands.LoanCancelledError,
+        commands.SessionTakenError,
+        commands.NoStateFileError,
+    ) as error:
         answer, cancelled = str(error), True
     # Outside the claim: writing the answer down and printing it touch no
     # emulator, and holding the screen across them would say this run is still
