@@ -40,7 +40,7 @@ description: >-
 你自己決定, 中途也可以換:
 
 - **自己跑**: 用 runtime 自己管的背景執行送出去 (見 `running.md` 的「開跑」), 前景讀 log 改東西. `--repeat 0` 整批跑完才通知一次, 不是每一輪, 所以代價只是你自己去讀 log 的那幾次. 迴圈照樣跑在主 checkout 上 (`uv run --no-sync`), 改東西在另一個 worktree, 理由在 `AGENTS.md` 的 The loop runs the main checkout.
-- **交給 subagent**: 照 `AGENTS.md` 那段派一個跑 `farm` 的 subagent (降一級模型, 降 thinking budget), 你只讀它留下的檔案. 省下盯的成本, 代價是你不在現場. 交辦寫明 `--debug` (要看戰鬥過程再加 `--shot-every`), 並交代它帶上就好、圖不用看, 圖由你看 (`farm` 的「要不要留畫面」).
+- **交給 subagent**: 照 `AGENTS.md` 的 Every session farms while it works, through one subagent 派一個跑 `farm` 的 subagent (降一級模型, 降 thinking budget), 你只讀它留下的檔案. 省下盯的成本, 代價是你不在現場. 交辦寫明 `--debug` (要看戰鬥過程再加 `--shot-every`), 並交代它帶上就好、圖不用看, 圖由你看 (`farm` 的「要不要留畫面」).
 
 **使用者指名就照他的**: 「你親自監督執行」是第一種, 不要為了省 context 轉包出去.
 

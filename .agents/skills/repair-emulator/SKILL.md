@@ -27,7 +27,7 @@ description: >-
 
 這是使用者明講的規矩. 那天一個 `launch` 失敗從 logcat 推了很久推不出來, 改成每秒截一張, 馬上看到遊戲啟動時會先跳回桌面一兩秒.
 
-- **Android 裡的畫面**用這個 skill 的 `scripts/look.py`. spend-loot 那種走 `commands._controller()` 的截圖會先 `ensure_coc` 把模擬器跟遊戲開起來, 修的時候正好不能那樣; `ai_coc capture` 只看不開, 但模擬器沒開它只會報錯, 不看 Android 的畫面
+- **Android 裡的畫面**用這個 skill 的 `scripts/look.py`. spend-loot 那種走 `commands._controller()` 的截圖會先 `ensure_coc` 把模擬器跟遊戲開起來, 修的時候正好不能那樣; `ai_coc capture` 只看不開, 但模擬器沒開、還在開機 (port 0) 或遊戲不在任何 display 上, 它都只會報錯, 不看 Android 的畫面
 
     ```bash
     uv run --no-sync python .agents/skills/repair-emulator/scripts/look.py <資料夾> 15 1
@@ -107,7 +107,7 @@ description: >-
 
 先認得正常的樣子: 那天連拍到的遊戲啟動, 頭十幾秒依序是 Play 遊戲的登入橫幅、SUPERCELL 標誌, **大約第 9 秒會跳回桌面一兩秒**, 然後遊戲自己回來. 所以一張桌面不代表失敗, 連拍十幾秒再判斷.
 
-處理: log 前面有 `The session was dropped; logging in again` 的話 (那天的版本寫的是 `The session was dropped; restarting the game`), 先問使用者是不是正在手機上玩: 重跑會把登入搶回來, 把他踢掉 (`AGENTS.md` 的 Driving the game). 不是, 就再跑一次 `ai_coc launch`. 那天出事的那一次就有這一行, 而且剛好是設定剛被洗成新機器之後; 當時沒留畫面, 原因沒查到, 之後重跑都正常. 再遇到就連拍留證據.
+處理: log 裡有 `Another device has logged in to this account; leaving the session to it` 的話 (指令回的是 `另一部裝置登入了這個帳號,沒有把登入搶回來`), 他多半正在手機上玩: 重跑會把登入搶回來, 把他踢掉 (`AGENTS.md` 的 Driving the game), 先告訴他, 他說可以才跑. 沒有, 就再跑一次 `ai_coc launch`. 那天出事的那一次 log 有 `The session was dropped; restarting the game` (當時的程式還分不出是不是另一部裝置登入), 而且剛好是設定剛被洗成新機器之後; 當時沒留畫面, 原因沒查到, 之後重跑都正常. 再遇到就連拍留證據.
 
 ## 乾淨的重開
 

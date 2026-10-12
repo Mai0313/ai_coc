@@ -3,14 +3,15 @@
 spend-loot 自己寫的點擊腳本先經過 `_controller()`, 也就是 `ensure_coc`: 模擬器沒開就
 開模擬器, 遊戲沒開就開遊戲. 修模擬器的時候那正是不能做的事. `ai_coc capture` 不開
 東西, 但它只截遊戲所在的 display, 遊戲不在任何 display 上就報錯. 所以這支只找出
-設定裡那台的 ADB, 截圖, 印出前景視窗, 其他什麼都不碰.
+設定裡那台的 ADB, 截圖, 印出前景視窗, 不開任何東西.
 
     uv run --no-sync python <skill>/scripts/look.py <資料夾>          # 一張
     uv run --no-sync python <skill>/scripts/look.py <資料夾> 15 1     # 15 張, 每張之間睡 1 秒
 
 每張本身還要一兩秒 (找 display 跟截圖), 所以 `1` 的實際間隔大約兩秒.
 
-實例用 `chosen(emulators())` 找, 跟每個指令一樣: 它只列出 instance, 不開任何東西.
+實例用 `chosen(emulators())` 找, 跟每個指令一樣: 它不開任何東西, 但 `config.json` 的
+`adb_serial` 是空的話會挑一台寫回去, 列雷電的 instance 時也會對每一台問 ADB.
 連的是那台的真實 port, 雷電還沒開好時回報的 port 0 不用, 所以 ADB 不通會直接看到
 被拒絕的那句話.
 

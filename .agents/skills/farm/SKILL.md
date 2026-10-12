@@ -87,7 +87,7 @@ uv run ai_coc attack --repeat 0 --plan src/ai_coc/plans/night_flat.json --yield
 
 - **開跑前跑一次 `uv run ai_coc status`, 每一趟都重讀**: 之前讀到的時間不沿用, 他在遊戲裡動過什麼 (寶石加速, 開藥水, 新的升級) 不一定會講. 他講了就再讀一次, 排好的計時全部換掉. `timers` 是兩個世界每件升級實際幾點好 (`done_at`, 加速已經算進去), 由早到晚; `clock_tower` 是鐘塔下次幾點能開 (`ready_in` 0 是現在就能開, 講一次就好, 不要每次醒來都講)
 - **把 `ai_coc watch` 丟到背景, 它就是計時器**: `uv run ai_coc watch --next <最早那一件的五分鐘前, ISO> --about "<在等什麼>"` (帶 `--agent`、`--session`、`--mission`), 用 runtime 自己管的背景執行開 (跟背景跑 `attack` 同一種, 見 `references/running.md` 的「開跑」). 它睡到 `--next` 才結束, 結束的通知就是叫醒你的那一下; 睡的時候它把自己記在 `state.json` 的 `watch` 那一塊, 別的 agent 看得到有人在盯, `ai_coc stop` 也停得到它. 不要另外排 sleep 或排程: 以前記錄跟計時是兩件事, 2026-10-11、10-12 都有 agent 只記不睡, 到點沒有人回來. 別人的 watch 還活著也照開: 它會先請那一個收工 (`stop_by` 記成你) 再接手, 你剛被交辦, 那一邊醒來讀到是你接手就收工. 回報講一聲接手了誰
-- **醒來先看它的輸出** (`result.json` 跟背景任務印的是同一份 `WatchReport`): `outcome` 是 `due` 就是時間到了; 是 `stopped` 就是有人叫停或接手了, `stop_by` 是誰、他的 `mission` 是為什麼, 什麼都不講, 這一節收工. 例外是 `stop_by.session` 是你自己的: 那是你重讀時間後開的新 watch 接手了舊的, 照常等新的那個
+- **醒來先看它的輸出** (`result.json` 跟背景任務印的是同一份 `WatchReport`): `outcome` 是 `due` 就是時間到了; 是 `stopped` 就是有人叫停或接手了, `stop_by` 是誰、他的 `mission` 是為什麼, 什麼都不講, 這一節收工. 例外是 `stop_by.session` 是你自己的: 那是你重讀時間後開的新 watch 接手了舊的, 照常等新的那個. 輸出只有一行說 `state.json` 不在 (exit code 不是 0) 的話, 它根本沒睡: 先跑一個會操作模擬器的指令 (例如 `status`) 再開一次
 - **時間到就發問, 不只推播** (使用者 2026-10-11: 有些 agent, 例如 Antigravity, 只有發問才彈得出通知): 用 runtime 自己問使用者的工具, 不再讀時間, 也不停打資源. **有些 runtime 發問時整個回合停在那裡等回答**, 所以讓打資源繼續的事都先做完再問: 下一件的 `ai_coc watch` 丟到背景、借來的模擬器 `giveback`、該派的下一個 subagent 派出去
     - **工人**: 先跑 `ai_coc worker` (它讀遊戲停著的那個世界, 會借走打資源的 run, 讀完 `giveback` 自己一步). 它回的 `world` 是這次要好的那個世界, 而 `suggested` (面板上的建議升級: 名字、價錢、資源) 不是空的, 就一個一個列成選項, 最後加「先不要動」. 世界不對, 或 `suggested` 是空的, 就只問要不要現在處理, 問題裡講明為什麼沒有清單. 價錢是模型讀的, 拿來給他挑可以, 花之前照 `spend-loot` 再確認, 而且等工人真的空出來
     - **實驗室**: 沒有指令能研究, 所以不讓他挑: 同樣讀一次 `lab`, 把 `suggested` 寫進問題裡給他參考, 選項只放一個「知道了」
@@ -144,7 +144,7 @@ uv run ai_coc attack --repeat 0 --plan src/ai_coc/plans/night_flat.json --yield
 - **入庫的進帳遠小於 `attacked`**: 進攻打不動人家, 是 watch-and-fix 的題目, 這裡只報告. 看落差而不是 `attacked` 大不大 (它只說對手**擺出**多少, 見「數字從哪來, 不准編」)
 - `The session was dropped`: `ui/runner.py` 的 `relogin` 自己會點對話框的按鈕重新登入回到村莊, 點了沒用才重開遊戲 (閒置斷線跟 連線已中斷 都是; log 有 `did not clear it; restarting the game` 就是重開了). 一直重複才要查
 - `waiting for the server rather than tapping`: 卡在載入畫面, 伺服器的事. 迴圈每次載入最多等 45 分鐘; 等不到的那輪是 `server_loading` (等滿) 或 `server_flapping` (載入完又掉回去). **不要**重開遊戲或模擬器, 量過兩次都是自己回來的. 連續兩輪都是這兩種再停下來講
-- `The camera was not at the far zoom` (**只在主村**): 那一輪多半白打. 迴圈每場自己會 pinch 回去, 連著出現才去看畫面; 手動修是先停迴圈再 `ai_coc view --zoom out`. 夜世界不做這個判斷, 沒這條不代表那邊的鏡頭是對的
+- `The camera was not at the far zoom` (**只在主村**): 量的是拉遠之前的鏡頭, 只是回報; 迴圈每場自己會 pinch 回去, 這一場照樣打. 連著出現才去看畫面. 夜世界不做這個判斷, 沒這條不代表那邊的鏡頭是對的
 
 **一輪就要停下來的**: `session_taken`, 另一部裝置 (多半是他的手機, 另一台模擬器也算) 登入了這個帳號, 在兩輪之間或打到一半都會有. 迴圈沒有把登入搶回來, 整個 series 自己收掉, log 有一行 `Another device has logged in to this account`. 使用者的交代 (2026-10-09): 被搶登就停手通知他, 他臨時上線一定是有事要做, 不小心的也會回來叫你繼續. 所以照「沒達成」交回報並發推播, 推播那一行講明是被登入擠掉、打資源停了, 等他說可以. **這段時間一個 `ai_coc` 指令都不要下**, `stock`、`status` 也算: 每個指令開跑時的 `ensure_coc` 都會重新登入, 把他踢下線 (2026-10-09 量過). 他說可以了, 照同一個世界同一組旗標開回去, 第一個指令就會重新登入. 夜世界被擠掉之後有幾分鐘配不到對手 (使用者 2026-10-09 的觀察), 開回去頭幾輪 `No opponent in 150s` 甚至 `no_opponent` 是這個, 不是卡住. 別的指令 (`walls`、`stock`, 還有剛開跑就遇到的 `attack`) 遇到它也不重開遊戲, `result.json` 只有一句 `另一部裝置登入了這個帳號,沒有把登入搶回來`, exit code 不是 0, 一樣照這條處理.
 
