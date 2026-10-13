@@ -621,6 +621,7 @@ class WorldTests(unittest.TestCase):
             "hud_tip_day_gold.png": "day",
             "hud_tip_day_elixir.png": "day",
             "hud_night.png": "night",
+            "home_markers_lit_orange.png": "day",
         }
         for path in sorted(FRAMES.glob("*.png")):
             try:
@@ -7534,58 +7535,49 @@ class HomeHudTests(unittest.TestCase):
         which is the same pixels on every village.
         """
         markers = collect_bubbles((FRAMES / "home_markers.png").read_bytes())
-        assert len(markers) == 11
-        assert {marker.resource for marker in markers} == {"gold", "elixir", "dark"}
+        assert len(markers) == 8
+        assert {marker.resource for marker in markers} == {"gold", "elixir"}
         # Every one on the collectors, none on the storage bars carrying the very
         # same icons a few hundred pixels to the right.
         assert all(940 <= x <= 1420 and 180 <= y <= 470 for x, y in (m.point for m in markers))
 
     def test_a_dark_marker_on_the_pale_plate_is_found_too(self) -> None:
-        """The same village, the same collectors, and the plate is a different colour.
+        """The plate a dark marker worth tapping sits on, the one every other bubble uses here.
 
-        `MARKERS` carries one plate for the dark marker, an orange one, because
-        its icon is nearly black and cannot be found the way gold and elixir
-        are. Measured on this frame the three dark bubbles sit on the pale plate
-        every other bubble uses, so that written-down colour finds none of them
-        — which is every dark marker on this account today, and dark elixir's
-        drills are its only steady source.
-
-        The pale plate is learned rather than listed: gold and elixir are found
-        by their own icons whatever their plate is painted, so their plate is
-        this frame's answer. On this frame a dark icon standing on it matches
-        0.42 to 0.51 of its own ring against at most 0.03 for the twelve other
-        dark shapes the village offers.
+        Its icon is nearly black and cannot be found the way gold and elixir
+        are, so it is found by that plate. On this frame a dark icon standing on
+        it matches 0.42 to 0.51 of its own ring against at most 0.03 for the
+        twelve other dark shapes the village offers.
         """
         markers = collect_bubbles((FRAMES / "home_markers_pale_plate.png").read_bytes())
         assert [marker.resource for marker in markers].count("dark") == 3
         assert len(markers) == 5
 
-    def test_the_orange_plate_is_still_what_finds_the_other_kind(self) -> None:
-        """Both plates, because two frames cannot say which state either one means."""
-        markers = collect_bubbles((FRAMES / "home_markers.png").read_bytes())
-        assert [marker.resource for marker in markers].count("dark") == 3
-        assert len(markers) == 11
+    def test_a_marker_on_the_orange_plate_is_over_a_full_storage(self) -> None:
+        """A tap there collects nothing, so it is left alone, whatever the resource.
 
-    def test_one_frame_carries_both_plates_at_once(self) -> None:
-        """Which is why the colour is learned per bubble rather than pooled per frame.
-
-        Measured on this frame, seven gold bubbles sit on an orange plate at
-        (221, 92, 33) and seven elixir bubbles on the pale one at
-        (184, 189, 131). A single median of the two comes out (213, 131, 66),
-        near neither, and the dark icons here score 0.38 against it where they
-        score 0.75 against the plate they are really on.
-
-        The three real dark bubbles are on the orange plate here, so the listed
-        entry finds them and the learned pass finds them again — the count holds
-        because the two readings of one bubble are three pixels apart against a
-        `DARK_APART` of thirty. The fourth is a gold bubble's own orange plate,
-        which the listed entry has always reported as a dark marker on a frame
-        where the gold bubbles are orange; unchanged here, and harmless, since
-        the point is still a bubble worth tapping and the gains are read off the
-        storage bars rather than counted off the markers.
+        This frame's three dark markers and this one's seven gold ones are all
+        orange; the elixir markers beside them are pale, and are what is left.
         """
+        markers = collect_bubbles((FRAMES / "home_markers.png").read_bytes())
+        assert "dark" not in {marker.resource for marker in markers}
         markers = collect_bubbles((FRAMES / "home_builders_busy.png").read_bytes())
-        assert [marker.resource for marker in markers].count("dark") == 4
+        assert {marker.resource for marker in markers} == {"elixir"}
+        assert len(markers) == 5
+
+    def test_dark_markers_are_found_when_every_other_marker_is_orange(self) -> None:
+        """Full gold and elixir storages leave no pale plate on the frame to learn from.
+
+        The pale plate is written down as well, so the three dark markers on it
+        are found; every gold and elixir marker here is orange, and each used
+        to come back with a dark one beside it, read off its own orange plate.
+        """
+        markers = collect_bubbles((FRAMES / "home_markers_lit_orange.png").read_bytes())
+        assert [(marker.resource, marker.point) for marker in markers] == [
+            ("dark", (364, 386)),
+            ("dark", (338, 446)),
+            ("dark", (338, 545)),
+        ]
 
     def test_a_boulder_in_the_foliage_is_not_a_dark_marker(self) -> None:
         """The floor the share line sits above, on the frame that sets it.
