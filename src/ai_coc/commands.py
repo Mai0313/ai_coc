@@ -2399,7 +2399,7 @@ COLLECT_LINES: dict[CollectOutcome, str] = {
     "nothing_to_collect": "沒有採集器等著收",
     "no_village": "畫面沒辦法回到村莊,收集沒有開始",
     "builder_base": "遊戲停在夜世界,主村的採集器沒有收",
-    "stock_unread": "收了 {markers} 個採集器的標記,但收完之後讀不到儲量",
+    "stock_unread": "{markers} 個採集器的標記點掉了,但之後讀不到儲量",
 }
 
 
