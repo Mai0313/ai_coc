@@ -1,6 +1,6 @@
 # 讓一輪在背景跑, 並且盯得住它
 
-`farm`, `watch-and-fix`, `build-feature`, `spend-loot`, `watch-upgrades` 五個 skill 共用這一份, 路徑是 `.agents/skills/farm/references/running.md`.
+`farm`, `watch-and-fix`, `spend-loot`, `watch-upgrades` 四個 skill 共用這一份, 路徑是 `.agents/skills/farm/references/running.md`.
 
 **`~/.ai_coc/state.json` 分兩塊**: `emulator` 是佔著模擬器的那個指令, `watch` 是睡著等升級的 `ai_coc watch`. 這份跟其他 skill 講到 `status`、`pid`、`log`、`command`、`caller`、`stop_by`、`yields`、`loan` 而沒說是哪一塊的, 都是 `emulator` 那一塊.
 
@@ -162,7 +162,7 @@ jq '.[-1] | {world, outcome, stock_full, attacked}' ~/.ai_coc/logs/<run>/result.
 
 **借的指令通常要等一場戰鬥 (五分鐘上下) 才開始**, 對方等滿 `TAKEOVER_WAIT` (約 12 分鐘) 還不收工才會被結束: 前景跑的話那次呼叫的 timeout 給 runtime 允許的最長, 不然就背景跑. 被砍了就 `giveback`, 不然借用會留 30 分鐘, 迴圈白等.
 
-**不 claim 的腳本自己借不到**: `spend-loot`「原語」那幾行 Python 跟 `build-feature` 的 `references/exploring.md` 那段腳本走 `commands._controller()`, 不碰 `state.json`, 迴圈在跑的時候照樣點得下去, 兩邊搶同一個畫面. 所以先用一個會 claim 的指令 (例如 `ai_coc stock`) 借到, 看 `state.json` 的 `loan` 在、`loan.ended` 是 null、`loan.borrower` 是你 (`emulator.ended` 是你那個指令收工的時間, 不用看), 才跑腳本. 沒有 `loan` 是迴圈剛好在兩個指令之間, 什麼都沒借到, 再借一次. 那個指令要帶 `--session`: 沒帶的話它一跑完就把借用還回去. 借用從你最後一個會 claim 的指令跑完起算, 過了 `LOAN_TIME` (30 分鐘) 就失效, 腳本用得久就中間再跑一次續上. 用完照樣 `giveback`.
+**不 claim 的腳本自己借不到**: `spend-loot`「原語」那幾行 Python, 或任何自己寫、走 `commands._controller()` 的腳本, 都不碰 `state.json`, 迴圈在跑的時候照樣點得下去, 兩邊搶同一個畫面. 所以先用一個會 claim 的指令 (例如 `ai_coc stock`) 借到, 看 `state.json` 的 `loan` 在、`loan.ended` 是 null、`loan.borrower` 是你 (`emulator.ended` 是你那個指令收工的時間, 不用看), 才跑腳本. 沒有 `loan` 是迴圈剛好在兩個指令之間, 什麼都沒借到, 再借一次. 那個指令要帶 `--session`: 沒帶的話它一跑完就把借用還回去. 借用從你最後一個會 claim 的指令跑完起算, 過了 `LOAN_TIME` (30 分鐘) 就失效, 腳本用得久就中間再跑一次續上. 用完照樣 `giveback`.
 
 **你自己決定測試要中途停**, 下 `ai_coc stop emulator`: 只停你的指令, 盯升級不動, 借用還在, 用完一樣要還 (「中止」的兩層). 是使用者叫停就不還, 見下面「用完一定要還」的例外.
 

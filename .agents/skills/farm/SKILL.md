@@ -175,7 +175,7 @@ uv run ai_coc attack --repeat 0 --plan src/ai_coc/plans/night_flat.json --yield
 **三, 兩個出口關掉的方式不一樣, 下一步也不一樣.**
 
 - **牆需要有一個工人閒著.** 一個閒著就能連買一整排, `0/N` 一片都買不了 (遊戲回「所有建築工人都在忙碌中」加一顆寶石按鈕). **這一種 `upgrade` 也接不上**, 它同樣要工人
-- **牆被大本營的等級卡住.** 看 `WallReport.outcome`: `cannot_afford` 跟 `builders_busy` 講得出原因, **`nothing_bought` 是它自己也說不上來**, 最可能是牆到頂了. **這一種正是 `upgrade` 該接手的地方**, 工人還閒著. 撞到一次這一趟就不用再跑 `walls`, 要等大本營升上去, 那是使用者的決定
+- **牆被大本營的等級卡住.** 看 `WallReport.outcome`: `cannot_afford` 跟 `builders_busy` 講得出原因, **`nothing_bought` 是它自己也說不上來**, 最可能是牆到頂了. 反過來 `nothing_bought` 不一定是大本營: 工人數讀不到也會落到這裡, 兩種的下一步相反, 看 `run.log` 每個位置停在哪一步 (`commands.py` 的 `WALL_LINES` 上面的註解). **這一種正是 `upgrade` 該接手的地方**, 工人還閒著. 撞到一次這一趟就不用再跑 `walls`, 要等大本營升上去, 那是使用者的決定
 
 **他開口要花的那一趟, 停手的條件不是「倉庫滿了」而是「資源花不掉了」**: 工人全忙或者沒有值得升的建築, 牆沒指名到所以不刷 (指名了就是牆也刷不動: `builders_busy` 或 `nothing_bought`), 剩下的只有要他拍板的英雄. 那時交報告收工. **`walls` 回 `cannot_afford` 或 `bought` 不是花不掉**: 前者是倉庫花到買不起下一批了, 後者是找到的牆都買了, 都是回去打的時候. 不交報告, 直接開下一輪 `attack` (倉庫還滿著的話它第一輪就 `stock_full`, 再刷一次). **他沒開口的那一趟剛好相反**, 倉庫滿了就是終點.
 
