@@ -11,21 +11,16 @@ them from the village. Two of the three are the icon itself, because a gold coin
 and an elixir drop are both far more saturated than anything the ground is
 painted in.
 
-Dark elixir's is nearly black, so it cannot be, and **the plate it sits on is
-not one colour**: measured on two frames of the same village with the same
-collectors in the same places, the dark bubbles are drawn on an orange plate in
-one and on the pale plate every other bubble uses in the other. So one of those
-plates is written down and the other is learned from the frame — gold and elixir
-are found whatever their plate is painted, which makes their plate this frame's
-answer. `_dark_bubbles` carries the measurement and says why a miss here is
-allowed to be quiet.
+Dark elixir's is nearly black, so it cannot be, and is found by the plate it
+sits on instead. **The plate says whether there is anything to take**: a marker
+on the orange plate is over a collector whose storage is full, which a tap
+cannot empty, so only the pale plate counts (`FULL_PLATE_LEAD`).
 """
 
 from __future__ import annotations
 
 import io
 from typing import TYPE_CHECKING
-import logging
 from statistics import median
 
 from ai_coc.models import Patch, ShieldState, ResourceBubble
@@ -53,8 +48,6 @@ if TYPE_CHECKING:
 
     from ai_coc.models import World, PlateRole
 
-logger = logging.getLogger(__name__)
-
 # Where a marker can be. Outside this is the game's own furniture — the button
 # columns down either side and the row along the bottom — and a marker cannot be
 # under it because the furniture is drawn on top. The storage bars in the top
@@ -66,9 +59,8 @@ STORAGE_BARS = (1240, 0, 1600, 330)
 
 # What each marker is made of: the channel ranges its own pixels fall in, and the
 # size the patch of them comes out at. Measured on live frames before and after
-# the camera was dragged — the coin segments to 21x16, the drop to 18x25 and the
-# orange plate to 38x41, each to within a pixel or two every time. The three
-# differ because they are three different shapes, not because of the camera.
+# the camera was dragged — the coin segments to 21x16 and the drop to 18x25, each
+# to within a pixel or two every time.
 #
 # **The size is doing most of the work.** Colour alone answers thirteen patches
 # of gold and nine of magenta on a single village frame — storage bars, the shop
@@ -82,15 +74,22 @@ STORAGE_BARS = (1240, 0, 1600, 330)
 MARKERS = (
     ("gold", ((236, 255), (181, 234), (0, 69)), (18, 24), (13, 20), 0.40),
     ("elixir", ((196, 255), (0, 114), (176, 255)), (16, 22), (21, 28), 0.50),
-    ("dark", ((201, 255), (56, 129), (0, 74)), (35, 41), (37, 45), 0.38),
 )
+# **A full storage's markers sit on an orange plate**, the rest on a pale one,
+# and a tap on the orange kind collects nothing. Told apart by how far the
+# plate's red leads its green: measured as the median of the ring round each
+# gold and elixir icon on every committed frame, the orange plate leads by 121
+# to 158 and the pale one by -8 to 6. The 224 frames recorded on 2026-10-13
+# took the orange down to 88, and the most anything else there led by was 49, a
+# gold patch on the builder base's battle screen. A ring the frame blacked out
+# leads by 0 and is no evidence of a full storage.
+FULL_PLATE_LEAD = 60
 
-# The dark marker's other plate, and how it is recognised without being written
-# down. The icon itself is what is found — nearly black, and measured at 24 to
-# 25 across by 27 to 28 down on both frames that carry one — and what separates
-# it from the twelve other dark shapes a village offers is the plate it is
-# sitting on. See `_dark_bubbles` for why that colour is learned per frame
-# instead of listed above.
+# The dark marker, recognised by its icon and its plate. The icon itself is
+# nearly black, measured at 24 to 25 across by 27 to 28 down, and what separates
+# it from the twelve other dark shapes a village offers is the pale plate it is
+# sitting on, written down (`PALE_PLATE`) and learned from the frame's own gold
+# and elixir markers besides, since the game paints it per bubble.
 #
 # The ring is sampled tight, because the plate is only a few pixels wider than
 # the icon: at 4 px and beyond it lands on the village behind the bubble, which
@@ -103,21 +102,23 @@ DARK_ICON_DOWN = (22, 34)
 DARK_ICON_FILL = 0.30
 PLATE_RING_PADS = (2, 3)
 PLATE_LEARN_PADS = (3, 5)
+# The written plate, as the tight ring reads it. Round every dark marker found it
+# read (194 to 202, 199 to 208, 152 to 162) in the open and as low as
+# (170, 170, 132) and (180, 180, 124) under the shade along the top of the
+# screen, and this sits between the two: one end alone loses the other.
+PALE_PLATE = (192, 198, 146)
 PLATE_MATCH = 28
-# Swept over every committed frame that has a marker to learn a plate from: the
-# thirteen real dark bubbles score 0.570 to 0.935 and the highest thing that is
-# not one scores 0.192 — a grey boulder in dark foliage on
-# `home_marker_over_bars.png`, whose pale stone is close to the pale plate and
-# whose shadow is the icon-shaped patch beside it. So the line goes midway
-# across that gap. **A first pass put it at 0.20**, which cleared that boulder
-# by 0.008 while the comment beside it claimed a gap of 0.39, because it was
-# measured on the two frames the change was written from rather than on all of
-# them. Obstacles are ordinary village furniture, so that floor is pinned by a
-# test now.
+# Swept over every committed frame and the 224 recorded on 2026-10-13, every real
+# dark bubble scores 0.426 or more against the written and learned plates, and
+# the highest thing that is not one scores 0.333 — a dragon on
+# `battle_in_progress.png` — so the line goes midway across that gap. Next come
+# troops in other battles at 0.266, and on a village a grey boulder in dark
+# foliage on `home_marker_over_bars.png` at 0.192. **A first pass put it at
+# 0.20**, which cleared that boulder by 0.008 while the comment beside it claimed
+# a gap of 0.39, because it was measured on the two frames the change was
+# written from rather than on all of them. Obstacles are ordinary village
+# furniture, so that floor is pinned by a test now.
 PLATE_SHARE = 0.38
-# Two readings of one bubble, since the orange plate and the icon inside it are
-# found by different passes and their middles sit a few pixels apart.
-DARK_APART = 30
 
 # The marker the game floats over the boat to the builder base: a pale plate
 # with a ship on it and a strip of water along its bottom. The boat itself is
@@ -285,85 +286,31 @@ def _ring(
     return out
 
 
-def _plate_colours(
-    village: bytes, size: tuple[int, int], lit: list[Patch]
-) -> list[tuple[int, int, int]]:
-    """Every plate colour this frame is drawing, one reading per marker already found.
-
-    **One list rather than one colour, because the game paints this per bubble
-    and not per frame.** Measured on `home_builders_busy.png`, seven gold
-    bubbles sit on an orange plate at (221, 92, 33) while seven elixir bubbles
-    on the same frame sit on the pale one at (184, 189, 131). Pooled into a
-    single median those two average to (213, 131, 66), which is near neither, and
-    a dark icon on the real orange then scores 0.38 against it where it scores
-    0.75 against the colour it is actually on. The composition that loses a
-    marker outright is a frame whose lit bubbles are mostly one plate and whose
-    dark bubble is on the other — which is the bug this whole reader exists to
-    fix, reintroduced by averaging.
-
-    Empty when no gold or elixir marker is on screen to learn from, which is an
-    ordinary answer and not an error — see `_dark_bubbles`.
-    """
-    found: list[tuple[int, int, int]] = []
-    for patch in lit:
-        ring = _ring(village, size, patch, PLATE_LEARN_PADS)
-        if not ring:
-            continue
-        red, green, blue = (round(median(pixel[band] for pixel in ring)) for band in range(3))
-        found.append((red, green, blue))
-    return found
+def _plate(village: bytes, size: tuple[int, int], patch: Patch) -> tuple[int, int, int] | None:
+    """The plate one marker's icon sits on, as the median of a ring around it."""
+    ring = _ring(village, size, patch, PLATE_LEARN_PADS)
+    if not ring:
+        return None
+    red, green, blue = (round(median(pixel[band] for pixel in ring)) for band in range(3))
+    return red, green, blue
 
 
-def _dark_bubbles(image: Image.Image, lit: list[Patch]) -> Iterator[Patch]:
-    """Dark elixir markers, found by their icon and the plate it is sitting on.
+def _dark_bubbles(image: Image.Image, plates: list[tuple[int, int, int]]) -> Iterator[Patch]:
+    """Dark elixir markers worth tapping: the nearly black icon, on a pale plate.
 
-    **The plate is not one colour, which is what this exists for.** The dark
-    marker's own icon is nearly black, so unlike gold and elixir it cannot be
-    found by the icon alone — the village is full of dark shapes — and the
-    reader keyed on the plate instead, in the one orange `MARKERS` carries.
-    Measured on two frames of this same village, taken weeks apart with the same
-    collectors in the same places, the three dark bubbles are drawn on an orange
-    plate in one and on the pale plate every other bubble uses in the other. Two
-    frames cannot say what the game means by that — full against merely worth
-    collecting is the obvious guess and is only a guess — but they are enough to
-    say the one written-down colour finds one of the two states and misses the
-    other, which is every dark marker on this account today.
-
-    So the pale one is learned from the frame rather than written down: gold and
-    elixir are found by their own icons, whatever their plate is painted, and
-    their plate is this frame's answer. Measured over both frames, a dark icon
-    on that plate matches 0.42 to 0.51 of its own ring against at most 0.03 for
-    the twelve other dark shapes the village offers, so the line has room.
-
-    **Nothing here fails loudly, and that is deliberate.** A frame with no gold
-    or elixir marker on it has nothing to learn from and this yields nothing;
-    so does a plate in some third colour. What that costs is a collector left
-    standing until the next pass, which is a few minutes of one collector's
-    production — far less than a reader that guesses would cost.
+    `plates` is the pale plate as this frame's gold and elixir markers draw it,
+    with `PALE_PLATE` among them for a frame that has none to learn from — one
+    whose gold and elixir storages are full draws every one of those orange.
+    **One reading per bubble rather than one per frame**, because the game
+    paints the plate per bubble. A plate in some third colour yields nothing,
+    quietly: that costs a collector left standing until the next pass, far less
+    than a reader that guesses would cost.
     """
     size = image.size
     village = image.tobytes()
-    plates = _plate_colours(village, size, lit)
-    candidates = [
-        patch
-        for patch in patches(mask(image, DARK_ICON), *size)
-        if patch.sized(DARK_ICON_ACROSS, DARK_ICON_DOWN, DARK_ICON_FILL)
-    ]
-    if not plates:
-        # **Asked after the scan and not before it**, because the frame with
-        # nothing to learn from is overwhelmingly the frame with no markers on
-        # it at all: a battle, a card row, a loading screen, or the plain
-        # village every successful pass ends on. Warned before the scan this
-        # fired on 74 of 84 committed frames, and a line that fires on
-        # everything teaches a reader to skip the one that will matter.
-        if candidates:
-            logger.warning(
-                "%d dark icon(s) on this frame and no gold or elixir marker to learn a plate "
-                "from, so any that are markers are left for the next pass",
-                len(candidates),
-            )
-        return
-    for patch in candidates:
+    for patch in patches(mask(image, DARK_ICON), *size):
+        if not patch.sized(DARK_ICON_ACROSS, DARK_ICON_DOWN, DARK_ICON_FILL):
+            continue
         ring = _ring(village, size, patch, PLATE_RING_PADS)
         if not ring:
             continue
@@ -378,18 +325,20 @@ def _dark_bubbles(image: Image.Image, lit: list[Patch]) -> Iterator[Patch]:
 
 
 def collect_bubbles(png: bytes) -> list[ResourceBubble]:
-    """Every collector marker standing on this frame, in reading order.
+    """Every collector marker worth tapping on this frame, in reading order.
 
     A marker is what the game puts above a collector that has something waiting,
     and tapping one collects it — no menu, no confirmation. It disappears once
-    collected, so a second read is what says whether a tap landed.
+    collected, so a second read is what says whether a tap landed. One on the
+    orange plate is left out: its storage is full and the tap takes nothing.
     """
     image = open_frame(png)
     left, top, right, bottom = VILLAGE_AREA
     village = image.crop(VILLAGE_AREA)
     width, height = right - left, bottom - top
+    data = village.tobytes()
     found: list[ResourceBubble] = []
-    lit: list[Patch] = []
+    plates = [PALE_PLATE]
     for resource, ranges, across, down, fill in MARKERS:
         for patch in patches(mask(village, ranges), width, height):
             if not patch.sized(across, down, fill):
@@ -397,19 +346,16 @@ def collect_bubbles(png: bytes) -> list[ResourceBubble]:
             middle = (patch.middle[0] + left, patch.middle[1] + top)
             if _in_storage_bars(middle):
                 continue
-            if resource != "dark":
-                lit.append(patch)
+            plate = _plate(data, (width, height), patch)
+            if plate is not None and plate[0] - plate[1] >= FULL_PLATE_LEAD:
+                continue
+            if plate is not None:
+                plates.append(plate)
             found.append(ResourceBubble(resource=resource, point=middle))
-    # After the loop, because it is the gold and elixir markers above that say
-    # what a plate looks like on this frame.
-    taken = {bubble.point for bubble in found if bubble.resource == "dark"}
-    for patch in _dark_bubbles(village, lit):
+    for patch in _dark_bubbles(village, plates):
         middle = (patch.middle[0] + left, patch.middle[1] + top)
-        if _in_storage_bars(middle) or any(
-            abs(middle[0] - x) < DARK_APART and abs(middle[1] - y) < DARK_APART for x, y in taken
-        ):
-            continue
-        found.append(ResourceBubble(resource="dark", point=middle))
+        if not _in_storage_bars(middle):
+            found.append(ResourceBubble(resource="dark", point=middle))
     return sorted(found, key=lambda bubble: (bubble.point[1], bubble.point[0]))
 
 
