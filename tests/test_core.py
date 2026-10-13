@@ -2598,7 +2598,7 @@ class ScoutTests(unittest.TestCase):
             assert _read_row(image, (0, 0, 10, 10), STOCK_DIGIT_TOLERANCE) == 11778492
 
     def test_a_real_leading_digit_is_kept_on_every_village_that_reads(self) -> None:
-        """The line sits above the worst real leading digit measured, 18."""
+        """The line sits above the worst real leading digit measured, a 3 at 24."""
         assert read_builder_stock(
             (FRAMES / "night_builder_panel.png").read_bytes()
         ) == VillageStock(gold=5500000, elixir=5100000, dark=0)

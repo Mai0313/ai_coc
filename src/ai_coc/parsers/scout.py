@@ -551,8 +551,8 @@ STOCK_TRIMMED_TOLERANCE = 20
 # a real leading `3` reads 22 to 24**, so the old line of 23 trimmed 3 361 479
 # to 61 479 on a live builder base, which the loop logged as the cart paying
 # -2 746 000. Swept over every committed frame and the 2 300 recorded on
-# 2026-10-13, no other real leading digit passed 18, and nothing the bars' sides
-# left there came under 51. The builder base's gems bar leads its dark row with a
+# 2026-10-13, no other real leading digit passed 22. On a village frame nothing
+# else came under 51; off one, a 0 on the attack menu read 28. The builder base's gems bar leads its dark row with a
 # green `+` at 30, which this trims too: that row now reads the gem count itself
 # instead of it with a 4 in front, and nothing compares it.
 STOCK_LEADING_TOLERANCE = 26
