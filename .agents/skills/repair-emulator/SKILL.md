@@ -5,7 +5,7 @@ description: >-
   連不上, `ai_coc` 報「模擬器尚未開放 ADB 連接埠：127.0.0.1:0」, 解析度變成
   1920x1080, 或者遊戲程序在卻沒出現在畫面上. 使用者說「模擬器閃退了」「雷電開不起來」
   「ADB 連不上」「launch 失敗」「模擬器怪怪的」的時候用這個 skill, farm、watch-and-fix、
-  watch-upgrades 跑到一半因為模擬器掛掉而停下來的時候也用. 靠截圖跟模擬器自己的
+  upgrades 跑到一半因為模擬器掛掉而停下來的時候也用. 靠截圖跟模擬器自己的
   CLI 分出是哪一種壞法, 弄回 `ai_coc launch` 站得上村莊的狀態, **不改程式碼**; 修不好,
   或者要動模擬器設定畫面的, 停下來請人.
 ---
@@ -27,7 +27,7 @@ description: >-
 
 這是使用者明講的規矩. 那天一個 `launch` 失敗從 logcat 推了很久推不出來, 改成每秒截一張, 馬上看到遊戲啟動時會先跳回桌面一兩秒.
 
-- **Android 裡的畫面**用這個 skill 的 `scripts/look.py`. spend-loot 那種走 `commands._controller()` 的截圖會先 `ensure_coc` 把模擬器跟遊戲開起來, 修的時候正好不能那樣; `ai_coc capture` 只看不開, 但模擬器沒開、還在開機 (port 0) 或遊戲不在任何 display 上, 它都只會報錯, 不看 Android 的畫面
+- **Android 裡的畫面**用這個 skill 的 `scripts/look.py`. upgrades 那種走 `commands._controller()` 的截圖會先 `ensure_coc` 把模擬器跟遊戲開起來, 修的時候正好不能那樣; `ai_coc capture` 只看不開, 但模擬器沒開、還在開機 (port 0) 或遊戲不在任何 display 上, 它都只會報錯, 不看 Android 的畫面
 
     ```bash
     uv run --no-sync python .agents/skills/repair-emulator/scripts/look.py <資料夾> 15 1
