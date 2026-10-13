@@ -21,7 +21,7 @@ The parsers read what the game paints at fixed places on a 1600x900 frame, so a 
 ## Done looks like
 
 - Every command the user relies on has run on the live game after the fix, on both villages where it applies, and did what it should (see "Prove it live").
-- Every reader that changed is pinned by a test on a committed frame of the new UI, with player names, clan names and chat painted over as `AGENTS.md` requires. Frames of the old UI are kept where a test still needs them, not deleted to make a sweep pass.
+- Every reader that changed is pinned by a test on a committed frame of the new UI, with every identity `AGENTS.md`'s Project rules list painted over (names, player tag, Supercell ID, clan names, chat); the profile and settings windows show the tag and ID. Frames of the old UI are kept where a test still needs them, not deleted to make a sweep pass.
 - `AGENTS.md`, the other skills and the docstrings say what the new UI is; nothing that the update made false is left standing.
 - The fixes are merged through `AGENTS.md`'s Development flow. Bugs found along the way that are not part of the update are filed as issues and fixed in their own PRs afterwards.
 - The user has seen the frames each decision rested on, and has heard what changed from the player's side, what was verified live, and what could not be.
@@ -30,7 +30,7 @@ The parsers read what the game paints at fixed places on a 1600x900 frame, so a 
 
 **The screen is the evidence; the log only says that something failed.** Start by taking frames of both villages and of every screen the commands pass through (village, attack menu, scout, battle, result, the panels behind the bottom-right buttons, settings, the builder base's cart), and put each next to a committed frame of the same screen from before. Send the user the ones you judge by. Ask what the user noticed: they play the game and see changes first, but treat their account as a lead to check against frames, not as the inventory.
 
-Before the first tap, follow `AGENTS.md`'s Driving the game: read `state.json` and park the camera. The farm subagent it calls for waits until the village and its storages read again: before that every round ends `not_a_village`, and exploring drives the emulator between every one of its commands. The user may be playing on the same emulator; a game that changes between two of your taps is a reason to ask.
+Before the first tap, follow `AGENTS.md`'s Driving the game: read `state.json` and park the camera (while no village reads, `view --zoom out` can only pinch out, not park). The farm subagent it calls for waits until the village and its storages read again, as `AGENTS.md` says. The user may be playing on the same emulator; a game that changes between two of your taps is a reason to ask.
 
 ## Explore by driving the game
 
@@ -59,7 +59,7 @@ The rules in `AGENTS.md`'s Cross-cutting rules hold for the new UI as they did f
 
 ## Prove it live
 
-Run each command the update touched on the live game, read its `run.log` and the frames it kept (`--debug`), and look at the screen it left behind: a command that answered right but left a dialog or a selection up has broken the next command. Spend-free ones are run freely (`world`, `world --go` both ways, `stock`, `status`, `worker`, `lab`, `view`, `launch`, `collect`, `hero` without `--upgrade`, `donate --dry-run`, an `attack` round on each village with `--stop-at 0`); anything that spends needs the user's say-so. Exercise the recovery paths too, by putting the game into the state they recover from (a panel left open, a dialog up) and running a command over it. A path that only a rare state reaches and that could not be produced live is named in the report as untested.
+Run each command the update touched on the live game, read its `run.log` and the frames it kept (`--debug`, where the command has it; for the others take a frame with `ai_coc capture`), and look at the screen it left behind: a command that answered right but left a dialog or a selection up has broken the next command. Spend-free ones are run freely (`world`, `world --go` both ways, `stock`, `status`, `worker`, `lab`, `view`, `launch`, `collect`, `hero` without `--upgrade`, `donate --dry-run`, an `attack` round on each village with `--stop-at 0`); anything that spends needs the user's say-so. Exercise the recovery paths too, by putting the game into the state they recover from (a panel left open, a dialog up) and running a command over it. A path that only a rare state reaches and that could not be produced live is named in the report as untested.
 
 A fix is proven when the new path appears in a live run's log and the frame after it shows the game where it should be. A clean run that never reached the new path proves nothing about it.
 
