@@ -139,7 +139,7 @@ from ai_coc.parsers.village import clock_tower, upgrade_timers, parse_village_te
 from ai_coc.adapters.mapping import fetch_entity_mapping
 from ai_coc.parsers.boundary import PLAYFIELD, VILLAGE_CENTRE, village_box, boundary_reach
 from ai_coc.parsers.building import wall_menu, game_dialog, upgrade_sheet, upgrade_buttons
-from ai_coc.parsers.settings import export_row, settings_open, more_settings_open
+from ai_coc.parsers.settings import export_row, window_open, settings_open, more_settings_open
 from ai_coc.adapters.emulator import Emulator, EmulatorError
 from ai_coc.adapters.ldplayer import LDPlayerAdapter
 from ai_coc.adapters.clipboard import read_clipboard, clear_clipboard, write_clipboard
@@ -2768,14 +2768,16 @@ def view(zoom: str = "out", times: int = 3) -> ViewReport:
     return report
 
 
-# The village export lives behind 設定 → 更多設定 → scroll → 複製, and every one
-# of these was measured on the live game at 1600x900. The copy button is not
-# here because `export_row` returns it: it is the one step that must not be
-# tapped on an unverified screen, so its coordinate travels with the reader that
-# confirms the row.
-SETTINGS_GEAR = (1540, 652)
-MORE_SETTINGS = (793, 770)
-CLOSE_SETTINGS = (1288, 99)
+# The village export lives behind the avatar → 設定 tab → 更多設定 → scroll →
+# 複製, and every one of these was measured on the live game at 1600x900 after
+# the 2026-10 overhaul moved settings into the profile window. The copy button
+# is not here because `export_row` returns it: it is the one step that must not
+# be tapped on an unverified screen, so its coordinate travels with the reader
+# that confirms the row.
+PROFILE_AVATAR = (85, 100)
+SETTINGS_TAB = (1265, 78)
+MORE_SETTINGS = (802, 797)
+CLOSE_SETTINGS = (1398, 70)
 SETTINGS_SCROLL = ((800, 650), (800, 250))
 SCROLL_MS = 400
 # The list is about four swipes deep; the extra ones cost nothing because the
@@ -2855,7 +2857,11 @@ def _copy_village(
             logger.info("Saved frame %s.png", label)
         return png
 
-    adb.tap(*SETTINGS_GEAR, display)
+    adb.tap(*PROFILE_AVATAR, display)
+    time.sleep(PAGE_SETTLE)
+    if not window_open(look("profile")):
+        return "", "settings_shut"
+    adb.tap(*SETTINGS_TAB, display)
     time.sleep(PAGE_SETTLE)
     if not settings_open(look("settings")):
         return "", "settings_shut"
@@ -2891,7 +2897,7 @@ EXPORT_LINES: dict[ExportOutcome, str] = {
     "never_exported": "還沒有匯出過任何村莊資訊",
     "wrong_format": "存檔讀不成村莊匯出,請重新執行一次 ai_coc export",
     "no_village": "遊戲沒有回到村莊畫面,沒有匯出",
-    "settings_shut": "點了設定齒輪,但設定視窗沒有打開",
+    "settings_shut": "點了頭像跟「設定」分頁,但設定頁沒有打開",
     "more_settings_shut": "點了更多設定,但那一頁沒有打開",
     "row_not_found": "捲到底了還是找不到「以 JSON 格式匯出村莊數據」那一列",
     "nothing_copied": (
@@ -2960,9 +2966,11 @@ def _exported(
         logger.warning("The clipboard payload was not a village: %s", exc)
         return VillageExport(tag="", exported_at="", outcome="not_a_village")
     finally:
-        # Whatever happened, the settings window is left covering the village,
-        # and every other command starts by assuming one is on screen.
-        adb.tap(*CLOSE_SETTINGS, display)
+        # Whatever happened, the profile window is left covering the village,
+        # and every other command starts by assuming one is on screen. Only
+        # where it is up: with none, that place is the gold bar.
+        if window_open(adb.screenshot(display)):
+            adb.tap(*CLOSE_SETTINGS, display)
     stamp = snapshot.raw.timestamp
     when = (
         datetime.fromtimestamp(stamp, UTC).isoformat() if stamp else datetime.now(UTC).isoformat()

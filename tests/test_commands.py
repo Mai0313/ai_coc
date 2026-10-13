@@ -936,7 +936,7 @@ class UpkeepLineTests(unittest.TestCase):
                 "never_exported": "還沒有匯出過",
                 "wrong_format": "存檔讀不成村莊匯出",
                 "no_village": "沒有回到村莊畫面",
-                "settings_shut": "設定視窗沒有打開",
+                "settings_shut": "設定頁沒有打開",
                 "more_settings_shut": "那一頁沒有打開",
                 "row_not_found": "捲到底了",
                 "nothing_copied": "剪貼簿沒有東西",
@@ -2064,6 +2064,7 @@ class ExportTests(unittest.TestCase):
         clip = screens.get("clip", PAYLOAD)
         reads = clip if isinstance(clip, list) else [clip] * (commands.CLIPBOARD_POLLS + 2)
         with (
+            patch.object(commands, "window_open", return_value=screens.get("window", True)),
             patch.object(commands, "settings_open", return_value=screens.get("settings", True)),
             patch.object(commands, "more_settings_open", return_value=screens.get("more", True)),
             patch.object(commands, "export_row", return_value=screens.get("row", (1131, 560))),
@@ -2090,7 +2091,7 @@ class ExportTests(unittest.TestCase):
 
     def test_a_game_that_never_came_back_is_not_tapped_at(self) -> None:
         """`_settle_game` answers None for a dropped session it could not restart,
-        a game still loading, and an emulator with no window yet. The gear is a
+        a game still loading, and an emulator with no window yet. The avatar is a
         fixed coordinate, so none of those may be tapped on.
         """
         with patch.object(commands, "_settle_game", return_value=None):
@@ -2104,11 +2105,19 @@ class ExportTests(unittest.TestCase):
         report, _ = self._export(settings=False)
         assert report.outcome == "settings_shut"
         assert report.entities == []
-        # The gear, and then the close — never 更多設定 at a screen nobody confirmed.
+        # The avatar, the tab, and then the close — never 更多設定 at a screen
+        # nobody confirmed.
         assert [call.args[:2] for call in self.adb.tap.call_args_list] == [
-            commands.SETTINGS_GEAR,
+            commands.PROFILE_AVATAR,
+            commands.SETTINGS_TAB,
             commands.CLOSE_SETTINGS,
         ]
+
+    def test_a_profile_window_that_never_opened_is_not_closed(self) -> None:
+        """With no window up, the close sits over the gold bar."""
+        report, _ = self._export(window=False)
+        assert report.outcome == "settings_shut"
+        assert [call.args[:2] for call in self.adb.tap.call_args_list] == [commands.PROFILE_AVATAR]
 
     def test_a_list_that_never_reaches_the_row_is_never_tapped(self) -> None:
         """A missed scroll leaves the copy coordinate over a settings toggle."""
