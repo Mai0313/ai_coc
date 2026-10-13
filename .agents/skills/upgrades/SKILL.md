@@ -50,12 +50,12 @@ description: >-
 uv run --no-sync ai_coc status --label watch --agent <名字> --session <session id> --mission "盯升級"
 ```
 
-它從遊戲自己的村莊匯出 (設定頁那一份) 讀兩個世界每件在跑的升級, 把在跑的藥水跟鐘塔算進去; 遊戲停著的那個世界, 另外讀牌子上的閒置數字跟倉庫. **不切世界, 不問 Gemini.** `result.json` 的欄位:
+它從遊戲自己的村莊匯出 (設定頁那一份) 讀兩個世界每件在跑的升級, 把在跑的藥水跟鐘塔算進去; 遊戲停著的那個世界, 另外讀右下角計數的閒置數字跟倉庫. **不切世界, 不問 Gemini.** `result.json` 的欄位:
 
 - **先看 `export`**: `exported` 才有 `timers` 跟 `clock_tower`. `no_village` 照「什麼時候收工」的不是村莊處理; 其他的 (`settings_shut`、`row_not_found`、`nothing_copied` 之類) 是設定頁那一趟沒走完, 過幾分鐘再讀. 沒讀到的時候 `timers` 是空的, 不能拿來說沒東西在跑
 - **`timers`** 由早到晚. `world` 是哪個世界; `role` 是 `builder` (工人)、`lab` (實驗室, 活動多給的研究格也算) 或 `pet` (寵物小屋, 他問才講), `null` 是還沒看過帶時間的那一區, 沒算加速, 回報時講明. `done_at` 是實際幾點好, `seconds` 是從匯出那一刻起還要幾秒, `timer` 是遊戲畫面上寫的正常速度倒數. `name` 是社群對照表的英文名 (沒有的是 `null`), 講給他聽時換成遊戲裡的中文
 - **`clock_tower`**: `ready_in` 是 0 就是現在能開, `ready_at` 是幾點能開, `boosting` 是正在跑的那一次還剩幾秒. `null` 是匯出裡沒有鐘塔, 或鐘塔正在升級
-- **`builder` / `lab`** 是遊戲停著那個世界牌子上的數字, 另一個世界的讀不到, 不為它開船. `outcome`: `counted` 讀到了; `unread` 牌子在, 數字讀不到; `no_badge` 這張畫面上沒有那塊牌子 (例如被寶石雨蓋住); `not_a_village` 畫面不是村莊. `unread` 跟 `no_badge` 過幾分鐘再讀; 兩塊都 `not_a_village` 見「什麼時候收工」
+- **`builder` / `lab`** 是遊戲停著那個世界右下角計數的數字, 另一個世界的讀不到, 不為它開船. `outcome`: `counted` 讀到了; `unread` 數字讀不到, 過幾分鐘再讀; `not_a_village` 畫面不是村莊, 兩個都是就見「什麼時候收工」
 - **工人學徒跟研究助手會讓掛著它們的那件比 `done_at` 早好, 目前不算** (使用者 2026-10-10 決定先跳過)
 
 ## 算出時間, 不要輪詢
@@ -91,7 +91,7 @@ uv run --no-sync ai_coc status --label watch --agent <名字> --session <session
 
 - 他要看的那件事問完了就收工, 不再開下一個 `ai_coc watch`
 - 他說停: 下 `ai_coc stop`, 一次就停掉你睡著的那個 `ai_coc watch`, 連同模擬器上在跑的指令; 你剛好借著模擬器 (在讀 `status`) 的話, 照 `.agents/skills/farm/references/running.md` 的「中止」等指令停了再下一次, 才取消借用
-- **讀到一次不是村莊就停**: `export` 是 `no_village`, 或兩塊牌子的 `outcome` 都是 `not_a_village`. 常見的原因是使用者正在手機上玩, 模擬器那邊被登出了, 而每跑一次 `ai_coc status` 都會經過 `ensure_coc` 把遊戲搶回來, 等於把他從手機上踢掉 (`AGENTS.md` 的 Driving the game). 所以不重試: 停下來, 問他玩完了沒 (見「講給使用者聽」), 他說可以了再讀. 看欄位不要看句子, 那句話只在 `run.log` 裡
+- **讀到一次不是村莊就停**: `export` 是 `no_village`, 或兩個計數的 `outcome` 都是 `not_a_village`. 常見的原因是使用者正在手機上玩, 模擬器那邊被登出了, 而每跑一次 `ai_coc status` 都會經過 `ensure_coc` 把遊戲搶回來, 等於把他從手機上踢掉 (`AGENTS.md` 的 Driving the game). 所以不重試: 停下來, 問他玩完了沒 (見「講給使用者聽」), 他說可以了再讀. 看欄位不要看句子, 那句話只在 `run.log` 裡
 - **另一部裝置登入了**: `status` 兩種都不回, exit code 不是 0, `result.json` 只有一句 `另一部裝置登入了這個帳號,沒有把登入搶回來`. 一樣停下來告訴他, 他說可以之前一個 `ai_coc` 指令都不要下 (`AGENTS.md` 的 Driving the game)
 
 # 花掉資源
