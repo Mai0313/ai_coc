@@ -12,12 +12,13 @@ A Windows-only PyQt5 desktop app that drives Clash of Clans inside MuMu Player 1
 
 ## Driving the game
 
-Four skills under `.agents/skills/` own the judgement of driving the game, and they are the only copy of those rules; a rule written here as well would drift.
+Five skills under `.agents/skills/` own the judgement of driving the game, and they are the only copy of those rules; a rule written here as well would drift.
 
 - **`farm`** — run the loops on both villages and judge them. By default `stock_full` ends the run with a report, or an idle builder or research slot (`builder_free`, `lab_free`) when the user asked to farm until one is free; the loot is spent only when the user asked for that.
 - **`upgrades`** — read the builder and laboratory timers and the clock tower's cooldown, and come back just before they run out; spend on walls, buildings and heroes once the user asked, walls named even then.
 - **`watch-and-fix`** — farm and watch the same run, fix whatever breaks between launching the game and landing back on the village, and take the fix through to a merged PR.
 - **`repair-emulator`** — bring the emulator itself back when it will not come up, without changing code, and hand it to the user when it cannot be fixed from here.
+- **`game-update`** — after the game changes what it draws (a UI or HUD overhaul, moved buttons, a changed mechanic), find out what changed by looking and tapping, fix the readers against measured frames, and prove every command live before shipping.
 
 `.agents/skills/farm/references/running.md` owns the mechanics the skills that run a loop share: which commands run in the background, why a subagent blocks instead, what `result.json` holds, how a loop is stopped and when that is safe.
 
@@ -283,7 +284,7 @@ The game writes the whole village out as JSON from the avatar → the profile wi
 - **Never invent master data.** What an upgrade costs, how long it takes and what it requires stay unknown until a value is source-backed, and the UI shows `—` rather than a guess.
 - **`docs/` is generated and gitignored**, rebuilt from the three READMEs and the source by `make gen-docs`. Edit the READMEs and the docstrings, never the output.
 - **`CLAUDE.md` is a symlink to this file**, and `.claude/skills` one to `.agents/skills`. Do not replace either link with a file. A Windows clone needs `git config core.symlinks true` and a fresh checkout of both, or they arrive as one-line text files that `end-of-file-fixer` rewrites and CI's `check-symlinks` then fails on. Make or repair one by writing the index (`git update-index --cacheinfo 120000,<blob>,<path>`), never with `ln -s`, which copies under Git Bash, or `mklink`, which stores backslashes.
-- **A change that outdates a project skill updates that skill in the same PR.** Before opening the PR, grep the four skills for whatever was renamed, moved or reversed, and mention new capabilities they should know about.
+- **A change that outdates a project skill updates that skill in the same PR.** Before opening the PR, grep the project skills for whatever was renamed, moved or reversed, and mention new capabilities they should know about.
 - **This file gets rules, not measurement records.** How a threshold was measured, what the previous value cost and which alternative was rejected go in the comment beside the constant (or the test that pins it). A paragraph here earns its place only as a rule an agent must follow, an invariant that spans files, or a known defect nobody has fixed; a number here is the evidence for one of those, or one a skill points at, not a record of its own. It grew from 7 KB to 235 KB between 2026-08-22 and 2026-09-25, mostly by restating those comments. A cut to this file or a skill is checked by a reviewer holding the new text's claims against the code and reading old against new clause by clause; a diff review alone missed lost rules both times.
 - **UI strings, prompts and user-facing messages are Traditional Chinese**; code, comments, commit messages and anything published to GitHub are English.
 - **Send the user every image you look at.** They cannot see your tool output, and a path they have to open themselves is one they will not open.
