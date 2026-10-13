@@ -433,7 +433,7 @@ def _print_table(export: VillageExport) -> None:
     # did not open, a clipboard that stayed empty — and the JSON branch that
     # would have shown it is the one `--table` replaced. `--last --table` on a
     # machine that has never run this is exactly that case, and it is the line
-    # both skills tell a session to start with.
+    # the `upgrades` skill tells a session to start with.
     console.print(commands.export_line(export))
 
 
