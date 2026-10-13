@@ -400,18 +400,45 @@ class ClanRunnerTests(unittest.TestCase):
             patch.object(runner, "_tap"),
             patch.object(clan_ui, "reinforce_button", return_value=button),
             patch.object(clan_ui, "donation_panel", return_value=panel),
+            patch.object(clan_ui, "chat_open", return_value=True),
+            patch.object(clan_ui, "current_world", return_value="day"),
             patch.object(clan_ui, "donatable_cards", side_effect=cards or [[]]),
             patch.object(clan_ui, "panel_difference", return_value=moved),
             patch.object(AdbController, "back") as back,
         ):
             return runner.donate(), back
 
+    def _leave(self, world: list[str | None], chat: list[bool]) -> MagicMock:
+        """`back` presses on the way out, given what each look on the way finds."""
+        runner = self._runner()
+        with (
+            patch.object(clan_ui.time, "sleep"),
+            patch.object(runner, "_frame", return_value=b"frame"),
+            patch.object(clan_ui, "current_world", side_effect=world),
+            patch.object(clan_ui, "chat_open", side_effect=chat),
+            patch.object(AdbController, "back") as back,
+        ):
+            runner._leave()
+        return back
+
     def test_nobody_asking_costs_a_look_and_the_way_back_out(self) -> None:
         report, back = self._donate(self._runner(), button=None)
         assert report.outcome == "nobody_asking"
         assert report.gifts == []
-        # The chat tab was opened, so it is closed again.
-        assert back.call_count == 2
+        assert back.called
+
+    def test_the_chat_alone_takes_one_back(self) -> None:
+        """The village still reads beside the chat, and a second `back` would
+        land on it and raise 確定退出遊戲嗎.
+        """
+        assert self._leave(world=["day", "day"], chat=[True, False]).call_count == 1
+
+    def test_the_panel_and_the_chat_behind_it_take_one_back_each(self) -> None:
+        """The panel hides the village, so it is closed without being recognised."""
+        assert self._leave(world=[None, "day"], chat=[True]).call_count == 2
+
+    def test_nothing_left_up_takes_no_back(self) -> None:
+        assert self._leave(world=["day"], chat=[False]).call_count == 0
 
     def test_a_panel_that_did_not_open_gives_nothing(self) -> None:
         report, _ = self._donate(self._runner(), button=(477, 440), panel=False)
