@@ -17,7 +17,13 @@ import logging
 
 from ai_coc.models import DonateReport
 from ai_coc.ui.runner import BACK_SETTLE, GameRunner
-from ai_coc.parsers.clan import donation_panel, donatable_cards, panel_difference, reinforce_button
+from ai_coc.parsers.clan import (
+    chat_open,
+    donation_panel,
+    donatable_cards,
+    panel_difference,
+    reinforce_button,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -49,13 +55,17 @@ class ClanRunner(GameRunner):
     dry_run: bool = False
 
     def _leave(self) -> None:
-        """Close the donation panel and the chat behind it.
+        """Close the donation panel and the chat behind it, whichever are still up.
 
-        `back` is safe on both — neither is the home village, which is the one
-        screen where it raises 確定退出遊戲嗎 — and `_home` picks up whatever it
-        does not manage to close.
+        `back` closes either, and is pressed only while one of them is on
+        screen: on the clear village it raises 確定退出遊戲嗎, which is all a
+        second `back` did when nobody was asking and only the chat was open.
+        `_home` picks up whatever this does not manage to close.
         """
         for _ in range(2):
+            png = self._frame("leave")
+            if not (donation_panel(png) or chat_open(png)):
+                return
             self.adb.back(self.display)
             time.sleep(BACK_SETTLE)
 
