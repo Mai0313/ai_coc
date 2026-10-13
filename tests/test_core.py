@@ -624,6 +624,7 @@ class WorldTests(unittest.TestCase):
             "home_markers_lit_orange.png": "day",
             "hero_hall_menu_maxed.png": "day",
             "menu_upgrading.png": "day",
+            "night_stock_leading_three.png": "night",
         }
         for path in sorted(FRAMES.glob("*.png")):
             try:
@@ -646,6 +647,13 @@ class StockTests(unittest.TestCase):
         assert read_stock((FRAMES / "hud_day.png").read_bytes()) == VillageStock(
             gold=38180400, elixir=28000000, dark=334555
         )
+
+    def test_a_leading_three_is_a_digit_and_not_the_village(self) -> None:
+        """A real 3 reads 24 off these bars, where the old trim line of 23 cut
+        both 3s and read 3 361 479 as 61 479.
+        """
+        night = (FRAMES / "night_stock_leading_three.png").read_bytes()
+        assert read_builder_stock(night) == VillageStock(gold=6000000, elixir=3361479, dark=0)
 
     def test_the_builder_base_storages_are_read_two_rows_deep(self) -> None:
         """Three would read the gems bar, which sits at exactly the dark row's y.
