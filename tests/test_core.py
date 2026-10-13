@@ -622,6 +622,8 @@ class WorldTests(unittest.TestCase):
             "hud_tip_day_elixir.png": "day",
             "hud_night.png": "night",
             "home_markers_lit_orange.png": "day",
+            "hero_hall_menu_maxed.png": "day",
+            "menu_upgrading.png": "day",
         }
         for path in sorted(FRAMES.glob("*.png")):
             try:
@@ -7975,6 +7977,27 @@ class HeroHallTests(unittest.TestCase):
         layout, and the sweep walked past the hall it had just opened.
         """
         assert hall_buttons((FRAMES / "hero_hall_menu_short.png").read_bytes()) == [(1238, 700)]
+
+    def test_a_maxed_hall_is_placed_by_its_info_button(self) -> None:
+        """A maxed 英雄殿堂 has no 升級, so nothing priced locates the row. Its
+        資訊 does, and the two blue plates between it and the hall are skipped.
+        """
+        assert hall_buttons((FRAMES / "hero_hall_menu_maxed.png").read_bytes()) == [(1068, 700)]
+
+    def test_a_collector_marker_beside_the_row_is_not_a_priced_button(self) -> None:
+        """A gold marker in the icon band, on the grid, has no button plate under it."""
+        marker = Image.open(FRAMES / "hud_day.png").convert("RGB").crop((1291, 478, 1341, 528))
+        image = Image.open(FRAMES / "hero_hall_menu_maxed.png").convert("RGB")
+        image.paste(marker, (1283, 625))
+        out = io.BytesIO()
+        image.save(out, format="PNG")
+        assert hall_buttons(out.getvalue()) == [(1068, 700)]
+
+    def test_a_building_being_upgraded_offers_no_way_in(self) -> None:
+        """Its row has no price either, and the pale button right of 資訊 is
+        取消, which cancels the upgrade. 立即完成's green plate says so.
+        """
+        assert hall_buttons((FRAMES / "menu_upgrading.png").read_bytes()) == []
 
     def test_a_screen_with_no_menu_on_it_offers_no_way_in(self) -> None:
         assert hall_buttons((FRAMES / "hero_hall.png").read_bytes()) == []

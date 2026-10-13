@@ -30,6 +30,7 @@ import itertools
 from ai_coc.models import HeroCard, HeroKind
 from ai_coc.parsers.frame import open_frame
 from ai_coc.parsers.glyphs import digits_from
+from ai_coc.parsers.regions import mask, patches
 from ai_coc.parsers.building import (
     ICON_OFFSET,
     BUTTON_PITCH,
@@ -39,6 +40,7 @@ from ai_coc.parsers.building import (
     _is_elixir,
     _icon_centres,
     _on_gem_plate,
+    _on_finish_plate,
 )
 
 if TYPE_CHECKING:
@@ -162,6 +164,22 @@ ARROW_BOX = (14, 22)
 ARROW_PALE = 170
 ARROW_SHARE = 0.05
 
+# **A maxed 英雄殿堂 has no priced button**, only 資訊, two blue plates and the
+# hall's own, so its menu is placed by 資訊 instead: the one button every menu
+# carries, first in the row. Its blue badge measured 47 across by 33 to 35 down
+# at a fill of 0.74 to 0.81, 60 times over the committed frames and the 224
+# recorded on 2026-10-13. In this band nothing else came nearer than 38x27 at
+# 0.58 and 33x22 at 0.64, both well short on size.
+#
+# **A building being upgraded has no priced button either**, and its 取消, which
+# cancels the upgrade, is a pale button right of 資訊. It always comes with
+# 立即完成's green plate, so a row carrying that plate is not placed by 資訊.
+INFO_BLUE = ((0, 90), (90, 190), (180, 255))
+INFO_BAND = (650, 715)
+INFO_ACROSS = (43, 51)
+INFO_DOWN = (30, 38)
+INFO_FILL = 0.65
+
 
 def _plated(image: Image.Image, centre: int) -> bool:
     """Whether a button really sits here, rather than the village between two."""
@@ -170,6 +188,22 @@ def _plated(image: Image.Image, centre: int) -> bool:
     count = len(data) // 3
     channels = (sum(data[i + c] for i in range(0, len(data), 3)) / count for c in range(3))
     return min(channels) > PLATE_PALE
+
+
+def _info_buttons(image: Image.Image) -> list[int]:
+    """Where the 資訊 button sits, read off its badge, on a row with no 取消 in it."""
+    top, bottom = INFO_BAND
+    band = image.crop((0, top, image.width, bottom))
+    return [
+        patch.middle[0]
+        for patch in patches(mask(band, INFO_BLUE), *band.size)
+        if patch.sized(INFO_ACROSS, INFO_DOWN, INFO_FILL)
+        and _on_grid(patch.middle[0])
+        and not any(
+            _on_finish_plate(image, patch.middle[0] + BUTTON_PITCH * step)
+            for step in range(1, HALL_STEPS + 1)
+        )
+    ]
 
 
 def hall_buttons(png: bytes) -> list[tuple[int, int]]:
@@ -192,24 +226,31 @@ def hall_buttons(png: bytes) -> list[tuple[int, int]]:
     button in that place — a barracks has 訓練, a laboratory has 研究 — and each
     of them opens a screen that is backed out of for the cost of a capture.
 
+    An icon counts only on a button's plate, since a collector marker in the
+    same band is one too. A menu with no priced button is placed by its 資訊
+    button instead (`INFO_BLUE`), and only then, so a priced 升級 is never
+    offered as a way in.
+
     The one place that must never be tapped is a blue plate, which spends gems
     or a magic item, and those are dropped here rather than left to the caller.
     """
     image = open_frame(png)
+    anchors = [
+        icon - ICON_OFFSET
+        for test in (_is_gold, _is_elixir)
+        for icon in _icon_centres(image, test)
+        if _on_grid(icon - ICON_OFFSET) and _plated(image, icon - ICON_OFFSET)
+    ] or _info_buttons(image)
     found: list[tuple[int, int]] = []
-    for test in (_is_gold, _is_elixir):
-        for icon in _icon_centres(image, test):
-            priced = icon - ICON_OFFSET
-            if not _on_grid(priced):
+    for anchor in anchors:
+        for step in range(1, HALL_STEPS + 1):
+            centre = anchor + BUTTON_PITCH * step
+            if centre + PLATE_BOX[2] >= image.width:
+                break
+            if _on_gem_plate(image, centre) or not _plated(image, centre):
                 continue
-            for step in range(1, HALL_STEPS + 1):
-                centre = priced + BUTTON_PITCH * step
-                if centre + PLATE_BOX[2] >= image.width:
-                    break
-                if _on_gem_plate(image, centre) or not _plated(image, centre):
-                    continue
-                if (centre, BUTTON_ROW_Y) not in found:
-                    found.append((centre, BUTTON_ROW_Y))
+            if (centre, BUTTON_ROW_Y) not in found:
+                found.append((centre, BUTTON_ROW_Y))
     return found
 
 
