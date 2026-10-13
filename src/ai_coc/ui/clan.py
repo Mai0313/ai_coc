@@ -17,7 +17,6 @@ import logging
 
 from ai_coc.models import DonateReport
 from ai_coc.ui.runner import BACK_SETTLE, GameRunner
-from ai_coc.parsers.world import current_world
 from ai_coc.parsers.clan import (
     chat_open,
     donation_panel,
@@ -25,6 +24,7 @@ from ai_coc.parsers.clan import (
     panel_difference,
     reinforce_button,
 )
+from ai_coc.parsers.world import current_world
 
 logger = logging.getLogger(__name__)
 
