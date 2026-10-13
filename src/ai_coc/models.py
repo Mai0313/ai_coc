@@ -2280,12 +2280,16 @@ class HeroCard(BaseModel):
     # So a run that went by the price alone reported "no confirmation sheet came
     # up", which reads as a swallowed tap rather than a button never live.
     upgradable: bool = False
+    # Whether the card has no button at all, which is how the game draws a hero
+    # at his level cap (等級上限). A card with no price and a button is not one:
+    # its price did not read, or it is 立即完成's gem.
+    capped: bool = False
 
 
 # How one `hero` run ended. **`read` is the read-only half and a success**: the
 # command answers what each hero's next level costs unless it is told to spend.
-# Of the refusals, `already_upgrading` / `button_dead` / `cannot_afford` are the
-# card's own three and they are not interchangeable — a hero the hall's level has
+# Of the refusals, `already_upgrading` / `at_level_cap` / `button_dead` /
+# `cannot_afford` are the card's own four and they are not interchangeable — a hero the hall's level has
 # capped keeps its price and loses its button, which a run going by the price
 # alone reported as a swallowed tap.
 HeroOutcome = Literal[
@@ -2294,6 +2298,7 @@ HeroOutcome = Literal[
     "hall_not_found",
     "hero_absent",
     "already_upgrading",
+    "at_level_cap",
     "button_dead",
     "cannot_afford",
     "builders_busy",

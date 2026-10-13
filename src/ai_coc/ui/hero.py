@@ -292,7 +292,7 @@ class HeroRunner(GameRunner):
         logger.info(
             "The hall holds %s",
             "／".join(
-                f"{card.hero}:{card.price if card.price is not None else '升級中'}"
+                f"{card.hero}:{card.price or ('等級上限' if card.capped else '升級中')}"
                 for card in report.cards
             ),
         )
@@ -310,7 +310,7 @@ class HeroRunner(GameRunner):
         before anything has been looked for.
         """
         if card.price is None:
-            return "already_upgrading"
+            return "at_level_cap" if card.capped else "already_upgrading"
         # Before the affordability check, because this one is not about money:
         # the village can be holding exactly what the card asks for and the
         # button still be dead. Measured live, 飛龍公爵 at 15 asked for 220 000

@@ -873,6 +873,7 @@ class UpkeepLineTests(unittest.TestCase):
                 "hall_not_found": "沒有找到英雄殿堂",
                 "hero_absent": "沒有看到",
                 "already_upgrading": "多半正在升級中",
+                "at_level_cap": "已經是等級上限",
                 "button_dead": "升級按鈕是停用的",
                 "cannot_afford": "資源不夠",
                 "builders_busy": "現在派不出去",
