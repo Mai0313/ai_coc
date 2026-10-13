@@ -546,12 +546,16 @@ STOCK_TRIMMED_TOLERANCE = 20
 # digit**, because it is the one the village can fake. A collector's bubble left
 # of the elixir bar read as a leading `1` at 28, inside `STOCK_DIGIT_TOLERANCE`,
 # and 11 778 462 came back as 111 778 462 (`stock_bubbles_left_of_elixir.png`).
-# Measured over every fixture that reads a village, a real leading digit sits at
-# 18 at worst (the builder base's 5 100 000) and a glyph the village put there at
-# 28 at best, so the line goes between them. The builder base's gems bar leads
-# its dark row with a green `+` at 30, which this trims too: that row now reads
-# the gem count itself instead of it with a 4 in front, and nothing compares it.
-STOCK_LEADING_TOLERANCE = 23
+# Measured over every fixture that reads a village, a glyph the village put there
+# sits at 28 at best, so the line goes below that. **Since the 2026-10 overhaul
+# a real leading `3` reads 22 to 24**, so the old line of 23 trimmed 3 361 479
+# to 61 479 on a live builder base, which the loop logged as the cart paying
+# -2 746 000. Swept over every committed frame and the 2 300 recorded on
+# 2026-10-13, no other real leading digit passed 22. On a village frame nothing
+# else came under 51; off one, a 0 on the attack menu read 28. The builder base's gems bar leads its dark row with a
+# green `+` at 30, which this trims too: that row now reads the gem count itself
+# instead of it with a 4 in front, and nothing compares it.
+STOCK_LEADING_TOLERANCE = 26
 STOCK_INK_SATURATION = 45
 # **The bars' own digits take a tighter ceiling still, because what the village
 # shows through them is pale rather than bright.** A collector marker's cream
@@ -937,7 +941,7 @@ def _read_row(image: Image.Image, box: tuple[int, int, int, int], tolerance: int
 
     **The trim is judged by what survives it as well as by what it removed.**
     `STOCK_LEADING_TOLERANCE` decides what is removed: a real leading digit lands
-    within 18 of its template and the village's own glyphs start at 28, so the
+    within 24 of its template and the village's own glyphs start at 28, so the
     line sits between them rather than at `STOCK_DIGIT_TOLERANCE`, where a
     collector's bubble at 28 used to pass as a leading `1`. `STOCK_TRIMMED_TOLERANCE`
     then holds whatever survives the trim of a glyph past `STOCK_DIGIT_TOLERANCE`
