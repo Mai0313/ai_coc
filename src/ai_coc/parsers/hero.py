@@ -166,9 +166,10 @@ ARROW_SHARE = 0.05
 
 # **A maxed 英雄殿堂 has no priced button**, only 資訊, two blue plates and the
 # hall's own, so its menu is placed by 資訊 instead: the one button every menu
-# carries, first in the row. Its blue badge measured 46 to 47 across by 33 to 35
-# down at a fill of 0.74 to 0.81 on six menus, and nothing else in the row band
-# of any committed frame came closer than 38x48 at 0.51.
+# carries, first in the row. Its blue badge measured 47 across by 33 to 35 down
+# at a fill of 0.74 to 0.81, 60 times over the committed frames and the 224
+# recorded on 2026-10-13. In this band nothing else came nearer than 38x27 at
+# 0.58 and 33x22 at 0.64, both well short on size.
 #
 # **A building being upgraded has no priced button either**, and its 取消, which
 # cancels the upgrade, is a pale button right of 資訊. It always comes with
@@ -225,8 +226,10 @@ def hall_buttons(png: bytes) -> list[tuple[int, int]]:
     button in that place — a barracks has 訓練, a laboratory has 研究 — and each
     of them opens a screen that is backed out of for the cost of a capture.
 
-    A menu with no priced button is placed by its 資訊 button instead
-    (`INFO_BLUE`), and only then, so a priced 升級 is never offered as a way in.
+    An icon counts only on a button's plate, since a collector marker in the
+    same band is one too. A menu with no priced button is placed by its 資訊
+    button instead (`INFO_BLUE`), and only then, so a priced 升級 is never
+    offered as a way in.
 
     The one place that must never be tapped is a blue plate, which spends gems
     or a magic item, and those are dropped here rather than left to the caller.
@@ -236,7 +239,7 @@ def hall_buttons(png: bytes) -> list[tuple[int, int]]:
         icon - ICON_OFFSET
         for test in (_is_gold, _is_elixir)
         for icon in _icon_centres(image, test)
-        if _on_grid(icon - ICON_OFFSET)
+        if _on_grid(icon - ICON_OFFSET) and _plated(image, icon - ICON_OFFSET)
     ] or _info_buttons(image)
     found: list[tuple[int, int]] = []
     for anchor in anchors:
