@@ -97,7 +97,13 @@ from ai_coc.adapters.ai import GeminiClient
 from ai_coc.adapters.adb import ZOOM_PINCHES, AdbController, AdbControlError
 from ai_coc.parsers.clan import donatable_cards
 from ai_coc.parsers.hero import hero_cards
-from ai_coc.parsers.home import builder_jobs, free_builders, collect_bubbles
+from ai_coc.parsers.home import (
+    PANEL_CLOSE,
+    panel_rows,
+    free_builders,
+    collect_bubbles,
+    build_panel_open,
+)
 from ai_coc.adapters.mumu import MuMuAdapter
 from ai_coc.parsers.scout import (
     NIGHT_COUNT_WHITE_RATIO,
@@ -1302,7 +1308,7 @@ def _rest(seconds: float, should_stop: Callable[[], bool] = stop_requested) -> b
 # `ensure_coc` returns as soon as it has seen the game's process, and that check
 # is a `pidof` — the process exists a couple of seconds after the launch while
 # the village is not on screen for much longer than that. `current_world` is
-# what settles it, because counting the plate row is how everything here tests
+# what settles it, because the corner's + buttons are how everything here tests
 # for a village being up at all.
 #
 # Much longer than `restart_game`'s flat 15 seconds, which only reopens the
@@ -1416,12 +1422,8 @@ def _settle_game(
                     relogin(adb, display)
                     relogged = True
                     waiting = "the game is logging in again"
-            # The raid report the game opens on after the village was attacked,
-            # which nothing else here answers either.
-            elif welcome_back(png):
-                logger.info("The raid report is covering the village; pressing back")
-                adb.back(display)
-                waiting = "the raid report was covering the village"
+            elif (pressed := _press_away(adb, display, png)) is not None:
+                waiting = pressed
             elif loading_screen(png):
                 waiting = "the game is on its loading screen"
             else:
@@ -1431,6 +1433,24 @@ def _settle_game(
     logger.warning(
         "Gave up after %.0fs waiting for the game: %s", polls * RESTART_POLL_GAP, waiting
     )
+    return None
+
+
+def _press_away(adb: AdbController, display: DisplayTarget, png: bytes) -> str | None:
+    """Press away a cover the game came up under, and say which; None where there is none.
+
+    The raid report the game opens on after the village was attacked gets
+    `back`. The build panel shifts the corner column, so the village under it
+    never reads; `back` leaves it up, and its own X shuts it.
+    """
+    if welcome_back(png):
+        logger.info("The raid report is covering the village; pressing back")
+        adb.back(display)
+        return "the raid report was covering the village"
+    if build_panel_open(png):
+        logger.info("The build panel is covering the village; pressing its X")
+        adb.tap(*PANEL_CLOSE, display)
+        return "the build panel was covering the village"
     return None
 
 
@@ -2149,7 +2169,7 @@ def _namer() -> GeminiClient | None:
 
 
 def _plate(role: PlateRole, frame_dir: Path | None) -> PlateReport:
-    """One plate on whichever village is up, and never the other one.
+    """One counter and its panel tab on whichever village is up, and never the other one.
 
     Same shape as `stock` and for the same reason: crossing is `ai_coc world
     --go`, so a status check that sails a boat is no longer one. `uncovered` is
@@ -2183,10 +2203,9 @@ def worker(frame_dir: Path | None = None) -> PlateReport:
 def lab(frame_dir: Path | None = None) -> PlateReport:
     """What is being researched on the village that is up, and how long it has left.
 
-    The home village has shown two research slots on this plate (two spells
-    running side by side) as well as one, and the builder base one; the pet
-    house is not on it. Both open the same panel as the
-    builders' plate does, so this is `worker` pointed one plate to the left.
+    The home village has two research slots and the builder base one, each on
+    the laboratory tab of the same panel the builders' counter opens, so this is
+    `worker` pointed at the next tab.
     """
     return _plate("lab", frame_dir)
 
@@ -2262,9 +2281,8 @@ def status(frame_dir: Path | None = None) -> StatusReport:
 # One line per way a plate's count can come back, for `run.log`.
 COUNT_LINES: dict[PlateCountOutcome, str] = {
     "counted": "{held} {free}/{total}",
-    "unread": "{held}的牌子在,數字讀不到",
-    "no_badge": "這個畫面上看不到{held}的牌子",
-    "not_a_village": "畫面不在村莊,讀不到上排的牌子",
+    "unread": "{held}的數字讀不到",
+    "not_a_village": "畫面不在村莊,讀不到右下的數字",
 }
 
 
@@ -2291,7 +2309,7 @@ def _timers_line(report: StatusReport) -> str:
 # with the reader: nothing under `ui/` cares what a plate is called, and these
 # were the last Chinese *values* `ui/plates.py` held — what is left there quotes
 # the game's own screen in a comment.
-PLATE_NAMES: dict[PlateRole, str] = {"lab": "實驗室", "builder": "建築工人", "shield": "護盾"}
+PLATE_NAMES: dict[PlateRole, str] = {"lab": "實驗室", "builder": "建築工人"}
 
 
 def _plate_line(report: PlateReport) -> str:
@@ -2300,17 +2318,14 @@ def _plate_line(report: PlateReport) -> str:
     Here rather than carried on the model, for the reason `stock_of` gives: a
     person reading `run.log` wants a sentence and a caller reading the report
     wants fields, and a sentence derivable from the fields is the same answer
-    twice. `outcome` is what the fields could not say on their own — a plate
-    whose badge was not on the frame, against a panel that would not open on a
-    frame whose count would not read either.
+    twice. `outcome` is what the fields could not say on their own — a tab
+    with nothing running, against a panel that would not open.
     """
     held = PLATE_NAMES[report.role]
     if report.outcome == "not_a_village":
-        return "畫面不在村莊,讀不到上排的牌子"
-    if report.outcome == "no_badge":
-        return f"這個畫面上看不到{held}的牌子"
+        return "畫面不在村莊,讀不到右下的數字"
     if report.outcome == "panel_shut":
-        return f"{held}的面板打不開,只讀到牌子上的數字"
+        return f"{held}的面板打不開,只讀到右下的數字"
     # Only the plate's own count, because the running count is on every line
     # below this one — carrying it here as well printed it twice.
     counted = f"{report.free}/{report.total}" if report.free is not None else "數字讀不到"
@@ -2348,7 +2363,7 @@ def _shield_line(shield: ShieldState | None, world: World | None) -> str:
     it — see `ShieldState.up` for why that combination is not a state.
     """
     if shield is None:
-        return "這個世界沒有護盾" if world == "night" else "護盾的牌子讀不到,沒辦法說還剩多久"
+        return "這個世界沒有護盾" if world == "night" else "護盾那一條讀不到,沒辦法說還剩多久"
     if shield.remaining is None:
         return "**沒有護盾**,村莊現在可以被打"
     return f"護盾還有 {spell_out(shield.remaining)}"
@@ -3011,7 +3026,7 @@ def read(png: bytes) -> FrameReading:
         bubbles=collect_bubbles(png),
         heroes=hero_cards(png),
         builders=free_builders(png),
-        queue=builder_jobs(png),
+        panel_rows=panel_rows(png),
         upgrades=upgrade_buttons(png),
         donatable=len(donatable_cards(png)),
         attack_menu=attack_menu_open(png),

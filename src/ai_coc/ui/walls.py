@@ -136,11 +136,10 @@ class WallRunner(GameRunner):
         so each is a tap and a capture. A neighbour can be a barracks as easily
         as a wall, which is what `_opened` is for.
 
-        Only the top needs bounds-checking, and `_opened` does it: the grid's
-        top row is y 140, a pitch above that is the plate row's reach, and a
-        pitch right of its last column is the storage bars, both of which
-        `on_top_ui` skips. The bottom is more than a pitch away: the lowest row
-        is y 500 against the button row at 622.
+        The game's own buttons are `_opened`'s to skip (`on_hud`): a pitch off a
+        spot can reach the avatar block, the storage bars or 商店. The bottom is
+        more than a pitch away: the lowest row is y 500 against the button row
+        at 622.
         """
         around = [
             (point[0] + dx, point[1] + dy)

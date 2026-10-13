@@ -25,8 +25,9 @@ from ai_coc.prompts import render
 from ai_coc.constants import COC_PACKAGE
 from ai_coc.adapters.ai import GeminiClient
 from ai_coc.adapters.adb import ZOOM_PINCHES, AdbController, AdbControlError
-from ai_coc.parsers.home import STORAGE_BARS
+from ai_coc.parsers.home import PANEL_CLOSE, STORAGE_BARS, build_panel_open
 from ai_coc.parsers.scout import (
+    in_battle,
     read_stock,
     session_taken,
     loading_screen,
@@ -79,20 +80,19 @@ SWEEP_LIMIT = (SWEEP_X[-1], 620)
 # the model about it works (0 of 14 on the next run), and the filter below is
 # what makes that a guarantee rather than an improvement.
 SPOT_FLOOR = SWEEP_LIMIT[1] * 100 // 900
-# How high a tap may go before it lands on the plate row along the top rather
-# than on the map. Measured 2026-10-07 under the laboratory, builder and shield
-# plates: a tap at y 100 opened each plate's panel and one at y 105 opened none.
-# The laboratory's panel then opened a full-screen research page under the next
-# tap, backing out of it left the camera on the laboratory, and every wall the
-# scan had found opened nothing; the shield's opens a sheet whose 移除 removes the
-# shield. The scan's neighbours step up to y 95, and Gemini has answered y 101.
-PLATE_FLOOR = 105
+# The game's own furniture over the map, where a tap opens a window rather than
+# a building. Since the 2026-10 overhaul that is the avatar block and league
+# badge in the top left, the storage bars down to the shield's in the top right
+# (whose bar and + open the shop's shield page), 商店 under them, and the chat
+# and clan war buttons down the left. The button rows along the bottom are
+# below `SWEEP_LIMIT` already. Each box reaches a few pixels past what it guards.
+HUD_BOXES = ((0, 0, 250, 300), STORAGE_BARS, (1450, 385, 1580, 515), (20, 385, 155, 645))
 
 
-def on_top_ui(point: tuple[int, int]) -> bool:
-    """Whether a tap here lands on the plate row or the storage bars rather than the map."""
+def on_hud(point: tuple[int, int]) -> bool:
+    """Whether a tap here lands on the game's own buttons rather than the map."""
     x, y = point
-    return y < PLATE_FLOOR or (x >= STORAGE_BARS[0] and y < STORAGE_BARS[3])
+    return any(left <= x <= right and top <= y <= bottom for left, top, right, bottom in HUD_BOXES)
 
 
 # One call against one still frame. Long enough for a slow answer, short enough
@@ -137,17 +137,17 @@ RELOGIN_WAIT = 8.0
 
 
 # Where to tap to drop a storage bar's 最大儲存量 tooltip open, one per bar down
-# the corner. The x sits inside the bar and well right of the builder base's
-# gems row, whose green + spans 1345 to 1385 and opens the shop — the one thing
-# on any of these rows that a stray tap must not reach. The y is each bar's own
-# middle, the same rows `read_stock` reads its digits from.
+# the corner. The x sits inside the bar and well right of the green + buttons,
+# which span 1325 to 1368 and buy gems or a shield — the one thing on any of
+# these rows that a stray tap must not reach. The y is each bar's own middle,
+# the same rows `read_stock` reads its digits from.
 #
 # The tooltip takes a moment to animate in and is a toggle rather than a popup,
 # so a capture taken too early reads the frame before it opened and costs the
 # whole row: `CAPACITY_TRIES` is what pays for that, and for a tooltip somebody
 # left open before the run started.
 STOCK_BAR_X = 1400
-STOCK_BAR_Y = (52, 136, 219)
+STOCK_BAR_Y = (46, 108, 170)
 TOOLTIP_SETTLE = 1.0
 CAPACITY_TRIES = 2
 
@@ -316,17 +316,16 @@ class ScreenRunner(BaseModel):
         bar is to have closed a tooltip that was already open, and the next
         attempt then opens it.
 
-        **A row that fails both tries can leave its own tooltip up, and that is
-        measured to be harmless.** The panel hangs *under* the bar that opened
-        it, so it covers the rows below rather than its own — and only the last
-        row read has nothing after it to close it, since the next row's first tap
-        closes whatever is open. Measured on the fixtures: with the dark tooltip
-        up `read_stock` still reads all three rows, and with the builder base's
-        elixir tooltip up `read_builder_stock` still reads both, which is exactly
-        the last row in each village. Closing on failure instead was tried and is
-        worse — with the tooltip starting closed, which is the ordinary case, a
-        row that fails twice would then end on an opening tap and leave the
-        **gold** panel up, and that one does cover the rows under it.
+        **A row that fails both tries can leave its own tooltip up**, and only
+        the last row read has nothing after it to close it, since the next
+        row's first tap closes whatever is open. The panel hangs *under* the bar
+        that opened it, and since the 2026-10 overhaul that covers the green +
+        buttons `current_world` reads the village off — the home village's dark
+        tooltip both of its own, the builder base's either of its one. So a
+        failed read ends by asking `current_world` and taps the last row once
+        more when it no longer names the village. Closing on every failure
+        instead would be worse: with the tooltip starting closed, which is the
+        ordinary case, a row that fails twice ends on an opening tap.
         """
         rows = ("gold", "elixir", "dark") if world == "day" else ("gold", "elixir")
         found: dict[str, int] = {}
@@ -345,6 +344,10 @@ class ScreenRunner(BaseModel):
             logger.warning(
                 "Only %d of %d storage ceilings read (%s)", len(found), len(rows), found or "none"
             )
+            if current_world(self._frame("capacity-after")) != world:
+                logger.info("A tooltip is left over the village; tapping its bar shut")
+                self._tap((STOCK_BAR_X, STOCK_BAR_Y[len(rows) - 1]))
+                time.sleep(TOOLTIP_SETTLE)
             return None
         logger.info("Storage ceilings read as %s", found)
         return StorageCapacity(**found)
@@ -412,17 +415,17 @@ class GameRunner(ScreenRunner):
         gaps.
 
         **So the village test here is `current_world` as well as the storages,
-        and widening it is the point rather than swapping it.** The plate row
-        along the top is UI at a fixed place and does not care where the camera
-        is, so it answered day on that very frame; but it misses villages of
-        its own, a gem shower drifting over a plate among them, and those the
-        storages read. Either reading is a village, and a village is where this
-        runs. `_settle_game` already opens the attack loop off the plate row,
-        which is why the six commands that skip it could not recover.
+        and widening it is the point rather than swapping it.** The + buttons
+        in the corner are UI at a fixed place and do not care where the camera
+        is; but they miss villages of their own, a storage tooltip left over
+        them among them, and those the storages read. Either reading is a
+        village, and a village is where this runs. `_settle_game` already opens
+        the attack loop off `current_world`, which is why the six commands that
+        skip it could not recover.
 
         **But the two readings do not settle the same half.** Either says this
-        is a village, so either is enough for the pinch; only the plate row says
-        *which* village, and a park has to be told, because the two maps clamp
+        is a village, so either is enough for the pinch; only `current_world`
+        says *which* village, and a park has to be told, because the two maps clamp
         in opposite corners. So a frame the storages alone recognised gets the
         scale and keeps whatever position it had — see the branch below.
 
@@ -442,7 +445,7 @@ class GameRunner(ScreenRunner):
         # **A village nobody could name gets the scale and not the position.**
         # The two maps clamp in opposite corners, so a park has to be told which
         # village it is pushing, and the one branch that reaches here with no
-        # world is the one where the plate row answered None and `read_stock` —
+        # world is the one where `current_world` answered None and `read_stock` —
         # which cannot tell the two villages apart — is the only test left.
         # Picking a side there is a coin flip that runs the builder base away
         # from the one corner its boat and its 聖水車 are moored at. `view` has
@@ -450,7 +453,7 @@ class GameRunner(ScreenRunner):
         # pinch is safe on any screen and the swipe is not.
         if world is None:
             logger.warning(
-                "The storages read but the plate row could not place the village; "
+                "The storages read but the corner's + buttons did not place the village; "
                 "zooming out without parking"
             )
             self.adb.zoom("out", ZOOM_PINCHES, COC_PACKAGE, self.display)
@@ -467,10 +470,10 @@ class GameRunner(ScreenRunner):
         """The settle, once a run, off whichever reading recognised the village.
 
         **Two callers because either reading can be the one that recognises
-        it.** The plate row is the one that survives a drifted camera, which is
-        why `_home` asks it first — but it misses villages of its own, a gem
-        shower drifting over a plate among them, and those the storages read.
-        Gated on the plate row alone, such a frame hands its caller a stock
+        it.** `current_world` is the one that survives a drifted camera, which
+        is why `_home` asks it first — but it misses villages of its own, a
+        tooltip left over its + buttons among them, and those the storages read.
+        Gated on `current_world` alone, such a frame hands its caller a stock
         with the camera never put back, and every caller reads a returned stock
         as the measured coordinates being valid now. The settle would then land
         at whatever `_home` came next — usually `_opened` backing out partway
@@ -480,6 +483,25 @@ class GameRunner(ScreenRunner):
         if not self._settled:
             self._settle_zoom(world)
             self._settled = True
+
+    def _cleared(self, png: bytes) -> bool:
+        """Answer a dialog with 取消, or shut the build panel, whichever is over the village.
+
+        Both are pressed rather than backed out of: 取消 is the harmless answer
+        to every dialog the game raises, and `back` leaves the build panel up,
+        measured on the builder base, where its own X shuts it.
+        """
+        dialog = game_dialog(png)
+        if dialog is not None:
+            logger.info("A dialog is covering the village; answering 取消")
+            self._tap(dialog.cancel)
+        elif build_panel_open(png):
+            logger.info("The build panel is over the village; pressing its X")
+            self._tap(PANEL_CLOSE)
+        else:
+            return False
+        time.sleep(BACK_SETTLE)
+        return True
 
     def _home(self) -> VillageStock | None:
         """The village's storages, once nothing is covering the village any more.
@@ -521,11 +543,7 @@ class GameRunner(ScreenRunner):
                 self._seen_village = False
                 self._settled = False
                 continue
-            dialog = game_dialog(png)
-            if dialog is not None:
-                logger.info("A dialog is covering the village; answering 取消")
-                self._tap(dialog.cancel)
-                time.sleep(BACK_SETTLE)
+            if self._cleared(png):
                 continue
             # Waited on whether or not a village has been seen: a session the
             # server dropped mid-run reloads from here, and a `back` pressed at
@@ -569,7 +587,10 @@ class GameRunner(ScreenRunner):
             if world is not None and not self._settled:
                 self._put_camera_back(world)
                 continue
-            stock = read_stock(png)
+            # **Not off a battle**, whose screen has drawn the same storage bars
+            # in the same place since the 2026-10 overhaul: read as the village,
+            # every tap after it would land on the battlefield with a card up.
+            stock = read_stock(png) if world == "day" or not in_battle(png) else None
             if stock is not None:
                 self._put_camera_back(world)
                 self._seen_village = True
@@ -613,8 +634,10 @@ class GameRunner(ScreenRunner):
             if self.should_stop():
                 logger.info("Stop requested; ending the %s walk", label)
                 return
-            if on_top_ui(spot):
-                logger.info("Skipping (%d, %d): that is the top row's UI, not the map", *spot)
+            if on_hud(spot):
+                logger.info(
+                    "Skipping (%d, %d): that is the game's own buttons, not the map", *spot
+                )
                 continue
             png = self._after_tap(spot, f"{label}_{spot[0]:04d}_{spot[1]:04d}")
             if read_stock(png) is None:
@@ -700,10 +723,13 @@ class GameRunner(ScreenRunner):
             if point[1] > SWEEP_LIMIT[1]:
                 logger.info("Dropping (%d, %d): that is the button row, not the map", *point)
                 continue
-            # The same at the top, here as well as in `_opened`, because the hero
-            # hall's search taps these points without walking through it.
-            if on_top_ui(point):
-                logger.info("Dropping (%d, %d): that is the top row's UI, not the map", *point)
+            # The same for the rest of the furniture, here as well as in
+            # `_opened`, because the hero hall's search taps these points without
+            # walking through it.
+            if on_hud(point):
+                logger.info(
+                    "Dropping (%d, %d): that is the game's own buttons, not the map", *point
+                )
                 continue
             spots.append(point)
         logger.info("Gemini put %d of %s at %s", len(spots), what, spots)

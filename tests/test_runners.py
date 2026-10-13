@@ -172,10 +172,10 @@ class OpenedWalkTests(unittest.TestCase):
             patch.object(shared, "read_stock", side_effect=[STOCK, None, STOCK]),
             patch.object(runner, "_home", return_value=STOCK) as home,
         ):
-            opened = list(runner._opened([(1, 201), (2, 202), (3, 203)], "named"))
-        assert [spot for spot, _ in opened] == [(1, 201), (3, 203)]
+            opened = list(runner._opened([(601, 201), (602, 202), (603, 203)], "named"))
+        assert [spot for spot, _ in opened] == [(601, 201), (603, 203)]
         home.assert_called_once()
-        assert tapped.call_args_list[1].args[1] == "named_0002_0202"
+        assert tapped.call_args_list[1].args[1] == "named_0602_0202"
 
     def test_a_village_that_cannot_be_got_back_ends_the_walk(self) -> None:
         runner = self._runner()
@@ -184,8 +184,8 @@ class OpenedWalkTests(unittest.TestCase):
             patch.object(shared, "read_stock", side_effect=[STOCK, None, STOCK]),
             patch.object(runner, "_home", return_value=None),
         ):
-            opened = list(runner._opened([(1, 201), (2, 202), (3, 203)], "named"))
-        assert [spot for spot, _ in opened] == [(1, 201)]
+            opened = list(runner._opened([(601, 201), (602, 202), (603, 203)], "named"))
+        assert [spot for spot, _ in opened] == [(601, 201)]
 
     def test_a_stop_ends_the_walk_where_the_last_tap_was_already_backed_out_of(self) -> None:
         """The one place a sweep can be interrupted, and so every finder's.
@@ -203,8 +203,10 @@ class OpenedWalkTests(unittest.TestCase):
             patch.object(runner, "_after_tap", return_value=b"") as tapped,
             patch.object(shared, "read_stock", return_value=STOCK),
         ):
-            opened = list(runner._opened([(1, 201), (2, 202), (3, 203), (4, 204)], "named"))
-        assert [spot for spot, _ in opened] == [(1, 201), (2, 202)]
+            opened = list(
+                runner._opened([(601, 201), (602, 202), (603, 203), (604, 204)], "named")
+            )
+        assert [spot for spot, _ in opened] == [(601, 201), (602, 202)]
         assert tapped.call_count == 2
 
     def test_a_walk_nobody_stopped_taps_every_point_it_was_given(self) -> None:
@@ -213,22 +215,27 @@ class OpenedWalkTests(unittest.TestCase):
             patch.object(runner, "_after_tap", return_value=b"") as tapped,
             patch.object(shared, "read_stock", return_value=STOCK),
         ):
-            opened = list(runner._opened([(1, 201), (2, 202), (3, 203)], "named"))
-        assert [spot for spot, _ in opened] == [(1, 201), (2, 202), (3, 203)]
+            opened = list(runner._opened([(601, 201), (602, 202), (603, 203)], "named"))
+        assert [spot for spot, _ in opened] == [(601, 201), (602, 202), (603, 203)]
         assert tapped.call_count == 3
 
-    def test_a_point_on_the_plate_row_is_never_tapped(self) -> None:
-        """Above `PLATE_FLOOR` a tap opens a plate's panel, the shield's among them."""
+    def test_a_point_on_the_games_own_buttons_is_never_tapped(self) -> None:
+        """A tap there opens a window rather than a building, the shield's shop page among them."""
         runner = self._runner()
         with (
             patch.object(runner, "_after_tap", return_value=b"") as tapped,
             patch.object(shared, "read_stock", return_value=STOCK),
         ):
             opened = list(
-                runner._opened([(580, 95), (1265, 140), (580, shared.PLATE_FLOOR)], "near")
+                runner._opened(
+                    [(85, 100), (1265, 140), (1347, 296), (1515, 450), (85, 470), (580, 95)],
+                    "near",
+                )
             )
-        # The plate row, then the storage bars a pitch right of the grid's last column.
-        assert [spot for spot, _ in opened] == [(580, shared.PLATE_FLOOR)]
+        # The avatar, the storage bars a pitch right of the grid's last column,
+        # the shield's +, 商店 and the chat; the top of the map is clear now that
+        # the plate row is gone.
+        assert [spot for spot, _ in opened] == [(580, 95)]
         assert tapped.call_count == 1
 
     def test_the_sweep_is_that_walk_over_the_grid_with_the_staggered_points_held_to_the_limit(
@@ -260,6 +267,7 @@ class OpenedWalkTests(unittest.TestCase):
             # A frame for the dialog, one for the camera being put back, and one
             # for the village that then reads.
             patch.object(shared, "game_dialog", side_effect=[dialog, None, None]),
+            patch.object(shared, "build_panel_open", return_value=False),
             patch.object(shared, "current_world", return_value="day"),
             patch.object(shared, "read_stock", return_value=STOCK),
             patch.object(GameRunner, "_settle_zoom"),
@@ -267,6 +275,26 @@ class OpenedWalkTests(unittest.TestCase):
         ):
             assert runner._home() == STOCK
         tapped.assert_called_once_with(dialog.cancel)
+
+    def test_the_build_panel_over_the_village_is_shut_with_its_own_x(self) -> None:
+        """`back` leaves it up, and it covers the right of the map."""
+        runner = self._runner()
+        with (
+            patch.object(shared.time, "sleep"),
+            patch.object(runner, "_frame", return_value=b""),
+            patch.object(shared, "idle_disconnected", return_value=False),
+            patch.object(shared, "loading_screen", return_value=False),
+            patch.object(shared, "game_dialog", return_value=None),
+            patch.object(shared, "build_panel_open", side_effect=[True, False, False]),
+            patch.object(shared, "current_world", return_value="day"),
+            patch.object(shared, "read_stock", return_value=STOCK),
+            patch.object(GameRunner, "_settle_zoom"),
+            patch.object(runner, "_tap") as tapped,
+            patch.object(AdbController, "back") as backed,
+        ):
+            assert runner._home() == STOCK
+        tapped.assert_called_once_with(shared.PANEL_CLOSE)
+        backed.assert_not_called()
 
     def test_the_first_village_a_loop_sees_settles_the_scale_and_the_position(self) -> None:
         """Two separate things, and the second one was missing.
@@ -284,19 +312,20 @@ class OpenedWalkTests(unittest.TestCase):
             patch.object(shared, "idle_disconnected", return_value=False),
             patch.object(shared, "loading_screen", return_value=False),
             patch.object(shared, "game_dialog", return_value=None),
+            patch.object(shared, "build_panel_open", return_value=False),
             patch.object(shared, "current_world", return_value="day"),
             patch.object(shared, "read_stock", return_value=STOCK),
             patch.object(shared, "park_camera") as parked,
         ):
             assert runner._home() == STOCK
-            # Once per run, hung off the first frame the plate row names as a
+            # Once per run, hung off the first frame `current_world` names as a
             # village — before the storages are read rather than after, since a
             # camera bad enough to hide them is exactly the one this fixes. A
             # second call is the same loop still going rather than a new one.
             assert runner._home() == STOCK
         # One call for both, because the pinch is the park's own first act: its
         # walk can only be read at the far zoom, so it stopped trusting callers
-        # to have got there. The village comes off the plate row, which named
+        # to have got there. The village comes off `current_world`, which named
         # this one day; a frame it cannot place is not parked at all.
         parked.assert_called_once_with(runner.adb, runner.display, "day")
 
@@ -1134,18 +1163,25 @@ class FreedSlotTests(unittest.TestCase):
         back.assert_called_once()
         return report.outcome
 
+    @staticmethod
+    def _counters(**counted: tuple[int, int]) -> MagicMock:
+        """`plate_count` answering per role, since no recorded frame has an idle slot yet."""
+        return MagicMock(side_effect=lambda png, role: counted[role])
+
     def test_an_idle_builder_stands_the_run_down_ahead_of_the_storages(self) -> None:
-        """This plate reads 1/6, and the answer the run waits for comes first even on full storages."""
+        """The answer the run waits for comes first, even on full storages."""
         runner = self._runner()
         for stock in (self.SHORT, self.FULL):
-            assert self._stood_down(runner, "day_shield_first_number_fused.png", stock) == (
-                "builder_free"
-            )
+            with patch.object(attack, "plate_count", self._counters(builder=(1, 6), lab=(0, 2))):
+                assert self._stood_down(runner, "hud_day.png", stock) == "builder_free"
 
     def test_the_builders_are_read_before_the_laboratory(self) -> None:
         """Builders 1/5 and laboratory 1/2 on one frame."""
         runner = self._runner()
-        assert self._stood_down(runner, "home_marker_over_bars.png", self.SHORT) == "builder_free"
+        counted = self._counters(builder=(1, 5), lab=(1, 2))
+        with patch.object(attack, "plate_count", counted):
+            assert self._stood_down(runner, "hud_day.png", self.SHORT) == "builder_free"
+        assert [call.args[1] for call in counted.call_args_list] == ["builder"]
 
     def test_an_idle_research_slot_stands_it_down_too(self) -> None:
         runner = self._runner()
@@ -1155,30 +1191,34 @@ class FreedSlotTests(unittest.TestCase):
     def test_a_run_watching_one_plate_never_reads_the_other(self) -> None:
         """An unused event research slot leaves the laboratory at 1/2 all day; a builder-only wait farms on."""
         runner = self._runner(until_idle=("builder",))
-        assert self._stood_down(runner, "home_marker_over_bars.png", self.SHORT) == "builder_free"
-        with patch.object(attack, "plate_count", return_value=(0, 5)) as counted:
-            assert self._stood_down(runner, "home_marker_over_bars.png", self.SHORT) is None
+        with patch.object(attack, "plate_count", self._counters(builder=(1, 5), lab=(1, 2))):
+            assert self._stood_down(runner, "hud_day.png", self.SHORT) == "builder_free"
+        counted = self._counters(builder=(0, 5), lab=(1, 2))
+        with patch.object(attack, "plate_count", counted):
+            assert self._stood_down(runner, "hud_day.png", self.SHORT) is None
         counted.assert_called_once()
         runner = self._runner(until_idle=("lab",))
-        assert self._stood_down(runner, "home_marker_over_bars.png", self.SHORT) == "lab_free"
+        with patch.object(attack, "plate_count", self._counters(builder=(1, 5), lab=(1, 2))):
+            assert self._stood_down(runner, "hud_day.png", self.SHORT) == "lab_free"
 
     def test_busy_or_unread_plates_leave_it_to_the_storages(self) -> None:
-        """0/6 and 0/2 on the first frame; the second's builders will not read, which plays the round."""
+        """0/6 and 0/2 on the frame; counters that will not read play the round."""
         runner = self._runner()
-        for frame in ("day_lab_panel.png", "world_day.png"):
-            assert self._stood_down(runner, frame, self.SHORT) is None, frame
-            assert self._stood_down(runner, frame, self.FULL) == "stock_full", frame
+        assert self._stood_down(runner, "hud_day.png", self.SHORT) is None
+        assert self._stood_down(runner, "hud_day.png", self.FULL) == "stock_full"
+        with patch.object(attack, "plate_count", return_value=None):
+            assert self._stood_down(runner, "hud_day.png", self.SHORT) is None
+            assert self._stood_down(runner, "hud_day.png", self.FULL) == "stock_full"
 
     def test_a_run_not_asked_to_watch_never_reads_the_plates(self) -> None:
         runner = self._runner(until_idle=())
-        with patch.object(attack, "plate_badges") as badges:
-            assert self._stood_down(runner, "day_lab_panel.png", self.SHORT) is None
-        badges.assert_not_called()
+        with patch.object(attack, "plate_count") as counted:
+            assert self._stood_down(runner, "hud_day.png", self.SHORT) is None
+        counted.assert_not_called()
 
     def test_the_builder_base_reports_its_own_village(self) -> None:
         runner = self._runner(world="night")
         with (
-            patch.object(attack, "plate_badges", return_value={"lab": 628, "builder": 830}),
             patch.object(attack, "plate_count", return_value=(1, 3)),
             patch.object(AdbController, "back"),
         ):
@@ -1622,13 +1662,9 @@ class BattleWaitTests(unittest.TestCase):
         assert [call.args[0] for call in tapped.call_args_list] == [NIGHT_FIND, SEARCH_CANCEL]
 
     def test_the_village_a_cancel_leaves_behind_is_not_a_match(self) -> None:
-        """Its own buttons read as a card row, and it was deployed into as an opponent.
-
-        The frame is the live one: 取消 had just dropped the game on the
-        builder base, and the loop called it a match four seconds later.
-        """
+        """Its own buttons read as a card row, and it was deployed into as an opponent."""
         runner = self._runner(world="night")
-        village = (FRAMES / "night_village_after_cancel.png").read_bytes()
+        village = (FRAMES / "hud_night.png").read_bytes()
         with (
             patch.object(attack.time, "sleep"),
             patch.object(attack.time, "monotonic", side_effect=[0.0, 0.0, 1e9]),
@@ -1945,7 +1981,7 @@ if __name__ == "__main__":
 
 
 class PlateRunnerTests(unittest.TestCase):
-    """The plates along the top, on whichever village is up and without sailing."""
+    """The builder and laboratory counters, on whichever village is up and without sailing."""
 
     def _read(
         self,
@@ -1953,38 +1989,35 @@ class PlateRunnerTests(unittest.TestCase):
         *,
         world: str | None = "night",
         counted: tuple[int, int] | None = (0, 3),
-        panels: list[list[int | None] | None] | None = None,
+        rows: tuple[int | None, ...] | None = (600, 7200),
         read: PlateJobNames | None = None,
-    ) -> tuple[object, MagicMock, MagicMock]:
+    ) -> tuple[object, MagicMock, MagicMock, MagicMock]:
         runner = plates.PlateRunner(adb=_adb(), display=DISPLAY)
-        # The builder base's own row: two plates, and no shield plate at all.
-        found = {"lab": 644, "builder": 846}
         with (
             patch.object(plates.time, "sleep"),
             patch.object(runner, "_frame", return_value=b""),
             patch.object(runner, "_after_tap", return_value=b"") as opened,
             patch.object(runner, "_tap") as tapped,
-            patch.object(runner, "_names", return_value=read),
+            patch.object(runner, "_names", return_value=read) as named,
             patch.object(plates, "current_world", return_value=world),
-            patch.object(plates, "plate_badges", return_value=found),
             patch.object(plates, "plate_count", return_value=counted),
-            patch.object(plates, "panel_rows", side_effect=panels or [[600, 7200]]),
+            patch.object(plates, "panel_rows", return_value=None if rows is None else list(rows)),
         ):
-            return runner.read(role), opened, tapped
+            return runner.read(role), opened, tapped, named
 
     def test_the_counts_come_off_one_frame_with_nothing_tapped(self) -> None:
-        """What `status` asks for: the plates' own digits, and no panel opened for them."""
+        """What `status` asks for: the counters' own digits, and no panel opened for them."""
         runner = plates.PlateRunner(adb=_adb(), display=DISPLAY)
         with (
             patch.object(runner, "_frame", return_value=b"") as captured,
             patch.object(runner, "_tap") as tapped,
             patch.object(plates, "current_world", return_value="night"),
-            patch.object(plates, "plate_badges", return_value={"builder": 846}),
-            patch.object(plates, "plate_count", return_value=(1, 3)),
+            patch.object(plates, "plate_count", side_effect=[(1, 3), None]) as counted,
         ):
             builder, lab = runner.counts()
         assert (builder.outcome, builder.free, builder.total) == ("counted", 1, 3)
-        assert (lab.world, lab.outcome) == ("night", "no_badge")
+        assert (lab.world, lab.outcome) == ("night", "unread")
+        assert [call.args[1] for call in counted.call_args_list] == ["builder", "lab"]
         captured.assert_called_once()
         tapped.assert_not_called()
         with (
@@ -1993,101 +2026,105 @@ class PlateRunnerTests(unittest.TestCase):
         ):
             assert [count.outcome for count in runner.counts()] == ["not_a_village"] * 2
 
+    def test_the_panel_is_shut_before_the_model_is_asked(self) -> None:
+        """The call can run past a minute, and a run killed in it would leave the panel up."""
+        order: list[str] = []
+        runner = plates.PlateRunner(adb=_adb(), display=DISPLAY)
+        with (
+            patch.object(plates.time, "sleep"),
+            patch.object(runner, "_frame", return_value=b""),
+            patch.object(runner, "_after_tap", return_value=b""),
+            patch.object(runner, "_tap", side_effect=lambda point: order.append(str(point))),
+            patch.object(runner, "_names", side_effect=lambda *_: order.append("names")),
+            patch.object(plates, "current_world", return_value="day"),
+            patch.object(plates, "plate_count", return_value=(0, 6)),
+            patch.object(plates, "panel_rows", return_value=[600]),
+        ):
+            runner.read("builder")
+        assert order == [str(plates.BUILD_BUTTON), str(plates.PANEL_CLOSE), "names"]
+
     def test_the_panel_is_read_and_shut_again_behind_the_run(self) -> None:
-        report, opened, tapped = self._read("builder", counted=(1, 3), panels=[[600, 7200]])
+        report, opened, tapped, _ = self._read("builder", counted=(1, 3))
         assert (report.world, report.free, report.total) == ("night", 1, 3)
-        assert [job.remaining for job in report.jobs] == [600, 7200]
         assert report.outcome == "read"
+        assert [job.remaining for job in report.jobs] == [600, 7200]
         opened.assert_called_once()
-        tapped.assert_called_once_with(plates.plate_button(846))
+        assert [call.args[0] for call in tapped.call_args_list] == [
+            plates.BUILD_BUTTON,
+            plates.PANEL_CLOSE,
+        ]
 
-    def test_a_button_that_toggles_is_worth_a_second_tap(self) -> None:
-        """A panel left open by an earlier command closes on the first tap."""
-        report, opened, _ = self._read("builder", panels=[None, [90_000]])
-        assert opened.call_count == 2
-        assert (report.outcome, [job.remaining for job in report.jobs]) == ("read", [90_000])
+    def test_the_panel_is_turned_to_the_counters_own_tab(self) -> None:
+        """It opens on whichever tab was last open, and each village lays its tabs out apart."""
+        for world in ("day", "night"):
+            for role in ("builder", "lab"):
+                _, opened, _, _ = self._read(role, world=world)
+                assert opened.call_args.args[0] == plates.PANEL_TABS[world, role]
 
-    def test_a_plate_with_nothing_running_is_not_tapped_a_third_time(self) -> None:
-        """**The closing tap would open it**, and an open panel hides the badge row.
+    def test_a_tab_with_nothing_running_is_idle_and_shut_without_asking_the_model(self) -> None:
+        report, _, tapped, named = self._read("builder", counted=(3, 3), rows=())
+        assert (report.outcome, report.free, report.total, report.jobs) == ("idle", 3, 3, [])
+        assert [call.args[0] for call in tapped.call_args_list] == [
+            plates.BUILD_BUTTON,
+            plates.PANEL_CLOSE,
+        ]
+        named.assert_not_called()
 
-        No bars means the panel never opened or opened empty, and the two are the
-        same picture — but two taps have already left it however it was found, so
-        a third is what leaves it covering the village. `status` reads the next
-        plate straight afterwards and would answer 畫面不在村莊 on a village that
-        is plainly there.
-        """
-        report, opened, tapped = self._read("builder", counted=(3, 3), panels=[None, None])
-        assert opened.call_count == 2
-        tapped.assert_not_called()
-        assert (report.outcome, report.free, report.total) == ("idle", 3, 3)
-
-    def test_a_panel_that_will_not_open_says_so_rather_than_claiming_it_is_empty(self) -> None:
-        """Every slot busy and no bars is a panel that failed, not a plate at rest."""
-        report, _, tapped = self._read("builder", counted=(0, 3), panels=[None, None])
-        tapped.assert_not_called()
-        assert (report.outcome, report.free, report.total) == ("panel_shut", 0, 3)
+    def test_a_panel_that_will_not_open_is_not_pressed_shut(self) -> None:
+        """Its X sits over the gold bar when it is not up, and every slot free does not make it idle."""
+        report, _, tapped, _ = self._read("builder", counted=(3, 3), rows=None)
+        assert [call.args[0] for call in tapped.call_args_list] == [plates.BUILD_BUTTON]
+        assert (report.outcome, report.free, report.total) == ("panel_shut", 3, 3)
 
     def test_a_shut_panel_on_an_unreadable_count_is_the_one_state_the_fields_cannot_say(
         self,
     ) -> None:
-        """**The pair `outcome` exists for**, and the only one it is needed for.
+        """**The pair `outcome` exists for**: a tab with nothing running and a panel that never opened.
 
-        A `panel_shut` that kept its count is told apart from `no_badge` by the
-        count alone, since `no_badge` returns before the plate is ever read. It
-        is when the count will not read either that the two leave the same
-        report — a village, no numbers, no rows — and the enum is the only thing
-        left pointing at two different things to do next.
+        Both leave a village, no numbers once the count will not read, and no
+        rows, and the enum is the only thing left pointing at two different
+        things to do next.
         """
-        shut, _, _ = self._read("builder", counted=None, panels=[None, None])
-        missing, _, _ = self._read("shield", counted=None)
+        shut, _, _, _ = self._read("builder", counted=None, rows=None)
+        idle, _, _, _ = self._read("builder", counted=None, rows=())
         assert (shut.world, shut.free, shut.total, shut.jobs) == (
-            missing.world,
-            missing.free,
-            missing.total,
-            missing.jobs,
+            idle.world,
+            idle.free,
+            idle.total,
+            idle.jobs,
         )
-        assert (shut.outcome, missing.outcome) == ("panel_shut", "no_badge")
+        assert (shut.outcome, idle.outcome) == ("panel_shut", "idle")
 
     def test_a_count_that_will_not_read_still_reports_what_is_running(self) -> None:
-        report, _, _ = self._read("builder", counted=None, panels=[[600, 7200]])
+        report, _, _, _ = self._read("builder", counted=None)
         assert (report.free, report.total) == (None, None)
         assert (report.outcome, len(report.jobs)) == ("read", 2)
 
     def test_a_frame_that_is_no_village_reads_no_plate(self) -> None:
-        report, opened, tapped = self._read("builder", world=None)
+        report, opened, tapped, _ = self._read("builder", world=None)
         assert (report.world, report.outcome) == (None, "not_a_village")
         opened.assert_not_called()
         tapped.assert_not_called()
 
-    def test_a_plate_this_village_does_not_have_is_said_rather_than_tapped(self) -> None:
-        """The builder base has no shield plate at all.
-
-        Distinct from a panel that would not open, which is the pair `outcome`
-        exists for: this one is a plate that was never there to tap.
-        """
-        report, opened, _ = self._read("shield")
-        assert report.outcome == "no_badge"
-        opened.assert_not_called()
-
     def test_the_suggested_rows_come_back_beside_the_running_ones(self) -> None:
         offer = SuggestedUpgrade(name="聖水收集器", price=60_000, resource="gold")
-        report, _, _ = self._read(
-            "builder", panels=[[600]], read=PlateJobNames(names=["X連弩"], suggested=[offer])
+        report, _, _, _ = self._read(
+            "builder", rows=(600,), read=PlateJobNames(names=["X連弩"], suggested=[offer])
         )
         assert report.suggested == [offer]
         assert [job.name for job in report.jobs] == ["X連弩"]
-        report, _, _ = self._read("builder", panels=[[600]])
+        report, _, _, _ = self._read("builder", rows=(600,))
         assert (report.suggested, [job.name for job in report.jobs]) == ([], [""])
 
     def test_a_name_is_matched_to_the_row_it_was_read_beside(self) -> None:
-        """Order, not sorting: a short answer leaves later rows unnamed."""
-        report, _, _ = self._read(
+        """A short answer leaves later rows unnamed rather than dropping them."""
+        report, _, _, _ = self._read(
             "builder",
-            panels=[[7200, 600, None]],
+            rows=(600, 7200, None),
             read=PlateJobNames(names=["奧托哨所", "X連弩"], suggested=[]),
         )
         assert [(job.name, job.remaining) for job in report.jobs] == [
-            ("奧托哨所", 7200),
-            ("X連弩", 600),
+            ("奧托哨所", 600),
+            ("X連弩", 7200),
             ("", None),
         ]

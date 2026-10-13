@@ -39,7 +39,7 @@ from ai_coc.ui.world import uncovered, collect_cart
 from ai_coc.constants import COC_PACKAGE
 from ai_coc.ui.runner import ScreenRunner, SessionTakenError, relogin, refuse_taken
 from ai_coc.adapters.adb import ZOOM_PINCHES
-from ai_coc.parsers.home import plate_count, plate_badges
+from ai_coc.parsers.home import plate_count
 from ai_coc.parsers.field import view_shift
 from ai_coc.parsers.scout import (
     PANEL_DRAWN_BRIGHTNESS,
@@ -109,8 +109,8 @@ SEARCH_PATIENCE = 150
 SEARCH_ATTEMPTS = 4
 SEARCH_POLL = 3.0
 
-# The plates `--until-idle` watches, in the order they are read, and what each
-# one standing idle ends the series as. The shield plate counts nothing.
+# The counters `--until-idle` watches, in the order they are read, and what
+# each one standing idle ends the series as.
 FREED: dict[IdleRole, AttackOutcome] = {"builder": "builder_free", "lab": "lab_free"}
 
 # How often the machine is offered its ability, and how often the loop looks at
@@ -979,7 +979,7 @@ class AttackRunner(ScreenRunner):
     # share of what that storage holds; 0 never stands one down. One number for
     # both villages, because the ceilings themselves are read off the game.
     stop_at: int = 0
-    # Which plates on this village stand the run down too once one shows an
+    # Which counters on this village stand the run down too once one shows an
     # idle slot; see `_stood_down`.
     until_idle: list[IdleRole] = Field(default_factory=list)
     max_skips: int = 20
@@ -1374,11 +1374,11 @@ class AttackRunner(ScreenRunner):
     def _stood_down(self, home: bytes) -> AttackReport | None:
         """A report standing the run down on an idle slot or full storages, or None to carry on.
 
-        **The builder and laboratory plates only where the run was asked to
+        **The builder and laboratory counters only where the run was asked to
         watch them**, and first, because that is the answer the run was started
-        to wait for. They sit in the badge row this frame was just read as a
-        village by, so asking costs no capture; a plate that will not read
-        plays the round, for the same reason an unreadable storage does.
+        to wait for. They are drawn on the village this frame was just read as,
+        so asking costs no capture; a counter that will not read plays the
+        round, for the same reason an unreadable storage does.
 
         **Only the idle count decides, never the total**, because events add a
         builder or a research slot (drawn with a goblin face) and take it away
@@ -1387,12 +1387,10 @@ class AttackRunner(ScreenRunner):
         and a count remembered here would take whatever freed up in the gap for
         the new starting line and never report it.
 
-        Measured on the 66 frames two recorded home village series took here,
-        every one read the builders as `0/6` and the laboratory as `0/2`, and a
-        live round on 2026-10-01 read `0/5` with the builder panel showing five
-        rows running. No real builder base frame with an idle builder has been
-        read yet: the two committed ones showing `1/3` are blacked out below the
-        digits.
+        Measured on the counters the 2026-10 overhaul put in the bottom right:
+        `0/6` and `0/2` at home and `0/3` and `0/1` on the builder base, each
+        matching the rows running on its panel. No frame with an idle slot has
+        been read since.
 
         Asked before the search rather than after it, on both villages: a
         village with every storage full has nowhere to put what this run would
@@ -1409,20 +1407,18 @@ class AttackRunner(ScreenRunner):
         gems bar — and its cart is the third storage there, by `_cart_has_room`.
         """
         if self.until_idle:
-            badges = plate_badges(home)
             for role, freed in FREED.items():
                 if role not in self.until_idle:
                     continue
-                centre = badges.get(role)
-                counted = None if centre is None else plate_count(home, centre)
+                counted = plate_count(home, role)
                 if counted is None:
-                    logger.info("The %s plate would not read; playing the round", role)
+                    logger.info("The %s counter would not read; playing the round", role)
                     continue
                 if counted[0] > 0:
-                    logger.info("The %s plate reads %d/%d idle; farming stops", role, *counted)
+                    logger.info("The %s counter reads %d/%d idle; farming stops", role, *counted)
                     self.adb.back(self.display)
                     return AttackReport(world=self.world, outcome=freed)
-                logger.info("The %s plate reads %d/%d idle; farming on", role, *counted)
+                logger.info("The %s counter reads %d/%d idle; farming on", role, *counted)
         stock = (read_stock if self.world == "day" else read_builder_stock)(home)
         if stock is None:
             return None
