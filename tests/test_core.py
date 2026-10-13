@@ -7908,17 +7908,19 @@ class HeroGemButtonTests(unittest.TestCase):
 
     def test_a_hero_at_his_level_cap_is_not_reported_as_upgrading(self) -> None:
         """飛龍公爵 here shows 等級上限 and no button at all, beside three heroes
-        whose button is 立即完成. Neither has a price, and only the gem says which.
+        whose button is 立即完成. None of them has a price, so the missing plate
+        is what says which, rather than the missing price.
         """
         cards = {
             card.hero: card for card in hero_cards((FRAMES / "hero_hall_capped.png").read_bytes())
         }
-        assert [hero for hero, card in cards.items() if card.upgrading] == [
+        assert [hero for hero, card in cards.items() if card.capped] == ["duke"]
+        assert [hero for hero, card in cards.items() if card.price is None] == [
             "queen",
             "minion_prince",
             "warden",
+            "duke",
         ]
-        assert (cards["duke"].price, cards["duke"].upgrading) == (None, False)
         runner = HeroRunner(
             adb=AdbController(endpoint=AdbEndpoint(port=16384)),
             display=DisplayTarget(logical_id="1", physical_id="2"),
@@ -8348,7 +8350,7 @@ class HeroRunnerTests(unittest.TestCase):
         with patch.object(AdbController, "tap") as tapped:
             outcome = runner._raise(
                 report,
-                {"duke": HeroCard(hero="duke", point=(1407, 648), upgrading=True)},
+                {"duke": HeroCard(hero="duke", point=(1407, 648))},
                 VillageStock(gold=0, elixir=0, dark=200_000),
             )
         assert outcome == "already_upgrading"

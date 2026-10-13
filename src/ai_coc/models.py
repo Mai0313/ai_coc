@@ -2279,10 +2279,10 @@ class HeroCard(BaseModel):
     # So a run that went by the price alone reported "no confirmation sheet came
     # up", which reads as a swallowed tap rather than a button never live.
     upgradable: bool = False
-    # Whether the button is 立即完成, a running upgrade's gem finish. A card with
-    # no price and no such button is a hero at his level cap, which the game
-    # marks 等級上限 with no button at all.
-    upgrading: bool = False
+    # Whether the card has no button at all, which is how the game draws a hero
+    # at his level cap (等級上限). A card with no price and a button is not one:
+    # its price did not read, or it is 立即完成's gem.
+    capped: bool = False
 
 
 # How one `hero` run ended. **`read` is the read-only half and a success**: the

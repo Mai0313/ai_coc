@@ -103,6 +103,11 @@ PRICE_TOLERANCE = 30
 BUTTON_LIVE = 15
 PLATE_BAND = (640, 660)
 PLATE_SPAN = 60
+# **A hero at his level cap has no button at all**: the card's own dark red shows
+# where the plate would be, under 等級上限. Measured over the committed halls and
+# the recorded ones, every plate, live and 立即完成 alike, reads 181 to 211 in its
+# brightest channel, against 66 to 70 where 飛龍公爵 at his cap has none.
+PLATE_NONE = 120
 # Nothing in the Hero Hall costs single figures, and a price that small is ink
 # read off something else. The cheapest hero level in the game is 4000 dark.
 MIN_PRICE = 100
@@ -342,12 +347,17 @@ def _live_button(image: Image.Image, centre: int) -> bool:
     cost with the button dead underneath it, which is indistinguishable from an
     affordable one to anything that only reads digits.
     """
+    red, green, blue = _plate(image, centre)
+    return green - max(red, blue) > BUTTON_LIVE
+
+
+def _plate(image: Image.Image, centre: int) -> tuple[float, float, float]:
+    """The mean colour where this card's button plate is drawn."""
     top, bottom = PLATE_BAND
-    plate = image.crop((centre - PLATE_SPAN, top, centre + PLATE_SPAN, bottom))
-    data = plate.tobytes()
+    data = image.crop((centre - PLATE_SPAN, top, centre + PLATE_SPAN, bottom)).tobytes()
     count = len(data) // 3
     red, green, blue = (sum(data[i + c] for i in range(0, len(data), 3)) / count for c in range(3))
-    return green - max(red, blue) > BUTTON_LIVE
+    return red, green, blue
 
 
 def _resource(image: Image.Image, centre: int) -> Literal["elixir", "dark"] | None:
@@ -409,7 +419,7 @@ def hero_cards(png: bytes) -> list[HeroCard]:
                 price=price,
                 resource=None if price is None else resource,
                 upgradable=price is not None and _live_button(image, centre),
-                upgrading=resource is None,
+                capped=max(_plate(image, centre)) < PLATE_NONE,
             )
         )
     return cards
