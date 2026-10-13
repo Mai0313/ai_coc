@@ -23,7 +23,14 @@ import logging
 
 from pydantic import Field
 
-from ai_coc.models import BuildReport, BuildingName, VillageStock, CollectReport, BuildCandidate
+from ai_coc.models import (
+    BuildReport,
+    BuildingName,
+    VillageStock,
+    CollectReport,
+    BuildCandidate,
+    ResourceBubble,
+)
 from ai_coc.prompts import render
 from ai_coc.ui.world import SWIPE_MS, SWIPE_SETTLE
 from ai_coc.ui.runner import BUY_SETTLE, MENU_SETTLE, SPOT_TIMEOUT, GameRunner
@@ -74,6 +81,20 @@ BUILD_TARGET = (
 BUILD_NOTES = "不要回答城牆、樹木石頭這種裝飾物、或地上的軍隊。這些點要散開在村莊的不同區塊。"
 
 
+def _one_per_kind(markers: list[ResourceBubble]) -> list[tuple[int, int]]:
+    """The first marker of each resource, which is all a pass needs to tap.
+
+    A tap on one marker collects every collector of its kind: measured
+    2026-10-13, one elixir tap emptied all six elixir markers and left the dark
+    ones. Tapping the rest landed on whatever stood under them once they were
+    gone, and selected a wall.
+    """
+    kinds: dict[str, tuple[int, int]] = {}
+    for marker in markers:
+        kinds.setdefault(marker.resource, marker.point)
+    return list(kinds.values())
+
+
 class UpkeepRunner(GameRunner):
     """Runs the jobs a village needs doing that have nothing to do with fighting."""
 
@@ -93,7 +114,7 @@ class UpkeepRunner(GameRunner):
     only: str = ""
 
     def collect(self) -> CollectReport:
-        """Tap every collector marker on screen, and report what the storages gained.
+        """Tap one collector marker of each resource, and report what the storages gained.
 
         The markers are re-read between passes rather than tapped from one list,
         because that read is the only evidence a tap landed: a collected marker
@@ -135,9 +156,7 @@ class UpkeepRunner(GameRunner):
                     len(markers),
                     "/".join(f"{m.resource}@{m.point[0]},{m.point[1]}" for m in markers),
                 )
-                self.adb.tap_many(
-                    [marker.point for marker in markers], self.display, gap=COLLECT_GAP
-                )
+                self.adb.tap_many(_one_per_kind(markers), self.display, gap=COLLECT_GAP)
                 report.markers += len(markers)
                 tapped = standing
                 time.sleep(COLLECT_SETTLE)

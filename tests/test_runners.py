@@ -499,14 +499,20 @@ class CollectTests(unittest.TestCase):
         ):
             return runner.collect(), tapped, swiped
 
-    def test_every_marker_is_tapped_in_one_burst_and_the_gain_comes_off_the_bars(self) -> None:
+    def test_one_marker_of_each_resource_is_tapped_and_the_gain_comes_off_the_bars(self) -> None:
+        """A tap collects every collector of its kind, so a second tap of the
+        same kind would land on whatever stands under a marker already gone.
+        """
         coin = ResourceBubble(resource="gold", point=(1000, 300))
         drop = ResourceBubble(resource="elixir", point=(1100, 320))
+        other = ResourceBubble(resource="elixir", point=(1200, 340))
         before = VillageStock(gold=100, elixir=100, dark=100)
         after = VillageStock(gold=150, elixir=130, dark=100)
-        report, tapped, _ = self._collect([before, after, after, after], [[coin, drop], [], []])
+        report, tapped, _ = self._collect(
+            [before, after, after, after], [[coin, drop, other], [], []]
+        )
         assert tapped.call_args_list[0].args[0] == [(1000, 300), (1100, 320)]
-        assert (report.markers, report.gold, report.elixir, report.dark) == (2, 50, 30, 0)
+        assert (report.markers, report.gold, report.elixir, report.dark) == (3, 50, 30, 0)
         assert report.outcome == "collected"
 
     def test_markers_that_are_still_standing_end_the_passes(self) -> None:
