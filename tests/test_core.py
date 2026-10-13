@@ -7906,6 +7906,27 @@ class HeroGemButtonTests(unittest.TestCase):
         assert blocked is not None
         assert blocked == "already_upgrading"
 
+    def test_a_hero_at_his_level_cap_is_not_reported_as_upgrading(self) -> None:
+        """飛龍公爵 here shows 等級上限 and no button at all, beside three heroes
+        whose button is 立即完成. Neither has a price, and only the gem says which.
+        """
+        cards = {
+            card.hero: card for card in hero_cards((FRAMES / "hero_hall_capped.png").read_bytes())
+        }
+        assert [hero for hero, card in cards.items() if card.upgrading] == [
+            "queen",
+            "minion_prince",
+            "warden",
+        ]
+        assert (cards["duke"].price, cards["duke"].upgrading) == (None, False)
+        runner = HeroRunner(
+            adb=AdbController(endpoint=AdbEndpoint(port=16384)),
+            display=DisplayTarget(logical_id="1", physical_id="2"),
+            hero="duke",
+        )
+        stock = VillageStock(gold=0, elixir=0, dark=999_999)
+        assert runner._blocked(cards["duke"], stock) == "at_level_cap"
+
 
 class HeroHallTests(unittest.TestCase):
     """The 英雄殿堂 screen, and the button on the village that opens it."""
@@ -8327,7 +8348,7 @@ class HeroRunnerTests(unittest.TestCase):
         with patch.object(AdbController, "tap") as tapped:
             outcome = runner._raise(
                 report,
-                {"duke": HeroCard(hero="duke", point=(1407, 648))},
+                {"duke": HeroCard(hero="duke", point=(1407, 648), upgrading=True)},
                 VillageStock(gold=0, elixir=0, dark=200_000),
             )
         assert outcome == "already_upgrading"

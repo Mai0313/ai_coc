@@ -409,6 +409,7 @@ def hero_cards(png: bytes) -> list[HeroCard]:
                 price=price,
                 resource=None if price is None else resource,
                 upgradable=price is not None and _live_button(image, centre),
+                upgrading=resource is None,
             )
         )
     return cards

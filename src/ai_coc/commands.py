@@ -2532,6 +2532,7 @@ HERO_LINES: dict[HeroOutcome, str] = {
     "hall_not_found": "掃過村莊都沒有找到英雄殿堂",
     "hero_absent": "英雄殿堂裡沒有看到 {hero}",
     "already_upgrading": "{hero} 現在沒有升級按鈕,多半正在升級中",
+    "at_level_cap": "{hero} 已經是等級上限,沒有下一級可以升",
     "button_dead": "{hero} 的升級按鈕是停用的,多半是英雄殿堂的等級擋住了(要 {price} {resource})",
     "cannot_afford": "資源不夠,{hero} 要 {price} {resource}",
     "builders_busy": "工人都在忙,{hero} 現在派不出去",
