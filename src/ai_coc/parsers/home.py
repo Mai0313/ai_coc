@@ -565,10 +565,10 @@ def shield_state(png: bytes) -> ShieldState | None:
     it. A frame without the bar's own + is not showing the bar at all, and
     answers None rather than 無.
 
-    Known and open: no countdown has been seen on this bar since the 2026-10
-    overhaul, so a shield that is up answers None, the way a countdown that
-    would not resolve always has, rather than a number read in a font nobody
-    has measured.
+    A shield that is up answers None, the way a countdown that would not
+    resolve always has: its time is not read, on purpose. The user has said
+    more than once that it does not matter, since loot is cheap and a few
+    battles win back what a raid takes (2026-10-10, 2026-10-13).
     """
     image = open_frame(png)
     if not plus_button(image, DAY_SHIELD_PLUS):

@@ -1428,8 +1428,9 @@ class ShieldState(BaseModel):
     The bar being absent altogether is not a state here — the builder base has
     no shield bar, so its callers get no `ShieldState` rather than one saying
     False. **Which of those two a None is comes off the world**: on the builder
-    base it is structural and needs no following up, and on the home village it
-    is a reading to take again.
+    base it is structural, and on the home village it is a shield that is up or
+    a bar this frame could not read. Neither is followed up, since the shield's
+    time is not worth reading here (AGENTS.md).
     """
 
     model_config = ConfigDict(frozen=True)
