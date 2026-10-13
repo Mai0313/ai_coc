@@ -147,6 +147,11 @@ MIN_PRICE = 100
 # to 204 and every ordinary one reads -20 to -29.
 PLATE_BOX = (-58, 622, -38, 642)
 PLATE_BLUE = 50
+# 立即完成, which finishes a running upgrade with gems, sits on a green plate.
+# Measured at the same corner, green over the larger of red and blue reads 86 on
+# it, against at most 18 on every other button and 40 on the village past the
+# end of a row.
+PLATE_GREEN = 60
 
 # The confirmation the game raises before it spends anything, which is both the
 # last chance to back out and the only signal that a tap on 升級 landed at all.
@@ -258,6 +263,15 @@ def _on_gem_plate(image: Image.Image, centre: int) -> bool:
     red = sum(data[i] for i in range(0, len(data), 3)) / count
     blue = sum(data[i + 2] for i in range(0, len(data), 3)) / count
     return blue - red > PLATE_BLUE
+
+
+def _on_finish_plate(image: Image.Image, centre: int) -> bool:
+    """Whether the button centred here is 立即完成, on its green plate."""
+    left, top, right, bottom = PLATE_BOX
+    data = image.crop((centre + left, top, centre + right, bottom)).tobytes()
+    count = len(data) // 3
+    red, green, blue = (sum(data[i + c] for i in range(0, len(data), 3)) / count for c in range(3))
+    return green - max(red, blue) > PLATE_GREEN
 
 
 def _on_grid(centre: int) -> bool:
