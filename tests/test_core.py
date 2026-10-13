@@ -71,6 +71,7 @@ from ai_coc.models import (
     LootThresholds,
     StorageCapacity,
 )
+from ai_coc.parsers import home as home_parser
 from ai_coc.parsers import scout as scout_parser
 from ai_coc.prompts import PROMPTS, PROMPT_DIR, render
 from ai_coc.ui.clan import ClanRunner
@@ -128,22 +129,15 @@ from ai_coc.adapters.adb import (
 from ai_coc.parsers.clan import panel_top, donatable_cards, reinforce_button
 from ai_coc.parsers.hero import SCROLL_LEFT, SCROLL_RIGHT, can_scroll, hero_cards, hall_buttons
 from ai_coc.parsers.home import (
-    NAMES_LEFT,
-    PANEL_BANDS,
-    PRICE_RIGHT,
     PANEL_BOTTOM,
-    _clear_rim,
     jobs_strip,
-    panel_jobs,
+    panel_rows,
     boat_marker,
     plate_count,
-    builder_jobs,
-    plate_badges,
-    plate_button,
     shield_state,
     free_builders,
     collect_bubbles,
-    plate_panel_open,
+    build_panel_open,
 )
 from ai_coc.logging_setup import _attach_run, configure_logging
 from ai_coc.parsers.field import view_shift
@@ -151,16 +145,9 @@ from ai_coc.parsers.frame import open_frame
 from ai_coc.parsers.scout import (
     SPEED_BOX,
     CART_PLANK,
-    PANEL_LEFT,
-    ROW_BOUNDS,
-    STOCK_LEFT,
-    PANEL_RIGHT,
     SPEED_GREEN,
-    STOCK_RIGHT,
-    STOCK_DARK_LEFT,
     CART_COLLECT_BOX,
     CART_PLANK_ABOVE,
-    STOCK_ROW_BOUNDS,
     CART_PLANK_BESIDE,
     LOOT_INK_BRIGHTNESS,
     STOCK_DIGIT_TOLERANCE,
@@ -200,7 +187,7 @@ from ai_coc.parsers.scout import (
     read_builder_stock,
     searching_opponent,
 )
-from ai_coc.parsers.world import info_badges, current_world
+from ai_coc.parsers.world import DAY_GEMS_PLUS, DAY_SHIELD_PLUS, NIGHT_GEMS_PLUS, current_world
 from ai_coc.parsers.glyphs import nearest, ink_mask, signature, digits_from, glyph_columns
 from ai_coc.ui.main_window import LIVE_INTERVAL, MainWindow
 from ai_coc.adapters.config import ConfigStore, dotenv_value
@@ -214,7 +201,7 @@ from ai_coc.parsers.building import (
     upgrade_sheet,
     upgrade_buttons,
 )
-from ai_coc.parsers.settings import export_row, settings_open, more_settings_open
+from ai_coc.parsers.settings import export_row, window_open, settings_open, more_settings_open
 
 FRAMES = Path(__file__).parent / "frames"
 
@@ -479,33 +466,45 @@ class SettingsMenuTests(unittest.TestCase):
 
     Every step of `export` is a fixed coordinate, so these readers are what
     stands between a menu that did not open and a tap landing wherever the
-    coordinate happens to point. On the scrolled page that is the 更高幀數
+    coordinate happens to point. On the unscrolled page that is a settings
     toggle, which flips a game setting and reports nothing.
     """
 
-    def test_the_settings_window_needs_both_its_button_and_its_account_band(self) -> None:
+    def test_the_settings_page_needs_both_its_button_and_its_account_band(self) -> None:
         """The button alone answers on a battle result screen, whose 回營 lands in the same box."""
-        assert settings_open((FRAMES / "settings_window.png").read_bytes())
-        assert not settings_open((FRAMES / "more_settings_top.png").read_bytes())
+        assert settings_open((FRAMES / "hud_settings.png").read_bytes())
+        assert not settings_open((FRAMES / "hud_more_settings_top.png").read_bytes())
         assert not settings_open((FRAMES / "battle_result.png").read_bytes())
-        assert not settings_open((FRAMES / "event_reward.png").read_bytes())
+        assert not settings_open((FRAMES / "shield_sheet.png").read_bytes())
 
     def test_the_more_settings_page_is_read_at_any_scroll_position(self) -> None:
-        """The back arrow, which is the one feature the settings window does not have."""
-        assert more_settings_open((FRAMES / "more_settings_top.png").read_bytes())
-        assert more_settings_open((FRAMES / "more_settings_export_row.png").read_bytes())
-        assert not more_settings_open((FRAMES / "settings_window.png").read_bytes())
+        """The back arrow, which is the one feature the settings page does not have."""
+        assert more_settings_open((FRAMES / "hud_more_settings_top.png").read_bytes())
+        assert more_settings_open((FRAMES / "hud_more_settings_export_row.png").read_bytes())
+        assert not more_settings_open((FRAMES / "hud_settings.png").read_bytes())
 
     def test_the_export_row_answers_only_where_the_copy_button_really_is(self) -> None:
-        assert export_row((FRAMES / "more_settings_export_row.png").read_bytes()) == (1131, 560)
+        assert export_row((FRAMES / "hud_more_settings_export_row.png").read_bytes()) == (
+            1163,
+            571,
+        )
         # The top of the same page: the copy coordinate is over a settings
         # toggle there, so this is the reading that must not be a tap.
-        assert export_row((FRAMES / "more_settings_top.png").read_bytes()) is None
-        # And the settings window, whose cream panel fills the box the white
-        # JSON label is looked for in — 0.938 white against the row's own 0.280.
-        # It is the green button test that rules this one out, which is why
-        # neither feature is read alone.
-        assert export_row((FRAMES / "settings_window.png").read_bytes()) is None
+        assert export_row((FRAMES / "hud_more_settings_top.png").read_bytes()) is None
+        # And the settings page, whose pale panel fills the box the white JSON
+        # label is looked for in. It is the green button test that rules this
+        # one out, which is why neither feature is read alone.
+        assert export_row((FRAMES / "hud_settings.png").read_bytes()) is None
+
+    def test_every_page_of_the_profile_window_shows_its_x(self) -> None:
+        """Which is what the export checks before it taps 設定, and before it closes."""
+        for name in (
+            "hud_settings.png",
+            "hud_more_settings_top.png",
+            "hud_more_settings_export_row.png",
+        ):
+            assert window_open((FRAMES / name).read_bytes()), name
+        assert not window_open((FRAMES / "hud_day.png").read_bytes())
 
     def test_no_other_recorded_screen_reads_as_one_of_these(self) -> None:
         """Swept over every other committed frame: battles, villages, menus, dialogs.
@@ -516,7 +515,7 @@ class SettingsMenuTests(unittest.TestCase):
         others = sorted(
             path
             for path in FRAMES.glob("*.png")
-            if not path.name.startswith(("settings_window", "more_settings"))
+            if not path.name.startswith(("hud_settings", "hud_more_settings"))
         )
         assert len(others) > 50
         for path in others:
@@ -528,75 +527,152 @@ class SettingsMenuTests(unittest.TestCase):
             assert readings == (False, False, None), path.name
 
 
-class WorldTests(unittest.TestCase):
-    """Live frames of both villages, masked to the plate row and the storage column."""
+# Where the storage bars and the loot panel sat before the 2026-10 overhaul. The
+# frames recorded then still pin how those rows are read — the trims, the gloss,
+# the village showing through, the panel fading in — so they are read at that
+# place rather than thrown away.
+LEGACY_GEOMETRY = {
+    "STOCK_ROW_BOUNDS": ((33, 72), (117, 156), (200, 239)),
+    "STOCK_RIGHT": 1512,
+    "PANEL_LEFT": 74,
+    "PANEL_RIGHT": 215,
+    "ROW_BOUNDS": ((126, 156), (173, 203), (220, 250)),
+}
 
-    def test_the_home_village_carries_three_plates(self) -> None:
-        assert current_world((FRAMES / "world_day.png").read_bytes()) == "day"
+
+def _at_legacy_geometry(case: unittest.TestCase) -> None:
+    """Read this test case's frames at the place the bars and the loot panel had before the overhaul."""
+    for name, value in LEGACY_GEOMETRY.items():
+        patcher = patch.object(scout_parser, name, value)
+        patcher.start()
+        case.addCleanup(patcher.stop)
+
+
+def _legacy_stock(png: bytes, builder: bool = False) -> VillageStock | None:
+    """`read_stock`, or `read_builder_stock`, at the bars' place before the overhaul."""
+    with (
+        patch.object(scout_parser, "STOCK_ROW_BOUNDS", LEGACY_GEOMETRY["STOCK_ROW_BOUNDS"]),
+        patch.object(scout_parser, "STOCK_RIGHT", LEGACY_GEOMETRY["STOCK_RIGHT"]),
+    ):
+        return (read_builder_stock if builder else read_stock)(png)
+
+
+def _covered(png: bytes, y: int) -> bytes:
+    """This frame with the corner's + button at height `y` painted over, as a drifting reward would."""
+    image = Image.open(io.BytesIO(png)).convert("RGB")
+    image.paste((40, 40, 40), (1320, y - 25, 1375, y + 25))
+    out = io.BytesIO()
+    image.save(out, format="PNG")
+    return out.getvalue()
+
+
+class WorldTests(unittest.TestCase):
+    """Which village a frame shows, read off the green + buttons in the corner column."""
+
+    def test_the_home_village_carries_the_shields_button(self) -> None:
+        assert current_world((FRAMES / "hud_day.png").read_bytes()) == "day"
+
+    def test_the_builder_base_carries_one_button_higher_up(self) -> None:
+        """It has no shield and no dark elixir, and a real-time mode cannot grow a shield."""
+        assert current_world((FRAMES / "hud_night.png").read_bytes()) == "night"
+
+    def test_either_home_button_alone_still_names_the_home_village(self) -> None:
+        """Something drifting over one button does not hand the village to the other map."""
+        day = (FRAMES / "hud_day.png").read_bytes()
+        assert current_world(_covered(day, DAY_SHIELD_PLUS)) == "day"
+        assert current_world(_covered(day, DAY_GEMS_PLUS)) == "day"
+        assert current_world(_covered(_covered(day, DAY_GEMS_PLUS), DAY_SHIELD_PLUS)) is None
+
+    def test_the_home_gems_height_is_not_believed_beside_the_builder_bases_button(self) -> None:
+        """That height is open map on the builder base; only the shield's is structural."""
+        day = Image.open(FRAMES / "hud_day.png").convert("RGB")
+        night = Image.open(FRAMES / "hud_night.png").convert("RGB")
+        box = (1320, DAY_GEMS_PLUS - 25, 1375, DAY_GEMS_PLUS + 25)
+        night.paste(day.crop(box), box[:2])
+        out = io.BytesIO()
+        night.save(out, format="PNG")
+        assert current_world(out.getvalue()) == "night"
+
+    def test_the_build_panel_reads_as_no_village(self) -> None:
+        """It moves the column left, and its green progress bars carry no cross."""
+        for name in (
+            "hud_day_build_panel.png",
+            "hud_day_lab_panel.png",
+            "hud_night_build_panel.png",
+        ):
+            assert current_world((FRAMES / name).read_bytes()) is None, name
+
+    def test_a_tooltip_over_the_buttons_reads_as_no_village(self) -> None:
+        """A tooltip hangs under its bar, over the buttons below it.
+
+        The builder base's gold one covers its only button and the home
+        village's dark one both of its own; the elixir one leaves the shield's.
+        `read_ceilings` taps a tooltip it left open shut again.
+        """
+        assert current_world((FRAMES / "hud_tip_night_gold.png").read_bytes()) is None
+        assert current_world((FRAMES / "hud_tip_day_dark.png").read_bytes()) is None
+        assert current_world((FRAMES / "hud_tip_day_elixir.png").read_bytes()) == "day"
+
+    def test_only_the_village_frames_read_as_a_village(self) -> None:
+        """Battles, the scout screen, settings and every frame from before the overhaul are neither."""
+        villages = {
+            "hud_day.png": "day",
+            "hud_day_shield_split.png": "day",
+            "hud_tip_day_gold.png": "day",
+            "hud_tip_day_elixir.png": "day",
+            "hud_night.png": "night",
+        }
+        for path in sorted(FRAMES.glob("*.png")):
+            try:
+                world = current_world(path.read_bytes())
+            except ValueError:
+                continue  # a fixture masked to another size, not a screen
+            assert world == villages.get(path.name), path.name
+
+    def test_the_screen_size_is_checked(self) -> None:
+        small = io.BytesIO()
+        Image.new("RGB", (800, 450)).save(small, format="PNG")
+        with pytest.raises(ValueError, match="1600x900"):
+            current_world(small.getvalue())
+
+
+class StockTests(unittest.TestCase):
+    """The storage bars in the corner, read at their place since the overhaul."""
+
+    def test_the_home_village_reads_three_rows(self) -> None:
+        assert read_stock((FRAMES / "hud_day.png").read_bytes()) == VillageStock(
+            gold=38180400, elixir=28000000, dark=334555
+        )
 
     def test_the_builder_base_storages_are_read_two_rows_deep(self) -> None:
         """Three would read the gems bar, which sits at exactly the dark row's y.
 
-        Measured, a builder base holding 10 152 gems reports `dark=10152`
-        through `read_stock`: the gem count, the green `+` beside it trimmed as
-        `STOCK_LEADING_TOLERANCE` trims whatever the village leaves in front of a
-        number. Here `dark` is 0, and that village's `StorageCapacity` has no
-        dark ceiling either, so nothing ever compares the two.
+        `read_stock` on the builder base reports the gem count as dark elixir,
+        so that village is read two rows deep and its `dark` is 0.
         """
-        assert read_builder_stock((FRAMES / "world_night.png").read_bytes()) == VillageStock(
-            gold=574030, elixir=589419, dark=0
-        )
+        night = (FRAMES / "hud_night.png").read_bytes()
+        assert read_builder_stock(night) == VillageStock(gold=6000000, elixir=5600000, dark=0)
+        assert read_stock(night) == VillageStock(gold=6000000, elixir=5600000, dark=5708)
 
-    def test_the_builder_base_carries_two(self) -> None:
-        """It has no 護盾 plate, and a real-time mode structurally cannot grow one."""
-        assert current_world((FRAMES / "world_night.png").read_bytes()) == "night"
-
-    def test_a_plate_covered_by_an_animation_does_not_change_the_village(self) -> None:
-        """A gem shower drifts over the top row and hides one plate for a few seconds.
-
-        Counting badges read that home village as two plates and answered
-        "builder base", and the attack loop then sailed away from the village it
-        was standing on — three times in one recorded run. The row is centred,
-        so the plate that is still visible at x 516 places it whatever is
-        floating over the rest.
-        """
-        assert current_world((FRAMES / "world_day_occluded.png").read_bytes()) == "day"
-        # The same shower heavier: only the shield's own badge is left, and it is
-        # the one place the builder base's row never reaches.
-        assert current_world((FRAMES / "world_day_shield_only.png").read_bytes()) == "day"
-
-    def test_one_badge_is_only_enough_when_it_is_the_shields(self) -> None:
-        """The loading screen puts a character's blue tunic 7 px from where the
-        home village's leftmost badge sits, so a lone badge on the left says
-        nothing. The shield's own place is different: the builder base's row
-        never reaches it, so anything there is the home village.
-        """
-        assert current_world((FRAMES / "loading_screen_badge_noise.png").read_bytes()) is None
-
-    def test_the_plates_are_found_where_the_camera_left_them(self) -> None:
-        """The row is laid out from the middle, so both villages move it as they please.
-
-        These two are the same villages with the camera dragged to a map corner
-        to reach the boat, which is where every crossing reads the world from.
-        """
-        assert current_world((FRAMES / "world_day_corner.png").read_bytes()) == "day"
-        assert current_world((FRAMES / "world_night_corner.png").read_bytes()) == "night"
+    def test_a_battle_draws_the_same_bars(self) -> None:
+        """Which is why `_home` will not take a battle for the village off them."""
+        battle = (FRAMES / "hud_battle.png").read_bytes()
+        assert read_stock(battle) is not None
+        assert in_battle(battle)
 
     def test_a_collector_marker_behind_the_dark_row_does_not_hide_the_village(self) -> None:
         """The dark row has its own left edge because its number is the shortest.
 
         Measured live: a collector's own full marker floated behind that row and
         laid ink from x 1300 to 1338, which failed the row — and `read_stock`
-        failing is how `_home` decides it is not on the home village, so
-        `walls`, `collect` and the attack loop all stood down together on a
-        village plainly on screen.
+        failing is how `_home` decides it is not on the home village.
 
         Gold is what stops the other two rows moving with it. This frame holds
         14 000 000, whose leading digit reaches back past the marker: given the
         dark row's edge it reads back 4 000 000, which is the truncation this
         project treats as the dangerous kind of wrong.
         """
-        stock = read_stock((FRAMES / "home_marker_over_bars.png").read_bytes())
+        stock = _legacy_stock((FRAMES / "home_marker_over_bars.png").read_bytes())
         assert stock is not None
         assert (stock.gold, stock.elixir, stock.dark) == (14000000, 17254813, 460500)
 
@@ -617,7 +693,7 @@ class WorldTests(unittest.TestCase):
             "day_shield_first_number_fused.png": (8522469, 10673893, 436817),
         }
         for name, (gold, elixir, dark) in cases.items():
-            stock = read_stock((FRAMES / name).read_bytes())
+            stock = _legacy_stock((FRAMES / name).read_bytes())
             assert stock == VillageStock(gold=gold, elixir=elixir, dark=dark), name
 
     def test_white_scenery_in_a_gap_does_not_fuse_two_digits(self) -> None:
@@ -627,64 +703,17 @@ class WorldTests(unittest.TestCase):
         took the digits' core to tell them apart; without it the frame read
         None and a farming run stalled on its baseline.
         """
-        stock = read_stock((FRAMES / "stock_white_behind_dark_bar.png").read_bytes())
+        stock = _legacy_stock((FRAMES / "stock_white_behind_dark_bar.png").read_bytes())
         assert stock == VillageStock(gold=4354835, elixir=1965891, dark=114647)
 
     def test_a_village_showing_through_the_bars_is_left_out_of_the_digits(self) -> None:
-        """Both readers name this frame now, and the plate row never depended on the camera.
+        """The shoreline behind a bar at 45% once fused the 779 of 10 779 278.
 
-        Measured live at a zoomed-in camera, one of seven pan positions out of
-        seven. The bars are translucent where they are not full, so the map's
-        shoreline showed through an elixir bar standing at 45% and filled the
-        gaps between its digits: the `779` of 10 779 278 came through as one
-        55 px span, too wide to be a glyph, and the frame read None. All three
-        numbers are perfectly legible to the eye on it.
-
-        Loosening the reader would have been the wrong end to fix this from —
-        that is the trade this project treats as dangerous, an honest None for
-        a truncated number. What fixed it is the other end: the shoreline is
-        paler than the digits are white, and `STOCK_BAR_SATURATION` leaves it
-        out of the ink.
+        It is paler than the digits are white, and `STOCK_BAR_SATURATION`
+        leaves it out of the ink.
         """
         frame = (FRAMES / "home_storages_camera_bleed.png").read_bytes()
-        assert read_stock(frame) == VillageStock(gold=7508791, elixir=10779278, dark=400000)
-        assert current_world(frame) == "day"
-
-    def test_a_village_at_a_map_corner_still_reads_as_one(self) -> None:
-        """The plate row is untouched by where the camera is, which the bars were not.
-
-        This frame is why the plate row replaced `read_stock` as the village
-        test: the camera at a map corner used to leave the dark elixir row
-        unreadable, so an ordinary village read as no village at all. The bars
-        survive it now — see `_read_row` — and the plate row never depended on
-        the camera in the first place.
-        """
-        assert current_world((FRAMES / "world_day_corner.png").read_bytes()) == "day"
-
-    def test_a_battle_is_neither_village(self) -> None:
-        """None is a third answer: nothing about a battle says which village is under it."""
-        assert current_world((FRAMES / "world_night_battle.png").read_bytes()) is None
-
-    def test_a_dialog_over_the_village_is_neither(self) -> None:
-        """The builder base's own attack dialog covers the plate row it would be read from."""
-        assert current_world((FRAMES / "world_night_menu.png").read_bytes()) is None
-
-    def test_each_badge_is_rejoined_across_its_own_glyph(self) -> None:
-        """The white `i` splits every badge into two runs of about 8 px.
-
-        Left unjoined, each half is under the width floor and every village reads
-        as no village; joined too eagerly, two badges 175 px apart would become
-        one and the home village would read as the builder base.
-        """
-        badges = info_badges((FRAMES / "world_day.png").read_bytes())
-        assert len(badges) == 3
-        assert all(20 <= right - left + 1 <= 40 for left, right in badges)
-
-    def test_the_screen_size_is_checked(self) -> None:
-        small = io.BytesIO()
-        Image.new("RGB", (800, 450)).save(small, format="PNG")
-        with pytest.raises(ValueError, match="1600x900"):
-            current_world(small.getvalue())
+        assert _legacy_stock(frame) == VillageStock(gold=7508791, elixir=10779278, dark=400000)
 
 
 class WorldChoiceTests(unittest.TestCase):
@@ -1441,7 +1470,6 @@ class ParkCameraTests(unittest.TestCase):
         with (
             patch.object(world_ui.time, "sleep"),
             patch.object(world_ui, "view_shift", side_effect=shifts),
-            patch.object(world_ui, "plate_panel_open", return_value=None),
             patch.object(world_ui, "boat_marker", side_effect=markers) as self.looked,
         ):
             parked = world_ui.park_camera(
@@ -1522,57 +1550,6 @@ class ParkCameraTests(unittest.TestCase):
         self.looked.assert_not_called()
         assert [c.args[0] for c in adb.zoom.call_args_list] == ["out"]
 
-    def _panelled(self, captures: list[str], world: str = "day") -> tuple[MagicMock, bool]:
-        """Park against real frames, so the panel check reads pixels rather than a stub."""
-        adb = MagicMock()
-        frames = [(FRAMES / name).read_bytes() for name in captures]
-        # The walk takes as many captures as it takes; the last frame stands for
-        # every one after the list runs out.
-        adb.screenshot.side_effect = lambda *_args: frames.pop(0) if len(frames) > 1 else frames[0]
-        with (
-            patch.object(world_ui.time, "sleep"),
-            patch.object(world_ui, "view_shift", return_value=(0, 0)),
-            patch.object(world_ui, "boat_marker", return_value=(442, 542)),
-        ):
-            parked = world_ui.park_camera(
-                adb, DisplayTarget(logical_id="1", physical_id="2"), world
-            )
-        return adb, parked
-
-    def test_a_plate_panel_is_pressed_shut_before_the_camera_is_read(self) -> None:
-        """It is a village by every test the callers have, and nothing else clears it.
-
-        `ai_coc worker`, `lab` and `status` each open one and shut it again, so
-        what leaves one standing is a run that died in between. `uncovered`
-        cannot help: the frame reads as a village, so it hands it straight back.
-        """
-        adb, parked = self._panelled(["day_builder_panel.png", "world_day.png"])
-        assert parked is True
-        button = plate_button(
-            plate_badges((FRAMES / "day_builder_panel.png").read_bytes())["builder"]
-        )
-        adb.tap.assert_called_once_with(*button, DisplayTarget(logical_id="1", physical_id="2"))
-        # Shut before either gesture: a park that is going to stand down should
-        # not spend 2.6 s pinching first.
-        names = [c[0] for c in adb.mock_calls]
-        assert names.index("tap") < names.index("zoom") < names.index("swipe")
-
-    def test_a_panel_that_will_not_shut_stands_the_park_down(self) -> None:
-        """Rather than swiping under it and reporting the camera parked.
-
-        **Two taps, not three**, so a false positive on village grass leaves the
-        screen as it was found: an odd count would end with a panel this opened
-        standing over the village, which is worse than what is being fixed.
-        """
-        adb, parked = self._panelled(["day_builder_panel.png"])
-        assert parked is False
-        assert adb.tap.call_count == world_ui.PANEL_TAPS
-        # The parity itself, not just the bound: tracking the constant would let
-        # it be raised to an odd number and still pass.
-        assert world_ui.PANEL_TAPS % 2 == 0
-        adb.zoom.assert_not_called()
-        adb.swipe.assert_not_called()
-
     def test_the_swipes_stop_when_the_picture_does(self) -> None:
         """A fixed count was the bug: five was half what this account needed.
 
@@ -1603,16 +1580,14 @@ class ParkCameraTests(unittest.TestCase):
         assert parked is True
         # Before any swipe is read, rather than merely somewhere in the call: a
         # pinch after the walk settles the scale for the next caller and leaves
-        # this one's own readings taken at whatever zoom it was handed. One
-        # capture comes first, which is the plate-panel check — a cover this has
-        # to shut itself, and the one thing worth not pinching for.
+        # this one's own readings taken at whatever zoom it was handed.
         #
         # Every argument pinned, because each one is load-bearing and none of
         # them is asserted anywhere else: one pinch covers two thirds of the
         # range rather than all of it, and a gesture with no display named goes
         # to every touch node, where MuMu's launcher takes two fingers as a
         # switch away from the game.
-        assert adb.mock_calls[1] == call.zoom(
+        assert adb.mock_calls[0] == call.zoom(
             "out",
             world_ui.ZOOM_PINCHES,
             world_ui.COC_PACKAGE,
@@ -1678,7 +1653,7 @@ class CrossingTests(unittest.TestCase):
             # keeps moving is the other half of that, and the boat is not where
             # it is remembered then.
             patch.object(world_ui, "view_shift", return_value=(0, 0) if parked else (65, -33)),
-            patch.object(world_ui, "plate_panel_open", return_value=None),
+            patch.object(world_ui, "build_panel_open", return_value=False),
             patch.object(world_ui, "boat_marker", side_effect=self.markers) as self.looked,
         ):
             landed = world_ui.cross(adb, DisplayTarget(logical_id="1", physical_id="2"), want)
@@ -1797,7 +1772,7 @@ class CrossingTests(unittest.TestCase):
         """Its 確定 sits where 回營 does, and a result screen is never pressed at."""
         adb = MagicMock()
         adb.screenshot.side_effect = [
-            (FRAMES / name).read_bytes() for name in ("welcome_back.png", "world_night.png")
+            (FRAMES / name).read_bytes() for name in ("welcome_back.png", "hud_night.png")
         ]
         with patch.object(world_ui.time, "sleep"):
             here = world_ui.uncovered(adb, DisplayTarget(logical_id="1", physical_id="2"))
@@ -1808,7 +1783,7 @@ class CrossingTests(unittest.TestCase):
         """Its 繼續 sits where 回營 does, and a result screen is never pressed at."""
         adb = MagicMock()
         adb.screenshot.side_effect = [
-            (FRAMES / name).read_bytes() for name in ("shield_sheet.png", "world_day.png")
+            (FRAMES / name).read_bytes() for name in ("shield_sheet.png", "hud_day.png")
         ]
         with patch.object(world_ui.time, "sleep"):
             here = world_ui.uncovered(adb, DisplayTarget(logical_id="1", physical_id="2"))
@@ -1855,7 +1830,7 @@ class CrossingTests(unittest.TestCase):
             patch.object(world_ui.time, "sleep"),
             patch.object(world_ui, "current_world", return_value="night"),
             patch.object(world_ui, "view_shift", return_value=(0, 0) if parked else (65, -33)),
-            patch.object(world_ui, "plate_panel_open", return_value=None),
+            patch.object(world_ui, "build_panel_open", return_value=False),
             patch.object(world_ui, "loot_cart_open", return_value=opens),
             patch.object(world_ui, "loot_cart_ready", return_value=ready),
             patch.object(world_ui, "loot_cart_load", return_value=held),
@@ -1944,7 +1919,7 @@ class CrossingTests(unittest.TestCase):
             patch.object(world_ui.time, "sleep"),
             patch.object(world_ui, "current_world", return_value="night"),
             patch.object(world_ui, "view_shift", return_value=(0, 0)),
-            patch.object(world_ui, "plate_panel_open", return_value=None),
+            patch.object(world_ui, "build_panel_open", return_value=False),
             patch.object(world_ui, "loot_cart_open", return_value=False),
             patch.object(world_ui, "read_builder_stock", return_value=None),
             patch.object(world_ui, "uncovered") as pressed,
@@ -2083,6 +2058,10 @@ class CrossingTests(unittest.TestCase):
 class ScoutTests(unittest.TestCase):
     """Frames captured from a live scout screen, masked down to the panels read here."""
 
+    def setUp(self) -> None:
+        # Every frame here is from before the 2026-10 overhaul.
+        _at_legacy_geometry(self)
+
     def test_loot_is_read_over_grass(self) -> None:
         view = read_scout((FRAMES / "scout_grass.png").read_bytes())
         assert view is not None
@@ -2208,16 +2187,18 @@ class ScoutTests(unittest.TestCase):
         image = Image.open(io.BytesIO((FRAMES / "scout_seven_digits.png").read_bytes())).convert(
             "RGB"
         )
-        top, bottom = ROW_BOUNDS[0]
+        top, bottom = scout_parser.ROW_BOUNDS[0]
         # The 1, 6 and 4 of 1 746 707, each measured off this frame's gold row.
         digits = [
-            image.crop((PANEL_LEFT + a, top, PANEL_LEFT + b, bottom))
+            image.crop((scout_parser.PANEL_LEFT + a, top, scout_parser.PANEL_LEFT + b, bottom))
             for a, b in ((10, 17), (59, 74), (41, 58))
         ]
-        ImageDraw.Draw(image).rectangle((PANEL_LEFT, top, PANEL_RIGHT, bottom), fill=(18, 20, 16))
+        ImageDraw.Draw(image).rectangle(
+            (scout_parser.PANEL_LEFT, top, scout_parser.PANEL_RIGHT, bottom), fill=(18, 20, 16)
+        )
         offset = 10
         for digit in digits:
-            image.paste(digit, (PANEL_LEFT + offset, top))
+            image.paste(digit, (scout_parser.PANEL_LEFT + offset, top))
             offset += digit.width
         frame = io.BytesIO()
         image.save(frame, "PNG")
@@ -2307,8 +2288,10 @@ class ScoutTests(unittest.TestCase):
         for name, dimmed in (("battle_dimmed_by_popup.png", True), ("scout_grass.png", False)):
             image = open_frame((FRAMES / name).read_bytes())
             floors = [
-                _dimmed_floor(image.crop((PANEL_LEFT, top, PANEL_RIGHT, bottom)))
-                for top, bottom in ROW_BOUNDS
+                _dimmed_floor(
+                    image.crop((scout_parser.PANEL_LEFT, top, scout_parser.PANEL_RIGHT, bottom))
+                )
+                for top, bottom in scout_parser.ROW_BOUNDS
             ]
             if dimmed:
                 assert all(floor is not None and floor < LOOT_INK_BRIGHTNESS for floor in floors)
@@ -2349,8 +2332,10 @@ class ScoutTests(unittest.TestCase):
         ):
             image = open_frame((FRAMES / name).read_bytes())
             floors = [
-                _lit_floor(image.crop((PANEL_LEFT, top, PANEL_RIGHT, bottom)))
-                for top, bottom in ROW_BOUNDS
+                _lit_floor(
+                    image.crop((scout_parser.PANEL_LEFT, top, scout_parser.PANEL_RIGHT, bottom))
+                )
+                for top, bottom in scout_parser.ROW_BOUNDS
             ]
             assert all(floor >= LOOT_INK_BRIGHTNESS for floor in floors), name
             assert any(floor > LOOT_INK_BRIGHTNESS for floor in floors) is raised, name
@@ -2560,7 +2545,7 @@ class ScoutTests(unittest.TestCase):
         could never get back to one.
 
         The marker lays 32 px of ink from x 1374, which is inside the digits'
-        own range and so past anything `STOCK_DARK_LEFT` can exclude.
+        own range and so past anything `scout_parser.STOCK_DARK_LEFT` can exclude.
         """
         assert read_stock(
             (FRAMES / "home_marker_past_dark_edge.png").read_bytes()
@@ -2630,9 +2615,9 @@ class ScoutTests(unittest.TestCase):
         ):
             with self.subTest(frame=frame, row=row):
                 image = open_frame((FRAMES / frame).read_bytes())
-                left = STOCK_DARK_LEFT if row == 2 else STOCK_LEFT
-                top, bottom = STOCK_ROW_BOUNDS[row]
-                box = (left, top, STOCK_RIGHT, bottom)
+                left = scout_parser.STOCK_DARK_LEFT if row == 2 else scout_parser.STOCK_LEFT
+                top, bottom = scout_parser.STOCK_ROW_BOUNDS[row]
+                box = (left, top, scout_parser.STOCK_RIGHT, bottom)
                 assert _read_row(image, box, STOCK_DIGIT_TOLERANCE) is None
 
     def test_storages_are_none_away_from_the_home_screen(self) -> None:
@@ -2666,10 +2651,15 @@ class CeilingReadTests(unittest.TestCase):
             patch.object(AttackRunner, "_tap", lambda _, point: taps.append(point)),
             patch.object(AttackRunner, "_frame", return_value=b""),
             patch.object(shared, "storage_capacity", side_effect=answers),
+            patch.object(shared, "current_world", return_value=self.after),
             patch.object(shared.time, "sleep"),
         ):
             runner._settle_ceilings(runner.world or "day")
         return taps
+
+    # What `current_world` reads once a read has failed: the village, unless a
+    # tooltip the failure left open hides its + buttons.
+    after: str | None = "day"
 
     def test_a_village_that_reads_every_row_is_asked_once_for_the_whole_run(self) -> None:
         runner = self._runner()
@@ -2691,6 +2681,18 @@ class CeilingReadTests(unittest.TestCase):
         assert runner._capacity is None
         assert runner._ceiling.full(VillageStock(gold=0, elixir=0, dark=370_000), 90) is None
 
+    def test_a_tooltip_a_failed_read_left_over_the_buttons_is_tapped_shut(self) -> None:
+        """It hides the + buttons, so the next village test would read nothing.
+
+        Only then: with the village still reading, the taps already left the
+        tooltips as they were found.
+        """
+        failed = [None, None, None, None, None, None]
+        assert len(self._read(self._runner(), failed)) == 6
+        self.after = None
+        taps = self._read(self._runner(), failed)
+        assert taps[6:] == [(shared.STOCK_BAR_X, shared.STOCK_BAR_Y[2])]
+
     def test_a_run_that_can_never_stand_down_does_not_tap_the_bars(self) -> None:
         """`probe` and `bounds` take the default 0, and so does 不監控 in the window."""
         assert self._read(self._runner(stop_at=0), []) == []
@@ -2708,6 +2710,20 @@ class CeilingReadTests(unittest.TestCase):
         assert taps == [(shared.STOCK_BAR_X, y) for y in shared.STOCK_BAR_Y for _ in range(2)]
 
 
+def _legacy_capacity(png: bytes, row: int) -> int | None:
+    """`storage_capacity` at the tooltip's place before the overhaul, its edge taken as found.
+
+    The frames from then still pin `CAPACITY_TOLERANCE` from both sides; their
+    tooltip had no edge at today's rows to confirm it by.
+    """
+    with (
+        patch.object(scout_parser, "CAPACITY_ROWS", ((103, 132), (187, 216), (271, 300))),
+        patch.object(scout_parser, "CAPACITY_X", (1340, 1585)),
+        patch.object(scout_parser, "_tooltip_edge", return_value=True),
+    ):
+        return storage_capacity(png, row)
+
+
 class StorageTipTests(unittest.TestCase):
     """最大儲存量, off the tooltip a tapped storage bar drops open.
 
@@ -2717,18 +2733,16 @@ class StorageTipTests(unittest.TestCase):
     """
 
     def test_every_row_of_both_villages_reads_its_own_ceiling(self) -> None:
-        """Each row of each village, because the panel is not the same in any two.
+        """Each row of each village, each from its own box.
 
-        The tooltip hangs under the bar that opened it, so the line moves by the
-        84 px row pitch; the home village writes three lines to the builder
-        base's two; and the dark row's panel sits further right, its label
-        reaching inside the box the other rows only show the colon in. What
-        makes one box serve all five is that 最大儲存量 is not a number: it
-        misses every digit template by 52 bits and up, so the label is cut away
-        wherever it falls and the capacity is what is left.
+        The tooltip hangs under the bar that opened it, its first line 59 to 65
+        px below that bar's digits, and right over the next bar's: the gold
+        line over 28 000 000 of elixir, the elixir line over 334 555 of dark,
+        the dark line over the gem count. What makes the label harmless is that
+        最大儲存量 is not a number, so it is cut away wherever it falls.
         """
         assert [
-            storage_capacity((FRAMES / f"stock_tip_{name}.png").read_bytes(), row)
+            storage_capacity((FRAMES / f"hud_tip_{name}.png").read_bytes(), row)
             for name, row in (
                 ("day_gold", 0),
                 ("day_elixir", 1),
@@ -2736,7 +2750,26 @@ class StorageTipTests(unittest.TestCase):
                 ("night_gold", 0),
                 ("night_elixir", 1),
             )
-        ] == [24_000_000, 24_000_000, 370_000, 2_050_000, 2_450_000]
+        ] == [28_000_000, 28_000_000, 470_000, 6_000_000, 5_600_000]
+
+    def test_a_tooltip_is_read_only_on_its_own_row(self) -> None:
+        """Every other row's box holds the next bar's number, which is no ceiling."""
+        for name, row in (("day_gold", 0), ("day_elixir", 1), ("day_dark", 2)):
+            png = (FRAMES / f"hud_tip_{name}.png").read_bytes()
+            assert [storage_capacity(png, other) for other in range(3) if other != row] == [
+                None,
+                None,
+            ], name
+
+    def test_a_frame_with_no_tooltip_open_reads_nothing(self) -> None:
+        """The gold box holds the elixir bar's digits, which read as a number on their own.
+
+        The tooltip's thin white top edge is what says one is open, and without
+        it the elixir held would come back as the gold ceiling.
+        """
+        for world in ("hud_day", "hud_night"):
+            png = (FRAMES / f"{world}.png").read_bytes()
+            assert [storage_capacity(png, row) for row in range(3)] == [None, None, None]
 
     def test_the_builder_base_elixir_is_not_read_ten_times_over(self) -> None:
         """2 450 000, not 24 500 000, which is what a loose tolerance reads here.
@@ -2744,9 +2777,10 @@ class StorageTipTests(unittest.TestCase):
         A scrap at the right end of the box comes back as one more 0 at 30 bits,
         and that ceiling is ten times the real one — a village that could never
         fill it and a run that would never stand down. This is the ceiling of
-        `CAPACITY_TOLERANCE`; the next test is its floor.
+        `CAPACITY_TOLERANCE`; the next test is its floor. From before the
+        overhaul.
         """
-        capacity = storage_capacity((FRAMES / "stock_tip_night_elixir.png").read_bytes(), 1)
+        capacity = _legacy_capacity((FRAMES / "stock_tip_night_elixir.png").read_bytes(), 1)
         assert capacity == 2_450_000
 
     def test_a_digit_the_bar_behind_shows_through_is_still_read(self) -> None:
@@ -2754,16 +2788,10 @@ class StorageTipTests(unittest.TestCase):
 
         They pushed the 7 to 16 bits, so the line was cut into 2 and 000000 and
         the elixir ceiling read 0, which leaves elixir out of `full` altogether.
-        Blacked out outside the storage corner.
+        From before the overhaul, blacked out outside the storage corner.
         """
         png = (FRAMES / "stock_tip_day_elixir_ghost.png").read_bytes()
-        assert storage_capacity(png, 1) == 27_000_000
-
-    def test_a_frame_with_no_tooltip_open_reads_nothing(self) -> None:
-        """Which is what leaves that resource out rather than guessing at one."""
-        for world in ("world_day", "world_night"):
-            png = (FRAMES / f"{world}.png").read_bytes()
-            assert [storage_capacity(png, row) for row in range(3)] == [None, None, None]
+        assert _legacy_capacity(png, 1) == 27_000_000
 
 
 class SurveyTests(unittest.TestCase):
@@ -4268,6 +4296,7 @@ class AttackTests(unittest.TestCase):
         failing. `can_skip` goes the same way: an unpainted button is an absent
         one, which is how a countdown that has expired is recognised.
         """
+        _at_legacy_geometry(self)
         fading = (FRAMES / "scout_fading_in.png").read_bytes()
         assert panel_drawn(fading) is False
         view = read_scout(fading)
@@ -4291,6 +4320,7 @@ class AttackTests(unittest.TestCase):
         clear. That second one costs nothing either way — `read_scout` resolves
         it to None, and the population this separates is the frames that answer.
         """
+        _at_legacy_geometry(self)
         assert panel_drawn((FRAMES / "scout_dim_dark.png").read_bytes()) is True
         assert panel_drawn((FRAMES / "scout_fading_in.png").read_bytes()) is False
         assert panel_drawn((FRAMES / "scout_faint_panel.png").read_bytes()) is False
@@ -4303,6 +4333,7 @@ class AttackTests(unittest.TestCase):
         on. None of the recorded frames from the evening this was measured held
         one, which is what the committed fixtures are for.
         """
+        _at_legacy_geometry(self)
         expired = (FRAMES / "scout_bright_backdrop.png").read_bytes()
         assert panel_drawn(expired) is True
         view = read_scout(expired)
@@ -4318,6 +4349,7 @@ class AttackTests(unittest.TestCase):
         correctly here and is not drawn by the measure above, so a check inside
         the reader would have taken the battle poll with it.
         """
+        _at_legacy_geometry(self)
         dimmed = (FRAMES / "battle_dimmed_by_popup.png").read_bytes()
         assert panel_drawn(dimmed) is False
         view = read_scout(dimmed)
@@ -6704,6 +6736,14 @@ class WallMenuTests(unittest.TestCase):
 class HomeTests(unittest.TestCase):
     """Getting back to a village, and how long an unreadable frame is worth waiting on."""
 
+    def setUp(self) -> None:
+        # The frames here are stand-ins, so the two covers `_home` checks that no
+        # case below is about read as absent; the cases about them patch them.
+        for name in ("build_panel_open", "in_battle"):
+            patcher = patch.object(shared, name, return_value=False)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
     def _backs(
         self,
         run: shared.GameRunner,
@@ -6751,6 +6791,33 @@ class HomeTests(unittest.TestCase):
         """Nothing is pressed at a launch: there is no village there to press back on."""
         held = VillageStock(gold=1, elixir=1, dark=1)
         assert self._backs(self._runner(), [None] * 4 + [held]) == 0
+
+    def test_a_battle_is_not_taken_for_the_village_its_bars_are_drawn_on(self) -> None:
+        """Since the overhaul a battle draws the same storage bars in the same place.
+
+        Read as the village, every tap after it would land on the battlefield
+        with a card selected. Off a battle frame the storages are not asked, so
+        this presses `back` and reads the next frame, which is the village.
+        """
+        held = VillageStock(gold=1, elixir=1, dark=1)
+        run = self._runner()
+        with (
+            patch.object(shared.time, "sleep"),
+            patch.object(run, "_frame", return_value=b""),
+            patch.object(shared, "idle_disconnected", return_value=False),
+            patch.object(shared, "loading_screen", return_value=False),
+            patch.object(shared, "game_dialog", return_value=None),
+            patch.object(shared, "current_world", side_effect=[None, "day"]),
+            patch.object(shared, "in_battle", side_effect=[True]),
+            patch.object(shared, "read_stock", return_value=held) as stock,
+            patch.object(shared.GameRunner, "_settle_zoom"),
+            patch.object(AdbController, "back") as back,
+        ):
+            run._settled = True
+            run._seen_village = True
+            assert run._home() == held
+        assert back.call_count == 1
+        assert stock.call_count == 1
 
     def test_a_panel_is_backed_out_of_at_once_once_a_village_has_read(self) -> None:
         """`_sweep` opens one on most of its taps, and the launch patience is not owed to it.
@@ -6814,12 +6881,12 @@ class HomeTests(unittest.TestCase):
         assert settle.call_count == 1
         assert back.call_count == 0
 
-    def test_a_village_the_plate_row_misses_still_settles_the_zoom(self) -> None:
-        """Widening the test, not swapping it: the storages catch what the plates drop.
+    def test_a_village_current_world_misses_still_settles_the_zoom(self) -> None:
+        """Widening the test, not swapping it: the storages catch what the buttons drop.
 
-        A gem shower drifts across the top of the home village and covers a
-        plate for a few seconds, which `current_world` answers None for.
-        Gated on the plate row alone, such a frame hands its caller a stock
+        A storage tooltip left open hangs over the corner's + buttons, which
+        `current_world` answers None for. Gated on `current_world` alone, such
+        a frame hands its caller a stock
         with the camera never put back — and every caller reads a returned
         stock as the measured coordinates being valid now.
 
@@ -6881,27 +6948,21 @@ class HomeTests(unittest.TestCase):
     def test_the_gems_bar_is_why_the_storages_cannot_name_the_village(self) -> None:
         """The premise, off real pixels rather than prose.
 
-        The builder base carries two badges and both sit left of the shield's
-        own, so covering either one leaves a row `current_world` will not read —
-        while `read_stock` answers straight through it, the gems bar arriving as
-        a dark elixir row. The home village needs to lose two of its three to
-        get there, which is what makes the builder base the exposed one.
+        The builder base carries one + button, so covering it leaves a frame
+        `current_world` will not read — while `read_stock` answers straight
+        through it, the gems bar arriving as a dark elixir row. The home village
+        needs to lose both of its buttons to get there, which is what makes the
+        builder base the exposed one.
 
         Painted here rather than committed: it is a synthetic frame, and
-        `tests/frames/` is 33 MB of real screens whose pixel values are the
+        `tests/frames/` holds real screens whose pixel values are the
         measurement.
         """
-        night = Image.open(io.BytesIO((FRAMES / "world_night.png").read_bytes())).convert("RGB")
-        grass = night.getpixel((400, 30))
-        covered = night.copy()
-        ImageDraw.Draw(covered).rectangle((810, 8, 890, 40), fill=grass)
-        raw = io.BytesIO()
-        covered.save(raw, format="PNG")
-        hidden = raw.getvalue()
+        hidden = _covered((FRAMES / "hud_night.png").read_bytes(), NIGHT_GEMS_PLUS)
         assert current_world(hidden) is None
         held = read_stock(hidden)
         assert held is not None
-        assert held.dark == 10_152
+        assert held.dark == 5_708
 
     def _walked(self, run: shared.GameRunner, seen: list[str]) -> tuple[bool, int]:
         """Walk `_home` over these worlds, the storages reading whenever it looks.
@@ -7156,9 +7217,9 @@ class WallRunnerTests(unittest.TestCase):
         does by tapping a grid and hoping; comparing what they ask is the half
         the loop does better.
         """
-        runner = self._runner(at=[(200, 300), (400, 300), (600, 300)])
+        runner = self._runner(at=[(300, 300), (400, 300), (600, 300)])
         menus = {
-            (200, 300): WallMenu(price=9000000, gold=(0, 0), elixir=(0, 0), add=(0, 0)),
+            (300, 300): WallMenu(price=9000000, gold=(0, 0), elixir=(0, 0), add=(0, 0)),
             (400, 300): WallMenu(price=4000000, gold=(0, 0), elixir=(0, 0), add=(0, 0)),
             (600, 300): None,
         }
@@ -7177,9 +7238,9 @@ class WallRunnerTests(unittest.TestCase):
         # Every named spot is read, and the one that opens nothing is dropped
         # rather than guessed at: it was found by eye on a frame the game has
         # since moved.
-        assert tapped == [(200, 300), (400, 300), (600, 300)]
+        assert tapped == [(300, 300), (400, 300), (600, 300)]
         assert [(w.point, w.price) for w in found] == [
-            ((200, 300), 9000000),
+            ((300, 300), 9000000),
             ((400, 300), 4000000),
         ]
         # And the cheapest is what gets bought, which is the lowest-level wall.
@@ -7192,7 +7253,7 @@ class WallRunnerTests(unittest.TestCase):
         the only other caller was a hand-named spot; a finder that answers in
         guesses makes the miss the ordinary case rather than the corner.
         """
-        runner = self._runner(at=[(200, 300), (400, 300)])
+        runner = self._runner(at=[(300, 300), (400, 300)])
         # The first tap opened a barracks: no storage bars, so no village.
         stocks = iter([None, _stock()])
         with (
@@ -7443,6 +7504,8 @@ class HomeHudTests(unittest.TestCase):
             "stock_plates_behind_bars_bought.png",
             "stock_white_behind_dark_bar.png",
             "wall_menu_elixir_only.png",
+            "hud_day_lab_panel.png",
+            "hud_day_shield_split.png",
             "world_day_boat_marker.png",
             "world_day_occluded.png",
             "world_day_shield_only.png",
@@ -7462,7 +7525,6 @@ class HomeHudTests(unittest.TestCase):
         """The boat is on screen and the game draws nothing over it, nor over any collector."""
         frame = (FRAMES / "world_day_marker_hidden.png").read_bytes()
         assert boat_marker(frame) is None
-        assert current_world(frame) == "day"
 
     def test_collector_markers_are_found_by_size_not_by_what_they_stand_on(self) -> None:
         """Colour alone answers the storage bars, the shop button and a spell factory.
@@ -7538,334 +7600,94 @@ class HomeHudTests(unittest.TestCase):
         markers = collect_bubbles((FRAMES / "home_marker_over_bars.png").read_bytes())
         assert not [marker for marker in markers if marker.resource == "dark"]
 
-    def test_the_builder_counter_is_split_on_its_slash(self) -> None:
-        """Idle over total. The slash is not a digit and is found by matching badly."""
-        assert free_builders((FRAMES / "home_markers.png").read_bytes()) == (1, 5)
+    def test_the_counters_are_split_on_their_slash(self) -> None:
+        """Idle over total, bottom right on both villages; the slash matches no digit.
 
-    def test_a_wide_leading_digit_still_fits_the_builder_box(self) -> None:
-        """0/6, where the box was cut from a 1/5 and a 1 is the narrowest digit.
-
-        The number is centred, so the leading 0 inks from x 792 and the old edge
-        at 795 took three columns off it: 23 bits from its template against 5
-        with them restored, either side of the tolerance. So this village read as
-        having no counter at all while every builder on it was busy.
+        The builder base's lone 1 lands 23 from its template, which the old
+        plates' tolerance of 19 would have dropped, reading 0/1 as 0.
         """
-        assert free_builders((FRAMES / "home_builders_busy.png").read_bytes()) == (0, 6)
+        day = (FRAMES / "hud_day.png").read_bytes()
+        night = (FRAMES / "hud_night.png").read_bytes()
+        assert (plate_count(day, "builder"), plate_count(day, "lab")) == ((0, 6), (0, 2))
+        assert (plate_count(night, "builder"), plate_count(night, "lab")) == ((0, 3), (0, 1))
+        assert free_builders(day) == (0, 6)
 
     def test_a_frame_with_no_village_on_it_has_no_builders(self) -> None:
-        assert free_builders((FRAMES / "wall_spend_dialog.png").read_bytes()) is None
+        """The build panel covers the counters, and a battle draws none."""
+        for name in ("wall_spend_dialog.png", "hud_scout.png", "hud_day_build_panel.png"):
+            assert free_builders((FRAMES / name).read_bytes()) is None, name
 
-    def test_the_builder_panel_is_read_off_its_progress_bars(self) -> None:
-        """9小時23分鐘, 19小時12分鐘, 21小時38分鐘 and 1天17小時, in seconds.
-
-        Two units and two ladders: only the first character of the first unit is
-        matched, and the second number follows it one step down. The frame keeps
-        the panel's own column and blacks out the rest; whole, it is 3 MB.
-        """
-        queue = builder_jobs((FRAMES / "builder_panel.png").read_bytes())
-        assert queue is not None
-        assert queue.running == 4
-        assert queue.remaining == [33780, 69120, 77880, 147600]
-
-    def test_a_unit_character_is_not_read_as_a_digit(self) -> None:
-        """1天16小時 and 4天23小時, which the old tolerance read as 7天 and 13天.
-
-        The panel is translucent, so what is behind it decides whether 小's two
-        short outer strokes reach the ink mask. Over the flat grass of
-        `builder_panel.png` they do; over this village's wall lattice only the
-        middle stroke survives, and a bare vertical bar sits exactly 30 from the
-        template for `0` — which the old line of 30 admitted with `<=`, turning
-        16小時 into 160小時. Nothing about that is visible on a masked fixture,
-        so this one is the whole live frame.
-
-        The first row is 7小時52分鐘 and does not resolve at all; it is absent
-        from the times while still counted in `running`, which is the disagreement
-        `BuildQueue` carries both numbers to show.
-        """
-        queue = builder_jobs((FRAMES / "day_builder_panel.png").read_bytes())
-        assert queue is not None
-        assert queue.running == 6
-        assert queue.remaining == [144000, 176400, 176400, 352800, 428400]
-
-    def test_a_village_with_no_panel_up_has_no_queue(self) -> None:
-        """The button toggles, so "no panel" is what a second tap is for."""
-        assert builder_jobs((FRAMES / "home_markers.png").read_bytes()) is None
-        assert builder_jobs((FRAMES / "home_storages.png").read_bytes()) is None
-
-    def test_a_plate_is_found_by_where_it_sits_not_by_its_place_in_the_row(self) -> None:
-        """A gem shower covers plates, so the first badge is not always the laboratory.
-
-        On the first of these only the shield's badge is visible and on the
-        second the shield's is the one missing. Read by index, the first would
-        open the shield as the laboratory and the second would raise.
-        """
-        shield_only = plate_badges((FRAMES / "world_day_shield_only.png").read_bytes())
-        assert shield_only == {"shield": 933}
-        occluded = plate_badges((FRAMES / "world_day_occluded.png").read_bytes())
-        assert occluded == {"lab": 516, "builder": 719}
-
-    def test_the_two_villages_lay_the_same_plates_out_differently(self) -> None:
-        """The row is centred and the home village has one plate more, so every x moves.
-
-        The builder base is here twice because its own row moves between frames
-        — measured at 628/830 and at 644/846 — which is why nothing downstream
-        may write a plate's position down.
-        """
-        assert plate_badges((FRAMES / "world_day.png").read_bytes()) == {
-            "lab": 516,
-            "builder": 719,
-            "shield": 933,
+    def test_the_build_panel_is_found_by_its_x_and_its_title_bar(self) -> None:
+        panels = {
+            "hud_day_build_panel.png",
+            "hud_day_build_panel_apprentice.png",
+            "hud_day_lab_panel.png",
+            "hud_night_build_panel.png",
         }
-        assert plate_badges((FRAMES / "world_night.png").read_bytes()) == {
-            "lab": 644,
-            "builder": 846,
+        for path in sorted(FRAMES.glob("*.png")):
+            try:
+                found = build_panel_open(path.read_bytes())
+            except ValueError:
+                continue  # a fixture masked to another size, not a screen
+            assert found == (path.name in panels), path.name
+
+    def test_the_running_rows_are_read_off_their_bars_with_their_countdowns(self) -> None:
+        """The fill and the track mark the rows; the 建議升級 and 其他升級 rows carry neither.
+
+        Each countdown as the frame writes it: 5小時 17分鐘 and the rest on the
+        builders' tab, 2天 13小時 and 3天 18小時 on the laboratory's, and on
+        the builder base 16小時 24分鐘, whose leading 1 lands 34 from its
+        template — the weakest digit on record.
+        """
+        rows = {
+            "hud_day_build_panel.png": [19020, 66660, 85920, 162000, 532800, 547200],
+            "hud_day_lab_panel.png": [219600, 324000],
+            "hud_night_build_panel.png": [59040, 151200, 244800],
         }
-        assert plate_badges((FRAMES / "world_night_corner.png").read_bytes()) == {
-            "lab": 628,
-            "builder": 830,
-        }
+        for name, read in rows.items():
+            assert panel_rows((FRAMES / name).read_bytes()) == read, name
+        assert panel_rows((FRAMES / "hud_day.png").read_bytes()) is None
 
-    def test_a_plate_count_is_read_from_its_own_badge(self) -> None:
-        """0/2 and 0/6 on the home village, 0/1 and 0/3 on the builder base.
+    def test_a_one_character_unit_has_to_be_shaped_like_tian(self) -> None:
+        """秒 is one character too, about as wide, and 45秒 taken for 天 is 45 days.
 
-        One offset from the badge serves all four, which is what lets a command
-        read either village without knowing where the row happens to be.
+        No recorded panel shows 秒 on a running row, so the gate is shown the
+        other way round: with the measured shapes of 天 swapped for a blank one,
+        the rows whose first unit is 天 answer None rather than a number.
         """
-        for frame, wanted in (
-            ("day_lab_panel.png", {"lab": (0, 2), "builder": (0, 6)}),
-            ("night_lab_panel.png", {"lab": (0, 1), "builder": (0, 3)}),
-        ):
-            png = (FRAMES / frame).read_bytes()
-            badges = plate_badges(png)
-            counts = {
-                role: plate_count(png, at) for role, at in badges.items() if role != "shield"
-            }
-            assert counts == wanted, frame
+        png = (FRAMES / "hud_day_lab_panel.png").read_bytes()
+        assert panel_rows(png) == [219600, 324000]
+        with patch.object(home_parser, "DAY_SHAPES", (0,)):
+            assert panel_rows(png) == [None, None]
 
-    def test_a_count_that_will_not_resolve_is_left_unread(self) -> None:
-        """The plate is translucent, so the camera decides whether the digits read.
+    def test_a_portrait_beside_a_countdown_is_left_out_of_it(self) -> None:
+        """An apprentice's ring and a goblin's face sit right against the number.
 
-        This village shows 0/5 and the 5 lands 24 from its template against a
-        tolerance of 19 — the pair 24/25 is the coin flip the tolerance was drawn
-        under, so the honest answer is nothing rather than the 0/9 a looser line
-        would give.
+        Cut to the text's own height, the ring came out the height of a digit
+        and 37 from a 1, 2 px before the real first digit, so 1天 read as 11天.
+        Seen whole, a portrait runs taller than any character. The first frame
+        is the one that read 11天: 1天 20小時 beside the apprentice, then 6天
+        4小時 and 6天 8小時 beside goblins.
         """
-        png = (FRAMES / "world_day.png").read_bytes()
-        assert plate_count(png, plate_badges(png)["builder"]) is None
-
-    def test_every_plate_opens_a_panel_read_through_its_own_band(self) -> None:
-        """Four panels, one template, four different places on screen.
-
-        The offset from each plate's badge to its own bars runs +147 to +172
-        against a bar 115 px wide, so these are measured rather than derived.
-        """
-        for frame, world, role, running, times in (
-            ("day_lab_panel.png", "day", "lab", 2, [108000, 201600]),
-            ("night_lab_panel.png", "night", "lab", 1, [327600]),
-            ("night_builder_panel.png", "night", "builder", 3, [29220, 219600, 306000]),
-        ):
-            queue = panel_jobs((FRAMES / frame).read_bytes(), world, role)
-            assert queue is not None, frame
-            assert queue.running == running, frame
-            assert queue.remaining == times, frame
+        read = panel_rows((FRAMES / "hud_day_build_panel_apprentice.png").read_bytes())
+        assert read == [16200, 63840, 83100, 158400, 529200, 543600]
 
     def test_the_strip_for_the_model_reaches_down_through_the_suggestions(self) -> None:
-        """The 建議升級 rows sit under the running ones, so the crop runs to the panel's foot."""
-        for frame, world, role in (
-            ("day_builder_panel.png", "day", "builder"),
-            ("day_lab_panel.png", "day", "lab"),
-            ("night_builder_panel.png", "night", "builder"),
-            ("night_lab_panel.png", "night", "lab"),
-        ):
-            strip = jobs_strip((FRAMES / frame).read_bytes(), world, role)
-            assert strip is not None, frame
-            band = PANEL_BANDS[(world, role)]
-            width, height = Image.open(io.BytesIO(strip)).size
-            assert width == band[1] - band[0] + NAMES_LEFT + PRICE_RIGHT, frame
-            assert height > PANEL_BOTTOM - 260, frame
+        """The panel from its X's column to the screen edge, down to its tabs."""
+        strip = jobs_strip((FRAMES / "hud_day_build_panel.png").read_bytes())
+        assert strip is not None
+        assert Image.open(io.BytesIO(strip)).size == (430, PANEL_BOTTOM - 60)
+        assert jobs_strip((FRAMES / "hud_day.png").read_bytes()) is None
 
-    def test_the_bars_agree_with_the_plate_that_opened_them(self) -> None:
-        """Busy builders and running bars are the same number, counted two ways.
+    def test_the_shield_bar_saying_no_shield_is_read_as_none_up(self) -> None:
+        """無 falls into three or four spans depending on what shows through the bar."""
+        for name in ("hud_day.png", "hud_day_shield_split.png"):
+            assert shield_state((FRAMES / name).read_bytes()) == ShieldState(), name
 
-        The plate says how many of the workmen are idle and the panel draws one
-        bar per job, so a reader that has both gets a check on itself for free.
-        """
-        for frame, world, role in (
-            ("day_lab_panel.png", "day", "lab"),
-            ("day_builder_panel.png", "day", "builder"),
-            ("night_lab_panel.png", "night", "lab"),
-            ("night_builder_panel.png", "night", "builder"),
-        ):
-            png = (FRAMES / frame).read_bytes()
-            counted = plate_count(png, plate_badges(png)[role])
-            queue = panel_jobs(png, world, role)
-            assert counted is not None, frame
-            assert queue is not None, frame
-            assert queue.running == counted[1] - counted[0], frame
-
-    def test_the_shield_plate_tells_no_shield_apart_from_an_unread_one(self) -> None:
-        """無 is a state, not a failure, and it is the opposite instruction.
-
-        A village with no shield is being farmed by other people right now; a
-        frame whose countdown will not resolve only wants looking at again. The
-        two are separated by how much is written on the plate — one glyph
-        against six — rather than by matching the character.
-        """
-        for frame, wanted in (("world_day.png", False), ("home_builders_busy.png", False)):
-            png = (FRAMES / frame).read_bytes()
-            state = shield_state(png, plate_badges(png)["shield"])
-            assert state is not None, frame
-            assert state.up is wanted, frame
-        png = (FRAMES / "day_lab_panel.png").read_bytes()
-        held = shield_state(png, plate_badges(png)["shield"])
-        assert held is not None
-        assert held.up is True
-        assert held.remaining == 6 * 3600 + 8 * 60
-
-    def test_a_countdown_drawn_over_the_icon_keeps_its_hours(self) -> None:
-        """The plate centres its text, so 3小時 12分鐘 starts over the icon's rim.
-
-        The box used to start past the icon and cut the 3 in half, and the
-        reader then took 12 分鐘 for the whole countdown: 720 seconds for a
-        shield of three hours and twelve minutes. Captured on LDPlayer; the
-        plate is the game's own and the same at 1600x900 on MuMu.
-        """
-        png = (FRAMES / "day_shield_over_icon.png").read_bytes()
-        assert shield_state(png, plate_badges(png)["shield"]) == ShieldState(
-            remaining=3 * 3600 + 12 * 60
-        )
-
-    def test_a_shorter_countdown_reads_past_the_rim_it_leaves_bare(self) -> None:
-        """3小時 26分 sits further right, and the rim shows between the 3 and 小.
-
-        Cut by columns, the three came out as one span nearest to 5 at 64 bits,
-        and the plate read as unreadable. Captured on LDPlayer.
-        """
-        png = (FRAMES / "day_shield_rim_bare.png").read_bytes()
-        assert shield_state(png, plate_badges(png)["shield"]) == ShieldState(
-            remaining=3 * 3600 + 26 * 60
-        )
-
-    def test_only_a_thin_patch_clear_of_the_box_edge_is_taken_for_the_rim(self) -> None:
-        """A sliver of a digit the box cut, and a 1's stem, both stand taller than the rim.
-
-        Taking either would leave 2小時 of 12小時 standing: a shield ten hours
-        shorter than it is, the direction a shield must never be wrong in. The 1
-        here is its stem alone, as narrow as the rim, which is what a plate whose
-        flag did not clear the ink threshold leaves.
-        """
-        for digit in (range(0, 3), range(4, 8)):
-            ink = [[False] * 110 for _ in range(34)]
-            for y in range(9, 28):
-                for x in digit:
-                    ink[y][x] = True
-            for y in range(9, 20):
-                for x in range(12, 15):
-                    ink[y][x] = True
-            _clear_rim(ink)
-            assert sorted({x for row in ink for x, on in enumerate(row) if on}) == list(digit)
-
-    def test_a_countdown_missing_its_first_number_is_unread_rather_than_short(self) -> None:
-        """A shield read hours short looks about to lapse, the wrong way to be wrong.
-
-        On MuMu, 1小時 48分 fuses its 1 with 小 and used to come back as 48
-        minutes; on the committed plate a gem shower hides the hours and it
-        came back as 14 minutes. Neither can be read, so neither is.
-        """
-        for frame in ("day_shield_first_number_fused.png", "world_day_shield_only.png"):
-            png = (FRAMES / frame).read_bytes()
-            assert shield_state(png, plate_badges(png)["shield"]) is None, frame
-
-    def test_a_shield_with_under_a_minute_left_is_still_a_shield(self) -> None:
-        """`up` is the countdown having read, not the countdown being non-zero.
-
-        This is the mutation deriving it introduces: `bool(self.remaining)`
-        passes every frame here, because no committed frame reads 0, and turns
-        a shield about to lapse into the loudest wrong line this project has —
-        **沒有護盾**,村莊現在可以被打 over a village that is still covered.
-        `_seconds_from` really can return 0, and `spell_out(0)` is 0 分鐘.
-        """
-        assert ShieldState(remaining=0).up is True
-        assert ShieldState().up is False
-
-    def test_the_plate_panel_is_found_by_its_running_rows(self) -> None:
-        """Four of the eighteen village frames carry one, and it answers on those four.
-
-        The panel is a village by every test the loops have — `current_world`
-        reads the badge row above it and `read_stock` the bars beside it — so
-        this is the only thing that can say it is there. The edges either side
-        of `BAR_COVERAGE`: `night_builder_panel.png` is the lowest panel at
-        0.9333 and `home_marker_over_bars.png` the highest village at 0.4667,
-        where a marker is sitting over the storage bars.
-
-        **An idle panel is invisible to it.** A plate with nothing running has
-        no bars to find, and the sheet's own dark reads 0.00 to 0.20 of bar
-        where a real one reads 0.83 to 0.97, so there is nothing else in the
-        band to go by. No committed frame has one; the park under an idle panel
-        is unchanged by this.
-        """
-        panelled = {
-            "day_builder_panel.png": ("day", "builder"),
-            "day_lab_panel.png": ("day", "lab"),
-            "night_builder_panel.png": ("night", "builder"),
-            "night_lab_panel.png": ("night", "lab"),
-        }
-        for frame, (world, role) in panelled.items():
-            png = (FRAMES / frame).read_bytes()
-            assert plate_panel_open(png, world) == plate_button(plate_badges(png)[role]), frame
-        for frame in (
-            "home_marker_over_bars.png",
-            "home_builders_busy.png",
-            "world_day.png",
-            "day_village_shield.png",
-            "world_night.png",
-        ):
-            png = (FRAMES / frame).read_bytes()
-            world = current_world(png)
-            assert world is not None, frame
-            assert plate_panel_open(png, world) is None, frame
-
-    def test_a_panel_pins_the_camera_reader_at_no_move_at_all(self) -> None:
-        """Why the park has to shut it rather than read through it.
-
-        The panel floats over the middle of the map and covers 60% of the box
-        `view_shift` compares, so a real pan under it reads as nothing moving —
-        which is the answer that means the camera has arrived. Synthesised the
-        way a static overlay behaves: translate the scene, paste the panel back
-        where it was.
-        """
-        png = (FRAMES / "day_builder_panel.png").read_bytes()
-        scene = Image.open(io.BytesIO(png)).convert("RGB")
-        panel = scene.crop((612, 122, 1032, 698))
-        drift = world_ui.CROSSINGS["night"].drift
-        for across, down in ((65, -33), (131, -65), (261, -131)):
-            moved = Image.new("RGB", scene.size, (0, 0, 0))
-            moved.paste(scene, (across, down))
-            bare = io.BytesIO()
-            moved.save(bare, format="PNG")
-            assert view_shift(png, bare.getvalue(), drift) == (across, down)
-            moved.paste(panel, (612, 122))
-            pinned = io.BytesIO()
-            moved.save(pinned, format="PNG")
-            assert view_shift(png, pinned.getvalue(), drift) == (0, 0), (across, down)
-
-    def test_a_plate_under_a_panel_says_nothing_rather_than_claiming_a_shield(self) -> None:
-        """Which is why an unreadable countdown is None and not `up=True`.
-
-        A full-screen panel leaves the badge row readable above it and the plate
-        itself unreadable, so the two look identical from here: both write
-        enough in that box to clear 無's one glyph and neither resolves. Reading
-        that as a shield would have this frame claim one on a screen that says no
-        such thing, and `remaining=None` on a live shield is a state nothing
-        produces for the same reason.
-        """
-        for frame in ("hero_hall_menu.png", "day_village_shield.png"):
-            png = (FRAMES / frame).read_bytes()
-            assert shield_state(png, plate_badges(png)["shield"]) is None, frame
-
-    def test_the_builder_base_has_no_shield_plate_to_read(self) -> None:
-        """Structurally, not incidentally: it is matchmaking against a live player."""
-        assert "shield" not in plate_badges((FRAMES / "world_night.png").read_bytes())
+    def test_the_shield_bar_is_only_read_where_its_button_is(self) -> None:
+        """The builder base has none, and a cover over the corner is no evidence of 無."""
+        for name in ("hud_night.png", "hud_day_build_panel.png", "hud_scout.png"):
+            assert shield_state((FRAMES / name).read_bytes()) is None, name
 
 
 class BuildingUpgradeTests(unittest.TestCase):
@@ -7931,6 +7753,9 @@ class BuildingUpgradeTests(unittest.TestCase):
         is a village, all over. What separates them is that the sheet covers the
         storage bars and a village does not.
         """
+        assert upgrade_sheet((FRAMES / "hud_day.png").read_bytes()) is None
+        # From before the 2026-10 overhaul, so read with the bars where they were.
+        _at_legacy_geometry(self)
         assert upgrade_sheet((FRAMES / "upgrade_sheet.png").read_bytes()) == (1121, 783)
         assert upgrade_sheet((FRAMES / "home_markers.png").read_bytes()) is None
         assert upgrade_sheet((FRAMES / "menu_with_gem_plate.png").read_bytes()) is None
@@ -8210,11 +8035,11 @@ class TargetFinderTests(unittest.TestCase):
             spots = runner._spotted("城牆", "散開", 3)
         assert spots == [(800, 423), (960, 270)]
 
-    def test_a_point_on_the_top_rows_ui_is_dropped_too(self) -> None:
+    def test_a_point_on_the_games_own_buttons_is_dropped_too(self) -> None:
         """The hero hall's search taps these points without walking through `_opened`."""
         runner = self._runner(ai=GeminiClient(api_key="not-a-real-key", settings=GeminiSetting()))
-        # 11% of 900 is 99, under the plate row; (82%, 20%) is the storage bars.
-        answer = self._answer((40, 11), (82, 20), (60, 30))
+        # (10%, 11%) is the avatar block, (82%, 20%) the storage bars, (94%, 50%) 商店.
+        answer = self._answer((10, 11), (82, 20), (94, 50), (60, 30))
         with (
             patch.object(GeminiClient, "generate_structured", return_value=answer),
             patch.object(WallRunner, "_frame", return_value=b""),

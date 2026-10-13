@@ -1,64 +1,39 @@
-"""Which of the game's two villages is on screen, counted off the top row of plates.
+"""Which of the game's two villages is on screen, read off the green + buttons in the corner.
 
 The game keeps two villages and reopens on whichever one it was closed on, so no
 command can assume which it is looking at. That matters more than it sounds:
 `read_stock` answers with three numbers on the builder base as readily as on the
 home village, because the builder base has no dark elixir and its gems bar sits
-at exactly the y the dark row is read from — measured, a builder base holding
-10 152 gems reports `dark=10152`, the gem count read as if it were dark elixir.
-So every loop's own "am I on the village" test says yes in the
+at exactly the y the dark row is read from — the gem count read as if it were
+dark elixir. So every loop's own "am I on the village" test says yes in the
 wrong world, and a sweep would walk the wrong map.
 
-**What separates them is the shield.** The home village carries a 護盾 plate in
-the row along the top; the builder base does not, and structurally cannot: the
-builder base is real-time matchmaking against another live player, and a shield
-that stopped you being attacked there would contradict the mode's own design.
-That is a stronger guarantee than anything else on the screen offers, and it is
-why the row's own reach is safe to lean on where the obvious candidates are not:
-the shield's plate is the one that pushes the row out to its widest.
+**What separates them is the shield.** Since the 2026-10 overhaul the column of
+bars in the top right ends, on the home village, in a 護盾 bar under the gems
+bar, each with a green + on its left; the builder base's column stops at its
+gems bar, because it has no dark elixir and no shield, and structurally cannot
+have one: the builder base is real-time matchmaking against another live player,
+and a shield that stopped you being attacked there would contradict the mode's
+own design. So the two villages put their + buttons at different heights — the
+builder base's one where the home village draws its dark bar, the home
+village's two lower down — and which heights carry one is the answer.
 
-**Two candidates were measured and thrown away, both for the same reason** — they
-pass today on this account and would break silently on another one, or on this
-one later:
+**The button is read as a green plate with a white cross on it, both at once.**
+Either alone matched something else: the build panel's progress bars fill the
+home village's gems box with green (0.68 of it), and the white settings and shop
+pages fill the cross's strokes. Measured on every frame recorded on 2026-10-13
+and every committed one, a real button reads 0.64 green and its strokes 1.00
+white; the most anything else reaches on both at once is 0.34 green with no
+cross (the hero upgrade sheet) and 0.29 green with a 0.40 cross (a builder base
+button dimmed under a storage tooltip, which answers None like any other cover).
 
-- *The builder base's trophy plate.* It sits in the top-left corner where the
-  home village shows a league badge, and this account's home village is
-  unranked, so the box is empty there. Over 4364 recorded home frames the plate
-  read on none of them, which looked conclusive and was not: the day the account
-  is ranked, that box grows a number and every home village reads as a builder
-  base.
-- *Counting resource rows.* The home village's gems row does not resolve as
-  digits at all — measured, 0 of 237 home village frames — so there is nothing
-  to count, and a night world that ever gained dark elixir would break it anyway.
+The old answer, the row of blue `i` badges over the builder, laboratory and
+shield plates along the top, went away with those plates.
 
-What is read is the little blue `i` badge the game floats over each plate — but
-**how far the row reaches, not how many badges are in it.** The row is centred,
-so a third plate pushes both ends outwards: measured over every frame on this
-machine, the home village's badges sit at x 516, 719 and 933 and the builder
-base's at 628-644 and 830-846. One visible badge therefore places the row, and
-the 933 end is the shield's own, which the builder base cannot have at all.
-
-**Counting them was wrong, and it was wrong in the direction that costs.** A
-gem shower — the game's own reward animation — drifts across the top row and
-covers a plate for a few seconds, which took the home village's count from three
-to two and answered "builder base" for it. Swept over 561 recorded frames on
-this machine, 35 read all three badges and 8 read fewer: 5 as `[516, 719]` with
-the shield covered, and one each as `[933]`, `[516, 933]` and `[516]`. Six of
-those eight the count called the wrong village outright, and the loop sailed
-away from the village it was on. Reading the span leaves seven of the eight
-correct, because an occluded badge shortens the row without moving the ends that
-are still visible; the eighth is the lone `[516]`, which stays None for the
-reason below.
-
-A lone badge is not enough on its own: the loading screen puts one 20 px patch
-of a character's blue tunic at x 509, seven pixels from where the home village's
-leftmost really sits. So a single badge answers None unless it is the shield's,
-which nothing else on any recorded frame reaches.
-
-It is also **a better village test than `read_stock`**, which is the one it
-replaces: two home frames had the camera at a map corner with the dark row
-unreadable, so `read_stock` called them "not a village" while this reads them
-correctly.
+**None is the answer whenever the column is covered or moved**, and that is
+wanted: the build panel shifts the whole column left, and the attack menu,
+the army screen, a battle and the loading screen cover or replace it. None of
+those is evidence about which village is underneath.
 
 Nothing here reads the boat. The boat is the only way to cross between the two,
 so it has to be *tapped*, but a boat is a sprite and the game dresses it up for
@@ -74,89 +49,73 @@ import logging
 from ai_coc.parsers.frame import open_frame
 
 if TYPE_CHECKING:
+    from PIL import Image
+
     from ai_coc.models import World
 
 logger = logging.getLogger(__name__)
 
-# The badge is a rounded blue plate with a white `i` on it. Measured down a
-# column through one, its plate runs (61, 149, 205) to (44, 101, 180) while the
-# grass under the row reads (37, 68, 12) and the builder's own hat beside it
-# (156, 121, 99) — so blue over red is what separates it, and by a long way.
-#
-# The row is laid out from the middle of the screen outwards and holds a
-# different number of plates in each village, so every badge sits at a different
-# x in the two. Nothing here reads a fixed position: the band is swept and
-# whatever is found is reported with its place, which is what `current_world`
-# reads the village off.
-BADGE_BAND = (12, 32)
-BADGE_LEFT, BADGE_RIGHT = 380, 1300
-BADGE_BLUE = 170
-BADGE_OVER_RED = 100
-BADGE_COVERAGE = 0.7
-# The white `i` splits each badge into two runs of about 8 px with roughly 10 px
-# between them, so the halves are rejoined before anything is counted. Measured,
-# a whole badge spans 25 to 26 px and the nearest neighbouring badge is 175 px
-# away, so nothing rejoins two badges into one.
-BADGE_GAP = 14
-BADGE_WIDTH = (20, 40)
-
-# Where the row starts tells the two apart, because it is centred and the home
-# village has one plate more. Measured: the home village's leftmost badge sits at
-# 516 on every frame here and the builder base's at 628 to 644, so the line goes
-# between them with 60 px of room on each side — far more than the 16 px the
-# builder base's own two readings differ by.
-ROW_LEFT_SPLIT = 576
-# The shield's own plate, and the one feature that needs no comparison: the
-# builder base is real-time matchmaking against a live player, so it has no
-# shield and its row never reaches this far. Measured, its rightmost badge tops
-# out at 846.
-SHIELD_BADGE_LEFT = 900
+# The middle of each + button's horizontal stroke: the builder base's gems bar,
+# then the home village's gems bar and its shield bar under it. The bars are 62
+# px apart and the buttons sit at their left ends, all at the same x.
+NIGHT_GEMS_PLUS = 170
+DAY_GEMS_PLUS = 233
+DAY_SHIELD_PLUS = 296
+PLUS_X = 1347
+# The plate around the cross, and the cross's two strokes, measured from the
+# middle above: the plate runs 1325-1368 across and 43 rows down, the vertical
+# stroke is 1344-1350 and the horizontal one 1337-1357 by seven rows.
+PLUS_PLATE = (-19, -18, 19, 20)
+PLUS_UPRIGHT = (-2, -9, 3, 6)
+PLUS_ACROSS = (-9, -2, 10, 3)
+# Midway between what a real button reads and the most anything else reaches
+# at once; see the module docstring for both sides.
+PLUS_GREEN = 0.45
+PLUS_CROSS = 0.8
 
 
-def info_badges(png: bytes) -> list[tuple[int, int]]:
-    """Where each plate's blue `i` badge sits along the top row."""
-    # Raw bytes rather than `load()`, which is what every other parser here
-    # does: three per RGB pixel, and typed as integers.
-    band = open_frame(png).crop((BADGE_LEFT, BADGE_BAND[0], BADGE_RIGHT, BADGE_BAND[1]))
-    width, rows = band.size
-    data = band.tobytes()
-    lit = [
-        x + BADGE_LEFT
-        for x in range(width)
-        if sum(
-            1
-            for offset in range(x * 3, len(data), width * 3)
-            if data[offset + 2] > BADGE_BLUE and data[offset + 2] - data[offset] > BADGE_OVER_RED
-        )
-        >= rows * BADGE_COVERAGE
-    ]
-    spans: list[tuple[int, int]] = []
-    for x in lit:
-        if spans and x - spans[-1][1] <= BADGE_GAP:
-            spans[-1] = (spans[-1][0], x)
+def _share(image: Image.Image, y: int, offsets: tuple[int, int, int, int], green: bool) -> float:
+    """How much of one box around a button is the plate's green, or the cross's white."""
+    left, top, right, bottom = offsets
+    data = image.crop((PLUS_X + left, y + top, PLUS_X + right, y + bottom)).tobytes()
+    hits = 0
+    for offset in range(0, len(data), 3):
+        red, grn, blue = data[offset], data[offset + 1], data[offset + 2]
+        if green:
+            hits += grn >= 140 and grn - red >= 60 and grn - blue >= 90
         else:
-            spans.append((x, x))
-    return [span for span in spans if BADGE_WIDTH[0] <= span[1] - span[0] + 1 <= BADGE_WIDTH[1]]
+            hits += min(red, grn, blue) >= 200 and max(red, grn, blue) - min(red, grn, blue) <= 20
+    return hits / (len(data) // 3)
+
+
+def plus_button(image: Image.Image, y: int) -> bool:
+    """Whether the corner column draws a green + button with its cross at this height."""
+    return (
+        _share(image, y, PLUS_PLATE, green=True) >= PLUS_GREEN
+        and _share(image, y, PLUS_UPRIGHT, green=False) >= PLUS_CROSS
+        and _share(image, y, PLUS_ACROSS, green=False) >= PLUS_CROSS
+    )
 
 
 def current_world(png: bytes) -> World | None:
     """Which village this frame is showing, or None when it is not showing one.
 
     **None is a third answer rather than a failure**, and callers have to keep it
-    apart from "the home village": a loading screen, a battle, a dialog and the
-    matchmaker all land here, and none of them is evidence about which village is
-    underneath. Measured, all 515 of those on this machine read no badges at all,
-    so None really does mean "not a village" rather than "a village I could not
-    place".
+    apart from "the home village": a loading screen, a battle, a dialog, the
+    build panel and the matchmaker all land here, and none of them is evidence
+    about which village is underneath.
+
+    **The shield's button is enough on its own, and the home gems button only
+    with the builder base's absent.** The shield is the structural difference;
+    the gems button's height is open map on the builder base, so it is believed
+    alone only where nothing says builder base — which is what still names a
+    home village whose shield button something drifted over.
     """
-    badges = info_badges(png)
-    if not badges:
-        logger.debug("No village on screen; no plate badges in the top row")
-        return None
-    centres = [(left + right) // 2 for left, right in badges]
-    if centres[-1] >= SHIELD_BADGE_LEFT:
+    image = open_frame(png)
+    night = plus_button(image, NIGHT_GEMS_PLUS)
+    if plus_button(image, DAY_SHIELD_PLUS) or (plus_button(image, DAY_GEMS_PLUS) and not night):
         return "day"
-    if len(centres) < 2:
-        logger.debug("One badge at x=%d is not enough to place the row", centres[0])
-        return None
-    return "day" if centres[0] < ROW_LEFT_SPLIT else "night"
+    if night:
+        return "night"
+    logger.debug("No village on screen; no + button in the corner column")
+    return None

@@ -465,7 +465,7 @@ class DispatchTests(unittest.TestCase):
     def test_read_puts_the_named_file_through_every_parser(self) -> None:
         """The one command that runs its real code here: it needs no emulator."""
         with patch("sys.stdout", new_callable=io.StringIO):
-            _run_command(_args("read", str(FRAMES / "world_day.png")), self.run)
+            _run_command(_args("read", str(FRAMES / "hud_day.png")), self.run)
         written = (self.run.directory / "result.json").read_text(encoding="utf-8")
         assert '"world": "day"' in written
 

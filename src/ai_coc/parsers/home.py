@@ -28,18 +28,19 @@ from typing import TYPE_CHECKING
 import logging
 from statistics import median
 
-from ai_coc.models import Patch, BuildQueue, ShieldState, ResourceBubble
+from ai_coc.models import Patch, ShieldState, ResourceBubble
 from ai_coc.parsers.frame import open_frame
-from ai_coc.parsers.world import ROW_LEFT_SPLIT, SHIELD_BADGE_LEFT, info_badges, current_world
+from ai_coc.parsers.scout import bar_ink
+from ai_coc.parsers.world import DAY_SHIELD_PLUS, plus_button
 
 # The digit reader and the mask it wants; nothing here is worth a second copy of
 # either. It used to be reached for through `parsers.scout`, by private name,
 # because that is where it happened to have been written.
 from ai_coc.parsers.glyphs import (
+    NOT_A_GLYPH,
     nearest,
     ink_mask,
     signature,
-    ink_patches,
     glyph_columns,
     split_numbers,
 )
@@ -59,7 +60,9 @@ logger = logging.getLogger(__name__)
 # under it because the furniture is drawn on top. The storage bars in the top
 # right are the same, and they carry the very icons being looked for.
 VILLAGE_AREA = (110, 80, 1480, 780)
-STORAGE_BARS = (1260, 0, 1600, 330)
+# The bars down to the shield's, whose + buys a shield and whose bar opens the
+# shop's shield page.
+STORAGE_BARS = (1240, 0, 1600, 330)
 
 # What each marker is made of: the channel ranges its own pixels fall in, and the
 # size the patch of them comes out at. Measured on live frames before and after
@@ -132,214 +135,121 @@ BOAT_ACROSS = (30, 56)
 BOAT_DOWN = (9, 22)
 BOAT_PLATE_SHARE = 0.08
 
-# 1/5 beside the builder's head, in the same white the storage bars use. The
-# slash between the two numbers is not a digit and that is how it is found:
-# swept over every recorded frame carrying this counter, a digit lands within 14
-# of its template and the slash between 38 and 41, so anything over the line
-# separates one number from the other.
-#
-# **The box was cut from a `1/5`, and `1` is the one digit narrow enough to fit
-# it.** The number is centred, so a wide leading digit hangs off the left: a
-# leading `0` inks from x 792 and the old edge at 795 took three columns off it,
-# putting it 23 bits from its template against 5 with them restored. That is
-# either side of the tolerance, so a village at `0/6` read as no counter at all.
-# The leading digit is at its floor for any edge from 792 down to 774, and at
-# 772 the counter plate's own frame (inked at 771 to 773) arrives as a fourth
-# glyph; 783 is the middle of that range and leaves the 9 px of margin the right
-# edge already had.
-#
-# **Written as an offset from the plate's own badge, because the row moves.** It
-# is laid out from the middle outwards and holds one plate more on the home
-# village, so the same plate sits at a different x in the two — and even within
-# the builder base the badges were measured at both 628/830 and 644/846. What
-# does not move is the plate around its own badge: this one offset reads `0/2`
-# and `0/6` on the home village and `0/1` and `0/3` on the builder base.
-PLATE_DIGITS = (64, 33, 141, 66)
-
-
-def plate_box(centre: int) -> tuple[int, int, int, int]:
-    """Where a plate writes its count, given where its own badge sits."""
-    return centre + PLATE_DIGITS[0], PLATE_DIGITS[1], centre + PLATE_DIGITS[2], PLATE_DIGITS[3]
-
-
-BUILDER_BOX = plate_box(719)
-
-# The shield plate writes a countdown rather than a count, so it needs a box of
-# its own: wider on the left, where 6小時 2分鐘 runs further than 0/6 does, and
-# stopping short of the green + on its right, which is a gem purchase and the one
-# thing on this row nothing here should be reading, let alone reaching.
-# The + starts about 145 past the badge. **The left edge is where the text can
-# start, not where the icon ends**: the plate centres its countdown, so a longer
-# one starts further left and is drawn over the icon's right side. Measured on
-# the plates on record, the first digit starts anywhere from about 32 to 40 past
-# the badge, and at 42 this cut 3小時 12分鐘's 3 in half and read 12 minutes. 35
-# is past the icon's tip at the digits' height. A first digit starting left of
-# it is left as a sliver in the box or not in it at all, and `shield_state` says
-# what each of those reads as.
-SHIELD_DIGITS = (35, 33, 145, 66)
-# The icon's silver rim rises above the text at its top right, and a digit that
-# starts over the icon fuses with it into a shape no template matches — 3 came
-# out nearest to 9. The rim is cleared from the box's first nine rows up to 52
-# past the badge, which is everything above the digits' tops: at eight rows the
-# 3 still read 26 against a tolerance of 25, at nine it reads 18.
-SHIELD_RIM = (52, 9)
-# Below the digits' tops the rim is a patch of its own, and it only shows when a
-# shorter countdown sits further right and leaves it bare between the first
-# digit and 小; column spans then fuse all three into a shape nothing matches.
-# Over the 23 home village frames of one recorded night, 3小時 26分, 45分 and 53分
-# among them, and the committed frames with the plate, every patch this clears
-# was 1 to 4 px wide and 1 to 12 rows tall. A 1 is 7 wide and only 5 on most of
-# its rows, so the width alone leaves one pixel; what keeps a 1 is its height,
-# 18 rows or more like every digit, and a digit the box cut into a sliver keeps
-# the height of the digit. Taking either would read 12小時 as 2小時.
-SHIELD_RIM_WIDTH = 5
-SHIELD_RIM_ROWS = 15
-# How tall a leading fragment can be and still be a leftover of that rim rather
-# than part of a character. Every rim leftover on the plates on record is one row
-# tall; a digit stands 18 to 24, and a sliver of one that the box cut stays that
-# tall, which the width it is left with would not tell apart from the rim.
-SHIELD_SCRAP_ROWS = 10
-# 無 against a countdown, by how many glyphs are written rather than by matching
-# the character: swept over every committed frame with the plate on it, 無 comes
-# out as one, once `_clear_rim` has taken the stub of rim it was counted with,
-# and a countdown as six or more.
-SHIELD_GLYPHS = 4
-
-
-def shield_box(centre: int) -> tuple[int, int, int, int]:
-    """Where the shield plate writes its countdown, given where its badge sits."""
-    return (
-        centre + SHIELD_DIGITS[0],
-        SHIELD_DIGITS[1],
-        centre + SHIELD_DIGITS[2],
-        SHIELD_DIGITS[3],
-    )
-
-
-# Which plate is which, **keyed by where it sits and never by its place in the
-# row**. `info_badges` returns only the badges it can see, and `parsers/world.py`'s
-# sweep records rows a gem shower left as `[516, 933]` or `[933]` — so on
-# `world_day_shield_only.png` the first badge is the *shield*, and a reader
-# taking index 0 for the laboratory would open the wrong plate. `ROW_LEFT_SPLIT`
-# and `SHIELD_BADGE_LEFT` are `current_world`'s own thresholds, reused here so
-# the two cannot disagree about the same row.
-#
-# The builder base needs one line of its own: its badges sit at 628-644 and
-# 830-846, so the line goes midway between them with 90 px of room either side.
-NIGHT_ROW_SPLIT = 740
-# Midway between the worst digit that resolves confidently and the first reading
-# that must not be believed. Two frames of one `0/5` counter read their `5` at 24
-# against a `9` at 25, once each way round, so that pair is a coin flip: 24 is
-# where a wrong answer starts, not where a right one ends. Nothing between 14 and
-# 23 changes any recorded frame, so the line goes in the middle of that gap
-# rather than at either edge of it.
-BUILDER_TOLERANCE = 19
-
-# Tapping a plate opens the panel listing what it is counting, and tapping it
-# again closes it — the button toggles rather than opens, which is why the
-# runner reads the panel before deciding it failed. Measured from the badge, the
-# same way the digit box is and for the same reason: the row moves.
-PLATE_BUTTON = (26, 48)
-
-
-def plate_button(centre: int) -> tuple[int, int]:
-    """Where to tap to open one plate's panel, given where its badge sits."""
-    return centre + PLATE_BUTTON[0], PLATE_BUTTON[1]
-
-
-# Each running upgrade gets a progress bar with its remaining time drawn over
-# it, and **the bar is the only thing that says which rows those are**. The panel
-# carries two more sections under them, 建議升級 and 其他升級, whose rows carry a
-# price in the same place in the same white — so a reader going by the text alone
-# would report a gold cost as a countdown. Nothing below the running rows has a
-# bar. Nothing reads the names beside them either: they are Chinese, they are
-# different in every village, and none of them is needed to answer when a
-# builder comes free.
-#
-# Measured on live panels the bars share one column and one pair of colours: the
-# unfilled track is a flat (47, 47, 47) and the filled part a bright green, and
-# together they cover the column edge to edge. Rows sit 48 px apart, so anything
-# within BAR_GAP of a bar already found is the same bar found again a row down.
-BAR_TRACK, BAR_TRACK_SPREAD = 47, 12
-BAR_COVERAGE = 0.8
-BAR_GAP = 20
-PANEL_TOP, PANEL_BOTTOM = 150, 700
-
-# **A table rather than a formula, because the panel floats and its offset from
-# its own plate does not hold.** Every plate opens the same panel — 升級中 over
-# 建議升級 over 其他升級, one green bar per running row — and measured live all
-# four sit at the same y (first row 212-216, then every 48 px) and carry a bar
-# 113 to 116 px wide. What differs is x, and not by a constant: from each
-# plate's badge the bar starts at +158, +172, +147 and +168, a 25 px spread
-# against a 115 px bar, so a derived box would cut the countdown off.
-#
-# Widening one band to cover all four was measured and thrown away: the green
-# test matches grass, and over the committed fixtures a 490 px band picks up
-# 110 px runs on `shop_skins.png` and both wall dialogs. Four narrow bands hold
-# `BAR_COVERAGE` meaningful — a real bar fills 0.97 of its own band, where in a
-# 490 px one it could never reach 0.8 at all.
-PANEL_BANDS = {
-    ("day", "lab"): (672, 790),
-    ("day", "builder"): (889, 1008),
-    ("night", "lab"): (789, 907),
-    ("night", "builder"): (1012, 1129),
+# The two counters in the bottom right, idle over total: the builders' and the
+# laboratory's. The 2026-10 overhaul moved them off the plate row along the top
+# to just above the 建造 button, at the same place on both villages, so a box
+# per role serves both. Measured on 0/6 and 0/2 at home and 0/3 and 0/1 on the
+# builder base: the digits ink 1426-1482 and 1505-1559 over rows 681-702, and
+# the portraits above them reach down to 679, which is where the boxes start.
+COUNTER_BOXES: dict[PlateRole, tuple[int, int, int, int]] = {
+    "builder": (1418, 680, 1492, 708),
+    "lab": (1497, 680, 1572, 708),
 }
+# The slash between the two numbers is not a digit, and that is how it is found:
+# it lands 35 to 39 from its nearest template on all four counters, while the
+# digits on them land at 23 at worst (the builder base's lone 1). The line goes
+# midway. The digits are larger than the old plates' were, which is why this is
+# not the old plates' 19: at 19 that 1 dropped out and 0/1 read as 0 alone.
+COUNTER_TOLERANCE = 29
 
-# The time sits in the band directly above its own bar, right-aligned — and
-# **reaches past the bar at both ends**: measured on `builder_panel.png` the ink
-# runs 884 to 1006 against a bar of 889 to 1006, so a box cut to the bar clips
-# the leading glyph and the reading loses a place.
-TIME_PAD = (-32, 7)
-TIME_HEIGHT = 26
-
-# How far around the bars to crop when handing the 升級中 block to a model. The
-# names run to the left of every bar and the panel's own left edge moves with the
-# longest of them, so this reaches further than any measured panel does rather
-# than trying to find it: the narrowest gap between a bar and its panel edge was
-# about 226 px. Whatever village comes with it is not a problem for a model
-# reading a label, where a name cut in half would be.
-NAMES_LEFT = 300
-NAMES_ABOVE = 40
-# How far past a bar's right end a 建議升級 price reaches: on the four committed
-# panels the last digit ends within a few pixels of the bar's own right edge.
-PRICE_RIGHT = 20
-# Midway between the worst digit that resolves and the nearest thing that is not
-# one. This said the gap was 16 against 49 and it is not: swept over 15 rows
-# across five panels, a digit lands within **19** while 小 comes back **exactly
-# 30** from the template for `0` — so at the old line of 30 the `<=` took it for
-# one, and 6小時 was read as 60小時.
-#
-# **It only misses on a live panel, which is why a fixture could not show it.**
-# The panel is translucent, so the village behind it decides whether 小's two
-# short outer strokes reach the ink mask; on `builder_panel.png`, shot over
-# flat grass, they do and the character reads 83 to 86 from any digit, while
-# over a wall's dense lattice only the middle stroke survives and what is left
-# is a bare vertical bar. Every unit that does resolve lands within 15, so one
-# line still separates both questions.
-#
-# Measured against 15 countdowns whose values were read off the frames by eye:
-# at 30, 8 right and **6 wrong**; at 25, 14 right and none wrong, with all four
-# of the committed fixture's rows unchanged. A wrong countdown is the dangerous
-# kind, because 1天16小時 arriving as 7天16小時 is a number a caller believes.
-TIME_DIGIT_TOLERANCE = 25
-
-# 天, 小時 and 分鐘, as the seconds one of each is worth. Only the **first**
-# character of a unit is matched, which is what keeps this to three templates:
-# 小 and 分 each lead a two-character unit, and the second unit on a row is
-# always the next step down the ladder rather than something to be read.
-#
-# Measured across every recorded panel, one unit that resolves at all lands
-# within 15 of its own template while the nearest other unit is 49 away, so
-# `TIME_DIGIT_TOLERANCE` separates these as well as it separates the digits.
-# **That tolerance moved to 25 and this went with it**: the figures here used to
-# say every unit missed a digit by 49 or more, which is what the block above
-# measured and disproved — over a live panel 小 lands exactly 30 from `0`.
-UNIT_TEMPLATES = {
-    86400: 694176028518715082074175994823591921588995,
-    3600: 1362459995062295920913326796806252659743,
-    60: 98001493513730352222404855677119927554332,
+# 建造 opens one panel for both counters, full height on the right: running
+# rows, then 建議升級 and 其他升級, with a tab per counter along its foot. It
+# opens on whatever tab was last open, so a reader taps the tab it wants.
+BUILD_BUTTON = (1495, 800)
+PANEL_TABS: dict[tuple[World, PlateRole], tuple[int, int]] = {
+    ("day", "builder"): (1222, 850),
+    ("day", "lab"): (1330, 850),
+    ("night", "builder"): (1277, 850),
+    ("night", "lab"): (1492, 850),
 }
+# **`back` does not shut it**, measured on the builder base: the panel stayed up
+# and only the camera moved. Its own red X does.
+PANEL_CLOSE = (1572, 30)
+# The X is a red plate, which no other screen draws there: it fills 0.36 of this
+# box on every panel recorded and under 0.1 on every other frame, committed or
+# recorded. The title bar beside it is the second reading, a flat grey-brown
+# around (128, 113, 98) that a village never paints over the whole box.
+PANEL_X_BOX = (1554, 12, 1592, 50)
+PANEL_X_RED = 0.25
+PANEL_TITLE_BOX = (1250, 8, 1330, 22)
+PANEL_TITLE = (128, 113, 98)
+PANEL_TITLE_SPREAD = 14
+PANEL_TITLE_SHARE = 0.8
+
+# Each running row is itself a progress bar the width of the panel: a green fill
+# from the left over a grey-brown track, with the name on the left and the
+# countdown on the right. **The fill and the track are the only thing that says
+# which rows those are**: the 建議升級 and 其他升級 rows under them are light
+# brown and carry a time as well, and the section headers between are dark
+# brown. Read in a band clear of the name and the countdown on every panel
+# recorded, along the top half of each row, where the track is (101, 82, 71)
+# give or take and the fill at its brightest; the bottom halves are both darker.
+# Rows are 48 px apart and about 38 tall, so a top found within `ROW_GAP` of the
+# last is the same row again.
+ROW_BAND = (1300, 1460)
+ROW_COVERAGE = 0.8
+ROW_GAP = 40
+PANEL_TOP, PANEL_BOTTOM = 60, 800
+
+# The countdown, right-aligned against the clock on each running row, measured
+# from the row's top: the text runs to x 1561 and the clock starts at 1571. The
+# box reaches above and below the text, for the reason `TIME_TEXT_ROWS` gives.
+TIME_BOX = (1420, 2, 1566, 32)
+# **The panel writes smaller than the old one did**, about 12 rows for a digit
+# and less for 小時, so glyphs are measured from six rows rather than the usual
+# twelve. A digit is believed at 39 from its template and at least 3 px wide:
+# measured over every countdown on the recorded panels, digits land at 34 at
+# worst (a 1, the narrowest and least stable), while the pieces 小時, 分鐘 and
+# 天 fall into come back at 44 and over — except 小's centre stroke, 1 px wide,
+# which reads 30 from `0`. The line goes midway.
+TIME_FLOOR = 6
+TIME_DIGIT_TOLERANCE = 39
+TIME_DIGIT_WIDTH = 3
+# **A row an apprentice or a goblin works on carries their portrait right
+# against its countdown**, and cut to the text's own height the apprentice's
+# ring came out as a piece the height of a digit, 37 from a 1, 2 px before the
+# real first digit: 1天 would have read as 11天. Seen whole, every portrait
+# piece runs 15 rows or more (the goblin's face 15, the lab assistant's 16, the
+# apprentice's ring 25), while every digit and unit runs 12 at most, so a span
+# taller than this is a portrait and is left out of the reading altogether.
+TIME_TEXT_ROWS = 13
+# How close something text-sized that is not a digit can sit before the first
+# number and still be something else. A digit missed there would be dropped,
+# and 16小時 would read as 6: the gap between two digits is 1 or 2 px.
+TIME_LEAD_GAP = 4
+# The unit after the first number is read whole, as one shape from the end of
+# that number to the start of the next, because the characters fall apart at
+# this size: 小 into three strokes, 時 and 分 into two each. 天 is one character
+# and comes out 9 or 10 px wide against 21 or 22 for the two-character units;
+# 小時 and 分鐘 land 0 to 2 bits from their own template over eleven rows and 26
+# to 28 from each other's.
+DAY_WIDTH = 14
+UNIT_WORDS = {
+    3600: 3991578210008329590722701825776025600,
+    60: 10645515507765239062307640030384884224,
+}
+# **天 is held to its shape as well as its width**, because 秒 is one character
+# too, about as wide, and 45秒 taken for 天 is 45 days. It renders five ways on
+# the recorded panels, in two families 41 to 47 bits apart, so each is kept.
+DAY_SHAPES = (
+    65398079761088050085476826099556345972481,
+    65398079761088050085476844184319308596737,
+    1393795308048637152504369991213948321664259,
+    1393795308048617384187137361284480929105409,
+    1393795266469657850937188490023723944119555,
+)
+UNIT_TOLERANCE = 13
 UNIT_LADDER = (86400, 3600, 60, 1)
+
+# The shield is a bar of its own now, under the gems bar, writing 無 or a
+# countdown right-aligned beside the shield icon. The box stops short of the
+# green + on its left, which buys a shield with gems.
+SHIELD_BOX = (1375, 284, 1525, 312)
+# 無 against a countdown, by how far the writing reaches rather than by what it
+# says: 無 inks 1502-1517 and falls into three or four column spans depending on
+# what shows through the bar, while a countdown is at least a digit and a unit,
+# 30 px or more at this size.
+SHIELD_NONE_WIDTH = 24
 
 
 def _in_storage_bars(point: tuple[int, int]) -> bool:
@@ -528,285 +438,16 @@ def boat_marker(png: bytes) -> tuple[int, int] | None:
     return None
 
 
-def _bar_tops(image: Image.Image, band: tuple[int, int]) -> list[int]:
-    """The top row of each progress bar in one panel's own column.
+def plate_count(png: bytes, role: PlateRole) -> tuple[int, int] | None:
+    """Idle over total on one counter in the bottom right, or None where it will not read.
 
-    Every fourth pixel is enough to tell a bar from anything else: it has to run
-    the whole column, and nothing else in the panel does.
+    The game counts the ones standing around, not the ones at work, so zero here
+    means every builder, or every research slot, is busy. A count nobody can
+    read is worth less than nothing if it is guessed at, so anything but two
+    numbers is None.
     """
-    width = band[1] - band[0]
-    data = image.crop((band[0], PANEL_TOP, band[1], PANEL_BOTTOM)).tobytes()
-    wanted = len(range(0, width, 4)) * BAR_COVERAGE
-    tops: list[int] = []
-    for row in range(PANEL_BOTTOM - PANEL_TOP):
-        base = row * width * 3
-        covered = 0
-        for offset in range(base, base + width * 3, 12):
-            red, green, blue = data[offset], data[offset + 1], data[offset + 2]
-            track = all(abs(value - BAR_TRACK) < BAR_TRACK_SPREAD for value in (red, green, blue))
-            if track or (green > 140 and green - red > 40 and green - blue > 60):
-                covered += 1
-        y = PANEL_TOP + row
-        if covered >= wanted and (not tops or y - tops[-1] > BAR_GAP):
-            tops.append(y)
-    return tops
-
-
-def _remaining(image: Image.Image, bar_top: int, band: tuple[int, int]) -> int | None:
-    """The seconds written above one progress bar, or None where they will not read.
-
-    A row reads as a number, a unit, and usually a second number in the next unit
-    down — 9小時 23分鐘, or 1天 17小時. The second unit is never matched, because
-    the game writes them in descending order and adjacent, so knowing the first
-    settles it.
-    """
-    box = (band[0] + TIME_PAD[0], bar_top - TIME_HEIGHT, band[1] + TIME_PAD[1], bar_top)
-    return _seconds_from(ink_mask(image.crop(box)))
-
-
-def _seconds_from(ink: list[list[bool]]) -> int | None:
-    """One countdown as seconds, from a mask of the row it is written on.
-
-    Shared with the shield plate, which writes the same 6小時 2分鐘 in the same
-    font from the same templates — the only thing that differs is which box it
-    was cropped from.
-    """
-    numbers: list[int] = []
-    digits = ""
-    scale: int | None = None
-    # Speckle is left in: half of what this row has to read is Chinese, and 小
-    # is three short strokes that the digit reader's filter takes for noise.
-    for left, right in glyph_columns(ink, speckle=False):
-        pattern = signature(ink, left, right)
-        if pattern is None:
-            continue
-        digit, distance = nearest(pattern)
-        if distance <= TIME_DIGIT_TOLERANCE:
-            digits += digit
-            continue
-        if digits:
-            numbers.append(int(digits))
-            digits = ""
-        if scale is not None or len(numbers) != 1:
-            continue
-        # The first character after the first number is the one unit worth
-        # matching; everything after it follows from the ladder.
-        unit = min(
-            UNIT_TEMPLATES, key=lambda seconds: (UNIT_TEMPLATES[seconds] ^ pattern).bit_count()
-        )
-        if (UNIT_TEMPLATES[unit] ^ pattern).bit_count() <= TIME_DIGIT_TOLERANCE:
-            scale = unit
-    if digits:
-        numbers.append(int(digits))
-    if scale is None or not numbers:
-        return None
-    below = UNIT_LADDER[UNIT_LADDER.index(scale) + 1]
-    return numbers[0] * scale + (numbers[1] * below if len(numbers) > 1 else 0)
-
-
-def panel_rows(png: bytes, world: World, role: PlateRole) -> list[int | None] | None:
-    """Each running row's countdown, **in the order the panel draws them**.
-
-    None for the whole list means that panel is not on screen at all, which is
-    what a caller that tapped a button that toggles needs to be told apart from
-    a plate with nothing running behind it. None for one row is a countdown that
-    would not resolve; the row is kept, because something is in it and dropping
-    it would report the plate as emptier than it is.
-
-    The order is what separates this from `panel_jobs`: the names beside these
-    rows are read left to right by a model, so anything matching one to a row
-    needs them as drawn rather than sorted.
-    """
-    band = PANEL_BANDS.get((world, role))
-    if band is None:
-        return None
-    image = open_frame(png)
-    tops = _bar_tops(image, band)
-    if not tops:
-        return None
-    return [_remaining(image, top, band) for top in tops]
-
-
-def jobs_strip(png: bytes, world: World, role: PlateRole) -> bytes | None:
-    """The 升級中 block and the 建議升級 block under it as one PNG, for a model to read.
-
-    Cropped rather than read, the same bargain `parsers.building.name_strip`
-    makes: what is being raised is written in Chinese, no parser here reads any,
-    and a strip is what a cheap model is actually for.
-
-    **One crop for the whole block rather than one per row**, because the rows
-    are contiguous and a call each would be one per running upgrade where this
-    is one per panel. The left edge is generous on purpose — the panel's own
-    width is not measured and varies with the longest name on it — so some
-    village comes with it, which a model reading a label has no trouble with.
-    """
-    band = PANEL_BANDS.get((world, role))
-    if band is None:
-        return None
-    image = open_frame(png)
-    tops = _bar_tops(image, band)
-    if not tops:
-        return None
-    # **Down to the bottom of the panel**, so the suggestions come along with
-    # the running rows; their prices end a few pixels right of the bars. The
-    # 其他升級 rows under them only show in full once the panel is scrolled, so
-    # they are left to the model to skip rather than read, until the panel is
-    # walked row by row to locate a building.
-    box = (band[0] - NAMES_LEFT, tops[0] - NAMES_ABOVE, band[1] + PRICE_RIGHT, PANEL_BOTTOM)
-    out = io.BytesIO()
-    image.crop(box).save(out, format="PNG")
-    return out.getvalue()
-
-
-def panel_jobs(png: bytes, world: World, role: PlateRole) -> BuildQueue | None:
-    """What one plate's panel says is running, soonest first.
-
-    A row whose time will not read is counted but left out of the times rather
-    than guessed at, which is why both numbers are reported: the two disagreeing
-    is worth seeing rather than hiding.
-    """
-    rows = panel_rows(png, world, role)
-    if rows is None:
-        return None
-    return BuildQueue(running=len(rows), remaining=sorted(s for s in rows if s is not None))
-
-
-def builder_jobs(png: bytes) -> BuildQueue | None:
-    """The home village's builder panel, which is what every caller here means."""
-    return panel_jobs(png, "day", "builder")
-
-
-def plate_badges(png: bytes) -> dict[PlateRole, int]:
-    """Where each plate's badge sits, by what that plate is rather than by its place.
-
-    **Never by index.** `info_badges` returns only the badges it can see, and a
-    gem shower drifting over the row leaves frames like `[516, 933]` or `[933]`
-    — on the second of those the first badge is the shield, so a reader taking
-    index 0 for the laboratory would open the wrong plate. The thresholds are
-    `current_world`'s own, so the two cannot disagree about one row.
-    """
-    world = current_world(png)
-    found: dict[PlateRole, int] = {}
-    for left, right in info_badges(png):
-        centre = (left + right) // 2
-        if centre >= SHIELD_BADGE_LEFT:
-            found["shield"] = centre
-        elif world is not None:
-            split = ROW_LEFT_SPLIT if world == "day" else NIGHT_ROW_SPLIT
-            found["lab" if centre < split else "builder"] = centre
-    return found
-
-
-def plate_panel_open(png: bytes, world: World) -> tuple[int, int] | None:
-    """Where to press to shut the plate panel over this village, or None for none.
-
-    **The panel is a village by every test the loops have**, which is what makes
-    it worth a reader of its own: it floats over the middle of the map rather
-    than filling the screen, so `current_world` reads the badge row above it and
-    `read_stock` reads the bars beside it, and `uncovered` hands a frame that
-    reads as a village straight back untouched. Nothing else clears it — the
-    button toggles, so a run that opened one and died leaves it up for whatever
-    comes next.
-
-    What it does cover is the middle, which is where `view_shift` looks: measured
-    on `day_builder_panel.png` it fills 60% of `ALIGN_BOX`, and a static overlay
-    that large pins the reader to (0, 0) whatever the camera does — true moves of
-    65, 131 and 261 px all read as no move at all.
-
-    Found by its running rows rather than by its own plate, reusing `panel_rows`
-    at no new threshold: over the 18 committed frames `current_world` names a
-    village on, the four with a panel are the four this answers for and the
-    other fourteen answer None. **An idle panel is invisible to it**, since a
-    plate with nothing running has no bars to find, and there is nothing else in
-    the band to go by — the sheet's own dark reads 0.00 to 0.20 of bar where a
-    real bar reads 0.83 to 0.97.
-    """
-    badges = plate_badges(png)
-    for role in ("lab", "builder"):
-        centre = badges.get(role)
-        if centre is not None and panel_rows(png, world, role) is not None:
-            return plate_button(centre)
-    return None
-
-
-def _rows(ink: list[list[bool]], span: tuple[int, int]) -> int:
-    """How many rows one column span's ink runs over, top to bottom."""
-    rows = [y for y, row in enumerate(ink) if any(row[span[0] : span[1]])]
-    return rows[-1] - rows[0] + 1 if rows else 0
-
-
-def _clear_rim(ink: list[list[bool]]) -> None:
-    """Clear, in place, the stretch of the icon's rim a short countdown leaves bare."""
-    reach = SHIELD_RIM[0] - SHIELD_DIGITS[0]
-    for cells in list(ink_patches(ink)):
-        xs, ys = [x for _, x in cells], [y for y, _ in cells]
-        if (
-            max(xs) < reach
-            and max(xs) - min(xs) + 1 < SHIELD_RIM_WIDTH
-            and max(ys) - min(ys) + 1 < SHIELD_RIM_ROWS
-        ):
-            for y, x in cells:
-                ink[y][x] = False
-
-
-def shield_state(png: bytes, centre: int) -> ShieldState | None:
-    """What the shield plate says, or None where this frame will not resolve it.
-
-    The plate writes either a countdown — 6小時 2分鐘, in the same font and from
-    the same templates as a panel row — or 無 when nothing is protecting the
-    village. **Those are told apart by how much is written there rather than by
-    reading any of it**: swept over every committed frame carrying the plate, 無
-    comes out as one glyph and a countdown as six or more, so the line goes
-    between at four. Nothing here matches the character itself, which would be
-    one more Chinese template to keep.
-
-    None is the honest third answer and it is not rare: the plate is translucent,
-    so the village behind it decides whether the strokes resolve — measured, two
-    of three frames read their countdown and the third did not.
-
-    **A countdown whose first character is not a digit is None, not the rest of
-    it.** The reader skips what it cannot match, so a first number it could not
-    read left the second one standing as the whole countdown: 1小時 48分 came
-    back as 48 minutes, and a plate whose hours a gem shower covered as 14. A
-    shield reported hours shorter than it is reads as one about to lapse, which
-    is the wrong direction to be wrong in.
-
-    Known and open (#260): a countdown with two-digit hours, which is what a shield
-    from a raid starts at, runs further left still, and nothing on record says
-    where. If its leading 1 falls wholly left of the box the plate reads ten
-    hours short, as it always did; a sliver of it in the box is caught above.
-    Also still None on the night `SHIELD_RIM_WIDTH` was measured on: five frames
-    whose first digit will not match for other reasons, four of them 4小時 and
-    one of those a 4 fused with a line drawn under it, and one whose 小 fell
-    apart into two spans, so the unit after the hours never matched.
-    """
-    ink = ink_mask(open_frame(png).crop(shield_box(centre)))
-    for row in ink[: SHIELD_RIM[1]]:
-        for x in range(SHIELD_RIM[0] - SHIELD_DIGITS[0]):
-            row[x] = False
-    _clear_rim(ink)
-    columns = glyph_columns(ink, speckle=False)
-    if len(columns) < SHIELD_GLYPHS:
-        return ShieldState()
-    first = next((span for span in columns if _rows(ink, span) > SHIELD_SCRAP_ROWS), None)
-    if first is not None:
-        pattern = signature(ink, *first)
-        if pattern is None or nearest(pattern)[1] > TIME_DIGIT_TOLERANCE:
-            return None
-    seconds = _seconds_from(ink)
-    return None if seconds is None else ShieldState(remaining=seconds)
-
-
-def plate_count(png: bytes, centre: int) -> tuple[int, int] | None:
-    """Idle over total on the plate whose badge is here, or None where it will not read.
-
-    None is the same answer `free_builders` has always given and wants the same
-    treatment: the plate is translucent, so what the camera has behind it decides
-    whether the digits resolve — measured, one committed frame reads its `0/5`
-    as `0` alone because the 5 lands 24 from its template against a tolerance of
-    19. A count nobody can read is worth less than nothing if it is guessed at.
-    """
-    found = split_numbers(ink_mask(open_frame(png).crop(plate_box(centre))), BUILDER_TOLERANCE)
+    box = COUNTER_BOXES[role]
+    found = split_numbers(ink_mask(open_frame(png).crop(box)), COUNTER_TOLERANCE)
     if len(found) != 2:
         return None
     return found[0], found[1]
@@ -815,19 +456,181 @@ def plate_count(png: bytes, centre: int) -> tuple[int, int] | None:
 def free_builders(png: bytes) -> tuple[int, int] | None:
     """Idle builders over total, or None where this screen is not showing them.
 
-    The game counts the ones standing around, not the ones at work, so zero here
-    means every builder is busy and nothing new can be started.
-
     **None costs each caller something different, and the cheap-looking one is
     the expensive one.** `UpkeepRunner.upgrade` and `HeroRunner` both stand the
     run down on it, which is loud and harmless. `WallRunner` does the opposite:
     its check is `counted is not None and counted[0] == 0`, so an unread counter
     silently never fires the "every builder is busy" branch and the run walks the
-    rest of the village at forty seconds a wall, buying nothing. That is why the
-    box above is sized to the widest number the counter can hold rather than to
-    the one it happened to be showing when it was cut.
+    rest of the village at forty seconds a wall, buying nothing.
     """
-    found = split_numbers(ink_mask(open_frame(png).crop(BUILDER_BOX)), BUILDER_TOLERANCE)
-    if len(found) != 2:
+    return plate_count(png, "builder")
+
+
+def build_panel_open(png: bytes) -> bool:
+    """Whether the panel 建造 opens is up, by its red X and the title bar beside it.
+
+    **It is not a village by any test the loops have**: it shifts the corner
+    column left, so `current_world` reads nothing, and it covers the right of
+    the map. `back` does not shut it, so whatever finds it presses
+    `PANEL_CLOSE`.
+    """
+    image = open_frame(png)
+    red = image.crop(PANEL_X_BOX).tobytes()
+    reds = sum(
+        1
+        for at in range(0, len(red), 3)
+        if red[at] >= 180 and red[at + 1] <= 80 and red[at + 2] <= 80
+    )
+    title = image.crop(PANEL_TITLE_BOX).tobytes()
+    flat = sum(
+        1
+        for at in range(0, len(title), 3)
+        if all(
+            abs(title[at + channel] - PANEL_TITLE[channel]) <= PANEL_TITLE_SPREAD
+            for channel in range(3)
+        )
+    )
+    return reds / (len(red) // 3) >= PANEL_X_RED and flat / (len(title) // 3) >= PANEL_TITLE_SHARE
+
+
+def _row_tops(image: Image.Image) -> list[int]:
+    """The top of each running row, read off its bar along `ROW_BAND`."""
+    width = ROW_BAND[1] - ROW_BAND[0]
+    data = image.crop((ROW_BAND[0], PANEL_TOP, ROW_BAND[1], PANEL_BOTTOM)).tobytes()
+    wanted = len(range(0, width, 4)) * ROW_COVERAGE
+    tops: list[int] = []
+    for row in range(PANEL_BOTTOM - PANEL_TOP):
+        base = row * width * 3
+        covered = 0
+        for at in range(base, base + width * 3, 12):
+            red, green, blue = data[at], data[at + 1], data[at + 2]
+            track = 90 <= red <= 112 and 74 <= green <= 92 and 60 <= blue <= 78
+            fill = green >= 150 and green - red >= 40 and green - blue >= 80
+            covered += track or fill
+        y = PANEL_TOP + row
+        if covered >= wanted and (not tops or y - tops[-1] > ROW_GAP):
+            tops.append(y)
+    return tops
+
+
+def _time_runs(ink: list[list[bool]]) -> list[list[int | str]]:
+    """A countdown row as runs of digits and of everything else, each with its span.
+
+    A run of digits carries them as its first item and any other run an empty
+    one. A portrait in front of the number is left out by its height.
+    """
+    runs: list[list[int | str]] = []
+    for left, right in glyph_columns(ink, speckle=False):
+        rows = [y for y, row in enumerate(ink) if any(row[left:right])]
+        if rows[-1] - rows[0] + 1 > TIME_TEXT_ROWS:
+            continue
+        pattern = signature(ink, left, right, TIME_FLOOR)
+        digit, distance = nearest(pattern) if pattern is not None else ("", NOT_A_GLYPH)
+        kind = (
+            digit if distance <= TIME_DIGIT_TOLERANCE and right - left >= TIME_DIGIT_WIDTH else ""
+        )
+        if runs and bool(runs[-1][0]) == bool(kind):
+            runs[-1][0] = f"{runs[-1][0]}{kind}"
+            runs[-1][2] = right
+        else:
+            runs.append([kind, left, right])
+    return runs
+
+
+def _countdown(ink: list[list[bool]]) -> int | None:
+    """One countdown as seconds: a number, a unit, and usually a number in the unit below.
+
+    The unit after the first number is the only one read, because the game
+    writes them in descending order and adjacent, so knowing the first settles
+    the second.
+    """
+    runs = _time_runs(ink)
+    while runs and not runs[0][0]:
+        if len(runs) > 1 and int(runs[1][1]) - int(runs[0][2]) < TIME_LEAD_GAP:
+            return None
+        runs.pop(0)
+    if len(runs) < 2:
         return None
-    return found[0], found[1]
+    left, right = int(runs[1][1]), int(runs[1][2])
+    pattern = signature(ink, left, right, TIME_FLOOR)
+    if pattern is None:
+        return None
+    if right - left <= DAY_WIDTH:
+        if min((shape ^ pattern).bit_count() for shape in DAY_SHAPES) > UNIT_TOLERANCE:
+            return None
+        scale = 86400
+    else:
+        scale = min(UNIT_WORDS, key=lambda unit: (UNIT_WORDS[unit] ^ pattern).bit_count())
+        if (UNIT_WORDS[scale] ^ pattern).bit_count() > UNIT_TOLERANCE:
+            return None
+    numbers = [int(str(run[0])) for run in runs if run[0]]
+    below = UNIT_LADDER[UNIT_LADDER.index(scale) + 1]
+    return numbers[0] * scale + (numbers[1] * below if len(numbers) > 1 else 0)
+
+
+def panel_rows(png: bytes) -> list[int | None] | None:
+    """Each running row's countdown, **in the order the panel draws them**.
+
+    None for the whole list means the panel is not on screen at all; an empty
+    list is a panel with nothing running on its tab, which the old plate panel
+    could not tell apart from one that never opened. None for one row is a
+    countdown that would not resolve; the row is kept, because something is in
+    it and dropping it would report the tab as emptier than it is.
+
+    These are the panel's own countdowns, at normal speed. `status` reads the
+    export instead, which works through whatever speed-ups are running.
+    """
+    if not build_panel_open(png):
+        return None
+    image = open_frame(png)
+    left, above, right, below = TIME_BOX
+    return [
+        _countdown(ink_mask(image.crop((left, top + above, right, top + below))))
+        for top in _row_tops(image)
+    ]
+
+
+def jobs_strip(png: bytes) -> bytes | None:
+    """The panel from its first row down, as one PNG for a model to read.
+
+    Cropped rather than read, the same bargain `parsers.building.name_strip`
+    makes: what is being raised is written in Chinese, no parser here reads any,
+    and a strip is what a cheap model is actually for. **Down to the bottom of
+    the panel**, so the 建議升級 rows come along with the running ones; the
+    其他升級 rows under them only show in full once the panel is scrolled, so
+    they are left to the model to skip.
+    """
+    if not build_panel_open(png):
+        return None
+    out = io.BytesIO()
+    open_frame(png).crop((PANEL_X_BOX[0] - 384, PANEL_TOP, 1600, PANEL_BOTTOM)).save(
+        out, format="PNG"
+    )
+    return out.getvalue()
+
+
+def shield_state(png: bytes) -> ShieldState | None:
+    """What the shield bar says, or None where this frame will not resolve it.
+
+    The bar writes either a countdown or 無 when nothing is protecting the
+    village. **Those are told apart by how far the writing reaches rather than
+    by reading any of it** (`SHIELD_NONE_WIDTH`). The bar is translucent, so
+    the ink is a storage bar's, which leaves out what the village puts behind
+    it. A frame without the bar's own + is not showing the bar at all, and
+    answers None rather than 無.
+
+    Known and open: no countdown has been seen on this bar since the 2026-10
+    overhaul, so a shield that is up answers None, the way a countdown that
+    would not resolve always has, rather than a number read in a font nobody
+    has measured.
+    """
+    image = open_frame(png)
+    if not plus_button(image, DAY_SHIELD_PLUS):
+        return None
+    ink = bar_ink(image.crop(SHIELD_BOX))
+    spans = glyph_columns(ink, speckle=False)
+    if not spans:
+        return None
+    if spans[-1][1] - spans[0][0] <= SHIELD_NONE_WIDTH:
+        return ShieldState()
+    return None

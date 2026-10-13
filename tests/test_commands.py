@@ -78,6 +78,7 @@ from ai_coc.models import (
 from ai_coc.constants import COC_PACKAGE
 from ai_coc.ui.runner import ScreenRunner
 from ai_coc.adapters.adb import AdbController, AdbControlError
+from ai_coc.parsers.home import PANEL_CLOSE
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -435,16 +436,14 @@ class PlateLineTests(unittest.TestCase):
     def test_the_three_failures_read_as_three_different_things(self) -> None:
         """Which is the whole reason `outcome` is a field: the rest are identical.
 
-        An idle plate, a panel that would not open and a badge that was not on
-        the frame all leave a village, a count that may or may not have read,
-        and no rows.
+        A tab with nothing running and a panel that would not open both leave a
+        village, a count that may or may not have read, and no rows.
         """
         assert (
             self._line(world="day", outcome="idle", free=3, total=3)
             == "建築工人 3/3,沒有在跑的項目"
         )
         assert "打不開" in self._line(world="day", outcome="panel_shut", free=0, total=3)
-        assert "看不到護盾的牌子" in self._line("shield", world="day", outcome="no_badge")
         assert "不在村莊" in self._line(outcome="not_a_village")
 
 
@@ -843,12 +842,7 @@ class UpkeepLineTests(unittest.TestCase):
     def test_every_plate_count_outcome_has_a_line_of_its_own(self) -> None:
         self._each(
             commands.COUNT_LINES,
-            {
-                "counted": "{free}/{total}",
-                "unread": "數字讀不到",
-                "no_badge": "看不到",
-                "not_a_village": "不在村莊",
-            },
+            {"counted": "{free}/{total}", "unread": "數字讀不到", "not_a_village": "不在村莊"},
             get_args(PlateCountOutcome),
         )
 
@@ -942,7 +936,7 @@ class UpkeepLineTests(unittest.TestCase):
                 "never_exported": "還沒有匯出過",
                 "wrong_format": "存檔讀不成村莊匯出",
                 "no_village": "沒有回到村莊畫面",
-                "settings_shut": "設定視窗沒有打開",
+                "settings_shut": "設定頁沒有打開",
                 "more_settings_shut": "那一頁沒有打開",
                 "row_not_found": "捲到底了",
                 "nothing_copied": "剪貼簿沒有東西",
@@ -1319,7 +1313,7 @@ class SettleGameTests(unittest.TestCase):
         park: bool = True,
         **screens: list[bool],
     ) -> tuple[MagicMock, DisplayTarget | None]:
-        """Poll against canned readings; `dropped`, `taken`, `welcome` and `loading` are what each frame reads as."""
+        """Poll against canned readings; `dropped`, `taken`, `welcome`, `panel` and `loading` are what each frame reads as."""
         adb = _adb()
         if displays is not None:
             adb.display_for.side_effect = displays
@@ -1332,6 +1326,9 @@ class SettleGameTests(unittest.TestCase):
             patch.object(commands, "refuse_taken", side_effect=screens.get("taken")),
             patch.object(
                 commands, "welcome_back", side_effect=screens.get("welcome") or [False] * 9
+            ),
+            patch.object(
+                commands, "build_panel_open", side_effect=screens.get("panel") or [False] * 9
             ),
             patch.object(
                 commands, "loading_screen", side_effect=screens.get("loading") or [False] * 9
@@ -1392,6 +1389,13 @@ class SettleGameTests(unittest.TestCase):
         adb, display = self._settle([None, "night"], welcome=[True])
         assert display == DISPLAY
         adb.back.assert_called_once_with(DISPLAY)
+
+    def test_the_build_panel_is_shut_with_its_own_x_rather_than_waited_under(self) -> None:
+        """It shifts the corner column, so the village under it never reads, and `back` leaves it up."""
+        adb, display = self._settle([None, "day"], panel=[True])
+        assert display == DISPLAY
+        adb.tap.assert_called_once_with(*PANEL_CLOSE, DISPLAY)
+        adb.back.assert_not_called()
 
     def test_giving_up_names_the_loading_screen(self) -> None:
         with self.assertLogs("ai_coc.commands", "WARNING") as logged:
@@ -1723,7 +1727,7 @@ class WatchTests(unittest.TestCase):
 
 class ReadCommandTests(unittest.TestCase):
     def test_a_home_village_frame_reads_as_one(self) -> None:
-        reading = commands.read((FRAMES / "world_day.png").read_bytes())
+        reading = commands.read((FRAMES / "hud_day.png").read_bytes())
         assert reading.world == "day"
         assert reading.stock is not None
         assert reading.scout is None
@@ -1731,9 +1735,9 @@ class ReadCommandTests(unittest.TestCase):
 
     def test_a_builder_base_frame_carries_its_own_two_rows(self) -> None:
         """`stock` reads the gems bar as dark elixir there; `builder_stock` is the one to believe."""
-        reading = commands.read((FRAMES / "world_night.png").read_bytes())
+        reading = commands.read((FRAMES / "hud_night.png").read_bytes())
         assert reading.world == "night"
-        assert reading.builder_stock == VillageStock(gold=574030, elixir=589419, dark=0)
+        assert reading.builder_stock == VillageStock(gold=6_000_000, elixir=5_600_000, dark=0)
 
     def test_read_says_when_a_frame_is_the_loading_screen(self) -> None:
         """Every other field is empty there, which used to leave a run's no-village report unexplained."""
@@ -1806,9 +1810,7 @@ class CaptureAndViewTests(unittest.TestCase):
             # arrived, and `PARK_STILL` of them is what it swipes for.
             patch.object(world_ui, "view_shift", return_value=(0, 0)),
             # These fakes hand back a MagicMock rather than a frame, and the
-            # panel check and the boat's marker read pixels; `ParkCameraTests`
-            # is where both are tested.
-            patch.object(world_ui, "plate_panel_open", return_value=None),
+            # boat's marker reads pixels; `ParkCameraTests` is where it is tested.
             patch.object(world_ui, "boat_marker", return_value=(442, 542)),
         ):
             return adb, commands.view(zoom, times)
@@ -2062,6 +2064,7 @@ class ExportTests(unittest.TestCase):
         clip = screens.get("clip", PAYLOAD)
         reads = clip if isinstance(clip, list) else [clip] * (commands.CLIPBOARD_POLLS + 2)
         with (
+            patch.object(commands, "window_open", return_value=screens.get("window", True)),
             patch.object(commands, "settings_open", return_value=screens.get("settings", True)),
             patch.object(commands, "more_settings_open", return_value=screens.get("more", True)),
             patch.object(commands, "export_row", return_value=screens.get("row", (1131, 560))),
@@ -2088,7 +2091,7 @@ class ExportTests(unittest.TestCase):
 
     def test_a_game_that_never_came_back_is_not_tapped_at(self) -> None:
         """`_settle_game` answers None for a dropped session it could not restart,
-        a game still loading, and an emulator with no window yet. The gear is a
+        a game still loading, and an emulator with no window yet. The avatar is a
         fixed coordinate, so none of those may be tapped on.
         """
         with patch.object(commands, "_settle_game", return_value=None):
@@ -2102,11 +2105,19 @@ class ExportTests(unittest.TestCase):
         report, _ = self._export(settings=False)
         assert report.outcome == "settings_shut"
         assert report.entities == []
-        # The gear, and then the close — never 更多設定 at a screen nobody confirmed.
+        # The avatar, the tab, and then the close — never 更多設定 at a screen
+        # nobody confirmed.
         assert [call.args[:2] for call in self.adb.tap.call_args_list] == [
-            commands.SETTINGS_GEAR,
+            commands.PROFILE_AVATAR,
+            commands.SETTINGS_TAB,
             commands.CLOSE_SETTINGS,
         ]
+
+    def test_a_profile_window_that_never_opened_is_not_closed(self) -> None:
+        """With no window up, the close sits over the gold bar."""
+        report, _ = self._export(window=False)
+        assert report.outcome == "settings_shut"
+        assert [call.args[:2] for call in self.adb.tap.call_args_list] == [commands.PROFILE_AVATAR]
 
     def test_a_list_that_never_reaches_the_row_is_never_tapped(self) -> None:
         """A missed scroll leaves the copy coordinate over a settings toggle."""

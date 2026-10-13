@@ -1,7 +1,9 @@
 """The game's own settings windows, which is where the village export lives.
 
-Clash of Clans can write the whole village out as JSON, behind 設定 → 更多設定 →
-scroll to the bottom → 複製. Every step is a fixed coordinate, so what these
+Clash of Clans can write the whole village out as JSON, behind the avatar →
+設定 tab → 更多設定 → scroll to the bottom → 複製. Since the 2026-10 overhaul
+settings is a tab of the profile window rather than a page behind a gear. Every
+step is a fixed coordinate, so what these
 readers are for is refusing to tap when the screen is not the one the
 coordinate was measured on.
 
@@ -27,34 +29,40 @@ if TYPE_CHECKING:
 
     from PIL import Image
 
-# The settings window, read as two features because the button alone is not
-# enough. Its 更多設定 plate measures 0.422 green, but a battle result screen puts
-# 0.262 of its own 回營 button in the same box and an event reward page 0.205 —
-# swept over every committed frame, which is how those two turned up. What no
-# other screen has is the SUPERCELL ID band across the top: 0.806 blue here
-# against at most 0.047 on all 66 of them, so the line goes nowhere near either
-# reading. The more-settings page reaches 0.30 there, being a list of blue rows,
-# and is ruled out by the button instead.
-MORE_BUTTON_BOX = (700, 750, 890, 790)
+# The red X every page of the profile window closes on. It fills 0.35 of this
+# box on all of them; two sheets from before the overhaul drew theirs in the
+# same place at 0.33, and nothing else recorded reaches 0.03. An X there is a
+# window to close, whichever window it is.
+WINDOW_X_BOX = (1375, 48, 1422, 95)
+WINDOW_X_RED = 0.2
+
+# The settings page, read as two features because the button alone is not
+# enough. Its 更多設定 plate measures 0.40 green, but battle result screens put
+# 0.59 to 0.80 of their own 回營 button in the same box and the shield sheet
+# 0.69. What no other screen has is the SUPERCELL ID band across the top: 0.82
+# blue here against at most 0.36 (a loading screen) everywhere else. Measured
+# on 2026-10-13 over every frame recorded that day and every committed one.
+MORE_BUTTON_BOX = (700, 775, 905, 815)
 MORE_BUTTON_GREEN = 0.20
-BANNER_BOX = (400, 160, 1200, 230)
+BANNER_BOX = (400, 130, 1200, 210)
 BANNER_BLUE = 0.50
 
-# The back arrow, which only the more-settings page has: 0.412 there against
-# 0.000 on the settings window it replaces and 0.041 on a village.
-BACK_ARROW_BOX = (295, 85, 385, 125)
+# The back arrow in the window's top left, which only the more-settings page
+# has: 0.75 there against 0.01 at most anywhere else.
+BACK_ARROW_BOX = (100, 45, 145, 110)
 BACK_ARROW_GREEN = 0.20
 
 # The export row, read as two features because neither separates it alone. The
-# white word JSON measures 0.280 when the list is at the bottom, 0.094 at the
-# top of the same page — but 0.938 on the settings window, whose cream panel
-# fills that box. The 複製 plate beside it measures 0.452 against 0.091 and
-# 0.000 for those two. Together they answer only on the row itself.
-JSON_LABEL_BOX = (378, 542, 446, 574)
+# white word JSON measures 0.39 when the list is at the bottom — but 0.93 on the
+# settings page and 1.0 on the loot cart's sheet, whose pale panels fill that
+# box. The 複製 plate beside it measures 0.46 against at most 0.75 elsewhere (the
+# builder base's attack menu, which has no JSON). Together they answer only on
+# the row itself.
+JSON_LABEL_BOX = (362, 557, 428, 584)
 JSON_LABEL_WHITE = 0.18
-COPY_BUTTON_BOX = (1080, 545, 1185, 578)
+COPY_BUTTON_BOX = (1080, 555, 1250, 590)
 COPY_BUTTON_GREEN = 0.30
-COPY_BUTTON = (1131, 560)
+COPY_BUTTON = (1163, 571)
 
 
 def _ratio(image: Image.Image, box: tuple[int, int, int, int], lit: Callable[..., bool]) -> float:
@@ -73,6 +81,15 @@ def _white(r: int, g: int, b: int) -> bool:
 
 def _blue(r: int, g: int, b: int) -> bool:
     return b > 120 and b - max(r, g) > 40
+
+
+def _red(r: int, g: int, b: int) -> bool:
+    return r >= 180 and g <= 80 and b <= 80
+
+
+def window_open(png: bytes) -> bool:
+    """Whether a window with its red X in the profile window's place is up."""
+    return _ratio(open_frame(png), WINDOW_X_BOX, _red) >= WINDOW_X_RED
 
 
 def settings_open(png: bytes) -> bool:

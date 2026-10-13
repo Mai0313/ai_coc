@@ -46,9 +46,15 @@ logger = logging.getLogger(__name__)
 # transparent, so the village behind it shows through to the right of the digits
 # and its brighter speckles segment as glyphs of their own. The box cannot simply
 # be pulled in tight against the text: loot runs to seven figures, and the widest
-# reading measured ran to x 207, so this leaves room for that and no more.
-PANEL_LEFT, PANEL_RIGHT = 74, 215
-ROW_BOUNDS = ((126, 156), (173, 203), (220, 250))
+# reading measured ran to x 209, so this leaves room for that and no more.
+#
+# **Since the 2026-10 overhaul the panel sits higher and further left**, under
+# the opponent's name and clan: a leading 1 inks from x 86, the icons end by 76,
+# and the digits run rows 121-136, 169-182 and 215-229. Swept on two frames of
+# one opponent, every box top within 7 px of these read all three numbers, and
+# every left edge from 76 to 84; the old left edge cut the leading 1 in half.
+PANEL_LEFT, PANEL_RIGHT = 80, 220
+ROW_BOUNDS = ((113, 143), (160, 190), (208, 238))
 # What is left of the village inside the box is dropped by how badly it matches:
 # measured over 21 rows of live frames, all 115 real digits land within 28 bits
 # of their template while the blobs read 42 and 57, so the line sits between.
@@ -487,7 +493,7 @@ HERO_BAR_MAX_BLUE = 30
 # and the capacity tooltip, whose digits are painted the same way. The loot
 # panel and the army screen are painted over other things and keep the shared
 # ceiling.
-STOCK_LEFT, STOCK_RIGHT = 1300, 1512
+STOCK_LEFT, STOCK_RIGHT = 1300, 1523
 # **The dark row gets its own left edge, because its number is shorter.** Gold
 # and elixir cap at 24M and their eight figures reach back to about x 1338; dark
 # caps at 370 000, so six figures put its leftmost digit at 1356 across every
@@ -516,7 +522,12 @@ STOCK_LEFT, STOCK_RIGHT = 1300, 1512
 # the camera is now parked in that corner on purpose, so a bar this edge does not
 # happen to clear stopped reading on every frame rather than on some.
 STOCK_DARK_LEFT = 1348
-STOCK_ROW_BOUNDS = ((33, 72), (117, 156), (200, 239))
+# **Where the bars are since the 2026-10 overhaul**: their digits ink rows 37-55,
+# 99-117 and 161-179 and end at x 1518, with the icons from about 1530. The
+# boxes and the right edge were swept over every frame recorded that day, and
+# every box from 2 px tighter to 2 px looser read the same, as did every right
+# edge from 1519 to 1527; at 1531 the icons join the last digit.
+STOCK_ROW_BOUNDS = ((27, 66), (89, 128), (151, 190))
 STOCK_DIGIT_TOLERANCE = 30
 # **A row that needed the village trimmed off it has to read cleanly to be
 # believed**, which is a tighter bar than the one a row that read straight off
@@ -569,31 +580,40 @@ STOCK_BAR_CORE = 245
 
 # 最大儲存量 on the tooltip a tapped storage bar drops open, which is the one
 # place the game writes down how much that storage holds. The panel hangs under
-# the bar that opened it, so its first line moves with the row by the same pitch
-# the bars themselves are spaced at.
+# the bar that opened it, its first line 59 to 65 px below that bar's digits —
+# not one pitch, so each row has its own box, measured on 2026-10-13 on both
+# villages and swept: each box sits midway in the range of tops that reads the
+# line whole without reaching the line under it.
 #
 # The line reads 最大儲存量 ： 24 000 000, and what makes it readable is that
-# the label is not a number: swept over both villages, every real digit lands
-# within 4 bits of its template while the Chinese and the colon read 46 and up,
-# so `split_numbers` cuts the line at the label and the capacity is the last
-# number left.
+# the label is not a number: every real digit lands within 4 bits of its
+# template while the Chinese and the colon read 46 and up, so `split_numbers`
+# cuts the line at the label and the capacity is the last number left.
 #
-# **The panel is translucent, so the bar under it shows through**, and that is
-# what sets `CAPACITY_TOLERANCE` from below. On a full home village the dark
-# bar's 470 000 sat behind the elixir line and pushed the 7 of 27 000 000 to 16
-# bits; at 15 the line was cut into 2 and 000000, the elixir ceiling read 0, and
-# a ceiling of 0 drops that storage out of `StorageCapacity.full`. From above it
-# is 30: a scrap at the right end of the box, on most tooltips of both villages,
-# which at 30 joins the line as one more 0 and reads 2 450 000 as 24 500 000, a
-# ceiling ten times the real one that no farming run could ever fill. The line
-# goes midway, swept over the 5 committed tooltips and the 15 recorded here.
+# **The panel is translucent, and its first line sits exactly over the next
+# bar's digits**, which is what sets `CAPACITY_TOLERANCE` from below: on a full
+# home village the dark bar's 470 000 sat behind the elixir line and pushed the
+# 7 of 27 000 000 to 16 bits; at 15 the line was cut into 2 and 000000, the
+# elixir ceiling read 0, and a ceiling of 0 drops that storage out of
+# `StorageCapacity.full`. From above it is 30: a scrap at the right end of the
+# box, which at 30 joins the line as one more 0 and reads 2 450 000 as
+# 24 500 000. The line goes midway.
 #
-# The box starts left of where any of these numbers do. It reaches past the
-# label on the dark row, whose panel sits further right, and that costs nothing:
-# label glyphs are cut away by the same tolerance.
-CAPACITY_BOX = (1340, 103, 1585, 132)
-CAPACITY_PITCH = 84
+# **And with no tooltip open the same box reads the next bar**, which would hand
+# the elixir held back as the gold ceiling. So the tooltip is confirmed first by
+# its top edge, a white line 1 px tall across the panel at `CAPACITY_EDGES`
+# (0.77 of the span on every tooltip, at most 0.51 on anything else drawn
+# there), with the panel's dark under it, which is what a page of white like
+# the shop's does not have.
+CAPACITY_ROWS = ((92, 121), (158, 187), (220, 249))
+CAPACITY_X = (1340, 1590)
 CAPACITY_TOLERANCE = 23
+CAPACITY_EDGES = (76, 142, 204)
+CAPACITY_EDGE_SPAN = (1390, 1560)
+CAPACITY_EDGE_WHITE = 0.65
+CAPACITY_EDGE_REACH = 2
+CAPACITY_UNDER = 4
+CAPACITY_UNDER_WHITE = 0.3
 
 # The 回營 button on the battle result screen. It is the one screen a farming
 # loop reliably ends on and the one it could not get off: the button only comes
@@ -878,7 +898,7 @@ def loading_screen(png: bytes) -> bool:
     )
 
 
-def _bar_ink(crop: Image.Image) -> list[list[bool]]:
+def bar_ink(crop: Image.Image) -> list[list[bool]]:
     """A storage bar's digits: ink that is a digit's white core or touches one."""
     ink = ink_mask(crop, saturation=STOCK_BAR_SATURATION)
     core = ink_mask(crop, STOCK_BAR_CORE, STOCK_BAR_SATURATION)
@@ -924,7 +944,7 @@ def _read_row(image: Image.Image, box: tuple[int, int, int, int], tolerance: int
     to a closer match, since removing that glyph also removes the rule that one
     poor glyph fails the row.
     """
-    glyphs = list(row_glyphs(_bar_ink(image.crop(box))))
+    glyphs = list(row_glyphs(bar_ink(image.crop(box))))
     trimmed = False
     while glyphs and glyphs[0][1] > min(tolerance, STOCK_LEADING_TOLERANCE):
         # Only a glyph past `tolerance` takes the row-wide rule away. One the
@@ -1667,6 +1687,26 @@ def read_builder_stock(png: bytes) -> VillageStock | None:
     return VillageStock(gold=gold, elixir=elixir, dark=0)
 
 
+def _white_share(image: Image.Image, y: int) -> float:
+    """How much of the tooltip's width is white along one row."""
+    data = image.crop((CAPACITY_EDGE_SPAN[0], y, CAPACITY_EDGE_SPAN[1], y + 1)).tobytes()
+    white = sum(
+        1
+        for at in range(0, len(data), 3)
+        if min(data[at : at + 3]) >= 225 and max(data[at : at + 3]) - min(data[at : at + 3]) <= 20
+    )
+    return white / (len(data) // 3)
+
+
+def _tooltip_edge(image: Image.Image, y: int) -> bool:
+    """Whether a tooltip's thin white top edge runs across near this row."""
+    return any(
+        _white_share(image, edge) >= CAPACITY_EDGE_WHITE
+        and _white_share(image, edge + CAPACITY_UNDER) <= CAPACITY_UNDER_WHITE
+        for edge in range(y - CAPACITY_EDGE_REACH, y + CAPACITY_EDGE_REACH + 1)
+    )
+
+
 def storage_capacity(png: bytes, row: int) -> int | None:
     """What this row's tooltip says the storage holds, or None where none is open.
 
@@ -1681,10 +1721,11 @@ def storage_capacity(png: bytes, row: int) -> int | None:
     comparison.
     """
     image = open_frame(png)
-    left, top, right, bottom = CAPACITY_BOX
-    shift = CAPACITY_PITCH * row
+    if not _tooltip_edge(image, CAPACITY_EDGES[row]):
+        return None
+    top, bottom = CAPACITY_ROWS[row]
     mask = ink_mask(
-        image.crop((left, top + shift, right, bottom + shift)), saturation=STOCK_INK_SATURATION
+        image.crop((CAPACITY_X[0], top, CAPACITY_X[1], bottom)), saturation=STOCK_INK_SATURATION
     )
     # The last number on the line, because everything before it is the label:
     # 最大儲存量 and its colon are cut away by the tolerance, and anything they

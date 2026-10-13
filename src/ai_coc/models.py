@@ -1405,26 +1405,10 @@ class CartReport(BaseModel):
     capacity: int | None = None
 
 
-class BuildQueue(BaseModel):
-    """What the builder panel shows running, read off the progress bars.
-
-    `running` counts the bars and `remaining` carries only the times that read,
-    so a row whose countdown could not be made out is visible as the two
-    disagreeing rather than as a queue quietly one short.
-    """
-
-    model_config = ConfigDict(frozen=True)
-
-    running: int = 0
-    # Seconds, soonest first, which is the order the question is asked in: the
-    # first of them is when the next builder comes free.
-    remaining: list[int] = Field(default_factory=list)
-
-
 class ShieldState(BaseModel):
     """Whether a shield is up over the home village, and for how much longer.
 
-    **The plate has a state that carries no countdown at all**, which is why a
+    **The bar has a state that carries no countdown at all**, which is why a
     countdown alone would not do: with no shield the game writes 無 there beside
     a green +, and a reader that only looked for digits would report that
     exactly as it reports a frame it could not make out. Those are opposite
@@ -1434,17 +1418,14 @@ class ShieldState(BaseModel):
     **So `up` is derived from `remaining` rather than stored beside it.** 無
     carries no countdown to read, and a shield that is up but whose countdown
     will not resolve is reported as no `ShieldState` at all rather than as one
-    with an empty countdown. That is because it cannot be told apart from the
-    plate being covered — swept over every committed frame, a full-screen panel
-    over the village leaves the badge readable and the plate under it
-    unreadable, so `hero_hall_menu.png` would otherwise claim a shield is up on
-    a frame that says no such thing. Two stored fields let that combination be
+    with an empty countdown, because it cannot be told apart from the bar being
+    covered. Two stored fields let that combination be
     written down anyway: `shield_state` never returned it, `_shield_line` had a
     branch testing for it that nothing could reach, and that dead branch was the
     only thing in the code suggesting the two were distinguishable.
 
-    The plate being absent altogether is not a state here — the builder base has
-    no shield plate, so its callers get no `ShieldState` rather than one saying
+    The bar being absent altogether is not a state here — the builder base has
+    no shield bar, so its callers get no `ShieldState` rather than one saying
     False. **Which of those two a None is comes off the world**: on the builder
     base it is structural and needs no following up, and on the home village it
     is a reading to take again.
@@ -1473,12 +1454,14 @@ class ShieldState(BaseModel):
 
 
 class PlateJob(BaseModel):
-    """One row of a plate's panel: what is being raised, and how long it has left.
+    """One running row of the build panel: what is being raised, and how long it has left.
 
     `remaining` is None for a row whose countdown would not resolve, which is
     counted all the same — the row is there and something is in it, so dropping
-    it would report a plate as emptier than it is. `name` is empty without a
-    model to read it with, since it is Chinese and no parser here reads any.
+    it would report a tab as emptier than it is. It is the panel's own
+    countdown, at normal speed; `status` works the export through the speed-ups.
+    `name` is empty without a model to read it with, since it is Chinese and no
+    parser here reads any.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -1521,33 +1504,28 @@ class PlateJobNames(BaseModel):
 
 
 class PlateReport(BaseModel):
-    """What one plate says, and what the panel behind it is running.
+    """What one counter says, and what the build panel's tab for it is running.
 
     **About the village on screen, and it never sails.** `world` says which one
     that turned out to be, the way `StockReport` does and for the same reason:
     crossing is `ai_coc world --go`, and a status check that moves the game is
     no longer one.
 
-    `free` and `total` are None together for a plate whose count would not
-    resolve — the plate is translucent, so the camera decides. That costs less
-    than it looks: the number a caller waiting on a builder actually wants is
-    `soonest`, which comes off the panel rather than off the plate.
+    `free` and `total` are None together for a counter whose digits would not
+    resolve. That costs less than it looks: the number a caller waiting on a
+    builder actually wants is the soonest of the jobs' countdowns, which come
+    off the panel rather than off the counter.
 
     **`outcome` names the branch this came back from, and there is no sentence.**
     `StockReport` argues the whole case already: a reading has no outcome to
     narrate, and every state it can be in is readable off its own fields. What
     earns a field here rather than a sentence is one pair the fields genuinely
-    cannot separate — a plate whose badge was not on the frame, against a panel
-    that would not open **on a frame whose count would not read either**. Both
-    leave a village, no counts and no rows. Read off an enum they are two
-    different things to do next; read off prose they are two wordings nobody can
-    match on. The commoner shape of that second one keeps its count, so those
-    two really are told apart by the fields — the pair is narrow, and it is
-    still the reason.
+    cannot separate — a panel that opened with nothing running on the tab,
+    against one that never opened. Both leave a village and no rows.
 
     **It has no default**, because every path through the reader knows how it
-    ended and a report that quietly claimed one of them would be wrong for four
-    of the five.
+    ended and a report that quietly claimed one of them would be wrong for three
+    of the four.
     """
 
     world: World | None = None
@@ -1559,11 +1537,6 @@ class PlateReport(BaseModel):
     # panel with nothing running, whose open state nothing here can confirm.
     suggested: list[SuggestedUpgrade] = Field(default_factory=list)
     outcome: PlateOutcome
-
-    def soonest(self) -> int | None:
-        """Seconds until the next one finishes, or None if no row's countdown read."""
-        times = [job.remaining for job in self.jobs if job.remaining is not None]
-        return min(times) if times else None
 
 
 class StockReport(BaseModel):
@@ -1609,17 +1582,15 @@ class StockReport(BaseModel):
     filled: dict[str, str] = Field(default_factory=dict)
 
 
-# How one plate's count came back, read off the village frame without opening
-# anything. `unread` and `no_badge` both leave a village and no numbers, which
-# is why this is a field: the first is a plate that is there and would not
-# resolve, the second one this frame did not show at all.
-PlateCountOutcome = Literal["counted", "unread", "no_badge", "not_a_village"]
+# How one counter came back, read off the village frame without opening
+# anything: its digits, digits that would not resolve, or no village to read.
+PlateCountOutcome = Literal["counted", "unread", "not_a_village"]
 
 
 class PlateCount(BaseModel):
-    """What one plate's own digits say: how many slots are idle, out of how many.
+    """What one counter's own digits say: how many slots are idle, out of how many.
 
-    The village on screen only, since the plates are drawn on the village they
+    The village on screen only, since the counters are drawn on the village they
     count; the timers on `StatusReport` cover both.
     """
 
@@ -2165,29 +2136,17 @@ RestartScope = Literal["none", "game", "emulator"]
 World = Literal["day", "night"]
 
 
-# The plates along the top of either village, named for what each one counts.
-# `lab` is the research slots — on the home village two research jobs have been
-# seen running side by side, and the pet house is not on this plate at all —
-# and `builder` the workmen. `shield` is the home village's
-# alone: the builder base is real-time matchmaking against a live player, so a
-# shield there would contradict the mode's own design.
-PlateRole = Literal["lab", "builder", "shield"]
+# The counters a village draws, named for what each one counts. `lab` is the
+# research slots — on the home village two research jobs have been seen running
+# side by side — and `builder` the workmen.
+PlateRole = Literal["lab", "builder"]
 
-# How a plate reading ended, which is the one thing about it the fields cannot
-# say. `read` is the only one that saw the panel: it opened and had at least one
-# row on it, which is the only thing `panel_rows` ever answers with — a band with
-# no bars comes back as nothing at all rather than as an empty list.
-#
-# **`idle` is inferred rather than observed**, and that is worth knowing before
-# leaning on it: it is the no-bars case where the plate's own count says every
-# slot is free, so it is a panel nobody watched open. A count that disagrees or
-# will not read leaves `panel_shut` instead, which is the honest answer that
-# nobody can say. The remaining two are failures a caller answers differently:
-# `not_a_village` is a screen to clear or wait out, and it is the only one whose
-# `world` is None; `no_badge` is a plate not on this frame, which on the home
-# village is worth another capture and on the builder base's missing shield is
-# structural and never will be.
-PlateOutcome = Literal["read", "idle", "no_badge", "panel_shut", "not_a_village"]
+# How a counter's panel reading ended, which is the one thing about it the
+# fields cannot say. `read` is a tab with at least one row running on it, and
+# `idle` one that opened with none; `panel_shut` is a panel that never opened,
+# and `not_a_village` a screen to clear or wait out, the only one whose `world`
+# is None.
+PlateOutcome = Literal["read", "idle", "panel_shut", "not_a_village"]
 
 
 class Pinch(BaseModel):
@@ -2658,7 +2617,9 @@ class FrameReading(BaseModel):
     bubbles: list[ResourceBubble] = Field(default_factory=list)
     heroes: list[HeroCard] = Field(default_factory=list)
     builders: tuple[int, int] | None = None
-    queue: BuildQueue | None = None
+    # Each running row's countdown on the open tab of the build panel; None with
+    # no panel up.
+    panel_rows: list[int | None] | None = None
     upgrades: list[UpgradeButton] = Field(default_factory=list)
     donatable: int = 0
     attack_menu: bool = False
