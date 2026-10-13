@@ -1321,8 +1321,9 @@ class CollectReport(BaseModel):
 
     The amounts are what the storages actually gained rather than what the
     markers promised, because a storage already full takes none of it and a
-    marker tapped twice pays once. `markers` is what was tapped, so the two
-    disagreeing is the interesting case rather than an inconsistency.
+    marker tapped twice pays once. `markers` is how many markers stood when
+    their kind was tapped, one tap emptying every collector of a kind, so the
+    two disagreeing is the interesting case rather than an inconsistency.
 
     **The two villages do different jobs under one command**, so the builder
     base's trip comes back whole in `cart` rather than squeezed into fields
