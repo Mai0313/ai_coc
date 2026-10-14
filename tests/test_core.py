@@ -628,6 +628,7 @@ class WorldTests(unittest.TestCase):
             "night_stock_leading_three.png": "night",
             "night_cart_marker.png": "night",
             "night_cart_no_marker.png": "night",
+            "hud_day_shield_up.png": "day",
         }
         for path in sorted(FRAMES.glob("*.png")):
             try:
@@ -7722,6 +7723,34 @@ class HomeHudTests(unittest.TestCase):
         """無 falls into three or four spans depending on what shows through the bar."""
         for name in ("hud_day.png", "hud_day_shield_split.png"):
             assert shield_state((FRAMES / name).read_bytes()) == ShieldState(), name
+
+    def test_a_shield_that_is_up_reads_its_countdown(self) -> None:
+        """5小時 36分鐘, in the bars' font, where the panel's unit templates
+        cannot tell 小時 from 分鐘.
+        """
+        shield = shield_state((FRAMES / "hud_day_shield_up.png").read_bytes())
+        assert shield == ShieldState(remaining=5 * 3600 + 36 * 60)
+
+    def test_a_two_digit_hour_is_read_whole(self) -> None:
+        """The countdown is right-aligned, so 14小時 reaches further left than 5小時.
+
+        Built from the fixture: its 5 is painted over with the bar beside it, and
+        a 1 and a 4 cut from `hud_day.png`'s gold bar are laid where the game
+        would draw them, ending 2 px before 小 as the 5 did.
+        """
+        shield = Image.open(FRAMES / "hud_day_shield_up.png").convert("RGB")
+        gold = Image.open(FRAMES / "hud_day.png").convert("RGB")
+        strip = shield.crop((1376, 280, 1382, 312))
+        for x in (1371, 1377, 1383, 1389, 1394):
+            shield.paste(strip, (x, 280))
+        for (left, right), x in (((1407, 1414), 1373), ((1463, 1479), 1382)):
+            digit = gold.crop((left, 30, right, 62))
+            shield.paste(
+                digit, (x, 280), digit.convert("L").point(lambda v: 255 if v > 150 else 0)
+            )
+        out = io.BytesIO()
+        shield.save(out, format="PNG")
+        assert shield_state(out.getvalue()) == ShieldState(remaining=14 * 3600 + 36 * 60)
 
     def test_the_shield_bar_is_only_read_where_its_button_is(self) -> None:
         """The builder base has none, and a cover over the corner is no evidence of 無."""

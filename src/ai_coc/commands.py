@@ -2351,8 +2351,8 @@ def _shield_line(shield: ShieldState | None, world: World | None) -> str:
 
     **`world` is here because the runner's None covers two things and they are
     not the same news.** The builder base has no shield plate at all, which is
-    structural; on a home village it is a shield that is up or a bar this frame
-    could not read, and the line says it cannot tell rather than guessing.
+    structural; on a home village it is a bar this frame could not read, and
+    the line says so rather than guessing.
 
     **There are two Nones here and they sit one level apart.** No `ShieldState`
     is a plate this frame could not read; a `ShieldState` with no `remaining` is
