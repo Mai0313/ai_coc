@@ -628,6 +628,7 @@ class WorldTests(unittest.TestCase):
             "night_stock_leading_three.png": "night",
             "night_cart_marker.png": "night",
             "night_cart_no_marker.png": "night",
+            "hud_day_shield_up.png": "day",
         }
         for path in sorted(FRAMES.glob("*.png")):
             try:
@@ -7722,6 +7723,13 @@ class HomeHudTests(unittest.TestCase):
         """無 falls into three or four spans depending on what shows through the bar."""
         for name in ("hud_day.png", "hud_day_shield_split.png"):
             assert shield_state((FRAMES / name).read_bytes()) == ShieldState(), name
+
+    def test_a_shield_that_is_up_reads_its_countdown(self) -> None:
+        """5小時 36分鐘, in the bars' font, where the panel's unit templates
+        cannot tell 小時 from 分鐘.
+        """
+        shield = shield_state((FRAMES / "hud_day_shield_up.png").read_bytes())
+        assert shield == ShieldState(remaining=5 * 3600 + 36 * 60)
 
     def test_the_shield_bar_is_only_read_where_its_button_is(self) -> None:
         """The builder base has none, and a cover over the corner is no evidence of 無."""

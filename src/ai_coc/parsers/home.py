@@ -23,6 +23,8 @@ import io
 from typing import TYPE_CHECKING
 from statistics import median
 
+from PIL import Image
+
 from ai_coc.models import Patch, ShieldState, ResourceBubble
 from ai_coc.parsers.frame import open_frame
 from ai_coc.parsers.scout import bar_ink
@@ -43,8 +45,6 @@ from ai_coc.parsers.regions import mask, patches
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
-
-    from PIL import Image
 
     from ai_coc.models import World, PlateRole
 
@@ -267,6 +267,24 @@ SHIELD_BOX = (1375, 284, 1525, 312)
 # what shows through the bar, while a countdown is at least a digit and a unit,
 # 30 px or more at this size.
 SHIELD_NONE_WIDTH = 24
+# **A countdown on the bar is written in the storage bars' font**, about twice
+# the panel's size. Its digits read off the shared templates the way the bars'
+# own do (18 at worst on the frames recorded with a shield up, and at least 7 px
+# wide where the units' strokes are 2 to 7), and its units do not: their strokes
+# are too thin for the 10x14 cell, where 小時 and 分鐘 came out one bit apart. So
+# a unit is compared as an 18x10 cell where any ink counts, which measured 86
+# bits between 小時 and 分鐘 and 0 between four frames of the same word. 天 and 秒 have
+# not been seen on the bar yet, so a countdown in them reads as none at all.
+SHIELD_TEXT_ROWS = 22
+SHIELD_DIGIT_TOLERANCE = 26
+SHIELD_DIGIT_WIDTH = 6
+SHIELD_UNIT_CELL = (18, 10)
+SHIELD_UNIT_INK = 40
+SHIELD_UNIT_WORDS = {
+    3600: 49211869528294647620196602586854557406177924202389505,
+    60: 25070008390483987176172767018809866025469748488181828,
+}
+SHIELD_UNIT_TOLERANCE = 30
 
 
 def _in_storage_bars(point: tuple[int, int]) -> bool:
@@ -485,7 +503,12 @@ def _row_tops(image: Image.Image) -> list[int]:
     return tops
 
 
-def _time_runs(ink: list[list[bool]]) -> list[list[int | str]]:
+def _time_runs(
+    ink: list[list[bool]],
+    text_rows: int = TIME_TEXT_ROWS,
+    tolerance: int = TIME_DIGIT_TOLERANCE,
+    width: int = TIME_DIGIT_WIDTH,
+) -> list[list[int | str]]:
     """A countdown row as runs of digits and of everything else, each with its span.
 
     A run of digits carries them as its first item and any other run an empty
@@ -494,13 +517,11 @@ def _time_runs(ink: list[list[bool]]) -> list[list[int | str]]:
     runs: list[list[int | str]] = []
     for left, right in glyph_columns(ink, speckle=False):
         rows = [y for y, row in enumerate(ink) if any(row[left:right])]
-        if rows[-1] - rows[0] + 1 > TIME_TEXT_ROWS:
+        if rows[-1] - rows[0] + 1 > text_rows:
             continue
         pattern = signature(ink, left, right, TIME_FLOOR)
         digit, distance = nearest(pattern) if pattern is not None else ("", NOT_A_GLYPH)
-        kind = (
-            digit if distance <= TIME_DIGIT_TOLERANCE and right - left >= TIME_DIGIT_WIDTH else ""
-        )
+        kind = digit if distance <= tolerance and right - left >= width else ""
         if runs and bool(runs[-1][0]) == bool(kind):
             runs[-1][0] = f"{runs[-1][0]}{kind}"
             runs[-1][2] = right
@@ -535,6 +556,40 @@ def _countdown(ink: list[list[bool]]) -> int | None:
         scale = min(UNIT_WORDS, key=lambda unit: (UNIT_WORDS[unit] ^ pattern).bit_count())
         if (UNIT_WORDS[scale] ^ pattern).bit_count() > UNIT_TOLERANCE:
             return None
+    numbers = [int(str(run[0])) for run in runs if run[0]]
+    below = UNIT_LADDER[UNIT_LADDER.index(scale) + 1]
+    return numbers[0] * scale + (numbers[1] * below if len(numbers) > 1 else 0)
+
+
+def _unit_bits(ink: list[list[bool]], left: int, right: int) -> int:
+    """One unit word on the shield bar as a `SHIELD_UNIT_CELL` pattern, any ink counting."""
+    rows = [y for y, row in enumerate(ink) if any(row[left:right])]
+    word = Image.frombytes(
+        "L",
+        (right - left, rows[-1] + 1 - rows[0]),
+        bytes(
+            255 if ink[y][x] else 0
+            for y in range(rows[0], rows[-1] + 1)
+            for x in range(left, right)
+        ),
+    )
+    bits = 0
+    for value in word.resize(SHIELD_UNIT_CELL, Image.Resampling.BOX).tobytes():
+        bits = bits << 1 | int(value > SHIELD_UNIT_INK)
+    return bits
+
+
+def _shield_countdown(ink: list[list[bool]]) -> int | None:
+    """The shield bar's countdown as seconds, or None where it does not read."""
+    runs = _time_runs(ink, SHIELD_TEXT_ROWS, SHIELD_DIGIT_TOLERANCE, SHIELD_DIGIT_WIDTH)
+    if len(runs) < 2 or not runs[0][0] or runs[1][0]:
+        return None
+    pattern = _unit_bits(ink, int(runs[1][1]), int(runs[1][2]))
+    scale = min(
+        SHIELD_UNIT_WORDS, key=lambda unit: (SHIELD_UNIT_WORDS[unit] ^ pattern).bit_count()
+    )
+    if (SHIELD_UNIT_WORDS[scale] ^ pattern).bit_count() > SHIELD_UNIT_TOLERANCE:
+        return None
     numbers = [int(str(run[0])) for run in runs if run[0]]
     below = UNIT_LADDER[UNIT_LADDER.index(scale) + 1]
     return numbers[0] * scale + (numbers[1] * below if len(numbers) > 1 else 0)
@@ -591,10 +646,8 @@ def shield_state(png: bytes) -> ShieldState | None:
     it. A frame without the bar's own + is not showing the bar at all, and
     answers None rather than 無.
 
-    A shield that is up answers None, the way a countdown that would not
-    resolve always has: its time is not read, on purpose. The user has said
-    more than once that it does not matter, since loot is cheap and a few
-    battles win back what a raid takes (2026-10-10, 2026-10-13).
+    A shield that is up answers its countdown (`_shield_countdown`), and one
+    whose countdown does not read answers None.
     """
     image = open_frame(png)
     if not plus_button(image, DAY_SHIELD_PLUS):
@@ -605,4 +658,5 @@ def shield_state(png: bytes) -> ShieldState | None:
         return None
     if spans[-1][1] - spans[0][0] <= SHIELD_NONE_WIDTH:
         return ShieldState()
-    return None
+    remaining = _shield_countdown(ink)
+    return None if remaining is None else ShieldState(remaining=remaining)
