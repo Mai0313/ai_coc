@@ -10,12 +10,6 @@ ORGANISATION = "Mai0313"
 VERSION_LABEL = f"v{__version__}"
 COC_PACKAGE = "com.supercell.clashofclans"
 DEFAULT_GEMINI_MODEL = "gemini-3.5-flash"
-# The cheap tier, for the one question the parsers provably cannot answer: which
-# building a menu belongs to. That is a line of Chinese on a strip of screen, so
-# it is a classification rather than a judgement, and it is asked once per
-# candidate rather than once per run — which is the call pattern a smaller model
-# is actually for.
-DEFAULT_LITE_MODEL = "gemini-3.5-flash-lite"
 DEFAULT_ADB_HOST = "127.0.0.1"
 
 

@@ -62,16 +62,8 @@ BUY_SETTLE = 1.5
 # and right edges are the game's own button columns for the same reason.
 SWEEP_X = (260, 420, 580, 740, 900, 1060, 1220)
 SWEEP_Y = (140, 260, 380, 500)
-# Half a grid step, for the second pass a caller makes when the first missed
-# what it was looking for. Buildings are three to five tiles across — 70 to
-# 120 px on this camera — against a grid that steps 160 by 120, so a small one
-# fits between four points with room to spare. Staggered, the same grid lands on
-# the middle of each of those gaps.
-SWEEP_STAGGER = (SWEEP_X[1] - SWEEP_X[0]) // 2, (SWEEP_Y[1] - SWEEP_Y[0]) // 2
-# How far a tap may go before it stops being the village. The plain grid stays
-# inside this by construction; a staggered one has to be held to it, and its
-# last column would otherwise land on the storage bars — which start at x 1260,
-# with the dark elixir reading beginning at exactly (1300, 200).
+# How far a tap may go before it stops being the village. The grid stays inside
+# this by construction; a spotted point has to be held to it.
 SWEEP_LIMIT = (SWEEP_X[-1], 620)
 # The same floor as a percentage, which is what a finder answers in. Below it is
 # the row of buttons the previous selection left on screen, so a point there taps
@@ -623,7 +615,7 @@ class GameRunner(ScreenRunner):
 
         **And one place to stop, for the same reason.** A tap costs a
         `MENU_SETTLE` and a capture, so a full sweep is a couple of minutes with
-        nothing else to interrupt it — which is what `ai_coc upgrade` spends
+        nothing else to interrupt it — which is what `ai_coc walls` spends
         whenever there is no key to ask with or the finder comes back empty.
         Leaving here is safe in the way leaving a batch is not, because the walk
         has already backed out of whatever the last tap opened; `WallRunner._scan`
@@ -647,9 +639,7 @@ class GameRunner(ScreenRunner):
                 continue
             yield spot, png
 
-    def _sweep(
-        self, label: str, offset: tuple[int, int] = (0, 0)
-    ) -> Iterator[tuple[tuple[int, int], bytes]]:
+    def _sweep(self, label: str) -> Iterator[tuple[tuple[int, int], bytes]]:
         """Tap across the village, handing back the frame each tap opened.
 
         This is the only way to find anything on the map without asking. Every
@@ -658,24 +648,9 @@ class GameRunner(ScreenRunner):
         discovered by tapping and reading, never by recognising or remembering.
 
         **The grid steps further than a small building is wide, so one pass is a
-        sample rather than a search.** At `SWEEP_STAGGER` it lands between four
-        of its own points, which is where whatever the first pass stepped over
-        is: measured, 英雄殿堂 sits at (990, 430) with the nearest grid point 86
-        px away and the staggered one 14 px away. A caller that has to find one
-        particular building runs both, and pays for the second only when the
-        first came back without it. A staggered point past `SWEEP_LIMIT` is
-        dropped rather than clamped, because a clamped one lands on a point the
-        other pass already covered.
+        sample rather than a search.**
         """
-        yield from self._opened(
-            (
-                (x + offset[0], y + offset[1])
-                for y in SWEEP_Y
-                for x in SWEEP_X
-                if x + offset[0] <= SWEEP_LIMIT[0] and y + offset[1] <= SWEEP_LIMIT[1]
-            ),
-            label,
-        )
+        yield from self._opened(((x, y) for y in SWEEP_Y for x in SWEEP_X), label)
 
     def _spotted(self, what: str, notes: str, count: int) -> list[tuple[int, int]]:
         """Ask Gemini where these are on the village. Empty means nobody could say.
@@ -724,8 +699,7 @@ class GameRunner(ScreenRunner):
                 logger.info("Dropping (%d, %d): that is the button row, not the map", *point)
                 continue
             # The same for the rest of the furniture, here as well as in
-            # `_opened`, because the hero hall's search taps these points without
-            # walking through it.
+            # `_opened`, so the answer a caller gets back is already clean.
             if on_hud(point):
                 logger.info(
                     "Dropping (%d, %d): that is the game's own buttons, not the map", *point

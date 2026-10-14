@@ -28,13 +28,10 @@ from ai_coc.models import (
     PlayedPlan,
     WallReport,
     AdbEndpoint,
-    BuildReport,
     ScreenPoint,
     WallUpgrade,
-    BuildingName,
     EntityMapping,
     GeminiRequest,
-    BuildCandidate,
     GeminiTextPart,
     GeminiImagePart,
     VillageDocument,
@@ -279,12 +276,7 @@ class PlanTests(unittest.TestCase):
 
 
 class ReportArithmeticTests(unittest.TestCase):
-    def test_a_building_name_reads_the_way_the_game_writes_it(self) -> None:
-        assert str(BuildingName(name="金礦", level=12)) == "金礦(12級)"
-        assert str(BuildingName(name="金礦")) == "金礦"
-        assert str(BuildingName()) == "?"
-
-    def test_wall_and_build_reports_add_up_what_was_paid(self) -> None:
+    def test_a_wall_report_adds_up_what_was_paid(self) -> None:
         walls = WallReport(
             outcome="bought",
             upgrades=[
@@ -294,14 +286,6 @@ class ReportArithmeticTests(unittest.TestCase):
         )
         assert walls.walls == 5
         assert (walls.paid("gold"), walls.paid("elixir")) == (4_800_000, 3_200_000)
-        build = BuildReport(
-            outcome="started",
-            started=[
-                BuildCandidate(point=(1, 1), resource="gold", price=100),
-                BuildCandidate(point=(2, 2), resource="elixir", price=250),
-            ],
-        )
-        assert (build.paid("gold"), build.paid("elixir"), build.paid("dark")) == (100, 250, 0)
 
 
 class GeminiRequestTests(unittest.TestCase):

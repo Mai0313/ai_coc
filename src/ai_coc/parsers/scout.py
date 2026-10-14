@@ -23,7 +23,7 @@ from ai_coc.parsers.frame import open_frame
 # The digit reader every number on these screens goes through. It used to live
 # in this module, which is why `parsers.home`, `parsers.building` and
 # `parsers.hero` each reached in here by private name for it; it has its own
-# module now and this file is one of its four callers rather than its owner.
+# module now and this file is one of its callers rather than its owner.
 from ai_coc.parsers.glyphs import (
     INK_BRIGHTNESS,
     MIN_GLYPH_ROWS,

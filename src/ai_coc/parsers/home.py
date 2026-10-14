@@ -19,7 +19,6 @@ cannot empty, so only the pale plate counts (`FULL_PLATE_LEAD`).
 
 from __future__ import annotations
 
-import io
 from typing import TYPE_CHECKING
 from statistics import median
 
@@ -46,7 +45,7 @@ from ai_coc.parsers.regions import mask, patches
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
-    from ai_coc.models import World, PlateRole
+    from ai_coc.models import PlateRole
 
 # Where a marker can be. Outside this is the game's own furniture — the button
 # columns down either side and the row along the bottom — and a marker cannot be
@@ -171,14 +170,7 @@ COUNTER_TOLERANCE = 29
 
 # 建造 opens one panel for both counters, full height on the right: running
 # rows, then 建議升級 and 其他升級, with a tab per counter along its foot. It
-# opens on whatever tab was last open, so a reader taps the tab it wants.
-BUILD_BUTTON = (1495, 800)
-PANEL_TABS: dict[tuple[World, PlateRole], tuple[int, int]] = {
-    ("day", "builder"): (1222, 850),
-    ("day", "lab"): (1330, 850),
-    ("night", "builder"): (1277, 850),
-    ("night", "lab"): (1492, 850),
-}
+# opens on whatever tab was last open.
 # **`back` does not shut it**, measured on the builder base: the panel stayed up
 # and only the camera moved. Its own red X does.
 PANEL_CLOSE = (1572, 30)
@@ -211,54 +203,11 @@ PANEL_TOP, PANEL_BOTTOM = 60, 800
 RUNNING_STEP = 60
 RUNNING_HEIGHT = 44
 
-# The countdown, right-aligned against the clock on each running row, measured
-# from the row's top: the text runs to x 1561 and the clock starts at 1571. The
-# box reaches above and below the text, for the reason `TIME_TEXT_ROWS` gives.
-TIME_BOX = (1420, 2, 1566, 32)
-# **The panel writes smaller than the old one did**, about 12 rows for a digit
-# and less for 小時, so glyphs are measured from six rows rather than the usual
-# twelve. A digit is believed at 39 from its template and at least 3 px wide:
-# measured over every countdown on the recorded panels, digits land at 34 at
-# worst (a 1, the narrowest and least stable), while the pieces 小時, 分鐘 and
-# 天 fall into come back at 44 and over — except 小's centre stroke, 1 px wide,
-# which reads 30 from `0`. The line goes midway.
+# How short a piece of a countdown may be and still be measured. Set for the
+# build panel's countdowns, written about 12 rows a digit and less for 小時;
+# their reader is gone, and the shield bar's countdown, the one left, writes
+# its digits about 22 rows tall, so this floor only drops speckle there.
 TIME_FLOOR = 6
-TIME_DIGIT_TOLERANCE = 39
-TIME_DIGIT_WIDTH = 3
-# **A row an apprentice or a goblin works on carries their portrait right
-# against its countdown**, and cut to the text's own height the apprentice's
-# ring came out as a piece the height of a digit, 37 from a 1, 2 px before the
-# real first digit: 1天 would have read as 11天. Seen whole, every portrait
-# piece runs 15 rows or more (the goblin's face 15, the lab assistant's 16, the
-# apprentice's ring 25), while every digit and unit runs 12 at most, so a span
-# taller than this is a portrait and is left out of the reading altogether.
-TIME_TEXT_ROWS = 13
-# How close something text-sized that is not a digit can sit before the first
-# number and still be something else. A digit missed there would be dropped,
-# and 16小時 would read as 6: the gap between two digits is 1 or 2 px.
-TIME_LEAD_GAP = 4
-# The unit after the first number is read whole, as one shape from the end of
-# that number to the start of the next, because the characters fall apart at
-# this size: 小 into three strokes, 時 and 分 into two each. 天 is one character
-# and comes out 9 or 10 px wide against 21 or 22 for the two-character units;
-# 小時 and 分鐘 land 0 to 2 bits from their own template over eleven rows and 26
-# to 28 from each other's.
-DAY_WIDTH = 14
-UNIT_WORDS = {
-    3600: 3991578210008329590722701825776025600,
-    60: 10645515507765239062307640030384884224,
-}
-# **天 is held to its shape as well as its width**, because 秒 is one character
-# too, about as wide, and 45秒 taken for 天 is 45 days. It renders five ways on
-# the recorded panels, in two families 41 to 47 bits apart, so each is kept.
-DAY_SHAPES = (
-    65398079761088050085476826099556345972481,
-    65398079761088050085476844184319308596737,
-    1393795308048637152504369991213948321664259,
-    1393795308048617384187137361284480929105409,
-    1393795266469657850937188490023723944119555,
-)
-UNIT_TOLERANCE = 13
 UNIT_LADDER = (86400, 3600, 60, 1)
 
 # The shield is a bar of its own now, under the gems bar, writing 無 or a
@@ -450,12 +399,10 @@ def plate_count(png: bytes, role: PlateRole) -> tuple[int, int] | None:
 def free_builders(png: bytes) -> tuple[int, int] | None:
     """Idle builders over total, or None where this screen is not showing them.
 
-    **None costs each caller something different, and the cheap-looking one is
-    the expensive one.** `UpkeepRunner.upgrade` and `HeroRunner` both stand the
-    run down on it, which is loud and harmless. `WallRunner` does the opposite:
-    its check is `counted is not None and counted[0] == 0`, so an unread counter
-    silently never fires the "every builder is busy" branch and the run walks the
-    rest of the village at forty seconds a wall, buying nothing.
+    **None is the expensive answer here.** `WallRunner`'s check is
+    `counted is not None and counted[0] == 0`, so an unread counter silently
+    never fires the "every builder is busy" branch and the run walks the rest of
+    the village at forty seconds a wall, buying nothing.
     """
     return plate_count(png, "builder")
 
@@ -530,15 +477,12 @@ def running_rows(png: bytes) -> list[tuple[int, int]]:
 
 
 def _time_runs(
-    ink: list[list[bool]],
-    text_rows: int = TIME_TEXT_ROWS,
-    tolerance: int = TIME_DIGIT_TOLERANCE,
-    width: int = TIME_DIGIT_WIDTH,
+    ink: list[list[bool]], text_rows: int, tolerance: int, width: int
 ) -> list[list[int | str]]:
     """A countdown row as runs of digits and of everything else, each with its span.
 
     A run of digits carries them as its first item and any other run an empty
-    one. A portrait in front of the number is left out by its height.
+    one. A piece taller than `text_rows` in front of the number is left out by its height.
     """
     runs: list[list[int | str]] = []
     for left, right in glyph_columns(ink, speckle=False):
@@ -554,37 +498,6 @@ def _time_runs(
         else:
             runs.append([kind, left, right])
     return runs
-
-
-def _countdown(ink: list[list[bool]]) -> int | None:
-    """One countdown as seconds: a number, a unit, and usually a number in the unit below.
-
-    The unit after the first number is the only one read, because the game
-    writes them in descending order and adjacent, so knowing the first settles
-    the second.
-    """
-    runs = _time_runs(ink)
-    while runs and not runs[0][0]:
-        if len(runs) > 1 and int(runs[1][1]) - int(runs[0][2]) < TIME_LEAD_GAP:
-            return None
-        runs.pop(0)
-    if len(runs) < 2:
-        return None
-    left, right = int(runs[1][1]), int(runs[1][2])
-    pattern = signature(ink, left, right, TIME_FLOOR)
-    if pattern is None:
-        return None
-    if right - left <= DAY_WIDTH:
-        if min((shape ^ pattern).bit_count() for shape in DAY_SHAPES) > UNIT_TOLERANCE:
-            return None
-        scale = 86400
-    else:
-        scale = min(UNIT_WORDS, key=lambda unit: (UNIT_WORDS[unit] ^ pattern).bit_count())
-        if (UNIT_WORDS[scale] ^ pattern).bit_count() > UNIT_TOLERANCE:
-            return None
-    numbers = [int(str(run[0])) for run in runs if run[0]]
-    below = UNIT_LADDER[UNIT_LADDER.index(scale) + 1]
-    return numbers[0] * scale + (numbers[1] * below if len(numbers) > 1 else 0)
 
 
 def _unit_bits(ink: list[list[bool]], left: int, right: int) -> int:
@@ -619,47 +532,6 @@ def _shield_countdown(ink: list[list[bool]]) -> int | None:
     numbers = [int(str(run[0])) for run in runs if run[0]]
     below = UNIT_LADDER[UNIT_LADDER.index(scale) + 1]
     return numbers[0] * scale + (numbers[1] * below if len(numbers) > 1 else 0)
-
-
-def panel_rows(png: bytes) -> list[int | None] | None:
-    """Each running row's countdown, **in the order the panel draws them**.
-
-    None for the whole list means the panel is not on screen at all; an empty
-    list is a panel with nothing running on its tab, which the old plate panel
-    could not tell apart from one that never opened. None for one row is a
-    countdown that would not resolve; the row is kept, because something is in
-    it and dropping it would report the tab as emptier than it is.
-
-    These are the panel's own countdowns, at normal speed. `status` reads the
-    export instead, which works through whatever speed-ups are running.
-    """
-    if not build_panel_open(png):
-        return None
-    image = open_frame(png)
-    left, above, right, below = TIME_BOX
-    return [
-        _countdown(ink_mask(image.crop((left, top + above, right, top + below))))
-        for top in _row_tops(image)
-    ]
-
-
-def jobs_strip(png: bytes) -> bytes | None:
-    """The panel from its first row down, as one PNG for a model to read.
-
-    Cropped rather than read, the same bargain `parsers.building.name_strip`
-    makes: what is being raised is written in Chinese, no parser here reads any,
-    and a strip is what a cheap model is actually for. **Down to the bottom of
-    the panel**, so the 建議升級 rows come along with the running ones; the
-    其他升級 rows under them only show in full once the panel is scrolled, so
-    they are left to the model to skip.
-    """
-    if not build_panel_open(png):
-        return None
-    out = io.BytesIO()
-    open_frame(png).crop((PANEL_X_BOX[0] - 384, PANEL_TOP, 1600, PANEL_BOTTOM)).save(
-        out, format="PNG"
-    )
-    return out.getvalue()
 
 
 def shield_state(png: bytes) -> ShieldState | None:

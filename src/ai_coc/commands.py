@@ -39,19 +39,14 @@ from ai_coc.models import (
     StateFile,
     AttackPlan,
     CartReport,
-    HeroReport,
     PlateCount,
     PlayedPlan,
     StopTarget,
     ViewReport,
     WallReport,
     AdbEndpoint,
-    BuildReport,
     CartOutcome,
-    HeroOptions,
-    HeroOutcome,
     NamedEntity,
-    PlateReport,
     PressReport,
     RunnerState,
     ShieldState,
@@ -63,7 +58,6 @@ from ai_coc.models import (
     WorldReport,
     AttackReport,
     AttackSeries,
-    BuildOutcome,
     DonateReport,
     FrameReading,
     LaunchReport,
@@ -87,7 +81,6 @@ from ai_coc.models import (
     CollectOutcome,
     ConfirmOutcome,
     LootThresholds,
-    UpgradeOptions,
     StorageCapacity,
     EmulatorInstance,
     PlateCountOutcome,
@@ -100,10 +93,8 @@ from ai_coc.adapters.ai import GeminiClient
 # cannot be built at all.
 from ai_coc.adapters.adb import ZOOM_PINCHES, AdbController, AdbControlError
 from ai_coc.parsers.clan import donatable_cards
-from ai_coc.parsers.hero import hero_cards
 from ai_coc.parsers.home import (
     PANEL_CLOSE,
-    panel_rows,
     running_rows,
     free_builders,
     collect_bubbles,
@@ -163,7 +154,6 @@ from ai_coc.adapters.ldplayer import LDPlayerAdapter
 from ai_coc.adapters.clipboard import read_clipboard, clear_clipboard, write_clipboard
 
 from .ui.clan import ClanRunner
-from .ui.hero import HeroRunner
 from .ui.walls import WallRunner
 from .ui.world import cross, uncovered, park_camera, collect_cart
 from .ui.attack import CARD_ROW_Y, DROP_SETTLE, BATTLE_TIMEOUT, SINGLE_DROP_DELAY, AttackRunner
@@ -409,18 +399,18 @@ def launch(
     return report
 
 
-def _planner(config: AppConfig, tier: Literal["main", "lite"] = "main") -> GeminiClient | None:
-    """A client for one tier, or None so every caller falls back to its own way.
+def _planner(config: AppConfig) -> GeminiClient | None:
+    """A client for the main tier, or None so every caller falls back to its own way.
 
-    None is not an error anywhere: the attack uses its fixed flank, the finders
-    sweep, and the building namer leaves the name unread. That is what keeps a
-    run with no key working exactly as it did before any of this existed.
+    None is not an error anywhere: the attack uses its fixed flank and the
+    finders sweep. That is what keeps a run with no key working exactly as it
+    did before any of this existed.
     """
     key = gemini_key(config)
     if not key:
         logger.info("No API key is saved; the loops will fall back to reading the screen alone")
         return None
-    return GeminiClient(api_key=key, settings=getattr(config.gemini, tier))
+    return GeminiClient(api_key=key, settings=config.gemini.main)
 
 
 class FrameTicker(BaseModel):
@@ -2183,59 +2173,6 @@ def stock_of(runner: ScreenRunner, adb: AdbController, display: DisplayTarget) -
     return report
 
 
-def _namer() -> GeminiClient | None:
-    """Who reads what is being raised, or nothing where there is no key.
-
-    The lite tier, for the reason `upgrade` uses it: this is a label off a crop
-    rather than a judgement about a whole screen. Without one the countdowns
-    still read and the names come back blank, which every caller treats as the
-    ordinary answer it is.
-    """
-    return _planner(ConfigStore().load(), "lite")
-
-
-def _plate(role: PlateRole, frame_dir: Path | None) -> PlateReport:
-    """One counter and its panel tab on whichever village is up, and never the other one.
-
-    Same shape as `stock` and for the same reason: crossing is `ai_coc world
-    --go`, so a status check that sails a boat is no longer one. `uncovered` is
-    what clears a panel the last command left standing, which the skills now make
-    the ordinary way to arrive here.
-    """
-    adb = _controller()
-    display = _settle_game(adb, WORLD_SETTLE_POLLS) or adb.display_for(COC_PACKAGE)
-    runner = PlateRunner(adb=adb, display=display, frame_dir=frame_dir, namer=_namer())
-    report = runner.read(role)
-    # The outcome rather than `world is None`, which is the same state encoded
-    # twice: only this branch of the reader leaves the world unset, and reading
-    # the field that says so is what keeps the two from drifting apart.
-    if report.outcome == "not_a_village" and uncovered(adb, display) is not None:
-        report = runner.read(role)
-    logger.info("Plate %s: %s", role, _plate_line(report))
-    return report
-
-
-def worker(frame_dir: Path | None = None) -> PlateReport:
-    """Who is building what on the village that is up, and how long each has left.
-
-    It reads whichever village is on screen and reports which that turned out
-    to be. `status` is where the timers of both villages come from now, worked
-    through any speed-up; the countdowns here are the panel's own, at normal
-    speed.
-    """
-    return _plate("builder", frame_dir)
-
-
-def lab(frame_dir: Path | None = None) -> PlateReport:
-    """What is being researched on the village that is up, and how long it has left.
-
-    The home village has two research slots and the builder base one, each on
-    the laboratory tab of the same panel the builders' counter opens, so this is
-    `worker` pointed at the next tab.
-    """
-    return _plate("lab", frame_dir)
-
-
 def _entity_names() -> dict[int, str]:
     """The community mapping's names, or none at all where it cannot be had.
 
@@ -2336,36 +2273,6 @@ def _timers_line(report: StatusReport) -> str:
 # were the last Chinese *values* `ui/plates.py` held — what is left there quotes
 # the game's own screen in a comment.
 PLATE_NAMES: dict[PlateRole, str] = {"lab": "實驗室", "builder": "建築工人"}
-
-
-def _plate_line(report: PlateReport) -> str:
-    """One plate as a line for a person, built from the report's own fields.
-
-    Here rather than carried on the model, for the reason `stock_of` gives: a
-    person reading `run.log` wants a sentence and a caller reading the report
-    wants fields, and a sentence derivable from the fields is the same answer
-    twice. `outcome` is what the fields could not say on their own — a tab
-    with nothing running, against a panel that would not open.
-    """
-    held = PLATE_NAMES[report.role]
-    if report.outcome == "not_a_village":
-        return "畫面不在村莊,讀不到右下的數字"
-    if report.outcome == "panel_shut":
-        return f"{held}的面板打不開,只讀到右下的數字"
-    # Only the plate's own count, because the running count is on every line
-    # below this one — carrying it here as well printed it twice.
-    counted = f"{report.free}/{report.total}" if report.free is not None else "數字讀不到"
-    if report.outcome == "idle":
-        return f"{held} {counted},沒有在跑的項目"
-    timed = [job for job in report.jobs if job.remaining is not None]
-    if not timed:
-        return f"{held} {counted},{len(report.jobs)} 個在跑,但每一個的倒數都讀不到"
-    next_up = min(timed, key=lambda job: job.remaining or 0)
-    named = f"是{next_up.name}," if next_up.name else ""
-    return (
-        f"{held} {counted},{len(report.jobs)} 個在跑,"
-        f"最快的{named}還要 {spell_out(next_up.remaining or 0)}"
-    )
 
 
 def _shield_line(shield: ShieldState | None, world: World | None) -> str:
@@ -2485,132 +2392,6 @@ def collect(frame_dir: Path | None = None) -> CollectReport:
     return report
 
 
-# What stopped the run putting builders on things. `started` adds nothing,
-# because the count and the names are the line's own opening either way.
-BUILD_LINES: dict[BuildOutcome, str] = {
-    "started": "",
-    "nothing_found": "掃過村莊都沒有找到可以升級的建築",
-    "cannot_afford": "剩下的資源買不起任何升級,最便宜的要 {cheapest}",
-    "only_no_match": "沒有找到名字含「{only}」而且買得起的建築",
-    "builders_busy": "工人都在忙,沒有可以派的",
-    "count_unread": "讀不到工人數量,先停下來",
-    "no_village": "畫面沒辦法回到村莊,建築升級沒有開始",
-    "builder_base": "遊戲停在夜世界,這裡只升主村的建築;要升先跑 ai_coc world --go day",
-    "village_lost": "升級之後讀不到村莊,先停下來",
-}
-
-
-def build_line(report: BuildReport) -> str:
-    """What one `upgrade` run started, and what stopped it starting more.
-
-    Named where a name was read, because "開始了 1 個升級" says nothing about
-    which builder went where — and that is the whole point of asking.
-    """
-    named = "、".join(str(job.building) for job in report.started if job.building.name)
-    did = f"開始了 {len(report.started)} 個升級" + (f":{named}" if named else "")
-    reason = BUILD_LINES[report.outcome].format(cheapest=report.cheapest, only=report.only)
-    return f"{did};{reason}" if reason else did
-
-
-def upgrade(
-    options: UpgradeOptions, should_stop: Callable[[], bool] = stop_requested
-) -> BuildReport:
-    """Put the village's idle builders to work, with no window in the way.
-
-    A builder standing around is the one thing a village cannot buy its way out
-    of, so this is worth running whenever an upgrade finishes. Walls are left to
-    `walls`, which needs no builder at all.
-
-    **This is the one upkeep command long enough to be worth stopping.** The
-    other three are seconds, but a run with no key to ask with, or one whose
-    finder came back empty, falls through to `_sweep` and spends a couple of
-    minutes tapping a grid. The check itself is in `GameRunner._opened`, which
-    is the walk all three finders share.
-    """
-    adb, display = _session(options.frame_dir)
-    config = ConfigStore().load()
-    report = UpkeepRunner(
-        adb=adb,
-        display=display,
-        frame_dir=options.frame_dir,
-        keep_gold=options.keep_gold,
-        keep_elixir=options.keep_elixir,
-        at=options.at,
-        should_stop=should_stop,
-        # Skipped when the run was told where to look, for the reason the wall
-        # loop skips it: the whole point of asking is to find them.
-        ai=None if options.at else _planner(config),
-        # Always, because it answers the one question the parsers cannot: which
-        # building this is. `--only` needs it, and without it the report is a
-        # coordinate.
-        namer=_planner(config, "lite"),
-        only=options.only,
-    ).upgrade()
-    logger.info("Upgrade: %s", build_line(report))
-    return report
-
-
-HERO_LINES: dict[HeroOutcome, str] = {
-    "read": "英雄殿堂裡讀到 {count} 個英雄",
-    "started": "{hero} 開始升級,花了 {price} {resource}",
-    "hall_not_found": "掃過村莊都沒有找到英雄殿堂",
-    "hero_absent": "英雄殿堂裡沒有看到 {hero}",
-    "already_upgrading": "{hero} 現在沒有升級按鈕,多半正在升級中",
-    "at_level_cap": "{hero} 已經是等級上限,沒有下一級可以升",
-    "button_dead": "{hero} 的升級按鈕是停用的,多半是英雄殿堂的等級擋住了(要 {price} {resource})",
-    "cannot_afford": "資源不夠,{hero} 要 {price} {resource}",
-    "builders_busy": "工人都在忙,{hero} 現在派不出去",
-    "count_unread": "讀不到工人數量,先停下來",
-    "card_moved": "{hero} 不在畫面上了,這一輪先不動它",
-    "no_confirmation": "點了 {hero} 的升級,但沒有出現確認畫面",
-    "undercharged": "確認了 {hero} 的升級,但儲量沒有少那麼多",
-    "no_village": "畫面沒辦法回到村莊,英雄升級沒有開始",
-    "builder_base": "遊戲停在夜世界,英雄殿堂在主村;要升先跑 ai_coc world --go day",
-    "village_lost": "開始升級 {hero} 之後讀不到村莊,先停下來",
-}
-
-
-def hero_line(report: HeroReport) -> str:
-    """The one line a person reads off a hall reading or a hero upgrade.
-
-    The price comes off whichever card this run was about — the one it started
-    where it started something, and the one it read where it refused — because
-    every refusal that names a number is naming that card's own.
-    """
-    card = report.started or next((one for one in report.cards if one.hero == report.hero), None)
-    return HERO_LINES[report.outcome].format(
-        count=len(report.cards),
-        hero=report.hero,
-        price=card.price if card else "",
-        resource=card.resource if card else "",
-    )
-
-
-def hero(options: HeroOptions) -> HeroReport:
-    """Read the 英雄殿堂, and raise the hero named, with no window in the way.
-
-    Reading is the default and spends nothing: what each hero costs next is the
-    number the decision rests on, and a hall nobody has looked at is the most
-    expensive kind of idle builder — a hero level runs for the better part of a
-    day, so one not started this evening is one not finished tomorrow.
-
-    `upgrade` is what turns it into a purchase, and only ever for the hero
-    named: which hero is worth raising is a judgement about how the village
-    plays, not something a price can settle.
-    """
-    adb, display = _session(options.frame_dir)
-    report = HeroRunner(
-        ai=_planner(ConfigStore().load()),
-        adb=adb,
-        display=display,
-        frame_dir=options.frame_dir,
-        hero=options.upgrade,
-        at=options.at,
-    ).run()
-    logger.info("Hero: %s", hero_line(report))
-    return report
-
-
 DONATE_LINES: dict[DonateOutcome, str] = {
     "donated": "捐了 {gifts} 次",
     "dry_run": "試跑,畫面上有 {offered} 種可以捐,一種都沒有捐出去",
@@ -2647,9 +2428,8 @@ def donate(options: DonateOptions) -> DonateReport:
 def world(go: World | None = None, keep: Path | None = None) -> WorldReport:
     """Which village the game is on, and sail to the other one when asked for it.
 
-    Reading is the default and crossing is the exception, for the same reason
-    `hero` reads unless told to spend a builder: this is the question every
-    other command has to ask itself now that the game reopens on whichever
+    Reading is the default and crossing is the exception: this is the question
+    every other command has to ask itself now that the game reopens on whichever
     village it was closed on, and the answer alone is worth having.
 
     **Reading really is one capture and nothing else** — no swipe, no tap, and
@@ -3307,9 +3087,7 @@ def read(png: bytes) -> FrameReading:
         army=army_strength(png),
         wall_menu=wall_menu(png),
         bubbles=collect_bubbles(png),
-        heroes=hero_cards(png),
         builders=free_builders(png),
-        panel_rows=panel_rows(png),
         upgrades=upgrade_buttons(png),
         donatable=len(donatable_cards(png)),
         attack_menu=attack_menu_open(png),

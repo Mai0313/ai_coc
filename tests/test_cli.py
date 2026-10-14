@@ -25,7 +25,6 @@ from ai_coc.models import (
     Caller,
     RunLog,
     ViewReport,
-    HeroOptions,
     NamedEntity,
     WallOptions,
     WorldReport,
@@ -35,7 +34,6 @@ from ai_coc.models import (
     DonateOptions,
     LootOverrides,
     VillageExport,
-    UpgradeOptions,
 )
 
 FRAMES = Path(__file__).parent / "frames"
@@ -51,11 +49,7 @@ MINIMAL: dict[str, list[str]] = {
     "walls": [],
     "collect": [],
     "stock": [],
-    "worker": [],
-    "lab": [],
     "status": [],
-    "upgrade": [],
-    "hero": [],
     "world": [],
     "view": [],
     "tap": ["100", "200"],
@@ -116,12 +110,6 @@ class ParserTests(unittest.TestCase):
         """It is the timer now, so one with no wake time has nothing to sleep until."""
         with pytest.raises(SystemExit):
             _args("watch")
-
-    def test_hero_only_names_a_real_hero(self) -> None:
-        """`unknown` is a `HeroKind` for the planner's benefit, not a hero to raise."""
-        assert _args("hero", "--upgrade", "duke").upgrade == "duke"
-        with pytest.raises(SystemExit):
-            _args("hero", "--upgrade", "unknown")
 
 
 class DispatchTests(unittest.TestCase):
@@ -209,26 +197,9 @@ class DispatchTests(unittest.TestCase):
             keep_gold=5, rounds=2, at=[(260, 140), (420, 260)]
         )
 
-    def test_upgrade_hero_and_donate_carry_their_own_options(self) -> None:
-        with (
-            patch.object(commands, "upgrade") as upgraded,
-            patch.object(commands, "hero") as raised,
-            patch.object(commands, "donate") as gave,
-        ):
-            _answer(
-                _args("upgrade", "--only", "金礦", "--at", "900,430", "--keep-elixir", "7"),
-                self.run,
-            )
-            _answer(_args("hero", "--upgrade", "duke", "--at", "990,430"), self.run)
-            _answer(_args("hero"), self.run)
+    def test_donate_carries_its_own_options(self) -> None:
+        with patch.object(commands, "donate") as gave:
             _answer(_args("donate", "--dry-run", "--rounds", "2"), self.run)
-        assert upgraded.call_args.args[0] == UpgradeOptions(
-            keep_elixir=7, at=[(900, 430)], only="金礦"
-        )
-        assert [call.args[0] for call in raised.call_args_list] == [
-            HeroOptions(upgrade="duke", at=(990, 430)),
-            HeroOptions(),
-        ]
         assert gave.call_args.args[0] == DonateOptions(dry_run=True, rounds=2)
 
     def test_the_scalar_commands_pass_their_flags_through(self) -> None:

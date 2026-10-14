@@ -1,16 +1,11 @@
-"""Village housekeeping: empty the collectors, and put idle builders to work.
+"""Village housekeeping: empty the collectors.
 
-Two jobs with nothing to do with fighting and everything to do with a village
-not standing still. A collector fills up whether anyone is watching and then
-stops, so a village left alone for hours was idle for most of them; an idle
-builder is the same waste in the other direction, and builders are what a
-village is actually short of rather than loot.
+A job with nothing to do with fighting and everything to do with a village not
+standing still. A collector fills up whether anyone is watching and then stops,
+so a village left alone for hours was idle for most of them.
 
 Collecting is the shortest loop in the project — tapping a marker collects it
-outright, no menu and nothing to confirm. Upgrading is the longest, because the
-building to put a builder on has to be found by tapping across the village
-first: no building can be recognised by its artwork, and none of them sits in
-the same place in two villages.
+outright, no menu and nothing to confirm.
 
 Kept Qt-free like the rest of `ui/` outside the widgets, so `commands.py` can
 drive it against the live game without a window.
@@ -21,28 +16,10 @@ from __future__ import annotations
 import time
 import logging
 
-from pydantic import Field
-
-from ai_coc.models import (
-    BuildReport,
-    BuildingName,
-    VillageStock,
-    CollectReport,
-    BuildCandidate,
-    ResourceBubble,
-)
-from ai_coc.prompts import render
+from ai_coc.models import CollectReport, ResourceBubble
 from ai_coc.ui.world import SWIPE_MS, SWIPE_SETTLE
-from ai_coc.ui.runner import BUY_SETTLE, MENU_SETTLE, SPOT_TIMEOUT, GameRunner
-from ai_coc.adapters.ai import GeminiClient
-from ai_coc.parsers.home import free_builders, collect_bubbles
-from ai_coc.parsers.building import (
-    wall_menu,
-    name_strip,
-    game_dialog,
-    upgrade_sheet,
-    upgrade_buttons,
-)
+from ai_coc.ui.runner import GameRunner
+from ai_coc.parsers.home import collect_bubbles
 
 logger = logging.getLogger(__name__)
 
@@ -65,21 +42,6 @@ COLLECT_PASSES = 3
 # be under the finger.
 FAR_CORNER_SWIPE = ((1380, 540), (820, 820))
 
-# How many buildings to ask Gemini for, and how to describe one.
-#
-# **More than the run can use, because a builder is what is scarce here.** Only
-# the free builders get spent, so a village at 1/5 uses one of these — but
-# `_pick` takes the dearest it can afford, and that comparison is only as good as
-# the list it is given. Measured live, 9 of 14 answers had a priced upgrade on
-# them, and **only two of those nine sat within 45 px of a sweep grid point**
-# against buildings 70 to 120 px across: the grid stops at x 1220 and y 500,
-# which leaves most of a village outside it.
-BUILD_SPOTS = 14
-BUILD_TARGET = (
-    "**可以升級的建築**（防禦塔、資源採集器、儲存罐、兵營、實驗室這一類，有實體屋頂的建築）"
-)
-BUILD_NOTES = "不要回答城牆、樹木石頭這種裝飾物、或地上的軍隊。這些點要散開在村莊的不同區塊。"
-
 
 def _one_per_kind(markers: list[ResourceBubble]) -> list[tuple[int, int]]:
     """The first marker of each resource, which is all a pass needs to tap.
@@ -97,21 +59,6 @@ def _one_per_kind(markers: list[ResourceBubble]) -> list[tuple[int, int]]:
 
 class UpkeepRunner(GameRunner):
     """Runs the jobs a village needs doing that have nothing to do with fighting."""
-
-    # What to leave in the storages rather than spend. A run that empties them
-    # leaves nothing to train an army with, which is the other half of farming.
-    keep_gold: int = 0
-    keep_elixir: int = 0
-    # The buildings this run was pointed at instead of looking for them. Empty
-    # means ask, and then sweep if that answers nothing.
-    at: list[tuple[int, int]] = Field(default_factory=list)
-    # Who to ask what a menu is showing. A different tier from `ai`, because it
-    # is a different kind of call: `ai` answers once per run against a whole
-    # screenshot, this one once per candidate against a strip.
-    namer: GeminiClient | None = None
-    # Only upgrade a building whose name contains this. Empty takes the dearest
-    # affordable one, which is what this loop did before names existed.
-    only: str = ""
 
     def collect(self) -> CollectReport:
         """Tap one collector marker of each resource, and report what the storages gained.
@@ -173,202 +120,4 @@ class UpkeepRunner(GameRunner):
         report.dark = after.dark - before.dark
         if report.markers:
             report.outcome = "collected"
-        return report
-
-    def _buildings(self) -> list[BuildCandidate]:
-        """The upgrades to choose between, from whichever of three finders answers.
-
-        Named points, when given, are the whole search; otherwise Gemini, then
-        the sweep — the same as the wall loop, and for the same reason: the sweep is a blind grid that takes
-        two and a half minutes and lands where it lands, so it is the fallback
-        rather than the default. It stays underneath because a village whose
-        buildings nobody can place still has buildings.
-        """
-        if self.at:
-            return self._priced(self.at)
-        if (spotted := self._spotted(BUILD_TARGET, BUILD_NOTES, BUILD_SPOTS)) and (
-            found := self._priced(spotted)
-        ):
-            return found
-        return self._scan()
-
-    def _offer(self, point: tuple[int, int], png: bytes) -> BuildCandidate | None:
-        """What this menu is offering, if it is an upgrade this loop may take.
-
-        Walls are skipped. They upgrade instantly and tie up no builder, so
-        putting one on a wall would be the single mistake this loop exists to
-        avoid, and `ai_coc walls` is where they belong.
-        """
-        if wall_menu(png) is not None:
-            return None
-        offers = upgrade_buttons(png)
-        if not offers:
-            return None
-        building = self._name(png)
-        logger.info(
-            "Upgrade at (%d, %d): %s asking %d in %s",
-            point[0],
-            point[1],
-            building,
-            offers[0].price,
-            offers[0].resource,
-        )
-        return BuildCandidate(
-            point=point, resource=offers[0].resource, price=offers[0].price, building=building
-        )
-
-    def _name(self, png: bytes) -> BuildingName:
-        """What the game says this menu belongs to, or nothing without a model.
-
-        Nothing is an ordinary answer and every caller treats it as one: the
-        report falls back to the coordinate it always used, and `--only` matches
-        nothing, which is the safe direction for a filter that decides where a
-        scarce builder goes.
-        """
-        if self.namer is None:
-            return BuildingName()
-        try:
-            return self.namer.generate_structured(
-                render("name_building"), BuildingName, name_strip(png), SPOT_TIMEOUT
-            )
-        except Exception:
-            logger.warning("The building's name could not be read", exc_info=True)
-            return BuildingName()
-
-    def _priced(self, points: list[tuple[int, int]]) -> list[BuildCandidate]:
-        """What each of these points is really offering, read off its own menu."""
-        found: list[BuildCandidate] = []
-        for point, png in self._opened(points, "named"):
-            offer = self._offer(point, png)
-            if offer is None:
-                logger.info("Nothing upgradeable at (%d, %d)", *point)
-                continue
-            found.append(offer)
-        return found
-
-    def _scan(self) -> list[BuildCandidate]:
-        """Every point on the sweep whose menu offers an upgrade, and what it costs."""
-        found: list[BuildCandidate] = []
-        for point, png in self._sweep("build"):
-            offer = self._offer(point, png)
-            if offer is not None:
-                found.append(offer)
-        return found
-
-    def _pick(self, offers: list[BuildCandidate], gold: int, elixir: int) -> BuildCandidate | None:
-        """The dearest upgrade the village can pay for, or None if it can pay for none.
-
-        Dearest rather than cheapest, which is the opposite of the wall loop and
-        for the opposite reason. There the loot is the scarce thing, so the
-        cheapest batch buys the most wall. Here the *builder* is scarce — a
-        village has five and each is busy for days — so one spent on something
-        cheap is one not available for the upgrade that was holding the village
-        back.
-
-        This is the seam a planner would replace, since which building is worth
-        raising is a judgement about the base rather than about the price.
-        """
-        purse = {"gold": gold, "elixir": elixir}
-        affordable = [offer for offer in offers if offer.price <= purse[offer.resource]]
-        if self.only:
-            # A substring rather than an exact match, because the label carries a
-            # level and a caller types a name. An unread name matches nothing,
-            # which is the safe direction: a builder is scarce and the whole
-            # point of naming one is not to spend it on a guess.
-            affordable = [offer for offer in affordable if self.only in offer.building.name]
-        if not affordable:
-            return None
-        return max(affordable, key=lambda offer: offer.price)
-
-    def _start(self, offer: BuildCandidate, stock: VillageStock) -> bool:
-        """Put a builder on this upgrade, and say whether the game took the money."""
-        png = self._after_tap(offer.point, "menu")
-        button = next(
-            (
-                found
-                for found in upgrade_buttons(png)
-                if found.resource == offer.resource and found.price == offer.price
-            ),
-            None,
-        )
-        if button is None:
-            logger.info("The menu at (%d, %d) no longer offers what it did", *offer.point)
-            return False
-        self._tap(button.point)
-        time.sleep(MENU_SETTLE)
-        # Confirmation comes in two shapes and the building decides which. A wall
-        # gets the little dialog; everything else opens a full-screen sheet —
-        # 將金礦升至10級？ — with what the level buys and 確認 along the bottom.
-        # Neither is waited for: whichever is there is answered, and a building
-        # that starts without asking simply has neither.
-        #
-        # 確定 is safe here for the reason it is in the wall loop: nothing
-        # between `_home` and this line presses `back`, and `back` is the only
-        # thing that raises the dialog that must never be confirmed.
-        asked = self._frame("confirm")
-        dialog = game_dialog(asked)
-        sheet = upgrade_sheet(asked)
-        if dialog is not None:
-            self._tap(dialog.confirm)
-        elif sheet is not None:
-            self._tap(sheet)
-        time.sleep(BUY_SETTLE)
-        # Through `_home` rather than a bare capture, because the sheet is still
-        # closing and it covers the storage bars while it does. Read directly,
-        # that came back as "could not be read" on an upgrade that had in fact
-        # started — the builder count had dropped by the next run — which is a
-        # loop under-reporting its own work.
-        paid = self._home()
-        if paid is None:
-            logger.warning("The storages could not be read after starting the upgrade")
-            return False
-        # The storage having really moved is what separates an upgrade from a
-        # report of one, exactly as in the wall loop: a tap the game swallows
-        # raises nothing at all.
-        spent = stock.gold - paid.gold if offer.resource == "gold" else stock.elixir - paid.elixir
-        if spent < offer.price:
-            logger.warning("Tapped 升級 but %s only moved by %d", offer.resource, spent)
-            return False
-        return True
-
-    def upgrade(self) -> BuildReport:
-        """Put every idle builder on the dearest upgrade the village can pay for."""
-        report = BuildReport(outcome="started", only=self.only)
-        stock = self._home()
-        if stock is None:
-            report.outcome = self._lost()
-            return report
-        builders = free_builders(self._frame("builders"))
-        if builders is None:
-            report.outcome = "count_unread"
-            return report
-        logger.info("%d of %d builder(s) are free", builders[0], builders[1])
-        if builders[0] == 0:
-            report.outcome = "builders_busy"
-            return report
-        offers = self._buildings()
-        if not offers:
-            report.outcome = "nothing_found"
-            return report
-        while offers and len(report.started) < builders[0]:
-            offer = self._pick(
-                offers, stock.gold - self.keep_gold, stock.elixir - self.keep_elixir
-            )
-            if offer is None:
-                if self.only:
-                    report.outcome = "only_no_match"
-                else:
-                    report.outcome = "cannot_afford"
-                    report.cheapest = min(other.price for other in offers)
-                break
-            if self._start(offer, stock):
-                report.started.append(offer)
-            # Either way this one is finished with: started, it is no longer on
-            # offer, and refused, it is not worth asking about again this run.
-            offers = [other for other in offers if other.point != offer.point]
-            after = self._home()
-            if after is None:
-                report.outcome = "village_lost"
-                break
-            stock = after
         return report
