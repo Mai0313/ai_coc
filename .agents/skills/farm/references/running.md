@@ -8,7 +8,7 @@
 
 一輪進攻四到五分鐘起跳, `--repeat 0` 打到倉庫滿可能是好幾個小時. **主 session 的角色是監督, 不是執行**: 迴圈在背景跑, 你在前景讀 log、改東西、回答使用者, 他隨時插得了話. 打資源的迴圈照 `AGENTS.md` 交給一個 farm subagent 跑; 主 session 自己送背景的, 是 `watch-and-fix` 親自盯的迴圈跟其他會跑很久的指令.
 
-**會跑很久的都用背景送出去, 這裡是唯一一份清單**: `attack`; `walls` (掃描加購買好幾分鐘); `upgrade` 跟 `hero` (找不到目標會退回 `_sweep`, 兩分半起跳); `donate --rounds 0`. `watch` 睡到 `--next` 才結束, 一定背景跑. 幾秒就回來的前景跑: `world`, `read`, `collect`, `capture`, `view`; `world --go` 真的坐船約一分鐘, `status` 要走設定頁拿村莊匯出, 也約一分鐘, 都前景跑; 被借走之後開回去的那一次例外, 它可能要排隊很久, 見「被借走」. 迴圈在跑的時候, 其中會 claim 的要先等它打完那一場 (見「你自己要用畫面」).
+**會跑很久的都用背景送出去, 這裡是唯一一份清單**: `attack`; `walls` (掃描加購買好幾分鐘); `upgrade` 跟 `hero` (找不到目標會退回 `_sweep`, 兩分半起跳); `donate --rounds 0`. `watch` 睡到 `--next` 才結束, 一定背景跑. 幾秒就回來的前景跑: `world`, `read`, `collect`, `capture`, `view`, `tap`, `swipe`, `confirm`; `world --go` 真的坐船約一分鐘, `status` 要走設定頁拿村莊匯出, 也約一分鐘, 都前景跑; 被借走之後開回去的那一次例外, 它可能要排隊很久, 見「被借走」. 迴圈在跑的時候, 其中會 claim 的要先等它打完那一場 (見「你自己要用畫面」).
 
 **你是 subagent 的話反過來, 在前景阻塞.** 沒有人在跟你講話, 背景指令跑完也不保證叫得醒一個已經結束回合的 subagent, 所以 subagent 把指令 (或等它的迴圈) 丟到背景再結束回合, 就會停在那裡不動. **subagent 要在前景阻塞**, 而一次阻塞的呼叫有 runtime 自己的 timeout 上限 (常見是十分鐘, 預設值往往更短), 所以分段等: 一段比那個上限短, **那次呼叫的 timeout 要設得比一段長** (沒設的話一段還沒等完就被砍), 等不到就再下一段. **分段的只有等待, 指令本身用 runtime 自己的背景執行開**, 在另外幾次前景呼叫裡等它: `attack` 一跑就超過一次呼叫的上限 (`walls` 平常一兩分鐘, 排隊或退回掃網格時也會超過), 而指令被砍等於把軍隊丟在場上 (見「中止」的「不要去砍背景程序」). 所以不要替它包 `timeout`, 也不要用 shell 的 `&` 或 `nohup` 丟出去 (exit code 跟輸出都回不來); 2026-10-08 一個 subagent 用 `timeout 590` 包住 `attack`, 時間一到就砍在一輪中間, 沒有 `result.json`, 那次已經打完的五輪只剩 `run.log` 數得出來. 每一段照「等待要有出口, 收工要清乾淨」寫, 不要只看 `result.json`:
 
@@ -162,7 +162,7 @@ jq '.[-1] | {world, outcome, stock_full, attacked}' ~/.ai_coc/logs/<run>/result.
 
 **借的指令通常要等一場戰鬥 (五分鐘上下) 才開始**, 對方等滿 `TAKEOVER_WAIT` (約 12 分鐘) 還不收工才會被結束: 前景跑的話那次呼叫的 timeout 給 runtime 允許的最長, 不然就背景跑. 被砍了就 `giveback`, 不然借用會留 30 分鐘, 迴圈白等.
 
-**不 claim 的腳本自己借不到**: `upgrades`「原語」那幾行 Python, 或任何自己寫、走 `commands._controller()` 的腳本, 都不碰 `state.json`, 迴圈在跑的時候照樣點得下去, 兩邊搶同一個畫面. 所以先用一個會 claim 的指令 (例如 `ai_coc stock`) 借到, 看 `state.json` 的 `loan` 在、`loan.ended` 是 null、`loan.borrower` 是你 (`emulator.ended` 是你那個指令收工的時間, 不用看), 才跑腳本. 沒有 `loan` 是迴圈剛好在兩個指令之間, 什麼都沒借到, 再借一次. 那個指令要帶 `--session`: 沒帶的話它一跑完就把借用還回去. 借用從你最後一個會 claim 的指令跑完起算, 過了 `LOAN_TIME` (30 分鐘) 就失效, 腳本用得久就中間再跑一次續上. 用完照樣 `giveback`.
+**不 claim 的腳本自己借不到**: 任何自己寫、走 `commands._controller()` 的腳本 (點畫面用會 claim 的 `ai_coc tap` / `swipe` 就沒有這個問題), 都不碰 `state.json`, 迴圈在跑的時候照樣點得下去, 兩邊搶同一個畫面. 所以先用一個會 claim 的指令 (例如 `ai_coc stock`) 借到, 看 `state.json` 的 `loan` 在、`loan.ended` 是 null、`loan.borrower` 是你 (`emulator.ended` 是你那個指令收工的時間, 不用看), 才跑腳本. 沒有 `loan` 是迴圈剛好在兩個指令之間, 什麼都沒借到, 再借一次. 那個指令要帶 `--session`: 沒帶的話它一跑完就把借用還回去. 借用從你最後一個會 claim 的指令跑完起算, 過了 `LOAN_TIME` (30 分鐘) 就失效, 腳本用得久就中間再跑一次續上. 用完照樣 `giveback`.
 
 **你自己決定測試要中途停**, 下 `ai_coc stop emulator`: 只停你的指令, 盯升級不動, 借用還在, 用完一樣要還 (「中止」的兩層). 是使用者叫停就不還, 見下面「用完一定要還」的例外.
 
