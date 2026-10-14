@@ -787,18 +787,45 @@ WELCOME_SHEET_PALE = 0.9
 # and the home village read again.
 SHIELD_RIBBON_BOX = (620, 255, 980, 315)
 SHIELD_RIBBON_PURPLE = 0.6
+# 已收到勝利之星獎勵, the sheet the game raises over the village when the day's
+# star bonus is won, a few times a day. Its one 確定 sits in `RETURN_HOME_BOX`
+# too, so `battle_over` took it for a result screen: `uncovered` refused to press
+# `back` at it, an attack series ended on `no_attack_menu` beneath it, and
+# `_settle_game` waited out its patience. `back` closes it, checked live on
+# 2026-10-14. Read off its blue panel beside that button: 0.759 of this box on
+# the sheet, against 0.0 on every other frame whose button passes the 回營 test,
+# and 0.598 on the settings page, which has no such button.
+STAR_PANEL_BOX = (230, 290, 1370, 640)
+STAR_PANEL_BLUE = 0.4
 
 
-def battle_over(png: bytes) -> bool:
-    """Whether the battle result screen is up with its 回營 button waiting."""
+def _home_button(png: bytes) -> bool:
+    """Whether a green button sits where the result screen draws 回營."""
     data = open_frame(png).crop(RETURN_HOME_BOX).tobytes()
     green = sum(
         data[i + 1] > 150 and data[i + 1] - data[i] > 45 and data[i + 1] - data[i + 2] > 60
         for i in range(0, len(data), 3)
     )
-    if green / (len(data) // 3) < RETURN_HOME_GREEN:
+    return green / (len(data) // 3) >= RETURN_HOME_GREEN
+
+
+def battle_over(png: bytes) -> bool:
+    """Whether the battle result screen is up with its 回營 button waiting."""
+    if not _home_button(png):
         return False
-    return not welcome_back(png) and not shield_sheet(png)
+    return not welcome_back(png) and not shield_sheet(png) and not star_bonus(png)
+
+
+def star_bonus(png: bytes) -> bool:
+    """Whether the 勝利之星 reward sheet is covering the village."""
+    if not _home_button(png):
+        return False
+    panel = open_frame(png).crop(STAR_PANEL_BOX).tobytes()
+    blue = sum(
+        panel[i + 2] > 180 and panel[i + 2] - panel[i] > 100 and panel[i + 2] - panel[i + 1] > 80
+        for i in range(0, len(panel), 3)
+    )
+    return blue / (len(panel) // 3) >= STAR_PANEL_BLUE
 
 
 def welcome_back(png: bytes) -> bool:

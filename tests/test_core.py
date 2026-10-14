@@ -160,6 +160,7 @@ from ai_coc.parsers.scout import (
     live_cards,
     read_scout,
     read_stock,
+    star_bonus,
     battle_over,
     card_groups,
     field_units,
@@ -1804,6 +1805,17 @@ class CrossingTests(unittest.TestCase):
         assert here == "day"
         assert adb.back.call_count == 1
 
+    def test_the_star_bonus_sheet_is_pressed_away(self) -> None:
+        """Its 確定 sits where 回營 does; `back` closed it live."""
+        adb = MagicMock()
+        adb.screenshot.side_effect = [
+            (FRAMES / name).read_bytes() for name in ("star_bonus.png", "hud_day.png")
+        ]
+        with patch.object(world_ui.time, "sleep"):
+            here = world_ui.uncovered(adb, DisplayTarget(logical_id="1", physical_id="2"))
+        assert here == "day"
+        assert adb.back.call_count == 1
+
     def test_a_loading_screen_is_never_pressed_at(self) -> None:
         """Nothing on it answers a press, and the presses were noise in the one log that matters."""
         adb, landed = self._cross([None], loading=True)
@@ -2493,6 +2505,18 @@ class ScoutTests(unittest.TestCase):
         png = (FRAMES / "shield_sheet.png").read_bytes()
         assert shield_sheet(png)
         assert not battle_over(png)
+
+    def test_the_star_bonus_sheet_is_not_a_result_screen(self) -> None:
+        """已收到勝利之星獎勵, whose green 確定 sits where 回營 does.
+
+        Read as a result screen, `uncovered` refused to press `back` at it, an
+        attack series ended on `no_attack_menu` beneath it, and `status` gave up.
+        """
+        png = (FRAMES / "star_bonus.png").read_bytes()
+        assert star_bonus(png)
+        assert not battle_over(png)
+        for name in ("battle_result.png", "battle_result_lit.png"):
+            assert not star_bonus((FRAMES / name).read_bytes()), name
         for path in FRAMES.glob("*.png"):
             if path.name != "shield_sheet.png":
                 assert not shield_sheet(path.read_bytes()), path.name

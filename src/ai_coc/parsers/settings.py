@@ -93,11 +93,16 @@ def window_open(png: bytes) -> bool:
 
 
 def settings_open(png: bytes) -> bool:
-    """Whether the 設定 window is up, by its 更多設定 button and its account band."""
+    """Whether the 設定 window is up, by its 更多設定 button and its account band.
+
+    And by the profile window's X it sits in, because the 勝利之星 reward sheet
+    paints a blue band and a green button in those same two places.
+    """
     image = open_frame(png)
     return (
         _ratio(image, MORE_BUTTON_BOX, _green) >= MORE_BUTTON_GREEN
         and _ratio(image, BANNER_BOX, _blue) >= BANNER_BLUE
+        and window_open(png)
     )
 
 
