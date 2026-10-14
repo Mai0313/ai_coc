@@ -397,9 +397,9 @@ UNCOVER_SETTLE = 1.5
 # pushes after one moved the picture by nothing and two more by 7 px, and yet a
 # park started from a camera shoved the other way stopped with the cart at
 # (1245, 622) — where the first spot used to find it — and (1268, 615) opened
-# the sheet there. Finding the cart on the frame instead is no easier: its
-# elixir bubble is dimmed at night to a khaki plate and a (110, 30, 200) drop,
-# which none of `collect_bubbles`' marker colours take.
+# the sheet there. Its elixir bubble is dimmed at night to a khaki plate and a
+# (110, 30, 200) drop, which none of `collect_bubbles`' marker colours take, so
+# it has a reader of its own (`cart_marker`, below).
 #
 # **Those were measured in the corner, and the park now drags the village to the
 # middle**, so the spots below are those three carried by the builder base's
@@ -411,8 +411,9 @@ CART_SPOTS = ((1126, 152), (1098, 150), (1070, 145))
 # **Since the 2026-10 overhaul the cart's marker is found first** (`cart_marker`),
 # and the spots above are only what is tried after it, or on an empty cart, which
 # draws no marker. On four parks from different starts the marker moved 20 px
-# across and 15 down, which left the spots on the cart's top edge or off it: one
-# night's trips missed with every spot on two of 21 visits, three looks each.
+# across and 15 down, and the park whose three looks all missed had it at
+# (1096, 71), 49 px above the rest: the spots sat on the cart's top edge or off
+# it, and one night's trips missed with every spot on two of 21 visits.
 # A tap this far below the marker's drop opened the sheet on all four.
 CART_BELOW_MARKER = 42
 CART_COLLECT = (1176, 760)

@@ -1877,6 +1877,16 @@ class CrossingTests(unittest.TestCase):
         assert cart_marker(marker) == (1077, 120)
         assert cart_marker((FRAMES / "night_cart_no_marker.png").read_bytes()) is None
 
+    def test_the_carts_bottles_are_not_its_marker(self) -> None:
+        """The drop painted out, what is left in that colour is the cart's own
+        bottles, 17x8 and 11x11, which only the drop's size keeps out.
+        """
+        image = Image.open(FRAMES / "night_cart_marker.png").convert("RGB")
+        image.paste((154, 155, 128), (1064, 105, 1091, 136))
+        out = io.BytesIO()
+        image.save(out, format="PNG")
+        assert cart_marker(out.getvalue()) is None
+
     def test_a_cart_that_never_opened_pays_nothing(self) -> None:
         """A tap the game swallowed leaves the cart looking exactly like an emptied one."""
         adb, report, read = self._cart(None, opens=False)

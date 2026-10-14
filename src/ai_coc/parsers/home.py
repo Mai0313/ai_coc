@@ -140,10 +140,13 @@ BOAT_PLATE_SHARE = 0.08
 # collectors' plate and drop, dimmed by the night, so its drop reads red 81 to
 # 173 where `MARKERS` wants 196 and up. Found by that drop alone, in the band the
 # parked camera has put it in: measured on five parks from different starts, the
-# drop's middle sat at x 1059-1078, y 105-120, and came out 20-22 across by 26-27
-# down at a fill of 0.61; the cart's own bottles beside it, the nearest thing in
-# that colour, came out 17x8 and 11x11. An empty cart has no marker.
-CART_MARKER_BAND = (980, 40, 1200, 200)
+# drop's middle sat at x 1059-1078, y 105-120, and on the park that missed with
+# every fixed spot at (1096, 71), so the band runs from the top of the frame;
+# swept over every committed and recorded frame, that finds nothing the band from
+# y 40 did not. The drop came out 20-22 across by 26-27 down at a fill of 0.61,
+# and the cart's own bottles beside it, the nearest thing in that colour, 17x8
+# and 11x11. An empty cart has no marker.
+CART_MARKER_BAND = (980, 0, 1200, 200)
 CART_MARKER_DROP = ((80, 180), (0, 125), (145, 245))
 CART_MARKER_ACROSS = (17, 25)
 CART_MARKER_DOWN = (23, 30)
