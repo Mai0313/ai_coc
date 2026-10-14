@@ -1891,6 +1891,14 @@ class PressAndConfirmTests(unittest.TestCase):
         )
         assert report.outcome == "pressed"
 
+    def test_a_green_button_right_of_the_panels_edge_takes_no_tap_with_the_panel_shut(
+        self,
+    ) -> None:
+        """The hero hall's card buttons reach x 1447; only an open panel's own rows are spared."""
+        adb, report = self._run(["hero_hall.png"], lambda d: commands.tap((1328, 640), d))
+        adb.tap.assert_not_called()
+        assert report.outcome == "green_button"
+
     def test_the_bars_the_open_panel_pushes_left_still_take_no_tap(self) -> None:
         """The + by the gems opens the shop, panel or no panel."""
         adb, report = self._run(["hud_day_build_panel.png"], lambda d: commands.tap((914, 171), d))
