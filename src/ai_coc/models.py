@@ -1790,6 +1790,34 @@ class ViewReport(BaseModel):
     outcome: ViewOutcome
 
 
+PressOutcome = Literal[
+    "pressed",
+    "sheet_up",
+    "dialog_up",
+    "on_hud",
+    "menu_gems",
+    "green_button",
+    "running_row",
+    "in_battle",
+]
+
+
+class PressReport(BaseModel):
+    """What one `tap` or `swipe` did, and the frame it left behind.
+
+    The frame is the answer as much as the outcome is: the agent driving these
+    reads the screen off it to decide the next press. A refused press keeps the
+    frame it was refused on, which is the screen still standing.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    gesture: Literal["tap", "swipe"]
+    points: list[tuple[int, int]]
+    outcome: PressOutcome
+    frame: Path
+
+
 RunnerStatus = Literal["running", "stopping", "idle"]
 
 
@@ -2441,6 +2469,59 @@ class GameDialog(BaseModel):
 
     confirm: tuple[int, int]
     cancel: tuple[int, int]
+
+
+SheetResource = Literal["gold", "elixir", "dark"]
+
+
+class SheetOffer(BaseModel):
+    """What the green 確認 on an upgrade sheet asks for.
+
+    Only ever a resource: the same button priced in gems is 立即完成 on a
+    running upgrade's sheet, and a reader answering that one too would hand
+    `confirm` the one tap it exists to refuse.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    price: int
+    resource: SheetResource
+    # Where the button that price was read off sits, which is the one place
+    # `confirm` may tap: the sheet's other 確認, priced in a magic item, sits
+    # beside it.
+    point: tuple[int, int]
+    # False when the price is written in red: the game's way of saying the
+    # village cannot pay, and a tap there opens the gem shop for the rest.
+    affordable: bool = True
+
+
+ConfirmOutcome = Literal[
+    "confirmed",
+    "no_sheet",
+    "not_a_resource",
+    "price_mismatch",
+    "cannot_afford",
+    "refused_by_game",
+    "sheet_stayed",
+    "unexpected",
+]
+
+
+class ConfirmReport(BaseModel):
+    """What `confirm` read off the sheet, whether it tapped, and what came up.
+
+    `asked` is the price the agent read off the panel row and `offer` what the
+    button itself says; the tap happens only when the two agree. Whether the
+    storage really moved is read off `frame` by the agent, which saw the
+    storages before it opened the sheet.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    asked: int
+    offer: SheetOffer | None = None
+    outcome: ConfirmOutcome
+    frame: Path
 
 
 class WallBatch(BaseModel):

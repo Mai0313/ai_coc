@@ -207,6 +207,9 @@ ROW_BAND = (1300, 1460)
 ROW_COVERAGE = 0.8
 ROW_GAP = 40
 PANEL_TOP, PANEL_BOTTOM = 60, 800
+# How far apart running rows sit and how tall each is, for `running_rows`.
+RUNNING_STEP = 60
+RUNNING_HEIGHT = 44
 
 # The countdown, right-aligned against the clock on each running row, measured
 # from the row's top: the text runs to x 1561 and the clock starts at 1571. The
@@ -502,6 +505,28 @@ def _row_tops(image: Image.Image) -> list[int]:
         if covered >= wanted and (not tops or y - tops[-1] > ROW_GAP):
             tops.append(y)
     return tops
+
+
+def running_rows(png: bytes) -> list[tuple[int, int]]:
+    """The spans of the open build panel's running rows, top to bottom, or none.
+
+    **A running row is the one row a tap must not land on**: on the home
+    village a hero's or a pet's opens 立即完成 for gems where 確認 would be,
+    and on the builder base a building's selects it with 取消 and 立即完成
+    beside each other. They are always the panel's first rows and 48 px
+    apart, so only the unbroken run from the top counts: further down,
+    measured on the builder base, a 其他升級 row's plate matched the track
+    colour too, at y 616.
+    """
+    image = open_frame(png)
+    if not build_panel_open(png):
+        return []
+    spans: list[tuple[int, int]] = []
+    for top in _row_tops(image):
+        if top > (spans[-1][0] if spans else PANEL_TOP) + RUNNING_STEP:
+            break
+        spans.append((top, top + RUNNING_HEIGHT))
+    return spans
 
 
 def _time_runs(

@@ -52,6 +52,7 @@ from ai_coc.models import (
     HeroOutcome,
     NamedEntity,
     PlateReport,
+    PressReport,
     RunnerState,
     ShieldState,
     StockReport,
@@ -66,12 +67,14 @@ from ai_coc.models import (
     DonateReport,
     FrameReading,
     LaunchReport,
+    PressOutcome,
     RestartScope,
     StatusReport,
     WorldOutcome,
     AttackOptions,
     AttackOutcome,
     CollectReport,
+    ConfirmReport,
     DisplayTarget,
     DonateOptions,
     DonateOutcome,
@@ -82,6 +85,7 @@ from ai_coc.models import (
     VillageExport,
     BoundarySurvey,
     CollectOutcome,
+    ConfirmOutcome,
     LootThresholds,
     UpgradeOptions,
     StorageCapacity,
@@ -100,6 +104,7 @@ from ai_coc.parsers.hero import hero_cards
 from ai_coc.parsers.home import (
     PANEL_CLOSE,
     panel_rows,
+    running_rows,
     free_builders,
     collect_bubbles,
     build_panel_open,
@@ -139,7 +144,19 @@ from ai_coc.adapters.config import ConfigStore, gemini_key
 from ai_coc.parsers.village import clock_tower, upgrade_timers, parse_village_text
 from ai_coc.adapters.mapping import fetch_entity_mapping
 from ai_coc.parsers.boundary import PLAYFIELD, VILLAGE_CENTRE, village_box, boundary_reach
-from ai_coc.parsers.building import wall_menu, game_dialog, upgrade_sheet, upgrade_buttons
+from ai_coc.parsers.building import (
+    MENU_ROW_BOX,
+    SHEET_CLOSE_BOX,
+    wall_menu,
+    sheet_open,
+    game_dialog,
+    sheet_offer,
+    green_buttons,
+    upgrade_sheet,
+    upgrade_buttons,
+    green_button_row,
+    menu_spends_gems,
+)
 from ai_coc.parsers.settings import export_row, window_open, settings_open, more_settings_open
 from ai_coc.adapters.emulator import Emulator, EmulatorError
 from ai_coc.adapters.ldplayer import LDPlayerAdapter
@@ -152,9 +169,12 @@ from .ui.world import cross, uncovered, park_camera, collect_cart
 from .ui.attack import CARD_ROW_Y, DROP_SETTLE, BATTLE_TIMEOUT, SINGLE_DROP_DELAY, AttackRunner
 from .ui.plates import PlateRunner
 from .ui.runner import (
+    BUY_SETTLE,
+    BACK_SETTLE,
     SESSION_TAKEN,
     ScreenRunner,
     SessionTakenError,
+    on_hud,
     relogin,
     spell_out,
     refuse_taken,
@@ -3018,6 +3038,256 @@ def capture(out_dir: Path, count: int = 1, gap: float = 1.5) -> list[Path]:
         if index + 1 < count:
             time.sleep(gap)
     return saved
+
+
+# The build panel's rows, its tabs and every sheet a row opens are driven by the
+# agent reading the frames these leave behind, so these are the hands and not
+# the eyes: they press where they are told and report what the screen became.
+# What they refuse is the only judgement they make, and it is about money.
+PRESS_SETTLE = 1.5
+SWIPE_TIME = 1200
+# A tap may press a dialog's 取消 and nothing else on it. The two buttons are
+# measured at x 476-771 and 825-1122, so this reach around 取消's middle covers
+# that button and stops well short of 確定.
+CANCEL_REACH = (140, 35)
+# Where the build panel starts across the screen; its rows sit right of this.
+PANEL_LEFT = 1170
+# The bars and their + buttons, which the open panel pushes left by its own width.
+PANEL_HUD_BOX = (810, 0, 1170, 330)
+# How many times `confirm` looks after its press, this far apart, and how many
+# of those looks in a row must show the panel or the village back before it
+# calls the purchase done. More than one, because the wall loop measured the
+# first capture after a purchase missing a dialog that was still sliding in.
+CONFIRM_LOOKS = 4
+CONFIRM_GAP = 0.8
+CONFIRM_SETTLED = 2
+
+PRESS_LINES: dict[PressOutcome, str] = {
+    "pressed": "已經按下去",
+    "sheet_up": "升級確認視窗開著,只能按它的 X;要買用 ai_coc confirm",
+    "dialog_up": "遊戲的對話框開著,只能按取消",
+    "on_hud": "那裡是遊戲自己的按鈕(商店、加號、頭像那一排),不按",
+    "menu_gems": "建築選單那一排有寶石或道具的按鈕(立即完成、取消升級、加速),不按",
+    "green_button": "那是綠色的按鈕(確認、立即完成、寶石補位都是綠的),要買用 ai_coc confirm",
+    "running_row": "那一列正在升級,點下去是立即完成(寶石)或那棟的選單,不按",
+    "in_battle": "畫面在戰鬥中,按下去會出兵,不按",
+}
+
+
+def press_line(report: PressReport) -> str:
+    """What one tap or swipe was asked to do, and whether it did."""
+    gesture = "點" if report.gesture == "tap" else "滑"
+    points = " → ".join(f"({x}, {y})" for x, y in report.points)
+    return f"{gesture} {points}:{PRESS_LINES[report.outcome]}"
+
+
+def _inside(point: tuple[int, int], box: tuple[int, int, int, int]) -> bool:
+    left, top, right, bottom = box
+    return left <= point[0] <= right and top <= point[1] <= bottom
+
+
+def _refused(png: bytes, point: tuple[int, int]) -> PressOutcome | None:
+    """Why a press here must not happen on this frame, or None when it may.
+
+    **Every refusal is a place where a press spends or ruins something.** An
+    upgrade sheet's green button is 確認 on one sheet and 立即完成 for gems on
+    the next, and its other 確認 pays with a magic item, so a sheet takes its X
+    and nothing else: buying goes through `confirm`, which reads the button
+    first. A dialog's 確定 is the same green whether it pays for a wall or quits
+    the game. The HUD's + buttons and its shop open the gem store. A running
+    row on the build panel opens 立即完成, or a menu whose 取消 throws the
+    upgrade away. And a press in a battle deploys whatever card is selected.
+    """
+    if in_battle(png):
+        return "in_battle"
+    # The sheet before the dialog: the builder base's sheet is pale enough to
+    # pass for one, and its X is the only way out of it.
+    if (world := sheet_open(png)) is not None:
+        return None if _inside(point, SHEET_CLOSE_BOX[world]) else "sheet_up"
+    if (dialog := game_dialog(png)) is not None:
+        across, down = CANCEL_REACH
+        near = (
+            abs(point[0] - dialog.cancel[0]) <= across and abs(point[1] - dialog.cancel[1]) <= down
+        )
+        return None if near else "dialog_up"
+    checks: tuple[tuple[PressOutcome, Callable[[], bool]], ...] = (
+        (
+            "on_hud",
+            lambda: (
+                (current_world(png) is not None and on_hud(point))
+                or (build_panel_open(png) and _inside(point, PANEL_HUD_BOX))
+            ),
+        ),
+        ("green_button", lambda: any(_inside(point, box) for box in green_buttons(png))),
+        (
+            "running_row",
+            lambda: (
+                point[0] >= PANEL_LEFT
+                and any(top <= point[1] <= bottom for top, bottom in running_rows(png))
+            ),
+        ),
+        (
+            "menu_gems",
+            lambda: (
+                menu_spends_gems(png, point)
+                or (_inside(point, MENU_ROW_BOX) and green_button_row(png))
+            ),
+        ),
+    )
+    return next((outcome for outcome, refused in checks if refused()), None)
+
+
+def _pressed(
+    gesture: Literal["tap", "swipe"],
+    points: list[tuple[int, int]],
+    frame_dir: Path,
+    press: Callable[[AdbController, DisplayTarget], None],
+    wait: float,
+) -> PressReport:
+    """Refuse or press, and keep the frame that says which.
+
+    `_attached` rather than `_controller`: nothing is relaunched or pressed on
+    the way in, so a panel the agent opened is still open when it gets here.
+    A swipe is refused on a sheet even from its X, since only a tap closes one.
+    """
+    adb = _attached()
+    display = adb.display_for(COC_PACKAGE)
+    frame_dir.mkdir(parents=True, exist_ok=True)
+    before = adb.screenshot(display)
+    refusal = _refused(before, points[0])
+    if refusal is None and gesture == "swipe" and sheet_open(before):
+        refusal = "sheet_up"
+    if refusal is not None:
+        frame = frame_dir / "refused.png"
+        frame.write_bytes(before)
+        report = PressReport(gesture=gesture, points=points, outcome=refusal, frame=frame)
+    else:
+        press(adb, display)
+        time.sleep(wait)
+        frame = frame_dir / "after.png"
+        frame.write_bytes(adb.screenshot(display))
+        report = PressReport(gesture=gesture, points=points, outcome="pressed", frame=frame)
+    logger.info("Press: %s, frame %s", press_line(report), frame)
+    return report
+
+
+def tap(point: tuple[int, int], frame_dir: Path, wait: float = PRESS_SETTLE) -> PressReport:
+    """Tap one point, unless the screen makes that a purchase, and show what followed."""
+    return _pressed("tap", [point], frame_dir, lambda adb, display: adb.tap(*point, display), wait)
+
+
+def swipe(
+    start: tuple[int, int],
+    end: tuple[int, int],
+    frame_dir: Path,
+    duration: int = SWIPE_TIME,
+    wait: float = PRESS_SETTLE,
+) -> PressReport:
+    """Drag from one point to another, the way the build panel scrolls.
+
+    Slow by default, because a fast fling keeps the panel coasting past the
+    frame taken after it: at 1200 ms three fresh opens scrolled four times each
+    stopped within 4 px of one another, against rows about 71 px tall.
+    """
+    return _pressed(
+        "swipe",
+        [start, end],
+        frame_dir,
+        lambda adb, display: adb.swipe(start, end, duration, display),
+        wait,
+    )
+
+
+_RESOURCE_NAMES = {"gold": "金幣", "elixir": "聖水", "dark": "黑水"}
+
+CONFIRM_LINES: dict[ConfirmOutcome, str] = {
+    "confirmed": "按了確認,視窗關了",
+    "no_sheet": "畫面上沒有升級確認視窗,什麼都沒按",
+    "not_a_resource": "確認鈕上不是金幣、聖水或黑水的價格(寶石或道具),什麼都沒按",
+    "price_mismatch": "確認鈕上的價格跟給的不一樣,什麼都沒按",
+    "cannot_afford": "價格是紅字,資源不夠;按下去會跳寶石補差額,什麼都沒按",
+    "refused_by_game": "按了確認,遊戲跳出對話框(多半是資源不夠或工人都在忙),已經按取消",
+    "sheet_stayed": "按了確認,但視窗還開著,沒有再按",
+    "unexpected": "按了確認,但出現認不得的畫面,沒有再按",
+}
+
+
+def confirm_line(report: ConfirmReport) -> str:
+    """What the sheet asked, what was expected, and what came of it."""
+    read = (
+        "讀不到"
+        if report.offer is None
+        else f"{report.offer.price:,} {_RESOURCE_NAMES[report.offer.resource]}"
+    )
+    return f"確認鈕 {read},預期 {report.asked:,}:{CONFIRM_LINES[report.outcome]}"
+
+
+def _after_confirm(adb: AdbController, display: DisplayTarget) -> tuple[ConfirmOutcome, bytes]:
+    """What the press on 確認 came to, judged over several looks.
+
+    A dialog at any look gets its 取消 and ends it. Only `CONFIRM_SETTLED`
+    looks in a row showing the panel or the village back, with no sheet over
+    them, count as done; anything else is left exactly as it stands.
+    """
+    settled = 0
+    outcome: ConfirmOutcome = "unexpected"
+    after = b""
+    for look in range(CONFIRM_LOOKS):
+        time.sleep(BUY_SETTLE if look == 0 else CONFIRM_GAP)
+        after = adb.screenshot(display)
+        # The sheet first, for the reason `_refused` gives: read as a dialog,
+        # a builder base sheet still standing would have its "取消" pressed,
+        # and that is wherever the dialog reader thought it saw orange.
+        if sheet_open(after):
+            settled, outcome = 0, "sheet_stayed"
+            continue
+        if (dialog := game_dialog(after)) is not None:
+            adb.tap(*dialog.cancel, display)
+            time.sleep(BACK_SETTLE)
+            return "refused_by_game", adb.screenshot(display)
+        if build_panel_open(after) or current_world(after) is not None:
+            settled += 1
+            if settled >= CONFIRM_SETTLED:
+                return "confirmed", after
+        else:
+            settled, outcome = 0, "unexpected"
+    return outcome, after
+
+
+def confirm(price: int, frame_dir: Path) -> ConfirmReport:
+    """Press the upgrade sheet's 確認 if it asks for exactly this many of a resource.
+
+    **The one command here that spends**, and so the one that reads before it
+    presses: the button must carry a gold, elixir or dark icon (立即完成 on a
+    running upgrade carries a gem in the same place) and the price written on
+    it must be the one the agent read off the panel row, which is what keeps a
+    tap on the wrong row from buying the wrong thing. It presses once. Whatever
+    the game raises after that — not enough of the resource, every builder
+    busy, each of which it answers with a gem offer — gets 取消 or is left
+    alone, never a second press.
+    """
+    adb = _attached()
+    display = adb.display_for(COC_PACKAGE)
+    frame_dir.mkdir(parents=True, exist_ok=True)
+    before = adb.screenshot(display)
+    offer = sheet_offer(before)
+    after = before
+    if not sheet_open(before):
+        outcome: ConfirmOutcome = "no_sheet"
+    elif offer is None:
+        outcome = "not_a_resource"
+    elif offer.price != price:
+        outcome = "price_mismatch"
+    elif not offer.affordable:
+        outcome = "cannot_afford"
+    else:
+        adb.tap(*offer.point, display)
+        outcome, after = _after_confirm(adb, display)
+    frame = frame_dir / "after.png"
+    frame.write_bytes(after)
+    report = ConfirmReport(asked=price, offer=offer, outcome=outcome, frame=frame)
+    logger.info("Confirm: %s, frame %s", confirm_line(report), frame)
+    return report
 
 
 def read(png: bytes) -> FrameReading:

@@ -8,6 +8,7 @@ it builds. The runners themselves are tested in `test_runners.py`.
 
 from __future__ import annotations
 
+import io
 import os
 import json
 import math
@@ -19,6 +20,7 @@ import tempfile
 import unittest
 from unittest.mock import MagicMock, patch
 
+from PIL import Image
 import pytest
 from pydantic import ValidationError
 
@@ -54,6 +56,7 @@ from ai_coc.models import (
     BuildOutcome,
     DonateReport,
     LaunchReport,
+    PressOutcome,
     RestartScope,
     StatusReport,
     VillageStock,
@@ -70,6 +73,7 @@ from ai_coc.models import (
     SurveyOutcome,
     VillageExport,
     CollectOutcome,
+    ConfirmOutcome,
     LootThresholds,
     UpgradeOptions,
     StorageCapacity,
@@ -914,6 +918,38 @@ class UpkeepLineTests(unittest.TestCase):
                 "no_display": "遊戲還沒有畫面",
             },
             get_args(WorldOutcome),
+        )
+
+    def test_every_press_outcome_has_a_line_of_its_own(self) -> None:
+        self._each(
+            commands.PRESS_LINES,
+            {
+                "pressed": "已經按下去",
+                "sheet_up": "升級確認視窗開著",
+                "dialog_up": "對話框開著",
+                "on_hud": "遊戲自己的按鈕",
+                "menu_gems": "建築選單那一排",
+                "green_button": "綠色的按鈕",
+                "running_row": "正在升級",
+                "in_battle": "戰鬥中",
+            },
+            get_args(PressOutcome),
+        )
+
+    def test_every_confirm_outcome_has_a_line_of_its_own(self) -> None:
+        self._each(
+            commands.CONFIRM_LINES,
+            {
+                "confirmed": "視窗關了",
+                "no_sheet": "沒有升級確認視窗",
+                "not_a_resource": "寶石或道具",
+                "price_mismatch": "價格跟給的不一樣",
+                "cannot_afford": "價格是紅字",
+                "refused_by_game": "已經按取消",
+                "sheet_stayed": "視窗還開著",
+                "unexpected": "認不得的畫面",
+            },
+            get_args(ConfirmOutcome),
         )
 
     def test_every_view_outcome_has_a_line_of_its_own(self) -> None:
@@ -1887,6 +1923,244 @@ class CaptureAndViewTests(unittest.TestCase):
         adb.zoom.assert_called_once()
         adb.swipe.assert_not_called()
         assert (report.outcome, report.world) == ("not_a_village", None)
+
+
+class PressAndConfirmTests(unittest.TestCase):
+    """The hands the agent drives the build panel with, and the one press that spends."""
+
+    def _run(self, frames: list[str], act: Callable[[Path], object]) -> tuple[MagicMock, object]:
+        adb = _adb()
+        pngs = [(FRAMES / name).read_bytes() for name in frames]
+        # The last frame stands for the screen staying put however often it is
+        # looked at again.
+        adb.screenshot.side_effect = lambda *_: pngs.pop(0) if len(pngs) > 1 else pngs[0]
+        with (
+            tempfile.TemporaryDirectory() as folder,
+            patch.object(commands, "_attached", return_value=adb),
+            patch.object(commands.time, "sleep"),
+        ):
+            report = act(Path(folder) / "frames")
+            assert report.frame.is_file()  # type: ignore[attr-defined]
+        return adb, report
+
+    def test_a_tap_on_the_map_lands(self) -> None:
+        adb, report = self._run(
+            ["hud_day.png", "hud_day_build_panel.png"], lambda d: commands.tap((800, 450), d)
+        )
+        adb.tap.assert_called_once_with(800, 450, DISPLAY)
+        assert report.outcome == "pressed"
+
+    def test_the_huds_own_buttons_are_refused_on_a_village(self) -> None:
+        """The shop and the + buttons open the gem store."""
+        adb, report = self._run(["hud_day.png"], lambda d: commands.tap((1515, 450), d))
+        adb.tap.assert_not_called()
+        assert report.outcome == "on_hud"
+
+    def test_a_menus_gem_plate_is_refused_across_its_whole_width(self) -> None:
+        """加速所有同類項目 on its blue plate, x 722-881 on this frame, paid in a magic item.
+
+        Its left edge included, where the nearest grid point is the gap beside it.
+        """
+        for x in (730, 800, 870):
+            adb, report = self._run(
+                ["menu_with_gem_plate.png"], lambda d, at=x: commands.tap((at, 700), d)
+            )
+            adb.tap.assert_not_called()
+            assert report.outcome == "menu_gems", x
+
+    def test_a_menu_row_with_a_finish_button_takes_no_tap_anywhere_along_it(self) -> None:
+        """A builder base running row selects the building: 資訊, 取消 and 立即完成 for gems."""
+        for point, outcome in (
+            ((757, 710), "green_button"),
+            ((585, 710), "menu_gems"),
+            ((410, 710), "menu_gems"),
+        ):
+            adb, report = self._run(
+                ["night_menu_finishing.png"], lambda d, p=point: commands.tap(p, d)
+            )
+            adb.tap.assert_not_called()
+            assert report.outcome == outcome, point
+
+    def test_the_panels_running_rows_take_no_tap_and_the_rest_do(self) -> None:
+        adb, report = self._run(["hud_day_build_panel.png"], lambda d: commands.tap((1300, 90), d))
+        adb.tap.assert_not_called()
+        assert report.outcome == "running_row"
+        adb, report = self._run(
+            ["hud_day_build_panel.png", "hud_day_build_panel.png"],
+            lambda d: commands.tap((1300, 420), d),
+        )
+        adb.tap.assert_called_once_with(1300, 420, DISPLAY)
+        assert report.outcome == "pressed"
+
+    def test_a_sheet_takes_its_x_and_nothing_else(self) -> None:
+        """Its green button is 立即完成 for gems on this one: buying is `confirm`'s."""
+        adb, report = self._run(["sheet_running_gems.png"], lambda d: commands.tap((1121, 783), d))
+        adb.tap.assert_not_called()
+        assert report.outcome == "sheet_up"
+        adb, report = self._run(
+            ["sheet_running_gems.png", "hud_day_build_panel.png"],
+            lambda d: commands.tap((1413, 70), d),
+        )
+        adb.tap.assert_called_once_with(1413, 70, DISPLAY)
+        assert report.outcome == "pressed"
+
+    def test_the_builder_base_sheet_takes_its_own_x(self) -> None:
+        """Pale enough to pass for a dialog, so it is read as a sheet first."""
+        adb, report = self._run(["night_sheet_red.png"], lambda d: commands.tap((805, 789), d))
+        adb.tap.assert_not_called()
+        assert report.outcome == "sheet_up"
+        adb, report = self._run(
+            ["night_sheet_red.png", "night_menu_finishing.png"],
+            lambda d: commands.tap((1340, 57), d),
+        )
+        assert report.outcome == "pressed"
+
+    def test_confirm_presses_the_builder_base_button_in_the_middle(self) -> None:
+        adb, report = self._run(
+            ["night_sheet_elixir.png", "night_menu_finishing.png"],
+            lambda d: commands.confirm(4000, d),
+        )
+        adb.tap.assert_called_once_with(805, 789, DISPLAY)
+        assert report.outcome == "confirmed"
+
+    def test_confirm_presses_nothing_on_a_builder_base_price_in_red(self) -> None:
+        adb, report = self._run(["night_sheet_red.png"], lambda d: commands.confirm(2560000, d))
+        adb.tap.assert_not_called()
+        assert report.outcome == "cannot_afford"
+
+    def test_the_busy_builders_gem_offer_takes_its_x_and_nothing_else(self) -> None:
+        """Raised over the panel when 確認 meets every builder busy: one green button, in gems."""
+        adb, report = self._run(["night_builders_busy.png"], lambda d: commands.tap((797, 570), d))
+        adb.tap.assert_not_called()
+        assert report.outcome == "green_button"
+        adb, report = self._run(
+            ["night_builders_busy.png", "night_menu_finishing.png"],
+            lambda d: commands.tap((1125, 272), d),
+        )
+        assert report.outcome == "pressed"
+
+    def test_the_bars_the_open_panel_pushes_left_still_take_no_tap(self) -> None:
+        """The + by the gems opens the shop, panel or no panel."""
+        adb, report = self._run(["hud_day_build_panel.png"], lambda d: commands.tap((914, 171), d))
+        adb.tap.assert_not_called()
+        assert report.outcome == "on_hud"
+
+    def test_a_dialog_takes_its_cancel_and_nothing_else(self) -> None:
+        adb, report = self._run(["wall_spend_dialog.png"], lambda d: commands.tap((973, 562), d))
+        adb.tap.assert_not_called()
+        assert report.outcome == "dialog_up"
+        adb, report = self._run(
+            ["wall_spend_dialog.png", "hud_day.png"], lambda d: commands.tap((623, 572), d)
+        )
+        assert report.outcome == "pressed"
+
+    def test_nothing_is_pressed_in_a_battle(self) -> None:
+        for act in (
+            lambda d: commands.tap((800, 450), d),
+            lambda d: commands.swipe((800, 450), (900, 450), d),
+        ):
+            adb, report = self._run(["battle_in_progress.png"], act)
+            adb.tap.assert_not_called()
+            adb.swipe.assert_not_called()
+            assert report.outcome == "in_battle"
+
+    def test_a_swipe_scrolls_the_open_panel_slowly(self) -> None:
+        adb, report = self._run(
+            ["hud_day_build_panel.png"], lambda d: commands.swipe((1385, 740), (1385, 240), d)
+        )
+        adb.swipe.assert_called_once_with((1385, 740), (1385, 240), commands.SWIPE_TIME, DISPLAY)
+        assert report.outcome == "pressed"
+
+    def test_no_swipe_crosses_a_sheet_even_from_its_x(self) -> None:
+        adb, report = self._run(
+            ["sheet_hero_dark.png"], lambda d: commands.swipe((1413, 70), (1413, 300), d)
+        )
+        adb.swipe.assert_not_called()
+        assert report.outcome == "sheet_up"
+
+    def test_confirm_presses_the_resource_button_once_when_the_price_agrees(self) -> None:
+        adb, report = self._run(
+            ["sheet_hero_dark.png", "hud_day_build_panel.png"],
+            lambda d: commands.confirm(10800, d),
+        )
+        adb.tap.assert_called_once()
+        assert adb.tap.call_args.args[0] > 1000
+        assert report.outcome == "confirmed"
+        assert report.offer.resource == "dark"
+
+    def test_confirm_presses_nothing_on_a_price_it_was_not_given(self) -> None:
+        adb, report = self._run(["sheet_hero_dark.png"], lambda d: commands.confirm(13500, d))
+        adb.tap.assert_not_called()
+        assert report.outcome == "price_mismatch"
+
+    def test_confirm_presses_nothing_on_a_gem_button(self) -> None:
+        adb, report = self._run(["sheet_running_gems.png"], lambda d: commands.confirm(500, d))
+        adb.tap.assert_not_called()
+        assert report.outcome == "not_a_resource"
+
+    def test_confirm_presses_nothing_without_a_sheet(self) -> None:
+        adb, report = self._run(["hud_day.png"], lambda d: commands.confirm(10800, d))
+        adb.tap.assert_not_called()
+        assert report.outcome == "no_sheet"
+
+    def test_confirm_presses_nothing_on_a_price_written_in_red(self) -> None:
+        """Red is the game saying the village cannot pay; the press would open the gem shop."""
+        image = Image.open(FRAMES / "sheet_hero_dark.png").convert("RGB")
+        pixels = image.load()
+        for x in range(1000, 1190):
+            for y in range(765, 803):
+                red, green, blue = pixels[x, y]
+                if red > 225 and green > 200 and blue < 150:
+                    pixels[x, y] = (255, 110, 100)
+        out = io.BytesIO()
+        image.save(out, format="PNG")
+        adb = _adb()
+        adb.screenshot.return_value = out.getvalue()
+        with (
+            tempfile.TemporaryDirectory() as folder,
+            patch.object(commands, "_attached", return_value=adb),
+            patch.object(commands.time, "sleep"),
+        ):
+            report = commands.confirm(10800, Path(folder))
+        adb.tap.assert_not_called()
+        assert report.outcome == "cannot_afford"
+        assert report.offer is not None
+        assert report.offer.price == 10800
+
+    def test_a_dialog_after_the_press_gets_cancel_and_nothing_more(self) -> None:
+        """Not enough resources or every builder busy, both answered with a gem offer."""
+        adb, report = self._run(
+            ["sheet_hero_dark.png", "wall_spend_dialog.png", "hud_day_build_panel.png"],
+            lambda d: commands.confirm(10800, d),
+        )
+        assert adb.tap.call_count == 2
+        assert adb.tap.call_args.args == (623, 572, DISPLAY)
+        assert report.outcome == "refused_by_game"
+
+    def test_a_dialog_that_slides_in_after_one_clear_look_still_gets_cancel(self) -> None:
+        adb, report = self._run(
+            [
+                "sheet_hero_dark.png",
+                "hud_day_build_panel.png",
+                "wall_spend_dialog.png",
+                "hud_day_build_panel.png",
+            ],
+            lambda d: commands.confirm(10800, d),
+        )
+        assert adb.tap.call_args.args == (623, 572, DISPLAY)
+        assert report.outcome == "refused_by_game"
+
+    def test_a_sheet_still_up_after_the_press_is_not_pressed_again(self) -> None:
+        adb, report = self._run(["sheet_hero_dark.png"], lambda d: commands.confirm(10800, d))
+        adb.tap.assert_called_once()
+        assert report.outcome == "sheet_stayed"
+
+    def test_a_screen_nothing_recognises_after_the_press_is_left_alone(self) -> None:
+        adb, report = self._run(
+            ["sheet_hero_dark.png", "army_screen.png"], lambda d: commands.confirm(10800, d)
+        )
+        adb.tap.assert_called_once()
+        assert report.outcome == "unexpected"
 
 
 class SurveyRunnerTests(unittest.TestCase):
