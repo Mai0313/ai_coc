@@ -18,13 +18,7 @@ from pydantic import (
     model_validator,
 )
 
-from .constants import (
-    LOG_DIR,
-    DEFAULT_ADB_HOST,
-    DEFAULT_LITE_MODEL,
-    DEFAULT_GEMINI_MODEL,
-    FRAME_RETENTION_DAYS,
-)
+from .constants import LOG_DIR, DEFAULT_ADB_HOST, DEFAULT_GEMINI_MODEL, FRAME_RETENTION_DAYS
 
 # Village JSON and the MuMu CLI both gain fields between game and emulator
 # releases. Models that mirror them allow extras so an unknown field is
@@ -845,29 +839,24 @@ class GeminiSetting(BaseModel):
 
 
 class GeminiSettings(BaseModel):
-    """The tiers this application sends work to, by what the work is.
+    """The tier this application sends work to, by what the work is.
 
-    Two rather than one because the two call patterns are different, which is
-    the only thing that justifies a second model at all. `main` answers once per
-    run against a whole screenshot — the attack plan, the target finder — so
-    nothing there is racing anything and the better model is simply the right
-    one. `lite` answers **once per candidate** on a cropped strip, which is where
-    a cheaper model earns its place.
+    `main` answers once per run against a whole screenshot — the attack plan,
+    the target finder — so nothing there is racing anything and the better
+    model is simply the right one.
 
     Named for the role rather than for the product: a key called `flash` holding
     `gemini-4-pro` is a lie the file keeps telling, and this project already has
     a scar from a settings key that outlived what it configured.
     """
 
-    # One key for both tiers, in plain text, because an OS key store tied the
-    # app to one OS.
+    # In plain text, because an OS key store tied the app to one OS.
     api_key: str = ""
     main: GeminiSetting = GeminiSetting()
-    lite: GeminiSetting = GeminiSetting(model=DEFAULT_LITE_MODEL)
 
 
 class UiJobs(BaseModel):
-    """Which of the five commands the window's cycle round-robins.
+    """Which of the four commands the window's cycle round-robins.
 
     The field names are the sub-command names, deliberately: each one is a
     `commands.*` function that `cli.py` dispatches to and that the window's own
@@ -878,7 +867,6 @@ class UiJobs(BaseModel):
 
     collect: bool = False
     donate: bool = False
-    upgrade: bool = False
     walls: bool = False
     attack: bool = False
 
@@ -970,7 +958,7 @@ class AppConfig(BaseModel):
     # being four lines of copying one field name onto another.
     gemini: GeminiSettings = GeminiSettings()
     # Nested for the reason `gemini` is, and for one more: a block says which
-    # keys are the window's without a prefix on each of them, so the five job
+    # keys are the window's without a prefix on each of them, so the four job
     # names underneath can be the sub-command names and nothing else.
     ui: UiSettings = UiSettings()
 
@@ -1454,92 +1442,6 @@ class ShieldState(BaseModel):
         return self.remaining is not None
 
 
-class PlateJob(BaseModel):
-    """One running row of the build panel: what is being raised, and how long it has left.
-
-    `remaining` is None for a row whose countdown would not resolve, which is
-    counted all the same — the row is there and something is in it, so dropping
-    it would report a tab as emptier than it is. It is the panel's own
-    countdown, at normal speed; `status` works the export through the speed-ups.
-    `name` is empty without a model to read it with, since it is Chinese and no
-    parser here reads any.
-    """
-
-    model_config = ConfigDict(frozen=True)
-
-    name: str = ""
-    remaining: int | None = None
-
-
-class SuggestedUpgrade(BaseModel):
-    """One row of a panel's 建議升級 block: what the game suggests raising, and for how much.
-
-    **The price is read by the model, not by the digit templates**, so it is
-    good for telling a person what is on offer and not yet for deciding to
-    spend: before anything buys off it, it is checked against a crop of the
-    row the way a building menu's price is. `price` is None where the row's
-    price would not read.
-    """
-
-    model_config = ConfigDict(frozen=True)
-
-    name: str
-    price: int | None
-    resource: Literal["gold", "elixir", "dark", "other"]
-
-
-class PlateJobNames(BaseModel):
-    """What a model read off a plate's panel: the 升級中 names, and the 建議升級 rows.
-
-    One call per panel rather than one per row, so the order is what matches a
-    name to its countdown. A row it could not make out comes back as an empty
-    string and still takes its place, since a short list would shift every name
-    after it onto the wrong row. Neither field has a default, because a model
-    leaves out a field that has one.
-    """
-
-    model_config = ConfigDict(frozen=True)
-
-    names: list[str]
-    suggested: list[SuggestedUpgrade]
-
-
-class PlateReport(BaseModel):
-    """What one counter says, and what the build panel's tab for it is running.
-
-    **About the village on screen, and it never sails.** `world` says which one
-    that turned out to be, the way `StockReport` does and for the same reason:
-    crossing is `ai_coc world --go`, and a status check that moves the game is
-    no longer one.
-
-    `free` and `total` are None together for a counter whose digits would not
-    resolve. That costs less than it looks: the number a caller waiting on a
-    builder actually wants is the soonest of the jobs' countdowns, which come
-    off the panel rather than off the counter.
-
-    **`outcome` names the branch this came back from, and there is no sentence.**
-    `StockReport` argues the whole case already: a reading has no outcome to
-    narrate, and every state it can be in is readable off its own fields. What
-    earns a field here rather than a sentence is one pair the fields genuinely
-    cannot separate — a panel that opened with nothing running on the tab,
-    against one that never opened. Both leave a village and no rows.
-
-    **It has no default**, because every path through the reader knows how it
-    ended and a report that quietly claimed one of them would be wrong for three
-    of the four.
-    """
-
-    world: World | None = None
-    role: PlateRole = "builder"
-    free: int | None = None
-    total: int | None = None
-    jobs: list[PlateJob] = Field(default_factory=list)
-    # The panel's 建議升級 rows, empty without a model to read them or on a
-    # panel with nothing running, whose open state nothing here can confirm.
-    suggested: list[SuggestedUpgrade] = Field(default_factory=list)
-    outcome: PlateOutcome
-
-
 class StockReport(BaseModel):
     """What the village on screen is holding, against what its storages take when full.
 
@@ -1568,7 +1470,7 @@ class StockReport(BaseModel):
     read. A sentence saying any of that again is the same answer twice, which is
     what it was doing. Where a report's fields really cannot say which branch a
     run came back from it carries a named outcome instead of prose — see
-    `PlateOutcome`: a wording nobody can match on is what made a sentence worse
+    `WallOutcome`: a wording nobody can match on is what made a sentence worse
     than a field rather than merely redundant. No report here carries a
     `message` any more, and the Chinese a person reads is built from the outcome
     at the edge, in `commands.py`.
@@ -1681,83 +1583,6 @@ class StatusReport(BaseModel):
     timers: list[UpgradeTimer] = Field(default_factory=list)
     # None where the export has no clock tower, or one being upgraded.
     clock_tower: ClockTower | None = None
-
-
-class BuildingName(BaseModel):
-    """What the game says is selected, read off the label rather than the artwork.
-
-    The one question the parsers provably cannot answer: 金礦 and 箭塔 open menus
-    that are identical to every reader here, and what separates them is a line of
-    Chinese. So it goes to a model — a cheap one, because reading a label is a
-    classification rather than a judgement.
-    """
-
-    model_config = ConfigDict(frozen=True)
-
-    # Empty when the strip carried no label, which is an ordinary answer: a frame
-    # can be caught between the tap and the game drawing it.
-    name: str = ""
-    level: int | None = None
-
-    def __str__(self) -> str:
-        """How the game writes it, which is what a log line should say."""
-        return f"{self.name}({self.level}級)" if self.level is not None else self.name or "?"
-
-
-class BuildCandidate(BaseModel):
-    """A building found with an upgrade on offer, and what it asks for.
-
-    Where it is, what it costs, and — when there is a model to ask — what it is.
-    The name buys two things nothing here had before: a report that says 金礦
-    rather than a coordinate, and `--only`, which is the difference between
-    spending a scarce builder on the dearest thing going and spending it on the
-    thing that was actually holding the village back.
-    """
-
-    model_config = ConfigDict(frozen=True)
-
-    point: tuple[int, int]
-    resource: Literal["gold", "elixir"]
-    price: int
-    building: BuildingName = BuildingName()
-
-
-# How one `upgrade` run ended. `started` says what it put builders on; this says
-# why it stopped putting them on things. **`builders_busy` and `cannot_afford`
-# are the two that mean "come back later"** and `nothing_found` is the one that
-# means the finder came up empty, which is a different thing to go and look at.
-BuildOutcome = Literal[
-    "started",
-    "nothing_found",
-    "cannot_afford",
-    "only_no_match",
-    "builders_busy",
-    "count_unread",
-    "no_village",
-    "builder_base",
-    "village_lost",
-]
-
-
-class BuildReport(BaseModel):
-    """What one `upgrade` run put the idle builders on."""
-
-    started: list[BuildCandidate] = Field(default_factory=list)
-    outcome: BuildOutcome
-    # What the cheapest upgrade on offer would have cost, on a run that could
-    # not pay for any of them. "Come back later" is only useful with how much
-    # later on it, and this is the number the sentence used to carry. **Only
-    # ever set on `cannot_afford`**: the `--only` refusal is about a name rather
-    # than about money, and the cheapest of every offer there is a price for
-    # buildings the filter had already thrown away.
-    cheapest: int | None = None
-    # The `--only` substring this run was given. Nothing else records it —
-    # `cli.py` logs the run directory and not the arguments — and it is the
-    # whole subject of an `only_no_match`.
-    only: str = ""
-
-    def paid(self, resource: str) -> int:
-        return sum(job.price for job in self.started if job.resource == resource)
 
 
 # How one `view` command left the camera. `parked` is the whole job done;
@@ -2159,9 +1984,9 @@ RestartScope = Literal["none", "game", "emulator"]
 
 # The game's two villages. Supercell calls them the Home Village and the Builder
 # Base; this project calls them day and night because that is what the player
-# calls them, and because `builder` already means the workman here — `ai_coc
-# worker` reads the panel saying which of the five are free, and a
-# `world --go builder` standing next to it would be read as belonging to that.
+# calls them, and because `builder` already means the workman here — the
+# builder counter says which of the five are free, and a `world --go builder`
+# standing next to it would be read as belonging to that.
 World = Literal["day", "night"]
 
 
@@ -2169,13 +1994,6 @@ World = Literal["day", "night"]
 # research slots — on the home village two research jobs have been seen running
 # side by side — and `builder` the workmen.
 PlateRole = Literal["lab", "builder"]
-
-# How a counter's panel reading ended, which is the one thing about it the
-# fields cannot say. `read` is a tab with at least one row running on it, and
-# `idle` one that opened with none; `panel_shut` is a panel that never opened,
-# and `not_a_village` a screen to clear or wait out, the only one whose `world`
-# is None.
-PlateOutcome = Literal["read", "idle", "panel_shut", "not_a_village"]
 
 
 class Pinch(BaseModel):
@@ -2278,84 +2096,6 @@ class LaunchReport(BaseModel):
         return self.outcome == "at_village"
 
 
-class HeroCard(BaseModel):
-    """One card on the 英雄殿堂 screen: who is on it, and what raising him costs.
-
-    `price` and `resource` are read off the same button, so they are both set or
-    both absent. A card without them is a hero the screen is showing but not
-    offering — one already being upgraded has a countdown where its button was —
-    which is a different thing from a card that is not on screen at all, and the
-    two are told apart because only the second is missing from the list.
-
-    A banner whose colour matches no hero never reaches here at all: the reader
-    drops it, because far more often than a hero the game has just added it is
-    some other screen with coloured plates on it. What that costs is a hero
-    added by an update reading as absent, which is a run that says it cannot
-    find him — and what it buys is a run that does not mistake the 我的軍隊
-    screen for the hall.
-    """
-
-    model_config = ConfigDict(frozen=True)
-
-    hero: HeroKind
-    point: tuple[int, int]
-    price: int | None = None
-    resource: Literal["elixir", "dark"] | None = None
-    # Whether that button can be pressed, which is not what a price says. A hero
-    # the Hero Hall's own level has capped keeps its price and loses its button:
-    # the plate greys, the number stays, and a tap is answered with a red line
-    # naming the hall level it wants first — Chinese, which nothing here reads.
-    # So a run that went by the price alone reported "no confirmation sheet came
-    # up", which reads as a swallowed tap rather than a button never live.
-    upgradable: bool = False
-    # Whether the card has no button at all, which is how the game draws a hero
-    # at his level cap (等級上限). A card with no price and a button is not one:
-    # its price did not read, or it is 立即完成's gem.
-    capped: bool = False
-
-
-# How one `hero` run ended. **`read` is the read-only half and a success**: the
-# command answers what each hero's next level costs unless it is told to spend.
-# Of the refusals, `already_upgrading` / `at_level_cap` / `button_dead` /
-# `cannot_afford` are the card's own four and they are not interchangeable — a hero the hall's level has
-# capped keeps its price and loses its button, which a run going by the price
-# alone reported as a swallowed tap.
-HeroOutcome = Literal[
-    "read",
-    "started",
-    "hall_not_found",
-    "hero_absent",
-    "already_upgrading",
-    "at_level_cap",
-    "button_dead",
-    "cannot_afford",
-    "builders_busy",
-    "count_unread",
-    "card_moved",
-    "no_confirmation",
-    "undercharged",
-    "no_village",
-    "builder_base",
-    "village_lost",
-]
-
-
-class HeroReport(BaseModel):
-    """What one `hero` run saw in the hall, and which upgrade it started.
-
-    The cards are reported whether or not anything was started, because that is
-    the read-only half of the command and the half worth running on its own:
-    what each hero costs next is the number a player decides against.
-    """
-
-    # Which hero this run was asked to raise, or None for a read. Nothing else
-    # on the report says it, and every refusal is about that one hero.
-    hero: HeroKind | None = None
-    cards: list[HeroCard] = Field(default_factory=list)
-    started: HeroCard | None = None
-    outcome: HeroOutcome
-
-
 # How one `donate` run ended. `nobody_asking` is the ordinary one and costs
 # almost nothing, which is what this loop is written to be: donating cannot be
 # done on demand, somebody else has to ask first.
@@ -2443,14 +2183,10 @@ class ScreenSpots(BaseModel):
     """Where Gemini thinks the things a loop is looking for are.
 
     These are guesses and are treated as such: every one of them is tapped and
-    the screen that comes up is checked by whatever the caller was looking for —
-    a wall menu, a priced upgrade button, hero cards. So a wrong point costs one
-    tap and one capture and is dropped with a line saying so, and asking for more
-    points than the run needs is the right shape rather than a waste.
-
-    One model for all three because the answer is the same shape whatever was
-    asked for; what differs is the question and the check, and both of those
-    belong to the caller.
+    the screen that comes up is checked by whatever the caller was looking for,
+    a wall menu today. So a wrong point costs one tap and one capture and is
+    dropped with a line saying so, and asking for more points than the run needs
+    is the right shape rather than a waste.
     """
 
     spots: list[ScreenPoint] = Field(default_factory=list)
@@ -2631,33 +2367,6 @@ class WallOptions(BaseModel):
     at: list[tuple[int, int]] = Field(default_factory=list)
 
 
-class UpgradeOptions(BaseModel):
-    """What one `upgrade` command was told to do."""
-
-    frame_dir: Path | None = None
-    # What to leave in the storages rather than spend, as for the walls.
-    keep_gold: int = 0
-    keep_elixir: int = 0
-    # The buildings this run was pointed at, instead of asking and then
-    # sweeping for them. Empty means find them.
-    at: list[tuple[int, int]] = Field(default_factory=list)
-    # Only a building whose name contains this; empty takes the dearest
-    # affordable one, which is what the loop did before names existed.
-    only: str = ""
-
-
-class HeroOptions(BaseModel):
-    """What one `hero` command was told to do."""
-
-    frame_dir: Path | None = None
-    # Which hero to raise. None reads the hall and starts nothing, which is the
-    # half of the command worth running on its own: what each hero costs next
-    # is the number the decision rests on, and reading it spends nothing.
-    upgrade: HeroKind | None = None
-    # Where the hall is, for a run that already knows.
-    at: tuple[int, int] | None = None
-
-
 class DonateOptions(BaseModel):
     """What one `donate` command was told to do."""
 
@@ -2679,7 +2388,7 @@ class FrameReading(BaseModel):
     Not literally every function in `parsers/`, and the line is where a loop
     would ask: a reader some loop consults to decide what to do next belongs
     here, while one that only measures something the caller already found — the
-    hall's scroll arrows, the name strip, the chat's own panel top — does not.
+    chat's own panel top — does not.
     That line moved once already, when the builder base's three screens turned
     out to be missing from a command the skills point a stuck night round at.
     """
@@ -2702,11 +2411,7 @@ class FrameReading(BaseModel):
     army: tuple[int, int] | None = None
     wall_menu: WallMenu | None = None
     bubbles: list[ResourceBubble] = Field(default_factory=list)
-    heroes: list[HeroCard] = Field(default_factory=list)
     builders: tuple[int, int] | None = None
-    # Each running row's countdown on the open tab of the build panel; None with
-    # no panel up.
-    panel_rows: list[int | None] | None = None
     upgrades: list[UpgradeButton] = Field(default_factory=list)
     donatable: int = 0
     attack_menu: bool = False

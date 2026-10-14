@@ -17,13 +17,11 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from ai_coc import plans, commands
+from ai_coc import plans
 from ai_coc.ui import clan as clan_ui
-from ai_coc.ui import hero as hero_ui
 from ai_coc.ui import attack, plates, upkeep
 from ai_coc.ui import runner as shared
 from ai_coc.models import (
-    HeroCard,
     BattleRow,
     LootOffer,
     ScoutView,
@@ -34,20 +32,14 @@ from ai_coc.models import (
     AdbEndpoint,
     ScreenPoint,
     AttackReport,
-    BuildingName,
     VillageStock,
     DisplayTarget,
     GeminiSetting,
-    PlateJobNames,
-    UpgradeButton,
-    BuildCandidate,
     LootThresholds,
     ResourceBubble,
     StorageCapacity,
-    SuggestedUpgrade,
 )
 from ai_coc.ui.clan import ClanRunner
-from ai_coc.ui.hero import HeroRunner
 from ai_coc.constants import COC_PACKAGE
 from ai_coc.ui.attack import (
     CARD_ROW_Y,
@@ -88,16 +80,6 @@ def _step(
 ) -> AttackStep:
     return AttackStep(
         act=act, who=who, at=[ScreenPoint(x_pct=x, y_pct=y) for x, y in points], seconds=seconds
-    )
-
-
-def _duke(price: int | None = 56_000) -> HeroCard:
-    return HeroCard(
-        hero="duke",
-        point=(1407, 648),
-        price=price,
-        resource=None if price is None else "dark",
-        upgradable=price is not None,
     )
 
 
@@ -192,7 +174,7 @@ class OpenedWalkTests(unittest.TestCase):
 
         A tap costs a settle and a capture, so a full grid is a couple of
         minutes with nothing else to check a stop against — which is what
-        `ai_coc upgrade` spends whenever it has no key to ask with. Leaving here
+        `ai_coc walls` spends whenever it has no key to ask with. Leaving here
         is safe because the walk has already backed out of whatever the last tap
         opened.
         """
@@ -238,9 +220,7 @@ class OpenedWalkTests(unittest.TestCase):
         assert [spot for spot, _ in opened] == [(580, 95)]
         assert tapped.call_count == 1
 
-    def test_the_sweep_is_that_walk_over_the_grid_with_the_staggered_points_held_to_the_limit(
-        self,
-    ) -> None:
+    def test_the_sweep_is_that_walk_over_the_grid(self) -> None:
         runner = self._runner()
         walked: list[list[tuple[int, int]]] = []
 
@@ -250,11 +230,9 @@ class OpenedWalkTests(unittest.TestCase):
 
         with patch.object(runner, "_opened", side_effect=opened):
             list(runner._sweep("scan"))
-            list(runner._sweep("hall", shared.SWEEP_STAGGER))
-        plain, staggered = walked
+        [plain] = walked
         assert len(plain) == len(shared.SWEEP_X) * len(shared.SWEEP_Y)
-        assert all(x <= shared.SWEEP_LIMIT[0] and y <= shared.SWEEP_LIMIT[1] for x, y in staggered)
-        assert len(staggered) < len(plain)
+        assert all(x <= shared.SWEEP_LIMIT[0] and y <= shared.SWEEP_LIMIT[1] for x, y in plain)
 
     def test_a_dialog_over_the_village_is_answered_with_cancel(self) -> None:
         runner = self._runner()
@@ -553,321 +531,6 @@ class SpellOutTests(unittest.TestCase):
         assert shared.spell_out(90_000) == "1 天 1 小時"
         assert shared.spell_out(3_660) == "1 小時 1 分鐘"
         assert shared.spell_out(120) == "2 分鐘"
-
-
-class UpgradeTests(unittest.TestCase):
-    def _runner(self, **fields: object) -> UpkeepRunner:
-        return UpkeepRunner(adb=_adb(), display=DISPLAY, **fields)
-
-    def _offer(self, point: tuple[int, int] = (500, 300), price: int = 720_000) -> BuildCandidate:
-        return BuildCandidate(
-            point=point, resource="gold", price=price, building=BuildingName(name="金礦", level=12)
-        )
-
-    def test_every_free_builder_is_put_on_the_dearest_affordable_upgrade(self) -> None:
-        runner = self._runner()
-        cheap, dear = self._offer((100, 100), 100_000), self._offer((200, 200), 900_000)
-        with (
-            patch.object(runner, "_home", return_value=STOCK),
-            patch.object(runner, "_frame", return_value=b""),
-            patch.object(upkeep, "free_builders", return_value=(2, 5)),
-            patch.object(runner, "_buildings", return_value=[cheap, dear]),
-            patch.object(runner, "_start", return_value=True) as started,
-        ):
-            report = runner.upgrade()
-        assert [call.args[0] for call in started.call_args_list] == [dear, cheap]
-        assert report.started == [dear, cheap]
-        assert report.outcome == "started"
-        assert commands.build_line(report) == "開始了 2 個升級:金礦(12級)、金礦(12級)"
-
-    def test_a_refused_upgrade_is_not_asked_about_again(self) -> None:
-        runner = self._runner()
-        offer = self._offer()
-        with (
-            patch.object(runner, "_home", return_value=STOCK),
-            patch.object(runner, "_frame", return_value=b""),
-            patch.object(upkeep, "free_builders", return_value=(3, 5)),
-            patch.object(runner, "_buildings", return_value=[offer]),
-            patch.object(runner, "_start", return_value=False) as started,
-        ):
-            report = runner.upgrade()
-        assert started.call_count == 1
-        assert report.started == []
-
-    def test_nothing_affordable_names_the_cheapest_thing_going(self) -> None:
-        runner = self._runner()
-        with (
-            patch.object(runner, "_home", return_value=VillageStock(gold=1, elixir=1, dark=1)),
-            patch.object(runner, "_frame", return_value=b""),
-            patch.object(upkeep, "free_builders", return_value=(1, 5)),
-            patch.object(runner, "_buildings", return_value=[self._offer(price=720_000)]),
-        ):
-            report = runner.upgrade()
-        assert (report.outcome, report.cheapest) == ("cannot_afford", 720_000)
-
-    def test_a_named_building_that_never_turned_up_is_not_a_price(self) -> None:
-        """`--only` is refused on a name, so the cheapest of what it filtered out
-        is a price for buildings the run never considered. What it does record is
-        the name asked for, which nothing else on this machine does.
-        """
-        runner = self._runner(only="實驗室")
-        with (
-            patch.object(runner, "_home", return_value=STOCK),
-            patch.object(runner, "_frame", return_value=b""),
-            patch.object(upkeep, "free_builders", return_value=(1, 5)),
-            patch.object(runner, "_buildings", return_value=[self._offer(price=100)]),
-        ):
-            report = runner.upgrade()
-        assert (report.outcome, report.cheapest, report.only) == ("only_no_match", None, "實驗室")
-        assert "實驗室" in commands.build_line(report)
-
-    def test_no_free_builder_ends_the_run_before_anything_is_looked_for(self) -> None:
-        runner = self._runner()
-        with (
-            patch.object(runner, "_home", return_value=STOCK),
-            patch.object(runner, "_frame", return_value=b""),
-            patch.object(upkeep, "free_builders", return_value=(0, 5)),
-            patch.object(runner, "_buildings") as looked,
-        ):
-            report = runner.upgrade()
-        looked.assert_not_called()
-        assert report.outcome == "builders_busy"
-
-    def _start(
-        self,
-        offered: list[UpgradeButton],
-        dialog: GameDialog | None,
-        sheet: tuple[int, int] | None,
-        paid: VillageStock | None,
-    ) -> tuple[bool, MagicMock]:
-        runner = self._runner()
-        with (
-            patch.object(upkeep.time, "sleep"),
-            patch.object(runner, "_after_tap", return_value=b""),
-            patch.object(runner, "_frame", return_value=b""),
-            patch.object(runner, "_tap") as tapped,
-            patch.object(upkeep, "upgrade_buttons", return_value=offered),
-            patch.object(upkeep, "game_dialog", return_value=dialog),
-            patch.object(upkeep, "upgrade_sheet", return_value=sheet),
-            patch.object(runner, "_home", return_value=paid),
-        ):
-            return runner._start(
-                self._offer(price=100), VillageStock(gold=1000, elixir=0, dark=0)
-            ), tapped
-
-    def test_a_started_upgrade_is_one_the_storage_paid_for(self) -> None:
-        button = UpgradeButton(resource="gold", point=(700, 700), price=100)
-        started, tapped = self._start(
-            [button], None, (1121, 783), VillageStock(gold=900, elixir=0, dark=0)
-        )
-        assert started
-        assert [call.args[0] for call in tapped.call_args_list] == [(700, 700), (1121, 783)]
-
-    def test_a_walls_dialog_is_confirmed_where_a_buildings_sheet_is_not_up(self) -> None:
-        button = UpgradeButton(resource="gold", point=(700, 700), price=100)
-        dialog = GameDialog(confirm=(973, 562), cancel=(623, 572))
-        started, tapped = self._start(
-            [button], dialog, None, VillageStock(gold=900, elixir=0, dark=0)
-        )
-        assert started
-        assert tapped.call_args_list[1].args[0] == dialog.confirm
-
-    def test_a_storage_that_never_moved_is_not_an_upgrade(self) -> None:
-        button = UpgradeButton(resource="gold", point=(700, 700), price=100)
-        started, _ = self._start(
-            [button], None, (1121, 783), VillageStock(gold=1000, elixir=0, dark=0)
-        )
-        assert not started
-
-    def test_a_menu_that_no_longer_offers_the_price_is_left_alone(self) -> None:
-        started, tapped = self._start([], None, None, STOCK)
-        assert not started
-        tapped.assert_not_called()
-
-    def test_an_offer_is_the_menus_first_upgrade_with_the_name_the_model_read(self) -> None:
-        runner = self._runner()
-        button = UpgradeButton(resource="elixir", point=(700, 700), price=60_000)
-        with (
-            patch.object(upkeep, "wall_menu", return_value=None),
-            patch.object(upkeep, "upgrade_buttons", return_value=[button]),
-            patch.object(runner, "_name", return_value=BuildingName(name="聖水收集器", level=8)),
-        ):
-            offer = runner._offer((500, 300), b"")
-        assert offer == BuildCandidate(
-            point=(500, 300),
-            resource="elixir",
-            price=60_000,
-            building=BuildingName(name="聖水收集器", level=8),
-        )
-
-    def test_a_wall_or_a_menu_with_no_upgrade_is_no_offer(self) -> None:
-        runner = self._runner()
-        with patch.object(upkeep, "wall_menu", return_value=MagicMock()):
-            assert runner._offer((1, 1), b"") is None
-        with (
-            patch.object(upkeep, "wall_menu", return_value=None),
-            patch.object(upkeep, "upgrade_buttons", return_value=[]),
-        ):
-            assert runner._offer((1, 1), b"") is None
-
-    def test_the_name_is_read_off_the_strip_by_the_lite_tier_and_dropped_on_a_failure(
-        self,
-    ) -> None:
-        runner = self._runner(
-            namer=GeminiClient(api_key="not-a-real-key", settings=GeminiSetting())
-        )
-        with (
-            patch.object(upkeep, "name_strip", return_value=b"strip"),
-            patch.object(
-                GeminiClient,
-                "generate_structured",
-                return_value=BuildingName(name="金礦", level=12),
-            ) as asked,
-        ):
-            assert runner._name(b"frame") == BuildingName(name="金礦", level=12)
-            assert asked.call_args.args[2] == b"strip"
-            asked.side_effect = RuntimeError("timeout")
-            assert runner._name(b"frame") == BuildingName()
-
-    def test_the_sweep_prices_whatever_opens_a_menu(self) -> None:
-        runner = self._runner()
-        offer = self._offer()
-        with (
-            patch.object(
-                runner, "_sweep", return_value=iter([((500, 300), b""), ((660, 300), b"")])
-            ),
-            patch.object(runner, "_offer", side_effect=[offer, None]),
-        ):
-            assert runner._scan() == [offer]
-
-
-class HeroRunnerTests(unittest.TestCase):
-    def _runner(self, **fields: object) -> HeroRunner:
-        return HeroRunner(adb=_adb(), display=DISPLAY, **fields)
-
-    def test_pages_scroll_until_the_arrow_is_gone_and_stop_when_the_hall_is(self) -> None:
-        runner = self._runner()
-        king = HeroCard(hero="king", point=(300, 648))
-        with (
-            patch.object(hero_ui.time, "sleep"),
-            patch.object(runner, "_frame", return_value=b""),
-            patch.object(hero_ui, "hero_cards", side_effect=[[king], [_duke()], []]),
-            patch.object(hero_ui, "can_scroll", side_effect=[True, True, True]),
-            patch.object(runner, "_tap") as tapped,
-        ):
-            pages = list(runner._pages(hero_ui.SCROLL_RIGHT))
-        assert pages == [[king], [_duke()]]
-        assert tapped.call_count == 2
-        with (
-            patch.object(runner, "_frame", return_value=b""),
-            patch.object(hero_ui, "hero_cards", return_value=[king]),
-            patch.object(hero_ui, "can_scroll", return_value=False),
-            patch.object(runner, "_tap") as tapped,
-        ):
-            assert list(runner._pages(hero_ui.SCROLL_RIGHT)) == [[king]]
-        tapped.assert_not_called()
-
-    def test_the_walk_keeps_a_priced_sighting_over_an_unpriced_one(self) -> None:
-        runner = self._runner()
-        with patch.object(runner, "_pages", side_effect=[[[_duke(None)]], [[_duke()]]]):
-            found = runner._walk()
-        assert found == {"duke": _duke()}
-
-    def test_bringing_a_hero_on_scrolls_until_its_card_is_in_front(self) -> None:
-        runner = self._runner()
-        king = HeroCard(hero="king", point=(300, 648))
-        with patch.object(runner, "_pages", side_effect=[[[king]], [[king], [_duke()]]]):
-            assert runner._bring_on("duke") == _duke()
-        with patch.object(runner, "_pages", return_value=[[king]]):
-            assert runner._bring_on("duke") is None
-
-    def test_a_button_is_the_hall_only_if_cards_come_up_behind_it(self) -> None:
-        runner = self._runner()
-        with (
-            patch.object(hero_ui, "hall_buttons", return_value=[(1151, 700), (1327, 700)]),
-            patch.object(runner, "_after_tap", side_effect=[b"barracks", b"hall"]),
-            patch.object(hero_ui, "hero_cards", side_effect=[[], [_duke()]]),
-            patch.object(runner, "_home", return_value=STOCK) as home,
-        ):
-            assert runner._try_menu(b"menu") == b"hall"
-        home.assert_called_once()
-
-    def test_the_hall_is_closed_only_while_it_is_the_thing_on_screen(self) -> None:
-        runner = self._runner()
-        with (
-            patch.object(hero_ui.time, "sleep"),
-            patch.object(runner, "_frame", return_value=b""),
-            patch.object(hero_ui, "hero_cards", side_effect=[[_duke()], []]),
-            patch.object(AdbController, "back") as back,
-        ):
-            runner._close()
-            runner._close()
-        assert back.call_count == 1
-
-    def test_a_remembered_spot_is_tried_more_than_once_because_buildings_overlap(self) -> None:
-        runner = self._runner(at=(990, 430))
-        with (
-            patch.object(runner, "_after_tap", return_value=b"menu"),
-            patch.object(runner, "_try_menu", side_effect=[None, b"hall"]) as tried,
-        ):
-            assert runner._open() == b"hall"
-        assert tried.call_count == 2
-
-    def test_starting_needs_the_sheet_and_not_the_cards(self) -> None:
-        runner = self._runner()
-        with (
-            patch.object(hero_ui.time, "sleep"),
-            patch.object(runner, "_tap") as tapped,
-            patch.object(runner, "_frame", return_value=b""),
-            patch.object(hero_ui, "hero_cards", side_effect=[[], [_duke()], []]),
-            patch.object(hero_ui, "upgrade_sheet", side_effect=[(1121, 783), None, None]),
-        ):
-            assert runner._start(_duke())
-            assert not runner._start(_duke())
-            assert not runner._start(_duke())
-        assert tapped.call_args_list[1].args[0] == (1121, 783)
-
-    def test_a_purchase_is_judged_on_the_dark_elixir_really_moving(self) -> None:
-        runner = self._runner(hero="duke")
-        before = VillageStock(gold=0, elixir=0, dark=200_000)
-        with (
-            patch.object(runner, "_bring_on", return_value=_duke()),
-            patch.object(runner, "_start", return_value=True),
-            patch.object(runner, "_close"),
-            patch.object(
-                runner, "_home", return_value=VillageStock(gold=0, elixir=0, dark=144_000)
-            ),
-        ):
-            started, outcome = runner._purchase(_duke(), before)
-        assert started == _duke()
-        assert outcome == "started"
-
-    def test_a_read_only_run_reports_the_hall_and_touches_nothing(self) -> None:
-        runner = self._runner()
-        with (
-            patch.object(runner, "_home", return_value=STOCK),
-            patch.object(runner, "_frame", return_value=b""),
-            patch.object(hero_ui, "free_builders", return_value=(1, 5)),
-            patch.object(runner, "_open", return_value=b""),
-            patch.object(runner, "_walk", return_value={"duke": _duke()}),
-            patch.object(runner, "_close") as closed,
-        ):
-            report = runner.run()
-        assert report.cards == [_duke()]
-        assert report.started is None
-        assert report.outcome == "read"
-        closed.assert_called_once()
-
-    def test_a_hall_nobody_could_find_says_so(self) -> None:
-        runner = self._runner()
-        with (
-            patch.object(runner, "_home", return_value=STOCK),
-            patch.object(runner, "_frame", return_value=b""),
-            patch.object(hero_ui, "free_builders", return_value=(1, 5)),
-            patch.object(runner, "_open", return_value=None),
-        ):
-            report = runner.run()
-        assert report.outcome == "hall_not_found"
 
 
 class OpenAttackMenuTests(unittest.TestCase):
@@ -2016,28 +1679,6 @@ if __name__ == "__main__":
 class PlateRunnerTests(unittest.TestCase):
     """The builder and laboratory counters, on whichever village is up and without sailing."""
 
-    def _read(
-        self,
-        role: str,
-        *,
-        world: str | None = "night",
-        counted: tuple[int, int] | None = (0, 3),
-        rows: tuple[int | None, ...] | None = (600, 7200),
-        read: PlateJobNames | None = None,
-    ) -> tuple[object, MagicMock, MagicMock, MagicMock]:
-        runner = plates.PlateRunner(adb=_adb(), display=DISPLAY)
-        with (
-            patch.object(plates.time, "sleep"),
-            patch.object(runner, "_frame", return_value=b""),
-            patch.object(runner, "_after_tap", return_value=b"") as opened,
-            patch.object(runner, "_tap") as tapped,
-            patch.object(runner, "_names", return_value=read) as named,
-            patch.object(plates, "current_world", return_value=world),
-            patch.object(plates, "plate_count", return_value=counted),
-            patch.object(plates, "panel_rows", return_value=None if rows is None else list(rows)),
-        ):
-            return runner.read(role), opened, tapped, named
-
     def test_the_counts_come_off_one_frame_with_nothing_tapped(self) -> None:
         """What `status` asks for: the counters' own digits, and no panel opened for them."""
         runner = plates.PlateRunner(adb=_adb(), display=DISPLAY)
@@ -2058,106 +1699,3 @@ class PlateRunnerTests(unittest.TestCase):
             patch.object(plates, "current_world", return_value=None),
         ):
             assert [count.outcome for count in runner.counts()] == ["not_a_village"] * 2
-
-    def test_the_panel_is_shut_before_the_model_is_asked(self) -> None:
-        """The call can run past a minute, and a run killed in it would leave the panel up."""
-        order: list[str] = []
-        runner = plates.PlateRunner(adb=_adb(), display=DISPLAY)
-        with (
-            patch.object(plates.time, "sleep"),
-            patch.object(runner, "_frame", return_value=b""),
-            patch.object(runner, "_after_tap", return_value=b""),
-            patch.object(runner, "_tap", side_effect=lambda point: order.append(str(point))),
-            patch.object(runner, "_names", side_effect=lambda *_: order.append("names")),
-            patch.object(plates, "current_world", return_value="day"),
-            patch.object(plates, "plate_count", return_value=(0, 6)),
-            patch.object(plates, "panel_rows", return_value=[600]),
-        ):
-            runner.read("builder")
-        assert order == [str(plates.BUILD_BUTTON), str(plates.PANEL_CLOSE), "names"]
-
-    def test_the_panel_is_read_and_shut_again_behind_the_run(self) -> None:
-        report, opened, tapped, _ = self._read("builder", counted=(1, 3))
-        assert (report.world, report.free, report.total) == ("night", 1, 3)
-        assert report.outcome == "read"
-        assert [job.remaining for job in report.jobs] == [600, 7200]
-        opened.assert_called_once()
-        assert [call.args[0] for call in tapped.call_args_list] == [
-            plates.BUILD_BUTTON,
-            plates.PANEL_CLOSE,
-        ]
-
-    def test_the_panel_is_turned_to_the_counters_own_tab(self) -> None:
-        """It opens on whichever tab was last open, and each village lays its tabs out apart."""
-        for world in ("day", "night"):
-            for role in ("builder", "lab"):
-                _, opened, _, _ = self._read(role, world=world)
-                assert opened.call_args.args[0] == plates.PANEL_TABS[world, role]
-
-    def test_a_tab_with_nothing_running_is_idle_and_shut_without_asking_the_model(self) -> None:
-        report, _, tapped, named = self._read("builder", counted=(3, 3), rows=())
-        assert (report.outcome, report.free, report.total, report.jobs) == ("idle", 3, 3, [])
-        assert [call.args[0] for call in tapped.call_args_list] == [
-            plates.BUILD_BUTTON,
-            plates.PANEL_CLOSE,
-        ]
-        named.assert_not_called()
-
-    def test_a_panel_that_will_not_open_is_not_pressed_shut(self) -> None:
-        """Its X sits over the gold bar when it is not up, and every slot free does not make it idle."""
-        report, _, tapped, _ = self._read("builder", counted=(3, 3), rows=None)
-        assert [call.args[0] for call in tapped.call_args_list] == [plates.BUILD_BUTTON]
-        assert (report.outcome, report.free, report.total) == ("panel_shut", 3, 3)
-
-    def test_a_shut_panel_on_an_unreadable_count_is_the_one_state_the_fields_cannot_say(
-        self,
-    ) -> None:
-        """**The pair `outcome` exists for**: a tab with nothing running and a panel that never opened.
-
-        Both leave a village, no numbers once the count will not read, and no
-        rows, and the enum is the only thing left pointing at two different
-        things to do next.
-        """
-        shut, _, _, _ = self._read("builder", counted=None, rows=None)
-        idle, _, _, _ = self._read("builder", counted=None, rows=())
-        assert (shut.world, shut.free, shut.total, shut.jobs) == (
-            idle.world,
-            idle.free,
-            idle.total,
-            idle.jobs,
-        )
-        assert (shut.outcome, idle.outcome) == ("panel_shut", "idle")
-
-    def test_a_count_that_will_not_read_still_reports_what_is_running(self) -> None:
-        report, _, _, _ = self._read("builder", counted=None)
-        assert (report.free, report.total) == (None, None)
-        assert (report.outcome, len(report.jobs)) == ("read", 2)
-
-    def test_a_frame_that_is_no_village_reads_no_plate(self) -> None:
-        report, opened, tapped, _ = self._read("builder", world=None)
-        assert (report.world, report.outcome) == (None, "not_a_village")
-        opened.assert_not_called()
-        tapped.assert_not_called()
-
-    def test_the_suggested_rows_come_back_beside_the_running_ones(self) -> None:
-        offer = SuggestedUpgrade(name="聖水收集器", price=60_000, resource="gold")
-        report, _, _, _ = self._read(
-            "builder", rows=(600,), read=PlateJobNames(names=["X連弩"], suggested=[offer])
-        )
-        assert report.suggested == [offer]
-        assert [job.name for job in report.jobs] == ["X連弩"]
-        report, _, _, _ = self._read("builder", rows=(600,))
-        assert (report.suggested, [job.name for job in report.jobs]) == ([], [""])
-
-    def test_a_name_is_matched_to_the_row_it_was_read_beside(self) -> None:
-        """A short answer leaves later rows unnamed rather than dropping them."""
-        report, _, _, _ = self._read(
-            "builder",
-            rows=(600, 7200, None),
-            read=PlateJobNames(names=["奧托哨所", "X連弩"], suggested=[]),
-        )
-        assert [(job.name, job.remaining) for job in report.jobs] == [
-            ("奧托哨所", 600),
-            ("X連弩", 7200),
-            ("", None),
-        ]

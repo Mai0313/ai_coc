@@ -30,30 +30,23 @@ from ai_coc.models import (
     Watch,
     Caller,
     MapEdge,
-    PlateJob,
     ProbeRay,
     AppConfig,
     LootOffer,
     NightPlan,
     AttackPlan,
     CartReport,
-    HeroReport,
     PlateCount,
     PlayedPlan,
     AdbEndpoint,
-    BuildReport,
     CartOutcome,
-    HeroOptions,
-    HeroOutcome,
     NamedEntity,
-    PlateReport,
     RunnerState,
     ShieldState,
     ViewOutcome,
     WallOptions,
     WallOutcome,
     AttackReport,
-    BuildOutcome,
     DonateReport,
     LaunchReport,
     PressOutcome,
@@ -75,7 +68,6 @@ from ai_coc.models import (
     CollectOutcome,
     ConfirmOutcome,
     LootThresholds,
-    UpgradeOptions,
     StorageCapacity,
     PlateCountOutcome,
 )
@@ -377,17 +369,8 @@ class StockCommandTests(unittest.TestCase):
         sailed.assert_not_called()
 
 
-class PlateLineTests(unittest.TestCase):
-    """The plate readings as a line for a person, built where the log is written.
-
-    The report itself carries fields and an `outcome` and no prose, which is
-    `StockReport`'s bargain applied to the two commands that were still keeping
-    a sentence of their own. The sentence is still worth having — it is what a
-    person reads in `run.log` — it just is not a field.
-    """
-
-    def _line(self, role: str = "builder", **fields: object) -> str:
-        return commands._plate_line(PlateReport(role=role, **fields))
+class ShieldLineTests(unittest.TestCase):
+    """The shield reading as a line for a person, built where the log is written."""
 
     def test_the_shield_plate_has_three_answers_and_they_are_not_interchangeable(self) -> None:
         """No plate, a plate saying 無, and a plate with a countdown on it.
@@ -407,48 +390,6 @@ class PlateLineTests(unittest.TestCase):
         assert "讀不到" in commands._shield_line(None, "day")
         assert commands._shield_line(ShieldState(), "day") == "**沒有護盾**,村莊現在可以被打"
         assert commands._shield_line(ShieldState(remaining=600), "day") == "護盾還有 10 分鐘"
-
-    def test_a_plate_with_work_on_it_names_the_soonest(self) -> None:
-        assert (
-            self._line(
-                world="night",
-                outcome="read",
-                free=1,
-                total=3,
-                jobs=[PlateJob(name="X連弩", remaining=600), PlateJob(remaining=7200)],
-            )
-            == "建築工人 1/3,2 個在跑,最快的是X連弩,還要 10 分鐘"
-        )
-
-    def test_a_row_with_no_name_still_reports_its_countdown(self) -> None:
-        line = self._line(
-            world="day", outcome="read", free=0, total=6, jobs=[PlateJob(remaining=90_000)]
-        )
-        assert "1 天 1 小時" in line
-        assert "最快的還要" in line
-
-    def test_a_count_that_will_not_read_says_so_once(self) -> None:
-        """The running total used to be printed twice on this path."""
-        line = self._line(world="day", outcome="read", jobs=[PlateJob(remaining=600)])
-        assert "數字讀不到" in line
-        assert line.count("個在跑") == 1
-
-    def test_every_countdown_unreadable_is_not_an_empty_plate(self) -> None:
-        line = self._line(world="day", outcome="read", free=0, total=6, jobs=[PlateJob()])
-        assert "每一個的倒數都讀不到" in line
-
-    def test_the_three_failures_read_as_three_different_things(self) -> None:
-        """Which is the whole reason `outcome` is a field: the rest are identical.
-
-        A tab with nothing running and a panel that would not open both leave a
-        village, a count that may or may not have read, and no rows.
-        """
-        assert (
-            self._line(world="day", outcome="idle", free=3, total=3)
-            == "建築工人 3/3,沒有在跑的項目"
-        )
-        assert "打不開" in self._line(world="day", outcome="panel_shut", free=0, total=3)
-        assert "不在村莊" in self._line(outcome="not_a_village")
 
 
 class StatusCommandTests(unittest.TestCase):
@@ -673,62 +614,15 @@ class CollectCommandTests(unittest.TestCase):
 class LoopCommandTests(unittest.TestCase):
     """Each loop command builds its runner from its options, and only from them."""
 
-    def _planners(self) -> tuple[MagicMock, MagicMock]:
-        main, lite = MagicMock(name="main tier"), MagicMock(name="lite tier")
-        patcher = patch.object(
-            commands,
-            "_planner",
-            side_effect=lambda _config, tier="main": lite if tier == "lite" else main,
-        )
+    def _planner(self) -> MagicMock:
+        main = MagicMock(name="main tier")
+        patcher = patch.object(commands, "_planner", return_value=main)
         patcher.start()
         self.addCleanup(patcher.stop)
         config = patch.object(commands.ConfigStore, "load", return_value=AppConfig())
         config.start()
         self.addCleanup(config.stop)
-        return main, lite
-
-    def test_upgrade_asks_the_main_tier_where_to_look_and_the_lite_tier_what_it_found(
-        self,
-    ) -> None:
-        main, lite = self._planners()
-        with (
-            patch.object(commands, "_controller", return_value=_adb()),
-            patch.object(commands, "UpkeepRunner") as runner,
-        ):
-            runner.return_value.upgrade.return_value = BuildReport(outcome="started")
-            report = commands.upgrade(UpgradeOptions(keep_gold=5, keep_elixir=7, only="金礦"))
-        kwargs = runner.call_args.kwargs
-        assert (kwargs["keep_gold"], kwargs["keep_elixir"], kwargs["only"]) == (5, 7, "金礦")
-        assert kwargs["ai"] is main
-        assert kwargs["namer"] is lite
-        assert report.outcome == "started"
-
-    def test_a_named_building_skips_the_finder_but_keeps_the_namer(self) -> None:
-        """The whole point of asking is to find them; a caller who named them already looked."""
-        _, lite = self._planners()
-        with (
-            patch.object(commands, "_controller", return_value=_adb()),
-            patch.object(commands, "UpkeepRunner") as runner,
-        ):
-            runner.return_value.upgrade.return_value = BuildReport(outcome="started")
-            commands.upgrade(UpgradeOptions(at=[(900, 430)]))
-        kwargs = runner.call_args.kwargs
-        assert kwargs["ai"] is None
-        assert kwargs["namer"] is lite
-        assert kwargs["at"] == [(900, 430)]
-
-    def test_hero_passes_the_hero_and_the_spot_it_was_given(self) -> None:
-        main, _ = self._planners()
-        with (
-            patch.object(commands, "_controller", return_value=_adb()),
-            patch.object(commands, "HeroRunner") as runner,
-        ):
-            runner.return_value.run.return_value = HeroReport(outcome="read")
-            report = commands.hero(HeroOptions(upgrade="duke", at=(990, 430)))
-        kwargs = runner.call_args.kwargs
-        assert (kwargs["hero"], kwargs["at"]) == ("duke", (990, 430))
-        assert kwargs["ai"] is main
-        assert report.outcome == "read"
+        return main
 
     def test_donate_passes_the_dry_run_and_the_round_limit(self) -> None:
         with (
@@ -742,7 +636,7 @@ class LoopCommandTests(unittest.TestCase):
         assert report.outcome == "donated"
 
     def test_walls_skips_the_finder_when_told_where_the_walls_are(self) -> None:
-        main, _ = self._planners()
+        main = self._planner()
         with (
             patch.object(commands, "_controller", return_value=_adb()),
             patch.object(commands, "WallRunner") as runner,
@@ -766,7 +660,7 @@ class LoopCommandTests(unittest.TestCase):
         stop now, which is why this asserts the flag reached it rather than
         checking a sentence this command used to prefix.
         """
-        self._planners()
+        self._planner()
         button = MagicMock(return_value=True)
         with (
             patch.object(commands, "_controller", return_value=_adb()),
@@ -848,48 +742,6 @@ class UpkeepLineTests(unittest.TestCase):
             commands.COUNT_LINES,
             {"counted": "{free}/{total}", "unread": "數字讀不到", "not_a_village": "不在村莊"},
             get_args(PlateCountOutcome),
-        )
-
-    def test_every_upgrade_outcome_has_a_line_of_its_own(self) -> None:
-        """`started` is the empty one: the count and the names are the line's own opening."""
-        self._each(
-            commands.BUILD_LINES,
-            {
-                "nothing_found": "沒有找到可以升級的建築",
-                "cannot_afford": "最便宜的要",
-                "only_no_match": "而且買得起的建築",
-                "builders_busy": "工人都在忙",
-                "count_unread": "讀不到工人數量",
-                "no_village": "建築升級沒有開始",
-                "builder_base": "只升主村的建築",
-                "village_lost": "升級之後讀不到村莊",
-            },
-            tuple(one for one in get_args(BuildOutcome) if one != "started"),
-        )
-        assert commands.BUILD_LINES["started"] == ""
-
-    def test_every_hero_outcome_has_a_line_of_its_own(self) -> None:
-        self._each(
-            commands.HERO_LINES,
-            {
-                "read": "個英雄",
-                "started": "開始升級,花了",
-                "hall_not_found": "沒有找到英雄殿堂",
-                "hero_absent": "沒有看到",
-                "already_upgrading": "多半正在升級中",
-                "at_level_cap": "已經是等級上限",
-                "button_dead": "升級按鈕是停用的",
-                "cannot_afford": "資源不夠",
-                "builders_busy": "現在派不出去",
-                "count_unread": "讀不到工人數量",
-                "card_moved": "不在畫面上了",
-                "no_confirmation": "沒有出現確認畫面",
-                "undercharged": "儲量沒有少那麼多",
-                "no_village": "英雄升級沒有開始",
-                "builder_base": "英雄殿堂在主村",
-                "village_lost": "之後讀不到村莊",
-            },
-            get_args(HeroOutcome),
         )
 
     def test_every_donate_outcome_has_a_line_of_its_own(self) -> None:

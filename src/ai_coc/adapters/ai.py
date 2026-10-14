@@ -115,8 +115,8 @@ class GeminiClient(BaseModel):
         """One request; `timeout` is seconds, and giving up is the caller's to handle.
 
         The deadline belongs to the call rather than to the client because one
-        client serves the attack planner, the target finder and the building
-        namer, and only the planner has a window it can miss. A timed-out call
+        client serves the attack planner and the target finder, and only the
+        planner has a window it can miss. A timed-out call
         raises the SDK's
         own `APITimeoutError`, which is **not** a `google.genai.errors.APIError`
         and so does not reach the handler below — that is deliberate, since the

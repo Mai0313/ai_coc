@@ -19,16 +19,13 @@ from ai_coc.models import (
     World,
     Caller,
     RunLog,
-    HeroKind,
     StopTarget,
-    HeroOptions,
     WallOptions,
     RestartScope,
     AttackOptions,
     DonateOptions,
     LootOverrides,
     VillageExport,
-    UpgradeOptions,
 )
 from ai_coc.constants import APP_NAME
 from ai_coc.logging_setup import configure_logging
@@ -56,11 +53,7 @@ RECORDABLE = (
     "walls",
     "collect",
     "stock",
-    "worker",
-    "lab",
     "status",
-    "upgrade",
-    "hero",
     "donate",
     "probe",
     "bounds",
@@ -113,12 +106,8 @@ COMMANDS = (
         "兩個世界每件升級實際幾點好（藥水和鐘塔已算進去），加上這個村莊的閒置人數、倉庫和護盾",
     ),
     ("stock", "這個村莊的倉庫存量和容量"),
-    ("worker", "這個村莊的工人在升什麼、還要多久，加上面板上的建議升級"),
-    ("lab", "這個村莊的實驗室在研究什麼、還要多久，加上面板上的建議升級"),
     ("world", "看遊戲停在日世界還是夜世界，加 --go 就開船過去"),
     ("walls", "用倉庫的資源升級城牆"),
-    ("upgrade", "派閒著的工人去升級建築，預設挑買得起的最貴那棟"),
-    ("hero", "看每個英雄升下一級要多少，加 --upgrade 才真的升"),
     ("collect", "收掉採集器裡的資源；在夜世界收的是聖水車"),
     ("donate", "部落有人要兵就捐"),
     ("launch", "開模擬器和部落衝突，停在村莊畫面"),
@@ -252,31 +241,6 @@ def _parser() -> argparse.ArgumentParser:
         action="append",
         help="這個座標上的城牆列為候選，跳過整個村莊的掃描；可以給很多次，最便宜的先買",
     )
-    build = sub.choices["upgrade"]
-    build.add_argument("--keep-gold", type=int, default=0, help="留下這麼多金幣不花")
-    build.add_argument("--keep-elixir", type=int, default=0, help="留下這麼多聖水不花")
-    build.add_argument(
-        "--at",
-        metavar="X,Y",
-        action="append",
-        help="這個座標上的建築列為候選，跳過尋找；可以給很多次，買得起的最貴那棟先升",
-    )
-    build.add_argument(
-        "--only", metavar="名稱", default="", help="只升名字含這幾個字的建築，例如 --only 金礦"
-    )
-    champions = sub.choices["hero"]
-    # Reading is the default and starting an upgrade is the exception, because
-    # only one of the two spends anything. Which hero is worth a builder is a
-    # judgement about the village, so nothing here picks one on its own.
-    champions.add_argument(
-        "--upgrade",
-        metavar="英雄",
-        choices=[kind for kind in get_args(HeroKind) if kind != "unknown"],
-        help="真的把這個英雄送去升級；不給就只看價錢",
-    )
-    champions.add_argument(
-        "--at", metavar="X,Y", help="直接點這個座標上的建築，跳過整個村莊的掃描"
-    )
     give = sub.choices["donate"]
     give.add_argument("--dry-run", action="store_true", help="走完流程但不真的捐，只回報能捐什麼")
     give.add_argument("--rounds", type=int, default=0, help="最多捐幾次，0 代表捐到不能捐為止")
@@ -396,21 +360,7 @@ def _answer(arguments: argparse.Namespace, run: RunLog) -> BaseModel | str:
         ),
         "collect": lambda: commands.collect(run.frames),
         "stock": lambda: commands.stock(run.frames),
-        "worker": lambda: commands.worker(run.frames),
-        "lab": lambda: commands.lab(run.frames),
         "status": lambda: commands.status(run.frames),
-        "upgrade": lambda: commands.upgrade(
-            UpgradeOptions(
-                frame_dir=run.frames,
-                keep_gold=a.keep_gold,
-                keep_elixir=a.keep_elixir,
-                at=[_spot(one) for one in a.at or ()],
-                only=a.only,
-            )
-        ),
-        "hero": lambda: commands.hero(
-            HeroOptions(frame_dir=run.frames, upgrade=a.upgrade, at=_spot(a.at) if a.at else None)
-        ),
         "world": lambda: commands.world(a.go, run.no_village),
         "view": lambda: commands.view(a.zoom, a.times),
         "tap": lambda: commands.tap((a.x, a.y), run.directory / "frames", a.wait),

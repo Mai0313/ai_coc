@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 import pytest
 
-from ai_coc.models import BuildingName, GeminiSetting
+from ai_coc.models import ScreenPoint, ScreenSpots, GeminiSetting
 from ai_coc.adapters import ai
 from ai_coc.adapters.ai import GeminiClient
 
@@ -114,16 +114,16 @@ class RequestTests(unittest.TestCase):
 
 class StructuredTests(unittest.TestCase):
     def test_the_schema_is_sent_under_its_json_name(self) -> None:
-        interactions = FakeInteractions(output_text='{"name": "金礦"}')
-        target = _client(interactions).generate_structured("這是什麼建築？", BuildingName)
-        assert target.name == "金礦"
-        assert interactions.body["response_format"]["schema"]["title"] == "BuildingName"
+        interactions = FakeInteractions(output_text='{"spots": [{"x_pct": 50, "y_pct": 25}]}')
+        target = _client(interactions).generate_structured("城牆在哪裡？", ScreenSpots)
+        assert target.spots == [ScreenPoint(x_pct=50, y_pct=25)]
+        assert interactions.body["response_format"]["schema"]["title"] == "ScreenSpots"
         assert interactions.body["response_format"]["mime_type"] == "application/json"
 
     def test_a_reply_that_does_not_match_the_model_is_rejected(self) -> None:
         interactions = FakeInteractions(output_text="不是 JSON")
         with pytest.raises(RuntimeError):
-            _client(interactions).generate_structured("這是什麼建築？", BuildingName)
+            _client(interactions).generate_structured("城牆在哪裡？", ScreenSpots)
 
 
 if __name__ == "__main__":

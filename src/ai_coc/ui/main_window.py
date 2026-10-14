@@ -45,7 +45,6 @@ from ai_coc.models import (
     ThinkingLevel,
     VillageExport,
     LootThresholds,
-    UpgradeOptions,
 )
 from ai_coc.constants import LOG_DIR, APP_NAME, COC_PACKAGE, VERSION_LABEL, DEFAULT_GEMINI_MODEL
 from ai_coc.adapters.ai import GeminiClient
@@ -352,7 +351,6 @@ class MainWindow(QMainWindow):
         form = QFormLayout(behavior)
         self.auto_collect = QCheckBox("自主收取主村資源")
         self.auto_donate = QCheckBox("自主開啟部落聊天室並捐兵")
-        self.auto_upgrade = QCheckBox("自主安排並執行建築升級")
         self.auto_walls = QCheckBox("自主刷牆")
         self.auto_attack = QCheckBox("自主搜尋對手並打資源")
         for name, widget in self._job_boxes().items():
@@ -361,7 +359,7 @@ class MainWindow(QMainWindow):
         return behavior
 
     def _job_boxes(self) -> dict[str, QCheckBox]:
-        """The five checkboxes, under the names the settings file saves them by.
+        """The four checkboxes, under the names the settings file saves them by.
 
         Which are the sub-command names, so this is also the one place a name
         and a widget are lined up. That pairing used to be written out by hand
@@ -372,7 +370,6 @@ class MainWindow(QMainWindow):
         return {
             "collect": self.auto_collect,
             "donate": self.auto_donate,
-            "upgrade": self.auto_upgrade,
             "walls": self.auto_walls,
             "attack": self.auto_attack,
         }
@@ -615,7 +612,6 @@ class MainWindow(QMainWindow):
             for enabled, job in (
                 (self.auto_collect.isChecked(), self.run_collect),
                 (self.auto_donate.isChecked(), self.run_donate),
-                (self.auto_upgrade.isChecked(), self.run_upgrade),
                 (self.auto_walls.isChecked(), self.run_walls),
                 (self.auto_attack.isChecked(), self.run_attack),
             )
@@ -705,7 +701,7 @@ class MainWindow(QMainWindow):
 
         None of the commands sails on its own; crossing is `commands.world`'s
         job and it is the caller's to ask for. The cycle is that caller for the
-        three jobs that exist only on the home village, which is what keeps a
+        two jobs that exist only on the home village, which is what keeps a
         window started on the builder base doing what it always did: sail over
         for them, and farm whichever village they left it on. On the home
         village already, the crossing does nothing.
@@ -729,22 +725,13 @@ class MainWindow(QMainWindow):
             ),
         )
 
-    def run_upgrade(self) -> None:
-        self._run_job(
-            "正在安排建築升級…",
-            "upgrade",
-            self._on_home_village(
-                lambda run: commands.upgrade(UpgradeOptions(frame_dir=run.frames), self._stopping)
-            ),
-        )
-
     def run_walls(self) -> None:
         # One batch per pass, for the reason `run_attack` takes one round: the
         # cycle is what decides what comes next, and `WallOptions.rounds` of 0 —
         # the CLI's default, where somebody is deliberately spending the loot —
         # keeps buying until neither storage will pay for another wall. That is
-        # the whole session rather than a pass, and the collectors, the builders
-        # and the attack would wait it out. A batch is up to `MAX_BATCH` walls,
+        # the whole session rather than a pass, and the collectors and the attack
+        # would wait it out. A batch is up to `MAX_BATCH` walls,
         # so this is not a pass that barely does anything.
         self._run_job(
             "正在升級城牆…",
@@ -1038,7 +1025,7 @@ class MainWindow(QMainWindow):
         """Get the village out of the game, through the same call a terminal makes.
 
         **The only `_run_job` a widget can start**, and therefore the only one
-        that has to check `job_running` itself: the other five are reached from
+        that has to check `job_running` itself: the other four are reached from
         `automation_cycle`, which returns early on that flag before it gets
         here. Without this, pressing the button during an automation pass puts
         two passes on one display — and the one that finishes first clears the
@@ -1094,8 +1081,6 @@ class MainWindow(QMainWindow):
 
     def save_api(self) -> None:
         try:
-            # Only the main tier is on this tab; the lite one has no picker
-            # because nothing about it is a judgement call the user makes.
             self._save_config(
                 gemini=self.config.gemini.model_copy(
                     update={

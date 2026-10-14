@@ -19,7 +19,7 @@ import pytest
 from pydantic import ValidationError
 
 from ai_coc import plans, models, commands, logging_setup
-from ai_coc.ui import hero, walls, attack, upkeep
+from ai_coc.ui import walls, attack
 from ai_coc.ui import world as world_ui
 from ai_coc.ui import runner as shared
 from ai_coc.cli import _parser
@@ -30,7 +30,6 @@ from ai_coc.models import (
     RunLog,
     UiJobs,
     LoanEnd,
-    HeroCard,
     ProbeRay,
     WallMenu,
     AppConfig,
@@ -42,7 +41,6 @@ from ai_coc.models import (
     AttackPlan,
     AttackStep,
     CartReport,
-    HeroReport,
     PlayedPlan,
     UiSettings,
     WallReport,
@@ -56,28 +54,22 @@ from ai_coc.models import (
     WallUpgrade,
     AttackReport,
     AttackSeries,
-    BuildingName,
     VillageStock,
     AttackOptions,
     DisplayTarget,
     GeminiSetting,
     LootOverrides,
-    UpgradeButton,
     VillageExport,
     WallCandidate,
     BoundarySurvey,
-    BuildCandidate,
     GeminiSettings,
     LootThresholds,
     StorageCapacity,
 )
-from ai_coc.parsers import home as home_parser
 from ai_coc.parsers import scout as scout_parser
 from ai_coc.prompts import PROMPTS, PROMPT_DIR, render
 from ai_coc.ui.clan import ClanRunner
-from ai_coc.ui.hero import HeroRunner
 from ai_coc.ui.walls import WallRunner
-from ai_coc.constants import DEFAULT_LITE_MODEL
 from ai_coc.ui.attack import (
     SPEED_UP,
     PLAYFIELD,
@@ -109,7 +101,7 @@ from ai_coc.ui.attack import (
     single_spots,
     deploy_candidates,
 )
-from ai_coc.ui.runner import SWEEP_X, SWEEP_Y, SWEEP_LIMIT, SWEEP_STAGGER, SessionTakenError
+from ai_coc.ui.runner import SessionTakenError
 from ai_coc.ui.upkeep import UpkeepRunner
 from ai_coc.adapters.ai import GeminiClient
 from ai_coc.adapters.adb import (
@@ -127,11 +119,7 @@ from ai_coc.adapters.adb import (
     physical_display,
 )
 from ai_coc.parsers.clan import panel_top, donatable_cards, reinforce_button
-from ai_coc.parsers.hero import SCROLL_LEFT, SCROLL_RIGHT, can_scroll, hero_cards, hall_buttons
 from ai_coc.parsers.home import (
-    PANEL_BOTTOM,
-    jobs_strip,
-    panel_rows,
     boat_marker,
     cart_marker,
     plate_count,
@@ -198,7 +186,6 @@ from ai_coc.parsers.boundary import DEPLOY_BOUND, fitted_line, village_box, boun
 from ai_coc.parsers.building import (
     PRICE_TOLERANCE,
     wall_menu,
-    name_strip,
     sheet_open,
     game_dialog,
     sheet_offer,
@@ -3042,7 +3029,7 @@ class ConfigTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             store = ConfigStore(path=Path(td) / "config.json")
             on_disk = GeminiSettings(
-                api_key="AQ.saved", lite=GeminiSetting(model="edited-by-hand")
+                api_key="AQ.saved", main=GeminiSetting(model="edited-by-hand")
             )
             store.save(AppConfig(gemini=on_disk))
             window = MagicMock()
@@ -3157,13 +3144,7 @@ class PromptTests(unittest.TestCase):
         """Both directions: a missing file is a `KeyError` at the first call, and a
         file nothing asks for is a prompt somebody will keep rewording for nothing.
         """
-        assert set(PROMPTS) == {
-            "attack_plan",
-            "find_targets",
-            "name_building",
-            "night_plan",
-            "read_plate_jobs",
-        }
+        assert set(PROMPTS) == {"attack_plan", "find_targets", "night_plan"}
 
     def test_a_prompt_fills_in_its_placeholders(self) -> None:
         filled = render("find_targets", what="城牆", notes="", count=12, floor=55)
@@ -3183,7 +3164,6 @@ class PromptTests(unittest.TestCase):
         filled = {
             "attack_plan": {"rage_count", "freeze_count"},
             "find_targets": {"what", "notes", "count", "floor"},
-            "read_plate_jobs": {"world"},
         }
         for name, text in PROMPTS.items():
             fields = {field for _, field, _, _ in string.Formatter().parse(text) if field}
@@ -6662,7 +6642,7 @@ class WindowToggleTests(unittest.TestCase):
 
 
 class UiJobNameTests(unittest.TestCase):
-    """The five job names, which have to line up in three places at once.
+    """The four job names, which have to line up in three places at once.
 
     They are fields of `UiJobs`, checkboxes on the window, and sub-commands of
     the CLI, and nothing but a name connects the three. A rename that reaches
@@ -7089,7 +7069,7 @@ class HomeTests(unittest.TestCase):
         assert run._lost() == "no_village"
 
     def test_every_home_village_command_names_the_builder_base(self) -> None:
-        """Five entry points share `_home`, and each carries the reason into its own report."""
+        """Three entry points share `_home`, and each carries the reason into its own report."""
         where = {
             "adb": AdbController(endpoint=AdbEndpoint(port=16384)),
             "display": DisplayTarget(logical_id="1", physical_id="2"),
@@ -7097,8 +7077,6 @@ class HomeTests(unittest.TestCase):
         entries = [
             WallRunner(**where).run,
             UpkeepRunner(**where).collect,
-            UpkeepRunner(**where).upgrade,
-            HeroRunner(**where).run,
             ClanRunner(**where).donate,
         ]
         with (
@@ -7701,54 +7679,6 @@ class HomeHudTests(unittest.TestCase):
                 continue  # a fixture masked to another size, not a screen
             assert found == (path.name in panels), path.name
 
-    def test_the_running_rows_are_read_off_their_bars_with_their_countdowns(self) -> None:
-        """The fill and the track mark the rows; the 建議升級 and 其他升級 rows carry neither.
-
-        Each countdown as the frame writes it: 5小時 17分鐘 and the rest on the
-        builders' tab, 2天 13小時 and 3天 18小時 on the laboratory's, and on
-        the builder base 16小時 24分鐘, whose leading 1 lands 34 from its
-        template — the weakest digit on record.
-        """
-        rows = {
-            "hud_day_build_panel.png": [19020, 66660, 85920, 162000, 532800, 547200],
-            "hud_day_lab_panel.png": [219600, 324000],
-            "hud_night_build_panel.png": [59040, 151200, 244800],
-        }
-        for name, read in rows.items():
-            assert panel_rows((FRAMES / name).read_bytes()) == read, name
-        assert panel_rows((FRAMES / "hud_day.png").read_bytes()) is None
-
-    def test_a_one_character_unit_has_to_be_shaped_like_tian(self) -> None:
-        """秒 is one character too, about as wide, and 45秒 taken for 天 is 45 days.
-
-        No recorded panel shows 秒 on a running row, so the gate is shown the
-        other way round: with the measured shapes of 天 swapped for a blank one,
-        the rows whose first unit is 天 answer None rather than a number.
-        """
-        png = (FRAMES / "hud_day_lab_panel.png").read_bytes()
-        assert panel_rows(png) == [219600, 324000]
-        with patch.object(home_parser, "DAY_SHAPES", (0,)):
-            assert panel_rows(png) == [None, None]
-
-    def test_a_portrait_beside_a_countdown_is_left_out_of_it(self) -> None:
-        """An apprentice's ring and a goblin's face sit right against the number.
-
-        Cut to the text's own height, the ring came out the height of a digit
-        and 37 from a 1, 2 px before the real first digit, so 1天 read as 11天.
-        Seen whole, a portrait runs taller than any character. The first frame
-        is the one that read 11天: 1天 20小時 beside the apprentice, then 6天
-        4小時 and 6天 8小時 beside goblins.
-        """
-        read = panel_rows((FRAMES / "hud_day_build_panel_apprentice.png").read_bytes())
-        assert read == [16200, 63840, 83100, 158400, 529200, 543600]
-
-    def test_the_strip_for_the_model_reaches_down_through_the_suggestions(self) -> None:
-        """The panel from its X's column to the screen edge, down to its tabs."""
-        strip = jobs_strip((FRAMES / "hud_day_build_panel.png").read_bytes())
-        assert strip is not None
-        assert Image.open(io.BytesIO(strip)).size == (430, PANEL_BOTTOM - 60)
-        assert jobs_strip((FRAMES / "hud_day.png").read_bytes()) is None
-
     def test_the_shield_bar_saying_no_shield_is_read_as_none_up(self) -> None:
         """無 falls into three or four spans depending on what shows through the bar."""
         for name in ("hud_day.png", "hud_day_shield_split.png"):
@@ -7811,7 +7741,7 @@ class BuildingUpgradeTests(unittest.TestCase):
         to 14, and eight 12 — of which the digits with no ascender are 11. At the
         loot panel's floor those drop out one at a time and whatever survives is
         reported as the price, which had 英雄殿堂's own 10 400 000 reading as 14
-        and left `ai_coc upgrade` unable to see any eight-figure upgrade at all.
+        and left the old upgrade loop unable to see any eight-figure upgrade at all.
         """
         offers = upgrade_buttons((FRAMES / "hero_hall_menu.png").read_bytes())
         assert [(offer.resource, offer.price) for offer in offers] == [("elixir", 10_400_000)]
@@ -7858,44 +7788,12 @@ class BuildingUpgradeTests(unittest.TestCase):
         assert upgrade_sheet((FRAMES / "home_markers.png").read_bytes()) is None
         assert upgrade_sheet((FRAMES / "menu_with_gem_plate.png").read_bytes()) is None
 
-
-class SweepGridTests(unittest.TestCase):
-    """Where a sweep may tap, which is not everywhere the grid can reach."""
-
-    def test_the_staggered_grid_lands_between_the_plain_one(self) -> None:
-        """Buildings are narrower than the grid steps, so one pass is a sample.
-        英雄殿堂 sits 86 px from the nearest plain point and was walked past
-        twice; the staggered grid puts a point 14 px from it.
+    def test_a_heros_sheet_confirms_where_a_buildings_does(self) -> None:
+        """A hero's sheet is a different screen, so that its 確認 lands inside the
+        span `upgrade_sheet` searches is a measurement rather than a given.
         """
-        hall = (990, 430)
-
-        def nearest(points: list[tuple[int, int]]) -> float:
-            return min(math.dist(point, hall) for point in points)
-
-        plain = [(x, y) for y in SWEEP_Y for x in SWEEP_X]
-        staggered = [
-            (x + SWEEP_STAGGER[0], y + SWEEP_STAGGER[1]) for y in SWEEP_Y for x in SWEEP_X
-        ]
-        assert round(nearest(plain)) == 86
-        assert round(nearest(staggered)) == 14
-
-    def test_no_staggered_point_lands_on_the_game_hud(self) -> None:
-        """The plain grid stops at x 1220 to stay left of the storage bars, which
-        start at 1260 — and the staggered one would put (1300, 200) on the exact
-        corner of the dark elixir reading. Those points are dropped rather than
-        clamped, since a clamped one lands where the other pass already went.
-        """
-        kept = [
-            (x + SWEEP_STAGGER[0], y + SWEEP_STAGGER[1])
-            for y in SWEEP_Y
-            for x in SWEEP_X
-            if x + SWEEP_STAGGER[0] <= SWEEP_LIMIT[0] and y + SWEEP_STAGGER[1] <= SWEEP_LIMIT[1]
-        ]
-        assert kept, "the staggered pass has to keep some points"
-        assert max(point[0] for point in kept) <= SWEEP_X[-1]
-        # The button row a tap opens starts at 622.
-        assert max(point[1] for point in kept) < 622
-        assert round(min(math.dist(point, (990, 430)) for point in kept)) == 14
+        sheet = (FRAMES / "hero_upgrade_sheet.png").read_bytes()
+        assert upgrade_sheet(sheet) == (1121, 783)
 
 
 class PinchTests(unittest.TestCase):
@@ -7952,200 +7850,8 @@ class PinchTests(unittest.TestCase):
         assert self._events().count((EV_SYN, SYN_REPORT, 0)) == 4
 
 
-class HeroGemButtonTests(unittest.TestCase):
-    """The one button in the hall that spends gems, and why it read as a price."""
-
-    def test_a_hero_already_upgrading_offers_gems_rather_than_a_price(self) -> None:
-        """立即完成 sits where 升級 was, on the same green plate, with a number
-        beside it — and that number is a gem count.
-
-        Read as a price it is a cheap one, so it cleared the affordability check
-        and its plate was live, which left `hero --upgrade warden` one tap from
-        finishing an upgrade with gems. Measured live it came back as
-        `warden 268 dark upgradable=True` against a village holding 11 359 gems.
-        The card still appears, because the hero is on the screen and the hall
-        has to keep reading as the hall.
-        """
-        cards = {
-            card.hero: card
-            for card in hero_cards((FRAMES / "hero_hall_finishing.png").read_bytes())
-        }
-        warden = cards["warden"]
-        assert (warden.price, warden.resource, warden.upgradable) == (None, None, False)
-        # And the four beside it are untouched: same plate, same place, a real
-        # price in dark elixir.
-        assert [(c.price, c.resource) for c in cards.values() if c.hero != "warden"] == [
-            (4500, "dark"),
-            (5850, "dark"),
-            (11700, "dark"),
-            (9000, "dark"),
-        ]
-
-    def test_the_elixir_hero_is_not_mistaken_for_a_gem_button(self) -> None:
-        """Both are drawn on the same green plate, so the icon is what separates
-        them: swept over both committed halls the elixir drop reads -120 of
-        `green - max(red, blue)` and every dark one -7 to -9, against +48 for the
-        gem. Widening what a gem looks like would take 大守護者 with it.
-        """
-        for name in ("hero_hall", "hero_hall_scrolled"):
-            cards = {card.hero: card for card in hero_cards((FRAMES / f"{name}.png").read_bytes())}
-            assert (cards["warden"].price, cards["warden"].resource) == (1_360_000, "elixir"), name
-            assert cards["warden"].upgradable, name
-
-    def test_a_gem_button_is_reported_as_a_hero_already_being_raised(self) -> None:
-        """Which is what it is, and it is the message the loop already had: a
-        card with no price stops before the affordability check and before
-        anything is tapped.
-        """
-        runner = HeroRunner(
-            adb=AdbController(endpoint=AdbEndpoint(port=16384)),
-            display=DisplayTarget(logical_id="1", physical_id="2"),
-            hero="warden",
-        )
-        cards = {
-            card.hero: card
-            for card in hero_cards((FRAMES / "hero_hall_finishing.png").read_bytes())
-        }
-        blocked = runner._blocked(cards["warden"], VillageStock(gold=0, elixir=0, dark=999_999))
-        assert blocked is not None
-        assert blocked == "already_upgrading"
-
-    def test_a_hero_at_his_level_cap_is_not_reported_as_upgrading(self) -> None:
-        """飛龍公爵 here shows 等級上限 and no button at all, beside three heroes
-        whose button is 立即完成. None of them has a price, so the missing plate
-        is what says which, rather than the missing price.
-        """
-        cards = {
-            card.hero: card for card in hero_cards((FRAMES / "hero_hall_capped.png").read_bytes())
-        }
-        assert [hero for hero, card in cards.items() if card.capped] == ["duke"]
-        assert [hero for hero, card in cards.items() if card.price is None] == [
-            "queen",
-            "minion_prince",
-            "warden",
-            "duke",
-        ]
-        runner = HeroRunner(
-            adb=AdbController(endpoint=AdbEndpoint(port=16384)),
-            display=DisplayTarget(logical_id="1", physical_id="2"),
-            hero="duke",
-        )
-        stock = VillageStock(gold=0, elixir=0, dark=999_999)
-        assert runner._blocked(cards["duke"], stock) == "at_level_cap"
-
-
-class HeroHallTests(unittest.TestCase):
-    """The 英雄殿堂 screen, and the button on the village that opens it."""
-
-    def test_every_card_reads_its_hero_and_what_the_next_level_costs(self) -> None:
-        """The banner is the identifying mark, and it is UI rather than artwork:
-        the same flat colour at level 1 as at level 100, and the same wherever
-        the row has been scrolled to.
-        """
-        cards = hero_cards((FRAMES / "hero_hall.png").read_bytes())
-        assert [(card.hero, card.price, card.resource) for card in cards] == [
-            ("king", 4_000, "dark"),
-            ("queen", 4_800, "dark"),
-            ("minion_prince", 4_400, "dark"),
-            ("warden", 1_360_000, "elixir"),
-            ("champion", 8_000, "dark"),
-        ]
-
-    def test_the_sixth_hero_is_only_there_once_the_row_has_scrolled(self) -> None:
-        """Five of the six cards fit, so the last one is off screen until it is
-        scrolled to — and a card only half on screen is not read at all, because
-        the price beside its middle would be its neighbour's.
-        """
-        cards = hero_cards((FRAMES / "hero_hall_scrolled.png").read_bytes())
-        assert [card.hero for card in cards] == [
-            "queen",
-            "minion_prince",
-            "warden",
-            "champion",
-            "duke",
-        ]
-        assert (cards[-1].price, cards[-1].resource) == (56_000, "dark")
-
-    def test_a_screen_of_coloured_plates_is_not_the_hall(self) -> None:
-        """我的軍隊 stands its heroes on tall coloured plates of their own, and a
-        run that took those for hall cards walked into that screen, called it the
-        Hero Hall and stopped sweeping for the real one. A banner matching no
-        hero is dropped rather than reported as an unknown one, which is what
-        leaves this screen answering nothing at all.
-        """
-        assert hero_cards((FRAMES / "army_screen.png").read_bytes()) == []
-        assert hero_cards((FRAMES / "home_storages.png").read_bytes()) == []
-        assert hero_cards((FRAMES / "upgrade_sheet.png").read_bytes()) == []
-
-    def test_an_arrow_is_read_before_it_is_tapped(self) -> None:
-        """The end the row has run out of is not drawn, and a card stands where
-        that arrow was — so a run that tapped blindly would open a hero instead
-        of scrolling.
-        """
-        left = (FRAMES / "hero_hall.png").read_bytes()
-        right = (FRAMES / "hero_hall_scrolled.png").read_bytes()
-        assert (can_scroll(left, SCROLL_LEFT), can_scroll(left, SCROLL_RIGHT)) == (False, True)
-        assert (can_scroll(right, SCROLL_LEFT), can_scroll(right, SCROLL_RIGHT)) == (True, False)
-
-    def test_the_way_in_is_placed_by_the_icon_beside_it(self) -> None:
-        """英雄殿堂's own button is a gold crown, which is artwork. What is read
-        is the resource icon on the 升級 beside it, and the row's fixed pitch
-        does the rest — its price is deliberately not wanted, because needing one
-        would only be a second way to miss a menu that is really there.
-        """
-        assert hall_buttons((FRAMES / "hero_hall_menu.png").read_bytes()) == [(1151, 700)]
-
-    def test_the_way_in_is_not_a_fixed_number_of_places_along(self) -> None:
-        """The row gains and loses buttons with the building's state. The same
-        menu came up five buttons wide with a 強化 running, putting the hall one
-        place right of 升級, and four wide without it — which slid every button
-        half a pitch and left the gem-plated 強化英雄 in that place instead. A
-        reader that only looked one place along reported nothing on the second
-        layout, and the sweep walked past the hall it had just opened.
-        """
-        assert hall_buttons((FRAMES / "hero_hall_menu_short.png").read_bytes()) == [(1238, 700)]
-
-    def test_a_maxed_hall_is_placed_by_its_info_button(self) -> None:
-        """A maxed 英雄殿堂 has no 升級, so nothing priced locates the row. Its
-        資訊 does, and the two blue plates between it and the hall are skipped.
-        """
-        assert hall_buttons((FRAMES / "hero_hall_menu_maxed.png").read_bytes()) == [(1068, 700)]
-
-    def test_a_collector_marker_beside_the_row_is_not_a_priced_button(self) -> None:
-        """A gold marker in the icon band, on the grid, has no button plate under it."""
-        marker = Image.open(FRAMES / "hud_day.png").convert("RGB").crop((1291, 478, 1341, 528))
-        image = Image.open(FRAMES / "hero_hall_menu_maxed.png").convert("RGB")
-        image.paste(marker, (1283, 625))
-        out = io.BytesIO()
-        image.save(out, format="PNG")
-        assert hall_buttons(out.getvalue()) == [(1068, 700)]
-
-    def test_a_building_being_upgraded_offers_no_way_in(self) -> None:
-        """Its row has no price either, and the pale button right of 資訊 is
-        取消, which cancels the upgrade. 立即完成's green plate says so.
-        """
-        assert hall_buttons((FRAMES / "menu_upgrading.png").read_bytes()) == []
-
-    def test_a_screen_with_no_menu_on_it_offers_no_way_in(self) -> None:
-        assert hall_buttons((FRAMES / "hero_hall.png").read_bytes()) == []
-        assert hall_buttons((FRAMES / "home_storages.png").read_bytes()) == []
-        assert hall_buttons((FRAMES / "army_screen.png").read_bytes()) == []
-
-    def test_the_confirmation_covers_the_cards_and_confirms_where_it_is_sought(self) -> None:
-        """The whole spending half of the command rests on these two readings.
-
-        `_start` calls a frame that still has cards on it a tap that never
-        landed, and it needs 確認 inside the span `upgrade_sheet` searches — the
-        same one a building's sheet uses. A hero's sheet is a different screen,
-        so that it lands in the same place is a measurement rather than a given.
-        """
-        sheet = (FRAMES / "hero_upgrade_sheet.png").read_bytes()
-        assert hero_cards(sheet) == []
-        assert upgrade_sheet(sheet) == (1121, 783)
-
-
 class TargetFinderTests(unittest.TestCase):
-    """The one finder all three loops share, with Gemini and the emulator taken out."""
+    """The finder the wall loop asks first, with Gemini and the emulator taken out."""
 
     def _runner(self, **fields: object) -> WallRunner:
         return WallRunner(
@@ -8178,7 +7884,7 @@ class TargetFinderTests(unittest.TestCase):
         assert spots == [(800, 423), (960, 270)]
 
     def test_a_point_on_the_games_own_buttons_is_dropped_too(self) -> None:
-        """The hero hall's search taps these points without walking through `_opened`."""
+        """Here as well as in `_opened`, so the answer a caller gets back is already clean."""
         runner = self._runner(ai=GeminiClient(api_key="not-a-real-key", settings=GeminiSetting()))
         # (10%, 11%) is the avatar block, (82%, 20%) the storage bars, (94%, 50%) 商店.
         answer = self._answer((10, 11), (82, 20), (94, 50), (60, 30))
@@ -8194,307 +7900,6 @@ class TargetFinderTests(unittest.TestCase):
         existed, which is what keeps the sweep underneath rather than beside it.
         """
         assert self._runner()._spotted("城牆", "散開", 12) == []
-
-
-class GeminiTierTests(unittest.TestCase):
-    """Two model tiers in the settings file."""
-
-    def test_the_lite_tier_defaults_to_its_own_model(self) -> None:
-        """The whole point of a second tier is that it is a different model."""
-        assert AppConfig().gemini.lite.model == DEFAULT_LITE_MODEL
-        assert AppConfig().gemini.main.model != DEFAULT_LITE_MODEL
-
-
-class BuildingNameTests(unittest.TestCase):
-    """Reading which building a menu belongs to, which no parser here can do."""
-
-    def test_the_name_strip_is_a_slice_of_the_frame_rather_than_the_frame(self) -> None:
-        """A per-candidate call is only affordable because of what it sends: the
-        band is 4% of the frame's area, and it is a fixed one — measured across
-        nine live menus, every label sat inside it whatever was selected.
-        """
-        frame = (FRAMES / "hero_hall_menu.png").read_bytes()
-        strip = Image.open(io.BytesIO(name_strip(frame)))
-        assert strip.size == (900, 65)
-        assert len(strip.tobytes()) / len(Image.open(io.BytesIO(frame)).tobytes()) < 0.05
-
-    def test_no_model_leaves_the_name_unread_rather_than_guessed(self) -> None:
-        """Which is what a run with no API key gets, and every caller treats it
-        as ordinary: the report falls back to the coordinate it always used.
-        """
-        runner = UpkeepRunner(
-            adb=AdbController(endpoint=AdbEndpoint(port=16384)),
-            display=DisplayTarget(logical_id="1", physical_id="2"),
-        )
-        assert runner._name(b"") == BuildingName()
-
-    def test_only_skips_a_dearer_building_with_the_wrong_name(self) -> None:
-        """The opposite of what this loop does unasked, and deliberately: without
-        a name the dearest affordable upgrade is the best use of a scarce
-        builder, and with one the caller knows better than the price does.
-        """
-        runner = UpkeepRunner(
-            adb=AdbController(endpoint=AdbEndpoint(port=16384)),
-            display=DisplayTarget(logical_id="1", physical_id="2"),
-            only="金礦",
-        )
-        offers = [
-            BuildCandidate(
-                point=(100, 100),
-                resource="gold",
-                price=9_900_000,
-                building=BuildingName(name="箭塔", level=15),
-            ),
-            BuildCandidate(
-                point=(200, 200),
-                resource="gold",
-                price=720_000,
-                building=BuildingName(name="金礦", level=12),
-            ),
-        ]
-        assert runner._pick(offers, 20_000_000, 0).point == (200, 200)
-        # An unread name matches nothing, which is the safe direction for a
-        # filter that decides where a builder goes.
-        blank = [offer.model_copy(update={"building": BuildingName()}) for offer in offers]
-        assert runner._pick(blank, 20_000_000, 0) is None
-
-
-class UpkeepRunnerTests(unittest.TestCase):
-    """`upgrade` runs the same three finders in the same order as the wall loop."""
-
-    def _runner(self, **fields: object) -> UpkeepRunner:
-        return UpkeepRunner(
-            adb=AdbController(endpoint=AdbEndpoint(port=16384)),
-            display=DisplayTarget(logical_id="1", physical_id="2"),
-            **fields,
-        )
-
-    def test_spotted_buildings_are_priced_off_their_own_menus(self) -> None:
-        """The finder answers in guesses and each one is opened before it counts.
-
-        It also reaches ground the sweep cannot: measured live, only two of the
-        nine buildings it found sat within 45 px of a grid point, against a grid
-        that stops at x 1220 and y 500 on a 1600x900 screen.
-        """
-        runner = self._runner(ai=GeminiClient(api_key="not-a-real-key", settings=GeminiSetting()))
-        answer = ScreenSpots(
-            spots=[ScreenPoint(x_pct=50, y_pct=40), ScreenPoint(x_pct=80, y_pct=50)]
-        )
-        offers = iter([[], [UpgradeButton(resource="gold", point=(700, 700), price=9_900_000)]])
-        with (
-            patch.object(GeminiClient, "generate_structured", return_value=answer),
-            patch.object(UpkeepRunner, "_after_tap", return_value=b""),
-            patch.object(UpkeepRunner, "_frame", return_value=b""),
-            patch.object(shared, "read_stock", return_value=_stock()),
-            patch.object(upkeep, "wall_menu", return_value=None),
-            patch.object(upkeep, "upgrade_buttons", side_effect=lambda _png: next(offers)),
-            patch.object(runner, "_scan") as scan,
-        ):
-            found = runner._buildings()
-        assert [(o.point, o.price) for o in found] == [((1280, 450), 9_900_000)]
-        scan.assert_not_called()
-
-    def test_a_wall_the_finder_answered_is_never_offered_to_a_builder(self) -> None:
-        """A wall upgrades instantly and ties up no builder, so putting one on a
-        wall is the single mistake this loop exists to avoid. That check used to
-        sit inside the sweep; every finder has to pass it now.
-        """
-        runner = self._runner(at=[(500, 300)])
-        with (
-            patch.object(UpkeepRunner, "_after_tap", return_value=b""),
-            patch.object(shared, "read_stock", return_value=_stock()),
-            patch.object(upkeep, "wall_menu", return_value=_menu(1_600_000)),
-            patch.object(upkeep, "upgrade_buttons", return_value=[]),
-        ):
-            assert runner._buildings() == []
-
-    def test_a_village_the_finder_could_not_place_falls_through_to_the_sweep(self) -> None:
-        """A village whose buildings nobody can name still has buildings."""
-        runner = self._runner()
-        with patch.object(runner, "_scan", return_value=[]) as scan:
-            assert runner._buildings() == []
-        scan.assert_called_once()
-
-
-class HeroRunnerTests(unittest.TestCase):
-    """The arithmetic between the taps, with the emulator taken out."""
-
-    def _runner(self, **fields: object) -> HeroRunner:
-        return HeroRunner(
-            adb=AdbController(endpoint=AdbEndpoint(port=16384)),
-            display=DisplayTarget(logical_id="1", physical_id="2"),
-            **fields,
-        )
-
-    def _duke(self, **fields: object) -> HeroCard:
-        """A card the hall is really offering, which is what these tests are about.
-
-        `upgradable` has to be said out loud because its default is False: a
-        card built without it is one whose button is greyed, and every test
-        below would stop on that rather than on the thing it is checking.
-        """
-        fields.setdefault("upgradable", True)
-        return HeroCard(hero="duke", point=(1407, 648), price=56_000, resource="dark", **fields)
-
-    def test_the_hall_is_asked_for_before_the_village_is_swept(self) -> None:
-        """One building, so the first guess that opens it ends the search.
-
-        This is where the finder is worth the most: the sweep's grid steps over
-        this building entirely on its first pass — measured, it sits 86 px from
-        the nearest grid point — so finding it costs up to 52 taps across two
-        passes, each with a settle and a capture. Measured live, the first guess
-        opened it.
-        """
-        runner = self._runner(ai=GeminiClient(api_key="not-a-real-key", settings=GeminiSetting()))
-        answer = ScreenSpots(spots=[ScreenPoint(x_pct=62, y_pct=48)])
-        with (
-            patch.object(GeminiClient, "generate_structured", return_value=answer),
-            patch.object(HeroRunner, "_frame", return_value=b""),
-            patch.object(HeroRunner, "_after_tap", return_value=b"hall") as tapped,
-            patch.object(runner, "_try_menu", return_value=b"cards"),
-            patch.object(runner, "_sweep") as swept,
-        ):
-            assert runner._open() == b"cards"
-        assert tapped.call_args.args[0] == (992, 432)
-        swept.assert_not_called()
-
-    def test_a_hall_the_finder_missed_still_gets_swept_for(self) -> None:
-        """The sweep stays underneath, because a hall nobody can place is still
-        standing somewhere on the map.
-        """
-        runner = self._runner(ai=GeminiClient(api_key="not-a-real-key", settings=GeminiSetting()))
-        answer = ScreenSpots(spots=[ScreenPoint(x_pct=10, y_pct=10)])
-        with (
-            patch.object(GeminiClient, "generate_structured", return_value=answer),
-            patch.object(HeroRunner, "_frame", return_value=b""),
-            patch.object(HeroRunner, "_after_tap", return_value=b""),
-            patch.object(runner, "_try_menu", return_value=None),
-            patch.object(runner, "_home", return_value=_stock()),
-            patch.object(runner, "_sweep", return_value=iter(())) as swept,
-        ):
-            assert runner._open() is None
-        assert swept.call_count == 2
-
-    def test_a_button_the_hall_has_greyed_is_not_an_upgrade_that_can_be_started(self) -> None:
-        """A capped hero keeps its price and loses its button, so the price says
-        nothing about whether it can be raised.
-
-        Measured live: 飛龍公爵 at 15 asked for 220 000 dark against a village
-        holding exactly 220 000, and the game answered the tap with a red line
-        saying to raise the Hero Hall to 11 first — so the run had the money and
-        still could not spend it. Reported through the price alone it came back
-        as "no confirmation sheet came up", which reads as a swallowed tap.
-        """
-        runner = self._runner(hero="duke")
-        report = HeroReport(hero="duke", outcome="read")
-        with patch.object(runner, "_bring_on") as brought:
-            outcome = runner._raise(
-                report,
-                {"duke": self._duke(upgradable=False)},
-                VillageStock(gold=0, elixir=0, dark=999_999),
-            )
-        brought.assert_not_called()
-        assert outcome == "button_dead"
-        assert report.started is None
-
-    def test_an_upgrade_the_village_cannot_pay_for_is_never_tapped(self) -> None:
-        """This is the guard, not a courtesy. The game answers an upgrade it
-        cannot charge for with a gem purchase, and nothing below the prompt layer
-        would stop a loop walking into one.
-        """
-        runner = self._runner(hero="duke")
-        report = HeroReport(hero="duke", outcome="read")
-        with patch.object(AdbController, "tap") as tapped:
-            outcome = runner._raise(
-                report, {"duke": self._duke()}, VillageStock(gold=0, elixir=0, dark=55_999)
-            )
-        assert outcome == "cannot_afford"
-        assert report.started is None
-        tapped.assert_not_called()
-
-    def test_a_village_with_no_builder_free_never_looks_for_the_hall(self) -> None:
-        """Every builder busy is the ordinary state of a farming village, and
-        finding the hall costs minutes of tapping. The count is known before any
-        of that, so a run that was asked to spend ends on it.
-        """
-        runner = self._runner(hero="duke")
-        with (
-            patch.object(runner, "_home", return_value=VillageStock(gold=0, elixir=0, dark=0)),
-            patch.object(runner, "_frame", return_value=b""),
-            patch.object(hero, "free_builders", return_value=(0, 5)),
-            patch.object(runner, "_open") as opened,
-        ):
-            report = runner.run()
-        assert report.outcome == "builders_busy"
-        opened.assert_not_called()
-
-    def test_a_run_that_only_reads_still_opens_the_hall_with_no_builder_free(self) -> None:
-        """Reading costs nothing to be wrong about, and what each hero's next
-        level costs is the half worth having when nothing can be started.
-        """
-        runner = self._runner()
-        with (
-            patch.object(runner, "_home", return_value=VillageStock(gold=0, elixir=0, dark=0)),
-            patch.object(runner, "_frame", return_value=b""),
-            patch.object(hero, "free_builders", return_value=(0, 5)),
-            patch.object(runner, "_open", return_value=b"") as opened,
-            patch.object(runner, "_walk", return_value={}),
-            patch.object(runner, "_close"),
-        ):
-            runner.run()
-        opened.assert_called_once()
-
-    def test_a_hero_already_being_upgraded_has_no_button_to_tap(self) -> None:
-        """Its card is on the screen with a countdown where the button was, which
-        is why a price that does not read leaves the card in the list rather than
-        out of it.
-        """
-        runner = self._runner(hero="duke")
-        report = HeroReport(hero="duke", outcome="read")
-        with patch.object(AdbController, "tap") as tapped:
-            outcome = runner._raise(
-                report,
-                {"duke": HeroCard(hero="duke", point=(1407, 648))},
-                VillageStock(gold=0, elixir=0, dark=200_000),
-            )
-        assert outcome == "already_upgrading"
-        tapped.assert_not_called()
-
-    def test_a_storage_that_never_moved_is_not_an_upgrade(self) -> None:
-        """Confirming the sheet is not proof: a tap the game swallows raises
-        nothing at all, and the sheet closes the same way either way.
-        """
-        runner = self._runner(hero="duke")
-        report = HeroReport(hero="duke", outcome="read")
-        held = VillageStock(gold=0, elixir=0, dark=200_000)
-        with (
-            patch.object(hero, "hero_cards", return_value=[self._duke()]),
-            patch.object(runner, "_frame", return_value=b""),
-            patch.object(runner, "_start", return_value=True),
-            patch.object(runner, "_close"),
-            patch.object(runner, "_home", return_value=held),
-        ):
-            outcome = runner._raise(report, {"duke": self._duke()}, held)
-        assert report.started is None
-        assert outcome == "undercharged"
-
-    def test_the_hall_is_read_again_before_the_button_is_tapped(self) -> None:
-        """The walk ends wherever the row ran out, which is not where it was when
-        the card was read — so tapping the remembered point would tap whichever
-        card has slid into that place.
-        """
-        runner = self._runner(hero="duke")
-        report = HeroReport(hero="duke", outcome="read")
-        with (
-            patch.object(hero, "hero_cards", return_value=[]),
-            patch.object(runner, "_frame", return_value=b""),
-            patch.object(AdbController, "tap") as tapped,
-        ):
-            outcome = runner._raise(
-                report, {"duke": self._duke()}, VillageStock(gold=0, elixir=0, dark=200_000)
-            )
-        assert outcome == "card_moved"
-        tapped.assert_not_called()
 
 
 class ClanTests(unittest.TestCase):
