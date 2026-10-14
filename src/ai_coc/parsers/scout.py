@@ -794,7 +794,7 @@ SHIELD_RIBBON_PURPLE = 0.6
 # `_settle_game` waited out its patience. `back` closes it, checked live on
 # 2026-10-14. Read off its blue panel beside that button: 0.759 of this box on
 # the sheet, against 0.0 on every other frame whose button passes the 回營 test,
-# and 0.598 on the settings page, which has no such button.
+# and 0.598 on the 更多設定 page, which has no such button.
 STAR_PANEL_BOX = (230, 290, 1370, 640)
 STAR_PANEL_BLUE = 0.4
 

@@ -2505,6 +2505,9 @@ class ScoutTests(unittest.TestCase):
         png = (FRAMES / "shield_sheet.png").read_bytes()
         assert shield_sheet(png)
         assert not battle_over(png)
+        for path in FRAMES.glob("*.png"):
+            if path.name != "shield_sheet.png":
+                assert not shield_sheet(path.read_bytes()), path.name
 
     def test_the_star_bonus_sheet_is_not_a_result_screen(self) -> None:
         """已收到勝利之星獎勵, whose green 確定 sits where 回營 does.
@@ -2516,10 +2519,10 @@ class ScoutTests(unittest.TestCase):
         assert star_bonus(png)
         assert not battle_over(png)
         for name in ("battle_result.png", "battle_result_lit.png"):
-            assert not star_bonus((FRAMES / name).read_bytes()), name
+            assert battle_over((FRAMES / name).read_bytes()), name
         for path in FRAMES.glob("*.png"):
-            if path.name != "shield_sheet.png":
-                assert not shield_sheet(path.read_bytes()), path.name
+            if path.name != "star_bonus.png":
+                assert not star_bonus(path.read_bytes()), path.name
 
     def test_the_speed_button_is_read_by_its_label(self) -> None:
         """It toggles between 1x and 4x, so which one it says decides whether to tap."""
