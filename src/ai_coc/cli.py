@@ -123,6 +123,9 @@ COMMANDS = (
     ("donate", "部落有人要兵就捐"),
     ("launch", "開模擬器和部落衝突，停在村莊畫面"),
     ("view", "把村莊鏡頭拉遠或拉近"),
+    ("tap", "點畫面上一個點，存下點完的畫面；升級確認視窗只能點它的 X"),
+    ("swipe", "從一點滑到另一點，例如捲動建造面板，存下滑完的畫面"),
+    ("confirm", "確認鈕上的價格跟 --price 一樣、而且是金幣聖水黑水，才按下確認"),
     ("export", "從遊戲匯出整個村莊的資料，對上名稱後存起來"),
     ("capture", "連續截圖，存進這次的紀錄資料夾"),
     ("read", "不碰遊戲，把一張截圖交給每個判讀器，印出各自讀到什麼"),
@@ -153,6 +156,27 @@ def _watch_flags(watcher: argparse.ArgumentParser, stopper: argparse.ArgumentPar
         default="all",
         help="只停模擬器上的指令（emulator）或只停盯升級（watch）；不給就兩個都停",
     )
+
+
+def _press_flags(
+    press: argparse.ArgumentParser, drag: argparse.ArgumentParser, buy: argparse.ArgumentParser
+) -> None:
+    """The hands the agent drives the build panel with.
+
+    They press where they are told and refuse only where a press would spend;
+    reading the screen is the agent's, off the frame each one leaves. Their own
+    function for the reason `_watch_flags` is.
+    """
+    press.add_argument("x", type=int, help="橫座標，1600x900 畫面上")
+    press.add_argument("y", type=int, help="縱座標")
+    for name in ("x1", "y1", "x2", "y2"):
+        drag.add_argument(name, type=int, help="起點到終點的座標")
+    drag.add_argument("--ms", type=int, default=commands.SWIPE_TIME, help="滑多久，毫秒")
+    for one in (press, drag):
+        one.add_argument(
+            "--wait", type=float, default=commands.PRESS_SETTLE, metavar="秒", help="等多久再截圖"
+        )
+    buy.add_argument("--price", type=int, required=True, help="在面板那一列讀到的價格")
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -275,6 +299,7 @@ def _parser() -> argparse.ArgumentParser:
         help="out 拉遠到所有座標量測時的視野，in 拉近；預設 out",
     )
     camera.add_argument("--times", type=int, default=3, help="做幾次，已經到底的話多做無害")
+    _press_flags(sub.choices["tap"], sub.choices["swipe"], sub.choices["confirm"])
     # The game's own village export, which is the only complete account of what
     # the village holds and far more than any screen reader can see.
     village = sub.choices["export"]
@@ -288,8 +313,7 @@ def _parser() -> argparse.ArgumentParser:
     shot = sub.choices["capture"]
     shot.add_argument("--count", type=int, default=1, help="存幾張")
     shot.add_argument("--gap", type=float, default=1.5, metavar="秒", help="每張間隔幾秒")
-    frame = sub.choices["read"]
-    frame.add_argument("png", type=Path, help="要判讀的截圖")
+    sub.choices["read"].add_argument("png", type=Path, help="要判讀的截圖")
     for name in RECORDABLE:
         sub.choices[name].add_argument(
             "--debug",
@@ -389,6 +413,11 @@ def _answer(arguments: argparse.Namespace, run: RunLog) -> BaseModel | str:
         ),
         "world": lambda: commands.world(a.go, run.no_village),
         "view": lambda: commands.view(a.zoom, a.times),
+        "tap": lambda: commands.tap((a.x, a.y), run.directory / "frames", a.wait),
+        "swipe": lambda: commands.swipe(
+            (a.x1, a.y1), (a.x2, a.y2), run.directory / "frames", a.ms, a.wait
+        ),
+        "confirm": lambda: commands.confirm(a.price, run.directory / "frames"),
         "launch": lambda: commands.launch(a.restart, commands.stop_requested, run.no_village),
         "donate": lambda: commands.donate(
             DonateOptions(frame_dir=run.frames, dry_run=a.dry_run, rounds=a.rounds)

@@ -199,7 +199,9 @@ from ai_coc.parsers.building import (
     PRICE_TOLERANCE,
     wall_menu,
     name_strip,
+    sheet_open,
     game_dialog,
+    sheet_offer,
     upgrade_sheet,
     upgrade_buttons,
 )
@@ -7690,6 +7692,7 @@ class HomeHudTests(unittest.TestCase):
             "hud_day_build_panel_apprentice.png",
             "hud_day_lab_panel.png",
             "hud_night_build_panel.png",
+            "night_menu_finishing.png",
         }
         for path in sorted(FRAMES.glob("*.png")):
             try:
@@ -8526,6 +8529,60 @@ class ClanTests(unittest.TestCase):
         """
         assert len(donatable_cards((FRAMES / "clan_donate_low.png").read_bytes())) == 10
         assert donatable_cards((FRAMES / "home_markers.png").read_bytes()) == []
+
+
+class UpgradeSheetOfferTests(unittest.TestCase):
+    """What `confirm` reads before it presses, on the sheets the build panel opens."""
+
+    def test_each_sheet_reads_the_price_and_the_resource_on_its_button(self) -> None:
+        for name, price, resource in (
+            ("sheet_hero_dark.png", 10800, "dark"),
+            ("sheet_pet_dark.png", 32000, "dark"),
+            ("sheet_building_elixir.png", 14400000, "elixir"),
+            ("sheet_building_gold.png", 6800000, "gold"),
+            ("hero_upgrade_sheet.png", 56000, "dark"),
+            ("night_sheet_gold.png", 2000000, "gold"),
+            ("night_sheet_elixir.png", 4000, "elixir"),
+            ("night_sheet_red.png", 2560000, "elixir"),
+        ):
+            offer = sheet_offer((FRAMES / name).read_bytes())
+            assert offer is not None, name
+            assert (offer.price, offer.resource) == (price, resource), name
+            # The resource button, not a magic item's 確認 beside it.
+            assert offer.point in {(1121, 783), (805, 789)}, name
+            assert offer.affordable == (name != "night_sheet_red.png"), name
+
+    def test_a_running_upgrades_gem_button_is_no_offer(self) -> None:
+        """立即完成 sits in 確認's place; reading it as a price is the tap `confirm` refuses."""
+        png = (FRAMES / "sheet_running_gems.png").read_bytes()
+        assert sheet_open(png)
+        assert sheet_offer(png) is None
+
+    def test_only_the_sheets_read_as_one_and_only_their_buttons_as_offers(self) -> None:
+        """`upgrade_sheet` alone answers on 40 of these frames; the X is what narrows it."""
+        sheets = {
+            "hero_upgrade_sheet.png",
+            "sheet_building_elixir.png",
+            "sheet_building_gold.png",
+            "sheet_hero_dark.png",
+            "sheet_pet_dark.png",
+            "sheet_running_gems.png",
+            "night_sheet_gold.png",
+            "night_sheet_elixir.png",
+            "night_sheet_red.png",
+        }
+        opened = {path.name for path in FRAMES.glob("*.png") if sheet_open(path.read_bytes())}
+        assert opened == sheets
+        offered = {path.name for path in FRAMES.glob("*.png") if sheet_offer(path.read_bytes())}
+        assert offered == sheets - {"sheet_running_gems.png"}
+
+    def test_an_icon_that_is_no_resource_is_no_offer(self) -> None:
+        """Painting the drop out leaves a priced button with nothing to say what it costs."""
+        image = Image.open(FRAMES / "sheet_hero_dark.png").convert("RGB")
+        image.paste((180, 230, 80), (1190, 770, 1245, 830))
+        out = io.BytesIO()
+        image.save(out, format="PNG")
+        assert sheet_offer(out.getvalue()) is None
 
 
 if __name__ == "__main__":

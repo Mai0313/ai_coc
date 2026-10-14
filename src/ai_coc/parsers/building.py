@@ -26,7 +26,9 @@ from typing import TYPE_CHECKING
 import logging
 import itertools
 
-from ai_coc.models import WallMenu, GameDialog, UpgradeButton
+from PIL import Image
+
+from ai_coc.models import World, WallMenu, GameDialog, SheetOffer, SheetResource, UpgradeButton
 from ai_coc.parsers.frame import open_frame
 from ai_coc.parsers.scout import read_stock
 from ai_coc.parsers.glyphs import digits_from
@@ -34,8 +36,6 @@ from ai_coc.parsers.regions import mask, patches
 
 if TYPE_CHECKING:
     from collections.abc import Callable
-
-    from PIL import Image
 
 logger = logging.getLogger(__name__)
 
@@ -459,6 +459,287 @@ def upgrade_sheet(png: bytes) -> tuple[int, int] | None:
     if biggest is None:
         return None
     return biggest.middle[0] + left, biggest.middle[1] + top
+
+
+# What the sheet's green 確認 asks for, which is what `confirm` holds against
+# the price the agent read off the panel row before it taps.
+#
+# **Each village draws its own sheet.** The home village's 「將X升至N級？」
+# puts 確認 bottom right, beside a magic item's 確認 and the upgrade time, the
+# same for heroes, buildings, research and pets on every one recorded. The
+# builder base's 「是否提升至N級？」 is a larger window with one button in the
+# middle, its price drawn bigger, its gold a square and its elixir violet.
+# Measured on fourteen home sheets and four builder base ones.
+#
+# **The same green, in the same place, is 立即完成 on a running upgrade's
+# sheet**, priced in gems: a tap on a running hero's or pet's row opens
+# 「正在將X升至N級」 instead. The icon is what tells them apart, so an offer is
+# only a resource icon that clears its own floor. On the home sheets the icon
+# box holds 0.249 coin on both gold sheets, 0.204 drop on the elixir one and
+# 0.34 on the four dark ones, against at most 0.009 of any of them on the gem
+# sheet; each floor sits about halfway, and a box that clears two floors is no
+# offer either.
+SHEET_PRICE_BOX: dict[World, tuple[int, int, int, int]] = {
+    "day": (1000, 765, 1190, 803),
+    "night": (668, 760, 872, 810),
+}
+SHEET_ICON_BOX: dict[World, tuple[int, int, int, int]] = {
+    "day": (1190, 770, 1245, 830),
+    "night": (876, 752, 948, 822),
+}
+SHEET_ICON_FLOORS: dict[SheetResource, float] = {"gold": 0.12, "elixir": 0.1, "dark": 0.17}
+# Where the button is looked for on each sheet: the home one is `upgrade_sheet`'s
+# own span, the builder base's is the middle, where its one button stands.
+SHEET_BUTTON_SPAN: dict[World, tuple[int, int, int, int]] = {
+    "day": SHEET_SPAN,
+    "night": (600, 700, 1010, 880),
+}
+# The builder base draws its price too large for the digit templates' widths:
+# shrunk to this, its four sheets read 2 560 000, 2 000 000, 192 000 and 4 000
+# with no digit worse than 23.
+SHEET_PRICE_SCALE: dict[World, float] = {"day": 1.0, "night": 0.7}
+# The price is drawn yellow while an event discounts it (every home sheet
+# recorded, with the old price struck through below the box), white otherwise
+# (every builder base sheet), and red, like a menu's, when the village cannot
+# pay. The worst digit on the seven discounted home prices landed 20 from its
+# template; the gem sheet's white 500 came back 35 to 40 off, so it does not
+# read as a price either. **Yellow is the home sheet's alone**: the builder
+# base's lime button carries a highlight that passes for it right across the
+# price box, so there only white and red count.
+SHEET_INK_YELLOW = (225, 200, 150)
+SHEET_INK_WHITE = 225
+SHEET_DIGIT_TOLERANCE = 26
+# The sheet's red X, the one part of it a plain `tap` may press: on the home
+# sheets it spans about x 1383-1445 and y 40-100, centred on (1413, 70), and on
+# the builder base's x 1301-1377 and y 23-92.
+SHEET_CLOSE_BOX: dict[World, tuple[int, int, int, int]] = {
+    "day": (1378, 35, 1450, 105),
+    "night": (1296, 18, 1382, 97),
+}
+# **`upgrade_sheet` alone is no test for a sheet being up**: it is a green patch
+# on a frame whose storages do not read, which 40 of the committed frames are —
+# battles, the army screen, the old panels, settings, the shop. It was only ever
+# asked right after 升級 was tapped. The X is what this window has and they do
+# not: measured, the home box is 0.432 red on all fourteen home sheets, the gem
+# sheet included, and on a troop's info window that carries no green button;
+# 0.164 on the profile window's settings tab, and 0.03 at most anywhere else.
+# The builder base box reads 0.302 on its four.
+SHEET_X_BOX: dict[World, tuple[int, int, int, int]] = {
+    "day": (1383, 40, 1445, 100),
+    "night": (1305, 27, 1373, 88),
+}
+SHEET_X_RED = 0.2
+# **Red is the game saying the village cannot pay, and tapping it anyway opens
+# the gem shop for the shortfall**, so a red price is read but never offered as
+# affordable. On every discounted or white sheet recorded this box holds no red
+# at all (a home sheet's struck-through old price and its red line sit below
+# it), and the builder base's red 2 560 000 fills well over a hundredth of it.
+SHEET_RED_SHARE = 0.01
+# A plain `tap` on a building's menu row may not land on the two kinds of
+# button there that are never paid from the storages: the blue plate
+# (加速所有同類項目, the wall ring) and 立即完成's green one. The row is laid out
+# on a half-pitch grid around the middle, so the button under a point is the
+# grid position nearest it, this far across either way, inside this band.
+MENU_BAND = (610, 770)
+MENU_HALF_WIDTH = 80
+# **A menu row carrying a green button takes no plain tap anywhere along it.**
+# A running row tapped on the builder base's build panel opens no sheet: it
+# selects the building, whose row then reads 資訊, 取消 and 立即完成 for gems,
+# and 取消 throws the running upgrade away. So the whole band is refused
+# whenever a bright green plate stands in it. Measured, the biggest such patch
+# here is 4159 px on that row, 1401 or more on every frame carrying a green
+# button in this band (hero hall cards, the night menu's 升級, 確定 on the
+# welcome report, the shield sheet's 繼續), and 159 at most on every village
+# and build panel frame committed.
+MENU_ROW_BOX = (250, 600, 1170, 800)
+MENU_ROW_GREEN = ((0, 185), (200, 255), (0, 110))
+MENU_ROW_PATCH = 800
+# **Nothing a plain tap needs is a big green button**, and every way to spend
+# gems by mistake is one: 確認 itself (which `confirm` presses), 立即完成, and
+# 所有建築工人都在忙碌中's offer to finish a job for gems, which the game raises
+# over the panel when 確認 is pressed with every builder busy and which is
+# neither a sheet nor a two-button dialog. So any bright green patch this big
+# left of the build panel takes no tap. Measured, that offer's button is 14915
+# px, a sheet's green stat boxes about 10500, and every village and panel frame
+# committed has none bigger than 740 (the + by the gems, which `on_hud` takes).
+GREEN_BUTTON_AREA = (0, 0, 1170, 900)
+GREEN_BUTTON_PATCH = 2500
+# Each village's resource icons, as the colour of a pixel on them. The home
+# village's coin and drop are the menus' own tests; its dark drop is the only
+# near-black on the button. The builder base's gold is a square and its elixir
+# violet rather than magenta, and it has no dark elixir.
+SHEET_ICONS: dict[World, tuple[tuple[SheetResource, Callable[[int, int, int], bool]], ...]] = {
+    "day": (
+        ("gold", lambda red, green, blue: red > 200 and 150 < green < red and blue < 90),
+        ("elixir", _is_elixir),
+        (
+            "dark",
+            lambda red, green, blue: max(red, green, blue) < 90 and green <= max(red, blue) + 5,
+        ),
+    ),
+    "night": (
+        ("gold", lambda red, green, blue: red > 220 and green > 150 and blue < 60),
+        ("elixir", lambda red, green, blue: blue > 200 and green < 100 and 90 < red < 210),
+    ),
+}
+
+
+def _sheet_ink(world: World, red: int, green: int, blue: int) -> bool:
+    """A pixel of the price on that village's sheet button, in any colour it is drawn in."""
+    bright, warm, cool = SHEET_INK_YELLOW
+    return (
+        (world == "day" and red > bright and green > warm and blue < cool)
+        or min(red, green, blue) > SHEET_INK_WHITE
+        or (red > INK_RED_LEVEL and red - green > INK_RED_MARGIN and red - blue > INK_RED_MARGIN)
+    )
+
+
+def _sheet_icon(world: World, red: int, green: int, blue: int) -> SheetResource | None:
+    """Which resource icon this pixel of the button could belong to, on that village's sheet."""
+    return next(
+        (resource for resource, test in SHEET_ICONS[world] if test(red, green, blue)), None
+    )
+
+
+def _sheet_button(image: Image.Image, world: World) -> tuple[int, int] | None:
+    """The middle of the biggest green patch where that village's sheet keeps its button."""
+    left, top, right, bottom = SHEET_BUTTON_SPAN[world]
+    biggest = max(
+        (
+            patch
+            for patch in patches(
+                mask(image.crop((left, top, right, bottom)), SHEET_GREEN),
+                right - left,
+                bottom - top,
+            )
+            if patch.count >= SHEET_BUTTON
+        ),
+        key=lambda patch: patch.count,
+        default=None,
+    )
+    return None if biggest is None else (biggest.middle[0] + left, biggest.middle[1] + top)
+
+
+def sheet_open(png: bytes) -> World | None:
+    """Which village's upgrade sheet is up, by its red X and its green button, or None."""
+    if read_stock(png) is not None:
+        return None
+    image = open_frame(png)
+    for world, box in SHEET_X_BOX.items():
+        data = image.crop(box).tobytes()
+        reds = sum(
+            1
+            for at in range(0, len(data), 3)
+            if data[at] >= 180 and data[at + 1] <= 80 and data[at + 2] <= 80
+        )
+        if reds / (len(data) // 3) >= SHEET_X_RED and _sheet_button(image, world) is not None:
+            return world
+    return None
+
+
+def sheet_offer(png: bytes) -> SheetOffer | None:
+    """What the upgrade sheet's 確認 costs and in which resource, or None.
+
+    None for no sheet, for a gem price (立即完成), for a button whose icon is
+    no resource or more than one, and for a price that does not read: anything
+    that is not plainly a resource-priced 確認 is something `confirm` must not
+    tap.
+    """
+    world = sheet_open(png)
+    if world is None:
+        return None
+    image = open_frame(png)
+    point = _sheet_button(image, world)
+    price_box, icon_box = SHEET_PRICE_BOX[world], SHEET_ICON_BOX[world]
+    # The button the price is read off, and not the magic item's beside it:
+    # only a green patch that sits under the price is the button this reads.
+    if point is None or not price_box[0] <= point[0] <= icon_box[2]:
+        return None
+    data = image.crop(icon_box).tobytes()
+    count = len(data) // 3
+    found = [_sheet_icon(world, data[i], data[i + 1], data[i + 2]) for i in range(0, len(data), 3)]
+    resources = [
+        resource
+        for resource, floor in SHEET_ICON_FLOORS.items()
+        if found.count(resource) / count >= floor
+    ]
+    if len(resources) != 1:
+        return None
+    band = image.crop(price_box)
+    scale = SHEET_PRICE_SCALE[world]
+    if scale != 1.0:
+        band = band.resize(
+            (round(band.width * scale), round(band.height * scale)), Image.Resampling.BILINEAR
+        )
+    width, height = band.size
+    pixels = band.tobytes()
+    ink = [
+        [
+            _sheet_ink(world, *pixels[(y * width + x) * 3 : (y * width + x) * 3 + 3])
+            for x in range(width)
+        ]
+        for y in range(height)
+    ]
+    price = digits_from(ink, SHEET_DIGIT_TOLERANCE, floor=PRICE_ROWS)
+    if price is None or price < MIN_PRICE:
+        return None
+    reds = sum(
+        1
+        for at in range(0, len(pixels), 3)
+        if pixels[at] > INK_RED_LEVEL
+        and pixels[at] - pixels[at + 1] > INK_RED_MARGIN
+        and pixels[at] - pixels[at + 2] > INK_RED_MARGIN
+    )
+    return SheetOffer(
+        price=price,
+        resource=resources[0],
+        point=point,
+        affordable=reds / (width * height) < SHEET_RED_SHARE,
+    )
+
+
+def green_buttons(png: bytes) -> list[tuple[int, int, int, int]]:
+    """The box round every big bright green button left of the build panel."""
+    image = open_frame(png).crop(GREEN_BUTTON_AREA)
+    return [
+        (patch.left, patch.top, patch.right, patch.bottom)
+        for patch in patches(mask(image, MENU_ROW_GREEN), *image.size)
+        if patch.count >= GREEN_BUTTON_PATCH
+    ]
+
+
+def green_button_row(png: bytes) -> bool:
+    """Whether a bright green button stands in the band a building's menu row uses."""
+    image = open_frame(png).crop(MENU_ROW_BOX)
+    width, height = image.size
+    return any(
+        patch.count >= MENU_ROW_PATCH
+        for patch in patches(mask(image, MENU_ROW_GREEN), width, height)
+    )
+
+
+def menu_spends_gems(png: bytes, point: tuple[int, int]) -> bool:
+    """Whether this point is on a menu button paid in gems or a magic item.
+
+    Asked of any frame, and answered from the plate alone: a village with no
+    menu open has grass where the plate would be, which neither test takes
+    (measured 40 at most against the green floor's 60).
+    """
+    x, y = point
+    if not MENU_BAND[0] <= y <= MENU_BAND[1]:
+        return False
+    step = BUTTON_PITCH // 2
+    centre = BUTTON_MIDDLE + round((x - BUTTON_MIDDLE) / step) * step
+    # Every grid position a button this wide could be standing on, not only the
+    # nearest: more than half a step from a button's middle the nearest one is
+    # the gap beside it, and the plate sampled there was the neighbour's.
+    near = [
+        middle
+        for middle in (centre - step, centre, centre + step)
+        if abs(x - middle) <= MENU_HALF_WIDTH
+    ]
+    image = open_frame(png)
+    return any(_on_gem_plate(image, middle) or _on_finish_plate(image, middle) for middle in near)
 
 
 def name_strip(png: bytes) -> bytes:
