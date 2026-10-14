@@ -21,7 +21,7 @@
 
 **症狀**: `AttackReport.outcome` 是 `no_attack_menu`.
 
-看 `_open_attack_menu` (它自己分辨掉線、載入、結算畫面, 讀不到村莊就交給 `ui/world.py` 的 `uncovered`) 跟 `attack_menu_open`. `ui/runner.py` 的 `_home` 是 `walls`、`upgrade` 那些 `GameRunner` 的回家路徑, 攻擊迴圈不走它. 在乾淨的村莊上按 back 是災難, `AGENTS.md` 搜 `back` 跟 `確定退出遊戲嗎`.
+看 `_open_attack_menu` (它自己分辨掉線、載入、結算畫面, 讀不到村莊就交給 `ui/world.py` 的 `uncovered`) 跟 `attack_menu_open`. `ui/runner.py` 的 `_home` 是 `walls`、`collect` 那些 `GameRunner` 的回家路徑, 攻擊迴圈不走它. 在乾淨的村莊上按 back 是災難, `AGENTS.md` 搜 `back` 跟 `確定退出遊戲嗎`.
 
 三個常被懷疑的原因:
 

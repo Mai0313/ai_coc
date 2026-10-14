@@ -27,7 +27,7 @@ Other Languages: [English](README.md) | [繁體中文](README.zh-TW.md) | [简�
 
 **Asks Gemini exactly one question per battle**, and only after an opponent has already passed your thresholds: how to attack this particular village. It answers where to drop the line of troops, where each rage and freeze goes, and which hero is on which card. Without an API key the app plays a fixed tactic instead and everything else still works.
 
-**Spends what it farms.** Wall upgrades finish the moment they are paid for, so they are where a full storage goes; the loop finds walls on the map, works out the cheapest batch the village can afford and buys it. Idle builders can be put on the most expensive upgrade affordable, and heroes raised one at a time.
+**Spends what it farms.** Wall upgrades finish the moment they are paid for, so they are where a full storage goes; the loop finds walls on the map, works out the cheapest batch the village can afford and buys it. Buildings, heroes, research and pets are upgraded by an agent through the build panel, with `tap`, `swipe` and `confirm`.
 
 **Keeps the village ticking.** Empties the collectors, reads what every builder is on and how long is left, and donates troops to whoever is asking in the clan chat.
 
@@ -39,7 +39,7 @@ Village exports keep unknown fields and unknown `data_id`s instead of failing on
 
 - Windows. The app talks to `mumu-cli.exe` or `ldconsole.exe`, reads the registry through `winreg` and the clipboard through `ctypes.windll`, none of which exist elsewhere
 - [MuMu Player 12](https://www.mumuplayer.com/) or [LDPlayer 14](https://www.ldplayer.net/) with Clash of Clans installed, running at 1600x900. On LDPlayer, turn on ADB debugging (local connection) in its settings
-- A Gemini API key, entered in the app's settings tab. It answers three things and nothing else: the tactic for each battle, where the walls and buildings are on the map, and which building a menu belongs to. Without one the attack loop falls back to a fixed tactic, the wall and upgrade loops sweep for their targets instead, and the collector, builder, hero and donation commands never ask it anything in the first place
+- A Gemini API key, entered in the app's settings tab. It answers two things and nothing else: the tactic for each battle, and where the walls are on the map. Without one the attack loop falls back to a fixed tactic, the wall loop sweeps for its targets instead, and the collector, builder and donation commands never ask it anything in the first place
 
 ## 🚀 Install and run
 
@@ -103,19 +103,14 @@ ai_coc attack --plan used.json     # play that one again, edits included
 ```bash
 ai_coc walls                          # buy wall upgrades until the storages will not stretch
 ai_coc walls --keep-elixir 2000000    # leave that much behind to train an army with
-ai_coc upgrade                        # put idle builders on the dearest upgrade affordable
-ai_coc hero                           # what raising each hero next would cost
-ai_coc hero --upgrade duke            # put a builder on that one
 ```
 
-A wall upgrade needs a free builder and hands it straight back, so `walls` stops and says so when every builder is busy. `hero` reads by default and only spends when told which hero, because which one is worth a builder is a judgement about how the village plays.
+A wall upgrade needs a free builder and hands it straight back, so `walls` stops and says so when every builder is busy. Everything else goes through the build panel: `tap` and `swipe` press and scroll and keep the frame they left, and `confirm` is the one press that spends, made only when the sheet asks exactly the price given, in gold, elixir or dark elixir.
 
 ### Keeping the village going
 
 ```bash
 ai_coc collect                        # empty every collector that has something waiting
-ai_coc worker                         # what each builder on the village that is up is on, and how long is left
-ai_coc lab                            # what that village is researching, and how long is left
 ai_coc status                         # when every upgrade on both villages really finishes, potions included, plus this village's storages
 ai_coc watch --next <time> --about "..."   # sleep until then as the one watching the upgrades, named on state.json; run it in the background
 ai_coc donate                         # give troops to whoever in the clan is asking
@@ -150,7 +145,7 @@ ai_coc attack                         # attack whichever village the game is on
 
 The game keeps two villages — the home village and the builder base — and reopens on whichever one it was closed on, so `world` is worth asking before anything that assumes one of them. Reading it is a single screenshot: no tap, no swipe, no camera move. **No command sails on its own**: `world --go` is the only one that changes villages, and one with nothing to do on the village it finds — `walls` on the builder base, say — says so and leaves the game where it is.
 
-`read` is the quickest way to answer "did it misread the screen, or did the tap miss?" It prints what every reader got from one frame: the loot panel, the storages, the card row and the builder panel.
+`read` is the quickest way to answer "did it misread the screen, or did the tap miss?" It prints what every reader got from one frame: the loot panel, the storages, the card row and the builder counter.
 
 ### Where a run leaves what it saw
 
@@ -187,18 +182,12 @@ The first line of every run says which directory it is, and the name is `<when>-
       "model": "gemini-3.5-flash",
       "base_url": "",
       "thinking_level": "low"
-    },
-    "lite": {
-      "model": "gemini-3.5-flash-lite",
-      "base_url": "",
-      "thinking_level": "low"
     }
   },
   "ui": {
     "jobs": {
       "collect": false,
       "donate": false,
-      "upgrade": false,
       "walls": false,
       "attack": false
     },
@@ -214,8 +203,8 @@ That is the whole file. **A run that finds no file creates one only to write dow
 - **thresholds**: who is worth attacking. Set them too high and a run skips dozens of opponents without ever starting a battle
 - **stop_at**: how full every storage has to be before a run stands down, as a percentage. **One number for both villages**, because the loop reads each storage's real ceiling off the game — tap a storage bar and it writes 最大儲存量 on the spot. Every storage has to reach it, not just one of them: a battle brings home three, so one at the ceiling is no reason to stop earning the other two. On the builder base the elixir cart counts as one more: past a full elixir storage it keeps banking each battle's defence reward, so a run there stands down only once the cart has reached the same share of the ceiling written on it. `0` never stands a run down, and a storage whose ceiling would not read is left out of the count. `--stop-at` overrides it for one run, `0` included, which is what a test battle against a village that farming has just filled needs
 - **adb_serial**: which emulator instance to drive, by the serial `adb devices` shows (`127.0.0.1:16384`, `127.0.0.1:5555`, or `emulator-5554`, which is the same LDPlayer instance as `127.0.0.1:5555`). Left empty, the first run takes the instance with the game running, MuMu's where both have it, and writes its serial here; picking an instance in the window's emulator list writes it too. A serial no installed emulator answers to is an error rather than a guess
-- **gemini**: which model answers each kind of call. `main` is asked once per run against a whole screenshot — the attack plan, the target finder — so nothing there is racing anything and the better model is simply the right one. `lite` is asked once per candidate against a cropped strip, which is a classification rather than a judgement and is where a cheaper model earns its place. `base_url` empty means Google's own endpoint. `api_key` is the one key both tiers use, kept in plain text; the settings tab's 儲存設定 writes it, and while it is empty a `GEMINI_API_KEY` from the environment or a `.env` stands in
-- **ui**: what only the window reads, and the last thing that was not in this file. It lived in the Windows registry, where no editor opens it and no `ai_coc` sub-command can reach it, on the rule that a setting no terminal command asks for does not belong in a shared file — which is how the one part of this app nobody could edit by hand turned out to be the window's own behaviour. `jobs` is which of the five commands the window's cycle round-robins, named for the sub-commands themselves, so `"walls": true` runs the same job `ai_coc walls` does, one pass of it per turn rather than until the storages will not stretch. `cycle_minutes` only ever paces a cycle that found nothing to do, because a finished job queues the next pass straight away. `live_view` is the live preview in the 主控 tab, and `record_frames` is the checkbox form of the frames `--debug` keeps
+- **gemini**: which model answers each kind of call. `main` is asked once per run against a whole screenshot — the attack plan, the target finder — so nothing there is racing anything and the better model is simply the right one. `base_url` empty means Google's own endpoint. `api_key` is kept in plain text; the settings tab's 儲存設定 writes it, and while it is empty a `GEMINI_API_KEY` from the environment or a `.env` stands in
+- **ui**: what only the window reads, and the last thing that was not in this file. It lived in the Windows registry, where no editor opens it and no `ai_coc` sub-command can reach it, on the rule that a setting no terminal command asks for does not belong in a shared file — which is how the one part of this app nobody could edit by hand turned out to be the window's own behaviour. `jobs` is which of the four commands the window's cycle round-robins, named for the sub-commands themselves, so `"walls": true` runs the same job `ai_coc walls` does, one pass of it per turn rather than until the storages will not stretch. `cycle_minutes` only ever paces a cycle that found nothing to do, because a finished job queues the next pass straight away. `live_view` is the live preview in the 主控 tab, and `record_frames` is the checkbox form of the frames `--debug` keeps
 
 There are no ability or spell timings here any more. They were a table of per-hero constants, and editing them meant guessing how long an army takes to walk across a village nobody had looked at — which is the planner's job, done with the village on screen. Every clock lives on the plan now: see `plans/flat.json` for the shape, and `--plan` to replay one.
 
