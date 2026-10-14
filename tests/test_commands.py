@@ -1328,6 +1328,7 @@ class SettleGameTests(unittest.TestCase):
             patch.object(
                 commands, "welcome_back", side_effect=screens.get("welcome") or [False] * 9
             ),
+            patch.object(commands, "star_bonus", side_effect=screens.get("star") or [False] * 9),
             patch.object(
                 commands, "build_panel_open", side_effect=screens.get("panel") or [False] * 9
             ),
@@ -1388,6 +1389,12 @@ class SettleGameTests(unittest.TestCase):
     def test_the_raid_report_is_pressed_away_rather_than_waited_under(self) -> None:
         """首領，歡迎回來 held a launch for its whole patience; `back` closes it."""
         adb, display = self._settle([None, "night"], welcome=[True])
+        assert display == DISPLAY
+        adb.back.assert_called_once_with(DISPLAY)
+
+    def test_the_star_bonus_sheet_is_pressed_away_rather_than_waited_under(self) -> None:
+        """已收到勝利之星獎勵 held `status` for its whole patience; `back` closes it."""
+        adb, display = self._settle([None, "day"], star=[True])
         assert display == DISPLAY
         adb.back.assert_called_once_with(DISPLAY)
 

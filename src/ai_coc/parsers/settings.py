@@ -39,9 +39,10 @@ WINDOW_X_RED = 0.2
 # The settings page, read as two features because the button alone is not
 # enough. Its 更多設定 plate measures 0.40 green, but battle result screens put
 # 0.59 to 0.80 of their own 回營 button in the same box and the shield sheet
-# 0.69. What no other screen has is the SUPERCELL ID band across the top: 0.82
-# blue here against at most 0.36 (a loading screen) everywhere else. Measured
-# on 2026-10-13 over every frame recorded that day and every committed one.
+# 0.69. The SUPERCELL ID band across the top reads 0.82 blue here against at
+# most 0.36 (a loading screen) on every frame recorded on 2026-10-13 and every
+# committed one then; the 勝利之星 reward sheet, recorded the next day, reads
+# 0.60 on it and 0.92 on the button, so `settings_open` wants the window's X too.
 MORE_BUTTON_BOX = (700, 775, 905, 815)
 MORE_BUTTON_GREEN = 0.20
 BANNER_BOX = (400, 130, 1200, 210)
@@ -93,11 +94,16 @@ def window_open(png: bytes) -> bool:
 
 
 def settings_open(png: bytes) -> bool:
-    """Whether the 設定 window is up, by its 更多設定 button and its account band."""
+    """Whether the 設定 window is up, by its 更多設定 button and its account band.
+
+    And by the profile window's X it sits in, because the 勝利之星 reward sheet
+    paints a blue band and a green button in those same two places.
+    """
     image = open_frame(png)
     return (
         _ratio(image, MORE_BUTTON_BOX, _green) >= MORE_BUTTON_GREEN
         and _ratio(image, BANNER_BOX, _blue) >= BANNER_BLUE
+        and window_open(png)
     )
 
 
