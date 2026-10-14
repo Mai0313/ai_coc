@@ -259,9 +259,10 @@ UNIT_TOLERANCE = 13
 UNIT_LADDER = (86400, 3600, 60, 1)
 
 # The shield is a bar of its own now, under the gems bar, writing 無 or a
-# countdown right-aligned beside the shield icon. The box stops short of the
-# green + on its left, which buys a shield with gems.
-SHIELD_BOX = (1375, 284, 1525, 312)
+# countdown right-aligned beside the shield icon. The box starts just right of
+# the dark border of the green + on its left, which buys a shield with gems: a
+# two-digit hour reaches past x 1375, where 5小時 36分鐘 started at 1383.
+SHIELD_BOX = (1371, 284, 1525, 312)
 # 無 against a countdown, by how far the writing reaches rather than by what it
 # says: 無 inks 1502-1517 and falls into three or four column spans depending on
 # what shows through the bar, while a countdown is at least a digit and a unit,
