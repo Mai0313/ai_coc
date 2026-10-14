@@ -133,6 +133,7 @@ from ai_coc.parsers.home import (
     jobs_strip,
     panel_rows,
     boat_marker,
+    cart_marker,
     plate_count,
     shield_state,
     free_builders,
@@ -625,6 +626,8 @@ class WorldTests(unittest.TestCase):
             "hero_hall_menu_maxed.png": "day",
             "menu_upgrading.png": "day",
             "night_stock_leading_three.png": "night",
+            "night_cart_marker.png": "night",
+            "night_cart_no_marker.png": "night",
         }
         for path in sorted(FRAMES.glob("*.png")):
             try:
@@ -1845,12 +1848,44 @@ class CrossingTests(unittest.TestCase):
             patch.object(world_ui, "loot_cart_open", return_value=opens),
             patch.object(world_ui, "loot_cart_ready", return_value=ready),
             patch.object(world_ui, "loot_cart_load", return_value=held),
+            patch.object(world_ui, "cart_marker", return_value=None),
             patch.object(
                 world_ui, "read_builder_stock", side_effect=stocks, return_value=None
             ) as read,
         ):
             report = world_ui.collect_cart(adb, DisplayTarget(logical_id="1", physical_id="2"))
         return adb, report, read
+
+    def test_the_cart_is_tapped_below_its_marker_before_any_spot(self) -> None:
+        """The spots sat on the cart's top edge or off it as the park moved."""
+        adb = MagicMock()
+        with (
+            patch.object(world_ui.time, "sleep"),
+            patch.object(world_ui, "current_world", return_value="night"),
+            patch.object(world_ui, "park_camera", return_value=True),
+            patch.object(world_ui, "read_builder_stock", return_value=None),
+            patch.object(world_ui, "cart_marker", return_value=(1077, 120)),
+            patch.object(world_ui, "loot_cart_open", return_value=True),
+            patch.object(world_ui, "loot_cart_ready", return_value=False),
+            patch.object(world_ui, "loot_cart_load", return_value=(10, 1_600_000)),
+        ):
+            world_ui.collect_cart(adb, DisplayTarget(logical_id="1", physical_id="2"))
+        assert adb.tap.call_args_list[0].args[:2] == (1077, 120 + world_ui.CART_BELOW_MARKER)
+
+    def test_the_cart_marker_is_its_dimmed_drop_and_an_empty_cart_has_none(self) -> None:
+        marker = (FRAMES / "night_cart_marker.png").read_bytes()
+        assert cart_marker(marker) == (1077, 120)
+        assert cart_marker((FRAMES / "night_cart_no_marker.png").read_bytes()) is None
+
+    def test_the_carts_bottles_are_not_its_marker(self) -> None:
+        """The drop painted out, what is left in that colour is the cart's own
+        bottles, 17x8 and 11x11, which only the drop's size keeps out.
+        """
+        image = Image.open(FRAMES / "night_cart_marker.png").convert("RGB")
+        image.paste((154, 155, 128), (1064, 105, 1091, 136))
+        out = io.BytesIO()
+        image.save(out, format="PNG")
+        assert cart_marker(out.getvalue()) is None
 
     def test_a_cart_that_never_opened_pays_nothing(self) -> None:
         """A tap the game swallowed leaves the cart looking exactly like an emptied one."""
@@ -1933,6 +1968,7 @@ class CrossingTests(unittest.TestCase):
             patch.object(world_ui, "build_panel_open", return_value=False),
             patch.object(world_ui, "loot_cart_open", return_value=False),
             patch.object(world_ui, "read_builder_stock", return_value=None),
+            patch.object(world_ui, "cart_marker", return_value=None),
             patch.object(world_ui, "uncovered") as pressed,
         ):
             report = world_ui.collect_cart(adb, DisplayTarget(logical_id="1", physical_id="2"))
@@ -1956,6 +1992,7 @@ class CrossingTests(unittest.TestCase):
             patch.object(world_ui, "current_world", return_value="night"),
             patch.object(world_ui, "park_camera", return_value=True),
             patch.object(world_ui, "read_builder_stock", return_value=None),
+            patch.object(world_ui, "cart_marker", return_value=None),
             patch.object(world_ui, "loot_cart_open", return_value=True),
             patch.object(world_ui, "loot_cart_ready", return_value=False),
             patch.object(world_ui, "loot_cart_load", return_value=(10, 1_600_000)),

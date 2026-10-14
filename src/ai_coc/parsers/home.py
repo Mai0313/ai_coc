@@ -136,6 +136,22 @@ BOAT_ACROSS = (30, 56)
 BOAT_DOWN = (9, 22)
 BOAT_PLATE_SHARE = 0.08
 
+# The marker over the builder base's loot cart while it holds elixir: the day
+# collectors' plate and drop, dimmed by the night, so its drop reads red 81 to
+# 173 where `MARKERS` wants 196 and up. Found by that drop alone, in the band the
+# parked camera has put it in: measured on five parks from different starts, the
+# drop's middle sat at x 1059-1078, y 105-120, and on the park that missed with
+# every fixed spot at (1096, 71), so the band runs from the top of the frame;
+# swept over every committed and recorded frame, that finds nothing the band from
+# y 40 did not. The drop came out 20-22 across by 26-27 down at a fill of 0.61,
+# and the cart's own bottles beside it, the nearest thing in that colour, 17x8
+# and 11x11. An empty cart has no marker.
+CART_MARKER_BAND = (980, 0, 1200, 200)
+CART_MARKER_DROP = ((80, 180), (0, 125), (145, 245))
+CART_MARKER_ACROSS = (17, 25)
+CART_MARKER_DOWN = (23, 30)
+CART_MARKER_FILL = 0.45
+
 # The two counters in the bottom right, idle over total: the builders' and the
 # laboratory's. The 2026-10 overhaul moved them off the plate row along the top
 # to just above the 建造 button, at the same place on both villages, so a box
@@ -381,6 +397,16 @@ def boat_marker(png: bytes) -> tuple[int, int] | None:
         )
         if plate and plate.count(255) / len(plate) >= BOAT_PLATE_SHARE:
             return left + patch.left + across // 2, top + patch.top - across // 2
+    return None
+
+
+def cart_marker(png: bytes) -> tuple[int, int] | None:
+    """The middle of the drop on the loot cart's marker, or None where none is drawn."""
+    left, top = CART_MARKER_BAND[:2]
+    band = open_frame(png).crop(CART_MARKER_BAND)
+    for patch in patches(mask(band, CART_MARKER_DROP), *band.size):
+        if patch.sized(CART_MARKER_ACROSS, CART_MARKER_DOWN, CART_MARKER_FILL):
+            return left + patch.middle[0], top + patch.middle[1]
     return None
 
 

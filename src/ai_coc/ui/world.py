@@ -38,7 +38,7 @@ import logging
 from ai_coc.models import Pinch, Crossing, CartReport
 from ai_coc.constants import COC_PACKAGE
 from ai_coc.adapters.adb import ZOOM_PINCHES
-from ai_coc.parsers.home import PANEL_CLOSE, boat_marker, build_panel_open
+from ai_coc.parsers.home import PANEL_CLOSE, boat_marker, cart_marker, build_panel_open
 from ai_coc.parsers.field import view_shift
 from ai_coc.parsers.scout import (
     in_battle,
@@ -397,9 +397,9 @@ UNCOVER_SETTLE = 1.5
 # pushes after one moved the picture by nothing and two more by 7 px, and yet a
 # park started from a camera shoved the other way stopped with the cart at
 # (1245, 622) — where the first spot used to find it — and (1268, 615) opened
-# the sheet there. Finding the cart on the frame instead is no easier: its
-# elixir bubble is dimmed at night to a khaki plate and a (110, 30, 200) drop,
-# which none of `collect_bubbles`' marker colours take.
+# the sheet there. Its elixir bubble is dimmed at night to a khaki plate and a
+# (110, 30, 200) drop, which none of `collect_bubbles`' marker colours take, so
+# it has a reader of its own (`cart_marker`, below).
 #
 # **Those were measured in the corner, and the park now drags the village to the
 # middle**, so the spots below are those three carried by the builder base's
@@ -408,6 +408,14 @@ UNCOVER_SETTLE = 1.5
 # the cart's marker read at (1110, 95) and (1105, 90) on two parks, and a tap at
 # (1105, 130) opened the sheet.
 CART_SPOTS = ((1126, 152), (1098, 150), (1070, 145))
+# **Since the 2026-10 overhaul the cart's marker is found first** (`cart_marker`),
+# and the spots above are only what is tried after it, or on an empty cart, which
+# draws no marker. On four parks from different starts the marker moved 20 px
+# across and 15 down, and the park whose three looks all missed had it at
+# (1096, 71), 49 px above the rest: the spots sat on the cart's top edge or off
+# it, and one night's trips missed with every spot on two of 21 visits.
+# A tap this far below the marker's drop opened the sheet on all four.
+CART_BELOW_MARKER = 42
 CART_COLLECT = (1176, 760)
 CART_CLOSE = (1338, 89)
 CART_SETTLE = 1.5
@@ -505,8 +513,13 @@ def collect_cart(adb: AdbController, display: DisplayTarget) -> CartReport:
         # reads as an empty cart on a village whose elixir is all still in one.
         logger.warning("The camera never parked; the cart's spots are somewhere else entirely")
         return CartReport(outcome="not_parked")
-    before = read_builder_stock(adb.screenshot(display))
-    for spot in CART_SPOTS:
+    parked = adb.screenshot(display)
+    before = read_builder_stock(parked)
+    marker = cart_marker(parked)
+    spots = (
+        CART_SPOTS if marker is None else ((marker[0], marker[1] + CART_BELOW_MARKER), *CART_SPOTS)
+    )
+    for spot in spots:
         adb.tap(spot[0], spot[1], display)
         time.sleep(CART_OPENING)
         sheet = adb.screenshot(display)
@@ -514,7 +527,7 @@ def collect_cart(adb: AdbController, display: DisplayTarget) -> CartReport:
             break
         logger.info("The tap at %s did not open the cart; trying the next spot", spot)
     else:
-        logger.warning("None of the %d candidate spots found the cart", len(CART_SPOTS))
+        logger.warning("None of the %d candidate spots found the cart", len(spots))
         # **Every one of those taps was a place on the map**, so a miss opened
         # whichever building was standing there — and a full-screen panel left
         # behind is what `commands.collect` then reads as no village at all,
