@@ -1589,8 +1589,10 @@ class StatusReport(BaseModel):
 # card selected deploys troops along its path; `zoomed_in` is `--zoom in`, where
 # the park would undo the request and could not settle anyway; and
 # `never_settled` is a camera that would not stop moving, which leaves every
-# remembered coordinate off by however far it was short.
-ViewOutcome = Literal["parked", "not_a_village", "zoomed_in", "never_settled"]
+# remembered coordinate off by however far it was short; and `selected` is a
+# village with a building or a wall left selected, whose button row the park's
+# drag would start on instead of moving the camera (#429).
+ViewOutcome = Literal["parked", "not_a_village", "zoomed_in", "never_settled", "selected"]
 
 
 class ViewReport(BaseModel):

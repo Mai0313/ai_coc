@@ -734,6 +734,7 @@ class UpkeepLineTests(unittest.TestCase):
                 "not_a_village": "畫面不是村莊",
                 "zoomed_in": "拉近的鏡頭停不住",
                 "never_settled": "鏡頭一直沒有停下來",
+                "selected": "還選著",
             },
             get_args(ViewOutcome),
         )
@@ -1617,12 +1618,13 @@ class CaptureAndViewTests(unittest.TestCase):
         slept.assert_called_once_with(0.5)
 
     def _view(
-        self, seen: str | None, zoom: str = "out", times: int = 2
+        self, seen: str | None, zoom: str = "out", times: int = 2, selected: bool = False
     ) -> tuple[MagicMock, object]:
         adb = _adb()
         with (
             patch.object(commands, "_controller", return_value=adb),
             patch.object(commands, "current_world", return_value=seen),
+            patch.object(commands, "selection_row", return_value=selected),
             patch.object(world_ui.time, "sleep"),
             # The park reads its own frames now; a still one is what says it
             # arrived, and `PARK_STILL` of them is what it swipes for.
@@ -1670,6 +1672,13 @@ class CaptureAndViewTests(unittest.TestCase):
             (crossing.start, landing)
         ] * world_ui.PARK_STILL + [world_ui.CENTRE_DRAGS["free"]]
         assert (report.outcome, report.world) == ("parked", "day")
+
+    def test_a_village_with_something_selected_is_pinched_and_not_dragged(self) -> None:
+        """A drag starting on the selection's buttons leaves the camera where it was (#429)."""
+        adb, report = self._view("night", selected=True)
+        adb.zoom.assert_called_once()
+        adb.swipe.assert_not_called()
+        assert (report.outcome, report.world) == ("selected", "night")
 
     def test_the_builder_base_is_parked_into_its_own_corner(self) -> None:
         """The two maps clamp in opposite corners, so one push cannot serve both.

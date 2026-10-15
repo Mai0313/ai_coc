@@ -140,6 +140,7 @@ from ai_coc.parsers.building import (
     game_dialog,
     sheet_offer,
     green_buttons,
+    selection_row,
     upgrade_sheet,
     panel_wall_menu,
     green_button_row,
@@ -2424,6 +2425,7 @@ VIEW_LINES: dict[ViewOutcome, str] = {
     "not_a_village": "但畫面不是村莊,沒有把鏡頭停回定位",
     "zoomed_in": "拉近的鏡頭停不住,沒有把鏡頭停回定位",
     "never_settled": "但鏡頭一直沒有停下來,定位失敗",
+    "selected": "但有建築或城牆還選著,拖曳可能拖到它,沒有停鏡頭;先點一塊空地取消選取再來",
 }
 
 
@@ -2460,9 +2462,10 @@ def view(zoom: str = "out", times: int = 3) -> ViewReport:
     instead of panning, and this command's whole reputation is that it can be run
     blind at whatever the game is showing — a killed run leaves the game
     mid-battle, and that is exactly when somebody reaches for it. The one capture
-    answers both questions the park has: whether this is a village at all, and
-    which of the two, since the maps clamp in opposite corners. Anything else
-    keeps the zoom and says the camera was left where it was.
+    answers the three questions the park has: whether this is a village at all,
+    which of the two, since the maps clamp in opposite corners, and whether
+    something on it is still selected (`selection_row`). Anything else keeps the
+    zoom and says the camera was left where it was.
 
     **And `--zoom in` is refused a park before the capture is even taken**, for
     the reason `park_camera` pinches at all: its walk is only bounded at the far
@@ -2486,8 +2489,10 @@ def view(zoom: str = "out", times: int = 3) -> ViewReport:
         # swipe after fourteen of them; `park_camera` pinches back out for
         # exactly that reason, which on this path is the opposite of the request.
         outcome: ViewOutcome = "zoomed_in"
-    elif (world := current_world(adb.screenshot(display))) is None:
+    elif (world := current_world(frame := adb.screenshot(display))) is None:
         outcome = "not_a_village"
+    elif selection_row(frame):
+        outcome = "selected"
     elif park_camera(adb, display, world):
         outcome = "parked"
     else:

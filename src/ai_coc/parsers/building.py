@@ -691,6 +691,32 @@ def green_buttons(png: bytes) -> list[tuple[int, int, int, int]]:
     ]
 
 
+# **A building or a wall left selected keeps its button row along the bottom of
+# the village**, and a swipe that starts on one of those buttons does not move
+# the camera: measured on the builder base, a park's centring drag began on a
+# selected wall's 升級 and left the village in the map corner while `view`
+# reported it parked (#429). One that starts on the selected building itself may
+# drag it somewhere else, which nobody has measured and nobody should. The row's
+# buttons are beige plates about 152 by 143 px: each holds 12 196 to 17 315 px
+# of this colour on the four village frames with something selected, two of
+# each village, and the biggest patch on the ten other village frames
+# committed is 487, the bars along the bottom edge. Asked only of a frame
+# already known to be a village: the report the game opens on after a raid
+# (`welcome_back`) is one beige plate of 84 140.
+SELECTION_ROW_BOX = (250, 600, 1400, 800)
+SELECTION_PLATE = ((180, 230), (165, 210), (135, 190))
+SELECTION_PLATE_PATCH = 8000
+
+
+def selection_row(png: bytes) -> bool:
+    """Whether a selected building's or wall's button row stands along the bottom of the village."""
+    image = open_frame(png).crop(SELECTION_ROW_BOX)
+    return any(
+        patch.count >= SELECTION_PLATE_PATCH
+        for patch in patches(mask(image, SELECTION_PLATE), *image.size)
+    )
+
+
 def green_button_row(png: bytes) -> bool:
     """Whether a bright green button stands in the band a building's menu row uses."""
     image = open_frame(png).crop(MENU_ROW_BOX)

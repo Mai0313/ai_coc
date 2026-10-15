@@ -183,6 +183,7 @@ from ai_coc.parsers.building import (
     sheet_open,
     game_dialog,
     sheet_offer,
+    selection_row,
     upgrade_sheet,
     panel_wall_menu,
 )
@@ -613,6 +614,8 @@ class WorldTests(unittest.TestCase):
             "night_cart_marker.png": "night",
             "night_cart_no_marker.png": "night",
             "hud_day_shield_up.png": "day",
+            "view_wall_selected.png": "night",
+            "view_wall_batch_selected.png": "night",
         }
         for path in sorted(FRAMES.glob("*.png")):
             try:
@@ -7481,6 +7484,30 @@ class PanelWallMenuTests(unittest.TestCase):
         out = io.BytesIO()
         image.save(out, format="PNG")
         assert panel_wall_menu(out.getvalue()) is None
+
+
+class SelectionRowTests(unittest.TestCase):
+    """The button row a selected building or wall leaves along the bottom, which `view` will not drag across."""
+
+    def test_only_a_village_with_something_selected_reads_as_one(self) -> None:
+        """Two of each village with a selection; every other village frame committed without."""
+        selected = {
+            "view_wall_selected.png",
+            "view_wall_batch_selected.png",
+            "menu_upgrading.png",
+            "hero_hall_menu_maxed.png",
+        }
+        villages = 0
+        for path in sorted(FRAMES.glob("*.png")):
+            png = path.read_bytes()
+            try:
+                if current_world(png) is None:
+                    continue
+            except ValueError:
+                continue  # a fixture masked to another size, not a screen
+            villages += 1
+            assert selection_row(png) == (path.name in selected), path.name
+        assert villages > len(selected)
 
 
 if __name__ == "__main__":
