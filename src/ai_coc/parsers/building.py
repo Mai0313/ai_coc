@@ -8,9 +8,8 @@ instead is the UI the game paints on top of the village: the resource icons on
 the button row and the price written beside them, which are the same pixels
 whatever happens to be selected.
 
-So this says what the menu *offers*, never what it belongs to. `upgrade_buttons`
-answers where 升級 is and what it costs; that is enough to upgrade anything,
-because the price is what the decision rests on and the name is not.
+So this says what a button *offers*, never what it belongs to: the price and
+the resource are what a press rests on, and the name is not.
 
 Walls are the one exception, and they are told apart by something no other
 building can do rather than by their artwork: being upgradeable with gold *or*
@@ -27,15 +26,7 @@ import itertools
 
 from PIL import Image
 
-from ai_coc.models import (
-    World,
-    WallMenu,
-    GameDialog,
-    SheetOffer,
-    PanelWallMenu,
-    SheetResource,
-    UpgradeButton,
-)
+from ai_coc.models import World, GameDialog, SheetOffer, PanelWallMenu, SheetResource
 from ai_coc.parsers.home import build_panel_open
 from ai_coc.parsers.frame import open_frame
 from ai_coc.parsers.scout import read_stock
@@ -53,18 +44,12 @@ logger = logging.getLogger(__name__)
 # button after it moves a place along. Measured across both layouts the spacing
 # does not move, so one located button locates the rest.
 BUTTON_PITCH = 176
-BUTTON_ROW_Y = 700
 
 # The row is centred here, which is what puts every possible button middle on
 # a half-pitch grid: an odd number of buttons puts one on the middle itself and
 # an even number straddles it. Measured, a real button lands within a pixel of
 # that grid and a patch of village between two buttons does not.
 BUTTON_MIDDLE = 800
-BUTTON_GRID_TOLERANCE = 8
-# Where a button carries its resource icon: this band across the row, and this
-# far to the right of the button's own middle.
-ICON_BAND = (636, 664)
-ICON_OFFSET = 64
 # A resource icon measures about 17 px across, so anything narrower is a speckle
 # of the village showing through between two buttons.
 MIN_ICON_WIDTH = 10
@@ -77,9 +62,9 @@ ICON_TOLERANCE = 8
 # plate on its own: white ink is bright *and* neutral where the plate is yellow,
 # and red ink runs (255, 137, 128), which no part of the plate comes near. Red is
 # the game saying the village cannot afford this, and it is read rather than
-# skipped: the loop does its own arithmetic, and a price it cannot read at all is
-# one it cannot size a batch against.
-PRICE_BOX = (-66, 634, 52, 666)
+# skipped: `confirm` answers `cannot_afford` for it, where a price it could not
+# read at all would be no wall menu.
+#
 # White ink fades into its dark outline through greys whose three channels stay
 # within 5 of each other, while the plate, wherever it is brighter than the floor,
 # is 14 to 19 apart. These were 245 and no spread, pure white only, which shaved
@@ -137,7 +122,7 @@ MIN_PRICE = 100
 # and must never be tapped. There are two: 加速所有同類項目 on an ordinary menu
 # and the wall ring on a wall's. Both carry an icon that reads as a resource —
 # the speed-up's potion answers the elixir test outright — so without this a
-# sweep reports "an upgrade costing 1 elixir" and a loop taps a magic item away.
+# reader takes it for "an upgrade costing 1 elixir" and a tap spends a magic item.
 # Measured at this corner of the plate, a blue one reads blue-minus-red of 199
 # to 204 and every ordinary one reads -20 to -29.
 PLATE_BOX = (-58, 622, -38, 642)
@@ -187,7 +172,7 @@ def _is_elixir(red: int, green: int, blue: int) -> bool:
 
 
 def _icon_centres(
-    image: Image.Image, test: Callable[[int, int, int], bool], rows: tuple[int, int] = ICON_BAND
+    image: Image.Image, test: Callable[[int, int, int], bool], rows: tuple[int, int]
 ) -> list[int]:
     """Where along the button row an icon this test recognises sits."""
     band = image.crop((0, rows[0], image.width, rows[1]))
@@ -242,16 +227,6 @@ def _price_mask(band: Image.Image) -> list[list[bool]]:
     return ink
 
 
-def _price(image: Image.Image, centre: int) -> int | None:
-    """What the button centred here asks for, or None where it does not read."""
-    left, top, right, bottom = PRICE_BOX
-    return digits_from(
-        _price_mask(image.crop((centre + left, top, centre + right, bottom))),
-        PRICE_TOLERANCE,
-        floor=PRICE_ROWS,
-    )
-
-
 def _on_gem_plate(
     image: Image.Image, centre: int, box: tuple[int, int, int, int] = PLATE_BOX
 ) -> bool:
@@ -271,88 +246,6 @@ def _on_finish_plate(image: Image.Image, centre: int) -> bool:
     count = len(data) // 3
     red, green, blue = (sum(data[i + c] for i in range(0, len(data), 3)) / count for c in range(3))
     return green - max(red, blue) > PLATE_GREEN
-
-
-def _on_grid(centre: int) -> bool:
-    """Whether a button could really sit here, given how the row is laid out.
-
-    The row is centred on the screen and spaced a pitch apart, so an odd number
-    of buttons puts one in the middle and an even number straddles it — which
-    leaves every possible button middle on a half-pitch grid. A resource icon
-    found anywhere else is the village showing through between two buttons, and
-    the price read beside it would be whatever the grass spelled.
-    """
-    step = BUTTON_PITCH // 2
-    offset = (centre - BUTTON_MIDDLE) % step
-    return min(offset, step - offset) <= BUTTON_GRID_TOLERANCE
-
-
-def upgrade_buttons(png: bytes) -> list[UpgradeButton]:
-    """Every 升級 button on the menu this frame is showing, cheapest first.
-
-    A resource icon is not enough on its own to call something an upgrade: 收集
-    on a collector's menu carries a gold coin too, and so does the wall ring.
-    What separates them is the price written beside it, so a button whose price
-    does not read is not reported — which also means a frame with no menu at all
-    comes back empty rather than wrong.
-
-    Dark elixir is deliberately not among them. Its icon is nearly black and a
-    village is full of dark pixels, so it cannot be found the way the other two
-    are; what it would buy is heroes, which take days rather than the moments
-    this is written around.
-    """
-    image = open_frame(png)
-    found: list[UpgradeButton] = []
-    for resource, test in (("gold", _is_gold), ("elixir", _is_elixir)):
-        for icon in _icon_centres(image, test):
-            centre = icon - ICON_OFFSET
-            if not _on_grid(centre) or _on_gem_plate(image, centre):
-                continue
-            price = _price(image, centre)
-            if price is not None and price >= MIN_PRICE:
-                found.append(
-                    UpgradeButton(resource=resource, point=(centre, BUTTON_ROW_Y), price=price)
-                )
-    return sorted(found, key=lambda button: button.price)
-
-
-def wall_menu(png: bytes) -> WallMenu | None:
-    """The wall menu on this frame, or None where the screen is not showing one.
-
-    A wall is the pair of buttons a pitch apart asking the same number in both
-    resources. Everything else in the village takes one resource, so no other
-    menu can produce that pair.
-
-    None covers every way of not being on a wall: no menu at all, a menu for
-    something that takes a single resource, and a wall whose price this frame
-    could not read. That they are one answer is deliberate — each of them leaves
-    the loop with nothing it can safely tap, and a caller acting on the
-    difference would be acting on a guess about a button it never located.
-    """
-    buttons = upgrade_buttons(png)
-    coins = [button for button in buttons if button.resource == "gold"]
-    for drop in (button for button in buttons if button.resource == "elixir"):
-        for coin in coins:
-            # A misread price is how a batch gets sized against money the village
-            # does not have, so the two have to agree as well as line up. They
-            # line up to within a pixel rather than exactly, because each middle
-            # is derived from where its own icon happened to segment.
-            if abs(drop.point[0] - coin.point[0] - BUTTON_PITCH) > ICON_TOLERANCE:
-                continue
-            if drop.price != coin.price:
-                logger.debug("Buttons a pitch apart priced %d and %d", coin.price, drop.price)
-                continue
-            # Everything is measured off the drop: it is the one icon on the row
-            # nothing else can be confused with, where the coin has the wall ring
-            # two places along answering the same colour test.
-            elixir, gold = drop.point[0], drop.point[0] - BUTTON_PITCH
-            return WallMenu(
-                gold=(gold, BUTTON_ROW_Y),
-                elixir=(elixir, BUTTON_ROW_Y),
-                add=(gold - BUTTON_PITCH, BUTTON_ROW_Y),
-                price=drop.price,
-            )
-    return None
 
 
 def _is_confirm(red: int, green: int, blue: int) -> bool:
@@ -704,8 +597,8 @@ def sheet_offer(png: bytes) -> SheetOffer | None:
 # two rows: 資訊, 整排選取 and 升級更多 (移除城牆 and 新增城牆 once it is a
 # batch) above, and the two price buttons below, gold then elixir. The rows are
 # laid out on a half-pitch grid around the middle of the screen left of the
-# panel, so `wall_menu`, which reads one row centred on the whole screen, finds
-# nothing on it. Measured on the builder base, a single wall and a batch of two:
+# panel, so the geometry of the row under a selected building (`BUTTON_MIDDLE`,
+# `BUTTON_PITCH`) does not fit it. Measured on the builder base, a single wall and a batch of two:
 # the icons span x 545-560 and 721-732 across y 731-746 and the buttons are
 # middled at x 497 and 671, 174 apart around 585.
 PANEL_WALL_ICON_BAND = (728, 750)

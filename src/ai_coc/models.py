@@ -841,8 +841,8 @@ class GeminiSetting(BaseModel):
 class GeminiSettings(BaseModel):
     """The tier this application sends work to, by what the work is.
 
-    `main` answers once per run against a whole screenshot — the attack plan,
-    the target finder — so nothing there is racing anything and the better
+    `main` answers once per run against a whole screenshot — the attack plan
+    on either village — so nothing there is racing anything and the better
     model is simply the right one.
 
     Named for the role rather than for the product: a key called `flash` holding
@@ -856,7 +856,7 @@ class GeminiSettings(BaseModel):
 
 
 class UiJobs(BaseModel):
-    """Which of the four commands the window's cycle round-robins.
+    """Which of the three commands the window's cycle round-robins.
 
     The field names are the sub-command names, deliberately: each one is a
     `commands.*` function that `cli.py` dispatches to and that the window's own
@@ -867,7 +867,6 @@ class UiJobs(BaseModel):
 
     collect: bool = False
     donate: bool = False
-    walls: bool = False
     attack: bool = False
 
 
@@ -1469,11 +1468,11 @@ class StockReport(BaseModel):
     not resolve, and a name missing from `filled` is a ceiling that would not
     read. A sentence saying any of that again is the same answer twice, which is
     what it was doing. Where a report's fields really cannot say which branch a
-    run came back from it carries a named outcome instead of prose — see
-    `WallOutcome`: a wording nobody can match on is what made a sentence worse
-    than a field rather than merely redundant. No report here carries a
-    `message` any more, and the Chinese a person reads is built from the outcome
-    at the edge, in `commands.py`.
+    run came back from it carries a named outcome instead of prose: a wording
+    nobody can match on is what makes a sentence worse than a field rather
+    than merely redundant. No report here carries a `message` any more, and the
+    Chinese a person reads is built from the outcome at the edge, in
+    `commands.py`.
     """
 
     world: World | None = None
@@ -2123,75 +2122,6 @@ class DonateReport(BaseModel):
     outcome: DonateOutcome
 
 
-class UpgradeButton(BaseModel):
-    """One 升級 button on a building's menu: where it is and what it asks for.
-
-    The price is what makes it an upgrade rather than any other button carrying a
-    resource icon — 收集 on a collector's menu has a gold coin on it too, and so
-    does the wall ring. Nothing here says which building the menu belongs to,
-    because nothing on the row does.
-    """
-
-    model_config = ConfigDict(frozen=True)
-
-    resource: Literal["gold", "elixir"]
-    point: tuple[int, int]
-    price: int
-
-
-class WallMenu(BaseModel):
-    """The wall menu's own buttons, located by the icons the game paints on them.
-
-    Nothing in this row sits at a fixed x. The buttons are laid out from the
-    middle of the screen outwards, so the row loses one the moment a batch has no
-    more walls left to add and every button after it shifts a place along. What
-    is fixed is the spacing, which is why these are read off each frame.
-    """
-
-    model_config = ConfigDict(frozen=True)
-
-    gold: tuple[int, int]
-    elixir: tuple[int, int]
-    # 升級更多 on a plain menu and 新增城牆 on a batch, which as far as the loop
-    # is concerned is one button: both put another wall into the selection, and
-    # both sit one place to the left of the gold button. That is what saves the
-    # loop from having to tell the two menus apart at all.
-    add: tuple[int, int]
-    # What the whole selection costs — the same number in gold as in elixir, and
-    # that is a wall's own signature. Every other building takes one resource, so
-    # no other menu carries both icons with one price between them.
-    price: int
-
-
-class WallCandidate(BaseModel):
-    """Somewhere on the village a tap opened a wall menu, and what it asked for.
-
-    The price stands in for the level without anything having to read one: walls
-    get dearer every level, so the cheapest candidate is the lowest wall on the
-    map. It is what it cost *when it was tapped*, which on a wall left selected
-    from an earlier batch is several walls' worth — the loop works the real unit
-    price out for itself before spending anything.
-    """
-
-    model_config = ConfigDict(frozen=True)
-
-    point: tuple[int, int]
-    price: int
-
-
-class ScreenSpots(BaseModel):
-    """Where Gemini thinks the things a loop is looking for are.
-
-    These are guesses and are treated as such: every one of them is tapped and
-    the screen that comes up is checked by whatever the caller was looking for,
-    a wall menu today. So a wrong point costs one tap and one capture and is
-    dropped with a line saying so, and asking for more points than the run needs
-    is the right shape rather than a waste.
-    """
-
-    spots: list[ScreenPoint] = Field(default_factory=list)
-
-
 class GameDialog(BaseModel):
     """The game's own yes/no panel, which very different questions all share.
 
@@ -2279,113 +2209,6 @@ class ConfirmReport(BaseModel):
     frame: Path
 
 
-class WallBatch(BaseModel):
-    """A batch grown to what the village can pay for, and what it now holds.
-
-    The menu comes back with it because growing a batch can drop a button from
-    the row — the game takes 新增城牆+10 away once fewer than ten walls are left
-    to add — and every button after it shifts a place along. The menu read before
-    the batch grew points at the wrong buttons afterwards.
-    """
-
-    model_config = ConfigDict(frozen=True)
-
-    menu: WallMenu
-    unit: int
-    count: int
-
-
-class WallUpgrade(BaseModel):
-    """One batch of walls that was paid for."""
-
-    model_config = ConfigDict(frozen=True)
-
-    unit: int
-    count: int
-    resource: Literal["gold", "elixir"]
-
-    @property
-    def spent(self) -> int:
-        return self.unit * self.count
-
-
-# Why a `walls` run stopped, which is the whole of what a caller has to decide
-# on and was a sentence for three releases. **The three that used to be told
-# apart by wording are the reason this exists**: a skill reads them to pick what
-# happens next, and `每一個位置都沒有買成` has been read as "the walls are
-# finished" and taken for it.
-#
-# `bought` and `nothing_bought` are both a run that walked its whole list —
-# `upgrades` says which. `cannot_afford` means go and farm; `builders_busy`
-# means the game refuses every batch until one workman is idle, which
-# `ai_coc status` dates; `nothing_bought` is the one where the loop cannot say
-# why, and the likeliest reason is the town hall capping every wall it found,
-# which is a decision for the player rather than for the loop. The rest are the
-# run not getting started: `no_walls_found` found none — swept, or verified the
-# spots a caller named, which does not sweep at all — `no_village`
-# never got back to one, `builder_base` found the game on the other village,
-# `no_stock` lost the storage bars between batches, and `stopped` is somebody
-# asking it to stand down.
-WallOutcome = Literal[
-    "bought",
-    "nothing_bought",
-    "cannot_afford",
-    "builders_busy",
-    "no_walls_found",
-    "no_village",
-    "builder_base",
-    "no_stock",
-    "stopped",
-]
-
-
-class WallReport(BaseModel):
-    """What one `walls` run bought, and what stopped it.
-
-    **`outcome` is a name rather than a sentence, and that is not a tidy-up.**
-    Three of its values used to be separated only by their wording, and a
-    project skill told its reader to tell them apart that way — so a reworded
-    line would have silently changed what the next session did, with nothing to
-    catch it. `upgrades` already says what was bought; this says why it stopped.
-    """
-
-    upgrades: list[WallUpgrade] = Field(default_factory=list)
-    outcome: WallOutcome
-
-    @property
-    def walls(self) -> int:
-        return sum(upgrade.count for upgrade in self.upgrades)
-
-    def paid(self, resource: str) -> int:
-        return sum(u.spent for u in self.upgrades if u.resource == resource)
-
-
-class WallOptions(BaseModel):
-    """What one `walls` command was told to do."""
-
-    frame_dir: Path | None = None
-    # What to leave in the storages rather than spend. A run that empties them
-    # leaves nothing to train an army with, which is the other half of farming.
-    keep_gold: int = 0
-    keep_elixir: int = 0
-    # 0 keeps buying until neither storage will pay for another wall.
-    rounds: int = 0
-    # The walls this run was pointed at, instead of scanning for them. Empty
-    # means scan.
-    #
-    # **A list rather than one, because one is not a choice.** `_pick` exists to
-    # take the cheapest wall found, which is the lowest level and so the one
-    # worth the loot; naming a single wall collapses that to whatever was named.
-    # Measured live, a run given one coordinate paid 9 000 000 for a wall while
-    # 4 000 000 ones stood in the same village.
-    #
-    # Which is also the division of labour worth keeping: finding walls is what
-    # the sweep is worst at — it taps a grid and hopes — and what a pair of eyes
-    # on a screenshot does in one look. Reading prices, batching and buying
-    # without ever reaching a gem button is the other way round.
-    at: list[tuple[int, int]] = Field(default_factory=list)
-
-
 class DonateOptions(BaseModel):
     """What one `donate` command was told to do."""
 
@@ -2428,12 +2251,10 @@ class FrameReading(BaseModel):
     # ceiling read, since opening one takes a tap.
     capacity: StorageCapacity = StorageCapacity()
     army: tuple[int, int] | None = None
-    wall_menu: WallMenu | None = None
     # The wall menu as drawn beside the open build panel, which `confirm --pay` reads.
     panel_wall: PanelWallMenu | None = None
     bubbles: list[ResourceBubble] = Field(default_factory=list)
     builders: tuple[int, int] | None = None
-    upgrades: list[UpgradeButton] = Field(default_factory=list)
     donatable: int = 0
     attack_menu: bool = False
     # The builder base's own three screens. They were missing while the skills

@@ -2,8 +2,8 @@
 
 Four readers in this package need the same thing — the loot panel, the storage
 bars, a building's price, a hero's price — and none of them can afford a vision
-call for it: the scout screen expires in 30 seconds, and a wall run reads a
-price once a batch. Position, font and size are all fixed by the 1600x900
+call for it: the scout screen expires in 30 seconds, and `confirm` reads a
+price before every press. Position, font and size are all fixed by the 1600x900
 layout, so a digit is normalised to a bit pattern and compared against ten of
 them.
 

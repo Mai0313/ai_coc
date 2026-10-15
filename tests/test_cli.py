@@ -20,13 +20,12 @@ from unittest.mock import patch
 import pytest
 
 from ai_coc import cli, models, commands
-from ai_coc.cli import RECORDABLE, _spot, _answer, _parser, _run_command
+from ai_coc.cli import RECORDABLE, _answer, _parser, _run_command
 from ai_coc.models import (
     Caller,
     RunLog,
     ViewReport,
     NamedEntity,
-    WallOptions,
     WorldReport,
     AttackSeries,
     AttackOptions,
@@ -46,7 +45,6 @@ MINIMAL: dict[str, list[str]] = {
     "stop": [],
     "giveback": [],
     "watch": ["--next", "2026-10-12T23:10"],
-    "walls": [],
     "collect": [],
     "stock": [],
     "status": [],
@@ -93,11 +91,6 @@ class ParserTests(unittest.TestCase):
         # `world` reads one frame and keeps nothing, so it has no such flag.
         with pytest.raises(SystemExit):
             _args("world", "--debug")
-
-    def test_a_spot_is_two_integers(self) -> None:
-        assert _spot("260,140") == (260, 140)
-        with pytest.raises(ValueError, match="invalid literal"):
-            _spot("260")
 
     def test_stop_reaches_both_sections_unless_told_which(self) -> None:
         assert _args("stop").target == "all"
@@ -182,26 +175,6 @@ class DispatchTests(unittest.TestCase):
         assert options.minimums == LootOverrides()
         assert options.stop_at is None
         assert options.frame_dir is None
-
-    def test_walls_collects_every_named_spot(self) -> None:
-        with patch.object(commands, "walls") as walled:
-            _answer(
-                _args(
-                    "walls",
-                    "--at",
-                    "260,140",
-                    "--at",
-                    "420,260",
-                    "--keep-gold",
-                    "5",
-                    "--rounds",
-                    "2",
-                ),
-                self.run,
-            )
-        assert walled.call_args.args[0] == WallOptions(
-            keep_gold=5, rounds=2, at=[(260, 140), (420, 260)]
-        )
 
     def test_donate_carries_its_own_options(self) -> None:
         with patch.object(commands, "donate") as gave:

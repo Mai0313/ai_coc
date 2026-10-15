@@ -462,9 +462,8 @@ HERO_BAR_MAX_BLUE = 30
 # a gold row reading 10 649 867 matched every glyph but its 9, which came in at
 # 25 and failed the whole row. It failed it on every frame, because the number
 # does not change between them — so this was not a flicker to be retried, it was
-# a village whose storages simply could not be read, and both callers treat that
-# as "not now": the farming loop stops watching for a full storage and the wall
-# loop cannot see what it has to spend.
+# a village whose storages simply could not be read, and the farming loop
+# treats that as "not now": it stops watching for a full storage.
 #
 # Swept over 48 live village frames the worst real glyph is that 25 and the rest
 # sit at 15 or below, so the line goes above it. What the tolerance is not

@@ -13,15 +13,14 @@ Kept Qt-free like everything else under `ui/` that is not a widget, so
 from __future__ import annotations
 
 import time
-from typing import TYPE_CHECKING, Literal
+from typing import Literal
 import logging
 from pathlib import Path
 from collections.abc import Callable
 
 from pydantic import BaseModel, PrivateAttr
 
-from ai_coc.models import World, ScreenSpots, VillageStock, DisplayTarget, StorageCapacity
-from ai_coc.prompts import render
+from ai_coc.models import World, VillageStock, DisplayTarget, StorageCapacity
 from ai_coc.constants import COC_PACKAGE
 from ai_coc.adapters.ai import GeminiClient
 from ai_coc.adapters.adb import ZOOM_PINCHES, AdbController, AdbControlError
@@ -40,9 +39,6 @@ from ai_coc.parsers.building import game_dialog
 
 from .world import park_camera
 
-if TYPE_CHECKING:
-    from collections.abc import Iterable, Iterator
-
 logger = logging.getLogger(__name__)
 
 # How long a menu takes to open. Measured against this emulator by walking the
@@ -54,30 +50,12 @@ MENU_SETTLE = 1.0
 # themselves and all three came out the same.
 BUY_SETTLE = 1.5
 
-# Where a tap could land on something worth opening. Buildings move between
-# villages and the camera moves within one, so nothing can be remembered: what
-# is on the map is found by tapping and reading what the game opens. The row of
-# buttons a selection opens runs along the bottom of the screen, so a sweep that
-# reached down there would be pressing the previous tap's own buttons; the left
-# and right edges are the game's own button columns for the same reason.
-SWEEP_X = (260, 420, 580, 740, 900, 1060, 1220)
-SWEEP_Y = (140, 260, 380, 500)
-# How far a tap may go before it stops being the village. The grid stays inside
-# this by construction; a spotted point has to be held to it.
-SWEEP_LIMIT = (SWEEP_X[-1], 620)
-# The same floor as a percentage, which is what a finder answers in. Below it is
-# the row of buttons the previous selection left on screen, so a point there taps
-# that row rather than the map — measured, four of twelve answers landed in it
-# and each one opened whatever the last menu's buttons happened to be. Telling
-# the model about it works (0 of 14 on the next run), and the filter below is
-# what makes that a guarantee rather than an improvement.
-SPOT_FLOOR = SWEEP_LIMIT[1] * 100 // 900
 # The game's own furniture over the map, where a tap opens a window rather than
 # a building. Since the 2026-10 overhaul that is the avatar block and league
 # badge in the top left, the storage bars down to the shield's in the top right
 # (whose bar and + open the shop's shield page), 商店 under them, and the chat
-# and clan war buttons down the left. The button rows along the bottom are
-# below `SWEEP_LIMIT` already. Each box reaches a few pixels past what it guards.
+# and clan war buttons down the left. Each box reaches a few pixels past what it
+# guards.
 HUD_BOXES = ((0, 0, 250, 300), STORAGE_BARS, (1450, 385, 1580, 515), (20, 385, 155, 645))
 
 
@@ -86,10 +64,6 @@ def on_hud(point: tuple[int, int]) -> bool:
     x, y = point
     return any(left <= x <= right and top <= y <= bottom for left, top, right, bottom in HUD_BOXES)
 
-
-# One call against one still frame. Long enough for a slow answer, short enough
-# that a hung one falls through to the sweep rather than holding the run.
-SPOT_TIMEOUT = 60
 
 # Getting back to the village, which four different things can be in the way of,
 # and they do not want the same treatment.
@@ -101,12 +75,11 @@ SPOT_TIMEOUT = 60
 #
 # **The patience is only owed to a game that might still be starting**, which is
 # what `_seen_village` settles: once a village has read, an unreadable frame is a
-# panel and waiting on it buys nothing. That distinction is worth a private
-# attribute because `_sweep` spends most of its taps opening panels — its grid
-# steps 160 px over buildings 70 to 120 px across — and each one used to cost the
-# full patience before the first `back`. Measured over three live wall runs the
-# stalls were 26, 26 and 34 seconds, which is 50 to 80 of a 150 second run spent
-# waiting for a launch that had already happened.
+# panel and waiting on it buys nothing. Each panel used to cost the full patience
+# before the first `back`: measured over three live runs of the old wall loop,
+# whose village sweep opened one on most of its taps, the stalls were 26, 26 and
+# 34 seconds, which is 50 to 80 of a 150 second run spent waiting for a launch
+# that had already happened.
 HOME_TRIES = 20
 LOADING_PATIENCE = 10
 LOAD_WAIT = 2.0
@@ -232,13 +205,12 @@ class ScreenRunner(BaseModel):
     display: DisplayTarget
     # Asked between whole units of work, never inside one: a unit abandoned
     # halfway leaves the game on a screen the next run has to dig itself out of.
-    # What a unit is belongs to each loop — a wall batch here, an opponent there.
+    # What a unit is belongs to each loop — a donation here, an opponent there.
     should_stop: Callable[[], bool] = lambda: False
     # Where to keep every frame the loop reads, for a run being studied afterwards.
     frame_dir: Path | None = None
-    # Who to ask the one question the parsers cannot answer. None is an ordinary
-    # answer everywhere: the finders fall back to the sweep and the attack loop
-    # to its flat plan, which is what every loop here did before this existed.
+    # Who to ask the one question the parsers cannot answer: how to attack. None
+    # is an ordinary answer, and the attack loop plays its flat plan.
     ai: GeminiClient | None = None
 
     _captures: int = PrivateAttr(default=0)
@@ -369,8 +341,7 @@ class GameRunner(ScreenRunner):
 
         **Every one of these loops taps buildings by screen coordinate**, and
         those were measured at a free scenery's far zoom limit, which
-        `park_camera` also brings a bought one back to — the sweep grid, the
-        button row on an opened menu, a remembered `--at`. A camera that has
+        `park_camera` also brings a bought one back to. A camera that has
         drifted off that zoom sends all of them somewhere else, and the failure
         is silent: a tap lands on the ground and the loop simply reports that
         nothing opened.
@@ -421,7 +392,7 @@ class GameRunner(ScreenRunner):
         in opposite corners. So a frame the storages alone recognised gets the
         scale and keeps whatever position it had — see the branch below.
 
-        A pinch between wall batches would only be spending three seconds to
+        A pinch on every `_home` would only be spending three seconds to
         confirm what this one already settled.
 
         **The pinch settles the scale and the park settles the position**, which
@@ -451,7 +422,7 @@ class GameRunner(ScreenRunner):
             self.adb.zoom("out", ZOOM_PINCHES, COC_PACKAGE, self.display)
             return
         # **The answer is not acted on, and `_settled` is set either way.** A
-        # park that fell short leaves the sweep grid worse rather than unusable,
+        # park that fell short leaves the taps after it worse rather than unusable,
         # and `_home` re-enters this on every one of its `HOME_TRIES` while
         # `_settled` is False — so returning here without setting it would spend
         # twenty full parks, minutes of swiping, on the one path that cannot
@@ -468,9 +439,8 @@ class GameRunner(ScreenRunner):
         Gated on `current_world` alone, such a frame hands its caller a stock
         with the camera never put back, and every caller reads a returned stock
         as the measured coordinates being valid now. The settle would then land
-        at whatever `_home` came next — usually `_opened` backing out partway
-        through a walk — moving the map after the points that walk is spending
-        were already chosen.
+        at whatever `_home` came next, moving the map after the points the loop
+        is tapping were already chosen.
         """
         if not self._settled:
             self._settle_zoom(world)
@@ -515,7 +485,7 @@ class GameRunner(ScreenRunner):
         first village reads, an unreadable frame is far more often a launch still
         under way than a panel, so it is waited on. After one has, a launch is
         over and the frame is a panel, so `back` goes in at once; see the
-        constants above for what the old blanket patience cost a sweep.
+        constants above for what the old blanket patience cost.
 
         The two overlays are cleared rather than read past, because each dims
         the whole screen enough to stop the storage bars reading even though they
@@ -548,10 +518,10 @@ class GameRunner(ScreenRunner):
                 continue
             # **The game reopens on whichever village it was closed on**, and
             # every loop that reaches this method is the home village's own —
-            # its sweep grid, its building menus, its storages. Nothing below
+            # its collectors, its clan castle, its storages. Nothing below
             # could tell the difference: `read_stock` answers on the builder
             # base as readily, reading its gems bar as dark elixir, so a run
-            # that arrived there would sweep the wrong map and report it as an
+            # that arrived there would tap the wrong map and report it as an
             # ordinary empty one.
             #
             # **It stops there rather than sailing**, because no command sails
@@ -594,117 +564,3 @@ class GameRunner(ScreenRunner):
             time.sleep(BACK_SETTLE)
         logger.warning("Never got back to a village that could be tapped")
         return None
-
-    def _opened(
-        self, points: Iterable[tuple[int, int]], label: str
-    ) -> Iterator[tuple[tuple[int, int], bytes]]:
-        """Tap each of these points on the village, handing back the frame each opened.
-
-        Every point here is a raw village coordinate, so one that misses what it
-        was aimed at opens whatever building is standing there — and a
-        full-screen panel would swallow every tap after it. A barracks and a
-        laboratory both do this. The storage bars are the test: a building menu
-        leaves them readable and a full-screen panel does not, so a tap that
-        covered the village is backed out of before the next one goes in, and
-        the walk ends if the village cannot be got back at all.
-
-        One walk for every caller, because every caller has the same problem: a
-        sweep's grid point is a sample of whatever it lands on, a hand-named
-        spot misses because the camera moved since somebody looked, and a
-        spotted one misses because it was a guess. None of those is rare.
-
-        **And one place to stop, for the same reason.** A tap costs a
-        `MENU_SETTLE` and a capture, so a full sweep is a couple of minutes with
-        nothing else to interrupt it — which is what `ai_coc walls` spends
-        whenever there is no key to ask with or the finder comes back empty.
-        Leaving here is safe in the way leaving a batch is not, because the walk
-        has already backed out of whatever the last tap opened; `WallRunner._scan`
-        made the same check at its own call site before this one existed, and
-        still does, since it has a batch loop below the walk that this cannot see.
-        """
-        for spot in points:
-            if self.should_stop():
-                logger.info("Stop requested; ending the %s walk", label)
-                return
-            if on_hud(spot):
-                logger.info(
-                    "Skipping (%d, %d): that is the game's own buttons, not the map", *spot
-                )
-                continue
-            png = self._after_tap(spot, f"{label}_{spot[0]:04d}_{spot[1]:04d}")
-            if read_stock(png) is None:
-                logger.info("The tap at (%d, %d) covered the village; backing out", *spot)
-                if self._home() is None:
-                    return
-                continue
-            yield spot, png
-
-    def _sweep(self, label: str) -> Iterator[tuple[tuple[int, int], bytes]]:
-        """Tap across the village, handing back the frame each tap opened.
-
-        This is the only way to find anything on the map without asking. Every
-        building is its own artwork and gets repainted at each level, layouts
-        differ between villages, and the camera moves — so what is there is
-        discovered by tapping and reading, never by recognising or remembering.
-
-        **The grid steps further than a small building is wide, so one pass is a
-        sample rather than a search.**
-        """
-        yield from self._opened(((x, y) for y in SWEEP_Y for x in SWEEP_X), label)
-
-    def _spotted(self, what: str, notes: str, count: int) -> list[tuple[int, int]]:
-        """Ask Gemini where these are on the village. Empty means nobody could say.
-
-        **One finder for every loop here, because the answer is the same shape
-        whatever was asked for.** What differs is the question and the check, and
-        both stay with the caller: this returns points, and the caller taps each
-        one and decides from what opened whether it was right. That division is
-        what makes an imperfect finder usable at all — a wrong point costs one
-        tap and one capture, about 1.7 s, so asking for more points than the run
-        needs is the right shape rather than a waste.
-
-        What it replaces is `_sweep`, which is the worst part of every loop that
-        uses it: a blind grid, two and a half minutes, and a sample rather than a
-        search. Measured against one live village, 12 of 12 answers opened a wall
-        menu, the first of three answers for 英雄殿堂 opened the hall, and 9 of
-        14 buildings had a priced upgrade on them — the whole call taking about
-        10 s. **And it reaches ground the grid cannot**: of those nine, only two
-        sat within 45 px of a grid point, while four were more than 75 px from
-        one against buildings 70 to 120 px across.
-
-        The sweep stays underneath all of it. A village whose walls nobody can
-        place still has walls, and two and a half minutes of grid taps beats a
-        run that buys nothing.
-        """
-        if self.ai is None:
-            return []
-        try:
-            answer = self.ai.generate_structured(
-                render("find_targets", what=what, notes=notes, count=count, floor=SPOT_FLOOR),
-                ScreenSpots,
-                self._frame("village"),
-                SPOT_TIMEOUT,
-            )
-        except Exception:
-            logger.warning("Gemini could not be asked where the targets are", exc_info=True)
-            return []
-        spots: list[tuple[int, int]] = []
-        for spot in answer.spots:
-            point = spot.pixels()
-            # The prompt asks for this and the model obeys it, but a point in the
-            # button row taps the previous selection's own buttons rather than
-            # the map, and one that opens a shop is not something to find out by
-            # trying. The instruction is the optimisation; this is the guarantee.
-            if point[1] > SWEEP_LIMIT[1]:
-                logger.info("Dropping (%d, %d): that is the button row, not the map", *point)
-                continue
-            # The same for the rest of the furniture, here as well as in
-            # `_opened`, so the answer a caller gets back is already clean.
-            if on_hud(point):
-                logger.info(
-                    "Dropping (%d, %d): that is the game's own buttons, not the map", *point
-                )
-                continue
-            spots.append(point)
-        logger.info("Gemini put %d of %s at %s", len(spots), what, spots)
-        return spots

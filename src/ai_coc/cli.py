@@ -20,7 +20,6 @@ from ai_coc.models import (
     Caller,
     RunLog,
     StopTarget,
-    WallOptions,
     RestartScope,
     AttackOptions,
     DonateOptions,
@@ -46,19 +45,9 @@ def _log_uncaught(kind: type[BaseException], value: BaseException, trace: Any) -
 
 
 # The sub-commands that drive a loop, and so have frames worth keeping. Declared
-# once rather than nine times over, which is what a `--frames <dir>` on each of
+# once rather than eight times over, which is what a `--frames <dir>` on each of
 # them had become — and the directory it used to take is now the run's own.
-RECORDABLE = (
-    "attack",
-    "walls",
-    "collect",
-    "stock",
-    "status",
-    "donate",
-    "probe",
-    "bounds",
-    "export",
-)
+RECORDABLE = ("attack", "collect", "stock", "status", "donate", "probe", "bounds", "export")
 
 # The sub-commands that hold no claim on the emulator, listed the way round
 # that fails safely: `read` parses a PNG off the disk, and `stop` and
@@ -85,7 +74,7 @@ WITHOUT_CLAIM = ("read", "stop", "giveback", "capture", "watch")
 
 # Every sub-command and the line `--help` gives it, in the order a person
 # reaches for them, which is the order the help lists them in: farming, the
-# readings, spending, the rest of the village, the emulator and its camera, the
+# readings, the rest of the village, the emulator and its camera, spending, the
 # export, then the tools for working on the parsers.
 COMMANDS = (
     ("attack", "進攻遊戲當下所在的村莊，預設打一輪"),
@@ -107,7 +96,6 @@ COMMANDS = (
     ),
     ("stock", "這個村莊的倉庫存量和容量"),
     ("world", "看遊戲停在日世界還是夜世界，加 --go 就開船過去"),
-    ("walls", "用倉庫的資源升級城牆"),
     ("collect", "收掉採集器裡的資源；在夜世界收的是聖水車"),
     ("donate", "部落有人要兵就捐"),
     ("launch", "開模擬器和部落衝突，停在村莊畫面"),
@@ -237,18 +225,6 @@ def _parser() -> argparse.ArgumentParser:
         "--go", choices=get_args(World), help="開船到這個世界，已經在那邊就什麼都不做"
     )
     _watch_flags(sub.choices["watch"], sub.choices["stop"])
-    upgrade = sub.choices["walls"]
-    upgrade.add_argument("--keep-gold", type=int, default=0, help="留下這麼多金幣不花")
-    upgrade.add_argument("--keep-elixir", type=int, default=0, help="留下這麼多聖水不花")
-    upgrade.add_argument(
-        "--rounds", type=int, default=0, help="最多買幾批，0 代表買到資源不夠為止"
-    )
-    upgrade.add_argument(
-        "--at",
-        metavar="X,Y",
-        action="append",
-        help="這個座標上的城牆列為候選，跳過整個村莊的掃描；可以給很多次，最便宜的先買",
-    )
     give = sub.choices["donate"]
     give.add_argument("--dry-run", action="store_true", help="走完流程但不真的捐，只回報能捐什麼")
     give.add_argument("--rounds", type=int, default=0, help="最多捐幾次，0 代表捐到不能捐為止")
@@ -357,15 +333,6 @@ def _answer(arguments: argparse.Namespace, run: RunLog) -> BaseModel | str:
         "stop": lambda: commands.stop(_caller(a), a.target),
         "giveback": commands.giveback,
         "watch": lambda: commands.watch(_caller(a), a.next, a.about, run.directory),
-        "walls": lambda: commands.walls(
-            WallOptions(
-                frame_dir=run.frames,
-                keep_gold=a.keep_gold,
-                keep_elixir=a.keep_elixir,
-                rounds=a.rounds,
-                at=[_spot(one) for one in a.at or ()],
-            )
-        ),
         "collect": lambda: commands.collect(run.frames),
         "stock": lambda: commands.stock(run.frames),
         "status": lambda: commands.status(run.frames),
@@ -481,12 +448,6 @@ def _claim_for(arguments: argparse.Namespace, run: RunLog) -> AbstractContextMan
     return commands.claim(
         arguments.command, run.directory, _caller(arguments), yields=arguments.yields
     )
-
-
-def _spot(text: str) -> tuple[int, int]:
-    """One `X,Y` argument as a point on the screen."""
-    x, _, y = text.partition(",")
-    return int(x), int(y)
 
 
 def main() -> int:

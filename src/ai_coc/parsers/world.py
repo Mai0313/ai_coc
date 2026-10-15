@@ -6,7 +6,7 @@ command can assume which it is looking at. That matters more than it sounds:
 home village, because the builder base has no dark elixir and its gems bar sits
 at exactly the y the dark row is read from — the gem count read as if it were
 dark elixir. So every loop's own "am I on the village" test says yes in the
-wrong world, and a sweep would walk the wrong map.
+wrong world, and a loop would tap the wrong map.
 
 **What separates them is the shield.** Since the 2026-10 overhaul the column of
 bars in the top right ends, on the home village, in a 護盾 bar under the gems

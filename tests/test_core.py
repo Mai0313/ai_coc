@@ -19,8 +19,8 @@ import pytest
 from pydantic import ValidationError
 
 from ai_coc import plans, models, commands, logging_setup
-from ai_coc.ui import walls, attack
 from ai_coc.ui import world as world_ui
+from ai_coc.ui import attack
 from ai_coc.ui import runner as shared
 from ai_coc.cli import _parser
 from ai_coc.models import (
@@ -31,28 +31,22 @@ from ai_coc.models import (
     UiJobs,
     LoanEnd,
     ProbeRay,
-    WallMenu,
     AppConfig,
     BattleRow,
     LootOffer,
     ScoutView,
     TouchNode,
-    WallBatch,
     AttackPlan,
     AttackStep,
     CartReport,
     PlayedPlan,
     SheetOffer,
     UiSettings,
-    WallReport,
     AdbEndpoint,
     NamedEntity,
     RunnerState,
     ScreenPoint,
-    ScreenSpots,
     ShieldState,
-    WallOptions,
-    WallUpgrade,
     AttackReport,
     AttackSeries,
     VillageStock,
@@ -61,7 +55,6 @@ from ai_coc.models import (
     GeminiSetting,
     LootOverrides,
     VillageExport,
-    WallCandidate,
     BoundarySurvey,
     GeminiSettings,
     LootThresholds,
@@ -71,7 +64,6 @@ from ai_coc.parsers import scout as scout_parser
 from ai_coc.parsers import building as building_parser
 from ai_coc.prompts import PROMPTS, PROMPT_DIR, render
 from ai_coc.ui.clan import ClanRunner
-from ai_coc.ui.walls import WallRunner
 from ai_coc.ui.attack import (
     SPEED_UP,
     PLAYFIELD,
@@ -186,14 +178,13 @@ from ai_coc.adapters.config import ConfigStore, dotenv_value
 from ai_coc.parsers.village import clock_tower, parse_village, upgrade_timers, parse_village_text
 from ai_coc.parsers.boundary import DEPLOY_BOUND, fitted_line, village_box, boundary_reach
 from ai_coc.parsers.building import (
+    PRICE_ROWS,
     PRICE_TOLERANCE,
-    wall_menu,
     sheet_open,
     game_dialog,
     sheet_offer,
     upgrade_sheet,
     panel_wall_menu,
-    upgrade_buttons,
 )
 from ai_coc.parsers.settings import export_row, window_open, settings_open, more_settings_open
 
@@ -2966,7 +2957,7 @@ class ConfigTests(unittest.TestCase):
             saved = AppConfig(
                 thresholds=LootThresholds(min_gold=1, min_elixir=2, min_dark=3),
                 gemini=GeminiSettings(main=GeminiSetting(model="gemini-not-the-default")),
-                ui=UiSettings(jobs=UiJobs(walls=True), cycle_minutes=42, live_view=False),
+                ui=UiSettings(jobs=UiJobs(donate=True), cycle_minutes=42, live_view=False),
             )
             store.save(saved)
             assert store.load() == saved
@@ -3076,9 +3067,10 @@ class ConfigTests(unittest.TestCase):
         `timings` stayed in every existing file for a release after every clock
         moved onto the plan, so someone editing 大守護者's thirty seconds there
         would have been editing nothing at all. `keepalive_seconds` is the next
-        one out, now that holding the session open has been dropped. Pydantic
-        ignoring the key is what keeps the upgrade from failing; rewriting the
-        file is what stops it lying about what the run will do.
+        one out, now that holding the session open has been dropped, and
+        `ui.jobs.walls` went with the wall loop. Pydantic ignoring the key is
+        what keeps the upgrade from failing; rewriting the file is what stops it
+        lying about what the run will do.
         """
         with tempfile.TemporaryDirectory() as td:
             path = Path(td) / "config.json"
@@ -3088,6 +3080,7 @@ class ConfigTests(unittest.TestCase):
                     "restart_every": 50,
                     "timings": {"queen": 1, "warden": 30},
                     "keepalive_seconds": 120.0,
+                    "ui": {"jobs": {"walls": True, "attack": True}},
                 }),
                 encoding="utf-8",
             )
@@ -3097,6 +3090,7 @@ class ConfigTests(unittest.TestCase):
         assert "restart_every" not in written
         assert "timings" not in written
         assert "keepalive_seconds" not in written
+        assert written["ui"]["jobs"] == {"collect": False, "donate": False, "attack": True}
         # What it parsed is what it wrote. Rewriting `AppConfig()` instead would
         # pass every other assertion here while wiping the user's settings, and
         # this call is the first thing that runs after an upgrade.
@@ -3147,11 +3141,11 @@ class PromptTests(unittest.TestCase):
         """Both directions: a missing file is a `KeyError` at the first call, and a
         file nothing asks for is a prompt somebody will keep rewording for nothing.
         """
-        assert set(PROMPTS) == {"attack_plan", "find_targets", "night_plan"}
+        assert set(PROMPTS) == {"attack_plan", "night_plan"}
 
     def test_a_prompt_fills_in_its_placeholders(self) -> None:
-        filled = render("find_targets", what="城牆", notes="", count=12, floor=55)
-        assert "城牆" in filled
+        filled = render("attack_plan", rage_count=4, freeze_count=2)
+        assert "剛好 4 個" in filled
         assert "{" not in filled
 
     def test_the_attack_prompt_still_takes_its_spell_counts(self) -> None:
@@ -3164,10 +3158,7 @@ class PromptTests(unittest.TestCase):
         catch that and carry on without the model (`_plan` falls back to the flat
         plan every battle), so it has to fail here instead.
         """
-        filled = {
-            "attack_plan": {"rage_count", "freeze_count"},
-            "find_targets": {"what", "notes", "count", "floor"},
-        }
+        filled = {"attack_plan": {"rage_count", "freeze_count"}}
         for name, text in PROMPTS.items():
             fields = {field for _, field, _, _ in string.Formatter().parse(text) if field}
             assert fields == filled.get(name, set()), name
@@ -6101,50 +6092,6 @@ class RunnerStateTests(unittest.TestCase):
         assert after.loan is not None
         assert after.loan.ended == "returned"
 
-    def test_the_wall_command_answers_the_same_file(self) -> None:
-        """One file for every long loop rather than a mechanism each."""
-        with tempfile.TemporaryDirectory() as folder:
-            state = Path(folder) / "state.json"
-            report = MagicMock(outcome="nothing_bought", walls=0)
-            report.paid.return_value = 0
-            with (
-                patch.object(commands, "STATE_PATH", state),
-                patch.object(commands, "_controller"),
-                patch.object(commands, "current_world", return_value="day"),
-                patch.object(commands, "WallRunner") as runner,
-            ):
-                runner.return_value.run.return_value = report
-                commands.walls(WallOptions())
-            assert runner.call_args.kwargs["should_stop"] is commands.stop_requested
-
-    def test_a_stopped_wall_run_says_so_and_keeps_what_it_bought(self) -> None:
-        """The runner names the stop itself, so the command adds nothing.
-
-        This used to prefix 已停止 onto whatever sentence the loop had written,
-        and needed an exception for a run stopped before it bought anything —
-        whose own fallback reads as a verdict on positions it never tried. That
-        is the ambiguity `WallOutcome` removes.
-        """
-        with tempfile.TemporaryDirectory() as folder:
-            state = Path(folder) / "state.json"
-
-            def asked_mid_run() -> MagicMock:
-                commands.stop()
-                report = MagicMock(outcome="stopped", walls=3)
-                report.paid.return_value = 0
-                return report
-
-            with (
-                patch.object(commands, "STATE_PATH", state),
-                patch.object(commands, "_controller"),
-                patch.object(commands, "current_world", return_value="day"),
-                patch.object(commands, "WallRunner") as runner,
-                commands.claim("walls"),
-            ):
-                runner.return_value.run.side_effect = asked_mid_run
-                result = commands.walls(WallOptions())
-            assert result.outcome == "stopped"
-
     def test_a_headless_run_hands_the_state_to_the_runner(self) -> None:
         """The interface was there all along; only the window ever passed it.
 
@@ -6645,7 +6592,7 @@ class WindowToggleTests(unittest.TestCase):
 
 
 class UiJobNameTests(unittest.TestCase):
-    """The four job names, which have to line up in three places at once.
+    """The three job names, which have to line up in three places at once.
 
     They are fields of `UiJobs`, checkboxes on the window, and sub-commands of
     the CLI, and nothing but a name connects the three. A rename that reaches
@@ -6676,74 +6623,42 @@ class UiJobNameTests(unittest.TestCase):
         assert order.mock_calls[:2] == [call.world("day"), call.task("log")]
 
 
-def _menu(price: int, gold: int = 887) -> WallMenu:
-    """A wall menu whose buttons sit where a row of this width puts them."""
-    return WallMenu(gold=(gold, 700), elixir=(gold + 176, 700), add=(gold - 176, 700), price=price)
+def _menu_prices(name: str, *centres: int) -> list[int | None]:
+    """The prices on a menu row's buttons centred here, read with the ink `panel_wall_menu` uses.
+
+    These frames are the menu row under a selected building, where every
+    threshold `_price_mask` keeps was measured; the box is where that row writes
+    a price beside its button's middle.
+    """
+    image = Image.open(FRAMES / name).convert("RGB")
+    return [
+        digits_from(
+            building_parser._price_mask(image.crop((centre - 66, 634, centre + 52, 666))),
+            PRICE_TOLERANCE,
+            floor=PRICE_ROWS,
+        )
+        for centre in centres
+    ]
 
 
-def _stock() -> VillageStock:
-    """Storage bars that read, which is how every loop here tests for the village."""
-    return VillageStock(gold=9_000_000, elixir=9_000_000, dark=100_000)
-
-
-class WallMenuTests(unittest.TestCase):
-    """Live building menus, masked down to the button row the parser reads.
+class MenuPriceTests(unittest.TestCase):
+    """Live building menus, masked down to the prices on their button row.
 
     Nothing here is a picture of a wall, and that is the point: every level
     repaints one, so what is read is the UI the game paints on top of the village.
     """
 
-    def test_a_wall_is_the_one_building_priced_in_both_resources(self) -> None:
-        menu = wall_menu((FRAMES / "wall_menu_plain.png").read_bytes())
-        assert menu is not None
-        assert menu.price == 1_600_000
-        assert (menu.gold, menu.elixir) == ((887, 700), (1063, 700))
-        # 升級更多 on this menu, 新增城牆 on a batch: the same place in the row
-        # and the same effect, which is what saves the loop from telling the two
-        # menus apart. The wall ring sits on the far side of the elixir button
-        # and is never worked out at all, so it cannot be tapped by mistake.
-        assert menu.add == (711, 700)
-
-    def test_a_building_that_takes_one_resource_is_not_a_wall(self) -> None:
-        """A dark elixir drill: one price, one icon, and so no wall menu here."""
-        assert wall_menu((FRAMES / "wall_menu_elixir_only.png").read_bytes()) is None
-
-    def test_the_button_row_is_located_rather_than_written_down(self) -> None:
-        """A batch with under ten walls left to add loses 新增城牆+10.
-
-        The row is laid out from the middle of the screen outwards, so losing one
-        button moves every other button half a pitch. Written down, the loop
-        would be tapping 升級 where 聖水 now is.
-        """
-        menu = wall_menu((FRAMES / "wall_menu_short_row.png").read_bytes())
-        assert menu is not None
-        assert menu.price == 4_800_000
-        assert (menu.gold, menu.elixir, menu.add) == ((799, 700), (975, 700), (623, 700))
-
     def test_a_price_the_village_cannot_afford_is_still_read(self) -> None:
-        """The game writes it in red, and red is not a reason to stop reading it.
-
-        The loop sizes its own batch, so it needs the number rather than the
-        warning; a price that came back as None here would have the whole menu
-        read as "not a wall".
-        """
-        menu = wall_menu((FRAMES / "wall_menu_unaffordable.png").read_bytes())
-        assert menu is not None
-        assert menu.price == 11_200_000
+        """The game writes it in red, and red is not a reason to stop reading it."""
+        assert _menu_prices("wall_menu_unaffordable.png", 886, 1063) == [11_200_000] * 2
 
     def test_a_small_white_five_is_not_read_as_a_nine(self) -> None:
         """A batch of three affordable in gold only: white beside red, one price.
 
         Read as pure white alone, the gold price lost the grey edge of each 5 and
-        came back 29 900 000, so the two buttons disagreed and the batch was not
-        taken for a wall.
+        came back 29 900 000, so the two buttons disagreed.
         """
-        frame = (FRAMES / "wall_menu_white_five.png").read_bytes()
-        prices = [(button.resource, button.price) for button in upgrade_buttons(frame)]
-        assert prices == [("gold", 25_500_000), ("elixir", 25_500_000)]
-        menu = wall_menu(frame)
-        assert menu is not None
-        assert menu.price == 25_500_000
+        assert _menu_prices("wall_menu_white_five.png", 975, 1152) == [25_500_000] * 2
 
     def test_two_white_prices_cannot_agree_on_the_same_wrong_five(self) -> None:
         """Both buttons white, so both lost the same edge and read 8 900 000.
@@ -6752,29 +6667,18 @@ class WallMenuTests(unittest.TestCase):
         is what made this the dangerous half: the menu was taken for a wall at
         the wrong price.
         """
-        menu = wall_menu((FRAMES / "wall_menu_white_seven_figures.png").read_bytes())
-        assert menu is not None
-        assert menu.price == 8_500_000
+        assert _menu_prices("wall_menu_white_seven_figures.png", 975, 1152) == [8_500_000] * 2
 
     def test_the_plates_sheen_under_a_price_is_not_ink(self) -> None:
         """A bright neutral streak under 24 000 000 joined the 2 and the 4 into one span.
 
-        The elixir price stopped reading and the menu was not taken for a wall.
         The streak has no pure white in it, which every digit has at its core.
         """
-        frame = (FRAMES / "wall_menu_plate_sheen.png").read_bytes()
-        prices = [(button.resource, button.price) for button in upgrade_buttons(frame)]
-        assert prices == [("gold", 24_000_000), ("elixir", 24_000_000)]
-        menu = wall_menu(frame)
-        assert menu is not None
-        assert menu.price == 24_000_000
+        assert _menu_prices("wall_menu_plate_sheen.png", 975, 1152) == [24_000_000] * 2
 
     def test_a_row_still_lit_from_the_tap_keeps_its_plate_out_of_the_digits(self) -> None:
         """Just after 新增城牆 the plate above 16 000 000 is near neutral and touches the 6."""
-        frame = (FRAMES / "wall_menu_lit_row.png").read_bytes()
-        menu = wall_menu(frame)
-        assert menu is not None
-        assert menu.price == 16_000_000
+        assert _menu_prices("wall_menu_lit_row.png", 975, 1152) == [16_000_000] * 2
 
     def test_a_menu_on_its_own_is_not_a_dialog(self) -> None:
         assert game_dialog((FRAMES / "wall_menu_plain.png").read_bytes()) is None
@@ -6881,12 +6785,12 @@ class HomeTests(unittest.TestCase):
         assert stock.call_count == 1
 
     def test_a_panel_is_backed_out_of_at_once_once_a_village_has_read(self) -> None:
-        """`_sweep` opens one on most of its taps, and the launch patience is not owed to it.
+        """The launch patience is not owed to a panel a tap opened.
 
-        Measured over three live wall runs, the blanket patience put 26, 26 and
-        34 seconds between the tap that opened a building panel and the first
-        `back` — 50 to 80 seconds of a 150 second run, waiting out a launch that
-        had finished before the run started.
+        Measured over three live runs of the old wall loop, the blanket patience
+        put 26, 26 and 34 seconds between the tap that opened a building panel
+        and the first `back` — 50 to 80 seconds of a 150 second run, waiting out
+        a launch that had finished before the run started.
         """
         held = VillageStock(gold=1, elixir=1, dark=1)
         run = self._runner()
@@ -7072,16 +6976,12 @@ class HomeTests(unittest.TestCase):
         assert run._lost() == "no_village"
 
     def test_every_home_village_command_names_the_builder_base(self) -> None:
-        """Three entry points share `_home`, and each carries the reason into its own report."""
+        """Both entry points share `_home`, and each carries the reason into its own report."""
         where = {
             "adb": AdbController(endpoint=AdbEndpoint(port=16384)),
             "display": DisplayTarget(logical_id="1", physical_id="2"),
         }
-        entries = [
-            WallRunner(**where).run,
-            UpkeepRunner(**where).collect,
-            ClanRunner(**where).donate,
-        ]
+        entries = [UpkeepRunner(**where).collect, ClanRunner(**where).donate]
         with (
             patch.object(shared.time, "sleep"),
             patch.object(shared.ScreenRunner, "_frame", return_value=b""),
@@ -7145,399 +7045,6 @@ class HomeTests(unittest.TestCase):
         restarted.assert_not_called()
         back.assert_not_called()
         tapped.assert_not_called()
-
-
-class WallOutcomeTests(unittest.TestCase):
-    """Why a wall run stopped, which was a sentence and is now a name.
-
-    **Three of these used to be told apart by their wording**, and a project
-    skill instructed its reader to do exactly that — so nothing here was
-    guarding the distinction a rewording would have broken.
-    """
-
-    HELD = VillageStock(gold=9_000_000, elixir=9_000_000, dark=100_000)
-
-    def _run(
-        self,
-        *,
-        homes: list[VillageStock | None],
-        candidates: list[WallCandidate] | None = None,
-        bought: list[WallUpgrade | None] | None = None,
-        builders: tuple[int, int] | None = (1, 5),
-        stop_after: int | None = None,
-    ) -> WallReport:
-        found = candidates if candidates is not None else [WallCandidate(point=(1, 1), price=100)]
-        # A stop that arrives after that many readings, so 0 is one asked for
-        # before the run and None is one nobody asked for. Anything above 0 is
-        # the only way to reach the exit where a run was stopped *and* had
-        # already bought something.
-        asked = iter(range(10_000))
-        runner = WallRunner(
-            adb=AdbController(endpoint=AdbEndpoint(port=16384)),
-            display=DisplayTarget(logical_id="1", physical_id="2"),
-            should_stop=lambda: stop_after is not None and next(asked) >= stop_after,
-        )
-        with (
-            patch.object(walls.time, "sleep"),
-            patch.object(runner, "_frame", return_value=b""),
-            patch.object(runner, "_home", side_effect=homes),
-            patch.object(runner, "_candidates", return_value=found),
-            patch.object(runner, "_buy", side_effect=bought or [None]),
-            patch.object(walls, "free_builders", return_value=builders),
-            patch.object(walls, "wall_menu", return_value=None),
-        ):
-            return runner.run()
-
-    def test_a_village_nobody_could_get_back_to(self) -> None:
-        assert self._run(homes=[None]).outcome == "no_village"
-
-    def test_a_sweep_that_found_no_walls(self) -> None:
-        assert self._run(homes=[self.HELD], candidates=[]).outcome == "no_walls_found"
-
-    def test_a_stop_before_the_scan_is_not_a_village_without_walls(self) -> None:
-        """The pair a reader has already misread once, in the expensive direction."""
-        assert self._run(homes=[self.HELD], candidates=[], stop_after=0).outcome == "stopped"
-
-    def test_a_stop_after_the_scan_is_not_a_village_the_game_refused(self) -> None:
-        """**The exit nothing was guarding**, and the one a stop normally takes.
-
-        A stop that arrives once the walls are priced leaves the loop's own
-        condition to end the run, so nothing on the way out names a reason —
-        and read as `nothing_bought` it becomes the skills' instruction to stop
-        running `walls` for the rest of the trip, on a village that was simply
-        asked to stand down.
-        """
-        assert self._run(homes=[self.HELD], stop_after=0).outcome == "stopped"
-
-    def test_a_stop_that_arrives_after_a_batch_still_keeps_what_it_bought(self) -> None:
-        upgrade = WallUpgrade(unit=100, count=2, resource="gold")
-        report = self._run(homes=[self.HELD] * 3, bought=[upgrade, None], stop_after=1)
-        assert (report.outcome, report.walls) == ("stopped", 2)
-
-    def test_storages_that_stopped_reading_between_batches(self) -> None:
-        assert self._run(homes=[self.HELD, None]).outcome == "no_stock"
-
-    def test_a_purse_that_will_not_stretch_to_the_cheapest_batch(self) -> None:
-        poor = VillageStock(gold=50, elixir=50, dark=0)
-        assert self._run(homes=[poor, poor]).outcome == "cannot_afford"
-
-    def test_every_builder_busy_is_the_game_refusing_rather_than_the_purse(self) -> None:
-        """Measured at 0/5: one wall at 1 600 000 refused exactly as eight at 12 800 000."""
-        assert self._run(homes=[self.HELD, self.HELD], builders=(0, 5)).outcome == "builders_busy"
-
-    def test_a_batch_the_game_would_not_sell_with_builders_to_spare(self) -> None:
-        """**The one the loop cannot explain**, and the one read as "walls are done".
-
-        Every candidate was tried and none was bought, with a builder standing
-        idle — so the refusal is neither the purse nor the workmen, and the
-        likeliest reason is the town hall capping every wall found. That is a
-        decision for the player, which is why it may not read like a failure to
-        retry.
-        """
-        assert self._run(homes=[self.HELD, self.HELD]).outcome == "nothing_bought"
-
-    def test_a_batch_that_went_through(self) -> None:
-        upgrade = WallUpgrade(unit=100, count=2, resource="gold")
-        report = self._run(homes=[self.HELD, self.HELD, self.HELD], bought=[upgrade, None])
-        assert (report.outcome, report.walls) == ("bought", 2)
-
-
-class WallRunnerTests(unittest.TestCase):
-    """The arithmetic between the taps, with the emulator taken out."""
-
-    def _runner(self, **fields: object) -> WallRunner:
-        return WallRunner(
-            adb=AdbController(endpoint=AdbEndpoint(port=16384)),
-            display=DisplayTarget(logical_id="1", physical_id="2"),
-            **fields,
-        )
-
-    def _sized(
-        self, runner: WallRunner, opening: WallMenu, answers: list[WallMenu], purse: int
-    ) -> tuple[WallBatch | None, MagicMock]:
-        with (
-            patch.object(walls.time, "sleep"),
-            patch.object(runner, "_after_tap", return_value=b""),
-            patch.object(runner, "_frame", return_value=b""),
-            patch.object(walls, "wall_menu", side_effect=answers),
-            patch.object(AdbController, "tap_many") as tapped,
-        ):
-            return runner._sized(opening, purse), tapped
-
-    def test_several_named_walls_are_compared_rather_than_the_first_one_taken(self) -> None:
-        """One named wall is not a choice, and `_pick` exists to make one.
-
-        `--at` used to take a single spot and hand `_pick` a price of zero for
-        it, which it then dutifully chose. Measured live, that paid 9 000 000
-        for a wall while 4 000 000 ones stood in the same village — the sweep
-        was skipped, and so was the comparison that gives the loot its value.
-
-        Finding walls is the half a pair of eyes does in one look and the sweep
-        does by tapping a grid and hoping; comparing what they ask is the half
-        the loop does better.
-        """
-        runner = self._runner(at=[(300, 300), (400, 300), (600, 300)])
-        menus = {
-            (300, 300): WallMenu(price=9000000, gold=(0, 0), elixir=(0, 0), add=(0, 0)),
-            (400, 300): WallMenu(price=4000000, gold=(0, 0), elixir=(0, 0), add=(0, 0)),
-            (600, 300): None,
-        }
-        tapped: list[tuple[int, int]] = []
-
-        def after(point: tuple[int, int], label: str) -> bytes:
-            tapped.append(point)
-            return b""
-
-        with (
-            patch.object(WallRunner, "_after_tap", side_effect=after),
-            patch.object(shared, "read_stock", return_value=_stock()),
-            patch.object(walls, "wall_menu", side_effect=lambda _png: menus[tapped[-1]]),
-        ):
-            found = runner._candidates()
-        # Every named spot is read, and the one that opens nothing is dropped
-        # rather than guessed at: it was found by eye on a frame the game has
-        # since moved.
-        assert tapped == [(300, 300), (400, 300), (600, 300)]
-        assert [(w.point, w.price) for w in found] == [
-            ((300, 300), 9000000),
-            ((400, 300), 4000000),
-        ]
-        # And the cheapest is what gets bought, which is the lowest-level wall.
-        assert runner._pick({w.point: w.price for w in found}) == (400, 300)
-
-    def test_a_spot_that_opened_a_building_is_backed_out_of_before_the_next_tap(self) -> None:
-        """Every spot here is a raw village coordinate, so one that misses a wall
-        opens whatever building is standing there — and a full-screen panel
-        swallows every tap after it. That guard was `_neighbours`'s alone while
-        the only other caller was a hand-named spot; a finder that answers in
-        guesses makes the miss the ordinary case rather than the corner.
-        """
-        runner = self._runner(at=[(300, 300), (400, 300)])
-        # The first tap opened a barracks: no storage bars, so no village.
-        stocks = iter([None, _stock()])
-        with (
-            patch.object(WallRunner, "_after_tap", return_value=b""),
-            patch.object(shared, "read_stock", side_effect=lambda _png: next(stocks)),
-            patch.object(walls, "wall_menu", return_value=_menu(1_600_000)),
-            patch.object(runner, "_home", return_value=_stock()) as home,
-        ):
-            found = runner._candidates()
-        # Backed out once, and the wall behind the panel still gets read.
-        assert home.call_count == 1
-        assert [w.point for w in found] == [(400, 300)]
-
-    def test_gemini_spots_are_priced_off_their_own_menus(self) -> None:
-        """The finder answers in guesses, and every guess is opened and priced
-        before it can be spent on. That verification is the whole reason an
-        imperfect finder is usable: a wrong point costs one tap and one capture,
-        so asking for more spots than the run needs is the right shape.
-        """
-        runner = self._runner(ai=GeminiClient(api_key="not-a-real-key", settings=GeminiSetting()))
-        answer = ScreenSpots(
-            spots=[ScreenPoint(x_pct=25, y_pct=30), ScreenPoint(x_pct=50, y_pct=40)]
-        )
-        menus = iter([None, _menu(1_600_000)])
-        with (
-            patch.object(GeminiClient, "generate_structured", return_value=answer),
-            patch.object(WallRunner, "_after_tap", return_value=b""),
-            patch.object(WallRunner, "_frame", return_value=b""),
-            patch.object(shared, "read_stock", return_value=_stock()),
-            patch.object(walls, "wall_menu", side_effect=lambda _png: next(menus)),
-            patch.object(runner, "_scan") as scan,
-        ):
-            found = runner._candidates()
-        # The percentages become pixels the same way every other Gemini answer
-        # does, the miss is dropped, and the sweep is never reached because one
-        # spot did open a wall.
-        assert [w.point for w in found] == [(800, 360)]
-        scan.assert_not_called()
-
-    def test_a_village_gemini_could_not_place_falls_through_to_the_sweep(self) -> None:
-        """A village whose walls nobody could name still has walls, and the
-        alternative to two and a half minutes of grid taps is a run that buys
-        nothing at all.
-        """
-        runner = self._runner(ai=GeminiClient(api_key="not-a-real-key", settings=GeminiSetting()))
-        with (
-            patch.object(GeminiClient, "generate_structured", side_effect=RuntimeError("no key")),
-            patch.object(WallRunner, "_frame", return_value=b""),
-            patch.object(runner, "_scan", return_value=[]) as scan,
-        ):
-            assert runner._candidates() == []
-        scan.assert_called_once()
-
-    def test_a_stopped_run_starts_no_further_batch(self) -> None:
-        """Between batches is the only safe place: a batch is a menu, a
-        confirmation and a storage read, and leaving mid-way strands a dialog
-        over the village. Whatever it already bought stays bought, because a
-        wall upgrades the moment it is paid for and there is nothing to undo.
-        """
-        runner = self._runner(at=[(500, 300)], should_stop=lambda: True)
-        with patch.object(
-            runner, "_home", return_value=VillageStock(gold=99999999, elixir=99999999, dark=1)
-        ):
-            report = runner.run()
-        assert not report.upgrades
-
-    def test_a_stop_during_the_scan_does_not_wait_for_the_whole_sweep(self) -> None:
-        """The scan is the longest unguarded stretch of a run not told where to
-        start, and it is the opening of every run without `--at`: a grid tap
-        costs a settle and a capture, and each wall it lands on costs four more.
-        Leaving here is safe in a way that leaving a batch is not, because the
-        sweep already backs out of whatever each tap opened.
-        """
-        runner = self._runner(should_stop=lambda: True)
-        swept = iter([((580, 140), b""), ((740, 140), b"")])
-        with (
-            patch.object(walls.time, "sleep"),
-            patch.object(runner, "_sweep", return_value=swept),
-            patch.object(walls, "wall_menu", return_value=_menu(1_600_000)),
-        ):
-            found = runner._scan()
-        assert not found
-        # The second point is still sitting there, so the sweep was cut short
-        # rather than walked to the end and thrown away.
-        assert next(swept, None) is not None
-
-    def test_the_scan_looks_beside_each_wall_the_sweep_lands_on(self) -> None:
-        """Walls sit 45 px apart and the sweep steps 160, so it passes over three
-        of them between samples — and a section is not one level. Measured on a
-        live village the strip held 32 walls at 1 600 000 and three at 4 000 000,
-        the sweep's six samples all landed on the 4 000 000 ones, which are the
-        level the town hall caps, and the run bought nothing at all.
-        """
-        runner = self._runner()
-        # The sweep's own sample, then the four taps around it: one wall three
-        # levels lower, and three misses.
-        answers = [_menu(4_000_000), _menu(1_600_000), None, None, None]
-        with (
-            patch.object(walls.time, "sleep"),
-            patch.object(runner, "_after_tap", return_value=b""),
-            patch.object(runner, "_sweep", return_value=iter([((580, 140), b"")])),
-            patch.object(
-                shared, "read_stock", return_value=VillageStock(gold=0, elixir=0, dark=0)
-            ),
-            patch.object(walls, "wall_menu", side_effect=answers),
-        ):
-            found = runner._scan()
-        assert min(wall.price for wall in found) == 1_600_000
-        assert len(found) == 2
-
-    def test_a_neighbour_tap_that_opened_a_screen_is_backed_out_of(self) -> None:
-        """The sweep reads the storages after every one of its own taps for this
-        reason, and the neighbours are the first taps in this loop that go in on
-        raw village coordinates. A neighbour can be a barracks as easily as a
-        wall, and a tap that opened a full screen would leave the next three
-        landing somewhere inside it.
-        """
-        runner = self._runner()
-        held = VillageStock(gold=0, elixir=0, dark=0)
-        with (
-            patch.object(walls.time, "sleep"),
-            patch.object(runner, "_after_tap", return_value=b""),
-            patch.object(runner, "_sweep", return_value=iter([((580, 140), b"")])),
-            # The first neighbour opened a full screen; the rest are the village.
-            patch.object(shared, "read_stock", side_effect=[None, held, held, held]),
-            patch.object(
-                walls, "wall_menu", side_effect=[_menu(4_000_000), _menu(1_600_000), None, None]
-            ),
-            patch.object(runner, "_home", return_value=held) as home,
-        ):
-            found = runner._scan()
-        home.assert_called_once()
-        assert min(wall.price for wall in found) == 1_600_000
-
-    def test_a_price_that_does_not_move_means_the_batch_holds_one_wall(self) -> None:
-        """升級更多 makes a batch of the wall already selected, so it costs the same.
-
-        That is the whole of telling a plain menu from a batch: the loop taps the
-        same button either way and reads the answer, rather than trying to
-        recognise which of the two rows it is looking at.
-        """
-        runner = self._runner()
-        batch, tapped = self._sized(
-            runner, _menu(1_600_000), [_menu(1_600_000), _menu(4_800_000)], purse=5_000_000
-        )
-        assert batch is not None
-        assert (batch.unit, batch.count) == (1_600_000, 3)
-        assert len(tapped.call_args.args[0]) == 2
-
-    def test_the_unit_price_is_what_one_more_wall_adds(self) -> None:
-        runner = self._runner()
-        batch, tapped = self._sized(
-            runner, _menu(4_800_000), [_menu(6_400_000), _menu(9_600_000)], purse=10_000_000
-        )
-        assert batch is not None
-        assert (batch.unit, batch.count) == (1_600_000, 6)
-        # Four walls in the batch already, six affordable: two more taps.
-        assert len(tapped.call_args.args[0]) == 2
-
-    def test_a_batch_the_game_would_not_grow_is_reported_at_its_real_size(self) -> None:
-        """It stops at the last wall of that level and says so with a notice."""
-        runner = self._runner()
-        batch, _ = self._sized(
-            runner, _menu(1_600_000), [_menu(3_200_000), _menu(4_800_000)], purse=16_000_000
-        )
-        assert batch is not None
-        assert batch.count == 3
-
-    def test_a_batch_already_dearer_than_the_purse_is_left_alone(self) -> None:
-        """Growing it is the only thing this can do, and it is already too big."""
-        runner = self._runner()
-        batch, tapped = self._sized(
-            runner, _menu(16_000_000), [_menu(17_600_000)], purse=5_000_000
-        )
-        assert batch is None
-        tapped.assert_not_called()
-
-    def test_a_storage_that_never_moved_is_not_an_upgrade(self) -> None:
-        """Confirming the dialog is not proof: a tap the game swallows raises nothing.
-
-        Without this the loop counts walls it never bought, and the report says
-        the run succeeded.
-        """
-        runner = self._runner()
-        stock = VillageStock(gold=10_000_000, elixir=1_000_000, dark=0)
-        with (
-            patch.object(walls.time, "sleep"),
-            patch.object(runner, "_after_tap", return_value=b""),
-            patch.object(runner, "_frame", return_value=b""),
-            patch.object(runner, "_tap"),
-            patch.object(runner, "_confirm", return_value=True),
-            patch.object(
-                runner,
-                "_sized",
-                return_value=WallBatch(menu=_menu(3_200_000), unit=1_600_000, count=2),
-            ),
-            patch.object(walls, "wall_menu", return_value=_menu(1_600_000)),
-            patch.object(runner, "_home", return_value=stock),
-        ):
-            assert runner._buy((100, 100), stock) is None
-
-    def test_a_batch_that_was_paid_for_stops_being_the_cheapest(self) -> None:
-        """The next round moves to another wall rather than pushing this one on.
-
-        A batch left selected shows its next level's price, which is dearer than
-        every wall still at the old level — so re-reading it is all it takes to
-        keep one section of the village from running away from the rest.
-        """
-        runner = self._runner(rounds=2)
-        stock = VillageStock(gold=99_000_000, elixir=0, dark=0)
-        walls_found = [
-            WallCandidate(point=(100, 100), price=1_600_000),
-            WallCandidate(point=(200, 200), price=1_600_000),
-        ]
-        bought = WallUpgrade(unit=1_600_000, count=2, resource="gold")
-        with (
-            patch.object(runner, "_home", return_value=stock),
-            patch.object(runner, "_scan", return_value=walls_found),
-            patch.object(runner, "_frame", return_value=b""),
-            patch.object(runner, "_buy", return_value=bought) as buy,
-            patch.object(walls, "wall_menu", return_value=_menu(14_400_000)),
-        ):
-            report = runner.run()
-        assert [call.args[0] for call in buy.call_args_list] == [(100, 100), (200, 200)]
-        assert report.walls == 4
 
 
 class HomeHudTests(unittest.TestCase):
@@ -7727,20 +7234,6 @@ class HomeHudTests(unittest.TestCase):
 class BuildingUpgradeTests(unittest.TestCase):
     """Menus for the buildings that are not walls."""
 
-    def test_a_single_resource_menu_offers_one_upgrade(self) -> None:
-        offers = upgrade_buttons((FRAMES / "menu_with_gem_plate.png").read_bytes())
-        assert [(offer.resource, offer.price) for offer in offers] == [("elixir", 60_000)]
-
-    def test_a_button_on_a_blue_plate_is_never_an_upgrade(self) -> None:
-        """加速所有同類項目 spends a magic item and carries a potion the elixir test
-        answers outright, so without the plate check this menu reports an
-        "upgrade costing 1 elixir" and a loop taps the item away. The wall ring
-        is the same button in a different hat.
-        """
-        frame = (FRAMES / "menu_with_gem_plate.png").read_bytes()
-        assert len(upgrade_buttons(frame)) == 1
-        assert wall_menu(frame) is None
-
     def test_an_eight_figure_price_is_drawn_too_short_for_the_loot_panel_floor(self) -> None:
         """A price is shrunk to fit its button, so how tall a digit is depends on
         how many of them there are: five figures are drawn 16 px tall, seven 13
@@ -7749,21 +7242,7 @@ class BuildingUpgradeTests(unittest.TestCase):
         reported as the price, which had 英雄殿堂's own 10 400 000 reading as 14
         and left the old upgrade loop unable to see any eight-figure upgrade at all.
         """
-        offers = upgrade_buttons((FRAMES / "hero_hall_menu.png").read_bytes())
-        assert [(offer.resource, offer.price) for offer in offers] == [("elixir", 10_400_000)]
-
-    def test_a_shorter_floor_does_not_invent_prices_on_the_menus_that_already_read(self) -> None:
-        """Swept over 548 recorded frames, the lower floor changed four readings
-        and every one of them was this same eight-figure price. Nothing that read
-        before stopped reading, and nothing unreadable became a number.
-        """
-        plain = upgrade_buttons((FRAMES / "wall_menu_plain.png").read_bytes())
-        assert [(offer.resource, offer.price) for offer in plain] == [
-            ("gold", 1_600_000),
-            ("elixir", 1_600_000),
-        ]
-        assert upgrade_buttons((FRAMES / "home_storages.png").read_bytes()) == []
-        assert upgrade_buttons((FRAMES / "army_screen.png").read_bytes()) == []
+        assert _menu_prices("hero_hall_menu.png", 975) == [10_400_000]
 
     def test_a_price_the_reader_only_half_resolved_is_not_a_shorter_price(self) -> None:
         """`PRICE_TOLERANCE` was defined and never passed, so a row this reader
@@ -7854,58 +7333,6 @@ class PinchTests(unittest.TestCase):
         scale it started at.
         """
         assert self._events().count((EV_SYN, SYN_REPORT, 0)) == 4
-
-
-class TargetFinderTests(unittest.TestCase):
-    """The finder the wall loop asks first, with Gemini and the emulator taken out."""
-
-    def _runner(self, **fields: object) -> WallRunner:
-        return WallRunner(
-            adb=AdbController(endpoint=AdbEndpoint(port=16384)),
-            display=DisplayTarget(logical_id="1", physical_id="2"),
-            **fields,
-        )
-
-    def _answer(self, *points: tuple[float, float]) -> ScreenSpots:
-        return ScreenSpots(spots=[ScreenPoint(x_pct=x, y_pct=y) for x, y in points])
-
-    def test_a_point_in_the_button_row_is_dropped_rather_than_tapped(self) -> None:
-        """Below `SWEEP_LIMIT` is the row of buttons the last selection left on
-        screen, so a tap there presses one of them instead of choosing something
-        on the map.
-
-        Measured live, four of twelve answers landed in it and each opened
-        whatever that row happened to be offering. Telling the model about the
-        floor works — 0 of 14 on the next run — but the prompt is the
-        optimisation and this is the guarantee.
-        """
-        runner = self._runner(ai=GeminiClient(api_key="not-a-real-key", settings=GeminiSetting()))
-        # 47% of 900 is 423, which is on the map; 78% is 702, which is not.
-        answer = self._answer((50, 47), (47, 78), (60, 30))
-        with (
-            patch.object(GeminiClient, "generate_structured", return_value=answer),
-            patch.object(WallRunner, "_frame", return_value=b""),
-        ):
-            spots = runner._spotted("城牆", "散開", 3)
-        assert spots == [(800, 423), (960, 270)]
-
-    def test_a_point_on_the_games_own_buttons_is_dropped_too(self) -> None:
-        """Here as well as in `_opened`, so the answer a caller gets back is already clean."""
-        runner = self._runner(ai=GeminiClient(api_key="not-a-real-key", settings=GeminiSetting()))
-        # (10%, 11%) is the avatar block, (82%, 20%) the storage bars, (94%, 50%) 商店.
-        answer = self._answer((10, 11), (82, 20), (94, 50), (60, 30))
-        with (
-            patch.object(GeminiClient, "generate_structured", return_value=answer),
-            patch.object(WallRunner, "_frame", return_value=b""),
-        ):
-            spots = runner._spotted("城牆", "散開", 3)
-        assert spots == [(960, 270)]
-
-    def test_no_client_answers_nothing_so_the_sweep_still_runs(self) -> None:
-        """Without a key every loop here works exactly as it did before this
-        existed, which is what keeps the sweep underneath rather than beside it.
-        """
-        assert self._runner()._spotted("城牆", "散開", 12) == []
 
 
 class ClanTests(unittest.TestCase):
