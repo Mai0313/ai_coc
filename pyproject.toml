@@ -12,6 +12,7 @@ addopts = [
     "--junitxml=./.github/reports/.coverage.pytest.xml",
     "--cache-clear",
     "--numprocesses=auto",
+    "--maxprocesses=8",
     "--no-header",
     # Below the template's 80 because `ui/main_window.py` is the untested PyQt
     # shell, a seventh of the statements; everything under it sits around 90%.
