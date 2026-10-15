@@ -6,7 +6,7 @@ hides both. Keeping them here means a change to what the model is told shows up
 as a diff to one readable file.
 
 Each file is a `str.format` template, so a literal brace in a prompt has to be
-doubled. `PROMPTS` reads them once at import; `render` fills one in.
+doubled. `PROMPTS` reads them once at import.
 """
 
 from __future__ import annotations
@@ -28,8 +28,3 @@ if not PROMPTS:
     # here beats a `KeyError` on a dictionary lookup three modules away: what it
     # means in practice is a PyInstaller build whose `--add-data` line is missing.
     raise RuntimeError(f"找不到任何 prompt 檔案：{PROMPT_DIR}（打包時可能漏掉 --add-data）")
-
-
-def render(name: str, **values: object) -> str:
-    """One prompt with its placeholders filled in."""
-    return PROMPTS[name].format(**values)

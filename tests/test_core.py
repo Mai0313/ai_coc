@@ -62,7 +62,7 @@ from ai_coc.models import (
 )
 from ai_coc.parsers import scout as scout_parser
 from ai_coc.parsers import building as building_parser
-from ai_coc.prompts import PROMPTS, PROMPT_DIR, render
+from ai_coc.prompts import PROMPTS, PROMPT_DIR
 from ai_coc.ui.clan import ClanRunner
 from ai_coc.ui.attack import (
     SPEED_UP,
@@ -3144,7 +3144,7 @@ class PromptTests(unittest.TestCase):
         assert set(PROMPTS) == {"attack_plan", "night_plan"}
 
     def test_a_prompt_fills_in_its_placeholders(self) -> None:
-        filled = render("attack_plan", rage_count=4, freeze_count=2)
+        filled = PROMPTS["attack_plan"].format(rage_count=4, freeze_count=2)
         assert "剛好 4 個" in filled
         assert "{" not in filled
 
