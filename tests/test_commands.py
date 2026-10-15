@@ -800,6 +800,9 @@ class UpkeepLineTests(unittest.TestCase):
                 "refused_by_game": "已經按取消",
                 "sheet_stayed": "視窗還開著",
                 "unexpected": "認不得的畫面",
+                "no_wall_menu": "沒有開著的城牆選單",
+                "sheet_disagrees": "跟按鈕對不上",
+                "no_confirmation": "沒有跳出確認視窗或對話框",
             },
             get_args(ConfirmOutcome),
         )
@@ -2020,6 +2023,81 @@ class PressAndConfirmTests(unittest.TestCase):
             ["sheet_hero_dark.png", "army_screen.png"], lambda d: commands.confirm(10800, d)
         )
         adb.tap.assert_called_once()
+        assert report.outcome == "unexpected"
+
+    def test_a_walls_batch_is_paid_through_its_button_and_then_its_dialog(self) -> None:
+        adb, report = self._run(
+            ["night_wall_batch.png", "night_wall_dialog.png", "night_wall_menu.png"],
+            lambda d: commands.confirm(1600000, d, "elixir"),
+        )
+        assert [call.args for call in adb.tap.call_args_list] == [
+            (671, 790, DISPLAY),
+            (973, 560, DISPLAY),
+        ]
+        assert report.outcome == "confirmed"
+        assert report.wall is not None
+        assert (report.wall.price, report.wall.resource) == (1600000, "elixir")
+        assert report.offer is None
+
+    def test_a_single_wall_is_paid_through_its_button_and_then_its_sheet(self) -> None:
+        adb, report = self._run(
+            ["night_wall_menu.png", "night_sheet_wall.png", "night_wall_menu.png"],
+            lambda d: commands.confirm(800000, d, "elixir"),
+        )
+        assert [call.args for call in adb.tap.call_args_list] == [
+            (671, 790, DISPLAY),
+            (805, 789, DISPLAY),
+        ]
+        assert report.outcome == "confirmed"
+        assert report.offer is not None
+        assert report.offer.price == 800000
+
+    def test_a_wall_button_with_another_price_is_not_pressed(self) -> None:
+        adb, report = self._run(
+            ["night_wall_menu.png"], lambda d: commands.confirm(1600000, d, "elixir")
+        )
+        adb.tap.assert_not_called()
+        assert report.outcome == "price_mismatch"
+        assert report.wall is not None
+
+    def test_a_wall_button_written_in_red_is_not_pressed(self) -> None:
+        adb, report = self._run(
+            ["night_wall_batch.png"], lambda d: commands.confirm(1600000, d, "gold")
+        )
+        adb.tap.assert_not_called()
+        assert report.outcome == "cannot_afford"
+
+    def test_no_wall_menu_or_one_under_a_standing_dialog_presses_nothing(self) -> None:
+        """The row-move mode, a dialog already standing, a panel with no wall selected."""
+        for frame in ("night_wall_row.png", "night_wall_dialog.png", "hud_night_build_panel.png"):
+            adb, report = self._run([frame], lambda d: commands.confirm(1600000, d, "elixir"))
+            adb.tap.assert_not_called()
+            assert report.outcome == "no_wall_menu", frame
+
+    def test_a_sheet_that_disagrees_with_the_wall_button_is_left_unpressed(self) -> None:
+        adb, report = self._run(
+            ["night_wall_menu.png", "night_sheet_elixir.png"],
+            lambda d: commands.confirm(800000, d, "elixir"),
+        )
+        adb.tap.assert_called_once_with(671, 790, DISPLAY)
+        assert report.outcome == "sheet_disagrees"
+        assert report.offer is not None
+        assert report.offer.price == 4000
+
+    def test_a_wall_button_that_raises_nothing_says_so(self) -> None:
+        adb, report = self._run(
+            ["night_wall_menu.png"], lambda d: commands.confirm(800000, d, "elixir")
+        )
+        adb.tap.assert_called_once_with(671, 790, DISPLAY)
+        assert report.outcome == "no_confirmation"
+
+    def test_busy_builders_after_a_walls_dialog_are_left_alone(self) -> None:
+        """The game answers 確定 with its gem offer when every builder is busy."""
+        adb, report = self._run(
+            ["night_wall_batch.png", "night_wall_dialog.png", "night_builders_busy.png"],
+            lambda d: commands.confirm(1600000, d, "elixir"),
+        )
+        assert adb.tap.call_count == 2
         assert report.outcome == "unexpected"
 
 

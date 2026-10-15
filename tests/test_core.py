@@ -190,6 +190,7 @@ from ai_coc.parsers.building import (
     game_dialog,
     sheet_offer,
     upgrade_sheet,
+    panel_wall_menu,
     upgrade_buttons,
 )
 from ai_coc.parsers.settings import export_row, window_open, settings_open, more_settings_open
@@ -7671,6 +7672,9 @@ class HomeHudTests(unittest.TestCase):
             "hud_day_lab_panel.png",
             "hud_night_build_panel.png",
             "night_menu_finishing.png",
+            "night_wall_menu.png",
+            "night_wall_batch.png",
+            "night_wall_row.png",
         }
         for path in sorted(FRAMES.glob("*.png")):
             try:
@@ -7949,6 +7953,7 @@ class UpgradeSheetOfferTests(unittest.TestCase):
             ("night_sheet_gold.png", 2000000, "gold"),
             ("night_sheet_elixir.png", 4000, "elixir"),
             ("night_sheet_red.png", 2560000, "elixir"),
+            ("night_sheet_wall.png", 800000, "elixir"),
         ):
             offer = sheet_offer((FRAMES / name).read_bytes())
             assert offer is not None, name
@@ -7975,6 +7980,7 @@ class UpgradeSheetOfferTests(unittest.TestCase):
             "night_sheet_gold.png",
             "night_sheet_elixir.png",
             "night_sheet_red.png",
+            "night_sheet_wall.png",
         }
         opened = {path.name for path in FRAMES.glob("*.png") if sheet_open(path.read_bytes())}
         assert opened == sheets
@@ -7988,6 +7994,42 @@ class UpgradeSheetOfferTests(unittest.TestCase):
         out = io.BytesIO()
         image.save(out, format="PNG")
         assert sheet_offer(out.getvalue()) is None
+
+
+class PanelWallMenuTests(unittest.TestCase):
+    """The wall menu a 城牆 row opens beside the build panel, which `confirm --pay` presses."""
+
+    def test_a_single_wall_and_a_batch_read_both_price_buttons(self) -> None:
+        for name, price, gold_affordable in (
+            ("night_wall_menu.png", 800000, True),
+            # 1 600 000 against 845 208 gold held: the game writes that one red.
+            ("night_wall_batch.png", 1600000, False),
+        ):
+            menu = panel_wall_menu((FRAMES / name).read_bytes())
+            assert menu is not None, name
+            assert (menu.gold.price, menu.elixir.price) == (price, price), name
+            assert (menu.gold.point, menu.elixir.point) == ((497, 790), (671, 790)), name
+            assert (menu.gold.resource, menu.elixir.resource) == ("gold", "elixir"), name
+            assert menu.gold.affordable == gold_affordable, name
+            assert menu.elixir.affordable, name
+
+    def test_no_other_frame_reads_as_one(self) -> None:
+        """The row-move mode 整排選取 opens, the batch's dialog and the wall's sheet included."""
+        menus = {"night_wall_menu.png", "night_wall_batch.png"}
+        for path in sorted(FRAMES.glob("*.png")):
+            try:
+                found = panel_wall_menu(path.read_bytes())
+            except ValueError:
+                continue  # a fixture masked to another size, not a screen
+            assert (found is not None) == (path.name in menus), path.name
+
+    def test_a_blue_plate_under_a_price_button_is_no_menu(self) -> None:
+        """A magic item's button: painted blue at the plate the reader samples, the pair is refused."""
+        image = Image.open(FRAMES / "night_wall_menu.png").convert("RGB")
+        image.paste((40, 90, 240), (497 - 62, 760, 497 - 42, 780))
+        out = io.BytesIO()
+        image.save(out, format="PNG")
+        assert panel_wall_menu(out.getvalue()) is None
 
 
 if __name__ == "__main__":

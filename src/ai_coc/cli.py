@@ -114,7 +114,10 @@ COMMANDS = (
     ("view", "把村莊鏡頭拉遠或拉近"),
     ("tap", "點畫面上一個點，存下點完的畫面；升級確認視窗只能點它的 X"),
     ("swipe", "從一點滑到另一點，例如捲動建造面板，存下滑完的畫面"),
-    ("confirm", "確認鈕上的價格跟 --price 一樣、而且是金幣聖水黑水，才按下確認"),
+    (
+        "confirm",
+        "確認鈕上的價格跟 --price 一樣、而且是金幣聖水黑水，才按下確認；加 --pay 是從城牆選單的升級鈕開始付",
+    ),
     ("export", "從遊戲匯出整個村莊的資料，對上名稱後存起來"),
     ("capture", "連續截圖，存進這次的紀錄資料夾"),
     ("read", "不碰遊戲，把一張截圖交給每個判讀器，印出各自讀到什麼"),
@@ -166,6 +169,11 @@ def _press_flags(
             "--wait", type=float, default=commands.PRESS_SETTLE, metavar="秒", help="等多久再截圖"
         )
     buy.add_argument("--price", type=int, required=True, help="在面板那一列讀到的價格")
+    buy.add_argument(
+        "--pay",
+        choices=("gold", "elixir"),
+        help="城牆:從牆的選單按這種資源的升級鈕,再付跳出來的確認",
+    )
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -367,7 +375,7 @@ def _answer(arguments: argparse.Namespace, run: RunLog) -> BaseModel | str:
         "swipe": lambda: commands.swipe(
             (a.x1, a.y1), (a.x2, a.y2), run.directory / "frames", a.ms, a.wait
         ),
-        "confirm": lambda: commands.confirm(a.price, run.directory / "frames"),
+        "confirm": lambda: commands.confirm(a.price, run.directory / "frames", a.pay),
         "launch": lambda: commands.launch(a.restart, commands.stop_requested, run.no_village),
         "donate": lambda: commands.donate(
             DonateOptions(frame_dir=run.frames, dry_run=a.dry_run, rounds=a.rounds)
