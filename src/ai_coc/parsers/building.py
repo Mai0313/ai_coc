@@ -27,7 +27,15 @@ import itertools
 
 from PIL import Image
 
-from ai_coc.models import World, WallMenu, GameDialog, SheetOffer, SheetResource, UpgradeButton
+from ai_coc.models import (
+    World,
+    WallMenu,
+    GameDialog,
+    SheetOffer,
+    PanelWallMenu,
+    SheetResource,
+    UpgradeButton,
+)
 from ai_coc.parsers.home import build_panel_open
 from ai_coc.parsers.frame import open_frame
 from ai_coc.parsers.scout import read_stock
@@ -178,9 +186,11 @@ def _is_elixir(red: int, green: int, blue: int) -> bool:
     return red > 170 and blue > 170 and green < 130
 
 
-def _icon_centres(image: Image.Image, test: Callable[[int, int, int], bool]) -> list[int]:
+def _icon_centres(
+    image: Image.Image, test: Callable[[int, int, int], bool], rows: tuple[int, int] = ICON_BAND
+) -> list[int]:
     """Where along the button row an icon this test recognises sits."""
-    band = image.crop((0, ICON_BAND[0], image.width, ICON_BAND[1]))
+    band = image.crop((0, rows[0], image.width, rows[1]))
     width, height = band.size
     data = band.tobytes()
     lit = [
@@ -242,9 +252,11 @@ def _price(image: Image.Image, centre: int) -> int | None:
     )
 
 
-def _on_gem_plate(image: Image.Image, centre: int) -> bool:
+def _on_gem_plate(
+    image: Image.Image, centre: int, box: tuple[int, int, int, int] = PLATE_BOX
+) -> bool:
     """Whether the button centred here is one of the blue, gem-priced ones."""
-    left, top, right, bottom = PLATE_BOX
+    left, top, right, bottom = box
     data = image.crop((centre + left, top, centre + right, bottom)).tobytes()
     count = len(data) // 3
     red = sum(data[i] for i in range(0, len(data), 3)) / count
@@ -686,6 +698,92 @@ def sheet_offer(png: bytes) -> SheetOffer | None:
         point=point,
         affordable=reds / (width * height) < SHEET_RED_SHARE,
     )
+
+
+# **A wall picked off the build panel opens a menu of its own beside it**, in
+# two rows: 資訊, 整排選取 and 升級更多 (移除城牆 and 新增城牆 once it is a
+# batch) above, and the two price buttons below, gold then elixir. The rows are
+# laid out on a half-pitch grid around the middle of the screen left of the
+# panel, so `wall_menu`, which reads one row centred on the whole screen, finds
+# nothing on it. Measured on the builder base, a single wall and a batch of two:
+# the icons span x 545-560 and 721-732 across y 731-746 and the buttons are
+# middled at x 497 and 671, 174 apart around 585.
+PANEL_WALL_ICON_BAND = (728, 750)
+PANEL_WALL_ICON_OFFSET = 55
+PANEL_WALL_PRICE_BOX = (-58, 722, 46, 756)
+PANEL_WALL_MIDDLE = 585
+PANEL_WALL_PITCH = 174
+PANEL_WALL_ROW_Y = 790
+# Both real buttons sat 1 px off that grid on every menu recorded; the icons the
+# village throws up in the same band sat 10 to 36 px off it.
+PANEL_WALL_GRID_TOLERANCE = 5
+# Beside the price, blue minus red reads -34 to -46 on every button recorded,
+# against 199 to 204 on the old row's blue plates, which a magic item pays for.
+PANEL_WALL_PLATE_BOX = (-62, 760, -42, 780)
+# The red a price is written in when the village cannot pay: the gold of a batch
+# of two, 1 600 000 against 845 208 held, filled 0.19 of its price box, and no
+# white price recorded carries any.
+PANEL_WALL_RED_SHARE = 0.01
+
+
+def _panel_wall_button(
+    image: Image.Image, centre: int, resource: SheetResource
+) -> SheetOffer | None:
+    """What the wall's price button centred here asks, or None where it does not read."""
+    left, top, right, bottom = PANEL_WALL_PRICE_BOX
+    band = image.crop((centre + left, top, centre + right, bottom))
+    price = digits_from(_price_mask(band), PRICE_TOLERANCE, floor=PRICE_ROWS)
+    if price is None or price < MIN_PRICE:
+        return None
+    pixels = band.tobytes()
+    reds = sum(
+        1
+        for at in range(0, len(pixels), 3)
+        if pixels[at] > INK_RED_LEVEL
+        and pixels[at] - pixels[at + 1] > INK_RED_MARGIN
+        and pixels[at] - pixels[at + 2] > INK_RED_MARGIN
+    )
+    return SheetOffer(
+        price=price,
+        resource=resource,
+        point=(centre, PANEL_WALL_ROW_Y),
+        affordable=reds / (band.width * band.height) < PANEL_WALL_RED_SHARE,
+    )
+
+
+def panel_wall_menu(png: bytes) -> PanelWallMenu | None:
+    """The wall menu beside the open build panel, or None where none is up.
+
+    Two readings, as everywhere a button is pressed on one: the panel has to be
+    open, and the elixir drop has to stand on that menu's grid with a gold coin
+    one pitch to its left, both priced alike, which no other menu can show.
+    """
+    if not build_panel_open(png):
+        return None
+    image = open_frame(png).crop(GREEN_BUTTON_AREA)
+    step = PANEL_WALL_PITCH // 2
+    coins = [
+        icon - PANEL_WALL_ICON_OFFSET
+        for icon in _icon_centres(image, _is_gold, PANEL_WALL_ICON_BAND)
+    ]
+    for drop in _icon_centres(image, _is_elixir, PANEL_WALL_ICON_BAND):
+        elixir = drop - PANEL_WALL_ICON_OFFSET
+        offset = (elixir - PANEL_WALL_MIDDLE) % step
+        if min(offset, step - offset) > PANEL_WALL_GRID_TOLERANCE:
+            continue
+        gold = elixir - PANEL_WALL_PITCH
+        if not any(abs(coin - gold) <= ICON_TOLERANCE for coin in coins):
+            continue
+        if any(_on_gem_plate(image, middle, PANEL_WALL_PLATE_BOX) for middle in (gold, elixir)):
+            continue
+        offers = (
+            _panel_wall_button(image, gold, "gold"),
+            _panel_wall_button(image, elixir, "elixir"),
+        )
+        if offers[0] is None or offers[1] is None or offers[0].price != offers[1].price:
+            continue
+        return PanelWallMenu(gold=offers[0], elixir=offers[1])
+    return None
 
 
 def green_buttons(png: bytes) -> list[tuple[int, int, int, int]]:

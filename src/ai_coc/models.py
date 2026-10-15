@@ -2231,6 +2231,19 @@ class SheetOffer(BaseModel):
     affordable: bool = True
 
 
+class PanelWallMenu(BaseModel):
+    """The two price buttons a selected wall shows beside the open build panel.
+
+    Each is read the way a sheet's button is, price, resource and whether it is
+    written in red, because `confirm --pay` presses one of them itself.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    gold: SheetOffer
+    elixir: SheetOffer
+
+
 ConfirmOutcome = Literal[
     "confirmed",
     "no_sheet",
@@ -2240,6 +2253,9 @@ ConfirmOutcome = Literal[
     "refused_by_game",
     "sheet_stayed",
     "unexpected",
+    "no_wall_menu",
+    "sheet_disagrees",
+    "no_confirmation",
 ]
 
 
@@ -2249,13 +2265,16 @@ class ConfirmReport(BaseModel):
     `asked` is the price the agent read off the panel row and `offer` what the
     button itself says; the tap happens only when the two agree. Whether the
     storage really moved is read off `frame` by the agent, which saw the
-    storages before it opened the sheet.
+    storages before it opened the sheet. `wall` is the wall menu's button a
+    `--pay` run read and pressed first, and `offer` then the sheet that button
+    raised, if it raised one rather than the batch's dialog.
     """
 
     model_config = ConfigDict(frozen=True)
 
     asked: int
     offer: SheetOffer | None = None
+    wall: SheetOffer | None = None
     outcome: ConfirmOutcome
     frame: Path
 
@@ -2410,6 +2429,8 @@ class FrameReading(BaseModel):
     capacity: StorageCapacity = StorageCapacity()
     army: tuple[int, int] | None = None
     wall_menu: WallMenu | None = None
+    # The wall menu as drawn beside the open build panel, which `confirm --pay` reads.
+    panel_wall: PanelWallMenu | None = None
     bubbles: list[ResourceBubble] = Field(default_factory=list)
     builders: tuple[int, int] | None = None
     upgrades: list[UpgradeButton] = Field(default_factory=list)

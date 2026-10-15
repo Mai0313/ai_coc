@@ -105,7 +105,7 @@ ai_coc walls                          # buy wall upgrades until the storages wil
 ai_coc walls --keep-elixir 2000000    # leave that much behind to train an army with
 ```
 
-A wall upgrade needs a free builder and hands it straight back, so `walls` stops and says so when every builder is busy. Everything else goes through the build panel: `tap` and `swipe` press and scroll and keep the frame they left, and `confirm` is the one press that spends, made only when the sheet asks exactly the price given, in gold, elixir or dark elixir.
+A wall upgrade needs a free builder and hands it straight back, so `walls` stops and says so when every builder is busy. Everything else goes through the build panel: `tap` and `swipe` press and scroll and keep the frame they left, and `confirm` is the one press that spends, made only when the sheet asks exactly the price given, in gold, elixir or dark elixir. With `--pay` it starts on the menu of a wall picked from the panel: it presses that wall's price button only when it asks the price given and the village can pay, then the sheet or the batch's dialog that button raises.
 
 ### Keeping the village going
 

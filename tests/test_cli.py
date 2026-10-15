@@ -111,6 +111,12 @@ class ParserTests(unittest.TestCase):
         with pytest.raises(SystemExit):
             _args("watch")
 
+    def test_confirm_pays_a_wall_only_in_gold_or_elixir(self) -> None:
+        assert _args("confirm", "--price", "800000").pay is None
+        assert _args("confirm", "--price", "800000", "--pay", "elixir").pay == "elixir"
+        with pytest.raises(SystemExit):
+            _args("confirm", "--price", "800000", "--pay", "dark")
+
 
 class DispatchTests(unittest.TestCase):
     """Each entry of `_answer` hands `commands` what the flags said, and no more."""

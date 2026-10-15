@@ -41,6 +41,7 @@ from ai_coc.models import (
     CartReport,
     PlateCount,
     PlayedPlan,
+    SheetOffer,
     StopTarget,
     ViewReport,
     WallReport,
@@ -144,6 +145,7 @@ from ai_coc.parsers.building import (
     sheet_offer,
     green_buttons,
     upgrade_sheet,
+    panel_wall_menu,
     upgrade_buttons,
     green_button_row,
     menu_spends_gems,
@@ -2989,6 +2991,9 @@ CONFIRM_LINES: dict[ConfirmOutcome, str] = {
     "refused_by_game": "按了確認,遊戲跳出對話框(多半是資源不夠或工人都在忙),已經按取消",
     "sheet_stayed": "按了確認,但視窗還開著,沒有再按",
     "unexpected": "按了確認,但出現認不得的畫面,沒有再按",
+    "no_wall_menu": "旁邊沒有開著的城牆選單(或已經有視窗、對話框蓋著),什麼都沒按;已經自己按了升級鈕的話,用不帶 --pay 的 confirm",
+    "sheet_disagrees": "按了城牆的升級鈕,跳出的確認視窗跟按鈕對不上,視窗留著沒按",
+    "no_confirmation": "按了城牆的升級鈕,沒有跳出確認視窗或對話框;城牆到頂時會跳灰色確認鈕的視窗,看圖再按 X",
 }
 
 
@@ -2999,6 +3004,9 @@ def confirm_line(report: ConfirmReport) -> str:
         if report.offer is None
         else f"{report.offer.price:,} {_RESOURCE_NAMES[report.offer.resource]}"
     )
+    if report.wall is not None:
+        wall = f"{report.wall.price:,} {_RESOURCE_NAMES[report.wall.resource]}"
+        return f"城牆升級鈕 {wall},確認鈕 {read},預期 {report.asked:,}:{CONFIRM_LINES[report.outcome]}"
     return f"確認鈕 {read},預期 {report.asked:,}:{CONFIRM_LINES[report.outcome]}"
 
 
@@ -3034,7 +3042,73 @@ def _after_confirm(adb: AdbController, display: DisplayTarget) -> tuple[ConfirmO
     return outcome, after
 
 
-def confirm(price: int, frame_dir: Path) -> ConfirmReport:
+def _raised(
+    adb: AdbController, display: DisplayTarget, price: int, pay: Literal["gold", "elixir"]
+) -> tuple[ConfirmOutcome, SheetOffer | None, bytes]:
+    """Pay what a wall's price button raised: a single wall's sheet, or a batch's dialog.
+
+    **The dialog's 確定 is pressed on the strength of who raised it**, as the
+    wall loop always did: it is the 升級城牆 confirmation only because this
+    pressed a wall's price button a moment ago, after reading that price as the
+    one asked and in white, and with no sheet or dialog standing before it. Its
+    own pixels cannot say so: 確定退出遊戲嗎 is the same panel with the same
+    buttons, and no dialog priced in gems has ever been recorded to measure
+    against. A sheet is held to the price and resource like any other. The
+    sheet is looked for first, for the reason `_refused` gives.
+    """
+    seen: SheetOffer | None = None
+    sheet = False
+    after = b""
+    for look in range(CONFIRM_LOOKS):
+        time.sleep(BUY_SETTLE if look == 0 else CONFIRM_GAP)
+        after = adb.screenshot(display)
+        if sheet_open(after):
+            sheet, seen = True, sheet_offer(after)
+            if (
+                seen is not None
+                and seen.price == price
+                and seen.resource == pay
+                and seen.affordable
+            ):
+                adb.tap(*seen.point, display)
+                outcome, after = _after_confirm(adb, display)
+                return outcome, seen, after
+            continue
+        if (dialog := game_dialog(after)) is not None:
+            adb.tap(*dialog.confirm, display)
+            outcome, after = _after_confirm(adb, display)
+            return outcome, None, after
+    return ("sheet_disagrees" if sheet else "no_confirmation"), seen, after
+
+
+def _pay_wall(
+    adb: AdbController,
+    display: DisplayTarget,
+    before: bytes,
+    price: int,
+    pay: Literal["gold", "elixir"],
+) -> tuple[ConfirmOutcome, SheetOffer | None, SheetOffer | None, bytes]:
+    """Read the wall's price button for `pay`, press it if it agrees, and pay what it raised.
+
+    A sheet or a dialog already standing means no wall menu, whatever is drawn
+    under it: the dialog `_raised` presses has to be one this raised.
+    """
+    menu = None if sheet_open(before) or game_dialog(before) else panel_wall_menu(before)
+    wall = None if menu is None else menu.gold if pay == "gold" else menu.elixir
+    if wall is None:
+        return "no_wall_menu", None, None, before
+    if wall.price != price:
+        return "price_mismatch", None, wall, before
+    if not wall.affordable:
+        return "cannot_afford", None, wall, before
+    adb.tap(*wall.point, display)
+    outcome, offer, after = _raised(adb, display, price, pay)
+    return outcome, offer, wall, after
+
+
+def confirm(
+    price: int, frame_dir: Path, pay: Literal["gold", "elixir"] | None = None
+) -> ConfirmReport:
     """Press the upgrade sheet's 確認 if it asks for exactly this many of a resource.
 
     **The one command here that spends**, and so the one that reads before it
@@ -3045,27 +3119,37 @@ def confirm(price: int, frame_dir: Path) -> ConfirmReport:
     the game raises after that — not enough of the resource, every builder
     busy, each of which it answers with a gem offer — gets 取消 or is left
     alone, never a second press.
+
+    **With `pay`, it starts a step earlier, on a wall's menu beside the build
+    panel**: that resource's price button is pressed by this rather than by a
+    `tap`, only when it asks exactly `price` and in white, and then whatever it
+    raised is paid (`_raised`). The same reading-before-pressing holds for the
+    button as for the sheet.
     """
     adb = _attached()
     display = adb.display_for(COC_PACKAGE)
     frame_dir.mkdir(parents=True, exist_ok=True)
     before = adb.screenshot(display)
-    offer = sheet_offer(before)
     after = before
-    if not sheet_open(before):
-        outcome: ConfirmOutcome = "no_sheet"
-    elif offer is None:
-        outcome = "not_a_resource"
-    elif offer.price != price:
-        outcome = "price_mismatch"
-    elif not offer.affordable:
-        outcome = "cannot_afford"
+    wall: SheetOffer | None = None
+    if pay is not None:
+        outcome, offer, wall, after = _pay_wall(adb, display, before, price, pay)
     else:
-        adb.tap(*offer.point, display)
-        outcome, after = _after_confirm(adb, display)
+        offer = sheet_offer(before)
+        if not sheet_open(before):
+            outcome = "no_sheet"
+        elif offer is None:
+            outcome = "not_a_resource"
+        elif offer.price != price:
+            outcome = "price_mismatch"
+        elif not offer.affordable:
+            outcome = "cannot_afford"
+        else:
+            adb.tap(*offer.point, display)
+            outcome, after = _after_confirm(adb, display)
     frame = frame_dir / "after.png"
     frame.write_bytes(after)
-    report = ConfirmReport(asked=price, offer=offer, outcome=outcome, frame=frame)
+    report = ConfirmReport(asked=price, offer=offer, wall=wall, outcome=outcome, frame=frame)
     logger.info("Confirm: %s, frame %s", confirm_line(report), frame)
     return report
 
@@ -3086,6 +3170,7 @@ def read(png: bytes) -> FrameReading:
         ),
         army=army_strength(png),
         wall_menu=wall_menu(png),
+        panel_wall=panel_wall_menu(png),
         bubbles=collect_bubbles(png),
         builders=free_builders(png),
         upgrades=upgrade_buttons(png),
