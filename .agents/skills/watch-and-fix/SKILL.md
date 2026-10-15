@@ -60,7 +60,7 @@ description: >-
 
 ```bash
 uv run ai_coc world --go day --yield
-uv run ai_coc attack --repeat 0 --debug --shot-every 5 --yield
+uv run ai_coc attack --repeat 0 --plan src/ai_coc/plans/flat.json --debug --shot-every 5 --yield
 ```
 
 `--yield` 不能省: 沒帶的話, 你自己驗證用的指令會把這輪停掉而不是借走, 也沒有人會把它開回去. 指令都省略了 `--agent`、`--session`、`--mission`, 真的跑的時候每一個都要帶; 在主 checkout 跑一律寫成 `uv run --no-sync`.
@@ -69,7 +69,7 @@ uv run ai_coc attack --repeat 0 --debug --shot-every 5 --yield
 
 `--debug` 存迴圈自己讀的畫面, `--shot-every` 存定時的畫面. **分辨「判讀器讀錯」跟「點下去沒生效」只有畫面辦得到** (兩者在 log 上一模一樣), 所以查這類問題兩種都開. 怎麼讀在 `references/evidence.md`.
 
-**`plans.jsonl` 不用開旗標**: 一場一行, 是 AI 那一場的劇本 (照順序的步驟, 誰下在哪, 等幾秒). 把某一輪拉出來重播:
+**`plans.jsonl` 不用開旗標**: 一場一行, 是那一場照著打的劇本 (AI 規劃的, 或 `--plan` 交進去的那份; 照順序的步驟, 誰下在哪, 等幾秒). 把某一輪拉出來重播:
 
 ```bash
 jq -c 'select(.round==2).plan' ~/.ai_coc/logs/<run>/plans.jsonl > .runs/tuned.json

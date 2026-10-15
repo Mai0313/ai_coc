@@ -53,6 +53,7 @@ description: >-
 **沒特別交代就兩個世界都打完.** 不用先問哪邊有空間: 滿的世界第一輪就 `stock_full` (主村在付搜尋費前, 夜世界在進配對前), 代價只是幾秒. 他指定了一個才只打那一個. 兩邊是同一個指令, 各帶自己的平鋪戰術 (見下面「兩個世界都用平鋪」):
 
 ```bash
+uv run ai_coc world --go day --yield
 uv run ai_coc attack --repeat 0 --plan src/ai_coc/plans/flat.json --yield         # 日世界
 uv run ai_coc world --go night --yield
 uv run ai_coc attack --repeat 0 --plan src/ai_coc/plans/night_flat.json --yield   # 夜世界
