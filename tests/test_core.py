@@ -42,6 +42,7 @@ from ai_coc.models import (
     AttackStep,
     CartReport,
     PlayedPlan,
+    SheetOffer,
     UiSettings,
     WallReport,
     AdbEndpoint,
@@ -67,6 +68,7 @@ from ai_coc.models import (
     StorageCapacity,
 )
 from ai_coc.parsers import scout as scout_parser
+from ai_coc.parsers import building as building_parser
 from ai_coc.prompts import PROMPTS, PROMPT_DIR, render
 from ai_coc.ui.clan import ClanRunner
 from ai_coc.ui.walls import WallRunner
@@ -8022,6 +8024,28 @@ class PanelWallMenuTests(unittest.TestCase):
             except ValueError:
                 continue  # a fixture masked to another size, not a screen
             assert (found is not None) == (path.name in menus), path.name
+
+    def test_the_panel_has_to_be_open(self) -> None:
+        png = (FRAMES / "night_wall_menu.png").read_bytes()
+        with patch.object(building_parser, "build_panel_open", return_value=False):
+            assert panel_wall_menu(png) is None
+
+    def test_buttons_off_the_menus_grid_are_no_menu(self) -> None:
+        png = (FRAMES / "night_wall_menu.png").read_bytes()
+        with patch.object(building_parser, "PANEL_WALL_MIDDLE", 595):
+            assert panel_wall_menu(png) is None
+
+    def test_buttons_priced_apart_are_no_menu(self) -> None:
+        def priced(_image: object, centre: int, resource: str) -> SheetOffer:
+            return SheetOffer(
+                price=800000 if resource == "gold" else 1600000,
+                resource=resource,
+                point=(centre, 790),
+            )
+
+        png = (FRAMES / "night_wall_menu.png").read_bytes()
+        with patch.object(building_parser, "_panel_wall_button", side_effect=priced):
+            assert panel_wall_menu(png) is None
 
     def test_a_blue_plate_under_a_price_button_is_no_menu(self) -> None:
         """A magic item's button: painted blue at the plate the reader samples, the pair is refused."""

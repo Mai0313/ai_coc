@@ -36,8 +36,10 @@ from ai_coc.models import (
     NightPlan,
     AttackPlan,
     CartReport,
+    GameDialog,
     PlateCount,
     PlayedPlan,
+    SheetOffer,
     AdbEndpoint,
     CartOutcome,
     NamedEntity,
@@ -2073,6 +2075,37 @@ class PressAndConfirmTests(unittest.TestCase):
             adb, report = self._run([frame], lambda d: commands.confirm(1600000, d, "elixir"))
             adb.tap.assert_not_called()
             assert report.outcome == "no_wall_menu", frame
+
+    def test_a_dialog_or_a_sheet_already_up_takes_the_wall_menu_away(self) -> None:
+        """The dialog `_raised` presses has to be one this raised, whatever shows under it."""
+        for name, standing in (
+            ("game_dialog", GameDialog(confirm=(973, 560), cancel=(623, 572))),
+            ("sheet_open", "night"),
+        ):
+            with patch.object(commands, name, return_value=standing):
+                adb, report = self._run(
+                    ["night_wall_menu.png"], lambda d: commands.confirm(800000, d, "elixir")
+                )
+            adb.tap.assert_not_called()
+            assert report.outcome == "no_wall_menu", name
+
+    def test_a_sheet_in_the_other_resource_is_left_unpressed(self) -> None:
+        adb, report = self._run(
+            ["night_wall_menu.png", "night_sheet_wall.png"],
+            lambda d: commands.confirm(800000, d, "gold"),
+        )
+        adb.tap.assert_called_once_with(497, 790, DISPLAY)
+        assert report.outcome == "sheet_disagrees"
+
+    def test_a_sheet_written_in_red_after_the_wall_button_is_left_unpressed(self) -> None:
+        red = SheetOffer(price=800000, resource="elixir", point=(805, 789), affordable=False)
+        with patch.object(commands, "sheet_offer", return_value=red):
+            adb, report = self._run(
+                ["night_wall_menu.png", "night_sheet_wall.png"],
+                lambda d: commands.confirm(800000, d, "elixir"),
+            )
+        adb.tap.assert_called_once_with(671, 790, DISPLAY)
+        assert report.outcome == "sheet_disagrees"
 
     def test_a_sheet_that_disagrees_with_the_wall_button_is_left_unpressed(self) -> None:
         adb, report = self._run(
