@@ -414,8 +414,9 @@ CART_SPOTS = ((1126, 152), (1098, 150), (1070, 145))
 # across and 15 down, and the park whose three looks all missed had it at
 # (1096, 71), 49 px above the rest: the spots sat on the cart's top edge or off
 # it, and one night's trips missed with every spot on two of 21 visits.
-# A tap this far below the marker's drop opened the sheet on all four.
-CART_BELOW_MARKER = 42
+# A tap 42 px below the middle of the marker's drop opened the sheet on all
+# four, which is this far below the point of its plate on every frame since.
+CART_BELOW_MARKER = 15
 CART_COLLECT = (1176, 760)
 CART_CLOSE = (1338, 89)
 CART_SETTLE = 1.5
