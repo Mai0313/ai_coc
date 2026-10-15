@@ -135,21 +135,33 @@ BOAT_ACROSS = (30, 56)
 BOAT_DOWN = (9, 22)
 BOAT_PLATE_SHARE = 0.08
 
-# The marker over the builder base's loot cart while it holds elixir: the day
-# collectors' plate and drop, dimmed by the night, so its drop reads red 81 to
-# 173 where `MARKERS` wants 196 and up. Found by that drop alone, in the band the
-# parked camera has put it in: measured on five parks from different starts, the
-# drop's middle sat at x 1059-1078, y 105-120, and on the park that missed with
-# every fixed spot at (1096, 71), so the band runs from the top of the frame;
-# swept over every committed and recorded frame, that finds nothing the band from
-# y 40 did not. The drop came out 20-22 across by 26-27 down at a fill of 0.61,
-# and the cart's own bottles beside it, the nearest thing in that colour, 17x8
-# and 11x11. An empty cart has no marker.
+# The marker over the builder base's loot cart while it holds elixir: a khaki
+# plate, the day collectors' dimmed by the night, pointing down at the cart. In
+# the band the parked camera has put it in: measured on five parks from
+# different starts, the middle of the drop on it sat at x 1059-1078, y 105-120,
+# and on the park that missed with every fixed spot at (1096, 71), so the band
+# runs from the top of the frame. An empty cart has no marker.
+#
+# **Found by its plate, never by the icon on it**, because the icon changes
+# under a still camera: a drop for a while, then two crossed axes. A burst of a
+# parked full cart read the axes for 4 s, the drop for at least 23 s, then the
+# axes for all of a 96 s burst, so the drop this used to look for was missed on
+# most visits (#415). The plate reads (128, 128, 114) at its top edge down to
+# (180, 175, 125) at its point on both icons, 39-40 across by 43-45 down at a
+# fill of 0.46-0.55. The axes' blades can cut it in two: the lower part, 40x28
+# or 40x30 at 0.48-0.50, ends on the same point, which is why the point is what
+# is returned; the upper part, 40x14 or 40x15 at 0.35-0.415, is turned away by
+# its height, since its fill comes within 0.005 of the floor. Swept over the
+# committed frames and 934 recorded on 2026-10-16, the nearest anything else of
+# this size came was a home village plate at 0.37-0.38 (40x26, 38x24), so the
+# fill floor sits about 0.04 from each side, and nothing on a builder base. The
+# width keeps out the open cart sheet's plank, 220 across at 1.00, and the gold
+# bar's coin, 22x32, which the open build panel shifts into the band's corner.
 CART_MARKER_BAND = (980, 0, 1200, 200)
-CART_MARKER_DROP = ((80, 180), (0, 125), (145, 245))
-CART_MARKER_ACROSS = (17, 25)
-CART_MARKER_DOWN = (23, 30)
-CART_MARKER_FILL = 0.45
+CART_MARKER_PLATE = ((125, 185), (120, 180), (90, 135))
+CART_MARKER_ACROSS = (36, 44)
+CART_MARKER_DOWN = (24, 48)
+CART_MARKER_FILL = 0.42
 
 # The two counters in the bottom right, idle over total: the builders' and the
 # laboratory's. The 2026-10 overhaul moved them off the plate row along the top
@@ -372,12 +384,12 @@ def boat_marker(png: bytes) -> tuple[int, int] | None:
 
 
 def cart_marker(png: bytes) -> tuple[int, int] | None:
-    """The middle of the drop on the loot cart's marker, or None where none is drawn."""
+    """Where the loot cart's marker points, the bottom of its plate, or None where none is drawn."""
     left, top = CART_MARKER_BAND[:2]
     band = open_frame(png).crop(CART_MARKER_BAND)
-    for patch in patches(mask(band, CART_MARKER_DROP), *band.size):
+    for patch in patches(mask(band, CART_MARKER_PLATE), *band.size):
         if patch.sized(CART_MARKER_ACROSS, CART_MARKER_DOWN, CART_MARKER_FILL):
-            return left + patch.middle[0], top + patch.middle[1]
+            return left + patch.middle[0], top + patch.bottom
     return None
 
 

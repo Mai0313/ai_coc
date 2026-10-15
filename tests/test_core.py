@@ -1871,20 +1871,32 @@ class CrossingTests(unittest.TestCase):
             world_ui.collect_cart(adb, DisplayTarget(logical_id="1", physical_id="2"))
         assert adb.tap.call_args_list[0].args[:2] == (1077, 120 + world_ui.CART_BELOW_MARKER)
 
-    def test_the_cart_marker_is_its_dimmed_drop_and_an_empty_cart_has_none(self) -> None:
-        marker = (FRAMES / "night_cart_marker.png").read_bytes()
-        assert cart_marker(marker) == (1077, 120)
+    def test_the_cart_marker_is_its_plate_under_either_icon(self) -> None:
+        """The icon on it turns from a drop to crossed axes under a still camera (#415)."""
+        assert cart_marker((FRAMES / "night_cart_marker.png").read_bytes()) == (1076, 147)
+        axes = (FRAMES / "night_stock_leading_three.png").read_bytes()
+        assert cart_marker(axes) == (1097, 97)
         assert cart_marker((FRAMES / "night_cart_no_marker.png").read_bytes()) is None
 
-    def test_the_carts_bottles_are_not_its_marker(self) -> None:
-        """The drop painted out, what is left in that colour is the cart's own
-        bottles, 17x8 and 11x11, which only the drop's size keeps out.
+    def test_a_plate_the_axes_cut_in_two_still_points_at_the_cart(self) -> None:
+        """Cut 10 rows down, the part above is 39x10 at 0.48 fill, which only its
+        height keeps from being taken for the plate and tapped 33 px too high.
         """
-        image = Image.open(FRAMES / "night_cart_marker.png").convert("RGB")
-        image.paste((154, 155, 128), (1064, 105, 1091, 136))
+        image = Image.open(FRAMES / "night_stock_leading_three.png").convert("RGB")
+        image.paste((90, 95, 112), (1070, 65, 1125, 66))
         out = io.BytesIO()
         image.save(out, format="PNG")
-        assert cart_marker(out.getvalue()) is None
+        assert cart_marker(out.getvalue()) == (1097, 97)
+
+    def test_nothing_else_in_the_plates_colour_is_taken_for_it(self) -> None:
+        """Each is turned away by a different one of the plate's limits."""
+        for name in (
+            "night_cart_holding.png",  # the open sheet's plank, 220 across
+            "hud_night_build_panel.png",  # the gold bar's coin, 22 across
+            "home_marker_over_bars.png",  # a storage plate at 0.38 fill
+        ):
+            with self.subTest(name):
+                assert cart_marker((FRAMES / name).read_bytes()) is None
 
     def test_a_cart_that_never_opened_pays_nothing(self) -> None:
         """A tap the game swallowed leaves the cart looking exactly like an emptied one."""
