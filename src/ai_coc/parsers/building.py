@@ -699,7 +699,7 @@ def green_buttons(png: bytes) -> list[tuple[int, int, int, int]]:
 # drag it somewhere else, which nobody has measured and nobody should. The row's
 # buttons are beige plates about 152 by 143 px: each holds 12 196 to 17 315 px
 # of this colour on the four village frames with something selected, two of
-# each village, and the biggest patch on the thirteen other village frames
+# each village, and the biggest patch on the ten other village frames
 # committed is 487, the bars along the bottom edge. Asked only of a frame
 # already known to be a village: the report the game opens on after a raid
 # (`welcome_back`) is one beige plate of 84 140.

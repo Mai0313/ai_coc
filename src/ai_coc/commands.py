@@ -2462,9 +2462,10 @@ def view(zoom: str = "out", times: int = 3) -> ViewReport:
     instead of panning, and this command's whole reputation is that it can be run
     blind at whatever the game is showing — a killed run leaves the game
     mid-battle, and that is exactly when somebody reaches for it. The one capture
-    answers both questions the park has: whether this is a village at all, and
-    which of the two, since the maps clamp in opposite corners. Anything else
-    keeps the zoom and says the camera was left where it was.
+    answers the three questions the park has: whether this is a village at all,
+    which of the two, since the maps clamp in opposite corners, and whether
+    something on it is still selected (`selection_row`). Anything else keeps the
+    zoom and says the camera was left where it was.
 
     **And `--zoom in` is refused a park before the capture is even taken**, for
     the reason `park_camera` pinches at all: its walk is only bounded at the far
