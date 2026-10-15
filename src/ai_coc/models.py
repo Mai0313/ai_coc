@@ -1590,7 +1590,7 @@ class StatusReport(BaseModel):
 # the park would undo the request and could not settle anyway; and
 # `never_settled` is a camera that would not stop moving, which leaves every
 # remembered coordinate off by however far it was short.
-ViewOutcome = Literal["parked", "not_a_village", "zoomed_in", "never_settled"]
+ViewOutcome = Literal["parked", "not_a_village", "zoomed_in", "never_settled", "selected"]
 
 
 class ViewReport(BaseModel):
