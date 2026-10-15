@@ -144,9 +144,9 @@ BOAT_PLATE_SHARE = 0.08
 #
 # **Found by its plate, never by the icon on it**, because the icon changes
 # under a still camera: a drop for a while, then two crossed axes. A burst of a
-# parked full cart read the axes for 4 s, the drop for at least 23 s, then the
-# axes for all of a 96 s burst, so the drop this used to look for was missed on
-# most visits (#415). The plate reads (128, 128, 114) at its top edge down to
+# parked cart holding 656 538 read the axes for 4 s, the drop for at least 23 s,
+# then the axes for all of a 96 s burst, so the drop alone was missed on most
+# visits (#415). The plate reads (128, 128, 114) at its top edge down to
 # (180, 175, 125) at its point on both icons, 39-40 across by 43-45 down at a
 # fill of 0.46-0.55. The axes' blades can cut it in two: the lower part, 40x28
 # or 40x30 at 0.48-0.50, ends on the same point, which is why the point is what
@@ -157,11 +157,26 @@ BOAT_PLATE_SHARE = 0.08
 # fill floor sits about 0.04 from each side, and nothing on a builder base. The
 # width keeps out the open cart sheet's plank, 220 across at 1.00, and the gold
 # bar's coin, 22x32, which the open build panel shifts into the band's corner.
+#
+# **A full cart's plate is orange instead**, (148, 66, 35) down to (202, 53, 22),
+# as a home collector's is over a full storage, and in that colour a home
+# village shield rim comes to 37x31 at 0.44, past every limit above. So on it
+# the drop is what is read: the orange plate carried the drop on all 90 frames of
+# a 140 s burst of a full cart, and on #415's one frame of another. The drop's
+# middle sits 27 px above the plate's point on every frame that has both. It is
+# the night's dimmed drop, red 81 to 173 where `MARKERS` wants 196 and up, 20-22
+# across by 26-27 down at a fill of 0.61; the nearest thing in its colour is the
+# cart's own bottles beside it, 17x8 and 11x11.
 CART_MARKER_BAND = (980, 0, 1200, 200)
 CART_MARKER_PLATE = ((125, 185), (120, 180), (90, 135))
 CART_MARKER_ACROSS = (36, 44)
 CART_MARKER_DOWN = (24, 48)
 CART_MARKER_FILL = 0.42
+CART_DROP = ((80, 180), (0, 125), (145, 245))
+CART_DROP_ACROSS = (17, 25)
+CART_DROP_DOWN = (23, 30)
+CART_DROP_FILL = 0.45
+CART_DROP_ABOVE_POINT = 27
 
 # The two counters in the bottom right, idle over total: the builders' and the
 # laboratory's. The 2026-10 overhaul moved them off the plate row along the top
@@ -390,6 +405,9 @@ def cart_marker(png: bytes) -> tuple[int, int] | None:
     for patch in patches(mask(band, CART_MARKER_PLATE), *band.size):
         if patch.sized(CART_MARKER_ACROSS, CART_MARKER_DOWN, CART_MARKER_FILL):
             return left + patch.middle[0], top + patch.bottom
+    for patch in patches(mask(band, CART_DROP), *band.size):
+        if patch.sized(CART_DROP_ACROSS, CART_DROP_DOWN, CART_DROP_FILL):
+            return left + patch.middle[0], top + patch.middle[1] + CART_DROP_ABOVE_POINT
     return None
 
 

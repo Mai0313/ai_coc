@@ -613,6 +613,7 @@ class WorldTests(unittest.TestCase):
             "night_stock_leading_three.png": "night",
             "night_cart_marker.png": "night",
             "night_cart_no_marker.png": "night",
+            "night_cart_full.png": "night",
             "hud_day_shield_up.png": "day",
             "view_wall_selected.png": "night",
             "view_wall_batch_selected.png": "night",
@@ -1877,6 +1878,19 @@ class CrossingTests(unittest.TestCase):
         axes = (FRAMES / "night_stock_leading_three.png").read_bytes()
         assert cart_marker(axes) == (1097, 97)
         assert cart_marker((FRAMES / "night_cart_no_marker.png").read_bytes()) is None
+
+    def test_a_full_carts_orange_plate_is_found_by_its_drop(self) -> None:
+        assert cart_marker((FRAMES / "night_cart_full.png").read_bytes()) == (1096, 135)
+
+    def test_the_carts_bottles_are_not_its_drop(self) -> None:
+        """The marker painted out, what is left in the drop's colour is the
+        cart's own bottles, the nearest 17x8, which only the drop's height keeps out.
+        """
+        image = Image.open(FRAMES / "night_cart_marker.png").convert("RGB")
+        image.paste((60, 107, 54), (1054, 100, 1100, 148))
+        out = io.BytesIO()
+        image.save(out, format="PNG")
+        assert cart_marker(out.getvalue()) is None
 
     def test_a_plate_the_axes_cut_in_two_still_points_at_the_cart(self) -> None:
         """Cut 10 rows down, the part above is 39x10 at 0.48 fill, which only its
