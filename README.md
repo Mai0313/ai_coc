@@ -179,7 +179,7 @@ The first line of every run says which directory it is, and the name is `<when>-
   "gemini": {
     "api_key": "",
     "main": {
-      "model": "gemini-3.5-flash",
+      "model": "gemini-3.8-flash",
       "base_url": "",
       "thinking_level": "low"
     }
