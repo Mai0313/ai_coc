@@ -50,11 +50,12 @@ description: >-
 
 **沒有指令會自己換村莊, 每一個都做遊戲當下停著的那一個.** 先 `world --go` 再開 `attack`. `world --go` 回的不是那個村莊 (`crossing_failed`) 就不要開, 先去看畫面. 開跑後對一下 `run.log` 打的是哪一邊: 每一輪開頭 `Attack run starts` 是主村, `Builder base attack run starts` 是夜世界 (沒給 `--plan` 的那批第一輪前面還有一行 `Playing the day village, the one the game is on` (或 night); 給了 `--plan` 就打戰術檔寫的那個村莊, 沒有這行). 兩邊容量差十倍, 打錯世界「還差多少」就全錯.
 
-**沒特別交代就兩個世界都打完.** 不用先問哪邊有空間: 滿的世界第一輪就 `stock_full` (主村在付搜尋費前, 夜世界在進配對前), 代價只是幾秒. 他指定了一個才只打那一個. 夜世界是同一個指令, 多帶平鋪戰術 (為什麼見下面「夜世界不一樣的地方」):
+**沒特別交代就兩個世界都打完.** 不用先問哪邊有空間: 滿的世界第一輪就 `stock_full` (主村在付搜尋費前, 夜世界在進配對前), 代價只是幾秒. 他指定了一個才只打那一個. 兩邊是同一個指令, 各帶自己的平鋪戰術 (見下面「兩個世界都用平鋪」):
 
 ```bash
+uv run ai_coc attack --repeat 0 --plan src/ai_coc/plans/flat.json --yield         # 日世界
 uv run ai_coc world --go night --yield
-uv run ai_coc attack --repeat 0 --plan src/ai_coc/plans/night_flat.json --yield
+uv run ai_coc attack --repeat 0 --plan src/ai_coc/plans/night_flat.json --yield   # 夜世界
 ```
 
 **順序: 他指定了照他的, 沒指定就先打當下所在的那個.** 「當下所在」是開跑前第一件事用 `ai_coc world` 問到的答案, 記下來. 切畫面就是他指定順序的方式 (想先打夜世界他會自己切過去), 不要推翻.
@@ -72,10 +73,12 @@ uv run ai_coc attack --repeat 0 --plan src/ai_coc/plans/night_flat.json --yield
 - **主村一場約 +1.1M 金幣、+1.1M 聖水**, 一輪 2 到 3 分鐘. 幾乎空的倉庫打到 24M 的 90% 大概 20 場、一個多小時
 - **夜世界一場約 +100k 到 130k 金幣**; 聖水進推車, 一場 6 萬到 22 萬, 平均 12 萬左右 (2026-09-25 量的). 一輪 2 到 5 分鐘. 聖水是瓶頸, 5.1M 的聖水倉庫從三成打到九成約二十五場
 
+**兩個世界都用平鋪, 不叫 AI**: 日世界帶 `--plan src/ai_coc/plans/flat.json` (使用者 2026-10-15 的交代), 夜世界帶 `--plan src/ai_coc/plans/night_flat.json` (2026-09-26, 理由見下面). **AI 規劃留在程式裡, 不要拿掉**, 兩個世界的邏輯要一樣; 他明講要 AI 規劃的那一趟才不帶 `--plan`.
+
 夜世界不一樣的地方:
 
 - **沒有門檻**: 沒有偵察畫面, 贏拿金幣輸拿聖水, 沒東西好跳過
-- **打資源用平鋪戰術, 不叫 AI** (使用者 2026-09-26 的交代): 贏輸都有進帳, 兩樣倉庫都要填, 挑哪一邊打差別不大, AI 規劃卻每個 stage 要 10 到 15 秒 (慢的時候 40 秒以上, 逾時一樣退回平鋪). 用 `--plan src/ai_coc/plans/night_flat.json` 蓋過它就好. **AI 規劃留在程式裡, 不要拿掉**, 兩個世界的邏輯要一樣; 主村照舊讓 AI 規劃. 使用者說主村也用平鋪 (例如「幫我打日夜世界資源, 全部用平鋪就好」), 主村就帶 `--plan src/ai_coc/plans/flat.json`, 只管那一趟
+- **平鋪的理由**: 贏輸都有進帳, 兩樣倉庫都要填, 挑哪一邊打差別不大, AI 規劃卻每個 stage 要 10 到 15 秒 (慢的時候 40 秒以上, 逾時一樣退回平鋪)
 - **搜尋要等真人** (量過四秒到五分半). 搜尋中 log 不寫東西, 最久兩分半 (`SEARCH_PATIENCE`) 會有一行 `No opponent in 150s; cancelling and searching again`, 重搜 `SEARCH_ATTEMPTS` 次都沒配到才回 `no_opponent`
 - **聖水車也算一個倉庫.** 迴圈開跑第一輪跟之後每 `CART_EVERY` (五) 場去一次車子: 倉庫有空間就倒進去, 倉庫滿了就讀車上存多少. 倉庫滿了**而且**最近一次讀到車子也過同一個百分比才 `stock_full`, 所以車子剛滿之後最多還會多打四場. 同一趟看三次都讀不到車子, 就退回只看倉庫. 手動領是在夜世界跑 `uv run ai_coc collect`; 車子容量會跟著村莊長大 (現在 160 萬). 打完一輪記得確認有領到
 - **`CartReport.outcome` 有九種**, 收集鈕灰的三種在下一條: `collected` 領到了; `empty` 按了收集而儲量沒動; `not_found` 三個候選點都沒點開; `wrong_world` 不在夜世界; `not_parked` 鏡頭沒停好所以沒去找; `unreadable` 領了但有一邊的儲量條讀不到

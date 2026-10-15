@@ -33,7 +33,7 @@ done
 
 ```bash
 uv run ai_coc world --go day --yield --agent <名字> --session <session id> --mission "打日世界資源"
-uv run ai_coc attack --repeat 0 --yield --agent <名字> --session <session id> --mission "打日世界資源"
+uv run ai_coc attack --repeat 0 --plan src/ai_coc/plans/flat.json --yield --agent <名字> --session <session id> --mission "打日世界資源"
 ```
 
 **你是跟開發同時跑的 farm subagent, 就在主 checkout (預設分支) 上跑, 每個指令都寫成 `uv run --no-sync ai_coc …`**, `stop` 也一樣: 開發在另一個 worktree 做, 理由在 `AGENTS.md` 的 The loop runs the main checkout. 真的要同步 (merge 帶進新的依賴, 指令 import 失敗) 就等手上的程序結束再 `uv sync`.
