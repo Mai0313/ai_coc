@@ -46,8 +46,6 @@ from ai_coc.models import (
     RunnerState,
     ShieldState,
     ViewOutcome,
-    WallOptions,
-    WallOutcome,
     AttackReport,
     DonateReport,
     LaunchReport,
@@ -616,16 +614,6 @@ class CollectCommandTests(unittest.TestCase):
 class LoopCommandTests(unittest.TestCase):
     """Each loop command builds its runner from its options, and only from them."""
 
-    def _planner(self) -> MagicMock:
-        main = MagicMock(name="main tier")
-        patcher = patch.object(commands, "_planner", return_value=main)
-        patcher.start()
-        self.addCleanup(patcher.stop)
-        config = patch.object(commands.ConfigStore, "load", return_value=AppConfig())
-        config.start()
-        self.addCleanup(config.stop)
-        return main
-
     def test_donate_passes_the_dry_run_and_the_round_limit(self) -> None:
         with (
             patch.object(commands, "_controller", return_value=_adb()),
@@ -637,83 +625,12 @@ class LoopCommandTests(unittest.TestCase):
         assert (kwargs["dry_run"], kwargs["rounds"]) == (True, 2)
         assert report.outcome == "donated"
 
-    def test_walls_skips_the_finder_when_told_where_the_walls_are(self) -> None:
-        main = self._planner()
-        with (
-            patch.object(commands, "_controller", return_value=_adb()),
-            patch.object(commands, "WallRunner") as runner,
-        ):
-            runner.return_value.run.return_value = MagicMock(
-                outcome="nothing_bought", upgrades=[], walls=0
-            )
-            runner.return_value.run.return_value.paid.return_value = 0
-            commands.walls(WallOptions(at=[(1, 2)]))
-            named = runner.call_args.kwargs
-            commands.walls(WallOptions())
-            found = runner.call_args.kwargs
-        assert named["ai"] is None
-        assert found["ai"] is main
-
-    def test_a_caller_with_its_own_stop_reaches_the_wall_runner_and_the_report(self) -> None:
-        """What lets the window run this function: it has a button, not a terminal.
-
-        The runner reads it during the opening scan, which is the longest
-        unguarded stretch a wall run has — and it is the runner that names the
-        stop now, which is why this asserts the flag reached it rather than
-        checking a sentence this command used to prefix.
-        """
-        self._planner()
-        button = MagicMock(return_value=True)
-        with (
-            patch.object(commands, "_controller", return_value=_adb()),
-            patch.object(commands, "WallRunner") as runner,
-        ):
-            runner.return_value.run.return_value = MagicMock(outcome="nothing_bought", walls=0)
-            runner.return_value.run.return_value.upgrades = []
-            report = commands.walls(WallOptions(), button)
-        assert runner.call_args.kwargs["should_stop"] is button
-        # The flag was never written, so this is the caller's condition alone.
-        assert not commands.stop_requested()
-        # Named by the runner rather than rewritten here; the mock stands in for
-        # a loop that never reached its own stop check.
-        assert report.outcome == "nothing_bought"
-
-
-class WallLineTests(unittest.TestCase):
-    """One log line per wall outcome, each saying the thing only it means.
-
-    The three a project skill used to tell apart by wording are the reason:
-    counting distinct strings would let two of them swap and still pass.
-    """
-
-    def test_every_way_a_wall_run_can_stop_has_a_line_of_its_own(self) -> None:
-        own = {
-            "bought": "升級了",
-            "nothing_bought": "說不出原因",
-            "cannot_afford": "買不起",
-            "builders_busy": "工人都在忙",
-            "no_walls_found": "找不到任何城牆",
-            "no_village": "沒辦法回到村莊",
-            "builder_base": "城牆只在主村升",
-            "no_stock": "看不到村莊的儲量",
-            "stopped": "收到停止要求",
-        }
-        assert set(own) == set(get_args(WallOutcome))
-        for outcome, fragment in own.items():
-            line = commands.WALL_LINES[outcome].format(walls=3)
-            assert fragment in line, outcome
-            others = [
-                commands.WALL_LINES[other].format(walls=3) for other in own if other != outcome
-            ]
-            assert not any(fragment in other for other in others), outcome
-
 
 class UpkeepLineTests(unittest.TestCase):
     """One log line per outcome for the seven reports that gained one.
 
-    The same guard as `WallLineTests`, and for the reason that made it worth
-    writing there: counting distinct strings lets two of them swap and still
-    pass, so each fragment has to belong to its own outcome and to no other. A
+    Counting distinct strings lets two of them swap and still pass, so each
+    fragment has to belong to its own outcome and to no other. A
     table missing a value is worse again — a `KeyError` on the one path nobody
     exercised, raised from inside the command that was reporting a failure.
     """

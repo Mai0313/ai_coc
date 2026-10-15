@@ -430,8 +430,8 @@ FLANK_ROOM = 110
 # 145.2 misses, and it would miss 20 as well.
 #
 # So the way to close it is to bound the retries rather than the deadline, and
-# that is a client-wide setting (`HttpOptions.retry_options`) shared with the
-# target finder, whose own fallback is a two-and-a-half-minute sweep. Nothing
+# that is a client-wide setting (`HttpOptions.retry_options`) shared with
+# `_night_plan`. Nothing
 # here measures how often a call fails transiently, which is what a retry buys,
 # so that trade is not one this file can settle.
 PLAN_TIMEOUT = 30

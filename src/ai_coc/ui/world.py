@@ -133,8 +133,8 @@ SWIPE_SETTLE = 1.2
 # camera at its own edges; measured, that is not what a pinch does at all. Shove
 # the camera off centre and pinch, and `view_shift` across the pinch reads
 # (0, 0) — it widens the view and leaves the middle exactly where it was pushed.
-# So every coordinate aimed at the map — the sweep grid, a remembered `--at`,
-# anything a session writes down — was only ever valid until something moved the
+# So every coordinate aimed at the map — the crossing's spots, anything a
+# session writes down — was only ever valid until something moved the
 # camera, which is silent and constant.
 #
 # What *is* reproducible is the clamp itself. Swiping into a map corner runs the

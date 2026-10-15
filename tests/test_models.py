@@ -26,10 +26,8 @@ from ai_coc.models import (
     AttackPlan,
     AttackStep,
     PlayedPlan,
-    WallReport,
     AdbEndpoint,
     ScreenPoint,
-    WallUpgrade,
     EntityMapping,
     GeminiRequest,
     GeminiTextPart,
@@ -273,19 +271,6 @@ class PlanTests(unittest.TestCase):
             assert back.round == 2
             assert back.plan == plan
             assert type(back.plan) is type(plan)
-
-
-class ReportArithmeticTests(unittest.TestCase):
-    def test_a_wall_report_adds_up_what_was_paid(self) -> None:
-        walls = WallReport(
-            outcome="bought",
-            upgrades=[
-                WallUpgrade(unit=1_600_000, count=3, resource="gold"),
-                WallUpgrade(unit=1_600_000, count=2, resource="elixir"),
-            ],
-        )
-        assert walls.walls == 5
-        assert (walls.paid("gold"), walls.paid("elixir")) == (4_800_000, 3_200_000)
 
 
 class GeminiRequestTests(unittest.TestCase):

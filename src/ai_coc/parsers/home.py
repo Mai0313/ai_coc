@@ -397,13 +397,7 @@ def plate_count(png: bytes, role: PlateRole) -> tuple[int, int] | None:
 
 
 def free_builders(png: bytes) -> tuple[int, int] | None:
-    """Idle builders over total, or None where this screen is not showing them.
-
-    **None is the expensive answer here.** `WallRunner`'s check is
-    `counted is not None and counted[0] == 0`, so an unread counter silently
-    never fires the "every builder is busy" branch and the run walks the rest of
-    the village at forty seconds a wall, buying nothing.
-    """
+    """Idle builders over total, or None where this screen is not showing them."""
     return plate_count(png, "builder")
 
 

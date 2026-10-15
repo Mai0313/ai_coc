@@ -26,7 +26,7 @@ description: >-
 
 ## 三份文件的分工
 
-- **程式碼**說現在是什麼: 旗標看 `src/ai_coc/cli.py` 的 `_parser()`, 指令做什麼看 `src/ai_coc/commands.py` 對應的函式, 回報欄位看 `src/ai_coc/models.py` 的 `AttackReport` / `AttackSeries` / `WallReport`
+- **程式碼**說現在是什麼: 旗標看 `src/ai_coc/cli.py` 的 `_parser()`, 指令做什麼看 `src/ai_coc/commands.py` 對應的函式, 回報欄位看 `src/ai_coc/models.py` 的 `AttackReport` / `AttackSeries` / `ConfirmReport`
 - **`AGENTS.md` 跟常數旁邊的註解**說為什麼
 - **這份 skill** 說怎麼判斷: 什麼時候介入, 什麼時候停手
 
@@ -147,7 +147,7 @@ uv run ai_coc attack --repeat 0 --plan src/ai_coc/plans/night_flat.json --yield 
 - `waiting for the server rather than tapping`: 卡在載入畫面, 伺服器的事. 迴圈每次載入最多等 45 分鐘; 等不到的那輪是 `server_loading` (等滿) 或 `server_flapping` (載入完又掉回去). **不要**重開遊戲或模擬器, 量過兩次都是自己回來的. 連續兩輪都是這兩種再停下來講
 - `The camera was not at the far zoom` (**只在主村**): 量的是拉遠之前的鏡頭, 只是回報; 迴圈每場自己會 pinch 回去, 這一場照樣打. 連著出現才去看畫面. 夜世界不做這個判斷, 沒這條不代表那邊的鏡頭是對的
 
-**一輪就要停下來的**: `session_taken`, 另一部裝置 (多半是他的手機, 另一台模擬器也算) 登入了這個帳號, 在兩輪之間或打到一半都會有. 迴圈沒有把登入搶回來, 整個 series 自己收掉, log 有一行 `Another device has logged in to this account`. 使用者的交代 (2026-10-09): 被搶登就停手通知他, 他臨時上線一定是有事要做, 不小心的也會回來叫你繼續. 所以照「沒達成」交回報並發推播, 推播那一行講明是被登入擠掉、打資源停了, 等他說可以. **這段時間一個 `ai_coc` 指令都不要下**, `stock`、`status` 也算: 每個指令開跑時的 `ensure_coc` 都會重新登入, 把他踢下線 (2026-10-09 量過). 他說可以了, 照同一個世界同一組旗標開回去, 第一個指令就會重新登入. 夜世界被擠掉之後有幾分鐘配不到對手 (使用者 2026-10-09 的觀察), 開回去頭幾輪 `No opponent in 150s` 甚至 `no_opponent` 是這個, 不是卡住. 別的指令 (`walls`、`stock`, 還有剛開跑就遇到的 `attack`) 遇到它也不重開遊戲, `result.json` 只有一句 `另一部裝置登入了這個帳號,沒有把登入搶回來`, exit code 不是 0, 一樣照這條處理.
+**一輪就要停下來的**: `session_taken`, 另一部裝置 (多半是他的手機, 另一台模擬器也算) 登入了這個帳號, 在兩輪之間或打到一半都會有. 迴圈沒有把登入搶回來, 整個 series 自己收掉, log 有一行 `Another device has logged in to this account`. 使用者的交代 (2026-10-09): 被搶登就停手通知他, 他臨時上線一定是有事要做, 不小心的也會回來叫你繼續. 所以照「沒達成」交回報並發推播, 推播那一行講明是被登入擠掉、打資源停了, 等他說可以. **這段時間一個 `ai_coc` 指令都不要下**, `stock`、`status` 也算: 每個指令開跑時的 `ensure_coc` 都會重新登入, 把他踢下線 (2026-10-09 量過). 他說可以了, 照同一個世界同一組旗標開回去, 第一個指令就會重新登入. 夜世界被擠掉之後有幾分鐘配不到對手 (使用者 2026-10-09 的觀察), 開回去頭幾輪 `No opponent in 150s` 甚至 `no_opponent` 是這個, 不是卡住. 別的指令 (`collect`、`stock`, 還有剛開跑就遇到的 `attack`) 遇到它也不重開遊戲, `result.json` 只有一句 `另一部裝置登入了這個帳號,沒有把登入搶回來`, exit code 不是 0, 一樣照這條處理.
 
 ## 倉庫滿了: 預設就收工, 他開口才花
 
@@ -270,7 +270,7 @@ uv run ai_coc attack --repeat 0 --plan src/ai_coc/plans/night_flat.json --yield 
 - **進帳**: `run.log` 的 `holds` 那幾行, 算法見「進帳從 `run.log` 算」. **不是**每輪 `AttackReport.attacked` 的加總: 那是偵察畫面上對手擺出來的可搶量, 跟入庫一定對不上 (比平常大得多的落差是要往上報的訊號, 見「值得警覺的樣態」)
 - **現在的水位**: 那個世界最後一行 `holds`; 收工時跑的 `ai_coc status` 讀的是同一個世界的話, 用它的 `stock`, 那份比較新
 - **場數**: `AttackSeries` 裡真的開打的輪數; 主村看 `attacked` 不是 `None` (`jq '[.[] | select(.attacked != null)] | length' result.json`), 夜世界看 `phases` 大於 0 (`select(.phases > 0)`). 不是 `Attack finished` 的行數, 沒開打的那一輪 (例如最後那一輪 `stock_full`) 也有這一行
-- **花掉的**: 刷牆跟升建築一樣看花之前跟花之後兩次讀到的倉庫差額, 片數是每批「城牆(N級)xK」的 K 加起來; 舊的 `walls` 看它的 `result.json`, 只有 `upgrades` (每批的 `unit` 單價、`count` 片數、`resource` 付哪一種) 跟 `outcome`. 片數是 `count` 的和, 各資源花多少是 `unit × count` 的和 (`WallReport.walls` 跟 `paid()` 算的就是這個, 但它們不寫進檔案); `run.log` 的 `Walls: … (金幣 X／聖水 Y)` 那行是現成的. 升建築跟英雄看花之前跟花之後兩次讀到的倉庫差額
+- **花掉的**: 刷牆、升建築跟英雄都看花之前跟花之後兩次讀到的倉庫差額, 片數是每批「城牆(N級)xK」的 K 加起來
 - **時長**: `run.log` 第一行跟最後一行的時間戳; 沒有日期, 跨午夜看目錄名
 
 **量不到的就寫量不到, 不要估.**

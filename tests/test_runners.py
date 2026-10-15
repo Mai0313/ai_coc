@@ -141,98 +141,18 @@ class ReadStoragesTests(unittest.TestCase):
         night_reader.assert_not_called()
 
 
-class OpenedWalkTests(unittest.TestCase):
-    """The one walk every tap on a raw village coordinate takes."""
+class HomeCoverTests(unittest.TestCase):
+    """What stands between a loop and the village, and how each is cleared."""
 
     def _runner(self) -> GameRunner:
         return GameRunner(adb=_adb(), display=DISPLAY)
 
-    def test_a_tap_that_covered_the_village_is_backed_out_of_and_skipped(self) -> None:
-        runner = self._runner()
-        with (
-            patch.object(runner, "_after_tap", return_value=b"") as tapped,
-            patch.object(shared, "read_stock", side_effect=[STOCK, None, STOCK]),
-            patch.object(runner, "_home", return_value=STOCK) as home,
-        ):
-            opened = list(runner._opened([(601, 201), (602, 202), (603, 203)], "named"))
-        assert [spot for spot, _ in opened] == [(601, 201), (603, 203)]
-        home.assert_called_once()
-        assert tapped.call_args_list[1].args[1] == "named_0602_0202"
-
-    def test_a_village_that_cannot_be_got_back_ends_the_walk(self) -> None:
-        runner = self._runner()
-        with (
-            patch.object(runner, "_after_tap", return_value=b""),
-            patch.object(shared, "read_stock", side_effect=[STOCK, None, STOCK]),
-            patch.object(runner, "_home", return_value=None),
-        ):
-            opened = list(runner._opened([(601, 201), (602, 202), (603, 203)], "named"))
-        assert [spot for spot, _ in opened] == [(601, 201)]
-
-    def test_a_stop_ends_the_walk_where_the_last_tap_was_already_backed_out_of(self) -> None:
-        """The one place a sweep can be interrupted, and so every finder's.
-
-        A tap costs a settle and a capture, so a full grid is a couple of
-        minutes with nothing else to check a stop against — which is what
-        `ai_coc walls` spends whenever it has no key to ask with. Leaving here
-        is safe because the walk has already backed out of whatever the last tap
-        opened.
-        """
-        runner = GameRunner(
-            adb=_adb(), display=DISPLAY, should_stop=lambda: len(tapped.call_args_list) >= 2
-        )
-        with (
-            patch.object(runner, "_after_tap", return_value=b"") as tapped,
-            patch.object(shared, "read_stock", return_value=STOCK),
-        ):
-            opened = list(
-                runner._opened([(601, 201), (602, 202), (603, 203), (604, 204)], "named")
-            )
-        assert [spot for spot, _ in opened] == [(601, 201), (602, 202)]
-        assert tapped.call_count == 2
-
-    def test_a_walk_nobody_stopped_taps_every_point_it_was_given(self) -> None:
-        runner = self._runner()
-        with (
-            patch.object(runner, "_after_tap", return_value=b"") as tapped,
-            patch.object(shared, "read_stock", return_value=STOCK),
-        ):
-            opened = list(runner._opened([(601, 201), (602, 202), (603, 203)], "named"))
-        assert [spot for spot, _ in opened] == [(601, 201), (602, 202), (603, 203)]
-        assert tapped.call_count == 3
-
-    def test_a_point_on_the_games_own_buttons_is_never_tapped(self) -> None:
+    def test_the_games_own_buttons_are_not_the_map(self) -> None:
         """A tap there opens a window rather than a building, the shield's shop page among them."""
-        runner = self._runner()
-        with (
-            patch.object(runner, "_after_tap", return_value=b"") as tapped,
-            patch.object(shared, "read_stock", return_value=STOCK),
-        ):
-            opened = list(
-                runner._opened(
-                    [(85, 100), (1265, 140), (1347, 296), (1515, 450), (85, 470), (580, 95)],
-                    "near",
-                )
-            )
-        # The avatar, the storage bars a pitch right of the grid's last column,
-        # the shield's +, 商店 and the chat; the top of the map is clear now that
-        # the plate row is gone.
-        assert [spot for spot, _ in opened] == [(580, 95)]
-        assert tapped.call_count == 1
-
-    def test_the_sweep_is_that_walk_over_the_grid(self) -> None:
-        runner = self._runner()
-        walked: list[list[tuple[int, int]]] = []
-
-        def opened(points: object, label: str) -> object:
-            walked.append(list(points))
-            return iter(())
-
-        with patch.object(runner, "_opened", side_effect=opened):
-            list(runner._sweep("scan"))
-        [plain] = walked
-        assert len(plain) == len(shared.SWEEP_X) * len(shared.SWEEP_Y)
-        assert all(x <= shared.SWEEP_LIMIT[0] and y <= shared.SWEEP_LIMIT[1] for x, y in plain)
+        points = [(85, 100), (1265, 140), (1347, 296), (1515, 450), (85, 470), (580, 95)]
+        # The avatar, the storage bars, the shield's +, 商店 and the chat; the
+        # top of the map is clear now that the plate row is gone.
+        assert [point for point in points if not shared.on_hud(point)] == [(580, 95)]
 
     def test_a_dialog_over_the_village_is_answered_with_cancel(self) -> None:
         runner = self._runner()

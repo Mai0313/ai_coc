@@ -44,7 +44,6 @@ from ai_coc.models import (
     SheetOffer,
     StopTarget,
     ViewReport,
-    WallReport,
     AdbEndpoint,
     CartOutcome,
     NamedEntity,
@@ -53,8 +52,6 @@ from ai_coc.models import (
     ShieldState,
     StockReport,
     ViewOutcome,
-    WallOptions,
-    WallOutcome,
     WatchReport,
     WorldReport,
     AttackReport,
@@ -139,14 +136,12 @@ from ai_coc.parsers.boundary import PLAYFIELD, VILLAGE_CENTRE, village_box, boun
 from ai_coc.parsers.building import (
     MENU_ROW_BOX,
     SHEET_CLOSE_BOX,
-    wall_menu,
     sheet_open,
     game_dialog,
     sheet_offer,
     green_buttons,
     upgrade_sheet,
     panel_wall_menu,
-    upgrade_buttons,
     green_button_row,
     menu_spends_gems,
 )
@@ -156,7 +151,6 @@ from ai_coc.adapters.ldplayer import LDPlayerAdapter
 from ai_coc.adapters.clipboard import read_clipboard, clear_clipboard, write_clipboard
 
 from .ui.clan import ClanRunner
-from .ui.walls import WallRunner
 from .ui.world import cross, uncovered, park_camera, collect_cart
 from .ui.attack import CARD_ROW_Y, DROP_SETTLE, BATTLE_TIMEOUT, SINGLE_DROP_DELAY, AttackRunner
 from .ui.plates import PlateRunner
@@ -402,11 +396,11 @@ def launch(
 
 
 def _planner(config: AppConfig) -> GeminiClient | None:
-    """A client for the main tier, or None so every caller falls back to its own way.
+    """A client for the main tier, or None so the attack falls back to its own way.
 
-    None is not an error anywhere: the attack uses its fixed flank and the
-    finders sweep. That is what keeps a run with no key working exactly as it
-    did before any of this existed.
+    None is not an error anywhere: the attack uses its fixed flank. That is
+    what keeps a run with no key working exactly as it did before any of this
+    existed.
     """
     key = gemini_key(config)
     if not key:
@@ -832,9 +826,9 @@ def _read_file() -> StateFile | None:
     """What the state file says; None when there is no file at all.
 
     **Nothing in here raises, which is the whole point.** `should_stop` is
-    called from inside a battle — `AttackRunner` polls it between opponents and
-    `GameRunner._opened` after every tap — and the only thing catching anything
-    up there is a `KeyboardInterrupt` handler, so an exception raised on a read
+    called from inside a battle — `AttackRunner` polls it between opponents —
+    and the only thing catching anything up there is a `KeyboardInterrupt`
+    handler, so an exception raised on a read
     would end the series with the army still on the field. The old flag was a
     `Path.exists()` and could not fail; this one parses JSON off a file two
     processes may be writing, so every way that can go wrong lands on "carry
@@ -1078,8 +1072,7 @@ def stop(caller: Caller | None = None, target: StopTarget = "all") -> str:
     Nothing here touches the game or looks for a process: this changes fields
     and ends. What actually stops is the loop, when it next looks, and where
     that is belongs to each of them — `attack` between rounds and between
-    opponents, `walls` between batches and during the opening scan. Never
-    mid-battle or mid-batch, because either one abandoned halfway leaves the
+    opponents. Never mid-battle, because one abandoned halfway leaves the
     game on a screen the next run does not know how to get home from.
 
     Saying so when there is nothing to stop is the half the old flag could not
@@ -2037,73 +2030,6 @@ def bounds(frame_dir: Path | None = None) -> MapSurvey:
     return runner.survey
 
 
-# Only ever used to build a log line; `WallReport.outcome` is what a caller
-# reads. **`nothing_bought` is the one that must not name a cause**, because it
-# is by definition the one the loop cannot explain — and it has two routes, not
-# one. The town hall capping every wall found is the likeliest, and the other is
-# a builder counter that would not read: `WallRunner` only takes the
-# builders-busy exit on a count it could resolve, so an unread one drops every
-# candidate and lands here. Those two want opposite next steps — wait for a
-# workman against stop running `walls` at all — so the line points at the record
-# rather than at a reason.
-WALL_LINES: dict[WallOutcome, str] = {
-    "bought": "升級了 {walls} 面城牆",
-    "nothing_bought": "每一個位置都沒有買成,而這個迴圈說不出原因;紀錄裡有各自停在哪一步",
-    "cannot_afford": "剩下的資源買不起下一批城牆",
-    "builders_busy": "工人都在忙,遊戲不讓升級城牆;跑 ai_coc status 看最快的還要多久",
-    "no_walls_found": "找不到任何城牆",
-    "no_village": "畫面沒辦法回到村莊,城牆升級沒有開始",
-    "builder_base": "遊戲停在夜世界,城牆只在主村升;要升先跑 ai_coc world --go day",
-    "no_stock": "看不到村莊的儲量,先停下來",
-    "stopped": "收到停止要求,已經買成 {walls} 面城牆",
-}
-
-
-def walls(options: WallOptions, should_stop: Callable[[], bool] = stop_requested) -> WallReport:
-    """Spend the storages on wall upgrades, with no window in the way.
-
-    Walls upgrade the instant they are paid for and tie up no builder, so this is
-    what a village does with loot it has nowhere else to put — every builder busy
-    and both storages filling towards the point where the attack loop stands
-    itself down.
-
-    `ai_coc stop` ends this one too, between batches. A run with `--rounds 0`
-    against a village full of walls is the other loop here that goes on long
-    enough to be worth interrupting, and it answers the same file rather than a
-    second mechanism of its own. `should_stop` is what the window passes so its
-    button reaches the scan as well; see `attack` for why the state file stays
-    the default rather than being replaced.
-    """
-    adb, display = _session(options.frame_dir)
-    runner = WallRunner(
-        adb=adb,
-        display=display,
-        keep_gold=options.keep_gold,
-        keep_elixir=options.keep_elixir,
-        rounds=options.rounds,
-        at=options.at,
-        # Skipped when the run was told where the walls are: the whole point of
-        # asking is to find them, and a caller that named them has already
-        # looked at the screen.
-        ai=None if options.at else _planner(ConfigStore().load()),
-        should_stop=should_stop,
-        frame_dir=options.frame_dir,
-    )
-    report = runner.run()
-    # **The runner names the stop itself now**, which is what took a rewrite
-    # out of here: this used to prefix 已停止 onto whatever sentence the loop had
-    # written, and the exception it needed — a run stopped before it bought
-    # anything, whose own fallback reads as a verdict on positions it never
-    # tried — is exactly the ambiguity `WallOutcome` exists to remove.
-    logger.info(
-        "Walls: %s (金幣 %d／聖水 %d)",
-        WALL_LINES[report.outcome].format(walls=report.walls),
-        report.paid("gold"),
-        report.paid("elixir"),
-    )
-    return report
-
-
 def stock(frame_dir: Path | None = None) -> StockReport:
     """What the village on screen is holding, and how close that is to full.
 
@@ -3047,8 +2973,8 @@ def _raised(
 ) -> tuple[ConfirmOutcome, SheetOffer | None, bytes]:
     """Pay what a wall's price button raised: a single wall's sheet, or a batch's dialog.
 
-    **The dialog's 確定 is pressed on the strength of who raised it**, as the
-    wall loop always did: it is the 升級城牆 confirmation only because this
+    **The dialog's 確定 is pressed on the strength of who raised it**: it is
+    the 升級城牆 confirmation only because this
     pressed a wall's price button a moment ago, after reading that price as the
     one asked and in white, and with no sheet or dialog standing before it. Its
     own pixels cannot say so: 確定退出遊戲嗎 is the same panel with the same
@@ -3169,11 +3095,9 @@ def read(png: bytes) -> FrameReading:
             dark=storage_capacity(png, 2),
         ),
         army=army_strength(png),
-        wall_menu=wall_menu(png),
         panel_wall=panel_wall_menu(png),
         bubbles=collect_bubbles(png),
         builders=free_builders(png),
-        upgrades=upgrade_buttons(png),
         donatable=len(donatable_cards(png)),
         attack_menu=attack_menu_open(png),
         night_menu=night_attack_menu(png),

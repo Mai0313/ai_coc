@@ -77,7 +77,7 @@ uv run ai_coc
 
 The `test` group is what the suite needs; a plain `uv sync` installs enough to run the app but not enough to test it.
 
-Every loop has a headless sub-command (`uv run ai_coc attack`, `walls`, `collect`, and the rest; see the README), and those are how the game is worked on: a feature reachable only through a widget cannot be driven against the live game while it is being written. The window runs the same functions, so a sub-command is also the smoke test for what the window does.
+Every loop has a headless sub-command (`uv run ai_coc attack`, `collect`, `donate`, and the rest; see the README), and those are how the game is worked on: a feature reachable only through a widget cannot be driven against the live game while it is being written. The window runs the same functions, so a sub-command is also the smoke test for what the window does.
 
 Supported Python versions are declared in `pyproject.toml`. Use `uv` to manage interpreters when needed:
 
@@ -102,7 +102,7 @@ Always run `make fmt` and `make test` before opening a pull request.
 
 The three layers are directories, so an import that crosses them is visible in the import line:
 
-- **UI and orchestration**: `ui/main_window.py` holds the window and every tab; `ui/workers.py` the thread-pool workers; `ui/render.py` the Markdown and log rendering. The loops themselves are kept Qt-free so they can be driven and tested without a window: `ui/attack.py` (the attack loop), `ui/world.py` (crossing between the two villages), and `ui/walls.py`, `ui/upkeep.py`, `ui/clan.py` on top of the shared `ui/runner.py`
+- **UI and orchestration**: `ui/main_window.py` holds the window and every tab; `ui/workers.py` the thread-pool workers; `ui/render.py` the Markdown and log rendering. The loops themselves are kept Qt-free so they can be driven and tested without a window: `ui/attack.py` (the attack loop), `ui/world.py` (crossing between the two villages), and `ui/upkeep.py`, `ui/clan.py` on top of the shared `ui/runner.py`
 - **Adapters**: `adapters/emulator.py` (what every emulator does the same way), `adapters/mumu.py` and `adapters/ldplayer.py` (each emulator's own CLI and lifecycle), `adapters/adb.py` (every ADB call), `adapters/ai.py` (Gemini), `adapters/config.py` (the shared settings file, the API key included), `adapters/mapping.py` (the community `data_id` table), `adapters/clipboard.py` (the Windows clipboard, where the game's own village export arrives)
 - **Pure parsers**: `parsers/frame.py` (the 1600x900 frame every reader decodes through), `parsers/scout.py` (loot panel, card row, storage bars, and which screen is up), `parsers/building.py` (building menus and their prices), `parsers/home.py` (collector markers, builder panel), `parsers/world.py` (which of the two villages is on screen), plus `parsers/village.py`, `parsers/boundary.py`, `parsers/field.py` and `parsers/clan.py`. Two of them are shared machinery rather than screens and every other reader is built out of one or both: `parsers/glyphs.py` reads a number by matching each digit to a template, and `parsers/regions.py` finds the connected patches of one colour
 
