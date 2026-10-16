@@ -15,9 +15,9 @@ description: >-
 ## 圈長這樣
 
 1. **開始**: 照 `AGENTS.md` 的 Look before driving 先看 `state.json`, 別人已經在打資源 (One farmer at a time) 就不開, 跟他講. 跑一次 `status`, 照 `farm` 把兩個世界打滿. 跟他講一次: 這台電腦跟這個 session 要一直開著, 斷了就沒人醒來
-2. **睡**: 派完打資源就睡, 不等它打完: 打資源要好幾個小時, 中間有升級到點也要有人醒. 只掛一個 `ai_coc watch`, 醒來的時間取 `upgrades` 排出來的那一個跟現在起三小時後, 較早的那一個 (使用者 2026-10-16 定的: 每三小時上去看一眼, 資源沒滿就補), `--about` 寫上兩件各在等什麼, `--mission` 寫明「全天候託管」: 別的 session 讀到它就不開打資源的 (`AGENTS.md` 的 One farmer at a time). 計時放在 `ai_coc watch` 而不是 runtime 自己的排程: `ai_coc stop` 停得到它, 別的 session 也看得到有人在顧
-3. **醒來**: 先照 `upgrades` 的「醒來先看它的輸出」, 只有一處不同: 讀到 `stopped` 而 `stop_by` 是別的 session, 不要默默收工, 跟他講託管被誰 (`stop_by` 的 `mission`) 中斷了, 他以為還在跑. 有升級到點就照下一節升. 然後照 `farm` 再打一次兩個世界: 倉庫還滿著的話第一輪就 `stock_full`, 這就是「看一眼」. `state.json` 上打資源還在跑就不再開一個
-4. 重跑 `status`, 回到第 2 步
+2. **睡**: 派完打資源就睡, 不等它打完: 打資源要好幾個小時, 中間有升級到點也要有人醒. 只掛一個 `ai_coc watch`, 醒來的時間取下一件的 `done_at` (鐘塔是 `ready_at`; 託管不用問他, 所以不照 `upgrades` 提早五分鐘) 跟現在起三小時後, 較早的那一個 (使用者 2026-10-16 定的: 每三小時上去看一眼, 資源沒滿就補), `--about` 寫上兩件各在等什麼, `--mission` 寫明「全天候託管」: 別的 session 讀到它就不開打資源的 (`AGENTS.md` 的 One farmer at a time). 計時放在 `ai_coc watch` 而不是 runtime 自己的排程: `ai_coc stop` 停得到它, 別的 session 也看得到有人在顧
+3. **醒來**: 先照 `upgrades` 的「醒來先看它的輸出」, 只有一處不同: 讀到 `stopped` 而 `stop_by` 是別的 session, 不要默默收工, 跟他講託管被誰 (`stop_by` 的 `mission`) 中斷了, 他以為還在跑. `due` 的話先照 `AGENTS.md` 的 Look before driving 看 `state.json`, **再重跑 `status`** (借到打資源的就照 `upgrades` 讀完 `giveback`), 照新的讀數決定: 他中途可能玩過, 加速或自己升了東西不一定會講 (使用者 2026-10-16: 「你如果最一開始看 status, 我們基本可以確定你一定不會有一些意外的操作」). 有升級到點就照下一節升, 升了東西再重讀一次 (升級本身改了時間). 然後照 `farm` 再打一次兩個世界: 倉庫還滿著的話第一輪就 `stock_full`, 這就是「看一眼」. `state.json` 上打資源還在跑就不再開一個
+4. 照最新的讀數回到第 2 步
 
 盯時間跟升級是派工的這個 session 的事: 打資源的 subagent 卡在 `attack` 裡, 看不到時間也發不了通知, 只管打資源.
 
