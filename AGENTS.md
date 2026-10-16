@@ -12,12 +12,13 @@ A Windows-only PyQt5 desktop app that drives Clash of Clans inside MuMu Player 1
 
 ## Driving the game
 
-Five skills under `.agents/skills/` own the judgement of driving the game, and they are the only copy of those rules; a rule written here as well would drift.
+Six skills under `.agents/skills/` own the judgement of driving the game, and they are the only copy of those rules; a rule written here as well would drift.
 
 - **`farm`** — run the loops on both villages and judge them. By default `stock_full` ends the run with a report, or an idle builder or research slot (`builder_free`, `lab_free`) when the user asked to farm until one is free; the loot is spent only when the user asked for that.
 - **`upgrades`** — read the builder and laboratory timers and the clock tower's cooldown, and come back just before they run out; spend on walls, buildings and heroes once the user asked, walls named even then.
 - **`watch-and-fix`** — farm and watch the same run, fix whatever breaks between launching the game and landing back on the village, and take the fix through to a merged PR.
 - **`repair-emulator`** — bring the emulator itself back when it will not come up, without changing code, and hand it to the user when it cannot be fixed from here.
+- **`takeover`** — keep both villages farmed and upgrading until the user says stop: `farm` and `upgrades` strung into one loop that looks at the storages every three hours and, once an item is maxed, picks the next one in the user's order instead of asking.
 - **`game-update`** — after the game changes what it draws (a UI or HUD overhaul, moved buttons, a changed mechanic), find out what changed by looking and tapping, fix the readers against measured frames, and prove every command live before shipping.
 
 `.agents/skills/farm/references/running.md` owns the mechanics the skills that run a loop share: which commands run in the background, why a subagent blocks instead, what `result.json` holds, how a loop is stopped and when that is safe.
