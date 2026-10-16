@@ -361,7 +361,7 @@ def upgrade_sheet(png: bytes) -> tuple[int, int] | None:
 # same for heroes, buildings, research and pets on every one recorded. The
 # builder base's 「是否提升至N級？」 is a larger window with one button in the
 # middle, its price drawn bigger, its gold a square and its elixir violet.
-# Measured on fourteen home sheets and four builder base ones.
+# Measured on fourteen home sheets and five builder base ones, a hero's among them.
 #
 # **The same green, in the same place, is 立即完成 on a running upgrade's
 # sheet**, priced in gems: a tap on a running hero's or pet's row opens
@@ -378,7 +378,10 @@ def upgrade_sheet(png: bytes) -> tuple[int, int] | None:
 # layout's shape instead**, its button bottom right under the same X as the
 # other builder base sheets: on the Battle Machine's, measured 2026-10-16, the
 # button spans x 1102-1354 and y 743-844, the white price x 1118-1274, the drop
-# x 1294-1338 and y 764-817.
+# x 1294-1338 and y 764-817. **The hero's is tried first**, since the grass
+# under its portrait reaches into the middle span (4382 px of that green there,
+# against the 5000 a button needs), while its own span holds 2 px of it at most
+# on every other builder base sheet.
 SHEET_LAYOUTS: dict[
     World,
     tuple[
@@ -387,8 +390,8 @@ SHEET_LAYOUTS: dict[
 ] = {
     "day": ((SHEET_SPAN, (1000, 765, 1190, 803), (1190, 770, 1245, 830)),),
     "night": (
-        ((600, 700, 1010, 880), (668, 760, 872, 810), (876, 752, 948, 822)),
         ((1050, 700, 1400, 880), (1110, 760, 1290, 810), (1288, 752, 1350, 825)),
+        ((600, 700, 1010, 880), (668, 760, 872, 810), (876, 752, 948, 822)),
     ),
 }
 SHEET_ICON_FLOORS: dict[SheetResource, float] = {"gold": 0.12, "elixir": 0.1, "dark": 0.17}
@@ -421,7 +424,7 @@ SHEET_CLOSE_BOX: dict[World, tuple[int, int, int, int]] = {
 # not: measured, the home box is 0.432 red on all fourteen home sheets, the gem
 # sheet included, and on a troop's info window that carries no green button;
 # 0.164 on the profile window's settings tab, and 0.03 at most anywhere else.
-# The builder base box reads 0.302 on its four.
+# The builder base box reads 0.302 on its four building sheets and 0.362 on the hero's.
 SHEET_X_BOX: dict[World, tuple[int, int, int, int]] = {
     "day": (1383, 40, 1445, 100),
     "night": (1305, 27, 1373, 88),
