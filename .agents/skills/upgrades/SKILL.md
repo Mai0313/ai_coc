@@ -71,7 +71,7 @@ uv run --no-sync ai_coc status --label watch --agent <名字> --session <session
 
 ## 講給使用者聽
 
-**要他選的時候發問, 不只推播** (使用者 2026-10-11: 有些 agent, 例如 Antigravity, 只有發問才彈得出通知): 用 runtime 自己問使用者的工具. 有些 runtime 發問時整個回合停在那裡等回答, 所以先把下一件的 `ai_coc watch` 丟到背景、借來的模擬器 `giveback`, 再問.
+**要他選的時候發問, 不只推播** (使用者 2026-10-11: 有些 agent, 例如 Antigravity, 只有發問才彈得出通知): 用 runtime 自己問使用者的工具. 有些 runtime 發問時整個回合停在那裡等回答, 所以先把下一件的 `ai_coc watch` 丟到背景、借來的模擬器 `giveback`、要回去打的資源先派出去, 再問.
 
 問法:
 
