@@ -7212,6 +7212,8 @@ class HomeHudTests(unittest.TestCase):
             "night_menu_finishing.png",
             "night_wall_menu.png",
             "night_wall_batch.png",
+            "night_wall_menu_one_row.png",
+            "night_wall_batch_one_row.png",
             "night_wall_row.png",
         }
         for path in sorted(FRAMES.glob("*.png")):
@@ -7458,22 +7460,30 @@ class PanelWallMenuTests(unittest.TestCase):
     """The wall menu a 城牆 row opens beside the build panel, which `confirm --pay` presses."""
 
     def test_a_single_wall_and_a_batch_read_both_price_buttons(self) -> None:
-        for name, price, gold_affordable in (
-            ("night_wall_menu.png", 800000, True),
+        """In two rows, and in the one row the menu stands in 80 px higher."""
+        for name, price, gold_affordable, points in (
+            ("night_wall_menu.png", 800000, True, ((497, 790), (671, 790))),
             # 1 600 000 against 845 208 gold held: the game writes that one red.
-            ("night_wall_batch.png", 1600000, False),
+            ("night_wall_batch.png", 1600000, False, ((497, 790), (671, 790))),
+            ("night_wall_menu_one_row.png", 800000, True, ((759, 710), (933, 710))),
+            ("night_wall_batch_one_row.png", 800000, True, ((672, 710), (846, 710))),
         ):
             menu = panel_wall_menu((FRAMES / name).read_bytes())
             assert menu is not None, name
             assert (menu.gold.price, menu.elixir.price) == (price, price), name
-            assert (menu.gold.point, menu.elixir.point) == ((497, 790), (671, 790)), name
+            assert (menu.gold.point, menu.elixir.point) == points, name
             assert (menu.gold.resource, menu.elixir.resource) == ("gold", "elixir"), name
             assert menu.gold.affordable == gold_affordable, name
             assert menu.elixir.affordable, name
 
     def test_no_other_frame_reads_as_one(self) -> None:
         """The row-move mode 整排選取 opens, the batch's dialog and the wall's sheet included."""
-        menus = {"night_wall_menu.png", "night_wall_batch.png"}
+        menus = {
+            "night_wall_menu.png",
+            "night_wall_batch.png",
+            "night_wall_menu_one_row.png",
+            "night_wall_batch_one_row.png",
+        }
         for path in sorted(FRAMES.glob("*.png")):
             try:
                 found = panel_wall_menu(path.read_bytes())
@@ -7492,11 +7502,11 @@ class PanelWallMenuTests(unittest.TestCase):
             assert panel_wall_menu(png) is None
 
     def test_buttons_priced_apart_are_no_menu(self) -> None:
-        def priced(_image: object, centre: int, resource: str) -> SheetOffer:
+        def priced(_image: object, centre: int, resource: str, rise: int) -> SheetOffer:
             return SheetOffer(
                 price=800000 if resource == "gold" else 1600000,
                 resource=resource,
-                point=(centre, 790),
+                point=(centre, 790 + rise),
             )
 
         png = (FRAMES / "night_wall_menu.png").read_bytes()
