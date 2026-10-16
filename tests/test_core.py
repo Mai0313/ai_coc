@@ -1832,11 +1832,28 @@ class CrossingTests(unittest.TestCase):
         adb = MagicMock()
         adb.screenshot.side_effect = [
             (FRAMES / name).read_bytes()
-            for name in ("reward_chest_prize.png", "sheet_running_gems.png")
+            for name in ("reward_chest_prize.png", "sheet_running_gems.png", "hud_day.png")
         ]
         with patch.object(world_ui.time, "sleep"):
             world_ui.open_chest(adb, DisplayTarget(logical_id="1", physical_id="2"))
         assert [c.args[:2] for c in adb.tap.call_args_list] == [world_ui.CHEST_SPOT]
+
+    def test_a_reward_still_sliding_in_is_waited_on(self) -> None:
+        """A frame with no 繼續 that is no village either is looked at again."""
+        adb = MagicMock()
+        adb.screenshot.side_effect = [
+            (FRAMES / name).read_bytes()
+            for name in (
+                "reward_chest_prize.png",
+                "loading_screen.png",
+                "reward_chest_prize.png",
+                "hud_day.png",
+            )
+        ]
+        with patch.object(world_ui.time, "sleep"):
+            world_ui.open_chest(adb, DisplayTarget(logical_id="1", physical_id="2"))
+        taps = [c.args[:2] for c in adb.tap.call_args_list]
+        assert taps == [world_ui.CHEST_SPOT, (812, 813)]
 
     def test_a_loading_screen_is_never_pressed_at(self) -> None:
         """Nothing on it answers a press, and the presses were noise in the one log that matters."""

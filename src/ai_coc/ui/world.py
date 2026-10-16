@@ -388,7 +388,8 @@ CHEST_TAP_GAP = 0.8
 CHEST_TAPS = 10
 CHEST_OPENING = 2.5
 CHEST_CONTINUE_BOX = (680, 760, 950, 870)
-CHEST_REWARDS = 5
+# Looks, a reward pressed or a frame waited on each, before the village has to read.
+CHEST_REWARD_LOOKS = 10
 
 
 # The loot cart, moored on the grass beside the builder base's own boat and so
@@ -601,17 +602,21 @@ def open_chest(adb: AdbController, display: DisplayTarget) -> None:
             break
     time.sleep(CHEST_OPENING)
     left, top, right, bottom = CHEST_CONTINUE_BOX
-    for _ in range(CHEST_REWARDS):
+    # **Done only once the village reads**, since a frame with no 繼續 can also
+    # be a reward still sliding in, and nothing else presses one that is missed.
+    for _ in range(CHEST_REWARD_LOOKS):
+        png = adb.screenshot(display)
         buttons = [
             (x0, y0, x1, y1)
-            for x0, y0, x1, y1 in green_buttons(adb.screenshot(display))
+            for x0, y0, x1, y1 in green_buttons(png)
             if left <= x0 and top <= y0 and x1 <= right and y1 <= bottom
         ]
-        if not buttons:
+        if buttons:
+            x0, y0, x1, y1 = buttons[0]
+            logger.info("Pressing 繼續 on the chest's reward")
+            adb.tap((x0 + x1) // 2, (y0 + y1) // 2, display)
+        elif current_world(png) is not None:
             return
-        x0, y0, x1, y1 = buttons[0]
-        logger.info("Pressing 繼續 on the chest's reward")
-        adb.tap((x0 + x1) // 2, (y0 + y1) // 2, display)
         time.sleep(UNCOVER_SETTLE)
 
 

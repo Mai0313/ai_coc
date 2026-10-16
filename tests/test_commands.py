@@ -1116,6 +1116,20 @@ class AttackSeriesArmyShortTests(unittest.TestCase):
 class SettleGameTests(unittest.TestCase):
     """Waiting for a village that can be tapped, then pinching the camera out."""
 
+    def test_a_reward_chest_is_tapped_open(self) -> None:
+        """`back` does nothing to it, so the wait would otherwise run out beneath it."""
+        adb = MagicMock()
+        with (
+            patch.object(commands, "welcome_back", return_value=False),
+            patch.object(commands, "star_bonus", return_value=False),
+            patch.object(commands, "build_panel_open", return_value=False),
+            patch.object(commands, "reward_chest", return_value=4),
+            patch.object(commands, "open_chest") as opened,
+        ):
+            said = commands._press_away(adb, DISPLAY, b"")
+        assert said == "a reward chest was covering the village"
+        opened.assert_called_once_with(adb, DISPLAY)
+
     def _settle(
         self,
         worlds: list[str | None],
