@@ -117,6 +117,7 @@ from ai_coc.parsers.home import (
     boat_marker,
     cart_marker,
     plate_count,
+    reward_chest,
     shield_state,
     free_builders,
     collect_bubbles,
@@ -1657,6 +1658,7 @@ class CrossingTests(unittest.TestCase):
             # it is remembered then.
             patch.object(world_ui, "view_shift", return_value=(0, 0) if parked else (65, -33)),
             patch.object(world_ui, "build_panel_open", return_value=False),
+            patch.object(world_ui, "reward_chest", return_value=0),
             patch.object(world_ui, "boat_marker", side_effect=self.markers) as self.looked,
         ):
             landed = world_ui.cross(adb, DisplayTarget(logical_id="1", physical_id="2"), want)
@@ -1803,6 +1805,55 @@ class CrossingTests(unittest.TestCase):
             here = world_ui.uncovered(adb, DisplayTarget(logical_id="1", physical_id="2"))
         assert here == "day"
         assert adb.back.call_count == 1
+
+    def test_a_reward_chest_is_tapped_open_and_its_reward_continued(self) -> None:
+        """`back` does nothing to it; each tap on the chest spends a hammer."""
+        adb = MagicMock()
+        adb.screenshot.side_effect = [
+            (FRAMES / name).read_bytes()
+            for name in (
+                "reward_chest_four.png",
+                "reward_chest_one.png",
+                "reward_chest_prize.png",
+                "reward_chest_prize.png",
+                "hud_day.png",
+                "hud_day.png",
+            )
+        ]
+        with patch.object(world_ui.time, "sleep"):
+            here = world_ui.uncovered(adb, DisplayTarget(logical_id="1", physical_id="2"))
+        assert here == "day"
+        adb.back.assert_not_called()
+        taps = [c.args[:2] for c in adb.tap.call_args_list]
+        assert taps == [world_ui.CHEST_SPOT, world_ui.CHEST_SPOT, (812, 813)]
+
+    def test_a_green_button_off_the_rewards_place_is_not_pressed(self) -> None:
+        """立即完成 and the gem offers are green too."""
+        adb = MagicMock()
+        adb.screenshot.side_effect = [
+            (FRAMES / name).read_bytes()
+            for name in ("reward_chest_prize.png", "sheet_running_gems.png", "hud_day.png")
+        ]
+        with patch.object(world_ui.time, "sleep"):
+            world_ui.open_chest(adb, DisplayTarget(logical_id="1", physical_id="2"))
+        assert [c.args[:2] for c in adb.tap.call_args_list] == [world_ui.CHEST_SPOT]
+
+    def test_a_reward_still_sliding_in_is_waited_on(self) -> None:
+        """A frame with no 繼續 that is no village either is looked at again."""
+        adb = MagicMock()
+        adb.screenshot.side_effect = [
+            (FRAMES / name).read_bytes()
+            for name in (
+                "reward_chest_prize.png",
+                "loading_screen.png",
+                "reward_chest_prize.png",
+                "hud_day.png",
+            )
+        ]
+        with patch.object(world_ui.time, "sleep"):
+            world_ui.open_chest(adb, DisplayTarget(logical_id="1", physical_id="2"))
+        taps = [c.args[:2] for c in adb.tap.call_args_list]
+        assert taps == [world_ui.CHEST_SPOT, (812, 813)]
 
     def test_a_loading_screen_is_never_pressed_at(self) -> None:
         """Nothing on it answers a press, and the presses were noise in the one log that matters."""
@@ -6731,9 +6782,9 @@ class HomeTests(unittest.TestCase):
     """Getting back to a village, and how long an unreadable frame is worth waiting on."""
 
     def setUp(self) -> None:
-        # The frames here are stand-ins, so the two covers `_home` checks that no
+        # The frames here are stand-ins, so the covers `_home` checks that no
         # case below is about read as absent; the cases about them patch them.
-        for name in ("build_panel_open", "in_battle"):
+        for name in ("build_panel_open", "in_battle", "reward_chest"):
             patcher = patch.object(shared, name, return_value=False)
             patcher.start()
             self.addCleanup(patcher.stop)
@@ -7554,6 +7605,35 @@ class PanelWallMenuTests(unittest.TestCase):
             image.save(out, format="PNG")
             assert panel_wall_menu(out.getvalue()) is not None, name
             assert building_parser.menu_spends_gems(out.getvalue(), point), name
+
+
+class RewardChestTests(unittest.TestCase):
+    """The chest the game raises after some battles, read by the hammers left on it."""
+
+    def test_the_unused_hammers_are_counted(self) -> None:
+        for name, left in (
+            ("reward_chest_four.png", 4),
+            ("reward_chest_one.png", 1),
+            ("reward_chest_prize.png", 0),
+        ):
+            assert reward_chest((FRAMES / name).read_bytes()) == left, name
+
+    def test_no_other_frame_reads_as_one(self) -> None:
+        """The 4x speed button and the loading screen's badge carry white there, with no handle."""
+        chests = {"reward_chest_four.png", "reward_chest_one.png"}
+        for path in sorted(FRAMES.glob("*.png")):
+            try:
+                found = reward_chest(path.read_bytes())
+            except ValueError:
+                continue  # a fixture masked to another size, not a screen
+            assert bool(found) == (path.name in chests), path.name
+
+    def test_a_head_with_no_handle_under_it_is_no_hammer(self) -> None:
+        image = Image.open(FRAMES / "reward_chest_one.png").convert("RGB")
+        image.paste((40, 27, 14), (870, 750, 900, 780))
+        out = io.BytesIO()
+        image.save(out, format="PNG")
+        assert reward_chest(out.getvalue()) == 0
 
 
 class SelectionRowTests(unittest.TestCase):

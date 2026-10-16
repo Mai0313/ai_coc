@@ -93,6 +93,7 @@ from ai_coc.adapters.adb import ZOOM_PINCHES, AdbController, AdbControlError
 from ai_coc.parsers.clan import donatable_cards
 from ai_coc.parsers.home import (
     PANEL_CLOSE,
+    reward_chest,
     running_rows,
     free_builders,
     collect_bubbles,
@@ -152,7 +153,7 @@ from ai_coc.adapters.ldplayer import LDPlayerAdapter
 from ai_coc.adapters.clipboard import read_clipboard, clear_clipboard, write_clipboard
 
 from .ui.clan import ClanRunner
-from .ui.world import cross, uncovered, park_camera, collect_cart
+from .ui.world import cross, uncovered, open_chest, park_camera, collect_cart
 from .ui.attack import CARD_ROW_Y, DROP_SETTLE, BATTLE_TIMEOUT, SINGLE_DROP_DELAY, AttackRunner
 from .ui.plates import PlateRunner
 from .ui.runner import (
@@ -1463,6 +1464,10 @@ def _press_away(adb: AdbController, display: DisplayTarget, png: bytes) -> str |
         logger.info("The build panel is covering the village; pressing its X")
         adb.tap(*PANEL_CLOSE, display)
         return "the build panel was covering the village"
+    if reward_chest(png):
+        logger.info("A reward chest is covering the village; tapping it open")
+        open_chest(adb, display)
+        return "a reward chest was covering the village"
     return None
 
 

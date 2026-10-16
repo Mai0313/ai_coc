@@ -24,7 +24,7 @@ from ai_coc.models import World, VillageStock, DisplayTarget, StorageCapacity
 from ai_coc.constants import COC_PACKAGE
 from ai_coc.adapters.ai import GeminiClient
 from ai_coc.adapters.adb import ZOOM_PINCHES, AdbController, AdbControlError
-from ai_coc.parsers.home import PANEL_CLOSE, STORAGE_BARS, build_panel_open
+from ai_coc.parsers.home import PANEL_CLOSE, STORAGE_BARS, reward_chest, build_panel_open
 from ai_coc.parsers.scout import (
     in_battle,
     read_stock,
@@ -37,7 +37,7 @@ from ai_coc.parsers.scout import (
 from ai_coc.parsers.world import current_world
 from ai_coc.parsers.building import game_dialog
 
-from .world import park_camera
+from .world import open_chest, park_camera
 
 logger = logging.getLogger(__name__)
 
@@ -447,7 +447,7 @@ class GameRunner(ScreenRunner):
             self._settled = True
 
     def _cleared(self, png: bytes) -> bool:
-        """Answer a dialog with 取消, or shut the build panel, whichever is over the village.
+        """Answer a dialog with 取消, shut the build panel, or tap a reward chest open.
 
         Both are pressed rather than backed out of: 取消 is the harmless answer
         to every dialog the game raises, and `back` leaves the build panel up,
@@ -460,6 +460,9 @@ class GameRunner(ScreenRunner):
         elif build_panel_open(png):
             logger.info("The build panel is over the village; pressing its X")
             self._tap(PANEL_CLOSE)
+        elif reward_chest(png):
+            logger.info("A reward chest is over the village; tapping it open")
+            open_chest(self.adb, self.display)
         else:
             return False
         time.sleep(BACK_SETTLE)

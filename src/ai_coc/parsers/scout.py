@@ -200,6 +200,11 @@ NIGHT_PANEL_PALE = 0.8
 CART_PLANK_ABOVE = (1075, 686, 1290, 712)
 CART_PLANK_BESIDE = (575, 686, 1020, 704)
 CART_PLANK = 0.55
+# **A reward chest's room is floored in the same wood**, and the reward it shows
+# read as this sheet on both boxes. Its red X, which the room has none of, is
+# the third reading: 0.393 of this box on all four sheets, 0.0 on the reward.
+CART_X_BOX = (1305, 55, 1372, 122)
+CART_X_RED = 0.2
 # **The green is the same test and the same number it has always been**, and the
 # measurement behind it belongs here rather than in the history: that button
 # reads 0.82 of button green over 4 300 recorded frames of both villages where
@@ -1234,10 +1239,16 @@ def loot_cart_open(png: bytes) -> bool:
     over the village. `loot_cart_ready` is the button's own question.
     """
     image = open_frame(png)
-    return (
+    if not (
         _plank_ratio(image, CART_PLANK_ABOVE) >= CART_PLANK
         and _plank_ratio(image, CART_PLANK_BESIDE) >= CART_PLANK
+    ):
+        return False
+    data = image.crop(CART_X_BOX).tobytes()
+    reds = sum(
+        data[i] >= 180 and data[i + 1] <= 80 and data[i + 2] <= 80 for i in range(0, len(data), 3)
     )
+    return reds / (len(data) // 3) >= CART_X_RED
 
 
 def loot_cart_ready(png: bytes) -> bool:

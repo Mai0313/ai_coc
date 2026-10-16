@@ -38,7 +38,13 @@ import logging
 from ai_coc.models import Pinch, Crossing, CartReport
 from ai_coc.constants import COC_PACKAGE
 from ai_coc.adapters.adb import ZOOM_PINCHES
-from ai_coc.parsers.home import PANEL_CLOSE, boat_marker, cart_marker, build_panel_open
+from ai_coc.parsers.home import (
+    PANEL_CLOSE,
+    boat_marker,
+    cart_marker,
+    reward_chest,
+    build_panel_open,
+)
 from ai_coc.parsers.field import view_shift
 from ai_coc.parsers.scout import (
     in_battle,
@@ -51,6 +57,7 @@ from ai_coc.parsers.scout import (
     read_builder_stock,
 )
 from ai_coc.parsers.world import current_world
+from ai_coc.parsers.building import green_buttons
 
 if TYPE_CHECKING:
     from ai_coc.models import World, DisplayTarget
@@ -371,6 +378,19 @@ SAIL_GAP = 1.5
 UNCOVER_TRIES = 3
 UNCOVER_SETTLE = 1.5
 
+# A reward chest (`reward_chest`) is tapped open on the chest itself, one hammer
+# a tap, and what it holds then comes up one reward at a time over the same room,
+# each with a 繼續 in this box (x 701-924, y 780-847 on a 時光鐘樓藥水). Measured
+# 2026-10-16: the fourth tap flashed the screen white and the reward stood
+# about a second later.
+CHEST_SPOT = (790, 480)
+CHEST_TAP_GAP = 0.8
+CHEST_TAPS = 10
+CHEST_OPENING = 2.5
+CHEST_CONTINUE_BOX = (680, 760, 950, 870)
+# Looks, a reward pressed or a frame waited on each, before the village has to read.
+CHEST_REWARD_LOOKS = 10
+
 
 # The loot cart, moored on the grass beside the builder base's own boat and so
 # reached by the same clamped view. **It is where that village's elixir goes**:
@@ -567,6 +587,39 @@ def collect_cart(adb: AdbController, display: DisplayTarget) -> CartReport:
     return CartReport(outcome="collected" if gained > 0 else "empty", elixir=gained)
 
 
+def open_chest(adb: AdbController, display: DisplayTarget) -> None:
+    """Tap a reward chest open, then press 繼續 on each reward it shows.
+
+    **繼續 is pressed here and nowhere else**, straight after this opened the
+    chest itself: a big green button is what 立即完成 and the gem offers wear,
+    which is why `tap` refuses every one, so a green button is only ever pressed
+    by whoever raised it.
+    """
+    for _ in range(CHEST_TAPS):
+        adb.tap(*CHEST_SPOT, display)
+        time.sleep(CHEST_TAP_GAP)
+        if not reward_chest(adb.screenshot(display)):
+            break
+    time.sleep(CHEST_OPENING)
+    left, top, right, bottom = CHEST_CONTINUE_BOX
+    # **Done only once the village reads**, since a frame with no 繼續 can also
+    # be a reward still sliding in, and nothing else presses one that is missed.
+    for _ in range(CHEST_REWARD_LOOKS):
+        png = adb.screenshot(display)
+        buttons = [
+            (x0, y0, x1, y1)
+            for x0, y0, x1, y1 in green_buttons(png)
+            if left <= x0 and top <= y0 and x1 <= right and y1 <= bottom
+        ]
+        if buttons:
+            x0, y0, x1, y1 = buttons[0]
+            logger.info("Pressing 繼續 on the chest's reward")
+            adb.tap((x0 + x1) // 2, (y0 + y1) // 2, display)
+        elif current_world(png) is not None:
+            return
+        time.sleep(UNCOVER_SETTLE)
+
+
 def uncovered(adb: AdbController, display: DisplayTarget) -> World | None:
     """The village under whatever is over it, pressed away; None if none appeared.
 
@@ -627,6 +680,11 @@ def uncovered(adb: AdbController, display: DisplayTarget) -> World | None:
             logger.info("The build panel is over the village; pressing its X")
             adb.tap(*PANEL_CLOSE, display)
             time.sleep(UNCOVER_SETTLE)
+            continue
+        # `back` does nothing to a reward chest; tapping it open does.
+        if reward_chest(png):
+            logger.info("A reward chest is over the village; tapping it open")
+            open_chest(adb, display)
             continue
         logger.info("Something is over the village; pressing back to get at it")
         adb.back(display)
