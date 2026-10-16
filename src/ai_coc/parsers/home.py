@@ -178,6 +178,29 @@ CART_DROP_DOWN = (23, 30)
 CART_DROP_FILL = 0.45
 CART_DROP_ABOVE_POINT = 27
 
+# A reward chest the game raises over the home village after some battles,
+# full screen (a 普通 one, met 2026-10-16): `back` does nothing to it, so an
+# attack series ended `no_attack_menu` five rounds running beneath it. Every tap
+# on the chest spends one of the hammers on the strip under it, white unused and
+# black once used, and the last one opens it. Read by its unused hammers: a white
+# head 35x27 at 0.57 fill with an orange handle 15x22 at about 0.2 straight
+# below it, the heads at x 669-881 a pitch of 70-73 apart, y 728. Swept over
+# 254 frames, the committed ones and those recorded on 2026-10-16, nothing else
+# in the strip pairs the two: the 4x speed button's white comes 37x40 with no
+# handle, the loading screen's badge 22x19 with none.
+CHEST_STRIP = (640, 722, 940, 788)
+CHEST_HEAD = ((186, 255), (186, 255), (186, 255))
+CHEST_HEAD_ACROSS = (30, 40)
+CHEST_HEAD_DOWN = (24, 32)
+CHEST_HEAD_FILL = 0.45
+CHEST_HANDLE = ((150, 230), (70, 135), (20, 80))
+CHEST_HANDLE_ACROSS = (11, 19)
+CHEST_HANDLE_DOWN = (18, 26)
+CHEST_HANDLE_FILL = 0.12
+# How far a handle may sit from straight under its head, either way: measured 3
+# left and 2 up into the head's bottom row on every hammer.
+CHEST_HANDLE_REACH = 8
+
 # The two counters in the bottom right, idle over total: the builders' and the
 # laboratory's. The 2026-10 overhaul moved them off the plate row along the top
 # to just above the 建造 button, at the same place on both villages, so a box
@@ -409,6 +432,29 @@ def cart_marker(png: bytes) -> tuple[int, int] | None:
         if patch.sized(CART_DROP_ACROSS, CART_DROP_DOWN, CART_DROP_FILL):
             return left + patch.middle[0], top + patch.middle[1] + CART_DROP_ABOVE_POINT
     return None
+
+
+def reward_chest(png: bytes) -> int:
+    """How many unused hammers a reward chest has left; 0 where no chest is up."""
+    strip = open_frame(png).crop(CHEST_STRIP)
+    heads = [
+        patch
+        for patch in patches(mask(strip, CHEST_HEAD), *strip.size)
+        if patch.sized(CHEST_HEAD_ACROSS, CHEST_HEAD_DOWN, CHEST_HEAD_FILL)
+    ]
+    handles = [
+        patch
+        for patch in patches(mask(strip, CHEST_HANDLE), *strip.size)
+        if patch.sized(CHEST_HANDLE_ACROSS, CHEST_HANDLE_DOWN, CHEST_HANDLE_FILL)
+    ]
+    return sum(
+        any(
+            abs(handle.left - head.left) <= CHEST_HANDLE_REACH
+            and abs(handle.top - head.bottom) <= CHEST_HANDLE_REACH
+            for handle in handles
+        )
+        for head in heads
+    )
 
 
 def plate_count(png: bytes, role: PlateRole) -> tuple[int, int] | None:

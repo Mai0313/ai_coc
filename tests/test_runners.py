@@ -166,6 +166,7 @@ class HomeCoverTests(unittest.TestCase):
             # for the village that then reads.
             patch.object(shared, "game_dialog", side_effect=[dialog, None, None]),
             patch.object(shared, "build_panel_open", return_value=False),
+            patch.object(shared, "reward_chest", return_value=0),
             patch.object(shared, "current_world", return_value="day"),
             patch.object(shared, "read_stock", return_value=STOCK),
             patch.object(GameRunner, "_settle_zoom"),
@@ -184,6 +185,7 @@ class HomeCoverTests(unittest.TestCase):
             patch.object(shared, "loading_screen", return_value=False),
             patch.object(shared, "game_dialog", return_value=None),
             patch.object(shared, "build_panel_open", side_effect=[True, False, False]),
+            patch.object(shared, "reward_chest", return_value=0),
             patch.object(shared, "current_world", return_value="day"),
             patch.object(shared, "read_stock", return_value=STOCK),
             patch.object(GameRunner, "_settle_zoom"),
@@ -211,6 +213,7 @@ class HomeCoverTests(unittest.TestCase):
             patch.object(shared, "loading_screen", return_value=False),
             patch.object(shared, "game_dialog", return_value=None),
             patch.object(shared, "build_panel_open", return_value=False),
+            patch.object(shared, "reward_chest", return_value=0),
             patch.object(shared, "current_world", return_value="day"),
             patch.object(shared, "read_stock", return_value=STOCK),
             patch.object(shared, "park_camera") as parked,

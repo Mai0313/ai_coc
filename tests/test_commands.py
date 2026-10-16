@@ -1143,6 +1143,7 @@ class SettleGameTests(unittest.TestCase):
             patch.object(
                 commands, "build_panel_open", side_effect=screens.get("panel") or [False] * 9
             ),
+            patch.object(commands, "reward_chest", return_value=0),
             patch.object(
                 commands, "loading_screen", side_effect=screens.get("loading") or [False] * 9
             ),
