@@ -623,6 +623,23 @@ PANEL_WALL_PRICE_BOX = (-58, 722, 46, 756)
 PANEL_WALL_MIDDLE = 585
 PANEL_WALL_PITCH = 174
 PANEL_WALL_ROW_Y = 790
+# **The menu can also stand in one row**, all five buttons side by side, with
+# the price buttons 80 px higher on the same grid: on 2026-10-16 the drop sat at
+# y 652-661 against 732-741 on a single wall (x 933) and a batch (x 846). Every
+# two-row menu recorded had an extra button in the bottom right corner, a box
+# with a red 1, and the one-row menus did not. The heights below are added to
+# every y above, the two-row one first.
+PANEL_WALL_RISES = (0, -80)
+# **`tap`'s plate test reads this menu on its own grid and rows** (#439): the
+# ordinary row's grid sits about 40 px off these buttons, and in one row its
+# corners land on the night's ground above them, which read blue minus red 51
+# and refused 新增城牆. At these corners every button of both layouts reads -30
+# to -79, the ground 15 to 51, a blue plate 199 to 204. The two-row layout's
+# upper row (資訊 or 移除城牆 and the rest) stands 155 px above the price
+# buttons, its buttons ending by y 705 where the lower row's start at 720.
+PANEL_WALL_TOP_RISE = -155
+PANEL_WALL_ROW_SPLIT = 712
+PANEL_MENU_BAND = (560, 860)
 # Both real buttons sat 1 px off that grid on every menu recorded; the icons the
 # village throws up in the same band sat 10 to 36 px off it.
 PANEL_WALL_GRID_TOLERANCE = 5
@@ -636,11 +653,11 @@ PANEL_WALL_RED_SHARE = 0.01
 
 
 def _panel_wall_button(
-    image: Image.Image, centre: int, resource: SheetResource
+    image: Image.Image, centre: int, resource: SheetResource, rise: int
 ) -> SheetOffer | None:
     """What the wall's price button centred here asks, or None where it does not read."""
     left, top, right, bottom = PANEL_WALL_PRICE_BOX
-    band = image.crop((centre + left, top, centre + right, bottom))
+    band = image.crop((centre + left, top + rise, centre + right, bottom + rise))
     price = digits_from(_price_mask(band), PRICE_TOLERANCE, floor=PRICE_ROWS)
     if price is None or price < MIN_PRICE:
         return None
@@ -655,7 +672,7 @@ def _panel_wall_button(
     return SheetOffer(
         price=price,
         resource=resource,
-        point=(centre, PANEL_WALL_ROW_Y),
+        point=(centre, PANEL_WALL_ROW_Y + rise),
         affordable=reds / (band.width * band.height) < PANEL_WALL_RED_SHARE,
     )
 
@@ -670,12 +687,20 @@ def panel_wall_menu(png: bytes) -> PanelWallMenu | None:
     if not build_panel_open(png):
         return None
     image = open_frame(png).crop(GREEN_BUTTON_AREA)
+    for rise in PANEL_WALL_RISES:
+        if (menu := _panel_wall_row(image, rise)) is not None:
+            return menu
+    return None
+
+
+def _panel_wall_row(image: Image.Image, rise: int) -> PanelWallMenu | None:
+    """The wall menu's price buttons at one of the heights it stands at, or None."""
     step = PANEL_WALL_PITCH // 2
-    coins = [
-        icon - PANEL_WALL_ICON_OFFSET
-        for icon in _icon_centres(image, _is_gold, PANEL_WALL_ICON_BAND)
-    ]
-    for drop in _icon_centres(image, _is_elixir, PANEL_WALL_ICON_BAND):
+    icons = (PANEL_WALL_ICON_BAND[0] + rise, PANEL_WALL_ICON_BAND[1] + rise)
+    left, top, right, bottom = PANEL_WALL_PLATE_BOX
+    plate = (left, top + rise, right, bottom + rise)
+    coins = [icon - PANEL_WALL_ICON_OFFSET for icon in _icon_centres(image, _is_gold, icons)]
+    for drop in _icon_centres(image, _is_elixir, icons):
         elixir = drop - PANEL_WALL_ICON_OFFSET
         offset = (elixir - PANEL_WALL_MIDDLE) % step
         if min(offset, step - offset) > PANEL_WALL_GRID_TOLERANCE:
@@ -683,11 +708,11 @@ def panel_wall_menu(png: bytes) -> PanelWallMenu | None:
         gold = elixir - PANEL_WALL_PITCH
         if not any(abs(coin - gold) <= ICON_TOLERANCE for coin in coins):
             continue
-        if any(_on_gem_plate(image, middle, PANEL_WALL_PLATE_BOX) for middle in (gold, elixir)):
+        if any(_on_gem_plate(image, middle, plate) for middle in (gold, elixir)):
             continue
         offers = (
-            _panel_wall_button(image, gold, "gold"),
-            _panel_wall_button(image, elixir, "elixir"),
+            _panel_wall_button(image, gold, "gold", rise),
+            _panel_wall_button(image, elixir, "elixir", rise),
         )
         if offers[0] is None or offers[1] is None or offers[0].price != offers[1].price:
             continue
@@ -748,8 +773,11 @@ def menu_spends_gems(png: bytes, point: tuple[int, int]) -> bool:
 
     Asked of any frame, and answered from the plate alone: a village with no
     menu open has grass where the plate would be, which neither test takes
-    (measured 40 at most against the green floor's 60).
+    (measured 40 at most against the green floor's 60). With the wall menu up
+    beside the build panel, it reads that menu's own grid and rows instead.
     """
+    if (wall := panel_wall_menu(png)) is not None:
+        return _panel_menu_spends_gems(png, point, wall.gold.point[1] - PANEL_WALL_ROW_Y)
     x, y = point
     if not MENU_BAND[0] <= y <= MENU_BAND[1]:
         return False
@@ -765,3 +793,19 @@ def menu_spends_gems(png: bytes, point: tuple[int, int]) -> bool:
     ]
     image = open_frame(png)
     return any(_on_gem_plate(image, middle) or _on_finish_plate(image, middle) for middle in near)
+
+
+def _panel_menu_spends_gems(png: bytes, point: tuple[int, int], rise: int) -> bool:
+    """`menu_spends_gems` on the wall menu beside the panel, on that menu's own grid and rows."""
+    x, y = point
+    if not PANEL_MENU_BAND[0] <= y <= PANEL_MENU_BAND[1]:
+        return False
+    if rise == 0 and y < PANEL_WALL_ROW_SPLIT:
+        rise = PANEL_WALL_TOP_RISE
+    left, top, right, bottom = PANEL_WALL_PLATE_BOX
+    plate = (left, top + rise, right, bottom + rise)
+    step = PANEL_WALL_PITCH // 2
+    centre = PANEL_WALL_MIDDLE + round((x - PANEL_WALL_MIDDLE) / step) * step
+    near = [m for m in (centre - step, centre, centre + step) if abs(x - m) <= MENU_HALF_WIDTH]
+    image = open_frame(png)
+    return any(_on_gem_plate(image, middle, plate) for middle in near)

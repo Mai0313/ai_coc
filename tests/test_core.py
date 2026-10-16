@@ -7212,6 +7212,8 @@ class HomeHudTests(unittest.TestCase):
             "night_menu_finishing.png",
             "night_wall_menu.png",
             "night_wall_batch.png",
+            "night_wall_menu_one_row.png",
+            "night_wall_batch_one_row.png",
             "night_wall_row.png",
         }
         for path in sorted(FRAMES.glob("*.png")):
@@ -7461,22 +7463,30 @@ class PanelWallMenuTests(unittest.TestCase):
     """The wall menu a 城牆 row opens beside the build panel, which `confirm --pay` presses."""
 
     def test_a_single_wall_and_a_batch_read_both_price_buttons(self) -> None:
-        for name, price, gold_affordable in (
-            ("night_wall_menu.png", 800000, True),
+        """In two rows, and in the one row the menu stands in 80 px higher."""
+        for name, price, gold_affordable, points in (
+            ("night_wall_menu.png", 800000, True, ((497, 790), (671, 790))),
             # 1 600 000 against 845 208 gold held: the game writes that one red.
-            ("night_wall_batch.png", 1600000, False),
+            ("night_wall_batch.png", 1600000, False, ((497, 790), (671, 790))),
+            ("night_wall_menu_one_row.png", 800000, True, ((759, 710), (933, 710))),
+            ("night_wall_batch_one_row.png", 800000, True, ((672, 710), (846, 710))),
         ):
             menu = panel_wall_menu((FRAMES / name).read_bytes())
             assert menu is not None, name
             assert (menu.gold.price, menu.elixir.price) == (price, price), name
-            assert (menu.gold.point, menu.elixir.point) == ((497, 790), (671, 790)), name
+            assert (menu.gold.point, menu.elixir.point) == points, name
             assert (menu.gold.resource, menu.elixir.resource) == ("gold", "elixir"), name
             assert menu.gold.affordable == gold_affordable, name
             assert menu.elixir.affordable, name
 
     def test_no_other_frame_reads_as_one(self) -> None:
         """The row-move mode 整排選取 opens, the batch's dialog and the wall's sheet included."""
-        menus = {"night_wall_menu.png", "night_wall_batch.png"}
+        menus = {
+            "night_wall_menu.png",
+            "night_wall_batch.png",
+            "night_wall_menu_one_row.png",
+            "night_wall_batch_one_row.png",
+        }
         for path in sorted(FRAMES.glob("*.png")):
             try:
                 found = panel_wall_menu(path.read_bytes())
@@ -7495,11 +7505,11 @@ class PanelWallMenuTests(unittest.TestCase):
             assert panel_wall_menu(png) is None
 
     def test_buttons_priced_apart_are_no_menu(self) -> None:
-        def priced(_image: object, centre: int, resource: str) -> SheetOffer:
+        def priced(_image: object, centre: int, resource: str, rise: int) -> SheetOffer:
             return SheetOffer(
                 price=800000 if resource == "gold" else 1600000,
                 resource=resource,
-                point=(centre, 790),
+                point=(centre, 790 + rise),
             )
 
         png = (FRAMES / "night_wall_menu.png").read_bytes()
@@ -7513,6 +7523,37 @@ class PanelWallMenuTests(unittest.TestCase):
         out = io.BytesIO()
         image.save(out, format="PNG")
         assert panel_wall_menu(out.getvalue()) is None
+
+    def test_a_blue_plate_is_looked_for_at_the_one_rows_height(self) -> None:
+        image = Image.open(FRAMES / "night_wall_menu_one_row.png").convert("RGB")
+        image.paste((40, 90, 240), (759 - 62, 680, 759 - 42, 700))
+        out = io.BytesIO()
+        image.save(out, format="PNG")
+        assert panel_wall_menu(out.getvalue()) is None
+
+    def test_tap_reads_the_menus_own_buttons_in_either_layout(self) -> None:
+        """新增城牆 in one row and 移除城牆 in two were refused off the ordinary row's grid (#439)."""
+        for name, point in (
+            ("night_wall_batch_one_row.png", (497, 710)),
+            ("night_wall_batch_one_row.png", (322, 710)),
+            ("night_wall_batch.png", (495, 640)),
+            ("night_wall_menu.png", (585, 640)),
+        ):
+            png = (FRAMES / name).read_bytes()
+            assert not building_parser.menu_spends_gems(png, point), (name, point)
+
+    def test_a_blue_plate_in_the_menu_is_still_refused(self) -> None:
+        """Painted at the plate corner of a button in each layout's row, its price buttons untouched."""
+        for name, box, point in (
+            ("night_wall_batch_one_row.png", (498 - 62, 680, 498 - 42, 700), (497, 710)),
+            ("night_wall_menu.png", (585 - 62, 605, 585 - 42, 625), (585, 640)),
+        ):
+            image = Image.open(FRAMES / name).convert("RGB")
+            image.paste((40, 90, 240), box)
+            out = io.BytesIO()
+            image.save(out, format="PNG")
+            assert panel_wall_menu(out.getvalue()) is not None, name
+            assert building_parser.menu_spends_gems(out.getvalue(), point), name
 
 
 class SelectionRowTests(unittest.TestCase):
