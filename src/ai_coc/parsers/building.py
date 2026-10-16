@@ -361,7 +361,7 @@ def upgrade_sheet(png: bytes) -> tuple[int, int] | None:
 # same for heroes, buildings, research and pets on every one recorded. The
 # builder base's 「是否提升至N級？」 is a larger window with one button in the
 # middle, its price drawn bigger, its gold a square and its elixir violet.
-# Measured on fourteen home sheets and four builder base ones.
+# Measured on fourteen home sheets and five builder base ones, a hero's among them.
 #
 # **The same green, in the same place, is 立即完成 on a running upgrade's
 # sheet**, priced in gems: a tap on a running hero's or pet's row opens
@@ -371,21 +371,30 @@ def upgrade_sheet(png: bytes) -> tuple[int, int] | None:
 # 0.34 on the four dark ones, against at most 0.009 of any of them on the gem
 # sheet; each floor sits about halfway, and a box that clears two floors is no
 # offer either.
-SHEET_PRICE_BOX: dict[World, tuple[int, int, int, int]] = {
-    "day": (1000, 765, 1190, 803),
-    "night": (668, 760, 872, 810),
-}
-SHEET_ICON_BOX: dict[World, tuple[int, int, int, int]] = {
-    "day": (1190, 770, 1245, 830),
-    "night": (876, 752, 948, 822),
+#
+# Each layout is where its button is looked for, then its price box and its
+# icon box: the home one's span is `upgrade_sheet`'s own, the builder base's the
+# middle, where its one button stands. **A builder base hero gets the home
+# layout's shape instead**, its button bottom right under the same X as the
+# other builder base sheets: on the Battle Machine's, measured 2026-10-16, the
+# button spans x 1102-1354 and y 743-844, the white price x 1118-1274, the drop
+# x 1294-1338 and y 764-817. **The hero's is tried first**, since the grass
+# under its portrait reaches into the middle span (4382 px of that green there,
+# against the 5000 a button needs), while its own span holds 2 px of it at most
+# on every other builder base sheet.
+SHEET_LAYOUTS: dict[
+    World,
+    tuple[
+        tuple[tuple[int, int, int, int], tuple[int, int, int, int], tuple[int, int, int, int]], ...
+    ],
+] = {
+    "day": ((SHEET_SPAN, (1000, 765, 1190, 803), (1190, 770, 1245, 830)),),
+    "night": (
+        ((1050, 700, 1400, 880), (1110, 760, 1290, 810), (1288, 752, 1350, 825)),
+        ((600, 700, 1010, 880), (668, 760, 872, 810), (876, 752, 948, 822)),
+    ),
 }
 SHEET_ICON_FLOORS: dict[SheetResource, float] = {"gold": 0.12, "elixir": 0.1, "dark": 0.17}
-# Where the button is looked for on each sheet: the home one is `upgrade_sheet`'s
-# own span, the builder base's is the middle, where its one button stands.
-SHEET_BUTTON_SPAN: dict[World, tuple[int, int, int, int]] = {
-    "day": SHEET_SPAN,
-    "night": (600, 700, 1010, 880),
-}
 # The builder base draws its price too large for the digit templates' widths:
 # shrunk to this, its four sheets read 2 560 000, 2 000 000, 192 000 and 4 000
 # with no digit worse than 23.
@@ -415,7 +424,7 @@ SHEET_CLOSE_BOX: dict[World, tuple[int, int, int, int]] = {
 # not: measured, the home box is 0.432 red on all fourteen home sheets, the gem
 # sheet included, and on a troop's info window that carries no green button;
 # 0.164 on the profile window's settings tab, and 0.03 at most anywhere else.
-# The builder base box reads 0.302 on its four.
+# The builder base box reads 0.302 on its four building sheets and 0.362 on the hero's.
 SHEET_X_BOX: dict[World, tuple[int, int, int, int]] = {
     "day": (1383, 40, 1445, 100),
     "night": (1305, 27, 1373, 88),
@@ -496,23 +505,29 @@ def _sheet_icon(world: World, red: int, green: int, blue: int) -> SheetResource 
     )
 
 
-def _sheet_button(image: Image.Image, world: World) -> tuple[int, int] | None:
-    """The middle of the biggest green patch where that village's sheet keeps its button."""
-    left, top, right, bottom = SHEET_BUTTON_SPAN[world]
-    biggest = max(
-        (
-            patch
-            for patch in patches(
-                mask(image.crop((left, top, right, bottom)), SHEET_GREEN),
-                right - left,
-                bottom - top,
-            )
-            if patch.count >= SHEET_BUTTON
-        ),
-        key=lambda patch: patch.count,
-        default=None,
-    )
-    return None if biggest is None else (biggest.middle[0] + left, biggest.middle[1] + top)
+def _sheet_button(
+    image: Image.Image, world: World
+) -> tuple[tuple[int, int], tuple[int, int, int, int], tuple[int, int, int, int]] | None:
+    """The middle of the biggest green patch where one of that village's sheets keeps its
+    button, with that sheet's price box and icon box.
+    """
+    for (left, top, right, bottom), price_box, icon_box in SHEET_LAYOUTS[world]:
+        biggest = max(
+            (
+                patch
+                for patch in patches(
+                    mask(image.crop((left, top, right, bottom)), SHEET_GREEN),
+                    right - left,
+                    bottom - top,
+                )
+                if patch.count >= SHEET_BUTTON
+            ),
+            key=lambda patch: patch.count,
+            default=None,
+        )
+        if biggest is not None:
+            return (biggest.middle[0] + left, biggest.middle[1] + top), price_box, icon_box
+    return None
 
 
 def sheet_open(png: bytes) -> World | None:
@@ -544,11 +559,12 @@ def sheet_offer(png: bytes) -> SheetOffer | None:
     if world is None:
         return None
     image = open_frame(png)
-    point = _sheet_button(image, world)
-    price_box, icon_box = SHEET_PRICE_BOX[world], SHEET_ICON_BOX[world]
+    if (button := _sheet_button(image, world)) is None:
+        return None
+    point, price_box, icon_box = button
     # The button the price is read off, and not the magic item's beside it:
     # only a green patch that sits under the price is the button this reads.
-    if point is None or not price_box[0] <= point[0] <= icon_box[2]:
+    if not price_box[0] <= point[0] <= icon_box[2]:
         return None
     data = image.crop(icon_box).tobytes()
     count = len(data) // 3
