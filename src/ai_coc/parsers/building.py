@@ -614,6 +614,16 @@ PANEL_WALL_ROW_Y = 790
 # with a red 1, and the one-row menus did not. The heights below are added to
 # every y above, the two-row one first.
 PANEL_WALL_RISES = (0, -80)
+# **`tap`'s plate test reads this menu on its own grid and rows** (#439): the
+# ordinary row's grid sits about 40 px off these buttons, and in one row its
+# corners land on the night's ground above them, which read blue minus red 51
+# and refused 新增城牆. At these corners every button of both layouts reads -30
+# to -79, the ground 15 to 51, a blue plate 199 to 204. The two-row layout's
+# upper row (資訊 or 移除城牆 and the rest) stands 155 px above the price
+# buttons, its buttons ending by y 705 where the lower row's start at 720.
+PANEL_WALL_TOP_RISE = -155
+PANEL_WALL_ROW_SPLIT = 712
+PANEL_MENU_BAND = (560, 860)
 # Both real buttons sat 1 px off that grid on every menu recorded; the icons the
 # village throws up in the same band sat 10 to 36 px off it.
 PANEL_WALL_GRID_TOLERANCE = 5
@@ -747,8 +757,11 @@ def menu_spends_gems(png: bytes, point: tuple[int, int]) -> bool:
 
     Asked of any frame, and answered from the plate alone: a village with no
     menu open has grass where the plate would be, which neither test takes
-    (measured 40 at most against the green floor's 60).
+    (measured 40 at most against the green floor's 60). With the wall menu up
+    beside the build panel, it reads that menu's own grid and rows instead.
     """
+    if (wall := panel_wall_menu(png)) is not None:
+        return _panel_menu_spends_gems(png, point, wall.gold.point[1] - PANEL_WALL_ROW_Y)
     x, y = point
     if not MENU_BAND[0] <= y <= MENU_BAND[1]:
         return False
@@ -764,3 +777,19 @@ def menu_spends_gems(png: bytes, point: tuple[int, int]) -> bool:
     ]
     image = open_frame(png)
     return any(_on_gem_plate(image, middle) or _on_finish_plate(image, middle) for middle in near)
+
+
+def _panel_menu_spends_gems(png: bytes, point: tuple[int, int], rise: int) -> bool:
+    """`menu_spends_gems` on the wall menu beside the panel, on that menu's own grid and rows."""
+    x, y = point
+    if not PANEL_MENU_BAND[0] <= y <= PANEL_MENU_BAND[1]:
+        return False
+    if rise == 0 and y < PANEL_WALL_ROW_SPLIT:
+        rise = PANEL_WALL_TOP_RISE
+    left, top, right, bottom = PANEL_WALL_PLATE_BOX
+    plate = (left, top + rise, right, bottom + rise)
+    step = PANEL_WALL_PITCH // 2
+    centre = PANEL_WALL_MIDDLE + round((x - PANEL_WALL_MIDDLE) / step) * step
+    near = [m for m in (centre - step, centre, centre + step) if abs(x - m) <= MENU_HALF_WIDTH]
+    image = open_frame(png)
+    return any(_on_gem_plate(image, middle, plate) for middle in near)

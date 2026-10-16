@@ -7521,6 +7521,37 @@ class PanelWallMenuTests(unittest.TestCase):
         image.save(out, format="PNG")
         assert panel_wall_menu(out.getvalue()) is None
 
+    def test_a_blue_plate_is_looked_for_at_the_one_rows_height(self) -> None:
+        image = Image.open(FRAMES / "night_wall_menu_one_row.png").convert("RGB")
+        image.paste((40, 90, 240), (759 - 62, 680, 759 - 42, 700))
+        out = io.BytesIO()
+        image.save(out, format="PNG")
+        assert panel_wall_menu(out.getvalue()) is None
+
+    def test_tap_reads_the_menus_own_buttons_in_either_layout(self) -> None:
+        """新增城牆 in one row and 移除城牆 in two were refused off the ordinary row's grid (#439)."""
+        for name, point in (
+            ("night_wall_batch_one_row.png", (497, 710)),
+            ("night_wall_batch_one_row.png", (322, 710)),
+            ("night_wall_batch.png", (495, 640)),
+            ("night_wall_menu.png", (585, 640)),
+        ):
+            png = (FRAMES / name).read_bytes()
+            assert not building_parser.menu_spends_gems(png, point), (name, point)
+
+    def test_a_blue_plate_in_the_menu_is_still_refused(self) -> None:
+        """Painted at the plate corner of a button in each layout's row, its price buttons untouched."""
+        for name, box, point in (
+            ("night_wall_batch_one_row.png", (498 - 62, 680, 498 - 42, 700), (497, 710)),
+            ("night_wall_menu.png", (585 - 62, 605, 585 - 42, 625), (585, 640)),
+        ):
+            image = Image.open(FRAMES / name).convert("RGB")
+            image.paste((40, 90, 240), box)
+            out = io.BytesIO()
+            image.save(out, format="PNG")
+            assert panel_wall_menu(out.getvalue()) is not None, name
+            assert building_parser.menu_spends_gems(out.getvalue(), point), name
+
 
 class SelectionRowTests(unittest.TestCase):
     """The button row a selected building or wall leaves along the bottom, which `view` will not drag across."""
