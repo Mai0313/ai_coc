@@ -50,7 +50,7 @@ description: >-
 
 ## 三份文件的分工
 
-程式碼說現在是什麼, 常數旁邊的註解 (跟釘住它的測試) 說數字怎麼量出來的, `AGENTS.md` 放規則跟不變式 (Attack loop 那節是必讀), 這份 skill 說怎麼判斷. 動常數之前先在 `src/` 跟 `tests/` 搜它: 多半是修某個實測 bug 才變成現在的值, 改回去就把 bug 放回來.
+程式碼說現在是什麼, 常數旁邊的註解 (跟釘住它的測試) 說數字怎麼量出來的, `AGENTS.md` 跟 `.agents/architecture.md` 放規則跟不變式 (後者的 Attack loop 那節是必讀), 這份 skill 說怎麼判斷. 動常數之前先在 `src/` 跟 `tests/` 搜它: 多半是修某個實測 bug 才變成現在的值, 改回去就把 bug 放回來.
 
 ## 出兵沒有成本, 不要客氣
 
@@ -111,7 +111,7 @@ uv run ai_coc attack --plan .runs/tuned.json
 - **先量再改, 量的是代價.** 一件事看起來多糟不算數, 要看它讓進帳少了多少, 或讓一輪多花多少時間. 例如 AI 規劃慢到部隊晚半分鐘才下, 但那幾場都在時鐘用完之前就打完了, 就沒有東西可以救回來, 不改. 沒量測就改常數, 下一個人會以為那是量過的.
 - **一次只動一件事**, 跑幾輪看差別.
 - **流程照 `AGENTS.md` 的 `## Development flow`**, 不用另外問使用者.
-- **量到的新東西寫進常數旁邊的註解, 不寫進 `AGENTS.md`**: 那裡只收規則, 不變式跟未修的已知缺陷; 要加規則就直接寫, 不用先給使用者看.
+- **量到的新東西寫進常數旁邊的註解, 不寫進 `AGENTS.md` 或 `.agents/architecture.md`**: 那兩份只收規則, 不變式跟未修的已知缺陷; 要加規則就直接寫, 不用先給使用者看.
 - 改的時候讓迴圈繼續跑. **要活的遊戲才驗得了的, 直接下驗證的指令借走迴圈, 驗完 `giveback`**, 不用問, 規矩在 `.agents/skills/farm/references/running.md` 的「你自己要用畫面」那節. **驗的是分支自己的程式, 在 review 跟 CI 跑的時候就驗, 不等 merge**: 在那個 worktree 裡下 `uv run --no-sync ai_coc …` (使用者 2026-10-16: 「你不是應該趁現在在 review 的時候 趕快測試看看新程式實際升級牆壁嗎 … 這樣本末倒置吧」); 從主 checkout 下的跑的是 main 的舊程式, 那天一次「讀不到」就是這樣看錯的. 分支動到 `AppConfig` 的例外: 它一跑就把共用的 `~/.ai_coc/config.json` 改成分支的形狀, 所以先停掉迴圈再驗 (`AGENTS.md` 的 The loop runs the main checkout). 驗證場對著的多半是打滿的村莊, 所以加 `--stop-at 0`; 驗的是日世界的行為, 就趁日世界剛打滿, 還沒坐船去夜世界之前驗, 省兩趟船.
 - **merge 以後要讓迴圈用上.** 背景那輪跑的還是開跑時載入的程式碼. 在接縫停掉 (`ai_coc stop emulator`, 等它真的退出), 主 checkout `git pull --ff-only` (帶進的 `pyproject.toml` 或 `uv.lock` 有變就趁停著 `uv sync`), 同一個世界同一組旗標開回去, 剩下的場次就是驗證. 迴圈是 farm subagent 在跑的話, 它的回報進來才算退出, 開回去是傳訊息給同一個 subagent: `ai_coc stop` 是真的停, 它不會自己開回去 (`running.md` 的「中止」).
 

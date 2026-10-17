@@ -1416,7 +1416,7 @@ class ShieldState(BaseModel):
     no shield bar, so its callers get no `ShieldState` rather than one saying
     False. **Which of those two a None is comes off the world**: on the builder
     base it is structural, and on the home village it is a bar this frame could
-    not read, which nothing follows up: the shield is not watched (AGENTS.md).
+    not read, which nothing follows up: the shield is not watched (.agents/architecture.md).
     """
 
     model_config = ConfigDict(frozen=True)

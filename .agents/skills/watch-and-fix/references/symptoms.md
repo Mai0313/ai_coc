@@ -1,6 +1,6 @@
 # 症狀對照該去看什麼
 
-這張表只指路, 不給結論; 來龍去脈在常數或函式旁邊的註解. 找到症狀, 拿關鍵字 grep `src/` (跟釘住它的 `tests/`), 規則面看 `AGENTS.md`, 再讀那個函式.
+這張表只指路, 不給結論; 來龍去脈在常數或函式旁邊的註解. 找到症狀, 拿關鍵字 grep `src/` (跟釘住它的 `tests/`), 規則面看 `.agents/architecture.md`, 再讀那個函式.
 
 整條路是 **開起遊戲 -> 站上要打的那個村莊 -> 打完一場 -> 回到村莊 -> 開下一輪**, 中間那段在 `src/ai_coc/ui/attack.py` 的 `AttackRunner`: 攻擊 -> 倉庫檢查 -> 尋找對戰目標 -> 兵力檢查 -> scout -> 縮放與置中 -> 規劃 -> 清側翼 -> 照 plan 的步驟出兵、開技能、放法術 (`_play_tactic`) -> 等結束 -> 回營 (不等偵察倒數, 理由在「兵丟不出去」末尾). 下面照這個順序排.
 
@@ -10,7 +10,7 @@
 
 **症狀**: `ai_coc launch` 回 `at_village: false` (log 裡有 `Gave up after 180s waiting for the game: ...`, 冒號後面寫著最後在等什麼), 或一輪連攻擊選單都沒碰到就結束.
 
-`ai_coc launch` 的收工條件是**站在村莊上而且鏡頭停好了** (最遠處; 花錢買的場景是拉近回免費場景大小的那一格), 不是 pid (`ensure_coc` 只看 `pidof`): 看 `LaunchReport.at_village`. 重開範圍 `none` / `game` / `emulator` 在 `AGENTS.md` 搜 `RestartScope`; `emulator` 要等實例真的倒下 (`_await_shutdown`).
+`ai_coc launch` 的收工條件是**站在村莊上而且鏡頭停好了** (最遠處; 花錢買的場景是拉近回免費場景大小的那一格), 不是 pid (`ensure_coc` 只看 `pidof`): 看 `LaunchReport.at_village`. 重開範圍 `none` / `game` / `emulator` 在 `.agents/architecture.md` 搜 `RestartScope`; `emulator` 要等實例真的倒下 (`_await_shutdown`).
 
 **`launch` 等村莊** (`_settle_game`) 有兩處會出錯:
 
@@ -21,7 +21,7 @@
 
 **症狀**: `AttackReport.outcome` 是 `no_attack_menu`.
 
-看 `_open_attack_menu` (它自己分辨掉線、載入、結算畫面, 讀不到村莊就交給 `ui/world.py` 的 `uncovered`) 跟 `attack_menu_open`. `ui/runner.py` 的 `_home` 是 `collect`、`donate` 那些 `GameRunner` 的回家路徑, 攻擊迴圈不走它. 在乾淨的村莊上按 back 是災難, `AGENTS.md` 搜 `back` 跟 `確定退出遊戲嗎`.
+看 `_open_attack_menu` (它自己分辨掉線、載入、結算畫面, 讀不到村莊就交給 `ui/world.py` 的 `uncovered`) 跟 `attack_menu_open`. `ui/runner.py` 的 `_home` 是 `collect`、`donate` 那些 `GameRunner` 的回家路徑, 攻擊迴圈不走它. 在乾淨的村莊上按 back 是災難, `.agents/architecture.md` 搜 `back` 跟 `確定退出遊戲嗎`.
 
 三個常被懷疑的原因:
 
@@ -70,7 +70,7 @@
 
 **症狀**: 戰鬥還在打卻回報結束, 或回不了家.
 
-`read_scout` 的 `None` 同時是「正在搜尋對手」跟「讀不出來」, 不能當戰鬥結束. 結束看 `_battle_ended` (結果畫面的綠色回營按鈕). `AGENTS.md` 搜 `overloaded`.
+`read_scout` 的 `None` 同時是「正在搜尋對手」跟「讀不出來」, 不能當戰鬥結束. 結束看 `_battle_ended` (結果畫面的綠色回營按鈕). `.agents/architecture.md` 搜 `overloaded`.
 
 ## 打完了但回不到村莊
 
@@ -111,7 +111,7 @@
 
 ## 下方側翼站不下人
 
-看 `_clear_flank` 跟 `FLANK_ROOM`: 卡片列站在下方側翼上, 要先把村莊拖離卡片列再出兵. `AGENTS.md` 搜 `FLANK_ROOM`.
+看 `_clear_flank` 跟 `FLANK_ROOM`: 卡片列站在下方側翼上, 要先把村莊拖離卡片列再出兵. `.agents/architecture.md` 搜 `FLANK_ROOM`.
 
 ## 整場一隻兵都沒下去
 
@@ -125,7 +125,7 @@ log 的 `The camera was not at the far zoom` 量的是拉遠之前的鏡頭, 只
 
 相機動過而沒被記下. 看 `_settle_camera`, `_pan`, `_panned`, `_onscreen`, `parsers/field.py` 的 `view_shift` 跟 `parsers/boundary.py` 的 `village_box`. `view_shift` 滑兩張畫面比對, 不量兩次村莊 (`village_box` 會被紅色裝飾騙), `parsers/field.py` 開頭的註解搜 `98 px`.
 
-已知沒修的寫在 `AGENTS.md`: `_settle_camera` 拿到的是 scout 畫面, `village_box` 不是為那張校正的.
+已知沒修的寫在 `.agents/architecture.md`: `_settle_camera` 拿到的是 scout 畫面, `village_box` 不是為那張校正的.
 
 ## 多讀到一張卡
 
@@ -155,7 +155,7 @@ log 的 `The camera was not at the far zoom` 量的是拉遠之前的鏡頭, 只
 
 哪張一次性卡片是攻城機具由 plan 有沒有 `siege` 步驟決定 (血條分不出來, 遊戲對攻城戰車也畫血條): `_deploy` 建 `BattleRow` 時有 `siege` 就把第一張當機具, 沒有就整排當英雄. 多寫或少寫一個 `siege`, 整排英雄的落點跟開大秒數就偏一格, **沒有下游會發現**. 對照那輪 `plans.jsonl` 有沒有 `siege` 跟 `--debug` 的 `zoomed` 畫面 (置中拖過鏡頭的話是之後那張 `camera`, `_deploy` 讀卡片列的就是它) 上有沒有攻城機具, 對不上就從 `prompts/attack_plan.md` 查.
 
-`siege` 對得上還是晚一格, 看戰鬥中途卡片列前面有沒有多出一張 (活動卡): `BattleRow` 記的是開場讀到的 x, 前面插一張, 後面每張都往右移, `ability` 跟 `_cast` 就點到隔壁那張. 這是 `AGENTS.md` 記著的已知缺陷.
+`siege` 對得上還是晚一格, 看戰鬥中途卡片列前面有沒有多出一張 (活動卡): `BattleRow` 記的是開場讀到的 x, 前面插一張, 後面每張都往右移, `ability` 跟 `_cast` 就點到隔壁那張. 這是 `.agents/architecture.md` 記著的已知缺陷.
 
 ## 法術沒放出去
 
@@ -187,7 +187,7 @@ log 的 `The camera was not at the far zoom` 量的是拉遠之前的鏡頭, 只
 
 ## 出兵太慢
 
-整支軍隊該在**兩秒左右**下完, 過程中什麼都不讀 (一次判讀 0.9 秒), 順序全由 plan 決定. 看 `_play_tactic`, `_act`; 落地後那次判讀是 `_settle_drops`, 躲在第一個夠長的 `wait` 裡 (`CHECK_BUDGET`), 截圖之前先讓最後一個投下的英雄等滿 `HERO_SETTLE` 把血條畫出來 (太早讀會把落地的英雄判成沒下去, 重點卡片就是放技能). `DROP_SETTLE` 是放完法術, 推線重下, 夜世界第二階段送預選的機器 (`_send_selected`; 第一階段的機器跟英雄一樣等 `HERO_SETTLE`)跟夜世界每一趟出兵之後等卡片角落重畫的時間, 不在第一波出兵裡 (英雄的重試等的是 `HERO_SETTLE`). 改前改後的秒數在 `AGENTS.md` 搜 `7 seconds`.
+整支軍隊該在**兩秒左右**下完, 過程中什麼都不讀 (一次判讀 0.9 秒), 順序全由 plan 決定. 看 `_play_tactic`, `_act`; 落地後那次判讀是 `_settle_drops`, 躲在第一個夠長的 `wait` 裡 (`CHECK_BUDGET`), 截圖之前先讓最後一個投下的英雄等滿 `HERO_SETTLE` 把血條畫出來 (太早讀會把落地的英雄判成沒下去, 重點卡片就是放技能). `DROP_SETTLE` 是放完法術, 推線重下, 夜世界第二階段送預選的機器 (`_send_selected`; 第一階段的機器跟英雄一樣等 `HERO_SETTLE`)跟夜世界每一趟出兵之後等卡片角落重畫的時間, 不在第一波出兵裡 (英雄的重試等的是 `HERO_SETTLE`). 改前改後的秒數在 `.agents/architecture.md` 搜 `7 seconds`.
 
 ## 一張卡的兵全堆在一起, 或者某張卡點個不停
 

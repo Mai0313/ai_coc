@@ -27,7 +27,7 @@ description: >-
 ## 三份文件的分工
 
 - **程式碼**說現在是什麼: 旗標看 `src/ai_coc/cli.py` 的 `_parser()`, 指令做什麼看 `src/ai_coc/commands.py` 對應的函式, 回報欄位看 `src/ai_coc/models.py` 的 `AttackReport` / `AttackSeries` / `ConfirmReport`
-- **`AGENTS.md` 跟常數旁邊的註解**說為什麼
+- **`AGENTS.md`、`.agents/architecture.md` 跟常數旁邊的註解**說為什麼
 - **這份 skill** 說怎麼判斷: 什麼時候介入, 什麼時候停手
 
 花資源那一圈的流程留在這裡是刻意的, 不要整併進 `upgrades` (盯升級那一段 #449 已經交給 `upgrades` 跟 `takeover`): 使用者 2026-10-13 先說要搬, 看完要動哪些之後收回 (「farm 不要改好了 … farm 要保留流程和我們要做的事情, 只是 關於如何監控之類的可以引導 Agent 去使用 watch-upgrades 之類的 減少重複內容」). 跟 `upgrades` 重複的細節指過去就好. 講給他聽時說「打資源」, 不說「農場」(「這遊戲是部落衝突，不是什麼農場之類的」).
@@ -257,6 +257,7 @@ uv run ai_coc attack --repeat 0 --plan src/ai_coc/plans/night_flat.json --yield 
 
 ### 數字從哪來, 不准編
 
+- **倉庫讀到超過上限是真的** (例如 153%): 儲值送的資源會超過上限, 不是讀錯 (使用者: 「目前金幣超出上限是正常的 因為購買點數送的金幣 聖水 黑水 是會超過上限的 不用太在意」), `stop_at` 照樣把它當滿
 - **進帳**: `run.log` 的 `holds` 那幾行, 算法見「進帳從 `run.log` 算」. **不是**每輪 `AttackReport.attacked` 的加總: 那是偵察畫面上對手擺出來的可搶量, 跟入庫一定對不上 (比平常大得多的落差是要往上報的訊號, 見「值得警覺的樣態」)
 - **現在的水位**: 那個世界最後一行 `holds`; 收工時跑的 `ai_coc status` 讀的是同一個世界的話, 用它的 `stock`, 那份比較新
 - **場數**: `AttackSeries` 裡真的開打的輪數; 主村看 `attacked` 不是 `None` (`jq '[.[] | select(.attacked != null)] | length' result.json`), 夜世界看 `phases` 大於 0 (`select(.phases > 0)`). 不是 `Attack finished` 的行數, 沒開打的那一輪 (例如最後那一輪 `stock_full`) 也有這一行
