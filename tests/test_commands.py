@@ -47,6 +47,7 @@ from ai_coc.models import (
     ShieldState,
     ViewOutcome,
     AttackReport,
+    BoostOutcome,
     DonateReport,
     LaunchReport,
     PressOutcome,
@@ -74,12 +75,13 @@ from ai_coc.models import (
 from ai_coc.constants import COC_PACKAGE
 from ai_coc.ui.runner import ScreenRunner
 from ai_coc.adapters.adb import AdbController, AdbControlError
-from ai_coc.parsers.home import PANEL_CLOSE
+from ai_coc.parsers.home import PANEL_CLOSE, CLOCK_TOWER_BELOW
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
 FRAMES = Path(__file__).parent / "frames"
+
 DISPLAY = DisplayTarget(logical_id="2", physical_id="9")
 
 
@@ -724,6 +726,20 @@ class UpkeepLineTests(unittest.TestCase):
                 "no_confirmation": "沒有跳出確認視窗或對話框",
             },
             get_args(ConfirmOutcome),
+        )
+
+    def test_every_boost_outcome_has_a_line_of_its_own(self) -> None:
+        self._each(
+            commands.BOOST_LINES,
+            {
+                "boosted": "鐘塔開始加速",
+                "not_builder_base": "遊戲不在夜世界",
+                "not_ready": "沒有鐘塔能開的時鐘標記",
+                "no_free_boost": "找不到沒標價的免費加速鈕",
+                "not_taken": "加速沒有生效",
+                "unexpected": "不是它的確認視窗",
+            },
+            get_args(BoostOutcome),
         )
 
     def test_every_view_outcome_has_a_line_of_its_own(self) -> None:
@@ -1778,6 +1794,59 @@ class PressAndConfirmTests(unittest.TestCase):
             )
             adb.tap.assert_not_called()
             assert report.outcome == outcome, point
+
+    def test_a_ready_clock_tower_is_selected_and_its_free_boost_pressed_once(self) -> None:
+        """The tower, its free boost, then the 加速 on the sheet that press raised."""
+        adb, report = self._run(
+            [
+                "night_clock_ready.png",
+                "night_clock_selected.png",
+                "night_clock_boost_sheet.png",
+                "hud_night.png",
+            ],
+            commands.boost,
+        )
+        assert [call.args for call in adb.tap.call_args_list] == [
+            (816, 426 + CLOCK_TOWER_BELOW, DISPLAY),
+            (976, 700, DISPLAY),
+            (804, 614, DISPLAY),
+        ]
+        assert report.outcome == "boosted"  # type: ignore[attr-defined]
+
+    def test_a_boost_is_not_tried_where_its_marker_is_not(self) -> None:
+        """Off the builder base, or on it while the boost cools down and costs gems."""
+        for frame, outcome in (
+            ("hud_day.png", "not_builder_base"),
+            ("hud_night.png", "not_ready"),
+        ):
+            adb, report = self._run([frame], commands.boost)
+            adb.tap.assert_not_called()
+            assert report.outcome == outcome, frame  # type: ignore[attr-defined]
+
+    def test_a_tower_tap_that_opened_no_free_boost_presses_nothing_more(self) -> None:
+        adb, report = self._run(["night_clock_ready.png", "hud_night.png"], commands.boost)
+        assert adb.tap.call_count == 1
+        assert report.outcome == "no_free_boost"  # type: ignore[attr-defined]
+
+    def test_a_boost_press_is_never_repeated(self) -> None:
+        """Whatever stands after it, the button is pressed once and no other sheet is answered."""
+        for after, outcome in (
+            ("night_clock_selected.png", "not_taken"),
+            ("night_sheet_hero.png", "unexpected"),
+        ):
+            adb, report = self._run(
+                ["night_clock_ready.png", "night_clock_selected.png", after], commands.boost
+            )
+            assert adb.tap.call_count == 2
+            assert report.outcome == outcome, after  # type: ignore[attr-defined]
+
+    def test_a_boost_sheet_that_stays_is_not_pressed_again(self) -> None:
+        adb, report = self._run(
+            ["night_clock_ready.png", "night_clock_selected.png", "night_clock_boost_sheet.png"],
+            commands.boost,
+        )
+        assert adb.tap.call_count == 3
+        assert report.outcome == "not_taken"  # type: ignore[attr-defined]
 
     def test_the_panels_running_rows_take_no_tap_and_the_rest_do(self) -> None:
         adb, report = self._run(["hud_day_build_panel.png"], lambda d: commands.tap((1300, 90), d))

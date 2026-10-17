@@ -106,6 +106,7 @@ COMMANDS = (
         "confirm",
         "確認鈕上的價格跟 --price 一樣、而且是金幣聖水黑水，才按下確認；加 --pay 是從城牆選單的升級鈕開始付",
     ),
+    ("boost", "夜世界鐘塔能開時（上面有時鐘標記）按下它的免費加速；要寶石的不按"),
     ("export", "從遊戲匯出整個村莊的資料，對上名稱後存起來"),
     ("capture", "連續截圖，存進這次的紀錄資料夾"),
     ("read", "不碰遊戲，把一張截圖交給每個判讀器，印出各自讀到什麼"),
@@ -343,6 +344,7 @@ def _answer(arguments: argparse.Namespace, run: RunLog) -> BaseModel | str:
             (a.x1, a.y1), (a.x2, a.y2), run.directory / "frames", a.ms, a.wait
         ),
         "confirm": lambda: commands.confirm(a.price, run.directory / "frames", a.pay),
+        "boost": lambda: commands.boost(run.directory / "frames"),
         "launch": lambda: commands.launch(a.restart, commands.stop_requested, run.no_village),
         "donate": lambda: commands.donate(
             DonateOptions(frame_dir=run.frames, dry_run=a.dry_run, rounds=a.rounds)

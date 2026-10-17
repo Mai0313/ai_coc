@@ -122,6 +122,7 @@ from ai_coc.parsers.home import (
     free_builders,
     collect_bubbles,
     build_panel_open,
+    clock_tower_marker,
 )
 from ai_coc.logging_setup import _attach_run, configure_logging
 from ai_coc.parsers.field import view_shift
@@ -181,7 +182,9 @@ from ai_coc.parsers.boundary import DEPLOY_BOUND, fitted_line, village_box, boun
 from ai_coc.parsers.building import (
     PRICE_ROWS,
     PRICE_TOLERANCE,
+    free_boost,
     sheet_open,
+    boost_sheet,
     game_dialog,
     sheet_offer,
     selection_row,
@@ -613,6 +616,9 @@ class WorldTests(unittest.TestCase):
             "menu_upgrading.png": "day",
             "night_stock_leading_three.png": "night",
             "night_cart_marker.png": "night",
+            "night_clock_ready.png": "night",
+            "night_clock_selected.png": "night",
+            "night_clock_boosting.png": "night",
             "night_cart_no_marker.png": "night",
             "night_cart_full.png": "night",
             "hud_day_shield_up.png": "day",
@@ -7640,9 +7646,11 @@ class SelectionRowTests(unittest.TestCase):
     """The button row a selected building or wall leaves along the bottom, which `view` will not drag across."""
 
     def test_only_a_village_with_something_selected_reads_as_one(self) -> None:
-        """Two of each village with a selection; every other village frame committed without."""
+        """These village frames with a selection; every other village frame committed without."""
         selected = {
             "view_wall_selected.png",
+            "night_clock_selected.png",
+            "night_clock_boosting.png",
             "view_wall_batch_selected.png",
             "menu_upgrading.png",
             "hero_hall_menu_maxed.png",
@@ -7658,6 +7666,72 @@ class SelectionRowTests(unittest.TestCase):
             villages += 1
             assert selection_row(png) == (path.name in selected), path.name
         assert villages > len(selected)
+
+
+def _painted(name: str, colour: tuple[int, int, int], box: tuple[int, int, int, int]) -> bytes:
+    """This frame with one box painted over in one colour."""
+    image = Image.open(FRAMES / name).convert("RGB")
+    image.paste(colour, box)
+    out = io.BytesIO()
+    image.save(out, format="PNG")
+    return out.getvalue()
+
+
+class ClockTowerBoostTests(unittest.TestCase):
+    """The builder base clock tower's ready marker and the free boost under it."""
+
+    def test_the_ready_marker_floats_over_the_tower(self) -> None:
+        assert clock_tower_marker((FRAMES / "night_clock_ready.png").read_bytes()) == (816, 426)
+
+    def test_the_marker_goes_while_the_tower_is_selected(self) -> None:
+        assert clock_tower_marker((FRAMES / "night_clock_selected.png").read_bytes()) is None
+
+    def test_neither_half_of_the_marker_alone_is_taken_for_it(self) -> None:
+        """A pale patch on khaki without the rim, and the rim without the khaki."""
+        for name in (
+            "welcome_back.png",  # crossed swords on a beige report
+            "clan_donate_low.png",  # a clan chat portrait
+            "hud_night.png",  # the small clock on a boosted building's timer
+        ):
+            with self.subTest(name):
+                assert clock_tower_marker((FRAMES / name).read_bytes()) is None
+
+    def test_the_free_boost_is_the_unpriced_button_carrying_the_clock(self) -> None:
+        assert free_boost((FRAMES / "night_clock_selected.png").read_bytes()) == (976, 700)
+
+    def test_a_boosting_tower_offers_no_free_boost(self) -> None:
+        """Once started, the button turns into the boost's countdown on no plate."""
+        assert free_boost((FRAMES / "night_clock_boosting.png").read_bytes()) is None
+
+    def test_a_priced_boost_is_never_offered(self) -> None:
+        """The boost out of turn costs gems; a price along its top is enough to refuse it."""
+        image = Image.open(FRAMES / "night_clock_selected.png").convert("RGB")
+        image.paste(image.crop((730, 630, 870, 653)), (906, 630))
+        out = io.BytesIO()
+        image.save(out, format="PNG")
+        assert free_boost(out.getvalue()) is None
+
+    def test_a_boost_on_a_gem_plate_is_never_offered(self) -> None:
+        png = _painted("night_clock_selected.png", (40, 90, 230), (918, 622, 938, 642))
+        assert free_boost(png) is None
+
+    def test_the_boost_sheet_is_its_lime_button_under_a_red_x(self) -> None:
+        assert boost_sheet((FRAMES / "night_clock_boost_sheet.png").read_bytes()) == (804, 614)
+
+    def test_no_other_committed_frame_reads_as_any_of_them(self) -> None:
+        own = {
+            clock_tower_marker: "night_clock_ready.png",
+            free_boost: "night_clock_selected.png",
+            boost_sheet: "night_clock_boost_sheet.png",
+        }
+        for path in sorted(FRAMES.glob("*.png")):
+            if Image.open(path).size != (1600, 900):
+                continue
+            png = path.read_bytes()
+            for reader, name in own.items():
+                if path.name != name:
+                    with self.subTest(path.name, reader=reader.__name__):
+                        assert reader(png) is None
 
 
 if __name__ == "__main__":

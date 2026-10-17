@@ -758,6 +758,98 @@ def selection_row(png: bytes) -> bool:
     )
 
 
+# The clock tower's free boost (免費加速, met 2026-10-17) on the tower's own
+# button row: the button carrying the tower's clock icon, with nothing printed
+# along its top, where every button that costs something carries its price.
+# The boost out of turn costs gems, so a price of any kind, or a blue or green
+# plate, keeps this from answering. On the one frame of the row the icon's white
+# face measured 52x48 at a fill of 0.56 with its brown rim taking 0.10 of the
+# box 4 px around it; swept over the committed frames, the largest white patch
+# on any other button came 38x5 or 21x15. The price strip held 949 px of price
+# ink on 升級 (960 000) and none on 資訊 or the boost, whose icon starts 2 px
+# below it.
+BOOST_ICON_BAND = (250, 640, 1400, 705)
+BOOST_FACE = ((235, 255), (220, 255), (235, 255))
+BOOST_FACE_ACROSS = (40, 64)
+BOOST_FACE_DOWN = (38, 58)
+BOOST_FACE_FILL = 0.45
+BOOST_RIM = ((130, 185), (90, 135), (55, 95))
+BOOST_RIM_REACH = 4
+BOOST_RIM_SHARE = 0.05
+BOOST_PRICE_STRIP = (-70, 630, 70, 653)
+BOOST_PRICE_INK = 20
+BOOST_BUTTON_Y = 700
+
+
+def free_boost(png: bytes) -> tuple[int, int] | None:
+    """The middle of the clock tower's free boost button, or None where there is none to press."""
+    image = open_frame(png)
+    band = image.crop(BOOST_ICON_BAND)
+    width, height = band.size
+    for patch in patches(mask(band, BOOST_FACE), width, height):
+        if not patch.sized(BOOST_FACE_ACROSS, BOOST_FACE_DOWN, BOOST_FACE_FILL):
+            continue
+        rim = mask(
+            band.crop((
+                max(0, patch.left - BOOST_RIM_REACH),
+                max(0, patch.top - BOOST_RIM_REACH),
+                min(width, patch.right + BOOST_RIM_REACH + 1),
+                min(height, patch.bottom + BOOST_RIM_REACH + 1),
+            )),
+            BOOST_RIM,
+        )
+        if rim.count(255) / len(rim) < BOOST_RIM_SHARE:
+            continue
+        step = BUTTON_PITCH // 2
+        x = BOOST_ICON_BAND[0] + patch.middle[0]
+        centre = BUTTON_MIDDLE + round((x - BUTTON_MIDDLE) / step) * step
+        if _on_gem_plate(image, centre) or _on_finish_plate(image, centre):
+            return None
+        left, top, right, bottom = BOOST_PRICE_STRIP
+        ink = _price_mask(image.crop((centre + left, top, centre + right, bottom)))
+        return None if sum(map(sum, ink)) >= BOOST_PRICE_INK else (centre, BOOST_BUTTON_Y)
+    return None
+
+
+# Pressing the free boost raises a sheet of its own (2026-10-17): a dark title
+# bar, a red X in its corner and one lime 加速 button, a green paler than the
+# one `green_buttons` looks for, which misses it. `commands.boost` presses that
+# button only because its own press raised the sheet, from the unpriced boost
+# under the ready marker, the way `confirm` answers a dialog it raised itself.
+# Nothing on the sheet itself can tell a gem: the game's gem icon is the same
+# yellow-green as this lime, measured (139, 200, 67) to (214, 250, 121) on
+# `sheet_running_gems`. On the one frame of it the button measured 298x118 at a
+# fill of 0.85 and the X 77x71 at 2188 px; swept over the committed frames, the
+# nearest thing in that lime came 295x95 at 0.65 (grass on `night_builders_busy`).
+BOOST_SHEET_BUTTON_BOX = (640, 540, 970, 690)
+BOOST_SHEET_GREEN = ((100, 240), (180, 255), (15, 140))
+BOOST_SHEET_BUTTON_ACROSS = (260, 330)
+BOOST_SHEET_BUTTON_DOWN = (100, 135)
+BOOST_SHEET_BUTTON_FILL = 0.75
+BOOST_SHEET_X_BOX = (1100, 170, 1215, 270)
+BOOST_SHEET_RED = ((200, 255), (0, 90), (0, 90))
+BOOST_SHEET_X_PATCH = 1500
+
+
+def boost_sheet(png: bytes) -> tuple[int, int] | None:
+    """The middle of the free boost sheet's 加速 button, or None where that sheet is not up."""
+    image = open_frame(png)
+    x_box = image.crop(BOOST_SHEET_X_BOX)
+    if not any(
+        patch.count >= BOOST_SHEET_X_PATCH
+        for patch in patches(mask(x_box, BOOST_SHEET_RED), *x_box.size)
+    ):
+        return None
+    band = image.crop(BOOST_SHEET_BUTTON_BOX)
+    for patch in patches(mask(band, BOOST_SHEET_GREEN), *band.size):
+        if patch.sized(
+            BOOST_SHEET_BUTTON_ACROSS, BOOST_SHEET_BUTTON_DOWN, BOOST_SHEET_BUTTON_FILL
+        ):
+            left, top = BOOST_SHEET_BUTTON_BOX[:2]
+            return left + patch.middle[0], top + patch.middle[1]
+    return None
+
+
 def green_button_row(png: bytes) -> bool:
     """Whether a bright green button stands in the band a building's menu row uses."""
     image = open_frame(png).crop(MENU_ROW_BOX)
