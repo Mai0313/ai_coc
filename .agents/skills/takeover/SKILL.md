@@ -15,8 +15,8 @@ description: >-
 ## 圈長這樣
 
 1. **開始**: 照 `AGENTS.md` 的 Look before driving 先看 `state.json`, 別人已經在打資源 (One farmer at a time) 就不開, 跟他講. 跑一次 `status`, 照 `farm` 把兩個世界打滿. 跟他講一次: 這台電腦跟這個 session 要一直開著, 斷了就沒人醒來
-2. **睡**: 派完打資源就睡, 不等它打完: 打資源要好幾個小時, 中間有升級到點也要有人醒. 只掛一個 `ai_coc watch`, 醒來的時間取下一件的 `done_at` (鐘塔是 `ready_at`; 託管不用問他, 所以不照 `upgrades` 提早五分鐘) 跟現在起三小時後, 較早的那一個 (使用者 2026-10-16 定的: 每三小時上去看一眼, 資源沒滿就補), `--about` 寫上兩件各在等什麼, `--mission` 寫明「全天候託管」: 別的 session 讀到它就不開打資源的 (`AGENTS.md` 的 One farmer at a time). 計時放在 `ai_coc watch` 而不是 runtime 自己的排程: `ai_coc stop` 停得到它, 別的 session 也看得到有人在顧
-3. **醒來**: 先照 `upgrades` 的「醒來先看它的輸出」, 只有一處不同: 讀到 `stopped` 而 `stop_by` 是別的 session, 不要默默收工, 跟他講託管被誰 (`stop_by` 的 `mission`) 中斷了, 他以為還在跑. `due` 的話先照 `AGENTS.md` 的 Look before driving 看 `state.json`, **再重跑 `status`** (借到打資源的就照 `upgrades` 讀完 `giveback`), 照新的讀數決定: 他中途可能玩過, 加速或自己升了東西不一定會講 (使用者 2026-10-16: 「你如果最一開始看 status, 我們基本可以確定你一定不會有一些意外的操作」). 讀數跟上一次對不上 (那一件提早好了、時間突然變長、等級跳了一級) 多半是他自己上線動過, 照新的讀數排, 不當成 bug (使用者 2026-10-17: 「你不能預期我都不會上線 … 有時候我手癢把它加速秒了 他的時間突然變長 … 這種情況你也不用太訝異」). 有升級到點就照下一節升, 升了東西再重讀一次 (升級本身改了時間). 然後照 `farm` 再打一次兩個世界: 倉庫還滿著的話第一輪就 `stock_full`, 這就是「看一眼」. `state.json` 上打資源還在跑就不再開一個
+2. **睡**: 派完打資源就睡, 不等它打完: 打資源要好幾個小時, 中間有升級到點也要有人醒. 只掛一個 `ai_coc watch`, 醒來的時間取下一件的 `done_at` (鐘塔是 `ready_at`; 託管不用問他, 所以不照 `upgrades` 提早五分鐘) 跟現在起三小時後, 較早的那一個 (使用者 2026-10-16 定的: 每三小時上去看一眼, 資源沒滿就補), `--about` 寫上兩件各在等什麼, `--mission` 寫明「全天候託管」: 別的 session 讀到它就不開打資源的 (`AGENTS.md` 的 One farmer at a time). 計時放在 `ai_coc watch` 而不是 runtime 自己的排程: `ai_coc stop` 停得到它, 別的 session 也看得到有人在顧. 背景指令跑完叫不醒你的 runtime, `ai_coc watch` 照開, 另外照 `.agents/skills/farm/references/running.md` 的「開跑」設一個排程叫醒自己
+3. **醒來**: 先照 `upgrades` 的「醒來先看它的輸出」, 只有一處不同: 讀到 `stopped` 而 `stop_by` 是別的 session, 不要默默收工, 跟他講託管被誰 (`stop_by` 的 `mission`) 中斷了, 他以為還在跑; 有設排程的話也刪掉. `due` 的話先照 `AGENTS.md` 的 Look before driving 看 `state.json`, **再重跑 `status`** (借到打資源的就照 `upgrades` 讀完 `giveback`), 照新的讀數決定: 他中途可能玩過, 加速或自己升了東西不一定會講 (使用者 2026-10-16: 「你如果最一開始看 status, 我們基本可以確定你一定不會有一些意外的操作」). 讀數跟上一次對不上 (那一件提早好了、時間突然變長、等級跳了一級) 多半是他自己上線動過, 照新的讀數排, 不當成 bug (使用者 2026-10-17: 「你不能預期我都不會上線 … 有時候我手癢把它加速秒了 他的時間突然變長 … 這種情況你也不用太訝異」). 有升級到點就照下一節升, 升了東西再重讀一次 (升級本身改了時間). 然後照 `farm` 再打一次兩個世界: 倉庫還滿著的話第一輪就 `stock_full`, 這就是「看一眼」. `state.json` 上打資源還在跑就不再開一個
 4. 照最新的讀數回到第 2 步
 
 **打資源的每一趟 (第 1 步的那一趟也算) 兩個世界都正常收工 (`stock_full`), 最後 `world --go day` 回日世界** (使用者 2026-10-17: 「我希望最後可以默認回到日世界」): 夜世界不會被打掉資源, 主村會, 停在主村他上線一眼就看得到, 下一次 `status` 讀到的計數也是主村的. 派打資源的 subagent 時把這一步寫進交辦, 連同這個條件: 被擠掉 (`session_taken`)、被叫停、或停下來回報的那一趟不開船, 開船會把遊戲登入回來, 把手機上的他踢掉.
@@ -47,6 +47,6 @@ description: >-
 
 ## 停
 
-- **他叫停**: 下 `ai_coc stop`, 一次停掉 watch 跟模擬器上的指令; 打資源的 subagent 照 `.agents/skills/farm/references/running.md` 的「中止」
-- **他在玩**: 他說在玩, 或讀到不是村莊、`session_taken`, 就 `ai_coc stop`, 不留 watch, 跟他講, 等他說可以再從第 1 步開始. 每次醒來都會把遊戲登入, 他在手機上玩就會被踢一次 (`AGENTS.md` 的 Driving the game)
+- **他叫停**: 下 `ai_coc stop`, 一次停掉 watch 跟模擬器上的指令, 有設排程的話一起刪掉; 打資源的 subagent 照 `.agents/skills/farm/references/running.md` 的「中止」
+- **他在玩**: 他說在玩, 或讀到不是村莊、`session_taken`, 就 `ai_coc stop`, 不留 watch 也不留排程, 跟他講, 等他說可以再從第 1 步開始. 每次醒來都會把遊戲登入, 他在手機上玩就會被踢一次 (`AGENTS.md` 的 Driving the game)
 - **擋住這個圈的** (撞到 bug, 打不動, 模擬器起不來): 不停下來等他, 你自己接 (使用者 2026-10-16: 「託管的時候 你要自己知道要使用 watch-and-fix」). 回不到村莊或讀到不是村莊, 要畫面看得出是擋路的東西 (彈窗、讀錯) 才算; 看不出來就可能是他在玩, 照上一條停. 程式的問題照 `watch-and-fix` 修到 merge, 再照它的「merge 以後要讓迴圈用上」接著跑, 要 `uv sync` 的話先 `ai_coc stop watch` 再 sync, 再照第 2 步重掛 (睡著的 watch 佔著 `ai_coc.exe`, sync 會撞 os error 32); 模擬器的問題照 `repair-emulator`, 它說要先問他的 (結束程序、重開模擬器) 照樣先問; 遊戲改版照 `game-update`, 那時先不打. 修的時候能打的那個世界照打. 修完跟他講修了什麼; `repair-emulator` 說要交給他的才停下來講. 不擋這個圈的記下來照跑, 有空再修. 打資源的 subagent 只回報, 修是你的事 (`AGENTS.md` 的 Fixing and repairing is the dispatching session's job)
