@@ -269,7 +269,7 @@ uvx poe docs
 
 All workflows live in `.github/workflows/`.
 
-- **Tests** (`test.yml`): pushes and pull requests to `main` or `release/*`, ignoring md files. Runs pytest on Python 3.12 on a Windows runner with coverage and comments a summary
+- **Tests** (`test.yml`): pushes and pull requests to `main` or `release/*`, ignoring md files except the prompts under `src/`, which the suite loads, so a prompt-only change still runs it. Runs pytest on Python 3.12 on a Windows runner with coverage and comments a summary
 - **Code Quality Check** (`code-quality-check.yml`): pull requests. Runs ruff and the rest of the pre-commit suite
 - **Docs Deploy** (`deploy.yml`): push to `main`. Builds the Zensical site and publishes to GitHub Pages. There is deliberately no `v*` tag trigger, because the `github-pages` environment only accepts deployments from `main` and a tag push fails before any step runs. Needs GitHub Pages enabled (Settings → Pages → Source: GitHub Actions)
 - **Build and Release** (`build_release.yml`): tags `v*` or manual dispatch. Builds a Windows x64 executable with PyInstaller plus the wheel and sdist, publishes to PyPI (needs the `UV_PUBLISH_TOKEN` secret) and uploads everything to the GitHub Release
