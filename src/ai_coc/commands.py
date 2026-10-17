@@ -45,6 +45,7 @@ from ai_coc.models import (
     StopTarget,
     ViewReport,
     AdbEndpoint,
+    BoostReport,
     CartOutcome,
     NamedEntity,
     PressReport,
@@ -56,6 +57,7 @@ from ai_coc.models import (
     WorldReport,
     AttackReport,
     AttackSeries,
+    BoostOutcome,
     DonateReport,
     FrameReading,
     LaunchReport,
@@ -93,11 +95,13 @@ from ai_coc.adapters.adb import ZOOM_PINCHES, AdbController, AdbControlError
 from ai_coc.parsers.clan import donatable_cards
 from ai_coc.parsers.home import (
     PANEL_CLOSE,
+    CLOCK_TOWER_BELOW,
     reward_chest,
     running_rows,
     free_builders,
     collect_bubbles,
     build_panel_open,
+    clock_tower_marker,
 )
 from ai_coc.adapters.mumu import MuMuAdapter
 from ai_coc.parsers.scout import (
@@ -137,6 +141,7 @@ from ai_coc.parsers.boundary import PLAYFIELD, VILLAGE_CENTRE, village_box, boun
 from ai_coc.parsers.building import (
     MENU_ROW_BOX,
     SHEET_CLOSE_BOX,
+    free_boost,
     sheet_open,
     game_dialog,
     sheet_offer,
@@ -3087,6 +3092,65 @@ def confirm(
     frame.write_bytes(after)
     report = ConfirmReport(asked=price, offer=offer, wall=wall, outcome=outcome, frame=frame)
     logger.info("Confirm: %s, frame %s", confirm_line(report), frame)
+    return report
+
+
+BOOST_LINES: dict[BoostOutcome, str] = {
+    "boosted": "按了鐘塔的免費加速,按鈕已經換掉",
+    "not_builder_base": "遊戲不在夜世界,鐘塔在夜世界,什麼都沒按",
+    "not_ready": "畫面上沒有鐘塔能開的時鐘標記(冷卻中,或鐘塔被擋住、選著別的東西),什麼都沒按",
+    "no_free_boost": "點了鐘塔,選單上找不到沒標價的免費加速鈕,沒有按;鐘塔還選著",
+    "not_taken": "按了免費加速,按鈕還在原地沒變,沒有再按",
+    "unexpected": "按了免費加速,跳出認不得的視窗或對話框,沒有再按",
+}
+
+
+def boost_line(report: BoostReport) -> str:
+    """Where the marker and the button were, and what came of the press."""
+    return f"鐘塔標記 {report.marker},加速鈕 {report.button}:{BOOST_LINES[report.outcome]}"
+
+
+def boost(frame_dir: Path) -> BoostReport:
+    """Start the builder base clock tower's free boost, when its ready marker says it is free.
+
+    **Nothing is pressed without the marker**, which the game floats over the
+    tower only while the free boost is ready: off it the same button asks for
+    gems. The tower is selected by a tap below the marker, and the button
+    pressed is the one carrying the tower's clock with no price on it, once.
+    The tower is left selected either way, for the agent to clear as it clears
+    any building it selected.
+    """
+    adb = _attached()
+    display = adb.display_for(COC_PACKAGE)
+    frame_dir.mkdir(parents=True, exist_ok=True)
+    before = adb.screenshot(display)
+    after = before
+    marker = button = None
+    outcome: BoostOutcome
+    if current_world(before) != "night":
+        outcome = "not_builder_base"
+    elif (marker := clock_tower_marker(before)) is None:
+        outcome = "not_ready"
+    else:
+        adb.tap(marker[0], marker[1] + CLOCK_TOWER_BELOW, display)
+        time.sleep(PRESS_SETTLE)
+        after = adb.screenshot(display)
+        if (button := free_boost(after)) is None:
+            outcome = "no_free_boost"
+        else:
+            adb.tap(*button, display)
+            time.sleep(PRESS_SETTLE)
+            after = adb.screenshot(display)
+            if sheet_open(after) is not None or game_dialog(after) is not None:
+                outcome = "unexpected"
+            elif free_boost(after) is not None:
+                outcome = "not_taken"
+            else:
+                outcome = "boosted"
+    frame = frame_dir / "after.png"
+    frame.write_bytes(after)
+    report = BoostReport(marker=marker, button=button, outcome=outcome, frame=frame)
+    logger.info("Boost: %s, frame %s", boost_line(report), frame)
     return report
 
 

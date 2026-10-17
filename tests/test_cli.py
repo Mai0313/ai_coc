@@ -53,6 +53,7 @@ MINIMAL: dict[str, list[str]] = {
     "tap": ["100", "200"],
     "swipe": ["1385", "740", "1385", "240"],
     "confirm": ["--price", "10800"],
+    "boost": [],
     "launch": [],
     "donate": [],
     "probe": [],

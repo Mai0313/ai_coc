@@ -758,6 +758,59 @@ def selection_row(png: bytes) -> bool:
     )
 
 
+# The clock tower's free boost (免費加速, met 2026-10-17) on the tower's own
+# button row: the button carrying the tower's clock icon, with nothing printed
+# along its top, where every button that costs something carries its price.
+# The boost out of turn costs gems, so a price of any kind, or a blue or green
+# plate, keeps this from answering. On the one frame of the row the icon's white
+# face measured 52x48 at a fill of 0.56 with its brown rim taking 0.10 of the
+# box 4 px around it; swept over the committed frames, the largest white patch
+# on any other button came 38x5 or 21x15. The price strip held 949 px of price
+# ink on 升級 (960 000) and none on 資訊 or the boost, whose icon starts 2 px
+# below it.
+BOOST_ICON_BAND = (250, 640, 1400, 705)
+BOOST_FACE = ((235, 255), (220, 255), (235, 255))
+BOOST_FACE_ACROSS = (40, 64)
+BOOST_FACE_DOWN = (38, 58)
+BOOST_FACE_FILL = 0.45
+BOOST_RIM = ((130, 185), (90, 135), (55, 95))
+BOOST_RIM_REACH = 4
+BOOST_RIM_SHARE = 0.05
+BOOST_PRICE_STRIP = (-70, 630, 70, 653)
+BOOST_PRICE_INK = 20
+BOOST_BUTTON_Y = 700
+
+
+def free_boost(png: bytes) -> tuple[int, int] | None:
+    """The middle of the clock tower's free boost button, or None where there is none to press."""
+    image = open_frame(png)
+    band = image.crop(BOOST_ICON_BAND)
+    width, height = band.size
+    for patch in patches(mask(band, BOOST_FACE), width, height):
+        if not patch.sized(BOOST_FACE_ACROSS, BOOST_FACE_DOWN, BOOST_FACE_FILL):
+            continue
+        rim = mask(
+            band.crop((
+                max(0, patch.left - BOOST_RIM_REACH),
+                max(0, patch.top - BOOST_RIM_REACH),
+                min(width, patch.right + BOOST_RIM_REACH + 1),
+                min(height, patch.bottom + BOOST_RIM_REACH + 1),
+            )),
+            BOOST_RIM,
+        )
+        if rim.count(255) / len(rim) < BOOST_RIM_SHARE:
+            continue
+        step = BUTTON_PITCH // 2
+        x = BOOST_ICON_BAND[0] + patch.middle[0]
+        centre = BUTTON_MIDDLE + round((x - BUTTON_MIDDLE) / step) * step
+        if _on_gem_plate(image, centre) or _on_finish_plate(image, centre):
+            return None
+        left, top, right, bottom = BOOST_PRICE_STRIP
+        ink = _price_mask(image.crop((centre + left, top, centre + right, bottom)))
+        return None if sum(map(sum, ink)) >= BOOST_PRICE_INK else (centre, BOOST_BUTTON_Y)
+    return None
+
+
 def green_button_row(png: bytes) -> bool:
     """Whether a bright green button stands in the band a building's menu row uses."""
     image = open_frame(png).crop(MENU_ROW_BOX)

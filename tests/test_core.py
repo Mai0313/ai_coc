@@ -122,6 +122,7 @@ from ai_coc.parsers.home import (
     free_builders,
     collect_bubbles,
     build_panel_open,
+    clock_tower_marker,
 )
 from ai_coc.logging_setup import _attach_run, configure_logging
 from ai_coc.parsers.field import view_shift
@@ -181,6 +182,7 @@ from ai_coc.parsers.boundary import DEPLOY_BOUND, fitted_line, village_box, boun
 from ai_coc.parsers.building import (
     PRICE_ROWS,
     PRICE_TOLERANCE,
+    free_boost,
     sheet_open,
     game_dialog,
     sheet_offer,
@@ -7662,3 +7664,58 @@ class SelectionRowTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def _painted(name: str, colour: tuple[int, int, int], box: tuple[int, int, int, int]) -> bytes:
+    """This frame with one box painted over in one colour."""
+    image = Image.open(FRAMES / name).convert("RGB")
+    image.paste(colour, box)
+    out = io.BytesIO()
+    image.save(out, format="PNG")
+    return out.getvalue()
+
+
+class ClockTowerBoostTests(unittest.TestCase):
+    """The builder base clock tower's ready marker and the free boost under it."""
+
+    def test_the_ready_marker_floats_over_the_tower(self) -> None:
+        assert clock_tower_marker((FRAMES / "night_clock_ready.png").read_bytes()) == (816, 426)
+
+    def test_the_marker_goes_while_the_tower_is_selected(self) -> None:
+        assert clock_tower_marker((FRAMES / "night_clock_selected.png").read_bytes()) is None
+
+    def test_neither_half_of_the_marker_alone_is_taken_for_it(self) -> None:
+        """A pale patch on khaki without the rim, and the rim without the khaki."""
+        for name in (
+            "welcome_back.png",  # crossed swords on a beige report
+            "clan_donate_low.png",  # a clan chat portrait
+            "hud_night.png",  # the small clock on a boosted building's timer
+        ):
+            with self.subTest(name):
+                assert clock_tower_marker((FRAMES / name).read_bytes()) is None
+
+    def test_the_free_boost_is_the_unpriced_button_carrying_the_clock(self) -> None:
+        assert free_boost((FRAMES / "night_clock_selected.png").read_bytes()) == (976, 700)
+
+    def test_a_priced_boost_is_never_offered(self) -> None:
+        """The boost out of turn costs gems; a price along its top is enough to refuse it."""
+        image = Image.open(FRAMES / "night_clock_selected.png").convert("RGB")
+        image.paste(image.crop((730, 630, 870, 653)), (906, 630))
+        out = io.BytesIO()
+        image.save(out, format="PNG")
+        assert free_boost(out.getvalue()) is None
+
+    def test_a_boost_on_a_gem_plate_is_never_offered(self) -> None:
+        png = _painted("night_clock_selected.png", (40, 90, 230), (918, 622, 938, 642))
+        assert free_boost(png) is None
+
+    def test_no_other_committed_frame_reads_as_either(self) -> None:
+        for path in sorted(FRAMES.glob("*.png")):
+            if Image.open(path).size != (1600, 900):
+                continue
+            png = path.read_bytes()
+            with self.subTest(path.name):
+                if path.name != "night_clock_ready.png":
+                    assert clock_tower_marker(png) is None
+                if path.name != "night_clock_selected.png":
+                    assert free_boost(png) is None

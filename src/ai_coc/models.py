@@ -1644,6 +1644,26 @@ class PressReport(BaseModel):
     frame: Path
 
 
+BoostOutcome = Literal[
+    "boosted", "not_builder_base", "not_ready", "no_free_boost", "not_taken", "unexpected"
+]
+
+
+class BoostReport(BaseModel):
+    """What one `boost` found on the builder base, and the frame it left behind.
+
+    `marker` is where the clock tower's ready marker was read and `button` where
+    the free boost was, each None when the run stopped before finding it.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    marker: tuple[int, int] | None = None
+    button: tuple[int, int] | None = None
+    outcome: BoostOutcome
+    frame: Path
+
+
 RunnerStatus = Literal["running", "stopping", "idle"]
 
 

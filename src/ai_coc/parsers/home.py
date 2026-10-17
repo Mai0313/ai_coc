@@ -178,6 +178,32 @@ CART_DROP_DOWN = (23, 30)
 CART_DROP_FILL = 0.45
 CART_DROP_ABOVE_POINT = 27
 
+# The marker the game floats over the builder base's clock tower (時光鐘樓) while
+# its free boost is ready, a khaki plate with a clock face on it. It goes while
+# the tower is selected and comes back when it is not, and there is none while
+# the boost cools down, so it is the ready signal as well as the tower's place.
+# The face is what is found, held to two things around it, each of which alone
+# matched something else. On the two parked frames that carry it (2026-10-17)
+# the face measured 23x21 at a fill of 0.56, the khaki plate took 0.27 of the
+# box 14 px around it, and the face's brown octagon rim 0.15 of the box 3 px
+# around it. Swept over the 163 frames then on disk: the plate alone also took
+# the crossed swords on `welcome_back` (0.30) and a clan chat portrait (0.18),
+# neither with any rim (under 0.03); the rim alone took the small clock the
+# builder base draws on a boosted building's timer (0.14), with no plate around
+# it (under 0.07). The tower's own pale stone came 12-16 across at 0.26-0.42.
+CLOCK_FACE = ((215, 250), (195, 245), (215, 252))
+CLOCK_FACE_ACROSS = (18, 30)
+CLOCK_FACE_DOWN = (16, 28)
+CLOCK_FACE_FILL = 0.45
+CLOCK_PLATE = ((160, 205), (165, 210), (110, 180))
+CLOCK_PLATE_REACH = 14
+CLOCK_PLATE_SHARE = 0.15
+CLOCK_RIM = ((110, 180), (65, 125), (35, 95))
+CLOCK_RIM_REACH = 3
+CLOCK_RIM_SHARE = 0.08
+# Where the tower stands under the face: tapped this far below it, it was selected.
+CLOCK_TOWER_BELOW = 78
+
 # A reward chest the game raises over the home village after some battles,
 # full screen (a 普通 one, met 2026-10-16): `back` does nothing to it, so an
 # attack series ended `no_attack_menu` five rounds running beneath it. Every tap
@@ -431,6 +457,34 @@ def cart_marker(png: bytes) -> tuple[int, int] | None:
     for patch in patches(mask(band, CART_DROP), *band.size):
         if patch.sized(CART_DROP_ACROSS, CART_DROP_DOWN, CART_DROP_FILL):
             return left + patch.middle[0], top + patch.middle[1] + CART_DROP_ABOVE_POINT
+    return None
+
+
+def clock_tower_marker(png: bytes) -> tuple[int, int] | None:
+    """The middle of the clock face over a clock tower whose free boost is ready, or None."""
+    left, top = VILLAGE_AREA[:2]
+    image = open_frame(png).crop(VILLAGE_AREA)
+    width, height = image.size
+
+    def share(patch: Patch, reach: int, colour: tuple[tuple[int, int], ...]) -> float:
+        around = mask(
+            image.crop((
+                max(0, patch.left - reach),
+                max(0, patch.top - reach),
+                min(width, patch.right + reach + 1),
+                min(height, patch.bottom + reach + 1),
+            )),
+            colour,
+        )
+        return around.count(255) / len(around)
+
+    for patch in patches(mask(image, CLOCK_FACE), width, height):
+        if (
+            patch.sized(CLOCK_FACE_ACROSS, CLOCK_FACE_DOWN, CLOCK_FACE_FILL)
+            and share(patch, CLOCK_PLATE_REACH, CLOCK_PLATE) >= CLOCK_PLATE_SHARE
+            and share(patch, CLOCK_RIM_REACH, CLOCK_RIM) >= CLOCK_RIM_SHARE
+        ):
+            return left + patch.middle[0], top + patch.middle[1]
     return None
 
 
