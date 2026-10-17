@@ -468,6 +468,21 @@ MENU_ROW_PATCH = 800
 # bigger than 769 (the + by the gems, which `on_hud` takes).
 GREEN_BUTTON_AREA = (0, 0, 1170, 900)
 GREEN_BUTTON_PATCH = 2500
+# **A paler lime button is one too** (#457). The clock tower's boost sheet draws
+# its 加速 in a lime this green misses, (108, 187, 31) to (224, 249, 137)
+# (`BOOST_SHEET_GREEN`), so on it a tap was refused only where the menu row's
+# plate test happened to read the sheet as a gem plate, and its top half and
+# right edge took one. Home village grass comes in that lime too, in patches of
+# over 100 000 px, so what tells a button is its solid fill. Measured over the
+# whole of every committed frame: the boost's button 30 046 px at 0.85, and the
+# other lime buttons (the wall dialogs' 確定, `star_bonus`, `night_menu`,
+# `sheet_running_gems`) 20 189 to 29 706 px at 0.79 to 0.85, every one already
+# refused earlier as a dialog or a sheet; the gem offer on
+# `night_builders_busy` came 0.73, refused as a bright green; grass 0.41 at most
+# on a village, 0.49 under the hero upgrade sheet. The size floor only keeps
+# small lime bits out: 回營 on a battle result sits just under it, 14 142 px.
+LIME_BUTTON_PATCH = 15000
+LIME_BUTTON_FILL = 0.75
 # Each village's resource icons, as the colour of a pixel on them. The home
 # village's coin and drop are the menus' own tests; its dark drop is the only
 # near-black on the button. The builder base's gold is a square and its elixir
@@ -725,11 +740,19 @@ def green_buttons(png: bytes) -> list[tuple[int, int, int, int]]:
     image = open_frame(png)
     if build_panel_open(png):
         image = image.crop(GREEN_BUTTON_AREA)
-    return [
+    bright = [
         (patch.left, patch.top, patch.right, patch.bottom)
         for patch in patches(mask(image, MENU_ROW_GREEN), *image.size)
         if patch.count >= GREEN_BUTTON_PATCH
     ]
+    lime = [
+        (patch.left, patch.top, patch.right, patch.bottom)
+        for patch in patches(mask(image, BOOST_SHEET_GREEN), *image.size)
+        if patch.count >= LIME_BUTTON_PATCH
+        and patch.count / ((patch.right - patch.left + 1) * (patch.bottom - patch.top + 1))
+        >= LIME_BUTTON_FILL
+    ]
+    return bright + lime
 
 
 # **A building or a wall left selected keeps its button row along the bottom of
