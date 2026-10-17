@@ -184,6 +184,7 @@ from ai_coc.parsers.building import (
     PRICE_TOLERANCE,
     free_boost,
     sheet_open,
+    boost_sheet,
     game_dialog,
     sheet_offer,
     selection_row,
@@ -615,6 +616,8 @@ class WorldTests(unittest.TestCase):
             "menu_upgrading.png": "day",
             "night_stock_leading_three.png": "night",
             "night_cart_marker.png": "night",
+            "night_clock_ready.png": "night",
+            "night_clock_selected.png": "night",
             "night_cart_no_marker.png": "night",
             "night_cart_full.png": "night",
             "hud_day_shield_up.png": "day",
@@ -7642,9 +7645,10 @@ class SelectionRowTests(unittest.TestCase):
     """The button row a selected building or wall leaves along the bottom, which `view` will not drag across."""
 
     def test_only_a_village_with_something_selected_reads_as_one(self) -> None:
-        """Two of each village with a selection; every other village frame committed without."""
+        """These village frames with a selection; every other village frame committed without."""
         selected = {
             "view_wall_selected.png",
+            "night_clock_selected.png",
             "view_wall_batch_selected.png",
             "menu_upgrading.png",
             "hero_hall_menu_maxed.png",
@@ -7709,13 +7713,24 @@ class ClockTowerBoostTests(unittest.TestCase):
         png = _painted("night_clock_selected.png", (40, 90, 230), (918, 622, 938, 642))
         assert free_boost(png) is None
 
-    def test_no_other_committed_frame_reads_as_either(self) -> None:
+    def test_the_boost_sheet_is_its_lime_button_under_a_red_x(self) -> None:
+        assert boost_sheet((FRAMES / "night_clock_boost_sheet.png").read_bytes()) == (804, 614)
+
+    def test_a_boost_sheet_with_a_gems_colour_on_its_button_is_not_taken(self) -> None:
+        png = _painted("night_clock_boost_sheet.png", (60, 220, 160), (860, 590, 900, 630))
+        assert boost_sheet(png) is None
+
+    def test_no_other_committed_frame_reads_as_any_of_them(self) -> None:
+        own = {
+            clock_tower_marker: "night_clock_ready.png",
+            free_boost: "night_clock_selected.png",
+            boost_sheet: "night_clock_boost_sheet.png",
+        }
         for path in sorted(FRAMES.glob("*.png")):
             if Image.open(path).size != (1600, 900):
                 continue
             png = path.read_bytes()
-            with self.subTest(path.name):
-                if path.name != "night_clock_ready.png":
-                    assert clock_tower_marker(png) is None
-                if path.name != "night_clock_selected.png":
-                    assert free_boost(png) is None
+            for reader, name in own.items():
+                if path.name != name:
+                    with self.subTest(path.name, reader=reader.__name__):
+                        assert reader(png) is None

@@ -732,12 +732,12 @@ class UpkeepLineTests(unittest.TestCase):
         self._each(
             commands.BOOST_LINES,
             {
-                "boosted": "按鈕已經換掉",
+                "boosted": "鐘塔開始加速",
                 "not_builder_base": "遊戲不在夜世界",
                 "not_ready": "沒有鐘塔能開的時鐘標記",
                 "no_free_boost": "找不到沒標價的免費加速鈕",
-                "not_taken": "按鈕還在原地沒變",
-                "unexpected": "跳出認不得的視窗或對話框",
+                "not_taken": "加速沒有生效",
+                "unexpected": "不是它的確認視窗",
             },
             get_args(BoostOutcome),
         )
@@ -1796,12 +1796,20 @@ class PressAndConfirmTests(unittest.TestCase):
             assert report.outcome == outcome, point
 
     def test_a_ready_clock_tower_is_selected_and_its_free_boost_pressed_once(self) -> None:
+        """The tower, its free boost, then the 加速 on the sheet that press raised."""
         adb, report = self._run(
-            ["night_clock_ready.png", "night_clock_selected.png", "hud_night.png"], commands.boost
+            [
+                "night_clock_ready.png",
+                "night_clock_selected.png",
+                "night_clock_boost_sheet.png",
+                "hud_night.png",
+            ],
+            commands.boost,
         )
         assert [call.args for call in adb.tap.call_args_list] == [
             (816, 426 + CLOCK_TOWER_BELOW, DISPLAY),
             (976, 700, DISPLAY),
+            (804, 614, DISPLAY),
         ]
         assert report.outcome == "boosted"  # type: ignore[attr-defined]
 
@@ -1821,7 +1829,7 @@ class PressAndConfirmTests(unittest.TestCase):
         assert report.outcome == "no_free_boost"  # type: ignore[attr-defined]
 
     def test_a_boost_press_is_never_repeated(self) -> None:
-        """Whatever stands after it, the button is pressed once."""
+        """Whatever stands after it, the button is pressed once and no other sheet is answered."""
         for after, outcome in (
             ("night_clock_selected.png", "not_taken"),
             ("night_sheet_hero.png", "unexpected"),
@@ -1831,6 +1839,14 @@ class PressAndConfirmTests(unittest.TestCase):
             )
             assert adb.tap.call_count == 2
             assert report.outcome == outcome, after  # type: ignore[attr-defined]
+
+    def test_a_boost_sheet_that_stays_is_not_pressed_again(self) -> None:
+        adb, report = self._run(
+            ["night_clock_ready.png", "night_clock_selected.png", "night_clock_boost_sheet.png"],
+            commands.boost,
+        )
+        assert adb.tap.call_count == 3
+        assert report.outcome == "not_taken"  # type: ignore[attr-defined]
 
     def test_the_panels_running_rows_take_no_tap_and_the_rest_do(self) -> None:
         adb, report = self._run(["hud_day_build_panel.png"], lambda d: commands.tap((1300, 90), d))

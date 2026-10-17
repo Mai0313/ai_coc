@@ -143,6 +143,7 @@ from ai_coc.parsers.building import (
     SHEET_CLOSE_BOX,
     free_boost,
     sheet_open,
+    boost_sheet,
     game_dialog,
     sheet_offer,
     green_buttons,
@@ -3096,12 +3097,12 @@ def confirm(
 
 
 BOOST_LINES: dict[BoostOutcome, str] = {
-    "boosted": "按了鐘塔的免費加速,按鈕已經換掉",
+    "boosted": "按了鐘塔的免費加速跟它的確認,鐘塔開始加速",
     "not_builder_base": "遊戲不在夜世界,鐘塔在夜世界,什麼都沒按",
     "not_ready": "畫面上沒有鐘塔能開的時鐘標記(冷卻中,或鐘塔被擋住、選著別的東西),什麼都沒按",
     "no_free_boost": "點了鐘塔,選單上找不到沒標價的免費加速鈕,沒有按;鐘塔還選著",
-    "not_taken": "按了免費加速,按鈕還在原地沒變,沒有再按",
-    "unexpected": "按了免費加速,跳出認不得的視窗或對話框,沒有再按",
+    "not_taken": "按了但加速沒有生效(確認視窗或免費加速鈕還在),沒有再按",
+    "unexpected": "按了免費加速,出現的不是它的確認視窗,沒有再按",
 }
 
 
@@ -3117,8 +3118,11 @@ def boost(frame_dir: Path) -> BoostReport:
     tower only while the free boost is ready: off it the same button asks for
     gems. The tower is selected by a tap below the marker, and the button
     pressed is the one carrying the tower's clock with no price on it, once.
-    The tower is left selected either way, for the agent to clear as it clears
-    any building it selected.
+    That raises the boost's own sheet, whose 加速 is pressed only because this
+    press raised it and only with no gem's colour on it (`boost_sheet`); the
+    first live run reported a boost on the press alone, with the sheet still
+    standing. The tower is left selected either way, for the agent to clear as
+    it clears any building it selected.
     """
     adb = _attached()
     display = adb.display_for(COC_PACKAGE)
@@ -3141,12 +3145,18 @@ def boost(frame_dir: Path) -> BoostReport:
             adb.tap(*button, display)
             time.sleep(PRESS_SETTLE)
             after = adb.screenshot(display)
-            if sheet_open(after) is not None or game_dialog(after) is not None:
-                outcome = "unexpected"
-            elif free_boost(after) is not None:
-                outcome = "not_taken"
-            else:
-                outcome = "boosted"
+            outcome = "not_taken" if free_boost(after) is not None else "unexpected"
+            if (start := boost_sheet(after)) is not None:
+                adb.tap(*start, display)
+                time.sleep(PRESS_SETTLE)
+                after = adb.screenshot(display)
+                standing = (
+                    boost_sheet(after) is not None
+                    or sheet_open(after) is not None
+                    or game_dialog(after) is not None
+                    or free_boost(after) is not None
+                )
+                outcome = "not_taken" if standing else "boosted"
     frame = frame_dir / "after.png"
     frame.write_bytes(after)
     report = BoostReport(marker=marker, button=button, outcome=outcome, frame=frame)
