@@ -42,7 +42,7 @@ description: >-
 ## 動手之前
 
 - **你是 subagent 就不要修.** 這份 skill 要跟使用者講話、請他改設定, subagent 做不到. 停手, 把 `state.json`、`list2` 那一行跟截圖交回給主 session, 由它照這份處理
-- 照 `AGENTS.md` 的 Look before driving 讀 `~/.ai_coc/state.json`. farm subagent 還在跑就照 `AGENTS.md` 先把模擬器拿回來, 模擬器只有一台; 它的迴圈多半已經跟著模擬器掛掉了, 那就等它的回報
+- 照 `AGENTS.md` 的 Look before driving 讀 `~/.ai_coc/state.json`. farm subagent 還在跑就照 `.agents/skills/farm/references/running.md` 的「你自己要用畫面」先把模擬器拿回來, 模擬器只有一台; 它的迴圈多半已經跟著模擬器掛掉了, 那就等它的回報
 - **結束程序、`quit`、重開模擬器之前先問使用者, 他說好才做.** 那是他的模擬器, 他看得到那個視窗, 一直開開關關又沒人說明, 他只會以為壞得更嚴重. `ai_coc launch --restart emulator` 也是重開 (雷電上就是 `quit` 再 `launch`, 見 `adapters/ldplayer.py` 的 `restart_instance`). 不帶 `--restart` 的 `ai_coc launch` 跑之前講一聲就好: 遊戲開不起來的時候 `ensure_coc` 會自己重開一次實例
 - 使用者可能正在模擬器或手機上玩 (`AGENTS.md` 的 Driving the game), 有疑慮就問
 - 每個 `ai_coc` 指令都帶 `--agent`、`--session`、`--mission` (`AGENTS.md` 的 Say who is driving), `look.py` 不用
@@ -127,7 +127,8 @@ description: >-
 - 不要為了「重現閃退」去強制結束模擬器. 那天就是這樣把設定洗掉的. 結束任何程序都要使用者先同意 (第 2 種), 而且要跟他說清楚兩輪之後設定會壞 (第 3 種)
 - 不要手改 `leidian0.config`, 理由在第 3 種
 - 不要在 `dnplayer.exe` 或 `Ld9BoxHeadless.exe` 還在的時候 `ldconsole launch`. 那天有三台雷電開出來就沒有視窗、使用者叫不出來: 兩次開的時候舊的確定還在或剛被結束十秒, 第三次舊的 VM 已經關了一分多鐘, 舊的 `dnplayer.exe` 在不在沒記到. 等兩個都不見了才開的那次有視窗
-- 不要自己下 `adb connect` / `adb disconnect`, 看 ADB 用 `look.py`: 每次 connect 都在雷電那端開一條新連線, 雷電的 port forward 曾經因此整個掛掉 (`AGENTS.md` 的 Adapters)
+- 不要自己下 `adb connect` / `adb disconnect`, 看 ADB 用 `look.py`: 每次 connect 都在雷電那端開一條新連線, 雷電的 port forward 曾經因此整個掛掉 (`.agents/architecture.md` 的 Adapters)
+- 不要用 uiautomator2 那類工具看畫面或點 (MuMu 自己的 `mumu-control` 也是): 它們只對 display 0, 在 MuMu 上那是桌面, 遊戲畫在自己的 display 上, 而且遊戲的 view tree 是空的; 那邊看到桌面不代表遊戲掛了
 - 同一招不要連試
 
 ## 什麼時候請人
@@ -142,4 +143,4 @@ description: >-
 
 ## 修好的標準
 
-`uv run --no-sync ai_coc launch` 回 `at_village: true`, 而且你看過 `look.py` 截的那一張: 1600x900, 站在村莊上, 鏡頭停好 (拉到最遠; 花錢買的場景會再拉近一次, 回到免費場景的大小). 發給使用者. 模擬器是從 farm subagent 手上拿來的, 就照 `AGENTS.md` 還回去, 並在回覆裡講一聲: 使用者看不到 subagent 的輸出.
+`uv run --no-sync ai_coc launch` 回 `at_village: true`, 而且你看過 `look.py` 截的那一張: 1600x900, 站在村莊上, 鏡頭停好 (拉到最遠; 花錢買的場景會再拉近一次, 回到免費場景的大小). 發給使用者. 模擬器是從 farm subagent 手上拿來的, 就照 `running.md` 的「用完一定要還」還回去, 並在回覆裡講一聲: 使用者看不到 subagent 的輸出.

@@ -21,8 +21,8 @@ The parsers read what the game paints at fixed places on a 1600x900 frame, so a 
 ## Done looks like
 
 - Every command the user relies on has run on the live game after the fix, on both villages where it applies, and did what it should (see "Prove it live").
-- Every reader that changed is pinned by a test on a committed frame of the new UI, with every identity `AGENTS.md`'s Project rules list painted over (names, player tag, Supercell ID, clan names, chat); the profile and settings windows show the tag and ID. Frames of the old UI are kept where a test still needs them, not deleted to make a sweep pass.
-- `AGENTS.md`, the other skills and the docstrings say what the new UI is; nothing that the update made false is left standing.
+- Every reader that changed is pinned by a test on a committed frame of the new UI, with every identity `.agents/architecture.md`'s Code rules list painted over (names, player tag, Supercell ID, clan names, chat); the profile and settings windows show the tag and ID. Frames of the old UI are kept where a test still needs them, not deleted to make a sweep pass.
+- `AGENTS.md`, `.agents/architecture.md`, the other skills and the docstrings say what the new UI is; nothing that the update made false is left standing.
 - The fixes are merged through `AGENTS.md`'s Development flow. Bugs found along the way that are not part of the update are filed as issues and fixed in their own PRs afterwards.
 - The user has seen the frames each decision rested on, and has heard what changed from the player's side, what was verified live, and what could not be.
 
@@ -51,11 +51,11 @@ Explore safely; the old dangers do not go away with the layout:
 
 ## Fix against measurements
 
-The rules in `AGENTS.md`'s Cross-cutting rules hold for the new UI as they did for the old: read what the game paints on top, pair two features where one alone matched something else, and draw every threshold from measurements on both sides of it, writing the margin and the frames it was measured on beside the constant. In particular:
+The rules in `.agents/architecture.md`'s Cross-cutting rules hold for the new UI as they did for the old: read what the game paints on top, pair two features where one alone matched something else, and draw every threshold from measurements on both sides of it, writing the margin and the frames it was measured on beside the constant. In particular:
 
 - **Re-check every spending guard** on the new UI (the blue-plate refusal, the gem icon, anything counted from an anchor). A guard that reads stale does not fail quietly; it can let a tap reach the wrong button.
 - **A changed mechanic is a finding too.** Watch what each tap does on the frame after it, not only whether the outcome came out right: a tap that now does more or less than it used to leaves the rest of a burst landing on whatever is underneath.
-- **Keep what the user decided.** A feature the user has said they do not want (`AGENTS.md`, the skills) is not rebuilt because the update broke it; say it broke and leave it. The converse holds too: a feature he kept is fixed, not dropped because another reading could stand in for it (「我們不應該刪除功能」, 2026-10-13).
+- **Keep what the user decided.** A feature the user has said they do not want (`AGENTS.md`, `.agents/architecture.md`, the skills) is not rebuilt because the update broke it; say it broke and leave it. The converse holds too: a feature he kept is fixed, not dropped because another reading could stand in for it (「我們不應該刪除功能」, 2026-10-13).
 
 ## Prove it live
 
