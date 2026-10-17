@@ -219,6 +219,7 @@ Prefer clarity over cleverness, and avoid unrelated refactors in feature or fix 
 These are documented in `pyproject.toml` comments and are not oversights:
 
 - Coverage is gated at 75% rather than 80%, because `ui/main_window.py` is the untested PyQt shell and a seventh of the statements
+- pytest-xdist is capped at `--maxprocesses=8`, because `auto` counts every physical core on a hybrid CPU and the suite then stutters the emulator running beside it
 - `[tool.ty.environment] python-platform = "win32"` is required, or `winreg` and `ctypes.windll` fail to resolve when the linters run on Linux
 - ty excludes `cli.py`, `ui/main_window.py` and `ui/workers.py`, because PyQt5 ships inaccurate stubs
 - `allowed-confusables` carries `／` and `？` for the Chinese UI strings
