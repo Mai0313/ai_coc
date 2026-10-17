@@ -7668,10 +7668,6 @@ class SelectionRowTests(unittest.TestCase):
         assert villages > len(selected)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 def _painted(name: str, colour: tuple[int, int, int], box: tuple[int, int, int, int]) -> bytes:
     """This frame with one box painted over in one colour."""
     image = Image.open(FRAMES / name).convert("RGB")
@@ -7722,10 +7718,6 @@ class ClockTowerBoostTests(unittest.TestCase):
     def test_the_boost_sheet_is_its_lime_button_under_a_red_x(self) -> None:
         assert boost_sheet((FRAMES / "night_clock_boost_sheet.png").read_bytes()) == (804, 614)
 
-    def test_a_boost_sheet_with_a_gems_colour_on_its_button_is_not_taken(self) -> None:
-        png = _painted("night_clock_boost_sheet.png", (60, 220, 160), (860, 590, 900, 630))
-        assert boost_sheet(png) is None
-
     def test_no_other_committed_frame_reads_as_any_of_them(self) -> None:
         own = {
             clock_tower_marker: "night_clock_ready.png",
@@ -7740,3 +7732,7 @@ class ClockTowerBoostTests(unittest.TestCase):
                 if path.name != name:
                     with self.subTest(path.name, reader=reader.__name__):
                         assert reader(png) is None
+
+
+if __name__ == "__main__":
+    unittest.main()

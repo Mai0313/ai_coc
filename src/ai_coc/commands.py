@@ -3119,7 +3119,7 @@ def boost(frame_dir: Path) -> BoostReport:
     gems. The tower is selected by a tap below the marker, and the button
     pressed is the one carrying the tower's clock with no price on it, once.
     That raises the boost's own sheet, whose 加速 is pressed only because this
-    press raised it and only with no gem's colour on it (`boost_sheet`); the
+    press raised it (`boost_sheet`), as `confirm` answers a dialog it raised; the
     first live run reported a boost on the press alone, with the sheet still
     standing. The tower is left selected either way, for the agent to clear as
     it clears any building it selected.

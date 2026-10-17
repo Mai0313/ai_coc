@@ -814,11 +814,13 @@ def free_boost(png: bytes) -> tuple[int, int] | None:
 # Pressing the free boost raises a sheet of its own (2026-10-17): a dark title
 # bar, a red X in its corner and one lime 加速 button, a green paler than the
 # one `green_buttons` looks for, which misses it. `commands.boost` presses that
-# button only because its own press on the unpriced boost raised the sheet, and
-# only with no gem's colour on it. On the one frame of it the button measured
-# 298x118 at a fill of 0.85 and the X 77x71 at 2188 px; swept over the
-# committed frames, the nearest thing in that lime came 295x95 at 0.65 (grass
-# on `night_builders_busy`), and the button held no pixel of a gem's colour.
+# button only because its own press raised the sheet, from the unpriced boost
+# under the ready marker, the way `confirm` answers a dialog it raised itself.
+# Nothing on the sheet itself can tell a gem: the game's gem icon is the same
+# yellow-green as this lime, measured (139, 200, 67) to (214, 250, 121) on
+# `sheet_running_gems`. On the one frame of it the button measured 298x118 at a
+# fill of 0.85 and the X 77x71 at 2188 px; swept over the committed frames, the
+# nearest thing in that lime came 295x95 at 0.65 (grass on `night_builders_busy`).
 BOOST_SHEET_BUTTON_BOX = (640, 540, 970, 690)
 BOOST_SHEET_GREEN = ((100, 240), (180, 255), (15, 140))
 BOOST_SHEET_BUTTON_ACROSS = (260, 330)
@@ -827,8 +829,6 @@ BOOST_SHEET_BUTTON_FILL = 0.75
 BOOST_SHEET_X_BOX = (1100, 170, 1215, 270)
 BOOST_SHEET_RED = ((200, 255), (0, 90), (0, 90))
 BOOST_SHEET_X_PATCH = 1500
-BOOST_SHEET_GEM = ((0, 150), (181, 255), (101, 255))
-BOOST_SHEET_GEM_PIXELS = 30
 
 
 def boost_sheet(png: bytes) -> tuple[int, int] | None:
@@ -845,8 +845,6 @@ def boost_sheet(png: bytes) -> tuple[int, int] | None:
         if patch.sized(
             BOOST_SHEET_BUTTON_ACROSS, BOOST_SHEET_BUTTON_DOWN, BOOST_SHEET_BUTTON_FILL
         ):
-            if mask(band, BOOST_SHEET_GEM).count(255) >= BOOST_SHEET_GEM_PIXELS:
-                return None
             left, top = BOOST_SHEET_BUTTON_BOX[:2]
             return left + patch.middle[0], top + patch.middle[1]
     return None
