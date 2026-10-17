@@ -433,7 +433,8 @@ FLANK_ROOM = 110
 # that is a client-wide setting (`HttpOptions.retry_options`) shared with
 # `_night_plan`. Nothing
 # here measures how often a call fails transiently, which is what a retry buys,
-# so that trade is not one this file can settle.
+# so that trade is not one this file can settle. The user chose to leave it as
+# it is (#333); raise it again only with evidence that a late plan costs loot.
 PLAN_TIMEOUT = 30
 
 # How many frames in a row may show an opponent whose loot will not read before

@@ -69,6 +69,9 @@ def _attach_run(root: logging.Logger, run: RunLog | None) -> None:
 def configure_logging(run: RunLog | None = None) -> None:
     """Send every module's logging to a rich stderr console, and to this run's file.
 
+    The file is plain lines rather than JSON or a logfire sink, chosen because
+    the agents that read it search it with grep.
+
     **There is no second file collecting every run together any more.** A
     rotating `controller.log` sat beside these for a while, on the reasoning
     that it answered a different question — what this machine has been doing,

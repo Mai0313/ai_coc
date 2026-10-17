@@ -12,6 +12,8 @@ addopts = [
     "--junitxml=./.github/reports/.coverage.pytest.xml",
     "--cache-clear",
     "--numprocesses=auto",
+    # Not in the template: `auto` counts physical cores, E-cores included, which
+    # on a hybrid desktop CPU can be 24 workers, enough to stutter the emulator.
     "--maxprocesses=8",
     "--no-header",
     # Below the template's 80 because `ui/main_window.py` is the untested PyQt
