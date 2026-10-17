@@ -55,7 +55,7 @@ The rules in `AGENTS.md`'s Cross-cutting rules hold for the new UI as they did f
 
 - **Re-check every spending guard** on the new UI (the blue-plate refusal, the gem icon, anything counted from an anchor). A guard that reads stale does not fail quietly; it can let a tap reach the wrong button.
 - **A changed mechanic is a finding too.** Watch what each tap does on the frame after it, not only whether the outcome came out right: a tap that now does more or less than it used to leaves the rest of a burst landing on whatever is underneath.
-- **Keep what the user decided.** A feature the user has said they do not want (`AGENTS.md`, the skills) is not rebuilt because the update broke it; say it broke and leave it.
+- **Keep what the user decided.** A feature the user has said they do not want (`AGENTS.md`, the skills) is not rebuilt because the update broke it; say it broke and leave it. The converse holds too: a feature he kept is fixed, not dropped because another reading could stand in for it (「我們不應該刪除功能」, 2026-10-13).
 
 ## Prove it live
 

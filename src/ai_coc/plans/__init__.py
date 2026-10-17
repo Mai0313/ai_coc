@@ -1,10 +1,9 @@
 """Written-out attack plans, so a tactic can be read, edited and replayed as a file.
 
-`flat.json` is the one the loop falls back to with no AI and nothing passed in.
-It spreads everything evenly — troops along one flank, rage over the whole route
-they walk, freeze held for the middle — which is not a good tactic so much as a
-safe one: it runs against any village and gives a baseline to compare a real plan
-against. It is exactly what the loop used to do from constants, written down.
+`flat.json` is the one the loop falls back to with no AI and nothing passed in,
+and the home tactic farming plays on purpose. It runs against any village and
+gives a baseline to compare a real plan against. Its step order and spell timing
+are the user's own, so a change to it is asked for first.
 """
 
 from __future__ import annotations

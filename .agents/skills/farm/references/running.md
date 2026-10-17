@@ -40,7 +40,7 @@ uv run ai_coc attack --repeat 0 --plan src/ai_coc/plans/flat.json --yield --agen
 
 **merge 進來的修正, 迴圈不會自己用上**: 它跑的是主 checkout 開跑時的程式碼. 開發那邊 merge 之後會傳話叫你拉, 你就在兩個指令之間 `git -C <主 checkout> pull --ff-only` (拉進來的 `pyproject.toml` 或 `uv.lock` 有變才 `uv sync`), 下一個指令起就是新的. 修正要馬上驗證的話是 `watch-and-fix` 的做法: 主 session 自己 `ai_coc stop emulator`, 等你回報收工, 自己拉, 再叫你同一組旗標開回去.
 
-**每一個 `ai_coc` 指令都帶 `--agent`、`--session`、`--mission`**, 其他 skill 裡寫的指令也一樣: 你自己的名字 (`claude-code`、`antigravity`、`codex`), 你自己的 session id, 這一趟在做什麼 (一句話). 每個指令都把它們寫進自己 `run.log` 裡寫目錄的那一行的下一行; 會佔用模擬器的指令還會寫進 `state.json` 的 `caller`, 所以那裡記的永遠是開始這一輪的人, 誰叫停的記在 `stop_by`. 別的 session 就是靠這些查出是誰在開模擬器. 旗標是選填的, 那是留給使用者手動打指令; agent 一律要帶, 沒帶的話 log 會留一行 warning.
+**每一個 `ai_coc` 指令都帶 `--agent`、`--session`、`--mission`**, 其他 skill 裡寫的指令也一樣: 你自己的名字 (`claude-code`、`antigravity`、`codex`), 你自己的 session id, 這一趟在做什麼 (一句話). 每個指令都把它們寫進自己 `run.log` 裡寫目錄的那一行的下一行; 會佔用模擬器的指令還會寫進 `state.json` 的 `caller`, 所以那裡記的永遠是開始這一輪的人, 誰叫停的記在 `stop_by`. 別的 session 就是靠這些查出是誰在開模擬器. 旗標是選填的, 那是留給使用者手動打指令; agent 一律要帶, 沒帶的話 log 會留一行 warning. subagent 沒有自己的 session id, 帶派它的 session id 加上 `-farm` 這類後綴 (`<派工的 session id>-farm`), 一定要跟派工的不一樣: 排隊不看 session, 借用卻是照 session 認借的人, 用同一個 id 的話, subagent 不帶 `--yield` 的指令會被當成借的那一邊, 把借用一直撐著不還給它自己的迴圈. 派工的那一邊查 One farmer at a time 時要認得出這個後綴是自己派的.
 
 **打資源的迴圈每個指令都帶 `--yield`**, `world --go` 跟 `attack` 都要: 那是背景工作, 不會把別人的 run 停掉, 模擬器有人在用就排隊等; 別人要用時它是被借走, 不是被停掉 (見「被借走」). 測試、驗證、花資源這些前景的事不帶.
 
@@ -136,13 +136,13 @@ jq '.[-1] | {world, outcome, stock_full, attacked}' ~/.ai_coc/logs/<run>/result.
 
 **不要去砍背景程序.** 砍掉的話迴圈的 `KeyboardInterrupt` 出口執行不到 (只有前景的 Ctrl-C 走得到), 軍隊留在場上, 遊戲停在回不了家的畫面, 沒有 `result.json`, 只剩 `run.log` 能數. **卡死的也不用你砍**: 別的**不帶 `--yield`** 的指令等滿 `TAKEOVER_WAIT` (約 12 分鐘) 還等不到它收工, 會自己結束它並在自己的 `run.log` 記下是誰的 run; 下一個指令照常把遊戲帶回村莊. 視窗跟沒有 `pid_created` 的舊紀錄例外, 不會被結束, 那個指令只會報錯; 視窗就請使用者在視窗按停止. 帶 `--yield` 的指令不會結束任何人, 排在卡死的 run 後面會一直等 (見「為什麼一定要背景跑」).
 
-**使用者說停, 停的是整件事而不是一個指令.** `state.json` 只停得下當下在跑的那個迴圈, 不知道你打算接著做什麼. 所以收到停止之後**不要再開下一個指令**, 只讀倉庫的 `stock`、`status` 也算, 除非使用者又說要繼續: 叫停就是他要接手, 回報的數字從 `run.log` 讀 (`farm` 的「沒達成的時候講什麼」). 這一條沒有機制在管, 只有你.
+**使用者說停, 停的是整件事而不是一個指令.** `state.json` 只停得下當下在跑的那個迴圈, 不知道你打算接著做什麼. 所以收到停止之後**不要再開下一個指令**, 只讀倉庫的 `stock`、`status` 也算, 除非使用者又說要繼續: 叫停就是他要接手, 回報的數字從 `run.log` 讀 (`farm` 的「沒達成的時候講什麼」). 這一條沒有機制在管, 只有你. 程式上的「黏住的停止」(停了就拒絕所有 claim, 直到一個 `ai_coc resume`) 提過, 使用者否掉了: 「我覺得你現在的作法應該就可以了 就是你修正 skill 那邊應該就可以了」; 照 skill 走的迴圈又衝過一次停止, 才重新提.
 
 **你是 farm subagent 而那個停不是你下的, 又沒有借用**, 是有人用 `ai_coc stop` 真的叫停. 不要自己開回去, 馬上回報停在哪 (打的世界跟旗標, 執行目錄, 打了幾場, 最後一行 `holds` 的水位); 之後有人傳話叫你接回去, 就是上面說的「又說要繼續」, 同一個世界同一組旗標開回去.
 
 **被叫停看 exit code 看不出來, 所以每一步跑完、開下一步之前都讀 `state.json`.** 在回合之間被停掉的 `attack` 照樣 exit 0, `result.json` 最後一個元素是那一輪自己的 `outcome` (多半是 `took_loot`), 不是 `stopped`; `world --go` 根本不讀叫停, 坐船時被停也照樣跑完. 看得出來的只有 `run.log` 結尾的 `Stop requested`, 跟 `state.json` 那筆 `idle` 紀錄上的 `stop_by`, 而下一個指令一 claim 就把 `stop_by` 蓋掉了. 所以只看剛跑完的那一步: `state.json` 的 `log` 是它的目錄, 而 `stop_by` 有值又不是你下的, 就是它被收掉了, 接著照「被借走」那三條分辨是借走還是叫停. `log` 不是剛跑完那一步的目錄, 那筆 `stop_by` 就是更早以前的 (使用者上一次叫停留下的會一直留到下一個指令 claim), 不算. **每一步各自一次呼叫, 不要把幾步寫成一支只看 exit code 的腳本** (`world --go … && attack … && confirm …`): 2026-10-08 一個 subagent 這樣跑, 兩次 `ai_coc stop` 之後又刷了兩次牆、開了一場進攻.
 
-**`ai_coc stop` 剛好下在兩步之間就不會叫停任何指令**: 沒有指令在跑, 它只回 `現在沒有指令在跑` (有人在盯升級的話, 盯升級照樣停), subagent 的下一步照常開跑. 下 stop 的那一邊看到這句, 要馬上傳話給打資源的 subagent; 它一步一次呼叫的話, 下一步之前就收得到.
+**`ai_coc stop` 剛好下在兩步之間就不會叫停任何指令**: 沒有指令在跑, 它只回 `現在沒有指令在跑` (有人在盯升級的話, 盯升級照樣停), subagent 的下一步照常開跑. 下 stop 的那一邊看到這句, 要馬上傳話給打資源的 subagent; 它一步一次呼叫的話, 下一步之前就收得到. **排在別人指令後面的 `--yield` 指令也停不到**: 它停在 `holds the emulator; waiting for it to finish`, 前面那個不是借用, stop 收掉前面那個之後它就開跑 (只有被取消的借用會讓排隊的不開跑). 所以佔著的不是借用時, 一樣要傳話給排在後面那個迴圈的 agent.
 
 **這一條只管使用者叫停.** 迴圈自己跑完 (倉庫滿了, 輪數跑完) 的通知是接縫不是終點, 自己接下一步, 判斷在 `.agents/skills/farm/SKILL.md` 的「倉庫滿了」那節. 差別是誰按的停.
 

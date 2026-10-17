@@ -961,7 +961,8 @@ def claim(
     other claim may borrow from it, and never queues behind a loan, so a
     borrower's own next command is not locked out. `ai_coc stop` cancelling the
     loan it queued behind ends it with `LoanCancelledError`, since a stop means
-    nothing lined up behind it starts.
+    nothing lined up behind it starts. One queued behind a holder that lent
+    nothing is not stopped: it starts once a stop has ended that holder.
     """
     global _held  # noqa: PLW0603 - process-wide by nature; see `_held`
     if _held is not None:
@@ -2138,6 +2139,8 @@ def status(frame_dir: Path | None = None) -> StatusReport:
     """
     names = _entity_names()
     adb = _controller()
+    # Parks the camera although the walk below only taps fixed HUD places:
+    # skipping it was offered to save time and kept as the safer default.
     settled = _settle_game(adb, WORLD_SETTLE_POLLS)
     display = settled or adb.display_for(COC_PACKAGE)
     runner = PlateRunner(adb=adb, display=display, frame_dir=frame_dir)

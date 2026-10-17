@@ -78,6 +78,8 @@ PINCH_GAP = 0.008
 PINCH_NEAR, PINCH_FAR = 150, 500
 PINCH_ROW = 450
 FULL_PINCH = Pinch(near=PINCH_NEAR, far=PINCH_FAR, centre=(800, PINCH_ROW))
+# The bare-ground share quoted below is the fraction of a 160x90 downscale of
+# the frame whose pixels have `g > r + 8 and g > b + 8`, a proxy for the zoom.
 # How long the camera takes to settle after one. Swept from a camera zoomed
 # fully in, two `out` gestures reach the far limit at every settle from 1.5 s
 # down to none at all — 0.505 to 0.507 of bare ground in all five — so this is
