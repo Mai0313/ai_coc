@@ -230,7 +230,7 @@ These are documented in `pyproject.toml` comments and are not oversights:
 
 UI strings, prompts and user-facing messages are Traditional Chinese; code, comments, commit messages and anything published to GitHub are English.
 
-The version is never written down by hand. `constants.py` reads it from the installed package metadata and CI derives that from the git tag through `dunamai`, so the `0.1.0` in `pyproject.toml` is a placeholder CI overwrites.
+The version is never written down by hand. `ai_coc/__init__.py` reads it from the installed package metadata and CI derives that from the git tag through `dunamai`, so the `0.1.0` in `pyproject.toml` is a placeholder CI overwrites.
 
 ## Packaging and Distribution
 
