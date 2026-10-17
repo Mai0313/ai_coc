@@ -618,6 +618,7 @@ class WorldTests(unittest.TestCase):
             "night_cart_marker.png": "night",
             "night_clock_ready.png": "night",
             "night_clock_selected.png": "night",
+            "night_clock_boosting.png": "night",
             "night_cart_no_marker.png": "night",
             "night_cart_full.png": "night",
             "hud_day_shield_up.png": "day",
@@ -7649,6 +7650,7 @@ class SelectionRowTests(unittest.TestCase):
         selected = {
             "view_wall_selected.png",
             "night_clock_selected.png",
+            "night_clock_boosting.png",
             "view_wall_batch_selected.png",
             "menu_upgrading.png",
             "hero_hall_menu_maxed.png",
@@ -7700,6 +7702,10 @@ class ClockTowerBoostTests(unittest.TestCase):
 
     def test_the_free_boost_is_the_unpriced_button_carrying_the_clock(self) -> None:
         assert free_boost((FRAMES / "night_clock_selected.png").read_bytes()) == (976, 700)
+
+    def test_a_boosting_tower_offers_no_free_boost(self) -> None:
+        """Once started, the button turns into the boost's countdown on no plate."""
+        assert free_boost((FRAMES / "night_clock_boosting.png").read_bytes()) is None
 
     def test_a_priced_boost_is_never_offered(self) -> None:
         """The boost out of turn costs gems; a price along its top is enough to refuse it."""
