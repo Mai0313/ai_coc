@@ -1857,6 +1857,13 @@ class PressAndConfirmTests(unittest.TestCase):
             adb.tap.assert_not_called()
             assert report.outcome == "green_button", point  # type: ignore[attr-defined]
 
+    def test_home_village_grass_in_that_lime_does_not_block_a_map_tap(self) -> None:
+        """Its patches run past 100 000 px; only their fill keeps them from reading as a button."""
+        for frame in ("day_shield_over_icon.png", "home_builders_busy.png"):
+            adb, report = self._run([frame, frame], lambda d: commands.tap((800, 450), d))
+            adb.tap.assert_called_once_with(800, 450, DISPLAY)
+            assert report.outcome == "pressed", frame  # type: ignore[attr-defined]
+
     def test_the_panels_running_rows_take_no_tap_and_the_rest_do(self) -> None:
         adb, report = self._run(["hud_day_build_panel.png"], lambda d: commands.tap((1300, 90), d))
         adb.tap.assert_not_called()

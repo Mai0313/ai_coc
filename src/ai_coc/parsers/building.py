@@ -472,10 +472,15 @@ GREEN_BUTTON_PATCH = 2500
 # its 加速 in a lime this green misses, (108, 187, 31) to (224, 249, 137)
 # (`BOOST_SHEET_GREEN`), so on it a tap was refused only where the menu row's
 # plate test happened to read the sheet as a gem plate, and its top half and
-# right edge took one. Village grass comes in that lime, so it is held to a
-# button's solid shape: measured, the button 30 046 px at a fill of 0.85, and
-# the biggest lime patch on any other committed frame 18 122 px at 0.65 (grass
-# on `night_builders_busy`).
+# right edge took one. Home village grass comes in that lime too, in patches of
+# over 100 000 px, so what tells a button is its solid fill. Measured over the
+# whole of every committed frame: the boost's button 30 046 px at 0.85, and the
+# other lime buttons (the wall dialogs' 確定, `star_bonus`, `night_menu`,
+# `sheet_running_gems`) 20 189 to 29 706 px at 0.79 to 0.85, every one already
+# refused earlier as a dialog or a sheet; the gem offer on
+# `night_builders_busy` came 0.73, refused as a bright green; grass 0.41 at most
+# on a village, 0.49 under the hero upgrade sheet. The size floor only keeps
+# small lime bits out: 回營 on a battle result sits just under it, 14 142 px.
 LIME_BUTTON_PATCH = 15000
 LIME_BUTTON_FILL = 0.75
 # Each village's resource icons, as the colour of a pixel on them. The home
