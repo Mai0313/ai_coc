@@ -1848,6 +1848,15 @@ class PressAndConfirmTests(unittest.TestCase):
         assert adb.tap.call_count == 3
         assert report.outcome == "not_taken"  # type: ignore[attr-defined]
 
+    def test_the_boost_sheets_lime_button_takes_no_tap_anywhere_on_it(self) -> None:
+        """Its top half and right edge took a tap before, which only `boost` should press (#457)."""
+        for point in ((804, 580), (804, 609), (881, 640), (700, 660)):
+            adb, report = self._run(
+                ["night_clock_boost_sheet.png"], lambda d, p=point: commands.tap(p, d)
+            )
+            adb.tap.assert_not_called()
+            assert report.outcome == "green_button", point  # type: ignore[attr-defined]
+
     def test_the_panels_running_rows_take_no_tap_and_the_rest_do(self) -> None:
         adb, report = self._run(["hud_day_build_panel.png"], lambda d: commands.tap((1300, 90), d))
         adb.tap.assert_not_called()
