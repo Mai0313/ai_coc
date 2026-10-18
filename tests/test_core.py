@@ -7473,12 +7473,14 @@ class UpgradeSheetOfferTests(unittest.TestCase):
             ("night_sheet_wall.png", 800000, "elixir"),
             # A builder base hero's, its button bottom right.
             ("night_sheet_hero.png", 2240000, "elixir"),
+            # Its digits two further off their templates than 26 allows.
+            ("night_sheet_hero_2400000.png", 2400000, "elixir"),
         ):
             offer = sheet_offer((FRAMES / name).read_bytes())
             assert offer is not None, name
             assert (offer.price, offer.resource) == (price, resource), name
             # The resource button, not a magic item's 確認 beside it.
-            assert offer.point in {(1121, 783), (805, 789), (1228, 793)}, name
+            assert offer.point in {(1121, 783), (805, 789), (1228, 793), (1229, 797)}, name
             assert offer.affordable == (name != "night_sheet_red.png"), name
 
     def test_a_running_upgrades_gem_button_is_no_offer(self) -> None:
@@ -7501,6 +7503,7 @@ class UpgradeSheetOfferTests(unittest.TestCase):
             "night_sheet_red.png",
             "night_sheet_wall.png",
             "night_sheet_hero.png",
+            "night_sheet_hero_2400000.png",
         }
         opened = {path.name for path in FRAMES.glob("*.png") if sheet_open(path.read_bytes())}
         assert opened == sheets
