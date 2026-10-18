@@ -409,7 +409,12 @@ SHEET_PRICE_SCALE: dict[World, float] = {"day": 1.0, "night": 0.7}
 # price box, so there only white and red count.
 SHEET_INK_YELLOW = (225, 200, 150)
 SHEET_INK_WHITE = 225
-SHEET_DIGIT_TOLERANCE = 26
+# **The builder base's shrunk digits land further from their templates.** At
+# its 0.7 scale the six builder base sheets read right with no digit worse than
+# 28 (the Battle Machine's 2 400 000 on 2026-10-19, refused at 26); swept over
+# scales 0.6 to 0.85, every wrong reading (2 400 800, 2 240 080, 2 240 008) had
+# a digit 30 or more off.
+SHEET_DIGIT_TOLERANCE: dict[World, int] = {"day": 26, "night": 29}
 # The sheet's red X, the one part of it a plain `tap` may press: on the home
 # sheets it spans about x 1383-1445 and y 40-100, centred on (1413, 70), and on
 # the builder base's x 1301-1377 and y 23-92.
@@ -606,7 +611,7 @@ def sheet_offer(png: bytes) -> SheetOffer | None:
         ]
         for y in range(height)
     ]
-    price = digits_from(ink, SHEET_DIGIT_TOLERANCE, floor=PRICE_ROWS)
+    price = digits_from(ink, SHEET_DIGIT_TOLERANCE[world], floor=PRICE_ROWS)
     if price is None or price < MIN_PRICE:
         return None
     reds = sum(
