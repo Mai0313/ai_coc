@@ -361,7 +361,8 @@ def upgrade_sheet(png: bytes) -> tuple[int, int] | None:
 # same for heroes, buildings, research and pets on every one recorded. The
 # builder base's 「是否提升至N級？」 is a larger window with one button in the
 # middle, its price drawn bigger, its gold a square and its elixir violet.
-# Measured on fourteen home sheets and five builder base ones, a hero's among them.
+# Measured on fourteen home sheets and eight builder base ones, two heroes' and
+# two of a research's among them.
 #
 # **The same green, in the same place, is 立即完成 on a running upgrade's
 # sheet**, priced in gems: a tap on a running hero's or pet's row opens
@@ -382,18 +383,38 @@ def upgrade_sheet(png: bytes) -> tuple[int, int] | None:
 # under its portrait reaches into the middle span (4382 px of that green there,
 # against the 5000 a button needs), while its own span holds 2 px of it at most
 # on every other builder base sheet.
+#
+# **A builder base research sheet puts that button 36 px left and 11 px up**:
+# on the Drop Ship's, measured 2026-10-19, it spans x 1074-1318 and y 732-832,
+# so the hero's boxes cut the leading 3 off (440 000 read, 28 off) and held
+# 0.09 of the drop. It is a layout of its own, the hero's boxes moved by that
+# much, told from the hero's by where the button's right edge lands (1318
+# against 1354 and 1355 on the two hero sheets). The boxes stay fixed rather
+# than following the button: the shrunk digits read differently a pixel apart,
+# and moved 1 px right and 4 px down with the Battle Machine's 2 400 000 button
+# they read 2 400 080 or came back 30 off. The last entry is that right edge,
+# None where one layout is the only one in its span.
 SHEET_LAYOUTS: dict[
     World,
     tuple[
-        tuple[tuple[int, int, int, int], tuple[int, int, int, int], tuple[int, int, int, int]], ...
+        tuple[
+            tuple[int, int, int, int],
+            tuple[int, int, int, int],
+            tuple[int, int, int, int],
+            int | None,
+        ],
+        ...,
     ],
 ] = {
-    "day": ((SHEET_SPAN, (1000, 765, 1190, 803), (1190, 770, 1245, 830)),),
+    "day": ((SHEET_SPAN, (1000, 765, 1190, 803), (1190, 770, 1245, 830), None),),
     "night": (
-        ((1050, 700, 1400, 880), (1110, 760, 1290, 810), (1288, 752, 1350, 825)),
-        ((600, 700, 1010, 880), (668, 760, 872, 810), (876, 752, 948, 822)),
+        ((1050, 700, 1400, 880), (1110, 760, 1290, 810), (1288, 752, 1350, 825), 1354),
+        ((1050, 700, 1400, 880), (1074, 749, 1254, 799), (1252, 741, 1314, 814), 1318),
+        ((600, 700, 1010, 880), (668, 760, 872, 810), (876, 752, 948, 822), None),
     ),
 }
+# How far a button's right edge may land from its layout's and still be that layout.
+SHEET_EDGE_SLACK = 8
 SHEET_ICON_FLOORS: dict[SheetResource, float] = {"gold": 0.12, "elixir": 0.1, "dark": 0.17}
 # The builder base draws its price too large for the digit templates' widths:
 # shrunk to this, its four sheets read 2 560 000, 2 000 000, 192 000 and 4 000
@@ -409,12 +430,15 @@ SHEET_PRICE_SCALE: dict[World, float] = {"day": 1.0, "night": 0.7}
 # price box, so there only white and red count.
 SHEET_INK_YELLOW = (225, 200, 150)
 SHEET_INK_WHITE = 225
-# **The builder base's shrunk digits land further from their templates.** At
-# its 0.7 scale the six builder base sheets read right with no digit worse than
-# 28 (the Battle Machine's 2 400 000 on 2026-10-19, refused at 26); swept over
-# scales 0.6 to 0.85, every wrong reading (2 400 800, 2 240 080, 2 240 008) had
-# a digit 30 or more off.
-SHEET_DIGIT_TOLERANCE: dict[World, int] = {"day": 26, "night": 29}
+# **The builder base's shrunk digits land further from their templates, and
+# the distance does not tell a right reading from a wrong one there.** At its
+# 0.7 scale the builder base sheets read right with digits up to 30 off (two
+# frames of the Drop Ship's 3 440 000 on 2026-10-19 came 27 and 30, a pixel
+# apart); swept over scales 0.6 to 0.85 the right readings ran up to 35 and the
+# wrong ones (2 400 800, 2 240 080, 2 240 008) came 30 to 32. So the tolerance
+# only keeps out a glyph that is no digit at all, and what keeps a misread from
+# spending is `confirm` pressing only on exactly the price the agent passed.
+SHEET_DIGIT_TOLERANCE: dict[World, int] = {"day": 26, "night": 35}
 # The sheet's red X, the one part of it a plain `tap` may press: on the home
 # sheets it spans about x 1383-1445 and y 40-100, centred on (1413, 70), and on
 # the builder base's x 1301-1377 and y 23-92.
@@ -429,12 +453,17 @@ SHEET_CLOSE_BOX: dict[World, tuple[int, int, int, int]] = {
 # not: measured, the home box is 0.432 red on all fourteen home sheets, the gem
 # sheet included, and on a troop's info window that carries no green button;
 # 0.164 on the profile window's settings tab, and 0.03 at most anywhere else.
-# The builder base box reads 0.302 on its four building sheets and 0.362 on the hero's.
+# The builder base's research sheet draws its X 20 px left of the others' (x
+# 1285-1348, y 33-90), so the builder base box is the part both cover: it reads
+# 0.292 on the four building sheets, 0.35 and 0.356 on the heroes', 0.333 on the
+# research's, and 0.2 at most anywhere else (a loot cart mid-animation), where
+# the box the X used to be read in caught the research's at 0.2003. The floor
+# sits between.
 SHEET_X_BOX: dict[World, tuple[int, int, int, int]] = {
     "day": (1383, 40, 1445, 100),
-    "night": (1305, 27, 1373, 88),
+    "night": (1305, 33, 1348, 88),
 }
-SHEET_X_RED = 0.2
+SHEET_X_RED = 0.25
 # **Red is the game saying the village cannot pay, and tapping it anyway opens
 # the gem shop for the shortfall**, so a red price is read but never offered as
 # affordable. On every discounted or white sheet recorded this box holds no red
@@ -527,11 +556,20 @@ def _sheet_icon(world: World, red: int, green: int, blue: int) -> SheetResource 
 
 def _sheet_button(
     image: Image.Image, world: World
-) -> tuple[tuple[int, int], tuple[int, int, int, int], tuple[int, int, int, int]] | None:
+) -> (
+    tuple[tuple[int, int], tuple[int, int, int, int] | None, tuple[int, int, int, int] | None]
+    | None
+):
     """The middle of the biggest green patch where one of that village's sheets keeps its
     button, with that sheet's price box and icon box.
+
+    A button whose right edge matches no layout in its span still counts, with
+    no boxes: it is a sheet nobody recorded, which `sheet_open` must still see
+    so a plain `tap` stays off its button, and which `sheet_offer` reads no
+    price off.
     """
-    for (left, top, right, bottom), price_box, icon_box in SHEET_LAYOUTS[world]:
+    unmatched: tuple[int, int] | None = None
+    for (left, top, right, bottom), price_box, icon_box, edge in SHEET_LAYOUTS[world]:
         biggest = max(
             (
                 patch
@@ -545,9 +583,13 @@ def _sheet_button(
             key=lambda patch: patch.count,
             default=None,
         )
-        if biggest is not None:
-            return (biggest.middle[0] + left, biggest.middle[1] + top), price_box, icon_box
-    return None
+        if biggest is None:
+            continue
+        point = (biggest.middle[0] + left, biggest.middle[1] + top)
+        if edge is None or abs(biggest.right + left - edge) <= SHEET_EDGE_SLACK:
+            return point, price_box, icon_box
+        unmatched = unmatched or point
+    return None if unmatched is None else (unmatched, None, None)
 
 
 def sheet_open(png: bytes) -> World | None:
@@ -582,9 +624,10 @@ def sheet_offer(png: bytes) -> SheetOffer | None:
     if (button := _sheet_button(image, world)) is None:
         return None
     point, price_box, icon_box = button
-    # The button the price is read off, and not the magic item's beside it:
-    # only a green patch that sits under the price is the button this reads.
-    if not price_box[0] <= point[0] <= icon_box[2]:
+    # No boxes is a button no layout knows. Otherwise the button the price is
+    # read off, and not the magic item's beside it: only a green patch that
+    # sits under the price is the button this reads.
+    if price_box is None or icon_box is None or not price_box[0] <= point[0] <= icon_box[2]:
         return None
     data = image.crop(icon_box).tobytes()
     count = len(data) // 3

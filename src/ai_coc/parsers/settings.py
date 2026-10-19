@@ -57,8 +57,10 @@ BACK_ARROW_GREEN = 0.20
 # white word JSON measures 0.39 when the list is at the bottom — but 0.93 on the
 # settings page and 1.0 on the loot cart's sheet, whose pale panels fill that
 # box. The 複製 plate beside it measures 0.46 against at most 0.75 elsewhere (the
-# builder base's attack menu, which has no JSON). Together they answer only on
-# the row itself.
+# builder base's attack menu, which has no JSON). Together they answered only on
+# the row itself until the builder base's research sheet (2026-10-19), whose
+# troop picture and green health bar fill both boxes; the page's back arrow
+# (`more_settings_open`) is what that sheet does not have.
 JSON_LABEL_BOX = (362, 557, 428, 584)
 JSON_LABEL_WHITE = 0.18
 COPY_BUTTON_BOX = (1080, 555, 1250, 590)
@@ -124,6 +126,8 @@ def export_row(png: bytes) -> tuple[int, int] | None:
     all", which are the same instruction to a caller: do not tap.
     """
     image = open_frame(png)
+    if _ratio(image, BACK_ARROW_BOX, _green) < BACK_ARROW_GREEN:
+        return None
     if _ratio(image, JSON_LABEL_BOX, _white) < JSON_LABEL_WHITE:
         return None
     if _ratio(image, COPY_BUTTON_BOX, _green) < COPY_BUTTON_GREEN:
