@@ -624,11 +624,10 @@ def sheet_offer(png: bytes) -> SheetOffer | None:
     if (button := _sheet_button(image, world)) is None:
         return None
     point, price_box, icon_box = button
-    if price_box is None or icon_box is None:
-        return None
-    # The button the price is read off, and not the magic item's beside it:
-    # only a green patch that sits under the price is the button this reads.
-    if not price_box[0] <= point[0] <= icon_box[2]:
+    # No boxes is a button no layout knows. Otherwise the button the price is
+    # read off, and not the magic item's beside it: only a green patch that
+    # sits under the price is the button this reads.
+    if price_box is None or icon_box is None or not price_box[0] <= point[0] <= icon_box[2]:
         return None
     data = image.crop(icon_box).tobytes()
     count = len(data) // 3
