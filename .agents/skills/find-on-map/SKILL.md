@@ -13,7 +13,7 @@ description: >-
 
 # Finding something on the map
 
-The result is a tap on the right thing, confirmed by what the game shows back, with the village left as it was found. Nothing in ai_coc recognises a building: the parsers read only the UI the game paints on top (`.agents/architecture.md`), so finding one is your own reading of a frame, done fresh each time.
+The result is a tap on the right thing, confirmed by what the game shows back, with the village left as it was found. Nothing in ai_coc recognises a building: the parsers read only the UI the game paints on top (`.agents/rules/screen.md`), so finding one is your own reading of a frame, done fresh each time.
 
 ## A fixed route first
 

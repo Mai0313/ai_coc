@@ -27,7 +27,7 @@ description: >-
 ## 三份文件的分工
 
 - **程式碼**說現在是什麼: 旗標看 `src/ai_coc/cli.py` 的 `_parser()`, 指令做什麼看 `src/ai_coc/commands.py` 對應的函式, 回報欄位看 `src/ai_coc/models.py` 的 `AttackReport` / `AttackSeries` / `ConfirmReport`
-- **`AGENTS.md`、`.agents/architecture.md` 跟常數旁邊的註解**說為什麼
+- **`AGENTS.md`、`.agents/rules/` 跟常數旁邊的註解**說為什麼
 - **這份 skill** 說怎麼判斷: 什麼時候介入, 什麼時候停手
 
 花資源那一圈的流程留在這裡是刻意的, 不要整併進 `upgrades` (盯升級那一段 #449 已經交給 `upgrades` 跟 `takeover`): 使用者 2026-10-13 先說要搬, 看完要動哪些之後收回 (「farm 不要改好了 … farm 要保留流程和我們要做的事情, 只是 關於如何監控之類的可以引導 Agent 去使用 watch-upgrades 之類的 減少重複內容」). 跟 `upgrades` 重複的細節指過去就好. 講給他聽時說「打資源」, 不說「農場」(「這遊戲是部落衝突，不是什麼農場之類的」).

@@ -127,7 +127,7 @@ description: >-
 - 不要為了「重現閃退」去強制結束模擬器. 那天就是這樣把設定洗掉的. 結束任何程序都要使用者先同意 (第 2 種), 而且要跟他說清楚兩輪之後設定會壞 (第 3 種)
 - 不要手改 `leidian0.config`, 理由在第 3 種
 - 不要在 `dnplayer.exe` 或 `Ld9BoxHeadless.exe` 還在的時候 `ldconsole launch`. 那天有三台雷電開出來就沒有視窗、使用者叫不出來: 兩次開的時候舊的確定還在或剛被結束十秒, 第三次舊的 VM 已經關了一分多鐘, 舊的 `dnplayer.exe` 在不在沒記到. 等兩個都不見了才開的那次有視窗
-- 不要自己下 `adb connect` / `adb disconnect`, 看 ADB 用 `look.py`: 每次 connect 都在雷電那端開一條新連線, 雷電的 port forward 曾經因此整個掛掉 (`.agents/architecture.md` 的 Adapters)
+- 不要自己下 `adb connect` / `adb disconnect`, 看 ADB 用 `look.py`: 每次 connect 都在雷電那端開一條新連線, 雷電的 port forward 曾經因此整個掛掉 (`.agents/rules/runtime.md` 的 Adapters)
 - 不要用 uiautomator2 那類工具看畫面或點 (MuMu 自己的 `mumu-control` 也是): 它們只對 display 0, 在 MuMu 上那是桌面, 遊戲畫在自己的 display 上, 而且遊戲的 view tree 是空的; 那邊看到桌面不代表遊戲掛了
 - 同一招不要連試
 

@@ -196,7 +196,7 @@ class ScreenRunner(BaseModel):
     server that takes minutes to answer — but it declared these five fields with the
     same names, types and defaults, and both methods with the same bodies. The
     frame naming in particular (`0006_scout`, `0010_pass`) is written down in
-    `.agents/architecture.md` and in the `watch-and-fix` skill, and a
+    `.agents/rules/code.md` and in the `watch-and-fix` skill, and a
     convention documented in two places and implemented in two is the drift
     `CLAUDE.md` is a symlink to avoid.
     """
