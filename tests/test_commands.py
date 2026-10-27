@@ -2080,8 +2080,14 @@ class PressAndConfirmTests(unittest.TestCase):
 
     def test_no_other_gem_button_is_taken_for_the_goblin_builder(self) -> None:
         """所有建築工人都在忙碌中 finishes another job for gems; nothing else hires a goblin."""
-        for frame in ("night_builders_busy.png", "sheet_running_gems.png", "hud_day.png"):
-            adb, report = self._run([frame], lambda d: commands.confirm(284, d, goblin=True))
+        # The home village's asked 103, under the cap, when the goblin was busy too.
+        for frame, gems in (
+            ("night_builders_busy.png", 284),
+            ("home_builders_busy_offer.png", 103),
+            ("sheet_running_gems.png", 284),
+            ("hud_day.png", 284),
+        ):
+            adb, report = self._run([frame], lambda d, n=gems: commands.confirm(n, d, goblin=True))
             adb.tap.assert_not_called()
             assert report.outcome == "no_goblin", frame
 
