@@ -50,6 +50,7 @@ from ai_coc.parsers.scout import (
     in_battle,
     battle_over,
     card_groups,
+    event_ended,
     loading_screen,
     loot_cart_load,
     loot_cart_open,
@@ -686,7 +687,10 @@ def uncovered(adb: AdbController, display: DisplayTarget) -> World | None:
             logger.info("A reward chest is over the village; tapping it open")
             open_chest(adb, display)
             continue
-        logger.info("Something is over the village; pressing back to get at it")
+        if event_ended(png):
+            logger.info("An event's end notice is over the village; pressing back")
+        else:
+            logger.info("Something is over the village; pressing back to get at it")
         adb.back(display)
         time.sleep(UNCOVER_SETTLE)
     return current_world(adb.screenshot(display))
@@ -771,7 +775,13 @@ def cross(adb: AdbController, display: DisplayTarget, want: World) -> World | No
         if (cleared := uncovered(adb, display)) is None:
             logger.warning("The village never came back; giving up on the crossing")
             return None
-    logger.warning("None of the %d candidate spots found the boat", len(spots))
+        # The boat can sail under a cover, an event's end notice among them, and
+        # the next spot would then be a tap on the village it sailed to.
+        if cleared == want:
+            logger.info("The %s village came up from under a cover", want)
+            break
+    else:
+        logger.warning("None of the %d candidate spots found the boat", len(spots))
     # What the last spot's own check already read, rather than a capture asking
     # the same question again: one of those is 0.6-0.8 s here.
     return cleared
