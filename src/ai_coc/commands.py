@@ -47,6 +47,7 @@ from ai_coc.models import (
     AdbEndpoint,
     BoostReport,
     CartOutcome,
+    GoblinOffer,
     NamedEntity,
     PressReport,
     RunnerState,
@@ -139,6 +140,7 @@ from ai_coc.parsers.village import clock_tower, upgrade_timers, parse_village_te
 from ai_coc.adapters.mapping import fetch_entity_mapping
 from ai_coc.parsers.boundary import PLAYFIELD, VILLAGE_CENTRE, village_box, boundary_reach
 from ai_coc.parsers.building import (
+    GOBLIN_X_BOX,
     MENU_ROW_BOX,
     SHEET_CLOSE_BOX,
     free_boost,
@@ -146,6 +148,8 @@ from ai_coc.parsers.building import (
     boost_sheet,
     game_dialog,
     sheet_offer,
+    goblin_offer,
+    goblin_prompt,
     green_buttons,
     selection_row,
     upgrade_sheet,
@@ -2831,6 +2835,9 @@ def _refused(png: bytes, point: tuple[int, int]) -> PressOutcome | None:
     # pass for one, and its X is the only way out of it.
     if (world := sheet_open(png)) is not None:
         return None if _inside(point, SHEET_CLOSE_BOX[world]) else "sheet_up"
+    # The goblin builder's prompt hires it for gems; `confirm --goblin` pays it.
+    if goblin_prompt(png):
+        return None if _inside(point, GOBLIN_X_BOX) else "sheet_up"
     if (dialog := game_dialog(png)) is not None:
         across, down = CANCEL_REACH
         near = (
@@ -2882,7 +2889,7 @@ def _pressed(
     frame_dir.mkdir(parents=True, exist_ok=True)
     before = adb.screenshot(display)
     refusal = _refused(before, points[0])
-    if refusal is None and gesture == "swipe" and sheet_open(before):
+    if refusal is None and gesture == "swipe" and (sheet_open(before) or goblin_prompt(before)):
         refusal = "sheet_up"
     if refusal is not None:
         frame = frame_dir / "refused.png"
@@ -2939,11 +2946,15 @@ CONFIRM_LINES: dict[ConfirmOutcome, str] = {
     "no_wall_menu": "旁邊沒有開著的城牆選單(或已經有視窗、對話框蓋著),什麼都沒按;已經自己按了升級鈕的話,用不帶 --pay 的 confirm",
     "sheet_disagrees": "按了城牆的升級鈕,跳出的確認視窗跟按鈕對不上,視窗留著沒按",
     "no_confirmation": "按了城牆的升級鈕,沒有跳出確認視窗或對話框;城牆到頂時會跳灰色確認鈕的視窗,看圖再按 X",
+    "no_goblin": "畫面上沒有聘請哥布林工人的視窗,或讀不出它要幾顆寶石,什麼都沒按",
 }
 
 
 def confirm_line(report: ConfirmReport) -> str:
     """What the sheet asked, what was expected, and what came of it."""
+    if report.goblin is not None or report.outcome == "no_goblin":
+        gems = "讀不到" if report.goblin is None else f"{report.goblin.gems:,} 寶石"
+        return f"哥布林工人 {gems},預期 {report.asked:,}:{CONFIRM_LINES[report.outcome]}"
     read = (
         "讀不到"
         if report.offer is None
@@ -3052,7 +3063,7 @@ def _pay_wall(
 
 
 def confirm(
-    price: int, frame_dir: Path, pay: Literal["gold", "elixir"] | None = None
+    price: int, frame_dir: Path, pay: Literal["gold", "elixir"] | None = None, goblin: bool = False
 ) -> ConfirmReport:
     """Press the upgrade sheet's 確認 if it asks for exactly this many of a resource.
 
@@ -3070,6 +3081,11 @@ def confirm(
     `tap`, only when it asks exactly `price` and in white, and then whatever it
     raised is paid (`_raised`). The same reading-before-pressing holds for the
     button as for the sheet.
+
+    **With `goblin`, it pays gems**, and only on the prompt to hire an event's
+    goblin builder, which a press on 確認 raises when every other builder is
+    busy: its one button is pressed when it asks exactly `price` gems. How many
+    gems the agent may pass is the user's call, kept in the `upgrades` skill.
     """
     adb = _attached()
     display = adb.display_for(COC_PACKAGE)
@@ -3077,7 +3093,18 @@ def confirm(
     before = adb.screenshot(display)
     after = before
     wall: SheetOffer | None = None
-    if pay is not None:
+    hire: GoblinOffer | None = None
+    offer: SheetOffer | None = None
+    if goblin:
+        hire = goblin_offer(before)
+        if hire is None:
+            outcome = "no_goblin"
+        elif hire.gems != price:
+            outcome = "price_mismatch"
+        else:
+            adb.tap(*hire.point, display)
+            outcome, after = _after_confirm(adb, display)
+    elif pay is not None:
         outcome, offer, wall, after = _pay_wall(adb, display, before, price, pay)
     else:
         offer = sheet_offer(before)
@@ -3094,7 +3121,9 @@ def confirm(
             outcome, after = _after_confirm(adb, display)
     frame = frame_dir / "after.png"
     frame.write_bytes(after)
-    report = ConfirmReport(asked=price, offer=offer, wall=wall, outcome=outcome, frame=frame)
+    report = ConfirmReport(
+        asked=price, offer=offer, wall=wall, goblin=hire, outcome=outcome, frame=frame
+    )
     logger.info("Confirm: %s, frame %s", confirm_line(report), frame)
     return report
 

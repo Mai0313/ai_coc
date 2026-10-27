@@ -2183,6 +2183,15 @@ class SheetOffer(BaseModel):
     affordable: bool = True
 
 
+class GoblinOffer(BaseModel):
+    """What an event's goblin builder asks to be hired for, in gems, and where its button is."""
+
+    model_config = ConfigDict(frozen=True)
+
+    gems: int
+    point: tuple[int, int]
+
+
 class PanelWallMenu(BaseModel):
     """The two price buttons a selected wall shows beside the open build panel.
 
@@ -2208,6 +2217,7 @@ ConfirmOutcome = Literal[
     "no_wall_menu",
     "sheet_disagrees",
     "no_confirmation",
+    "no_goblin",
 ]
 
 
@@ -2219,7 +2229,8 @@ class ConfirmReport(BaseModel):
     storage really moved is read off `frame` by the agent, which saw the
     storages before it opened the sheet. `wall` is the wall menu's button a
     `--pay` run read and pressed first, and `offer` then the sheet that button
-    raised, if it raised one rather than the batch's dialog.
+    raised, if it raised one rather than the batch's dialog. `goblin` is the
+    goblin builder's prompt a `--goblin` run read, `asked` then being gems.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -2227,6 +2238,7 @@ class ConfirmReport(BaseModel):
     asked: int
     offer: SheetOffer | None = None
     wall: SheetOffer | None = None
+    goblin: GoblinOffer | None = None
     outcome: ConfirmOutcome
     frame: Path
 

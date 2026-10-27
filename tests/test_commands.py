@@ -724,6 +724,7 @@ class UpkeepLineTests(unittest.TestCase):
                 "no_wall_menu": "沒有開著的城牆選單",
                 "sheet_disagrees": "跟按鈕對不上",
                 "no_confirmation": "沒有跳出確認視窗或對話框",
+                "no_goblin": "沒有聘請哥布林工人的視窗",
             },
             get_args(ConfirmOutcome),
         )
@@ -1922,6 +1923,26 @@ class PressAndConfirmTests(unittest.TestCase):
         )
         assert report.outcome == "pressed"
 
+    def test_the_goblin_builders_prompt_takes_its_x_and_nothing_else(self) -> None:
+        """Its gem button is a green `green_buttons` misses; only `confirm --goblin` pays it."""
+        for point in ((1105, 545), (1010, 520), (1200, 580)):
+            adb, report = self._run(
+                ["goblin_builder_offer.png"], lambda d, p=point: commands.tap(p, d)
+            )
+            adb.tap.assert_not_called()
+            assert report.outcome == "sheet_up", point
+        adb, report = self._run(
+            ["goblin_builder_offer.png"], lambda d: commands.swipe((1430, 193), (1105, 545), d)
+        )
+        adb.swipe.assert_not_called()
+        assert report.outcome == "sheet_up"
+        adb, report = self._run(
+            ["goblin_builder_offer.png", "hud_day_build_panel.png"],
+            lambda d: commands.tap((1430, 193), d),
+        )
+        adb.tap.assert_called_once_with(1430, 193, DISPLAY)
+        assert report.outcome == "pressed"
+
     def test_a_green_button_right_of_the_panels_edge_takes_no_tap_with_the_panel_shut(
         self,
     ) -> None:
@@ -2040,6 +2061,29 @@ class PressAndConfirmTests(unittest.TestCase):
         )
         assert adb.tap.call_args.args == (623, 572, DISPLAY)
         assert report.outcome == "refused_by_game"
+
+    def test_the_goblin_builder_is_hired_only_at_the_gems_asked(self) -> None:
+        """Its one button is gems; `--goblin` presses it at exactly `--price` of them."""
+        adb, report = self._run(
+            ["goblin_builder_offer.png", "hud_day_build_panel.png"],
+            lambda d: commands.confirm(15, d, goblin=True),
+        )
+        adb.tap.assert_called_once_with(1105, 545, DISPLAY)
+        assert report.outcome == "confirmed"
+        assert report.goblin is not None
+        assert report.goblin.gems == 15
+        adb, report = self._run(
+            ["goblin_builder_offer.png"], lambda d: commands.confirm(14, d, goblin=True)
+        )
+        adb.tap.assert_not_called()
+        assert report.outcome == "price_mismatch"
+
+    def test_no_other_gem_button_is_taken_for_the_goblin_builder(self) -> None:
+        """所有建築工人都在忙碌中 finishes another job for gems; nothing else hires a goblin."""
+        for frame in ("night_builders_busy.png", "sheet_running_gems.png", "hud_day.png"):
+            adb, report = self._run([frame], lambda d: commands.confirm(284, d, goblin=True))
+            adb.tap.assert_not_called()
+            assert report.outcome == "no_goblin", frame
 
     def test_a_sheet_still_up_after_the_press_is_not_pressed_again(self) -> None:
         adb, report = self._run(["sheet_hero_dark.png"], lambda d: commands.confirm(10800, d))

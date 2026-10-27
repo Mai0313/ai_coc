@@ -111,6 +111,12 @@ class ParserTests(unittest.TestCase):
         with pytest.raises(SystemExit):
             _args("confirm", "--price", "800000", "--pay", "dark")
 
+    def test_confirm_hires_a_goblin_only_when_asked_and_never_with_a_wall(self) -> None:
+        assert not _args("confirm", "--price", "15").goblin
+        assert _args("confirm", "--price", "15", "--goblin").goblin
+        with pytest.raises(SystemExit):
+            _args("confirm", "--price", "15", "--goblin", "--pay", "gold")
+
 
 class DispatchTests(unittest.TestCase):
     """Each entry of `_answer` hands `commands` what the flags said, and no more."""
