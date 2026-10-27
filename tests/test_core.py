@@ -7528,7 +7528,8 @@ class UpgradeSheetOfferTests(unittest.TestCase):
         running = {
             path.name for path in FRAMES.glob("*.png") if research_running(path.read_bytes())
         }
-        assert running == {"night_lab_researching.png"}
+        # The second opened from the lab itself, over the village rather than the panel.
+        assert running == {"night_lab_researching.png", "night_lab_researching_village.png"}
 
     def test_a_builder_base_button_no_layout_knows_is_a_sheet_with_no_offer(self) -> None:
         """An unrecorded sheet still keeps a plain tap off its button, and nothing is priced."""
