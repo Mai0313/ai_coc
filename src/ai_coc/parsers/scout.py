@@ -330,6 +330,24 @@ CARD_SLIVER = 4
 # so this sits one past the measured seam. Every recorded run swept was the
 # home village's; the builder base's rows are only the committed frames.
 CARD_SEAM = 2
+# **The same cart can break into more than two pieces**, and two at a time never
+# put them back: on 2026-10-28 it read as 33, 9, 17 and 45 px pieces, no pair of
+# them one card wide, so the machine was gone from the row on all three rounds
+# of a run and 大守護者 went down in its place with its ability never fired.
+# What keeps one card's pieces apart from the next card's is how dark the seam
+# gets: every card is outlined, and on the committed full rows the outline seams
+# bottom out at 8 to 35 (38 to 47 on a row still fading in, which `_deploy` never
+# reads), while the seams artwork cuts inside a card bottom out at 53 to 60.
+# Joined a piece at a time, or across wider gaps, ground speckle on village
+# frames ran together into cards that pass the badge test, so a run of pieces is
+# put back together only when every seam in it is this narrow and above this
+# line, and the whole run is one card wide. Swept over the committed frames and
+# three recorded battles, 340 in all: every line from 40 to 53 reads them the
+# same, 39 joins speckle on the build panel's frames, 54 changes the attack
+# dialog's and 55 loses the machine again; widths of 5 and 6 read them the same,
+# and 4 or 7 change rows.
+CARD_OUTLINE = 42
+CARD_SPLIT = 5
 CARD_LIT_BRIGHTNESS = 60
 # Every real card carries its level in a badge at the bottom-left corner. The
 # empty slot the row ends with does not: it is a dashed outline with the
@@ -1461,6 +1479,33 @@ def _rejoined(spans: list[tuple[int, int]], columns: bytes) -> list[tuple[int, i
     return joined
 
 
+def _unseamed(spans: list[tuple[int, int]], columns: bytes) -> list[tuple[int, int]]:
+    """A card that more than one seam broke, put back together; see `CARD_OUTLINE`."""
+    out: list[tuple[int, int]] = []
+    start = 0
+    while start < len(spans):
+        end = start
+        while (
+            end + 1 < len(spans)
+            and spans[end + 1][1] - spans[end + 1][0] < CARD_SPAN[0]
+            and spans[end + 1][1] - spans[start][0] <= CARD_SPAN[1]
+            and spans[end + 1][0] - spans[end][1] <= CARD_SPLIT
+            and min(columns[spans[end][1] : spans[end + 1][0]], default=0) > CARD_OUTLINE
+        ):
+            end += 1
+        if (
+            end > start
+            and spans[start][1] - spans[start][0] < CARD_SPAN[0]
+            and CARD_SPAN[0] <= spans[end][1] - spans[start][0]
+        ):
+            out.append((spans[start][0], spans[end][1]))
+            start = end + 1
+        else:
+            out.append(spans[start])
+            start += 1
+    return out
+
+
 def card_groups(png: bytes) -> list[list[int]]:
     """Card centres in the battle row, split into the groups the game lays them out in.
 
@@ -1489,7 +1534,11 @@ def card_groups(png: bytes) -> list[list[int]]:
         elif not lit and start is not None:
             pieces.append((start, x))
             start = None
-    spans = [span for span in _rejoined(pieces, columns) if span[1] - span[0] >= CARD_MIN_WIDTH]
+    spans = [
+        span
+        for span in _unseamed(_rejoined(pieces, columns), columns)
+        if span[1] - span[0] >= CARD_MIN_WIDTH
+    ]
     if len(spans) > 1 and spans[1][0] - spans[0][1] < CARD_EDGE_GAP:
         spans = spans[1:]
     spans = [span for span in spans if _badged(image, (span[0] + span[1]) // 2)]

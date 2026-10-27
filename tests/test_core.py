@@ -5524,6 +5524,34 @@ class AttackTests(unittest.TestCase):
         rest = [slot for group in groups[1:] for slot in group]
         assert counted_cards(png, rest) == [1181, 1302]
 
+    def test_a_machine_cut_into_four_pieces_is_still_a_card(self) -> None:
+        """33, 9, 17 and 45 px, no pair of them one card wide.
+
+        The machine vanished on all three rounds of a run, so 大守護者 went
+        down as the machine and never fired its ability. Blacked out outside
+        the card row, like `cards_dark_hero.png`.
+        """
+        png = (FRAMES / "cards_siege_four_pieces.png").read_bytes()
+        groups = card_groups(png)
+        assert groups == [[172, 293], [557, 683, 807], [939, 1060]]
+        rest = [slot for group in groups[1:] for slot in group]
+        assert counted_cards(png, rest) == [939, 1060]
+
+    def test_only_a_run_of_unoutlined_narrow_seams_one_card_wide_is_joined(self) -> None:
+        """A card's outline, a wide gap or a run short of a card leaves the pieces apart."""
+        columns = bytearray([55] * 1600)
+        pieces = [(502, 535), (539, 548), (549, 566), (567, 612)]
+        assert scout_parser._unseamed(pieces, bytes(columns)) == [(502, 612)]
+        columns[536] = 23
+        assert scout_parser._unseamed(pieces, bytes(columns)) == pieces
+        wide = [(502, 535), (545, 556), (557, 612)]
+        assert scout_parser._unseamed(wide, bytes([55] * 1600)) == wide
+        short = [(502, 535), (539, 548), (549, 566)]
+        assert scout_parser._unseamed(short, bytes([55] * 1600)) == short
+        # The run stops at a card's width, so a piece past it stays its own.
+        long = [*pieces, (615, 640)]
+        assert scout_parser._unseamed(long, bytes([55] * 1600)) == [(502, 612), (615, 640)]
+
     def test_a_sliver_clear_of_the_seam_is_not_stepped_over(self) -> None:
         """Only a sliver inside the seam belongs to the card; one further out is ground."""
         columns = bytes(1600)
