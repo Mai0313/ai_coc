@@ -191,6 +191,7 @@ from ai_coc.parsers.building import (
     selection_row,
     upgrade_sheet,
     panel_wall_menu,
+    research_running,
 )
 from ai_coc.parsers.settings import export_row, window_open, settings_open, more_settings_open
 
@@ -7525,10 +7526,9 @@ class UpgradeSheetOfferTests(unittest.TestCase):
             assert offer.point in {
                 (1121, 783),
                 (805, 789),
-                (1228, 793),
+                (1228, 794),
                 (1229, 797),
                 (1196, 782),
-                (1196, 781),
             }, name
             assert offer.affordable == (name != "night_sheet_red.png"), name
 
@@ -7560,6 +7560,14 @@ class UpgradeSheetOfferTests(unittest.TestCase):
         assert opened == sheets
         offered = {path.name for path in FRAMES.glob("*.png") if sheet_offer(path.read_bytes())}
         assert offered == sheets - {"sheet_running_gems.png"}
+
+    def test_only_the_labs_running_research_window_reads_as_one(self) -> None:
+        """Its greyed-out troop tile once passed for the research sheet's button (#492)."""
+        running = {
+            path.name for path in FRAMES.glob("*.png") if research_running(path.read_bytes())
+        }
+        # The second opened from the lab itself, over the village rather than the panel.
+        assert running == {"night_lab_researching.png", "night_lab_researching_village.png"}
 
     def test_a_builder_base_button_no_layout_knows_is_a_sheet_with_no_offer(self) -> None:
         """An unrecorded sheet still keeps a plain tap off its button, and nothing is priced."""

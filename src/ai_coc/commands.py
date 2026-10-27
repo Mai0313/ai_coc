@@ -153,6 +153,7 @@ from ai_coc.parsers.building import (
     panel_wall_menu,
     green_button_row,
     menu_spends_gems,
+    research_running,
 )
 from ai_coc.parsers.settings import export_row, window_open, settings_open, more_settings_open
 from ai_coc.adapters.emulator import Emulator, EmulatorError
@@ -2833,8 +2834,10 @@ def _refused(png: bytes, point: tuple[int, int]) -> PressOutcome | None:
     if in_battle(png):
         return "in_battle"
     # The sheet before the dialog: the builder base's sheet is pale enough to
-    # pass for one, and its X is the only way out of it.
-    if (world := sheet_open(png)) is not None:
+    # pass for one, and its X is the only way out of it. The lab's 升級部隊
+    # window keeps a gem 立即完成 and a research potion beside its X.
+    world = sheet_open(png) or ("night" if research_running(png) else None)
+    if world is not None:
         return None if _inside(point, SHEET_CLOSE_BOX[world]) else "sheet_up"
     if (dialog := game_dialog(png)) is not None:
         across, down = CANCEL_REACH
@@ -2887,7 +2890,7 @@ def _pressed(
     frame_dir.mkdir(parents=True, exist_ok=True)
     before = adb.screenshot(display)
     refusal = _refused(before, points[0])
-    if refusal is None and gesture == "swipe" and sheet_open(before):
+    if refusal is None and gesture == "swipe" and (sheet_open(before) or research_running(before)):
         refusal = "sheet_up"
     if refusal is not None:
         frame = frame_dir / "refused.png"
@@ -2965,7 +2968,9 @@ def _after_confirm(adb: AdbController, display: DisplayTarget) -> tuple[ConfirmO
 
     A dialog at any look gets its 取消 and ends it. Only `CONFIRM_SETTLED`
     looks in a row showing the panel or the village back, with no sheet over
-    them, count as done; anything else is left exactly as it stands.
+    them, count as done, and so does the builder base lab's 升級部隊 window,
+    which a started research opens in the sheet's place; anything else is left
+    exactly as it stands.
     """
     settled = 0
     outcome: ConfirmOutcome = "unexpected"
@@ -2983,7 +2988,7 @@ def _after_confirm(adb: AdbController, display: DisplayTarget) -> tuple[ConfirmO
             adb.tap(*dialog.cancel, display)
             time.sleep(BACK_SETTLE)
             return "refused_by_game", adb.screenshot(display)
-        if build_panel_open(after) or current_world(after) is not None:
+        if build_panel_open(after) or current_world(after) is not None or research_running(after):
             settled += 1
             if settled >= CONFIRM_SETTLED:
                 return "confirmed", after
