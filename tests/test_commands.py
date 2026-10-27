@@ -1898,6 +1898,30 @@ class PressAndConfirmTests(unittest.TestCase):
         )
         assert report.outcome == "pressed"
 
+    def test_the_labs_running_research_window_takes_its_x_and_nothing_else(self) -> None:
+        """Beside its X stand a gem 立即完成 and a research potion, a magic item."""
+        for point in ((1215, 315), (1215, 215), (700, 700)):
+            adb, report = self._run(
+                ["night_lab_researching.png"], lambda d, p=point: commands.tap(p, d)
+            )
+            adb.tap.assert_not_called()
+            assert report.outcome == "sheet_up", point
+        adb, report = self._run(
+            ["night_lab_researching.png", "night_lab_panel.png"],
+            lambda d: commands.tap((1318, 62), d),
+        )
+        adb.tap.assert_called_once_with(1318, 62, DISPLAY)
+        assert report.outcome == "pressed"
+
+    def test_a_research_that_opens_its_running_window_is_confirmed(self) -> None:
+        """The builder base lab answers 確認 with 升級部隊, not with its panel (#492)."""
+        adb, report = self._run(
+            ["night_sheet_lab.png", "night_lab_researching.png"],
+            lambda d: commands.confirm(3440000, d),
+        )
+        adb.tap.assert_called_once()
+        assert report.outcome == "confirmed"
+
     def test_confirm_presses_the_builder_base_button_in_the_middle(self) -> None:
         adb, report = self._run(
             ["night_sheet_elixir.png", "night_menu_finishing.png"],
@@ -1963,11 +1987,13 @@ class PressAndConfirmTests(unittest.TestCase):
         assert report.outcome == "pressed"
 
     def test_no_swipe_crosses_a_sheet_even_from_its_x(self) -> None:
-        adb, report = self._run(
-            ["sheet_hero_dark.png"], lambda d: commands.swipe((1413, 70), (1413, 300), d)
-        )
-        adb.swipe.assert_not_called()
-        assert report.outcome == "sheet_up"
+        for frame, x in (
+            ("sheet_hero_dark.png", (1413, 70)),
+            ("night_lab_researching.png", (1318, 62)),
+        ):
+            adb, report = self._run([frame], lambda d, at=x: commands.swipe(at, (1215, 315), d))
+            adb.swipe.assert_not_called()
+            assert report.outcome == "sheet_up", frame
 
     def test_confirm_presses_the_resource_button_once_when_the_price_agrees(self) -> None:
         adb, report = self._run(
