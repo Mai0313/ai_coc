@@ -104,7 +104,8 @@ COMMANDS = (
     ("swipe", "從一點滑到另一點，例如捲動建造面板，存下滑完的畫面"),
     (
         "confirm",
-        "確認鈕上的價格跟 --price 一樣、而且是金幣聖水黑水，才按下確認；加 --pay 是從城牆選單的升級鈕開始付",
+        "確認鈕上的價格跟 --price 一樣、而且是金幣聖水黑水，才按下確認；加 --pay 是從城牆選單的升級鈕開始付；"
+        "加 --goblin 是付寶石聘請哥布林工人",
     ),
     ("boost", "夜世界鐘塔能開時（上面有時鐘標記）按下它的免費加速；要寶石的不按"),
     ("export", "從遊戲匯出整個村莊的資料，對上名稱後存起來"),
@@ -158,10 +159,16 @@ def _press_flags(
             "--wait", type=float, default=commands.PRESS_SETTLE, metavar="秒", help="等多久再截圖"
         )
     buy.add_argument("--price", type=int, required=True, help="在面板那一列讀到的價格")
-    buy.add_argument(
+    how = buy.add_mutually_exclusive_group()
+    how.add_argument(
         "--pay",
         choices=("gold", "elixir"),
         help="城牆:從牆的選單按這種資源的升級鈕,再付跳出來的確認",
+    )
+    how.add_argument(
+        "--goblin",
+        action="store_true",
+        help="聘請哥布林工人:按它視窗上的寶石鈕,寶石數要跟 --price 一樣",
     )
 
 
@@ -343,7 +350,7 @@ def _answer(arguments: argparse.Namespace, run: RunLog) -> BaseModel | str:
         "swipe": lambda: commands.swipe(
             (a.x1, a.y1), (a.x2, a.y2), run.directory / "frames", a.ms, a.wait
         ),
-        "confirm": lambda: commands.confirm(a.price, run.directory / "frames", a.pay),
+        "confirm": lambda: commands.confirm(a.price, run.directory / "frames", a.pay, a.goblin),
         "boost": lambda: commands.boost(run.directory / "frames"),
         "launch": lambda: commands.launch(a.restart, commands.stop_requested, run.no_village),
         "donate": lambda: commands.donate(

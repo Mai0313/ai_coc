@@ -26,7 +26,7 @@ import itertools
 
 from PIL import Image
 
-from ai_coc.models import World, GameDialog, SheetOffer, PanelWallMenu, SheetResource
+from ai_coc.models import World, GameDialog, SheetOffer, GoblinOffer, PanelWallMenu, SheetResource
 from ai_coc.parsers.home import build_panel_open
 from ai_coc.parsers.frame import open_frame
 from ai_coc.parsers.scout import read_stock
@@ -702,6 +702,89 @@ def sheet_offer(png: bytes) -> SheetOffer | None:
         point=point,
         affordable=reds / (width * height) < SHEET_RED_SHARE,
     )
+
+
+# 嘿，首領, what 確認 raises instead of a sheet closing when every builder is
+# busy and an event's goblin builder is free: the goblin on the left, a pale
+# panel with its X top right, and one green button priced in gems, which hires
+# it for that upgrade. Measured once, 2026-10-27, at 15 gems over the home
+# village's build panel. Three readings, because each alone has a near miss
+# over the committed frames: its X box reads 0.354 red against 0.343 on
+# `loading_screen_badge_noise`, the panel box 1.000 pale against 0.983 on
+# `hud_settings`, and the button box 0.378 green against 0.426 on the builder
+# base research sheet; no frame but this one passes two of them. The builder
+# base's 所有建築工人都在忙碌中 offer, which finishes a running job for gems,
+# keeps its X and button elsewhere and passes none.
+GOBLIN_X_BOX = (1405, 170, 1458, 218)
+GOBLIN_PANEL_BOX = (760, 240, 1440, 290)
+GOBLIN_BUTTON_BOX = (1000, 500, 1210, 590)
+GOBLIN_X_RED = 0.25
+GOBLIN_PANEL_PALE = 0.9
+GOBLIN_BUTTON_GREEN = 0.25
+# The price, white on the button left of its gem. Shrunk to 0.6 the 15 read 2
+# and 11 off its templates; it read right at every scale from 0.5 to 0.8.
+GOBLIN_PRICE_BOX = (995, 505, 1125, 580)
+GOBLIN_PRICE_SCALE = 0.6
+
+
+def _share(
+    image: Image.Image, box: tuple[int, int, int, int], test: Callable[[int, int, int], bool]
+) -> float:
+    """How much of a box passes a pixel test."""
+    data = image.crop(box).tobytes()
+    return sum(test(data[i], data[i + 1], data[i + 2]) for i in range(0, len(data), 3)) / (
+        len(data) // 3
+    )
+
+
+def _goblin_prompt(image: Image.Image) -> bool:
+    return (
+        _share(image, GOBLIN_X_BOX, lambda r, g, b: r >= 180 and g <= 80 and b <= 80)
+        >= GOBLIN_X_RED
+        and _share(
+            image,
+            GOBLIN_PANEL_BOX,
+            lambda r, g, b: min(r, g, b) > 200 and max(r, g, b) - min(r, g, b) < 20,
+        )
+        >= GOBLIN_PANEL_PALE
+        and _share(image, GOBLIN_BUTTON_BOX, lambda r, g, b: g > 150 and g - r > 45 and g - b > 60)
+        >= GOBLIN_BUTTON_GREEN
+    )
+
+
+def goblin_prompt(png: bytes) -> bool:
+    """Whether the prompt to hire the goblin builder is up, whether or not its price reads.
+
+    `tap` asks this rather than `goblin_offer`: its gem button is a green that
+    `green_buttons` misses, and a price that does not read must not open it.
+    """
+    return _goblin_prompt(open_frame(png))
+
+
+def goblin_offer(png: bytes) -> GoblinOffer | None:
+    """How many gems the prompt to hire the goblin builder asks, or None where it is not up."""
+    image = open_frame(png)
+    if not _goblin_prompt(image):
+        return None
+    band = image.crop(GOBLIN_PRICE_BOX)
+    band = band.resize(
+        (round(band.width * GOBLIN_PRICE_SCALE), round(band.height * GOBLIN_PRICE_SCALE)),
+        Image.Resampling.BILINEAR,
+    )
+    width, height = band.size
+    pixels = band.tobytes()
+    ink = [
+        [
+            min(pixels[(y * width + x) * 3 : (y * width + x) * 3 + 3]) > SHEET_INK_WHITE
+            for x in range(width)
+        ]
+        for y in range(height)
+    ]
+    gems = digits_from(ink, SHEET_DIGIT_TOLERANCE["day"])
+    if not gems:
+        return None
+    left, top, right, bottom = GOBLIN_BUTTON_BOX
+    return GoblinOffer(gems=gems, point=((left + right) // 2, (top + bottom) // 2))
 
 
 # **A wall picked off the build panel opens a menu of its own beside it**, in
