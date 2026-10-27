@@ -801,6 +801,16 @@ SHIELD_RIBBON_PURPLE = 0.6
 # and 0.598 on the 更多設定 page, which has no such button.
 STAR_PANEL_BOX = (230, 290, 1370, 640)
 STAR_PANEL_BLUE = 0.4
+# 活動已結束, the notice the game raises over the village when an event ends,
+# its title the event's name. Its one 確認 sits in `RETURN_HOME_BOX` too, so
+# `battle_over` took it for a result screen and `uncovered` refused to press
+# `back` at it, which ended a crossing (#493). Read off its pale sheet on both
+# sides of that button and across the top of the sheet: 1.000 in all three
+# boxes on the one recorded, 2026-10-27, against at most 0.816 beside the
+# button and 0.077 above it on every other frame whose button passes the 回營
+# test. Whether `back` closes it has not been tried: an event has to end.
+EVENT_NOTICE_BOXES = ((360, 705, 660, 830), (940, 705, 1240, 830), (360, 445, 1240, 520))
+EVENT_NOTICE_PALE = 0.9
 
 
 def _home_button(png: bytes) -> bool:
@@ -817,7 +827,31 @@ def battle_over(png: bytes) -> bool:
     """Whether the battle result screen is up with its 回營 button waiting."""
     if not _home_button(png):
         return False
-    return not welcome_back(png) and not shield_sheet(png) and not star_bonus(png)
+    return (
+        not welcome_back(png)
+        and not shield_sheet(png)
+        and not star_bonus(png)
+        and not event_ended(png)
+    )
+
+
+def event_ended(png: bytes) -> bool:
+    """Whether the notice that an event has ended is covering the village."""
+    if not _home_button(png):
+        return False
+    image = open_frame(png)
+    for box in EVENT_NOTICE_BOXES:
+        sheet = image.crop(box).tobytes()
+        pale = sum(
+            min(sheet[i], sheet[i + 1], sheet[i + 2]) > 200
+            and max(sheet[i], sheet[i + 1], sheet[i + 2])
+            - min(sheet[i], sheet[i + 1], sheet[i + 2])
+            < 20
+            for i in range(0, len(sheet), 3)
+        )
+        if pale / (len(sheet) // 3) < EVENT_NOTICE_PALE:
+            return False
+    return True
 
 
 def star_bonus(png: bytes) -> bool:

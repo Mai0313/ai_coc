@@ -147,6 +147,7 @@ from ai_coc.parsers.scout import (
     star_bonus,
     battle_over,
     card_groups,
+    event_ended,
     field_units,
     panel_drawn,
     _plank_ratio,
@@ -1657,6 +1658,7 @@ class CrossingTests(unittest.TestCase):
             patch.object(world_ui, "card_groups", return_value=[[1]] if battle else []),
             patch.object(world_ui, "in_battle", return_value=battle),
             patch.object(world_ui, "battle_over", return_value=False),
+            patch.object(world_ui, "event_ended", return_value=False),
             patch.object(world_ui, "loading_screen", return_value=loading),
             # A still frame is how the park knows it arrived; without this the
             # crossing never gets as far as its candidate spots. A camera that
@@ -1762,6 +1764,18 @@ class CrossingTests(unittest.TestCase):
             world_ui.CROSSINGS["day"].spots[:2]
         )
 
+    def test_a_boat_that_sailed_under_a_cover_is_not_tapped_after(self) -> None:
+        """Pressed away, the cover leaves the village sailed to, where a next spot is a stray tap (#493)."""
+        adb, landed = self._cross([
+            "night",
+            *[None] * world_ui.SAIL_POLLS,  # the boat sailed, under an event's end notice
+            None,
+            "day",  # and `back` got the home village up
+        ])
+        assert landed == "day"
+        assert adb.back.call_count == 1
+        assert adb.tap.call_count == 1
+
     def test_a_covered_village_is_uncovered_rather_than_given_up_on(self) -> None:
         adb, landed = self._cross([None, "night", "day"])
         assert landed == "day"
@@ -1806,6 +1820,17 @@ class CrossingTests(unittest.TestCase):
         adb = MagicMock()
         adb.screenshot.side_effect = [
             (FRAMES / name).read_bytes() for name in ("star_bonus.png", "hud_day.png")
+        ]
+        with patch.object(world_ui.time, "sleep"):
+            here = world_ui.uncovered(adb, DisplayTarget(logical_id="1", physical_id="2"))
+        assert here == "day"
+        assert adb.back.call_count == 1
+
+    def test_an_events_end_notice_is_pressed_away(self) -> None:
+        """Its 確認 sits where 回營 does, and a result screen is never pressed at (#493)."""
+        adb = MagicMock()
+        adb.screenshot.side_effect = [
+            (FRAMES / name).read_bytes() for name in ("event_ended.png", "hud_day.png")
         ]
         with patch.object(world_ui.time, "sleep"):
             here = world_ui.uncovered(adb, DisplayTarget(logical_id="1", physical_id="2"))
@@ -2593,6 +2618,19 @@ class ScoutTests(unittest.TestCase):
         for path in FRAMES.glob("*.png"):
             if path.name != "star_bonus.png":
                 assert not star_bonus(path.read_bytes()), path.name
+
+    def test_an_events_end_notice_is_not_a_result_screen(self) -> None:
+        """活動已結束, whose one green 確認 sits where 回營 does.
+
+        Read as a result screen, `uncovered` refused to press `back` at it and a
+        crossing gave up beneath it (#493).
+        """
+        png = (FRAMES / "event_ended.png").read_bytes()
+        assert event_ended(png)
+        assert not battle_over(png)
+        for path in FRAMES.glob("*.png"):
+            if path.name != "event_ended.png":
+                assert not event_ended(path.read_bytes()), path.name
 
     def test_the_speed_button_is_read_by_its_label(self) -> None:
         """It toggles between 1x and 4x, so which one it says decides whether to tap."""

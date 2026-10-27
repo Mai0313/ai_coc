@@ -114,6 +114,7 @@ from ai_coc.parsers.scout import (
     star_bonus,
     battle_over,
     card_groups,
+    event_ended,
     field_units,
     panel_drawn,
     card_drained,
@@ -1455,7 +1456,7 @@ def _press_away(adb: AdbController, display: DisplayTarget, png: bytes) -> str |
     """Press away a cover the game came up under, and say which; None where there is none.
 
     The raid report the game opens on after the village was attacked gets
-    `back`, and so does the 勝利之星 reward sheet. The build panel shifts the
+    `back`, and so do the 勝利之星 reward sheet and an event's end notice. The build panel shifts the
     corner column, so the village under it never reads; `back` leaves it up,
     and its own X shuts it.
     """
@@ -1467,6 +1468,10 @@ def _press_away(adb: AdbController, display: DisplayTarget, png: bytes) -> str |
         logger.info("The star bonus sheet is covering the village; pressing back")
         adb.back(display)
         return "the star bonus sheet was covering the village"
+    if event_ended(png):
+        logger.info("An event's end notice is covering the village; pressing back")
+        adb.back(display)
+        return "an event's end notice was covering the village"
     if build_panel_open(png):
         logger.info("The build panel is covering the village; pressing its X")
         adb.tap(*PANEL_CLOSE, display)
