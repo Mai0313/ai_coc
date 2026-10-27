@@ -1139,6 +1139,7 @@ class SettleGameTests(unittest.TestCase):
         with (
             patch.object(commands, "welcome_back", return_value=False),
             patch.object(commands, "star_bonus", return_value=False),
+            patch.object(commands, "event_ended", return_value=False),
             patch.object(commands, "build_panel_open", return_value=False),
             patch.object(commands, "reward_chest", return_value=4),
             patch.object(commands, "open_chest") as opened,
@@ -1171,6 +1172,7 @@ class SettleGameTests(unittest.TestCase):
                 commands, "welcome_back", side_effect=screens.get("welcome") or [False] * 9
             ),
             patch.object(commands, "star_bonus", side_effect=screens.get("star") or [False] * 9),
+            patch.object(commands, "event_ended", side_effect=screens.get("event") or [False] * 9),
             patch.object(
                 commands, "build_panel_open", side_effect=screens.get("panel") or [False] * 9
             ),
@@ -1238,6 +1240,12 @@ class SettleGameTests(unittest.TestCase):
     def test_the_star_bonus_sheet_is_pressed_away_rather_than_waited_under(self) -> None:
         """已收到勝利之星獎勵 held `status` for its whole patience; `back` closes it."""
         adb, display = self._settle([None, "day"], star=[True])
+        assert display == DISPLAY
+        adb.back.assert_called_once_with(DISPLAY)
+
+    def test_an_events_end_notice_is_pressed_away_rather_than_waited_under(self) -> None:
+        """活動已結束 comes once per event, over whichever village the game is on (#493)."""
+        adb, display = self._settle([None, "day"], event=[True])
         assert display == DISPLAY
         adb.back.assert_called_once_with(DISPLAY)
 
@@ -1899,6 +1907,30 @@ class PressAndConfirmTests(unittest.TestCase):
         )
         assert report.outcome == "pressed"
 
+    def test_the_labs_running_research_window_takes_its_x_and_nothing_else(self) -> None:
+        """Beside its X stand a gem 立即完成 and a research potion, a magic item."""
+        for point in ((1215, 315), (1215, 215), (700, 700)):
+            adb, report = self._run(
+                ["night_lab_researching.png"], lambda d, p=point: commands.tap(p, d)
+            )
+            adb.tap.assert_not_called()
+            assert report.outcome == "sheet_up", point
+        adb, report = self._run(
+            ["night_lab_researching.png", "night_lab_panel.png"],
+            lambda d: commands.tap((1318, 62), d),
+        )
+        adb.tap.assert_called_once_with(1318, 62, DISPLAY)
+        assert report.outcome == "pressed"
+
+    def test_a_research_that_opens_its_running_window_is_confirmed(self) -> None:
+        """The builder base lab answers 確認 with 升級部隊, not with its panel (#492)."""
+        adb, report = self._run(
+            ["night_sheet_lab.png", "night_lab_researching.png"],
+            lambda d: commands.confirm(3440000, d),
+        )
+        adb.tap.assert_called_once()
+        assert report.outcome == "confirmed"
+
     def test_confirm_presses_the_builder_base_button_in_the_middle(self) -> None:
         adb, report = self._run(
             ["night_sheet_elixir.png", "night_menu_finishing.png"],
@@ -1984,11 +2016,13 @@ class PressAndConfirmTests(unittest.TestCase):
         assert report.outcome == "pressed"
 
     def test_no_swipe_crosses_a_sheet_even_from_its_x(self) -> None:
-        adb, report = self._run(
-            ["sheet_hero_dark.png"], lambda d: commands.swipe((1413, 70), (1413, 300), d)
-        )
-        adb.swipe.assert_not_called()
-        assert report.outcome == "sheet_up"
+        for frame, x in (
+            ("sheet_hero_dark.png", (1413, 70)),
+            ("night_lab_researching.png", (1318, 62)),
+        ):
+            adb, report = self._run([frame], lambda d, at=x: commands.swipe(at, (1215, 315), d))
+            adb.swipe.assert_not_called()
+            assert report.outcome == "sheet_up", frame
 
     def test_confirm_presses_the_resource_button_once_when_the_price_agrees(self) -> None:
         adb, report = self._run(

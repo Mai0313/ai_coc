@@ -115,6 +115,7 @@ from ai_coc.parsers.scout import (
     star_bonus,
     battle_over,
     card_groups,
+    event_ended,
     field_units,
     panel_drawn,
     card_drained,
@@ -156,6 +157,7 @@ from ai_coc.parsers.building import (
     panel_wall_menu,
     green_button_row,
     menu_spends_gems,
+    research_running,
 )
 from ai_coc.parsers.settings import export_row, window_open, settings_open, more_settings_open
 from ai_coc.adapters.emulator import Emulator, EmulatorError
@@ -1459,7 +1461,7 @@ def _press_away(adb: AdbController, display: DisplayTarget, png: bytes) -> str |
     """Press away a cover the game came up under, and say which; None where there is none.
 
     The raid report the game opens on after the village was attacked gets
-    `back`, and so does the 勝利之星 reward sheet. The build panel shifts the
+    `back`, and so do the 勝利之星 reward sheet and an event's end notice. The build panel shifts the
     corner column, so the village under it never reads; `back` leaves it up,
     and its own X shuts it.
     """
@@ -1471,6 +1473,10 @@ def _press_away(adb: AdbController, display: DisplayTarget, png: bytes) -> str |
         logger.info("The star bonus sheet is covering the village; pressing back")
         adb.back(display)
         return "the star bonus sheet was covering the village"
+    if event_ended(png):
+        logger.info("An event's end notice is covering the village; pressing back")
+        adb.back(display)
+        return "an event's end notice was covering the village"
     if build_panel_open(png):
         logger.info("The build panel is covering the village; pressing its X")
         adb.tap(*PANEL_CLOSE, display)
@@ -2832,8 +2838,10 @@ def _refused(png: bytes, point: tuple[int, int]) -> PressOutcome | None:
     if in_battle(png):
         return "in_battle"
     # The sheet before the dialog: the builder base's sheet is pale enough to
-    # pass for one, and its X is the only way out of it.
-    if (world := sheet_open(png)) is not None:
+    # pass for one, and its X is the only way out of it. The lab's 升級部隊
+    # window keeps a gem 立即完成 and a research potion beside its X.
+    world = sheet_open(png) or ("night" if research_running(png) else None)
+    if world is not None:
         return None if _inside(point, SHEET_CLOSE_BOX[world]) else "sheet_up"
     # The goblin builder's prompt hires it for gems; `confirm --goblin` pays it.
     if goblin_prompt(png):
@@ -2889,7 +2897,11 @@ def _pressed(
     frame_dir.mkdir(parents=True, exist_ok=True)
     before = adb.screenshot(display)
     refusal = _refused(before, points[0])
-    if refusal is None and gesture == "swipe" and (sheet_open(before) or goblin_prompt(before)):
+    if (
+        refusal is None
+        and gesture == "swipe"
+        and (sheet_open(before) or research_running(before) or goblin_prompt(before))
+    ):
         refusal = "sheet_up"
     if refusal is not None:
         frame = frame_dir / "refused.png"
@@ -2971,7 +2983,9 @@ def _after_confirm(adb: AdbController, display: DisplayTarget) -> tuple[ConfirmO
 
     A dialog at any look gets its 取消 and ends it. Only `CONFIRM_SETTLED`
     looks in a row showing the panel or the village back, with no sheet over
-    them, count as done; anything else is left exactly as it stands.
+    them, count as done, and so does the builder base lab's 升級部隊 window,
+    which a started research opens in the sheet's place; anything else is left
+    exactly as it stands.
     """
     settled = 0
     outcome: ConfirmOutcome = "unexpected"
@@ -2989,7 +3003,7 @@ def _after_confirm(adb: AdbController, display: DisplayTarget) -> tuple[ConfirmO
             adb.tap(*dialog.cancel, display)
             time.sleep(BACK_SETTLE)
             return "refused_by_game", adb.screenshot(display)
-        if build_panel_open(after) or current_world(after) is not None:
+        if build_panel_open(after) or current_world(after) is not None or research_running(after):
             settled += 1
             if settled >= CONFIRM_SETTLED:
                 return "confirmed", after

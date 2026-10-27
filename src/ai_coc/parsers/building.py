@@ -326,8 +326,15 @@ def game_dialog(png: bytes) -> GameDialog | None:
 # its own green is otherwise indistinguishable from grass. Measured, a village
 # frame answers a 474x214 patch of lawn to this same test and reads its storages
 # fine, while the sheet answers a 251x99 button and reads no storages at all.
+#
+# **Blue stops at 140, below where a grey starts** (#492): up to 190 it let in
+# the greyed-out troop tile on the builder base lab's 升級部隊 window, 6585 px of
+# blue 140 to 199 where a research sheet's button is looked for, so `confirm`
+# reported a research that had started as a sheet still standing. Every
+# button's bulk sits at blue 20 to 79 and the home buttons' highlight at 130 to
+# 139; what lies above 140 is under 300 px a button.
 SHEET_SPAN = (850, 620, 1400, 880)
-SHEET_GREEN = ((0, 210), (150, 255), (0, 190))
+SHEET_GREEN = ((0, 210), (150, 255), (0, 140))
 SHEET_BUTTON = 5000
 
 
@@ -592,21 +599,46 @@ def _sheet_button(
     return None if unmatched is None else (unmatched, None, None)
 
 
+def _sheet_x(image: Image.Image, world: World) -> bool:
+    """Whether that village's sheet X is drawn where its sheets keep it."""
+    data = image.crop(SHEET_X_BOX[world]).tobytes()
+    reds = sum(
+        1
+        for at in range(0, len(data), 3)
+        if data[at] >= 180 and data[at + 1] <= 80 and data[at + 2] <= 80
+    )
+    return reds / (len(data) // 3) >= SHEET_X_RED
+
+
 def sheet_open(png: bytes) -> World | None:
     """Which village's upgrade sheet is up, by its red X and its green button, or None."""
     if read_stock(png) is not None:
         return None
     image = open_frame(png)
-    for world, box in SHEET_X_BOX.items():
-        data = image.crop(box).tobytes()
-        reds = sum(
-            1
-            for at in range(0, len(data), 3)
-            if data[at] >= 180 and data[at + 1] <= 80 and data[at + 2] <= 80
-        )
-        if reds / (len(data) // 3) >= SHEET_X_RED and _sheet_button(image, world) is not None:
+    for world in SHEET_X_BOX:
+        if _sheet_x(image, world) and _sheet_button(image, world) is not None:
             return world
     return None
+
+
+# 升級部隊, the window the builder base lab opens in place of its research sheet
+# once 確認 has started the research: the research running on a light green band
+# across the top, a gem 立即完成 and a research potion beside it, the troop grid
+# below, and its X where the research sheet's was. Measured on the Drop Ship's,
+# 2026-10-27: this green fills 0.885 of the band's box, and at most 0.014 on any
+# committed frame (none of them under the builder base's sheet X).
+RESEARCH_BAND_BOX = (500, 125, 1100, 360)
+RESEARCH_BAND_GREEN = ((150, 190), (190, 230), (90, 125))
+RESEARCH_BAND_SHARE = 0.5
+
+
+def research_running(png: bytes) -> bool:
+    """Whether the builder base lab's 升級部隊 window is up with a research running."""
+    image = open_frame(png)
+    if not _sheet_x(image, "night"):
+        return False
+    band = mask(image.crop(RESEARCH_BAND_BOX), RESEARCH_BAND_GREEN)
+    return band.count(255) / len(band) >= RESEARCH_BAND_SHARE
 
 
 def sheet_offer(png: bytes) -> SheetOffer | None:

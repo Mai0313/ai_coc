@@ -31,7 +31,7 @@
 
 **夜世界多一個來源.** 搜尋等滿 `SEARCH_PATIENCE` 被取消後, `_reopen_search` 要按 攻擊 叫回對話框; 叫不回來就是 `no_attack_menu`, 前一行是 `The attack dialog did not come back after the search was cancelled`. 那就看 `_reopen_search` 當下那張 `attack-menu` 畫面, 不是 `_open_attack_menu`.
 
-**全螢幕彈窗** (活動獎勵, 賽季通行證) 最貴: 攻擊鈕被蓋住, 重試全點在彈窗上, 實測卡過 40 分鐘. `current_world` 讀不出東西時 `uncovered` 會按 back, log 是 `Something is over the village; pressing back to get at it`. 沒這行就是彈窗被誤讀了, 有兩種形狀:
+**全螢幕彈窗** (活動獎勵, 賽季通行證) 最貴: 攻擊鈕被蓋住, 重試全點在彈窗上, 實測卡過 40 分鐘. `current_world` 讀不出東西時 `uncovered` 會按 back, log 是 `Something is over the village; pressing back to get at it` (活動結束的通知是 `An event's end notice is over the village; pressing back`). 兩行都沒有就是彈窗被誤讀了, 有兩種形狀:
 
 - 讀成**結算畫面**: 量 `RETURN_HOME_BOX` 的綠色比例 (活動獎勵頁 0.2009, 真結算 0.3283).
 - 讀成**戰鬥**: log 是 `A battle is on screen; there is nothing here to press back at` 而不是在打仗. `uncovered` 要 `card_groups` 跟 `in_battle` 兩個都成立 (或 `battle_over`) 才寫這行, 所以是其中兩個一起誤判, 或 `battle_over` 誤判: 丟 `ai_coc read` 看是哪一個. 只有 `card_groups` 有東西而 `in_battle` 是 `false` 的面板 (探礦者, 商店 外觀 頁) 走不到這行, 會被按 `back`. `in_battle` 讀 `false` **不代表戰鬥結束**: 彈窗會壓暗那塊紅色, 建築大師基地開場倒數時不畫那顆按鈕.
