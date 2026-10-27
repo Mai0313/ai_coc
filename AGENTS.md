@@ -12,7 +12,7 @@ A Windows-only PyQt5 desktop app that drives Clash of Clans inside MuMu Player 1
 
 ## Driving the game
 
-Six skills under `.agents/skills/` own the judgement of driving the game, and they are the only copy of those rules; a rule written here as well would drift. They are `farm`, `upgrades`, `takeover`, `watch-and-fix`, `repair-emulator` and `game-update`, and each one's description says when it applies. By default farming ends at `stock_full` with a report, and the loot is spent only when the user asked for that.
+The skills under `.agents/skills/` own the judgement of driving the game, and they are the only copy of those rules; a rule written here as well would drift. They are `farm`, `upgrades`, `takeover`, `watch-and-fix`, `repair-emulator`, `game-update` and `find-on-map`, and each one's description says when it applies. By default farming ends at `stock_full` with a report, and the loot is spent only when the user asked for that.
 
 `.agents/skills/farm/references/running.md` owns the mechanics the skills that run a loop share: which commands run in the background, why a subagent blocks instead, what `result.json` holds, how a loop is stopped and when that is safe.
 
@@ -49,6 +49,8 @@ Six skills under `.agents/skills/` own the judgement of driving the game, and th
 Read `gh-dev-flow` before starting. In this repo the path always ends the same way: open the PR as a draft, run `code-review` over the branch and fix what holds up, then merge once CI is green. Merging on green needs no further approval.
 
 This file, `.agents/architecture.md` and the project skills are the agent's to edit: the user judges the project from the player's side and leaves its code and documents to the agent. Update them in the same PR as the change that outdates them without showing the text first, and say in the reply what changed for the user.
+
+**That includes starting a project skill nobody asked for** (the user's call of 2026-10-27). When a session works out how to do something in the game that a later session would have to work out again, a way through a screen, a check that settles what is on it, a repair, write it up as a new skill under `.agents/skills/` and take it through the flow above, with no approval; add its name to the list under Driving the game. Only global skills need the user's agreement.
 
 **Before changing, planning or reviewing anything under `src/`, `tests/`, the workflows, the build, `pyproject.toml`, `.pre-commit-config.yaml` or the READMEs, read `.agents/architecture.md`.** Nothing loads it at startup: it holds the map of the code, the invariants that span files, the known defects, the development commands and the rules for code.
 
