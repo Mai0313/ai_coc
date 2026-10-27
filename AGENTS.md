@@ -8,7 +8,7 @@ A Windows-only PyQt5 desktop app that drives Clash of Clans inside MuMu Player 1
 
 **Where the reasoning lives.** The code says what is. The comments and docstrings in `src/`, and the tests that pin each threshold, say why a value is what it is and which measurement set it. This file holds the rules that no single comment can, and the files under `.agents/rules/` the map of the code and the rules for it. Before changing a constant, read its comment and grep `src/` and `tests/` for its name: most were set by a battle that went wrong, and changing one back reopens that bug. A new measurement goes into the comment beside the constant it sets, not here.
 
-**Everything an agent has to follow lives in the repo**: this file, the rules under `.agents/rules/`, the skills under `.agents/skills/`, and the code. Codex, Antigravity and every other agent read the repo, not one runtime's private memory, so a rule kept only there is a rule they break. Write it here, into the file under `.agents/rules/` that covers the code it is about, or into the skill that owns it; private notes keep one machine's history and nothing more.
+**Everything an agent has to follow lives in the repo**: this file, the rules under `.agents/rules/`, the skills under `.agents/skills/`, and the code. Codex, Antigravity and every other agent read the repo, not one runtime's private memory or a rules directory outside the repo, so a rule kept only there is a rule they break. Write it here, into the file under `.agents/rules/` that covers the code it is about, or into the skill that owns it; private notes keep one machine's history and nothing more.
 
 ## Driving the game
 

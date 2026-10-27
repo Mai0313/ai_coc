@@ -1,6 +1,6 @@
 ---
 trigger: glob
-globs: "src/ai_coc/ui/attack.py, src/ai_coc/ui/world.py, src/ai_coc/parsers/scout.py, src/ai_coc/parsers/glyphs.py, src/ai_coc/parsers/boundary.py, src/ai_coc/parsers/field.py, src/ai_coc/plans/**, src/ai_coc/prompts/**, src/ai_coc/adapters/ai.py, src/ai_coc/adapters/config.py, src/ai_coc/commands.py, tests/**"
+globs: "src/ai_coc/ui/attack.py, src/ai_coc/ui/world.py, src/ai_coc/parsers/scout.py, src/ai_coc/parsers/glyphs.py, src/ai_coc/parsers/boundary.py, src/ai_coc/parsers/field.py, src/ai_coc/plans/**, src/ai_coc/prompts/**, src/ai_coc/adapters/ai.py, src/ai_coc/adapters/config.py, src/ai_coc/commands.py, src/ai_coc/models.py, src/ai_coc/ui/runner.py, src/ai_coc/parsers/home.py, src/ai_coc/cli.py, tests/**"
 paths:
   - "src/ai_coc/ui/attack.py"
   - "src/ai_coc/ui/world.py"
@@ -13,6 +13,10 @@ paths:
   - "src/ai_coc/adapters/ai.py"
   - "src/ai_coc/adapters/config.py"
   - "src/ai_coc/commands.py"
+  - "src/ai_coc/models.py"
+  - "src/ai_coc/ui/runner.py"
+  - "src/ai_coc/parsers/home.py"
+  - "src/ai_coc/cli.py"
   - "tests/**"
 ---
 

@@ -1,6 +1,6 @@
 ---
 trigger: glob
-globs: "src/ai_coc/commands.py, src/ai_coc/cli.py, src/ai_coc/models.py, src/ai_coc/constants.py, src/ai_coc/ui/**, src/ai_coc/adapters/**, src/ai_coc/parsers/settings.py, src/ai_coc/parsers/village.py, tests/**"
+globs: "src/ai_coc/commands.py, src/ai_coc/cli.py, src/ai_coc/models.py, src/ai_coc/constants.py, src/ai_coc/ui/**, src/ai_coc/adapters/**, src/ai_coc/parsers/settings.py, src/ai_coc/parsers/village.py, src/ai_coc/logging_setup.py, tests/**"
 paths:
   - "src/ai_coc/commands.py"
   - "src/ai_coc/cli.py"
@@ -10,6 +10,7 @@ paths:
   - "src/ai_coc/adapters/**"
   - "src/ai_coc/parsers/settings.py"
   - "src/ai_coc/parsers/village.py"
+  - "src/ai_coc/logging_setup.py"
   - "tests/**"
 ---
 

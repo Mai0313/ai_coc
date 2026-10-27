@@ -1,6 +1,6 @@
 ---
 trigger: glob
-globs: "src/**, tests/**, pyproject.toml, uv.lock, .pre-commit-config.yaml, .github/**, Makefile, README.md, README.zh-TW.md, README.zh-CN.md"
+globs: "src/**, tests/**, pyproject.toml, uv.lock, .pre-commit-config.yaml, .github/**, Makefile, README.md, README.zh-TW.md, README.zh-CN.md, scripts/**, mkdocs.yml"
 paths:
   - "src/**"
   - "tests/**"
@@ -12,6 +12,8 @@ paths:
   - "README.md"
   - "README.zh-TW.md"
   - "README.zh-CN.md"
+  - "scripts/**"
+  - "mkdocs.yml"
 ---
 
 # The code: commands, map and rules
