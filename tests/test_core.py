@@ -5548,6 +5548,9 @@ class AttackTests(unittest.TestCase):
         assert scout_parser._unseamed(wide, bytes([55] * 1600)) == wide
         short = [(502, 535), (539, 548), (549, 566)]
         assert scout_parser._unseamed(short, bytes([55] * 1600)) == short
+        # The run stops at a card's width, so a piece past it stays its own.
+        long = [*pieces, (615, 640)]
+        assert scout_parser._unseamed(long, bytes([55] * 1600)) == [(502, 612), (615, 640)]
 
     def test_a_sliver_clear_of_the_seam_is_not_stepped_over(self) -> None:
         """Only a sliver inside the seam belongs to the card; one further out is ground."""

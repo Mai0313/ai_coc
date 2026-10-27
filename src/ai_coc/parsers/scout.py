@@ -334,14 +334,18 @@ CARD_SEAM = 2
 # put them back: on 2026-10-28 it read as 33, 9, 17 and 45 px pieces, no pair of
 # them one card wide, so the machine was gone from the row on all three rounds
 # of a run and 大守護者 went down in its place with its ability never fired.
-# What tells a seam the artwork cut from the gap between two cards is how dark
-# it gets: every card is outlined, and the gaps on the committed full rows and
-# that run's frames bottom out at 8 to 35, while the seams inside a card bottom
-# out at 53 to 60. The seams are narrow too, 4 px at most against 11 between
-# two cards. A run of pieces split only by seams that narrow and above this line
-# is put back together when, and only when, the whole run is one card wide:
-# joined a piece at a time, or across wider gaps, ground speckle on village
-# frames ran together into cards that pass the badge test.
+# What keeps one card's pieces apart from the next card's is how dark the seam
+# gets: every card is outlined, and on the committed full rows the outline seams
+# bottom out at 8 to 35 (38 to 47 on a row still fading in, which `_deploy` never
+# reads), while the seams artwork cuts inside a card bottom out at 53 to 60.
+# Joined a piece at a time, or across wider gaps, ground speckle on village
+# frames ran together into cards that pass the badge test, so a run of pieces is
+# put back together only when every seam in it is this narrow and above this
+# line, and the whole run is one card wide. Swept over the committed frames and
+# three recorded battles, 340 in all: every line from 40 to 53 reads them the
+# same, 39 joins speckle on the build panel's frames, 54 changes the attack
+# dialog's and 55 loses the machine again; widths of 5 and 6 read them the same,
+# and 4 or 7 change rows.
 CARD_OUTLINE = 42
 CARD_SPLIT = 5
 CARD_LIT_BRIGHTNESS = 60
