@@ -6,8 +6,8 @@ description: >-
   it: dispatch a subagent on a weaker model it picks, let that subagent wait out a
   long command and take a second message, wake the session when a background
   command or a subagent finishes while the other is still running, fall back to
-  its own scheduler, read text and coordinates off a frame, and reach the user's
-  phone with a file and a question. It runs scratch scripts only and never touches
+  its own scheduler, put an image in front of the model, and reach the user's
+  phone with a file and a question. It runs a scratch script only and never touches
   the game. Use it when the user asks to check, test or compare what a runtime or
   harness can do here, for example 「測一下這個 harness 能不能託管」 or "run the
   capability check".
@@ -22,21 +22,20 @@ The result is `report.md` in the run's results directory, also shown in the repl
 ## Ground rules
 
 - **Nothing here drives the game.** Run no `ai_coc` command and spawn no farm subagent for the whole run (`AGENTS.md` says the same). The checks are about the runtime, and the commands they might borrow have side effects: a new `ai_coc watch` stands down whichever one is sleeping, and any command that touches the emulator stands down, or borrows from, a loop that is running.
-- **Evidence is what the scripts wrote**, not anyone's account of it. Times come from the scripts' logs, or from the clock read and written down at that moment.
+- **Evidence is what the script wrote**, not anyone's account of it. Times come from the script's logs, or from the clock read and written down at that moment.
 - **One results directory per run**, `.runs/capability-check/<runtime>-<YYYYMMDD-HHMM>/` under the checkout (git ignores `.runs/`), written `<dir>` below. Every file named below goes in it.
 - **The first thing on every turn of the run** is a line appended to `<dir>/turns.log`: the time, and what started the turn as the runtime presents it (a user message, a command's exit notice, a subagent's report, a scheduled wake, something else). Which of these starts a turn is half of what this skill measures.
 - **Before any wait that ends your turn**, tell the user the clock time you expect to be back by, with a few minutes' slack, and that they must not type until then: their message starts a turn too, and the wake could no longer be told apart from it. If you have not spoken by that time, they send any message, and that wait is recorded as not woken.
 
-## The scripts
+## The script
 
-Both run the same way in every shell, from the checkout root:
+It runs the same way in every shell, from the checkout root:
 
 ```bash
 uv run --no-sync python .agents/skills/agent-capability-check/scripts/sleeper.py --seconds <N> --log <file>
-uv run --no-sync python .agents/skills/agent-capability-check/scripts/make_image.py --out <png> --key <json>
 ```
 
-`sleeper.py` writes a `start` line with its pid, an `alive` line every minute, and an `exit` line with a random token that it also prints; a report that quotes the token was written after the script ended. `make_image.py` draws a 1600x900 frame, the size of ai_coc's frames, with a row of text and three coloured dots at random places, and writes the answer only to the key file, so the image is read without knowing what it holds. The point of both is that the agent under test did not make up the answer itself.
+`sleeper.py` writes a `start` line with its pid, an `alive` line every minute, and an `exit` line with a random token that it also prints; a report that quotes the token was written after the script ended, so the agent under test cannot make the answer up.
 
 ## 1. A subagent on a chosen model
 
@@ -75,13 +74,15 @@ Rows: **command exit wakes** (lateness: that turn's time minus the `exit` line's
 
 **The long version runs only when the user asks for it**, since it holds the session for hours: the same check with the subagent at two hours and the command at three, the longest `takeover` sleeps. With the subagent finishing first, it also covers the other order.
 
-## 3. Reading a frame
+## 3. Seeing an image
 
-Run `make_image.py --out <dir>/t3.png --key <dir>/t3-key.json`. Open the image, not the key, and write `<dir>/t3-answer.json`: the text exactly as shown, and each dot's centre as `{"red": [x, y], ...}` in the image's own pixels. Only then read the key. It passes with the text exact and every centre within 20 px, about what still lands a tap on the same panel row; record the largest miss. A runtime that shows you a scaled copy still owes coordinates on the full 1600x900 frame, and missing that scale is a failure this check is here to catch.
+This checks the runtime, not the model: whether it can put an image file in front of the model at all. `upgrades` reads the build panel off a frame before every upgrade, so a runtime that cannot do this can farm but never upgrade. How well the model reads the image is not measured.
+
+Open `tests/frames/hud_day_build_panel.png` through the runtime's own way of reading files, and write to `<dir>/t3-seen.txt` what it shows: which screen it is, the name on the panel's top row, and the gold count. The answers are not written here, so the file name alone cannot pass it; whoever reads the report holds them against the image. Row: **image reaches the model** (pass, or fail with what came back instead, such as an error or the file's bytes as text).
 
 ## 4. Reaching the user
 
-Send `t3.png` to the user through the runtime's way of sending files, then put a question with three options to them through its way of asking, and as a push notification too where that is separate. The user tells you whether the image reached their phone, whether the question did, and whether they could answer it there. Note whether your turn stood waiting on the answer: some runtimes block the turn on a question, which `upgrades` plans around. Rows: **file reaches the phone**, **question reaches the phone and is answerable there**.
+Send that same frame to the user through the runtime's way of sending files, then put a question with three options to them through its way of asking, and as a push notification too where that is separate. The user tells you whether the image reached their phone, whether the question did, and whether they could answer it there. Note whether your turn stood waiting on the answer: some runtimes block the turn on a question, which `upgrades` plans around. Rows: **file reaches the phone**, **question reaches the phone and is answerable there**.
 
 ## Order, and the end
 
