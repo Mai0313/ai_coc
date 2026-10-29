@@ -117,7 +117,7 @@ The comment beside each measured constant in these loops carries the reasoning b
 ## Testing
 
 - Tests are written with **pytest** and live under `tests/`.
-- Coverage is gated at **75%**, against a suite that measures about 81%: `ui/main_window.py` is the untested PyQt shell and a seventh of the statements, and everything under it sits around 90%. The parsers read recorded frames, the loops and commands run against a patched emulator, and new logic in either is expected to come with tests of the same shape. The gate sits in `addopts`, so a partial run cannot meet it: pass `--no-cov` when running a single file or test.
+- Coverage is gated at **80%**. The parsers read recorded frames, the loops and commands run against a patched emulator, and new logic in either is expected to come with tests of the same shape. The gate sits in `addopts`, so a partial run cannot meet it: pass `--no-cov` when running a single file or test.
 - Use `pytest-xdist` for parallel execution where helpful.
 - Recorded frames under `tests/frames/` are the fixtures for the readers. Reduce a real capture to the region being read and fill the rest with a flat colour rather than re-encoding it: these readers turn on exact pixels, and requantising a frame makes a bad one pass and a good one fail.
 - After writing a test, take the fix back out and check it actually fails. A parser test that passes either way is the easiest kind to write by accident.
@@ -218,7 +218,6 @@ Prefer clarity over cleverness, and avoid unrelated refactors in feature or fix 
 
 These are documented in `pyproject.toml` comments and are not oversights:
 
-- Coverage is gated at 75% rather than 80%, because `ui/main_window.py` is the untested PyQt shell and a seventh of the statements
 - pytest-xdist is capped at `--maxprocesses=8`, because `auto` counts every physical core on a hybrid CPU and the suite then stutters the emulator running beside it
 - `[tool.ty.environment] python-platform = "win32"` is required, or `winreg` and `ctypes.windll` fail to resolve when the linters run on Linux
 - ty excludes `cli.py`, `ui/main_window.py` and `ui/workers.py`, because PyQt5 ships inaccurate stubs
