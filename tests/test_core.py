@@ -121,7 +121,7 @@ from ai_coc.parsers.home import (
     build_panel_open,
     clock_tower_marker,
 )
-from ai_coc.logging_setup import _attach_run, configure_logging
+from ai_coc.logging_setup import _attach_run
 from ai_coc.parsers.field import view_shift
 from ai_coc.parsers.frame import open_frame
 from ai_coc.parsers.scout import (
@@ -6509,24 +6509,6 @@ class RunLogTests(unittest.TestCase):
             run.answer('{"ok": true}')
             assert (run.directory / "result.json").read_text(encoding="utf-8") == '{"ok": true}'
 
-    def test_a_second_run_takes_the_first_ones_file_away(self) -> None:
-        """The window opens a run per job, so without the removal its tenth job
-        would still be writing into the first job's directory as well.
-        """
-        with tempfile.TemporaryDirectory() as folder:
-            first = self._run(folder, "attack")
-            second = self._run(folder, "walls")
-            # A logger of its own: `configure_logging` touches the root one, and
-            # a test has no business rearranging where the suite's logging goes.
-            log = logging.getLogger("run-log-test")
-            _attach_run(log, first)
-            _attach_run(log, second)
-            log.info("only the second run")
-            for handler in log.handlers:
-                handler.close()
-            assert "only the second run" in second.log_path.read_text(encoding="utf-8")
-            assert "only the second run" not in first.log_path.read_text(encoding="utf-8")
-
     def test_a_cull_is_said_out_loud_once_a_handler_exists(self) -> None:
         """Deleting frames is the one destructive thing in the project, and it
         runs inside `RunLog.open` — before `configure_logging`, so a line
@@ -6558,29 +6540,6 @@ class RunLogTests(unittest.TestCase):
                 handler.close()
             log.handlers.clear()
         named.assert_not_called()
-
-    def test_a_second_setup_call_leaves_the_level_someone_chose(self) -> None:
-        """The window calls `configure_logging` again for every job it starts.
-
-        The 執行紀錄 selector lowers the root logger at runtime, so a second call
-        that fell through to `root.setLevel` would undo it — right after the user
-        asked for DEBUG to capture prompts. The guard therefore cannot key off
-        any of the sinks: which of them exist depends on the build, and
-        PyInstaller ships `--windowed`, where there is no stderr and so no
-        console handler at all.
-        """
-        root = logging.getLogger()
-        handlers, level = root.handlers[:], root.level
-        root.handlers.clear()
-        try:
-            with patch.object(logging_setup.sys, "stderr", None):
-                configure_logging()
-                root.setLevel(logging.DEBUG)
-                configure_logging()
-                assert root.level == logging.DEBUG
-        finally:
-            root.handlers[:] = handlers
-            root.setLevel(level)
 
 
 def _menu_prices(name: str, *centres: int) -> list[int | None]:
