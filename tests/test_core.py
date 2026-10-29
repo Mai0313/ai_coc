@@ -22,13 +22,11 @@ from ai_coc import plans, models, commands, logging_setup
 from ai_coc.ui import world as world_ui
 from ai_coc.ui import attack
 from ai_coc.ui import runner as shared
-from ai_coc.cli import _parser
 from ai_coc.models import (
     Loan,
     World,
     Caller,
     RunLog,
-    UiJobs,
     LoanEnd,
     ProbeRay,
     AppConfig,
@@ -41,7 +39,6 @@ from ai_coc.models import (
     CartReport,
     PlayedPlan,
     SheetOffer,
-    UiSettings,
     AdbEndpoint,
     NamedEntity,
     RunnerState,
@@ -124,7 +121,7 @@ from ai_coc.parsers.home import (
     build_panel_open,
     clock_tower_marker,
 )
-from ai_coc.logging_setup import _attach_run, configure_logging
+from ai_coc.logging_setup import _attach_run
 from ai_coc.parsers.field import view_shift
 from ai_coc.parsers.frame import open_frame
 from ai_coc.parsers.scout import (
@@ -176,7 +173,6 @@ from ai_coc.parsers.scout import (
 )
 from ai_coc.parsers.world import DAY_GEMS_PLUS, DAY_SHIELD_PLUS, NIGHT_GEMS_PLUS, current_world
 from ai_coc.parsers.glyphs import nearest, ink_mask, signature, digits_from, glyph_columns
-from ai_coc.ui.main_window import LIVE_INTERVAL, MainWindow
 from ai_coc.adapters.config import ConfigStore, dotenv_value
 from ai_coc.parsers.village import clock_tower, parse_village, upgrade_timers, parse_village_text
 from ai_coc.parsers.boundary import DEPLOY_BOUND, fitted_line, village_box, boundary_reach
@@ -2878,7 +2874,7 @@ class CeilingReadTests(unittest.TestCase):
         assert taps[6:] == [(shared.STOCK_BAR_X, shared.STOCK_BAR_Y[2])]
 
     def test_a_run_that_can_never_stand_down_does_not_tap_the_bars(self) -> None:
-        """`probe` and `bounds` take the default 0, and so does 不監控 in the window."""
+        """`probe` and `bounds` take the default 0, and so does `--stop-at 0`."""
         assert self._read(self._runner(stop_at=0), []) == []
 
     def test_the_builder_base_leaves_its_gems_row_alone(self) -> None:
@@ -3065,9 +3061,9 @@ class PlanTests(unittest.TestCase):
 
 
 class ConfigTests(unittest.TestCase):
-    """One settings file, because a run has to play the same way from either side."""
+    """The one settings file every command reads."""
 
-    def test_a_missing_file_reads_as_what_the_window_has_always_shown(self) -> None:
+    def test_a_missing_file_reads_as_the_defaults_to_farm_with(self) -> None:
         """Not the field defaults underneath: those are attack anything, stop at nothing."""
         with tempfile.TemporaryDirectory() as td:
             config = ConfigStore(path=Path(td) / "config.json").load()
@@ -3082,109 +3078,21 @@ class ConfigTests(unittest.TestCase):
             saved = AppConfig(
                 thresholds=LootThresholds(min_gold=1, min_elixir=2, min_dark=3),
                 gemini=GeminiSettings(main=GeminiSetting(model="gemini-not-the-default")),
-                ui=UiSettings(jobs=UiJobs(donate=True), cycle_minutes=42, live_view=False),
             )
             store.save(saved)
             assert store.load() == saved
 
-    def test_the_window_block_defaults_to_what_the_window_has_always_shown(self) -> None:
-        """Nothing carries the old `QSettings` values over, on this project's own
-        rule that a migration left in place is a code path nobody exercises.
-
-        What made dropping them safe was that every key that registry held was
-        already one of these, measured before they went. That half cannot be
-        asserted — the registry is gone and so are the window's old defaults —
-        so what is pinned here is the numbers a machine falls back to.
-        """
-        ui = AppConfig().ui
-        assert ui.jobs.model_dump() == dict.fromkeys(UiJobs.model_fields, False)
-        assert ui.cycle_minutes == 10
-        assert ui.live_view
-        assert not ui.record_frames
-
-    def test_a_save_merges_into_what_is_on_disk_rather_than_a_snapshot(self) -> None:
-        """Every write here puts the whole file back, so a field the window has
-        not touched goes to disk from whatever copy the window is holding — and
-        `adb_serial` is such a field, written back by the first CLI run after
-        the window opened. A preview checkbox must not undo it.
-        """
-        with tempfile.TemporaryDirectory() as td:
-            store = ConfigStore(path=Path(td) / "config.json")
-            store.save(AppConfig(adb_serial="127.0.0.1:5555"))
-            window = MagicMock()
-            # What the window read when it opened, which can be hours ago.
-            window.config = AppConfig()
-            with patch("ai_coc.ui.main_window.ConfigStore", lambda: store):
-                MainWindow._save_config(window, stop_at=55)
-            written = store.load()
-        assert written.adb_serial == "127.0.0.1:5555"
-        assert written.stop_at == 55
-
-    def test_saving_the_automation_reads_every_switch_off_its_own_widget(self) -> None:
-        """A whole `ui=` block built from the window's own copy would override
-        `_save_config`'s fresh read one level down, putting back the two fields
-        this method does not otherwise set. The window has a widget for all
-        four, so each is read off its own and none is carried over.
-        """
-        with tempfile.TemporaryDirectory() as td:
-            store = ConfigStore(path=Path(td) / "config.json")
-            store.save(AppConfig(ui=UiSettings(live_view=True, record_frames=True)))
-            window = MagicMock()
-            # The copy the window opened with, which the switches have since
-            # moved away from.
-            window.config = AppConfig(ui=UiSettings(live_view=True, record_frames=True))
-            window._job_boxes.return_value = {}
-            window.live_view.isChecked.return_value = False
-            window.record_frames.isChecked.return_value = False
-            window.cycle_minutes.value.return_value = 30
-            with patch("ai_coc.ui.main_window.ConfigStore", lambda: store):
-                MainWindow.save_automation(window)
-            saved = window._save_config.call_args.kwargs["ui"]
-        assert not saved.live_view
-        assert not saved.record_frames
-        assert saved.cycle_minutes == 30
-
-    def test_clearing_the_key_takes_it_off_the_disk_and_nothing_else(self) -> None:
-        with tempfile.TemporaryDirectory() as td:
-            store = ConfigStore(path=Path(td) / "config.json")
-            on_disk = GeminiSettings(
-                api_key="AQ.saved", main=GeminiSetting(model="edited-by-hand")
-            )
-            store.save(AppConfig(gemini=on_disk))
-            window = MagicMock()
-            window.config = AppConfig()
-            window._save_config = lambda **changes: MainWindow._save_config(window, **changes)
-            with (
-                patch("ai_coc.ui.main_window.ConfigStore", lambda: store),
-                patch("ai_coc.ui.main_window.QMessageBox"),
-            ):
-                MainWindow.clear_api(window)
-            written = store.load().gemini
-        assert written == on_disk.model_copy(update={"api_key": ""})
-
     def test_the_settings_scratch_file_belongs_to_one_process(self) -> None:
-        """A worker thread reads this file while the window writes it, and
-        `load` raises on a short read by design — so a truncating write ends the
-        pass that was reading. The same answer as `state.json`, and pid-scoped
-        for the same reason: `load` itself rewrites a file whose keys have
-        moved, so a headless run started beside the window is a second writer.
+        """Every command reads this file, and `load` raises on a short read by
+        design — so a truncating write ends the run that was reading. The same
+        answer as `state.json`, and pid-scoped for the same reason: `load`
+        itself rewrites a file whose keys have moved, so two commands started
+        together are two writers.
         """
         with tempfile.TemporaryDirectory() as td:
             with patch("ai_coc.adapters.config.os.replace"):
                 ConfigStore(path=Path(td) / "config.json").save(AppConfig())
             assert [path.name for path in Path(td).iterdir()] == [f"config.json.{os.getpid()}.tmp"]
-
-    def test_a_retry_interval_the_window_could_not_show_raises(self) -> None:
-        """The spin box clamps 0 to 1 and writes 1 back on the next save, so a
-        file saying 0 is a key that looks honoured and is not — `timings` again,
-        one field along. Out of range it fails on load, like every other value
-        this file cannot run as written.
-        """
-        with tempfile.TemporaryDirectory() as td:
-            path = Path(td) / "config.json"
-            path.write_text(json.dumps({"ui": {"cycle_minutes": 0}}), encoding="utf-8")
-            with pytest.raises(ValidationError):
-                ConfigStore(path=path).load()
 
     def test_a_setting_nothing_reads_any_more_is_dropped_from_the_file(self) -> None:
         """A key left behind reads as one still being honoured, and is not.
@@ -3192,8 +3100,8 @@ class ConfigTests(unittest.TestCase):
         `timings` stayed in every existing file for a release after every clock
         moved onto the plan, so someone editing 大守護者's thirty seconds there
         would have been editing nothing at all. `keepalive_seconds` is the next
-        one out, now that holding the session open has been dropped, and
-        `ui.jobs.walls` went with the wall loop. Pydantic ignoring the key is
+        one out, now that holding the session open has been dropped, and `ui`
+        went with the desktop window. Pydantic ignoring the key is
         what keeps the upgrade from failing; rewriting the file is what stops it
         lying about what the run will do.
         """
@@ -3215,7 +3123,7 @@ class ConfigTests(unittest.TestCase):
         assert "restart_every" not in written
         assert "timings" not in written
         assert "keepalive_seconds" not in written
-        assert written["ui"]["jobs"] == {"collect": False, "donate": False, "attack": True}
+        assert "ui" not in written
         # What it parsed is what it wrote. Rewriting `AppConfig()` instead would
         # pass every other assertion here while wiping the user's settings, and
         # this call is the first thing that runs after an upgrade.
@@ -5641,8 +5549,8 @@ class AttackTests(unittest.TestCase):
 class RunnerStateTests(unittest.TestCase):
     """Stopping a headless run, and saying who is driving, out of one file.
 
-    The window has a stop button; a run put in the background by whatever started
-    it has nothing, and killing the process never reaches the `KeyboardInterrupt`
+    Nothing can send a Ctrl-C to a run put in the background by whatever
+    started it, and killing the process never reaches the `KeyboardInterrupt`
     handler that leaves the game somewhere the next run can start from. The same
     file answers the question nothing on this machine used to record at all:
     whether anything is driving the emulator, which a second session had to be
@@ -5787,20 +5695,6 @@ class RunnerStateTests(unittest.TestCase):
                 f"state.json.{os.getpid()}.tmp"
             ]
 
-    def test_a_claim_this_process_holds_is_left_to_its_outermost_owner(self) -> None:
-        """The window runs every pass as its own `commands.*` call inside the
-        claim its automation cycle holds, so a nested release would publish
-        `idle` between passes and read, from outside, as a free emulator.
-        """
-        with tempfile.TemporaryDirectory() as folder:
-            state = Path(folder) / "state.json"
-            with patch.object(commands, "STATE_PATH", state), commands.claim("automation"):
-                with commands.claim("collect"):
-                    pass
-                held = commands.read_state()
-                assert held is not None
-                assert (held.status, held.command) == ("running", "automation")
-
     def test_a_release_leaves_a_claim_that_is_not_its_own_alone(self) -> None:
         """A run that outlived its own record must not wipe out the one after
         it, which is what another process claiming in between looks like.
@@ -5933,10 +5827,11 @@ class RunnerStateTests(unittest.TestCase):
             patch.object(commands, "holder", side_effect=[first, second, second, None]),
             patch.object(commands, "ask_to_stand_down") as asked,
             patch.object(commands, "_end") as ended,
+            patch.object(commands, "TAKEOVER_WAIT", 100),
             patch.object(commands.time, "monotonic", side_effect=lambda: clock[0]),
             patch.object(commands.time, "sleep", side_effect=a_minute_passes),
         ):
-            commands.take_over(Caller(), wait=100)
+            commands.take_over(Caller())
         assert [call.args[0] for call in asked.call_args_list] == [first, second]
         ended.assert_not_called()
 
@@ -5946,21 +5841,6 @@ class RunnerStateTests(unittest.TestCase):
         """
         with patch.object(commands.psutil, "Process") as process, pytest.raises(RuntimeError):
             commands._end(RunnerState(status="running", pid=424242, command="attack"), 720)
-        process.assert_not_called()
-
-    def test_the_window_is_never_ended_for_holding_on(self) -> None:
-        """Ending it would close the program somebody may be looking at."""
-        with tempfile.TemporaryDirectory() as folder:
-            self._held_by(folder, Caller(agent=commands.WINDOW_AGENT))
-            with (
-                patch.object(commands, "TAKEOVER_WAIT", 0),
-                patch.object(commands, "_alive", return_value=True),
-                patch.object(commands.psutil, "Process") as process,
-                patch.object(commands.time, "sleep"),
-                pytest.raises(RuntimeError),
-                commands.claim("walls"),
-            ):
-                pass
         process.assert_not_called()
 
     def test_a_torn_read_is_read_again_before_the_emulator_counts_as_free(self) -> None:
@@ -5978,10 +5858,8 @@ class RunnerStateTests(unittest.TestCase):
             assert commands.holder() == live
 
     def test_this_process_own_record_is_not_read_again_as_a_torn_one(self) -> None:
-        """Every window job leaves an honest `idle` under the window's own pid,
-        and reading that again froze the window on each start.
-        """
-        mine = RunnerState(status="idle", pid=os.getpid(), command="automation")
+        """An `idle` record under this pid is an honest one, not a torn read."""
+        mine = RunnerState(status="idle", pid=os.getpid(), command="attack")
         with (
             patch.object(commands, "read_state", return_value=mine),
             patch.object(commands.time, "sleep") as slept,
@@ -6246,10 +6124,8 @@ class RunnerStateTests(unittest.TestCase):
         assert after.loan.ended == "returned"
 
     def test_a_headless_run_hands_the_state_to_the_runner(self) -> None:
-        """The interface was there all along; only the window ever passed it.
-
-        Which is the whole bug: `should_stop` defaults to never stopping, so a
-        run started from a terminal read as one that simply could not be stopped.
+        """The runner's `should_stop` defaults to never stopping, so a run that
+        did not hand it the state file read as one that could not be stopped.
         """
         with tempfile.TemporaryDirectory() as folder:
             state = Path(folder) / "state.json"
@@ -6593,8 +6469,8 @@ class RunLogTests(unittest.TestCase):
 
     The layout came from `.agents/skills/farm/references/running.md`, built with
     shell redirection, so it existed only for the reader who could have built it
-    anyway. A person running the CLI by hand, or using the window, got a
-    rotating file and nothing else.
+    anyway. A person running the CLI by hand got a rotating file and nothing
+    else.
     """
 
     def _run(self, folder: str, command: str = "attack", *, recording: bool = False) -> RunLog:
@@ -6631,24 +6507,6 @@ class RunLogTests(unittest.TestCase):
             run.answer('{"ok": true}')
             assert (run.directory / "result.json").read_text(encoding="utf-8") == '{"ok": true}'
 
-    def test_a_second_run_takes_the_first_ones_file_away(self) -> None:
-        """The window opens a run per job, so without the removal its tenth job
-        would still be writing into the first job's directory as well.
-        """
-        with tempfile.TemporaryDirectory() as folder:
-            first = self._run(folder, "attack")
-            second = self._run(folder, "walls")
-            # A logger of its own: `configure_logging` touches the root one, and
-            # a test has no business rearranging where the suite's logging goes.
-            log = logging.getLogger("run-log-test")
-            _attach_run(log, first)
-            _attach_run(log, second)
-            log.info("only the second run")
-            for handler in log.handlers:
-                handler.close()
-            assert "only the second run" in second.log_path.read_text(encoding="utf-8")
-            assert "only the second run" not in first.log_path.read_text(encoding="utf-8")
-
     def test_a_cull_is_said_out_loud_once_a_handler_exists(self) -> None:
         """Deleting frames is the one destructive thing in the project, and it
         runs inside `RunLog.open` — before `configure_logging`, so a line
@@ -6680,100 +6538,6 @@ class RunLogTests(unittest.TestCase):
                 handler.close()
             log.handlers.clear()
         named.assert_not_called()
-
-    def test_a_second_setup_call_leaves_the_level_someone_chose(self) -> None:
-        """The window calls `configure_logging` again for every job it starts.
-
-        The 執行紀錄 selector lowers the root logger at runtime, so a second call
-        that fell through to `root.setLevel` would undo it — right after the user
-        asked for DEBUG to capture prompts. The guard therefore cannot key off
-        any of the sinks: which of them exist depends on the build, and
-        PyInstaller ships `--windowed`, where there is no stderr and so no
-        console handler at all.
-        """
-        root = logging.getLogger()
-        handlers, level = root.handlers[:], root.level
-        root.handlers.clear()
-        try:
-            with patch.object(logging_setup.sys, "stderr", None):
-                configure_logging()
-                root.setLevel(logging.DEBUG)
-                configure_logging()
-                assert root.level == logging.DEBUG
-        finally:
-            root.handlers[:] = handlers
-            root.setLevel(level)
-
-
-class WindowToggleTests(unittest.TestCase):
-    """The two checkboxes beside the preview, with no Qt event loop involved.
-
-    Called unbound against a stand-in for `self`, which is all a slot that only
-    touches its own attributes needs. This is the coverage whose absence let a
-    real regression through: a checkbox added below `_toggle_live_view` took
-    that method's timer branch with it, so unchecking 即時畫面 no longer stopped
-    the preview and the new checkbox started and stopped it instead. The whole
-    suite stayed green, because nothing here touches the window at all.
-    """
-
-    def test_the_live_toggle_still_owns_the_timer(self) -> None:
-        """Matched whole rather than call by call, because the interval is half
-        the point: a bare `start()` runs the preview every time round the event
-        loop, which is what `LIVE_INTERVAL` exists to avoid.
-        """
-        window = MagicMock()
-        MainWindow._toggle_live_view(window, True)
-        assert window.mock_calls == [
-            call._save_ui(live_view=True),
-            call.live_timer.start(LIVE_INTERVAL),
-        ]
-        window.reset_mock()
-        MainWindow._toggle_live_view(window, False)
-        assert window.mock_calls == [call._save_ui(live_view=False), call.live_timer.stop()]
-
-    def test_the_recording_toggle_touches_nothing_but_its_setting(self) -> None:
-        """What reads it is `run_attack`, when it opens the run. A round already
-        under way keeps whatever it started with, and the preview is none of its
-        business.
-        """
-        window = MagicMock()
-        MainWindow._toggle_record_frames(window, True)
-        # The whole call list, not a list of things it did not do: the
-        # regression this class exists for was a branch appearing where none
-        # belonged, and naming `live_timer` alone would miss the next one.
-        assert window.mock_calls == [call._save_ui(record_frames=True)]
-
-
-class UiJobNameTests(unittest.TestCase):
-    """The three job names, which have to line up in three places at once.
-
-    They are fields of `UiJobs`, checkboxes on the window, and sub-commands of
-    the CLI, and nothing but a name connects the three. A rename that reaches
-    two of them costs a job that quietly stops being run — the cycle skips it
-    and says nothing, because a missing checkbox is indistinguishable from an
-    unticked one.
-    """
-
-    def test_every_job_names_a_sub_command_a_terminal_could_run(self) -> None:
-        """Parsed rather than compared against a written-down list, so this asks
-        `cli.py` itself: a second list here would be one more copy to drift.
-        """
-        for name in UiJobs.model_fields:
-            assert _parser().parse_args([name]).command == name
-
-    def test_the_window_has_a_box_for_every_job_and_no_others(self) -> None:
-        """`_job_boxes` is where the widgets and the settings file are lined up,
-        so a field added to one and not the other has to fail here.
-        """
-        assert set(MainWindow._job_boxes(MagicMock())) == set(UiJobs.model_fields)
-
-    def test_a_home_village_job_is_taken_to_that_village_first(self) -> None:
-        """None of the commands sails, so the cycle that strings them together does."""
-        order = MagicMock()
-        order.task.return_value = "report"
-        with patch.object(commands, "world", order.world):
-            assert MainWindow._on_home_village(order.task)("log") == "report"
-        assert order.mock_calls[:2] == [call.world("day"), call.task("log")]
 
 
 def _menu_prices(name: str, *centres: int) -> list[int | None]:

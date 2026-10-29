@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 import time
 from typing import ClassVar
 import winreg
@@ -34,9 +33,9 @@ class EmulatorError(RuntimeError):
 class Emulator(BaseModel):
     """What every emulator does the same way: ADB for the game, its own CLI for its instances.
 
-    A subclass names its CLI and answers the five questions only its CLI can:
-    which instances exist, how to start, restart and stop one, and which version
-    it is. Everything else goes through ADB, which is the same on all of them.
+    A subclass names its CLI and answers the three questions only its CLI can:
+    which instances exist, and how to start and restart one. Everything else
+    goes through ADB, which is the same on all of them.
 
     **ADB is whichever adb adbutils finds, never the emulator's own**: the one on
     PATH, else the copy adbutils ships. Every adb talks to one server on port
@@ -69,9 +68,6 @@ class Emulator(BaseModel):
     def cli(self) -> Path:
         raise NotImplementedError
 
-    def version(self) -> str:
-        raise NotImplementedError
-
     def enumerate_instances(self) -> list[EmulatorInstance]:
         raise NotImplementedError
 
@@ -89,26 +85,9 @@ class Emulator(BaseModel):
     def restart_instance(self, index: int) -> None:
         raise NotImplementedError
 
-    def close_instance(self, index: int) -> None:
-        raise NotImplementedError
-
     @staticmethod
     def _flags() -> int:
         return getattr(subprocess, "CREATE_NO_WINDOW", 0)
-
-    @staticmethod
-    def _clean_environment() -> dict[str, str]:
-        # The packaged controller contains PyQt's Qt plugin paths. MuMu CLI is
-        # a separate Qt application and must not inherit those paths.
-        environment = os.environ.copy()
-        for key in (
-            "QT_PLUGIN_PATH",
-            "QT_QPA_PLATFORM",
-            "QT_QPA_PLATFORM_PLUGIN_PATH",
-            "QML2_IMPORT_PATH",
-        ):
-            environment.pop(key, None)
-        return environment
 
     def _run(self, command: list[str], timeout: float = 15) -> bytes:
         try:
@@ -117,7 +96,6 @@ class Emulator(BaseModel):
                 capture_output=True,
                 timeout=timeout,
                 creationflags=self._flags(),
-                env=self._clean_environment(),
                 # The exit code is turned into an EmulatorError below, with the
                 # emulator's own message attached.
                 check=False,
@@ -186,10 +164,6 @@ class Emulator(BaseModel):
         adb = self.controller(instance.adb_serial)
         adb.stop_app(COC_PACKAGE)
         adb.launch_app(COC_PACKAGE)
-
-    def screenshot(self, instance: EmulatorInstance) -> bytes:
-        adb = self.controller(instance.adb_serial)
-        return adb.screenshot(adb.display_for(COC_PACKAGE))
 
     def tap(self, instance: EmulatorInstance, x: int, y: int) -> None:
         adb = self.controller(instance.adb_serial)

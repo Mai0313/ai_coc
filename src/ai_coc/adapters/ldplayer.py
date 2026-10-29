@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import re
 import time
 from typing import ClassVar
 import logging
@@ -22,8 +21,6 @@ logger = logging.getLogger(__name__)
 # get-serialno` answers `emulator-5554`, and `127.0.0.1:5555` connects to it.
 FIRST_ADB_PORT = 5555
 ADB_PORT_STEP = 2
-# What `list2`'s Android field says, for the state a person reads in the picker.
-STATES = {0: "stopped", 1: "running", 2: "starting"}
 # How long a restart watches for the instance to go down and come back up.
 SETTLE_POLLS = 40
 SETTLE_GAP = 0.5
@@ -51,11 +48,6 @@ class LDPlayerAdapter(Emulator):
     def _console(self, *args: str, timeout: float = 15) -> str:
         # Titles come back in the system's code page rather than in UTF-8.
         return self._run([str(self.cli), *args], timeout).decode("mbcs", errors="replace")
-
-    def version(self) -> str:
-        """Off the banner `ldconsole` prints with no command, `ldplayer v14.0.29.0 ...`."""
-        found = re.search(r"v(\d+(?:\.\d+)+)", self._console())
-        return found.group(1) if found else "unknown"
 
     def serial_for(self, index: int) -> str:
         return f"127.0.0.1:{FIRST_ADB_PORT + ADB_PORT_STEP * index}"
@@ -97,14 +89,11 @@ class LDPlayerAdapter(Emulator):
             android = 1 if answered else info.android
             instances.append(
                 EmulatorInstance(
-                    emulator_id=f"ldplayer:{info.index}",
                     index=info.index,
-                    name=info.title or f"LDPlayer {info.index}",
                     android_version="unknown",
                     adb_serial=serial if answered else AdbEndpoint().serial,
                     process_started=info.pid > 0,
                     android_started=android == 1,
-                    state=STATES.get(android, "unknown"),
                     pid=info.pid,
                     main_hwnd=info.top_hwnd,
                     render_hwnd=info.bind_hwnd,
@@ -158,6 +147,3 @@ class LDPlayerAdapter(Emulator):
                 return
             time.sleep(SETTLE_GAP)
         logger.warning("LDPlayer instance %s never reported running=%s", index, running)
-
-    def close_instance(self, index: int) -> None:
-        self._console("quit", "--index", str(index), timeout=30)

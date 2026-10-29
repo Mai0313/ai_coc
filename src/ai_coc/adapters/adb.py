@@ -308,8 +308,8 @@ class AdbController(BaseModel):
             raise AdbControlError(f"ADB 截圖失敗 {self.serial}：{exc}") from exc
         if not data.startswith(PNG_MAGIC):
             raise AdbControlError(f"ADB 截圖失敗 {self.serial}：{data[:120]!r}")
-        # DEBUG, not INFO: the live preview calls this twice a second, which at
-        # INFO buries every decision the loop logs under a wall of captures.
+        # DEBUG, not INFO: a loop captures many times a minute, which at INFO
+        # buries every decision it logs under a wall of captures.
         logger.debug(
             "Captured %s display %s (%d bytes)", self.serial, display.logical_id, len(data)
         )

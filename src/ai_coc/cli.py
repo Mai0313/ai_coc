@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import sys
-from typing import TYPE_CHECKING, Any, get_args
+from typing import TYPE_CHECKING, Any, cast, get_args
 import logging
 from pathlib import Path
 import argparse
@@ -10,11 +10,10 @@ from contextlib import nullcontext
 
 from rich.table import Table
 from rich.console import Console
-from PyQt5.QtWidgets import QApplication
 
 # PyInstaller runs this file as `__main__`, which has no package context, so these
 # stay absolute even for same-layer modules.
-from ai_coc import commands, __version__
+from ai_coc import commands
 from ai_coc.models import (
     World,
     Caller,
@@ -26,9 +25,7 @@ from ai_coc.models import (
     LootOverrides,
     VillageExport,
 )
-from ai_coc.constants import APP_NAME
 from ai_coc.logging_setup import configure_logging
-from ai_coc.ui.main_window import MainWindow
 
 if TYPE_CHECKING:
     from contextlib import AbstractContextManager
@@ -40,7 +37,7 @@ logger = logging.getLogger(__name__)
 
 
 def _log_uncaught(kind: type[BaseException], value: BaseException, trace: Any) -> None:  # noqa: ANN401 - matches sys.excepthook
-    """Qt swallows slot exceptions; without this the packaged EXE loses them."""
+    """Keeps a crash's traceback in `run.log`; the default hook prints it to stderr alone."""
     logger.critical("未處理的例外", exc_info=(kind, value, trace))
 
 
@@ -173,17 +170,16 @@ def _press_flags(
 
 
 def _parser() -> argparse.ArgumentParser:
-    """Every argument the entry point takes; no sub-command means open the window."""
+    """Every argument the entry point takes; a sub-command is required."""
     parser = argparse.ArgumentParser(
         prog="ai_coc",
         description=(
-            "在模擬器上自動玩部落衝突。不帶指令就開視窗。"
-            "每個指令只處理遊戲當下停著的那個村莊，換村莊用 world --go。"
+            "在模擬器上自動玩部落衝突。每個指令只處理遊戲當下停著的那個村莊，換村莊用 world --go。"
         ),
     )
     # A metavar instead of the default brace list, which printed every name
     # twice over on one unbroken line.
-    sub = parser.add_subparsers(dest="command", title="指令", metavar="<指令>")
+    sub = parser.add_subparsers(dest="command", title="指令", metavar="<指令>", required=True)
     for name, note in COMMANDS:
         sub.add_parser(name, help=note)
     # It plays whichever village the game is on and never sails there itself:
@@ -362,7 +358,7 @@ def _answer(arguments: argparse.Namespace, run: RunLog) -> BaseModel | str:
         # capture's run with recording already on, because saving frames is the
         # whole of what the command does, so this is never None here.
         "capture": lambda: "\n".join(
-            str(path) for path in commands.capture(run.frames, a.count, a.gap)
+            str(path) for path in commands.capture(cast("Path", run.frames), a.count, a.gap)
         ),
         "read": lambda: commands.read(a.png.read_bytes()),
         "export": lambda: commands.export(run.frames, a.last),
@@ -467,7 +463,7 @@ def main() -> int:
     # `capture` records by definition — saving frames is the command — so it
     # carries no `--debug` of its own and turns recording on here instead.
     run = RunLog.open(
-        arguments.command or "app",
+        arguments.command,
         recording=getattr(arguments, "debug", False) or arguments.command == "capture",
         label=getattr(arguments, "label", ""),
     )
@@ -480,26 +476,15 @@ def main() -> int:
     # First line of every run, because a directory nobody can name is one nobody
     # goes back to: this is what a session reads to find the frames afterwards.
     logger.info("This run is being kept in %s", run.directory)
-    if arguments.command:
-        # Second line of every run: `state.json` holds only the latest, and the
-        # run directories are the history someone greps to find who ran what.
-        caller = _caller(arguments)
-        logger.info(
-            "Called by agent=%r session=%r mission=%r",
-            caller.agent,
-            caller.session,
-            caller.mission,
-        )
-        if not (caller.agent and caller.session and caller.mission):
-            logger.warning("Missing --agent/--session/--mission; this run will not say who ran it")
-        return _run_command(arguments, run)
-    app = QApplication(sys.argv)
-    app.setApplicationName(APP_NAME)
-    # Qt's own metadata slot, which takes the bare version, not a display label.
-    app.setApplicationVersion(__version__)
-    window = MainWindow(run)
-    window.show()
-    return app.exec_()
+    # Second line of every run: `state.json` holds only the latest, and the
+    # run directories are the history someone greps to find who ran what.
+    caller = _caller(arguments)
+    logger.info(
+        "Called by agent=%r session=%r mission=%r", caller.agent, caller.session, caller.mission
+    )
+    if not (caller.agent and caller.session and caller.mission):
+        logger.warning("Missing --agent/--session/--mission; this run will not say who ran it")
+    return _run_command(arguments, run)
 
 
 if __name__ == "__main__":

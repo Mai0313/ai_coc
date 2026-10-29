@@ -447,14 +447,11 @@ class TouchNodeTests(unittest.TestCase):
 
 def _instance(**fields: object) -> EmulatorInstance:
     base: dict[str, object] = {
-        "emulator_id": "mumu:0",
         "index": 0,
-        "name": "MuMu 0",
         "android_version": "12",
         "adb_serial": "127.0.0.1:16384",
         "process_started": True,
         "android_started": True,
-        "state": "running",
         "pid": 1,
         "main_hwnd": 0,
         "render_hwnd": 0,
@@ -481,13 +478,6 @@ class MuMuAdapterTests(unittest.TestCase):
         with pytest.raises(EmulatorError, match="MuMu CLI"):
             MuMuAdapter(install_root=self.root)
 
-    def test_the_cli_never_inherits_the_bundled_qt_paths(self) -> None:
-        """MuMu CLI is a Qt application of its own, and the packaged controller's plugin paths break it."""
-        with patch.dict(os.environ, {"QT_PLUGIN_PATH": "C:/bundle", "OTHER": "kept"}):
-            environment = MuMuAdapter._clean_environment()
-        assert "QT_PLUGIN_PATH" not in environment
-        assert environment["OTHER"] == "kept"
-
     def test_a_failed_command_carries_the_emulators_own_message(self) -> None:
         with (
             patch.object(
@@ -507,13 +497,14 @@ class MuMuAdapterTests(unittest.TestCase):
             self.mumu._run(["mumu-cli.exe", "version"])
 
     def test_the_cli_answer_is_read_through_its_byte_order_mark(self) -> None:
-        with patch.object(MuMuAdapter, "_run", return_value=b'\xef\xbb\xbf{"version": "4.1"}'):
-            assert self.mumu.version() == "4.1"
+        with patch.object(MuMuAdapter, "_run", return_value=b'\xef\xbb\xbf{"0": {"index": 0}}'):
+            table = self.mumu.cli_model(MuMuInstanceTable, "info", "--vmindex", "all")
+        assert [item.index for item in table.instances()] == [0]
         with (
             patch.object(MuMuAdapter, "_run", return_value=b"not json"),
             pytest.raises(EmulatorError, match="無法解析"),
         ):
-            self.mumu.version()
+            self.mumu.cli_model(MuMuInstanceTable, "info", "--vmindex", "all")
 
     def test_enumerating_inspects_only_the_instances_that_are_up(self) -> None:
         table = MuMuInstanceTable.model_validate({
@@ -534,19 +525,9 @@ class MuMuAdapterTests(unittest.TestCase):
             patch.object(AdbController, "is_running", return_value=True),
         ):
             first, second = self.mumu.enumerate_instances()
-        assert (first.index, first.name, first.resolution, first.coc_running) == (
-            0,
-            "A",
-            "1600x900",
-            True,
-        )
+        assert (first.index, first.resolution, first.coc_running) == (0, "1600x900", True)
         assert first.main_hwnd == 26
-        assert (second.index, second.name, second.resolution, second.coc_running) == (
-            1,
-            "MuMu 1",
-            "unknown",
-            False,
-        )
+        assert (second.index, second.resolution, second.coc_running) == (1, "unknown", False)
 
     def test_an_instance_is_looked_up_by_index_and_absent_when_mumu_drops_it(self) -> None:
         with patch.object(
@@ -663,8 +644,8 @@ class LDPlayerAdapterTests(unittest.TestCase):
             up, down = self.ld.enumerate_instances()
         assert ran.call_args.args[0][1:] == ["list2"]
         asked.assert_called_once_with(COC_PACKAGE)
-        assert (up.emulator_id, up.adb_serial, up.resolution, up.coc_running) == (
-            "ldplayer:0",
+        assert (up.index, up.adb_serial, up.resolution, up.coc_running) == (
+            0,
             "127.0.0.1:5555",
             "1600x900",
             True,
@@ -705,21 +686,18 @@ class LDPlayerAdapterTests(unittest.TestCase):
             patch.object(AdbController, "is_running", return_value=False),
         ):
             (lost,) = self.ld.enumerate_instances()
-        assert (lost.android_started, lost.adb_serial, lost.state, lost.coc_running) == (
+        assert (lost.android_started, lost.adb_serial, lost.coc_running) == (
             True,
             "127.0.0.1:5555",
-            "running",
             False,
         )
 
     def test_each_lifecycle_call_is_ldconsole_by_index(self) -> None:
         with patch.object(LDPlayerAdapter, "_run", return_value=b"stop") as ran:
             self.ld.launch_instance(2)
-            self.ld.close_instance(2)
         assert [call.args[0][1:] for call in ran.call_args_list] == [
             ["isrunning", "--index", "2"],
             ["launch", "--index", "2"],
-            ["quit", "--index", "2"],
         ]
 
     def test_an_instance_already_booting_is_not_launched_again(self) -> None:
@@ -749,11 +727,6 @@ class LDPlayerAdapterTests(unittest.TestCase):
         # A VM process outlived `quit` by five seconds, and a launch inside
         # that never got a VM at all.
         assert call(ldplayer_module.QUIT_SETTLE) in slept.call_args_list
-
-    def test_the_version_is_read_off_the_banner(self) -> None:
-        banner = b"ldplayer v14.0.29.0 Command Line Management Interface\r\n"
-        with patch.object(LDPlayerAdapter, "_run", return_value=banner):
-            assert self.ld.version() == "14.0.29.0"
 
     def test_a_serial_is_known_before_the_instance_is_up(self) -> None:
         """MuMu reports port 0 while an instance is down, so the scheme stands in for it."""

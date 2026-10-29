@@ -6,9 +6,6 @@ so a village left alone for hours was idle for most of them.
 
 Collecting is the shortest loop in the project — tapping a marker collects it
 outright, no menu and nothing to confirm.
-
-Kept Qt-free like the rest of `ui/` outside the widgets, so `commands.py` can
-drive it against the live game without a window.
 """
 
 from __future__ import annotations

@@ -1,11 +1,7 @@
 """The headless side of the application: what `cli.py` runs when given a command.
 
-Nothing here builds a window. Everything below the `ui/` package is already
-Qt-free, so the only thing the window was ever providing was the wiring — find
-the emulator, resolve the display it put the game on, hand over the API key —
-and that is what these functions are. A feature that can only be reached through
-a widget cannot be run against the live game while it is being worked on, which
-is the whole reason the attack loop grew a `frame_dir` at the same time.
+These functions are the wiring around the loops under `ui/`: find the emulator,
+resolve the display it put the game on, hand over the API key.
 """
 
 from __future__ import annotations
@@ -549,9 +545,6 @@ HOLDER_NAMES = ("python", "ai_coc")
 # a write, milliseconds long, so running out means that process died holding
 # the lock, and the write goes ahead unguarded rather than failing the run.
 LOCK_WAIT = 10
-# The window's own name on the file. It is never ended by a takeover: that
-# would close the program somebody may be looking at.
-WINDOW_AGENT = "window"
 # How long a loan outlives the borrower's last command before the lender may
 # start again. Long enough for the thinking and editing between one live test
 # and the next, each of which would otherwise borrow afresh and wait out a
@@ -641,7 +634,7 @@ def holder() -> RunnerState | None:
     torn = RunnerState(status="running", pid=os.getpid())
     state = read_state()
     for _ in range(TORN_READS):
-        if state != torn or _held is not None:
+        if state != torn:
             break
         time.sleep(TORN_GAP)
         state = read_state()
@@ -715,19 +708,19 @@ def _carried(state: RunnerState | None, caller: Caller, *, yields: bool) -> Loan
     return loan.model_copy(update={"until": until})
 
 
-def take_over(caller: Caller, wait: float | None = None) -> None:
+def take_over(caller: Caller) -> None:
     """Have the run holding the emulator stand down, and return once it has.
 
     **The file is a lock**, the user's call of 2026-09-27. A command that needs
     the emulator asks the holder to stand down through the same `stopping` that
     `ai_coc stop` writes, naming who asked, and waits for it to reach its seam
     and release — a battle under way is played out, never abandoned. A holder
-    still up after `wait` is ended here and that is logged, rather than left for
-    somebody to kill by hand or to delete the file under. The wait starts over
-    for each holder, so one that claimed while this waited on another gets its
-    own, rather than the rest of its predecessor's.
+    still up after `TAKEOVER_WAIT` is ended here and that is logged, rather
+    than left for somebody to kill by hand or to delete the file under. The
+    wait starts over for each holder, so one that claimed while this waited on
+    another gets its own, rather than the rest of its predecessor's.
     """
-    wait = TAKEOVER_WAIT if wait is None else wait
+    wait = TAKEOVER_WAIT
     deadline = 0.0
     asked: tuple[int, datetime | None] | None = None
     while (current := holder()) is not None:
@@ -786,10 +779,6 @@ def ask_to_stand_down(held: RunnerState, caller: Caller) -> None:
 
 def _end(holder: RunnerState, waited: float) -> None:
     """End a holder that never reached its seam, and say who it was."""
-    if holder.caller.agent == WINDOW_AGENT:
-        raise RuntimeError(
-            f"視窗佔著模擬器,請它停了 {waited / 60:.0f} 分鐘還沒放手;請在視窗按停止"
-        )
     # A record written before `pid_created` existed was matched on the process
     # name alone, which a Python process that reused the pid also passes.
     if holder.pid_created is None:
@@ -941,20 +930,6 @@ def claim(
     PNG and never opens ADB, and neither do `capture` and a plain `world`,
     which only look.
 
-    **A claim this process already holds is left alone, and the outermost one
-    owns the release.** The window runs every pass as its own `commands.*` call
-    while the automation cycle carries on around them, so a release at the end
-    of each pass would publish `idle` between passes and read, from outside, as
-    an emulator nobody is using.
-
-    **That test reads this process's own record and never the file**, because
-    the file cannot answer it. A read that fails or comes back torn recovers as
-    "running, and it is ours", which is the answer that keeps a battle from
-    standing down over a moment — and taking it for a claim already held would
-    have this yield without writing anything, leaving the run unrecorded and
-    stoppable by nothing at all: `stop` would read the last run's `idle` and say
-    there was nothing to stop, and deleting the file would not stop it either.
-
     **Another live run holding it is asked to stand down first**, and waited out;
     see `take_over`. The decision to claim is taken again inside the lock,
     because two commands can finish waiting on one holder in the same instant
@@ -971,9 +946,6 @@ def claim(
     nothing is not stopped: it starts once a stop has ended that holder.
     """
     global _held  # noqa: PLW0603 - process-wide by nature; see `_held`
-    if _held is not None:
-        yield
-        return
     who = caller or Caller()
     queued: datetime | None = None
     while True:
@@ -1725,15 +1697,14 @@ def _handed_plan(options: AttackOptions) -> tuple[AttackPlan | NightPlan | None,
 def attack(
     options: AttackOptions, should_stop: Callable[[], bool] = stop_requested
 ) -> AttackSeries:
-    """The attack loop, with no window in the way, for as many rounds as asked.
+    """The attack loop, for as many rounds as asked.
 
     Thresholds, storage limits and the model to plan with all come from the
-    shared config file, so a run started here plays the same way as one from
-    the window — the storage limits included, which means a full village stands
-    this down before it searches. `minimums` overrides the thresholds alone,
-    which is how a loop being studied gets the old behaviour back: all three at
-    zero is "attack the first opponent shown", and skipping nothing is what puts
-    the code worth watching on screen.
+    settings file — the storage limits included, which means a full village
+    stands this down before it searches. `minimums` overrides the thresholds
+    alone, which is how a loop being studied gets the old behaviour back: all
+    three at zero is "attack the first opponent shown", and skipping nothing is
+    what puts the code worth watching on screen.
 
     `plan` replaces the AI entirely — the loop plays that file and asks for
     nothing — and `plan_out` writes down whichever plan actually ran, so a battle
@@ -1749,12 +1720,10 @@ def attack(
     the rounds already played are still reported. The state file is the one that
     reaches a run put in the background, which nothing can send a Ctrl-C to.
 
-    **`should_stop` is what lets the window run this same function.** It has a
-    stop button rather than a terminal, and the button has to reach a battle
-    already under way; a run started there passes a condition that answers to
-    both, so `ai_coc stop` from a terminal still ends a window's round. Nothing
-    replaces the state file — the default reads it, and the `claim` around this
-    call is what marks the run as under way for anybody looking from outside.
+    **`should_stop` is the one condition the series stops on**, between rounds
+    and, handed to the runner, between opponents. The default reads the state
+    file that `ai_coc stop` writes, and the `claim` around this call is what
+    marks the run as under way for anybody looking from outside.
     """
     plan, world = _handed_plan(options)
     adb = _controller()
@@ -2312,7 +2281,7 @@ def _village_now(adb: AdbController, display: DisplayTarget) -> World | None:
 
 
 def collect(frame_dir: Path | None = None) -> CollectReport:
-    """Tap every collector the village has left standing, with no window in the way.
+    """Tap every collector the village has left standing.
 
     Collectors stop once they are full, so a village nobody has emptied has spent
     most of its time doing nothing. This is the cheapest thing in the project to
@@ -2357,7 +2326,7 @@ DONATE_LINES: dict[DonateOutcome, str] = {
 
 
 def donate(options: DonateOptions) -> DonateReport:
-    """Give troops to whoever in the clan is asking, with no window in the way.
+    """Give troops to whoever in the clan is asking.
 
     Cheap to run and cheap to find nothing: a clan with no request open costs one
     tap on the chat tab and one capture. `dry_run` walks the whole path and stops
@@ -2577,9 +2546,9 @@ def _export_path(tag: str) -> Path:
 def _last_export() -> VillageExport:
     """The most recent export on this machine, without touching the emulator.
 
-    This is what the window shows when it opens and what `--last` prints. A file
-    written before this command existed holds the game's raw payload rather than
-    an export, and says so rather than coming back as an empty village.
+    This is what `--last` prints. A file written before this command existed
+    holds the game's raw payload rather than an export, and says so rather than
+    coming back as an empty village.
     """
     saved = sorted(ACCOUNT_JSON_DIR.glob("*.json"), key=lambda one: one.stat().st_mtime)
     if not saved:

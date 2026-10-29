@@ -11,9 +11,6 @@ village alone — right for a loop about to spend the home village's loot, wrong
 for a question about whichever village is up. Neither crosses: `ai_coc world
 --go` is how a caller moves the game, and `status` only ever looks, the same
 bargain `ai_coc stock` makes.
-
-Kept Qt-free like the rest of `ui/` outside the widgets, so `commands.py` can
-drive it against the live game without a window.
 """
 
 from __future__ import annotations

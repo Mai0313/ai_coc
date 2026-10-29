@@ -947,8 +947,8 @@ class NightCartTests(unittest.TestCase):
     def test_a_look_that_could_not_say_is_taken_again_at_once(self) -> None:
         """A missed tap is no evidence of a full cart, so the visit goes again.
 
-        Within the one visit, because the window builds a new runner for every
-        pass and a count kept across rounds would start from nothing each time.
+        Within the one visit, because a series is started again around every
+        loan and a count kept across rounds would start from nothing each time.
         """
         runner = self._runner()
         room = CartReport(outcome="locked_holding", held=10, capacity=1_600_000)

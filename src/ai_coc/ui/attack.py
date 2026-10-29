@@ -1124,8 +1124,7 @@ class AttackRunner(ScreenRunner):
         for why a partial one is worse than none, and for what the taps do.
         """
         # Nothing to measure against, so nothing worth six taps: `probe` and
-        # `bounds` run at the default 0, and so does a window whose spinbox is
-        # at 不監控.
+        # `bounds` run at the default 0, and so does `attack --stop-at 0`.
         if self._capacity is not None or not self.stop_at:
             return
         self._capacity = self.read_ceilings(world)
@@ -1152,8 +1151,8 @@ class AttackRunner(ScreenRunner):
         up to `CART_LOOKS` times, rather than being taken either way: a missed
         tap is no evidence of a full cart, and a cart that never reads must not
         keep full storages farming for ever. Inside the one visit rather than
-        across rounds, because the window builds a new runner for every pass
-        and a count kept here would start from nothing each time.
+        across rounds, because a series is started again around every loan and
+        a count kept here would start from nothing each time.
         """
         if self.world != "night":
             return home

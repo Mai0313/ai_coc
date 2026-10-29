@@ -855,13 +855,7 @@ class RoundLineTests(unittest.TestCase):
 
 
 class AttackSeriesStopTests(unittest.TestCase):
-    """The series answers whoever started it, which is what lets the window run it.
-
-    `ai_coc stop` is still the default and still the only thing that reaches a
-    run started from another process. What the parameter adds is the window's
-    own button, which has nothing else to write to — and going through here is
-    what finally gives that button's flag somewhere to be cleared.
-    """
+    """The series stops on the condition it is handed, whose default is `ai_coc stop`."""
 
     def _series(self, should_stop: MagicMock) -> tuple[MagicMock, list]:
         runner = MagicMock(name="AttackRunner")
@@ -1385,18 +1379,12 @@ class RunPlumbingTests(unittest.TestCase):
             assert str(commands.STATE_PATH) in message
             assert commands.stop_requested()
 
-    def test_the_claim_is_public_because_the_start_button_needs_it(self) -> None:
-        """The window decides whether to stand down before it calls anything here.
-
-        So a `stopping` left by `ai_coc stop` — the ordinary state after a
-        farming session, since nothing takes it once the loops stop — has to be
-        overwritten by `start_automation` itself. Reached through the public
-        name rather than the widget, which no test can build.
-        """
+    def test_a_stop_ends_with_the_run_it_was_asked_of(self) -> None:
+        """The next claim does not stand down on a stop the last run already served."""
         with commands.claim("attack"):
             commands.stop()
             assert commands.stop_requested()
-        with commands.claim("automation"):
+        with commands.claim("collect"):
             assert not commands.stop_requested()
 
 

@@ -16,11 +16,7 @@ addopts = [
     # on a hybrid desktop CPU can be 24 workers, enough to stutter the emulator.
     "--maxprocesses=8",
     "--no-header",
-    # Below the template's 80 because `ui/main_window.py` is the untested PyQt
-    # shell, a seventh of the statements; everything under it sits around 90%.
-    # The suite measures 81% today, and the gap is what a change may cost before
-    # it is asked to bring tests with it.
-    "--cov-fail-under=75",
+    "--cov-fail-under=80",
 ]
 filterwarnings = [
     "ignore::DeprecationWarning",
@@ -80,8 +76,6 @@ dependencies = [
     "pillow>=11.0",
     "psutil>=7.2.2",
     "pydantic>=2.12",
-    "PyQt5>=5.15,<6",
-    "PyQt5-Qt5==5.15.2; sys_platform == 'win32'",
     "rich>=13.9",
 ]
 readme = "README.md"
@@ -545,16 +539,8 @@ python-version = "3.12"
 # `winreg` and `ctypes.windll` do not resolve on the Linux CI runner without this.
 python-platform = "win32"
 
-# PyQt5 ships its own inaccurate stubs, so ty rejects correct calls into the GUI
-# shell. Those files are covered by Ruff; the framework-independent core, which
-# now includes `ui/render.py`, is checked here.
 [tool.ty.src]
 include = ["src/ai_coc"]
-exclude = [
-    "src/ai_coc/cli.py",
-    "src/ai_coc/ui/main_window.py",
-    "src/ai_coc/ui/workers.py",
-]
 
 [tool.ty.rules]
 blanket-ignore-comment = "error"

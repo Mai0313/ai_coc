@@ -76,8 +76,10 @@ class ParserTests(unittest.TestCase):
         for name, extra in MINIMAL.items():
             assert parser.parse_args([name, *extra]).command == name
 
-    def test_no_sub_command_means_the_window(self) -> None:
-        assert _args().command is None
+    def test_a_sub_command_is_required(self) -> None:
+        with pytest.raises(SystemExit) as stopped:
+            _args()
+        assert stopped.value.code != 0
 
     def test_every_sub_command_takes_who_is_asking_and_none_needs_it(self) -> None:
         for name, extra in MINIMAL.items():

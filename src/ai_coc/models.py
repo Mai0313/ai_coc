@@ -158,13 +158,11 @@ class MuMuInstanceInfo(BaseModel):
     model_config = TOLERANT
 
     index: int
-    name: str = ""
     android_version: str = "unknown"
     adb_host_ip: str = DEFAULT_ADB_HOST
     adb_port: int = 0
     is_process_started: bool = False
     is_android_started: bool = False
-    player_state: str = "unknown"
     pid: int = 0
     main_wnd: str = "0"
     render_wnd: str = "0"
@@ -195,12 +193,6 @@ class MuMuInstanceTable(RootModel[dict[str, Any]]):
             for value in self.root.values()
             if isinstance(value, dict) and "index" in value
         ]
-
-
-class MuMuCliVersion(BaseModel):
-    model_config = TOLERANT
-
-    version: str = "unknown"
 
 
 class MuMuCliResult(BaseModel):
@@ -256,14 +248,11 @@ class LDPlayerInstanceInfo(BaseModel):
 class EmulatorInstance(BaseModel):
     model_config = ConfigDict(frozen=True)
 
-    emulator_id: str
     index: int
-    name: str
     android_version: str
     adb_serial: str
     process_started: bool
     android_started: bool
-    state: str
     pid: int
     main_hwnd: int
     render_hwnd: int
@@ -274,27 +263,6 @@ class EmulatorInstance(BaseModel):
     @property
     def endpoint(self) -> AdbEndpoint:
         return AdbEndpoint.parse(self.adb_serial)
-
-
-class Frame(BaseModel):
-    model_config = ConfigDict(frozen=True)
-
-    frame_id: str
-    emulator_id: str
-    account_tag: str
-    captured_at: str
-    png: bytes
-
-    @classmethod
-    def create(cls, emulator_id: str, account_tag: str, png: bytes, sequence: int) -> Frame:
-        now = datetime.now(UTC)
-        return cls(
-            frame_id=f"{emulator_id}:{sequence}:{int(now.timestamp() * 1000)}",
-            emulator_id=emulator_id,
-            account_tag=account_tag,
-            captured_at=now.isoformat(),
-            png=png,
-        )
 
 
 class VillageEntry(BaseModel):
@@ -488,7 +456,7 @@ class LootOffer(BaseModel):
 
 
 class LootThresholds(BaseModel):
-    """The minimum loot the automation tab requires before an opponent is worth attacking."""
+    """The minimum loot an opponent has to carry to be worth attacking."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -736,7 +704,8 @@ HeroKind = Literal["king", "queen", "warden", "champion", "minion_prince", "duke
 # Every call this application makes is a screen read against a fixed prompt, so
 # the thinking budget buys latency rather than a better answer. It is a setting
 # because a model that refuses the level, or a prompt that turns out to want the
-# reasoning, should be a picker away from working rather than a release away.
+# reasoning, should be an edit to the settings file away from working rather
+# than a release away.
 ThinkingLevel = Literal["minimal", "low", "medium", "high"]
 DEFAULT_THINKING_LEVEL: ThinkingLevel = "low"
 
@@ -855,68 +824,11 @@ class GeminiSettings(BaseModel):
     main: GeminiSetting = GeminiSetting()
 
 
-class UiJobs(BaseModel):
-    """Which of the three commands the window's cycle round-robins.
-
-    The field names are the sub-command names, deliberately: each one is a
-    `commands.*` function that `cli.py` dispatches to and that the window's own
-    `run_*` calls, so the file says what a pass will do in the same words a
-    terminal would. The registry's names — `auto_collect` and its four siblings
-    — said nothing the checkbox label did not, and matched nothing.
-    """
-
-    collect: bool = False
-    donate: bool = False
-    attack: bool = False
-
-
-class UiSettings(BaseModel):
-    """What only the window reads, in the file both sides already share.
-
-    These lived in `QSettings`, which is the Windows registry, on the rule that
-    a setting no terminal command asks for has no business in the shared file.
-    What that rule actually bought was a second place for settings to live, one
-    no editor opens and nothing outside the window can read: knowing which jobs
-    the window would run meant opening `regedit`. Being read by one side is not
-    a reason to be stored somewhere only that side can reach.
-    """
-
-    jobs: UiJobs = UiJobs()
-    # Only ever paces a cycle that found nothing to do: a finished job queues
-    # the next pass straight away, `NEXT_CYCLE_DELAY` later.
-    #
-    # Bounded to what the spin box takes, because the two disagreeing is the
-    # `timings` failure again: a file saying 0 is clamped to 1 by the widget,
-    # run as 1, and written back as 1 — a key that looks read and is not. Out
-    # of range it raises on load instead, which is what this file does with a
-    # value it cannot honour.
-    cycle_minutes: int = Field(default=10, ge=1, le=120)
-    live_view: bool = True
-    # Off by default because it is not free — a PNG encode on the emulator for
-    # every frame a loop reads, and a `frames/` under every run to hold them.
-    record_frames: bool = False
-
-
 class AppConfig(BaseModel):
-    """Everything a run needs that the window and the terminal both read.
+    """Everything a run reads from the settings file."""
 
-    These used to live in QSettings, which only the window can reach, so a run
-    started from a terminal got the field defaults instead — all three loot
-    thresholds at zero, which is "attack the first opponent shown". That was
-    written down as deliberate and was, for a loop being studied; it stopped
-    being deliberate the moment the same command became how the game is played.
-    The model picker had the same split, quietly sending every headless call to
-    `DEFAULT_GEMINI_MODEL` whatever the settings tab said.
-
-    What is here is everything either side reads. The five automation
-    checkboxes, the two preview switches and the retry interval were the last
-    thing left in the registry, kept there on the rule that a setting no
-    terminal command asks for does not belong in a shared file — which is how
-    they ended up somewhere no editor opens.
-    """
-
-    # The defaults are the ones the window has always shown, not the field
-    # defaults underneath them. `LootThresholds()` means "take anything", which
+    # The defaults are the ones to farm with, not the field defaults
+    # underneath them. `LootThresholds()` means "take anything", which
     # is the right neutral value for a model and the wrong one to farm with — and
     # it was only ever reached by a caller that had no way of asking the user.
     thresholds: LootThresholds = LootThresholds(
@@ -945,10 +857,9 @@ class AppConfig(BaseModel):
     # Which emulator instance every command drives, by its ADB serial:
     # `127.0.0.1:16384` or `emulator-5554`, whichever form `adb devices` shows.
     # Empty until the first run, which takes the instance running the game —
-    # MuMu's first where both are — and writes its serial here; the window's
-    # emulator picker writes it as well. A serial rather than an emulator name
-    # and an index, because it is what `adb devices` shows and what the picker
-    # lists, and each emulator fixes its instances' ports by index anyway.
+    # MuMu's first where both are — and writes its serial here. A serial rather
+    # than an emulator name and an index, because it is what `adb devices`
+    # shows, and each emulator fixes its instances' ports by index anyway.
     adb_serial: str = ""
     # Nested rather than three more flat keys, and it earns that twice over. At
     # the top level `model` would sit beside `adb_serial` with nothing saying
@@ -956,10 +867,6 @@ class AppConfig(BaseModel):
     # More usefully, a tier *is* a `GeminiSetting`, so building a client stopped
     # being four lines of copying one field name onto another.
     gemini: GeminiSettings = GeminiSettings()
-    # Nested for the reason `gemini` is, and for one more: a block says which
-    # keys are the window's without a prefix on each of them, so the four job
-    # names underneath can be the sub-command names and nothing else.
-    ui: UiSettings = UiSettings()
 
 
 class AttackPlan(BaseModel):
@@ -1165,7 +1072,7 @@ class AttackReport(BaseModel):
         **Derived rather than stored**, because it was the one thing the old
         sentence said that a field also said, and two places to look is how they
         drift. Kept under its own name because `farm` owns where it leads and
-        both that skill and the window read it — and computed rather than plain
+        that skill reads it — and computed rather than plain
         so `result.json` carries it exactly as it did.
         """
         return self.outcome == "stock_full"
@@ -1893,8 +1800,7 @@ class RunLog(BaseModel):
     It exists because the layout was a convention rather than a feature. The
     skills told a session to build this directory with shell redirection, so it
     existed only for the reader who could have built it anyway — a person
-    running the CLI by hand, or using the window, got a rotating file and
-    nothing else.
+    running the CLI by hand got a rotating file and nothing else.
 
     `recording` is off by default because it is not free: the frames a loop
     reads are a PNG encode each on the emulator, and the heartbeat competes with
