@@ -71,13 +71,13 @@ uv sync --group test
 # Install pre-commit hooks
 uv run pre-commit install
 
-# Start the app
-uv run ai_coc
+# List the commands
+uv run ai_coc --help
 ```
 
 The `test` group is what the suite needs; a plain `uv sync` installs enough to run the app but not enough to test it.
 
-Every loop has a headless sub-command (`uv run ai_coc attack`, `collect`, `donate`, and the rest; see the README), and those are how the game is worked on: a feature reachable only through a widget cannot be driven against the live game while it is being written. The window runs the same functions, so a sub-command is also the smoke test for what the window does.
+Every loop has a sub-command (`uv run ai_coc attack`, `collect`, `donate`, and the rest; see the README), and those are how the game is worked on and smoke-tested.
 
 Supported Python versions are declared in `pyproject.toml`. Use `uv` to manage interpreters when needed:
 
@@ -102,7 +102,7 @@ Always run `make fmt` and `make test` before opening a pull request.
 
 The three layers are directories, so an import that crosses them is visible in the import line:
 
-- **UI and orchestration**: `ui/main_window.py` holds the window and every tab; `ui/workers.py` the thread-pool workers; `ui/render.py` the Markdown and log rendering. The loops themselves are kept Qt-free so they can be driven and tested without a window: `ui/attack.py` (the attack loop), `ui/world.py` (crossing between the two villages), and `ui/upkeep.py`, `ui/clan.py` on top of the shared `ui/runner.py`
+- **Loops and orchestration**: `ui/attack.py` (the attack loop), `ui/world.py` (crossing between the two villages), and `ui/upkeep.py`, `ui/clan.py` on top of the shared `ui/runner.py`
 - **Adapters**: `adapters/emulator.py` (what every emulator does the same way), `adapters/mumu.py` and `adapters/ldplayer.py` (each emulator's own CLI and lifecycle), `adapters/adb.py` (every ADB call), `adapters/ai.py` (Gemini), `adapters/config.py` (the shared settings file, the API key included), `adapters/mapping.py` (the community `data_id` table), `adapters/clipboard.py` (the Windows clipboard, where the game's own village export arrives)
 - **Pure parsers**: `parsers/frame.py` (the 1600x900 frame every reader decodes through), `parsers/scout.py` (loot panel, card row, storage bars, and which screen is up), `parsers/building.py` (building menus and their prices), `parsers/home.py` (collector markers, builder panel), `parsers/world.py` (which of the two villages is on screen), plus `parsers/village.py`, `parsers/boundary.py`, `parsers/field.py` and `parsers/clan.py`. Two of them are shared machinery rather than screens and every other reader is built out of one or both: `parsers/glyphs.py` reads a number by matching each digit to a template, and `parsers/regions.py` finds the connected patches of one colour
 
@@ -110,7 +110,7 @@ The three layers are directories, so an import that crosses them is visible in t
 
 Prompts are one Markdown file each under `prompts/`, loaded once and filled in by `render`, because a prompt is reworded far more often than the code around it.
 
-Every structured value is a Pydantic model, collected in `models.py`: no `dataclass`, no `TypedDict`, and no bare `dict[str, Any]` travelling between functions. Blocking calls go through a `QThreadPool` worker and come back to the UI thread as a signal; never call an adapter directly from a slot.
+Every structured value is a Pydantic model, collected in `models.py`: no `dataclass`, no `TypedDict`, and no bare `dict[str, Any]` travelling between functions.
 
 The comment beside each measured constant in these loops carries the reasoning behind its value, and `AGENTS.md` at the repo root, with `.agents/rules/`, carries the rules that span files. Read both before changing a constant, because most of them were paid for by a battle that went wrong.
 
@@ -220,7 +220,6 @@ These are documented in `pyproject.toml` comments and are not oversights:
 
 - pytest-xdist is capped at `--maxprocesses=8`, because `auto` counts every physical core on a hybrid CPU and the suite then stutters the emulator running beside it
 - `[tool.ty.environment] python-platform = "win32"` is required, or `winreg` and `ctypes.windll` fail to resolve when the linters run on Linux
-- ty excludes `cli.py`, `ui/main_window.py` and `ui/workers.py`, because PyQt5 ships inaccurate stubs
 - `allowed-confusables` carries `／` and `？` for the Chinese UI strings
 - The `build_release.yml` matrix is Windows-only, because nothing here runs elsewhere
 - **`test.yml`'s matrix is Windows-only for a harder reason**: `adapters/emulator.py` imports `winreg` at module scope, so on Linux `test_core.py` cannot be imported and its tests are silently skipped. That went unnoticed because `uv run pytest | tee` reported `tee`'s exit code rather than pytest's, so the job passed either way. Keep `set -o pipefail` in that step

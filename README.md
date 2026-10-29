@@ -6,7 +6,7 @@
 
 </div>
 
-A Windows desktop application that plays Clash of Clans for you inside MuMu Player 12 or LDPlayer 14. It reads the screen itself and turns what it finds into ADB taps, checking the outcome on the next screenshot. Gemini is asked exactly one question per battle: how to attack this village.
+A Windows command-line tool that plays Clash of Clans for you inside MuMu Player 12 or LDPlayer 14. It reads the screen itself and turns what it finds into ADB taps, checking the outcome on the next screenshot. Gemini is asked exactly one question per battle: how to attack this village.
 
 Other Languages: [English](README.md) | [繁體中文](README.zh-TW.md) | [简体中文](README.zh-CN.md)
 
@@ -28,28 +28,28 @@ Village exports keep unknown fields and unknown `data_id`s instead of failing on
 
 - Windows. The app talks to `mumu-cli.exe` or `ldconsole.exe`, reads the registry through `winreg` and the clipboard through `ctypes.windll`, none of which exist elsewhere
 - [MuMu Player 12](https://www.mumuplayer.com/) or [LDPlayer 14](https://www.ldplayer.net/) with Clash of Clans installed, running at 1600x900. On LDPlayer, turn on ADB debugging (local connection) in its settings
-- A Gemini API key, entered in the app's settings tab. It answers one thing and nothing else: the tactic for each battle. Without one the attack loop falls back to a fixed tactic, and no other command asks it anything in the first place
+- A Gemini API key, saved as `gemini.api_key` in the settings file below. It answers one thing and nothing else: the tactic for each battle. Without one the attack loop falls back to a fixed tactic, and no other command asks it anything in the first place
 
 ## 🚀 Install and run
 
 From PyPI, without installing anything permanently:
 
 ```bash
-uvx ai_coc
+uvx ai_coc --help
 ```
 
 Or as a regular install:
 
 ```bash
 uv tool install ai_coc
-ai_coc
+ai_coc --help
 ```
 
 Prebuilt Windows executables are attached to every [release](https://github.com/Mai0313/ai_coc/releases).
 
 ## 🎮 Playing from the terminal
 
-The window is one way in. The other is a sub-command, which runs the same loops with no window at all, and this is how the game is usually played, because it leaves the terminal free to watch the log.
+Everything is a sub-command; `ai_coc --help` lists them.
 
 ### Attacking
 
@@ -138,7 +138,7 @@ The game keeps two villages — the home village and the builder base — and re
 
 ### Where a run leaves what it saw
 
-Every run gets a directory of its own, whichever side of the app started it:
+Every run gets a directory of its own:
 
 ```
 ~/.ai_coc/logs/2026-08-29-011423-attack/
@@ -154,7 +154,7 @@ The first line of every run says which directory it is, and the name is `<when>-
 
 ## ⚙️ Settings
 
-`~/.ai_coc/config.json` is read by both the window and the terminal, so a run plays the same way from either side:
+`~/.ai_coc/config.json` holds the settings every command reads:
 
 ```json
 {
@@ -172,31 +172,20 @@ The first line of every run says which directory it is, and the name is `<when>-
       "base_url": "",
       "thinking_level": "low"
     }
-  },
-  "ui": {
-    "jobs": {
-      "collect": false,
-      "donate": false,
-      "attack": false
-    },
-    "cycle_minutes": 10,
-    "live_view": true,
-    "record_frames": false
   }
 }
 ```
 
-That is the whole file. **A run that finds no file creates one only to write down `adb_serial`** — otherwise it uses exactly these values and leaves the disk alone — so the file appears the first time a command or the window picks an emulator, or the first time the window writes it, which is 儲存設定 or either switch over the preview. Once it exists it is kept honest on every load, by whichever side loads it first: a key the app no longer reads is dropped and a key the file never had is filled in, so what is on disk is always a statement of what the next run will do rather than of what was saved once.
+That is the whole file. **A run that finds no file creates one only to write down `adb_serial`** — otherwise it uses exactly these values and leaves the disk alone — so the file appears the first time a command picks an emulator. Once it exists it is kept honest on every load: a key the app no longer reads is dropped and a key the file never had is filled in, so what is on disk is always a statement of what the next run will do rather than of what was saved once.
 
 - **thresholds**: who is worth attacking. Set them too high and a run skips dozens of opponents without ever starting a battle
 - **stop_at**: how full every storage has to be before a run stands down, as a percentage. **One number for both villages**, because the loop reads each storage's real ceiling off the game — tap a storage bar and it writes 最大儲存量 on the spot. Every storage has to reach it, not just one of them: a battle brings home three, so one at the ceiling is no reason to stop earning the other two. On the builder base the elixir cart counts as one more: past a full elixir storage it keeps banking each battle's defence reward, so a run there stands down only once the cart has reached the same share of the ceiling written on it. `0` never stands a run down, and a storage whose ceiling would not read is left out of the count. `--stop-at` overrides it for one run, `0` included, which is what a test battle against a village that farming has just filled needs
-- **adb_serial**: which emulator instance to drive, by the serial `adb devices` shows (`127.0.0.1:16384`, `127.0.0.1:5555`, or `emulator-5554`, which is the same LDPlayer instance as `127.0.0.1:5555`). Left empty, the first run takes the instance with the game running, MuMu's where both have it, and writes its serial here; picking an instance in the window's emulator list writes it too. A serial no installed emulator answers to is an error rather than a guess
-- **gemini**: which model answers each kind of call. `main` is asked once per run against a whole screenshot — the attack plan on either village — so nothing there is racing anything and the better model is simply the right one. `base_url` empty means Google's own endpoint. `api_key` is kept in plain text; the settings tab's 儲存設定 writes it, and while it is empty a `GEMINI_API_KEY` from the environment or a `.env` stands in
-- **ui**: what only the window reads, and the last thing that was not in this file. It lived in the Windows registry, where no editor opens it and no `ai_coc` sub-command can reach it, on the rule that a setting no terminal command asks for does not belong in a shared file — which is how the one part of this app nobody could edit by hand turned out to be the window's own behaviour. `jobs` is which of the three commands the window's cycle round-robins, named for the sub-commands themselves, so `"donate": true` runs the same job `ai_coc donate` does, one pass of it per turn. `cycle_minutes` only ever paces a cycle that found nothing to do, because a finished job queues the next pass straight away. `live_view` is the live preview in the 主控 tab, and `record_frames` is the checkbox form of the frames `--debug` keeps
+- **adb_serial**: which emulator instance to drive, by the serial `adb devices` shows (`127.0.0.1:16384`, `127.0.0.1:5555`, or `emulator-5554`, which is the same LDPlayer instance as `127.0.0.1:5555`). Left empty, the first run takes the instance with the game running, MuMu's where both have it, and writes its serial here. A serial no installed emulator answers to is an error rather than a guess
+- **gemini**: which model answers each kind of call. `main` is asked once per run against a whole screenshot — the attack plan on either village — so nothing there is racing anything and the better model is simply the right one. `base_url` empty means Google's own endpoint. `api_key` is kept in plain text, and while it is empty a `GEMINI_API_KEY` from the environment or a `.env` stands in
 
 There are no ability or spell timings here any more. They were a table of per-hero constants, and editing them meant guessing how long an army takes to walk across a village nobody had looked at — which is the planner's job, done with the village on screen. Every clock lives on the plan now: see `plans/flat.json` for the shape, and `--plan` to replay one.
 
-Everything else lives in `~/.ai_coc`: the account JSON `ai_coc export` writes, the run logs, and `state.json` — which command is driving the emulator, its pid, its log directory, and who started it (`--agent`, `--session`, `--mission`, or `window`). It is kept after a run ends rather than removed, so the record says what the last run was instead of going blank. It is also a lock: a command that drives the emulator asks the live run holding it to stand down and waits for it to finish, and takes over at once from a run whose process is gone. A run started with `--yield` is background work: it never stands anything down, and when something else needs the emulator it is lent out instead of stopped, and its agent starts it again once `ai_coc giveback` hands the emulator back, or half an hour after the borrower's last command. The file has a second section, `watch`: the `ai_coc watch` process an agent sleeps on until an upgrade comes due, with its own pid, so whether anyone is watching is whether that process is alive. A new watch stops a live one and takes its place, and `ai_coc stop` ends it.
+Everything else lives in `~/.ai_coc`: the account JSON `ai_coc export` writes, the run logs, and `state.json` — which command is driving the emulator, its pid, its log directory, and who started it (`--agent`, `--session`, `--mission`). It is kept after a run ends rather than removed, so the record says what the last run was instead of going blank. It is also a lock: a command that drives the emulator asks the live run holding it to stand down and waits for it to finish, and takes over at once from a run whose process is gone. A run started with `--yield` is background work: it never stands anything down, and when something else needs the emulator it is lent out instead of stopped, and its agent starts it again once `ai_coc giveback` hands the emulator back, or half an hour after the borrower's last command. The file has a second section, `watch`: the `ai_coc watch` process an agent sleeps on until an upgrade comes due, with its own pid, so whether anyone is watching is whether that process is alive. A new watch stops a live one and takes its place, and `ai_coc stop` ends it.
 
 ## 🤝 Contributing
 
