@@ -88,8 +88,7 @@ def _opened() -> None:
     The owner is not decoration: opened with NULL, `EmptyClipboard` sets the
     clipboard owner to NULL and every `SetClipboardData` after it fails, so
     putting back what was there would silently leave it empty. This has no
-    window of its own — the packaged build runs `--windowed` and a terminal run
-    has none at all — so it borrows the desktop's, which is what a process
+    window of its own, so it borrows the desktop's, which is what a process
     without a window of its own is expected to do.
     """
     owner = _user32.GetDesktopWindow()

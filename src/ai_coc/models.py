@@ -456,7 +456,7 @@ class LootOffer(BaseModel):
 
 
 class LootThresholds(BaseModel):
-    """The minimum loot the automation tab requires before an opponent is worth attacking."""
+    """The minimum loot an opponent has to carry to be worth attacking."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -704,7 +704,8 @@ HeroKind = Literal["king", "queen", "warden", "champion", "minion_prince", "duke
 # Every call this application makes is a screen read against a fixed prompt, so
 # the thinking budget buys latency rather than a better answer. It is a setting
 # because a model that refuses the level, or a prompt that turns out to want the
-# reasoning, should be a picker away from working rather than a release away.
+# reasoning, should be an edit to the settings file away from working rather
+# than a release away.
 ThinkingLevel = Literal["minimal", "low", "medium", "high"]
 DEFAULT_THINKING_LEVEL: ThinkingLevel = "low"
 
@@ -1071,7 +1072,7 @@ class AttackReport(BaseModel):
         **Derived rather than stored**, because it was the one thing the old
         sentence said that a field also said, and two places to look is how they
         drift. Kept under its own name because `farm` owns where it leads and
-        both that skill and the window read it — and computed rather than plain
+        that skill reads it — and computed rather than plain
         so `result.json` carries it exactly as it did.
         """
         return self.outcome == "stock_full"
@@ -1799,8 +1800,7 @@ class RunLog(BaseModel):
     It exists because the layout was a convention rather than a feature. The
     skills told a session to build this directory with shell redirection, so it
     existed only for the reader who could have built it anyway — a person
-    running the CLI by hand, or using the window, got a rotating file and
-    nothing else.
+    running the CLI by hand got a rotating file and nothing else.
 
     `recording` is off by default because it is not free: the frames a loop
     reads are a PNG encode each on the emulator, and the heartbeat competes with

@@ -2874,7 +2874,7 @@ class CeilingReadTests(unittest.TestCase):
         assert taps[6:] == [(shared.STOCK_BAR_X, shared.STOCK_BAR_Y[2])]
 
     def test_a_run_that_can_never_stand_down_does_not_tap_the_bars(self) -> None:
-        """`probe` and `bounds` take the default 0, and so does 不監控 in the window."""
+        """`probe` and `bounds` take the default 0, and so does `--stop-at 0`."""
         assert self._read(self._runner(stop_at=0), []) == []
 
     def test_the_builder_base_leaves_its_gems_row_alone(self) -> None:
@@ -6124,10 +6124,8 @@ class RunnerStateTests(unittest.TestCase):
         assert after.loan.ended == "returned"
 
     def test_a_headless_run_hands_the_state_to_the_runner(self) -> None:
-        """The interface was there all along; only the window ever passed it.
-
-        Which is the whole bug: `should_stop` defaults to never stopping, so a
-        run started from a terminal read as one that simply could not be stopped.
+        """The runner's `should_stop` defaults to never stopping, so a run that
+        did not hand it the state file read as one that could not be stopped.
         """
         with tempfile.TemporaryDirectory() as folder:
             state = Path(folder) / "state.json"
@@ -6471,8 +6469,8 @@ class RunLogTests(unittest.TestCase):
 
     The layout came from `.agents/skills/farm/references/running.md`, built with
     shell redirection, so it existed only for the reader who could have built it
-    anyway. A person running the CLI by hand, or using the window, got a
-    rotating file and nothing else.
+    anyway. A person running the CLI by hand got a rotating file and nothing
+    else.
     """
 
     def _run(self, folder: str, command: str = "attack", *, recording: bool = False) -> RunLog:

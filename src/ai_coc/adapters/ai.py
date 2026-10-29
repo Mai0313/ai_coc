@@ -41,7 +41,7 @@ class GeminiClient(BaseModel):
 
     @property
     def client(self) -> genai.Client:
-        """Built lazily so a missing key surfaces on the worker thread, not in a slot."""
+        """Built lazily, so a missing key surfaces at the first call."""
         if self._client is None:
             if not self.api_key.strip():
                 raise ValueError("尚未設定 Gemini API Key")

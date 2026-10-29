@@ -5,9 +5,6 @@ on screen — and each of them can arrive to find it is not. The game may still 
 loading, a panel may be covering it, a dialog may be standing over it, or the
 session may have been dropped for idling, which is what a loop that spends
 minutes between rounds or inside a battle walks into sooner or later.
-
-Kept Qt-free like everything else under `ui/` that is not a widget, so
-`commands.py` can drive any of it against the live game without a window.
 """
 
 from __future__ import annotations

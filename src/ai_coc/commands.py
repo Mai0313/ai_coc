@@ -1,11 +1,7 @@
 """The headless side of the application: what `cli.py` runs when given a command.
 
-Nothing here builds a window. Everything below the `ui/` package is already
-Qt-free, so the only thing the window was ever providing was the wiring — find
-the emulator, resolve the display it put the game on, hand over the API key —
-and that is what these functions are. A feature that can only be reached through
-a widget cannot be run against the live game while it is being worked on, which
-is the whole reason the attack loop grew a `frame_dir` at the same time.
+These functions are the wiring around the loops under `ui/`: find the emulator,
+resolve the display it put the game on, hand over the API key.
 """
 
 from __future__ import annotations
@@ -2285,7 +2281,7 @@ def _village_now(adb: AdbController, display: DisplayTarget) -> World | None:
 
 
 def collect(frame_dir: Path | None = None) -> CollectReport:
-    """Tap every collector the village has left standing, with no window in the way.
+    """Tap every collector the village has left standing.
 
     Collectors stop once they are full, so a village nobody has emptied has spent
     most of its time doing nothing. This is the cheapest thing in the project to
@@ -2330,7 +2326,7 @@ DONATE_LINES: dict[DonateOutcome, str] = {
 
 
 def donate(options: DonateOptions) -> DonateReport:
-    """Give troops to whoever in the clan is asking, with no window in the way.
+    """Give troops to whoever in the clan is asking.
 
     Cheap to run and cheap to find nothing: a clan with no request open costs one
     tap on the chat tab and one capture. `dry_run` walks the whole path and stops
@@ -2550,9 +2546,9 @@ def _export_path(tag: str) -> Path:
 def _last_export() -> VillageExport:
     """The most recent export on this machine, without touching the emulator.
 
-    This is what the window shows when it opens and what `--last` prints. A file
-    written before this command existed holds the game's raw payload rather than
-    an export, and says so rather than coming back as an empty village.
+    This is what `--last` prints. A file written before this command existed
+    holds the game's raw payload rather than an export, and says so rather than
+    coming back as an empty village.
     """
     saved = sorted(ACCOUNT_JSON_DIR.glob("*.json"), key=lambda one: one.stat().st_mtime)
     if not saved:
