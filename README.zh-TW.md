@@ -168,7 +168,7 @@ ai_coc attack                         # 打遊戲當下所在的那個村莊
   "gemini": {
     "api_key": "",
     "main": {
-      "model": "gemini-3.8-flash",
+      "model": "gemini-4-argon",
       "base_url": "",
       "thinking_level": "low"
     }
