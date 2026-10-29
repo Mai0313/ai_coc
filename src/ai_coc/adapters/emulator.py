@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 import time
 from typing import ClassVar
 import winreg
@@ -90,20 +89,6 @@ class Emulator(BaseModel):
     def _flags() -> int:
         return getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
-    @staticmethod
-    def _clean_environment() -> dict[str, str]:
-        # The packaged controller contains PyQt's Qt plugin paths. MuMu CLI is
-        # a separate Qt application and must not inherit those paths.
-        environment = os.environ.copy()
-        for key in (
-            "QT_PLUGIN_PATH",
-            "QT_QPA_PLATFORM",
-            "QT_QPA_PLATFORM_PLUGIN_PATH",
-            "QML2_IMPORT_PATH",
-        ):
-            environment.pop(key, None)
-        return environment
-
     def _run(self, command: list[str], timeout: float = 15) -> bytes:
         try:
             result = subprocess.run(  # noqa: S603 - command is the located emulator CLI plus literal arguments
@@ -111,7 +96,6 @@ class Emulator(BaseModel):
                 capture_output=True,
                 timeout=timeout,
                 creationflags=self._flags(),
-                env=self._clean_environment(),
                 # The exit code is turned into an EmulatorError below, with the
                 # emulator's own message attached.
                 check=False,

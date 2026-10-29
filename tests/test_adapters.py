@@ -478,13 +478,6 @@ class MuMuAdapterTests(unittest.TestCase):
         with pytest.raises(EmulatorError, match="MuMu CLI"):
             MuMuAdapter(install_root=self.root)
 
-    def test_the_cli_never_inherits_the_bundled_qt_paths(self) -> None:
-        """MuMu CLI is a Qt application of its own, and the packaged controller's plugin paths break it."""
-        with patch.dict(os.environ, {"QT_PLUGIN_PATH": "C:/bundle", "OTHER": "kept"}):
-            environment = MuMuAdapter._clean_environment()
-        assert "QT_PLUGIN_PATH" not in environment
-        assert environment["OTHER"] == "kept"
-
     def test_a_failed_command_carries_the_emulators_own_message(self) -> None:
         with (
             patch.object(
