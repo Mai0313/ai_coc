@@ -182,7 +182,7 @@ from .ui.runner import (
 from .ui.upkeep import UpkeepRunner
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterable, Iterator
+    from collections.abc import Callable, Iterable, Iterator, Generator
 
 logger = logging.getLogger(__name__)
 
@@ -586,7 +586,7 @@ class NoStateFileError(RuntimeError):
 
 
 @contextmanager
-def _turn() -> Iterator[None]:
+def _turn() -> Generator[None]:
     """One process at a time through a read and a write of the state file.
 
     Without it two commands waiting on one holder both read `idle` in the same
@@ -931,7 +931,7 @@ def _write_file(state: StateFile) -> None:
 @contextmanager
 def claim(
     command: str, log: Path | None = None, caller: Caller | None = None, *, yields: bool = False
-) -> Iterator[None]:
+) -> Generator[None]:
     """Say that this process is driving the emulator, and who asked, and hand it back after.
 
     Every command that drives the emulator takes one, short ones included: a
