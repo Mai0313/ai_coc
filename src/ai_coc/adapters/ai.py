@@ -161,9 +161,6 @@ class GeminiClient(BaseModel):
             raise RuntimeError(f"Gemini 沒有回傳內容，status={interaction.status}")
         return text
 
-    def generate(self, prompt: str, image_png: bytes | None = None) -> str:
-        return self._create(prompt, image_png)
-
     def generate_structured(
         self,
         prompt: str,

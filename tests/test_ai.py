@@ -54,13 +54,13 @@ def _client(interactions: FakeInteractions, sends: int = 1) -> GeminiClient:
 class RequestTests(unittest.TestCase):
     def test_the_prompt_travels_as_the_first_text_part(self) -> None:
         interactions = FakeInteractions(output_text="好的")
-        assert _client(interactions).generate("在嗎") == "好的"
+        assert _client(interactions)._create("在嗎", None) == "好的"
         assert interactions.body["model"] == "gemini-test"
         assert interactions.body["input"] == [{"type": "text", "text": "在嗎"}]
 
     def test_a_screenshot_travels_as_a_base64_image_part(self) -> None:
         interactions = FakeInteractions(output_text="x")
-        _client(interactions).generate("看畫面", b"PNGDATA")
+        _client(interactions)._create("看畫面", b"PNGDATA")
         image = interactions.body["input"][1]
         assert image["type"] == "image"
         assert base64.b64decode(image["data"]) == b"PNGDATA"
@@ -109,7 +109,7 @@ class RequestTests(unittest.TestCase):
 
     def test_an_empty_reply_is_an_error_rather_than_an_empty_string(self) -> None:
         with pytest.raises(RuntimeError):
-            _client(FakeInteractions()).generate("在嗎")
+            _client(FakeInteractions())._create("在嗎", None)
 
 
 class StructuredTests(unittest.TestCase):
