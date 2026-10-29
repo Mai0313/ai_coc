@@ -3006,10 +3006,12 @@ class PlanTests(unittest.TestCase):
         assert plan.deploy_end is not None
         played = [step.act for step in plan.steps]
         assert set(played) == {"siege", "troops", "hero", "ability", "rage", "freeze", "wait"}
-        # The first hero opens with its ability, the machine and the troops
-        # follow, and no spell goes down before there are troops for it to cover.
+        # The first hero opens with its ability, the troops and the other heroes
+        # follow, the machine goes down after every one of them, and no spell
+        # goes down before there are troops for it to cover.
         assert played[:2] == ["hero", "ability"]
-        assert played.index("siege") < played.index("troops") < played.index("rage")
+        units = [i for i, act in enumerate(played) if act in ("troops", "hero")]
+        assert units[-1] < played.index("siege") < played.index("rage")
         assert played.index("rage") < played.index("freeze") < len(played) - 1
         # As many bottles as an unreadable rage card is assumed to hold, so the
         # fallback tactic can place everything the loop asks it to.
