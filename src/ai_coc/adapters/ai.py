@@ -26,8 +26,8 @@ T = TypeVar("T", bound=BaseModel)
 class GeminiClient(BaseModel):
     """The single place the application talks to Gemini, through google-genai."""
 
-    # Its own field rather than part of `settings`, because `settings` is one
-    # tier and the key serves both.
+    # Its own field rather than `settings.api_key`, because the key may come
+    # from the environment or a `.env` instead of the settings file.
     api_key: str = ""
     settings: GeminiSetting
 
@@ -160,9 +160,6 @@ class GeminiClient(BaseModel):
         if not text:
             raise RuntimeError(f"Gemini 沒有回傳內容，status={interaction.status}")
         return text
-
-    def generate(self, prompt: str, image_png: bytes | None = None) -> str:
-        return self._create(prompt, image_png)
 
     def generate_structured(
         self,

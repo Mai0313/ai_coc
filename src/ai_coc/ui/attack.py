@@ -38,6 +38,7 @@ from ai_coc.prompts import PROMPTS
 from ai_coc.ui.world import uncovered, collect_cart
 from ai_coc.constants import COC_PACKAGE
 from ai_coc.ui.runner import ScreenRunner, SessionTakenError, relogin, refuse_taken
+from ai_coc.adapters.ai import GeminiClient
 from ai_coc.adapters.adb import ZOOM_PINCHES
 from ai_coc.parsers.home import plate_count
 from ai_coc.parsers.field import view_shift
@@ -984,6 +985,9 @@ class AttackRunner(ScreenRunner):
     # idle slot; see `_stood_down`.
     until_idle: list[IdleRole] = Field(default_factory=list)
     max_skips: int = 20
+    # Who to ask the one question the parsers cannot answer: how to attack. None
+    # is an ordinary answer, and the loop plays its flat plan.
+    ai: GeminiClient | None = None
     # A plan settled before the run, which skips the Gemini call entirely. This is
     # what `--plan` fills, and it is how a hand-written tactic is replayed
     # exactly: the loop plays what it is given rather than asking for its own.

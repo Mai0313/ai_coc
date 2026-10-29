@@ -19,7 +19,6 @@ from pydantic import BaseModel, PrivateAttr
 
 from ai_coc.models import World, VillageStock, DisplayTarget, StorageCapacity
 from ai_coc.constants import COC_PACKAGE
-from ai_coc.adapters.ai import GeminiClient
 from ai_coc.adapters.adb import ZOOM_PINCHES, AdbController, AdbControlError
 from ai_coc.parsers.home import PANEL_CLOSE, STORAGE_BARS, reward_chest, build_panel_open
 from ai_coc.parsers.scout import (
@@ -206,9 +205,6 @@ class ScreenRunner(BaseModel):
     should_stop: Callable[[], bool] = lambda: False
     # Where to keep every frame the loop reads, for a run being studied afterwards.
     frame_dir: Path | None = None
-    # Who to ask the one question the parsers cannot answer: how to attack. None
-    # is an ordinary answer, and the attack loop plays its flat plan.
-    ai: GeminiClient | None = None
 
     _captures: int = PrivateAttr(default=0)
 

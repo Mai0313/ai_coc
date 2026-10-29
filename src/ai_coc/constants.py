@@ -6,7 +6,7 @@ APP_NAME = "AI CoC"
 ORGANISATION = "Mai0313"
 
 COC_PACKAGE = "com.supercell.clashofclans"
-DEFAULT_GEMINI_MODEL = "gemini-3.8-flash"
+DEFAULT_GEMINI_MODEL = "gemini-4-argon"
 DEFAULT_ADB_HOST = "127.0.0.1"
 
 
