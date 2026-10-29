@@ -1,14 +1,7 @@
 ---
 name: find-on-map
 description: >-
-  Find something on a Clash of Clans village map by looking at a frame yourself,
-  and tap it through ai_coc, when no command, panel row or HUD button reaches
-  it: a building's own menu (the lab's 研究, the hero hall's 英雄殿堂, a
-  building's 資訊), the window behind it such as the builder base lab's 升級部隊
-  while a research runs, a decoration, an obstacle, an event object, or anything
-  else the game draws on the ground, on either village. Use it whenever a task
-  needs a tap at a place on the map that no parser knows, including a live test
-  that needs a screen only a building opens.
+  Find something on a Clash of Clans village map by looking at a frame yourself, and tap it through ai_coc, when no command, panel row or HUD button reaches it: a building's own menu (the lab's 研究, the hero hall's 英雄殿堂, a building's 資訊), the window behind it such as the builder base lab's 升級部隊 while a research runs, a decoration, an obstacle, an event object, or anything else the game draws on the ground, on either village. Use it whenever a task needs a tap at a place on the map that no parser knows, including a live test that needs a screen only a building opens.
 ---
 
 # Finding something on the map

@@ -1,16 +1,7 @@
 ---
 name: agent-capability-check
 description: >-
-  Check whether the agent runtime running this session (Claude Code, Codex,
-  Antigravity or any other harness) can do what this project's skills assume of
-  it: dispatch a subagent on a weaker model it picks, let that subagent wait out a
-  long command and take a second message, wake the session when a background
-  command or a subagent finishes while the other is still running, fall back to
-  its own scheduler, put an image in front of the model, and reach the user's
-  phone with a file and a question. It runs a scratch script only and never touches
-  the game. Use it when the user asks to check, test or compare what a runtime or
-  harness can do here, for example 「測一下這個 harness 能不能託管」 or "run the
-  capability check".
+  Check whether the agent runtime running this session (Claude Code, Codex, Antigravity or any other harness) can do what this project's skills assume of it: dispatch a subagent on a weaker model it picks, let that subagent wait out a long command and take a second message, wake the session when a background command or a subagent finishes while the other is still running, fall back to its own scheduler, put an image in front of the model, and reach the user's phone with a file and a question. It runs a scratch script only and never touches the game. Use it when the user asks to check, test or compare what a runtime or harness can do here, for example 「測一下這個 harness 能不能託管」 or "run the capability check".
 ---
 
 # Checking what this runtime can do
