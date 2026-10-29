@@ -804,6 +804,10 @@ class GeminiSetting(BaseModel):
 
     model: str = DEFAULT_GEMINI_MODEL
     base_url: str = ""
+    # Beside `base_url` rather than shared by every tier, because a tier pointed
+    # at a proxy needs that proxy's key. In plain text, because an OS key store
+    # tied the app to one OS.
+    api_key: str = ""
     thinking_level: ThinkingLevel = DEFAULT_THINKING_LEVEL
 
 
@@ -819,8 +823,6 @@ class GeminiSettings(BaseModel):
     a scar from a settings key that outlived what it configured.
     """
 
-    # In plain text, because an OS key store tied the app to one OS.
-    api_key: str = ""
     main: GeminiSetting = GeminiSetting()
 
 

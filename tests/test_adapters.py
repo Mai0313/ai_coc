@@ -21,11 +21,10 @@ from unittest.mock import MagicMock, call, patch
 import pytest
 
 from ai_coc.models import (
-    AppConfig,
     TouchNode,
     AdbEndpoint,
     DisplayTarget,
-    GeminiSettings,
+    GeminiSetting,
     EmulatorInstance,
     MuMuInstanceTable,
 )
@@ -737,23 +736,23 @@ class LDPlayerAdapterTests(unittest.TestCase):
 
 class GeminiKeyTests(unittest.TestCase):
     def test_a_saved_key_outranks_the_environment_which_outranks_the_dotenv(self) -> None:
-        saved = AppConfig(gemini=GeminiSettings(api_key="from-config"))
+        saved = GeminiSetting(api_key="from-config")
         with (
             patch.dict(os.environ, {"GEMINI_API_KEY": "from-env"}),
             patch.object(config, "dotenv_value", return_value="from-file"),
         ):
             assert config.gemini_key(saved) == "from-config"
-            assert config.gemini_key(AppConfig()) == "from-env"
+            assert config.gemini_key(GeminiSetting()) == "from-env"
         with (
             patch.dict(os.environ, {}, clear=True),
             patch.object(config, "dotenv_value", return_value="from-file"),
         ):
-            assert config.gemini_key(AppConfig()) == "from-file"
+            assert config.gemini_key(GeminiSetting()) == "from-file"
         with (
             patch.dict(os.environ, {}, clear=True),
             patch.object(config, "dotenv_value", return_value=""),
         ):
-            assert config.gemini_key(AppConfig()) == ""
+            assert config.gemini_key(GeminiSetting()) == ""
 
 
 class EntityMappingDownloadTests(unittest.TestCase):

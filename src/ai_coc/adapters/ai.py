@@ -26,8 +26,8 @@ T = TypeVar("T", bound=BaseModel)
 class GeminiClient(BaseModel):
     """The single place the application talks to Gemini, through google-genai."""
 
-    # Its own field rather than part of `settings`, because `settings` is one
-    # tier and the key serves both.
+    # Its own field rather than `settings.api_key`, because the key may come
+    # from the environment or a `.env` instead of the settings file.
     api_key: str = ""
     settings: GeminiSetting
 

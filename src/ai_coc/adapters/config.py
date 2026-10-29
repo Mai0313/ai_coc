@@ -8,7 +8,7 @@ from pathlib import Path
 
 from pydantic import Field, BaseModel
 
-from ai_coc.models import AppConfig
+from ai_coc.models import AppConfig, GeminiSetting
 from ai_coc.constants import data_root
 
 # Development fallback for a machine with no key saved yet. Never written to,
@@ -30,9 +30,9 @@ def dotenv_value(name: str, path: Path = DOTENV_PATH) -> str:
     return ""
 
 
-def gemini_key(config: AppConfig) -> str:
-    """The saved key, or the development fallback when nothing has been saved."""
-    return config.gemini.api_key or os.environ.get(ENV_VAR, "") or dotenv_value(ENV_VAR)
+def gemini_key(setting: GeminiSetting) -> str:
+    """The tier's saved key, or the development fallback when nothing has been saved."""
+    return setting.api_key or os.environ.get(ENV_VAR, "") or dotenv_value(ENV_VAR)
 
 
 class ConfigStore(BaseModel):

@@ -28,7 +28,7 @@ Village exports keep unknown fields and unknown `data_id`s instead of failing on
 
 - Windows. The app talks to `mumu-cli.exe` or `ldconsole.exe`, reads the registry through `winreg` and the clipboard through `ctypes.windll`, none of which exist elsewhere
 - [MuMu Player 12](https://www.mumuplayer.com/) or [LDPlayer 14](https://www.ldplayer.net/) with Clash of Clans installed, running at 1600x900. On LDPlayer, turn on ADB debugging (local connection) in its settings
-- A Gemini API key, saved as `gemini.api_key` in the settings file below. It answers one thing and nothing else: the tactic for each battle. Without one the attack loop falls back to a fixed tactic, and no other command asks it anything in the first place
+- A Gemini API key, saved as `gemini.main.api_key` in the settings file below. It answers one thing and nothing else: the tactic for each battle. Without one the attack loop falls back to a fixed tactic, and no other command asks it anything in the first place
 
 ## 🚀 Install and run
 
@@ -166,10 +166,10 @@ The first line of every run says which directory it is, and the name is `<when>-
   "stop_at": 90,
   "adb_serial": "127.0.0.1:16384",
   "gemini": {
-    "api_key": "",
     "main": {
       "model": "gemini-4-argon",
       "base_url": "",
+      "api_key": "",
       "thinking_level": "low"
     }
   }
@@ -181,7 +181,7 @@ That is the whole file. **A run that finds no file creates one only to write dow
 - **thresholds**: who is worth attacking. Set them too high and a run skips dozens of opponents without ever starting a battle
 - **stop_at**: how full every storage has to be before a run stands down, as a percentage. **One number for both villages**, because the loop reads each storage's real ceiling off the game — tap a storage bar and it writes 最大儲存量 on the spot. Every storage has to reach it, not just one of them: a battle brings home three, so one at the ceiling is no reason to stop earning the other two. On the builder base the elixir cart counts as one more: past a full elixir storage it keeps banking each battle's defence reward, so a run there stands down only once the cart has reached the same share of the ceiling written on it. `0` never stands a run down, and a storage whose ceiling would not read is left out of the count. `--stop-at` overrides it for one run, `0` included, which is what a test battle against a village that farming has just filled needs
 - **adb_serial**: which emulator instance to drive, by the serial `adb devices` shows (`127.0.0.1:16384`, `127.0.0.1:5555`, or `emulator-5554`, which is the same LDPlayer instance as `127.0.0.1:5555`). Left empty, the first run takes the instance with the game running, MuMu's where both have it, and writes its serial here. A serial no installed emulator answers to is an error rather than a guess
-- **gemini**: which model answers each kind of call. `main` is asked once per run against a whole screenshot — the attack plan on either village — so nothing there is racing anything and the better model is simply the right one. `base_url` empty means Google's own endpoint. `api_key` is kept in plain text, and while it is empty a `GEMINI_API_KEY` from the environment or a `.env` stands in
+- **gemini**: which model answers each kind of call. `main` is asked once per run against a whole screenshot — the attack plan on either village — so nothing there is racing anything and the better model is simply the right one. `base_url` empty means Google's own endpoint. Each model carries its own `api_key`, so one pointed at a proxy can hold that proxy's key. It is kept in plain text, and while it is empty a `GEMINI_API_KEY` from the environment or a `.env` stands in
 
 There are no ability or spell timings here any more. They were a table of per-hero constants, and editing them meant guessing how long an army takes to walk across a village nobody had looked at — which is the planner's job, done with the village on screen. Every clock lives on the plan now: see `plans/flat.json` for the shape, and `--plan` to replay one.
 

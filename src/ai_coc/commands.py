@@ -412,7 +412,7 @@ def _planner(config: AppConfig) -> GeminiClient | None:
     what keeps a run with no key working exactly as it did before any of this
     existed.
     """
-    key = gemini_key(config)
+    key = gemini_key(config.gemini.main)
     if not key:
         logger.info("No API key is saved; the loops will fall back to reading the screen alone")
         return None
