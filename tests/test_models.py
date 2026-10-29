@@ -116,18 +116,14 @@ class MuMuPayloadTests(unittest.TestCase):
             "note": {"no index": True},
         })
         assert [item.index for item in table.instances()] == [0, 1]
-        assert table.instances()[0].name == "A"
 
     def test_an_instance_carries_its_endpoint(self) -> None:
         instance = EmulatorInstance(
-            emulator_id="mumu:0",
             index=0,
-            name="MuMu 0",
             android_version="12",
             adb_serial="127.0.0.1:16384",
             process_started=True,
             android_started=True,
-            state="running",
             pid=1,
             main_hwnd=0,
             render_hwnd=0,

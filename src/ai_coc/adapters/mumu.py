@@ -6,7 +6,7 @@ from pathlib import Path
 
 from pydantic import Field, BaseModel
 
-from ai_coc.models import MuMuCliResult, MuMuCliVersion, EmulatorInstance, MuMuInstanceTable
+from ai_coc.models import MuMuCliResult, EmulatorInstance, MuMuInstanceTable
 from ai_coc.constants import COC_PACKAGE
 
 from .emulator import Emulator, EmulatorError, uninstall_dirs
@@ -51,9 +51,6 @@ class MuMuAdapter(Emulator):
         except ValueError as exc:
             raise EmulatorError(f"無法解析 MuMu CLI 回應：{data[:200]!r}") from exc
 
-    def version(self) -> str:
-        return self.cli_model(MuMuCliVersion, "version").version
-
     def serial_for(self, index: int) -> str:
         return f"127.0.0.1:{FIRST_ADB_PORT + ADB_PORT_STEP * index}"
 
@@ -72,14 +69,11 @@ class MuMuAdapter(Emulator):
                     logger.warning("Unable to inspect MuMu instance %s", info.index, exc_info=True)
             instances.append(
                 EmulatorInstance(
-                    emulator_id=f"mumu:{info.index}",
                     index=info.index,
-                    name=info.name or f"MuMu {info.index}",
                     android_version=info.android_version,
                     adb_serial=info.endpoint.serial,
                     process_started=info.is_process_started,
                     android_started=info.is_android_started,
-                    state=info.player_state,
                     pid=info.pid,
                     main_hwnd=info.hwnd("main_wnd"),
                     render_hwnd=info.hwnd("render_wnd"),
@@ -96,6 +90,3 @@ class MuMuAdapter(Emulator):
 
     def restart_instance(self, index: int) -> None:
         self.cli_model(MuMuCliResult, "control", "--vmindex", str(index), "restart", timeout=30)
-
-    def close_instance(self, index: int) -> None:
-        self.cli_model(MuMuCliResult, "control", "--vmindex", str(index), "shutdown", timeout=30)

@@ -34,9 +34,9 @@ class EmulatorError(RuntimeError):
 class Emulator(BaseModel):
     """What every emulator does the same way: ADB for the game, its own CLI for its instances.
 
-    A subclass names its CLI and answers the five questions only its CLI can:
-    which instances exist, how to start, restart and stop one, and which version
-    it is. Everything else goes through ADB, which is the same on all of them.
+    A subclass names its CLI and answers the three questions only its CLI can:
+    which instances exist, and how to start and restart one. Everything else
+    goes through ADB, which is the same on all of them.
 
     **ADB is whichever adb adbutils finds, never the emulator's own**: the one on
     PATH, else the copy adbutils ships. Every adb talks to one server on port
@@ -69,9 +69,6 @@ class Emulator(BaseModel):
     def cli(self) -> Path:
         raise NotImplementedError
 
-    def version(self) -> str:
-        raise NotImplementedError
-
     def enumerate_instances(self) -> list[EmulatorInstance]:
         raise NotImplementedError
 
@@ -87,9 +84,6 @@ class Emulator(BaseModel):
         raise NotImplementedError
 
     def restart_instance(self, index: int) -> None:
-        raise NotImplementedError
-
-    def close_instance(self, index: int) -> None:
         raise NotImplementedError
 
     @staticmethod
@@ -186,10 +180,6 @@ class Emulator(BaseModel):
         adb = self.controller(instance.adb_serial)
         adb.stop_app(COC_PACKAGE)
         adb.launch_app(COC_PACKAGE)
-
-    def screenshot(self, instance: EmulatorInstance) -> bytes:
-        adb = self.controller(instance.adb_serial)
-        return adb.screenshot(adb.display_for(COC_PACKAGE))
 
     def tap(self, instance: EmulatorInstance, x: int, y: int) -> None:
         adb = self.controller(instance.adb_serial)

@@ -22,20 +22,6 @@ logger = logging.getLogger(__name__)
 
 T = TypeVar("T", bound=BaseModel)
 
-# The endpoint also lists image, speech and embedding models. The controller
-# only ever sends a prompt plus a screenshot and expects text back.
-NON_TEXT_MODEL_TAGS = (
-    "tts",
-    "audio",
-    "speech",
-    "image",
-    "video",
-    "veo",
-    "imagen",
-    "embedding",
-    "aqa",
-)
-
 
 class GeminiClient(BaseModel):
     """The single place the application talks to Gemini, through google-genai."""
@@ -197,25 +183,3 @@ class GeminiClient(BaseModel):
         except ValidationError as exc:
             logger.error("Gemini reply did not match %s: %s", schema.__name__, text)
             raise RuntimeError(f"Gemini 回覆不符合 {schema.__name__} 格式：{text[:500]}") from exc
-
-    def list_text_models(self) -> list[str]:
-        """Model IDs on this endpoint that can answer a prompt with text."""
-        try:
-            models = list(self.client.models.list())
-        except errors.APIError as exc:
-            logger.exception("Listing Gemini models failed")
-            raise RuntimeError(f"無法取得模型清單：{exc}") from exc
-        candidates: list[tuple[str, list[str]]] = []
-        for model in models:
-            name = (model.name or "").removeprefix("models/")
-            if name and not any(tag in name.lower() for tag in NON_TEXT_MODEL_TAGS):
-                candidates.append((name, list(model.supported_actions or [])))
-        # Older endpoints report generateContent; newer ones may report nothing.
-        # Falling back to the name filter keeps the picker from coming up empty.
-        generative = [name for name, actions in candidates if "generateContent" in actions]
-        names = sorted(set(generative or [name for name, _ in candidates]))
-        logger.info("Gemini endpoint exposes %d text models", len(names))
-        return names
-
-    def test(self) -> str:
-        return self._create("Reply with exactly: AI CoC connected", None)

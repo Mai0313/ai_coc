@@ -158,13 +158,11 @@ class MuMuInstanceInfo(BaseModel):
     model_config = TOLERANT
 
     index: int
-    name: str = ""
     android_version: str = "unknown"
     adb_host_ip: str = DEFAULT_ADB_HOST
     adb_port: int = 0
     is_process_started: bool = False
     is_android_started: bool = False
-    player_state: str = "unknown"
     pid: int = 0
     main_wnd: str = "0"
     render_wnd: str = "0"
@@ -195,12 +193,6 @@ class MuMuInstanceTable(RootModel[dict[str, Any]]):
             for value in self.root.values()
             if isinstance(value, dict) and "index" in value
         ]
-
-
-class MuMuCliVersion(BaseModel):
-    model_config = TOLERANT
-
-    version: str = "unknown"
 
 
 class MuMuCliResult(BaseModel):
@@ -256,14 +248,11 @@ class LDPlayerInstanceInfo(BaseModel):
 class EmulatorInstance(BaseModel):
     model_config = ConfigDict(frozen=True)
 
-    emulator_id: str
     index: int
-    name: str
     android_version: str
     adb_serial: str
     process_started: bool
     android_started: bool
-    state: str
     pid: int
     main_hwnd: int
     render_hwnd: int
