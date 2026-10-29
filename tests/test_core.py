@@ -27,7 +27,6 @@ from ai_coc.models import (
     World,
     Caller,
     RunLog,
-    UiJobs,
     LoanEnd,
     ProbeRay,
     AppConfig,
@@ -40,7 +39,6 @@ from ai_coc.models import (
     CartReport,
     PlayedPlan,
     SheetOffer,
-    UiSettings,
     AdbEndpoint,
     NamedEntity,
     RunnerState,
@@ -3063,9 +3061,9 @@ class PlanTests(unittest.TestCase):
 
 
 class ConfigTests(unittest.TestCase):
-    """One settings file, because a run has to play the same way from either side."""
+    """The one settings file every command reads."""
 
-    def test_a_missing_file_reads_as_what_the_window_has_always_shown(self) -> None:
+    def test_a_missing_file_reads_as_the_defaults_to_farm_with(self) -> None:
         """Not the field defaults underneath: those are attack anything, stop at nothing."""
         with tempfile.TemporaryDirectory() as td:
             config = ConfigStore(path=Path(td) / "config.json").load()
@@ -3080,49 +3078,21 @@ class ConfigTests(unittest.TestCase):
             saved = AppConfig(
                 thresholds=LootThresholds(min_gold=1, min_elixir=2, min_dark=3),
                 gemini=GeminiSettings(main=GeminiSetting(model="gemini-not-the-default")),
-                ui=UiSettings(jobs=UiJobs(donate=True), cycle_minutes=42, live_view=False),
             )
             store.save(saved)
             assert store.load() == saved
 
-    def test_the_window_block_defaults_to_what_the_window_has_always_shown(self) -> None:
-        """Nothing carries the old `QSettings` values over, on this project's own
-        rule that a migration left in place is a code path nobody exercises.
-
-        What made dropping them safe was that every key that registry held was
-        already one of these, measured before they went. That half cannot be
-        asserted — the registry is gone and so are the window's old defaults —
-        so what is pinned here is the numbers a machine falls back to.
-        """
-        ui = AppConfig().ui
-        assert ui.jobs.model_dump() == dict.fromkeys(UiJobs.model_fields, False)
-        assert ui.cycle_minutes == 10
-        assert ui.live_view
-        assert not ui.record_frames
-
     def test_the_settings_scratch_file_belongs_to_one_process(self) -> None:
-        """A worker thread reads this file while the window writes it, and
-        `load` raises on a short read by design — so a truncating write ends the
-        pass that was reading. The same answer as `state.json`, and pid-scoped
-        for the same reason: `load` itself rewrites a file whose keys have
-        moved, so a headless run started beside the window is a second writer.
+        """Every command reads this file, and `load` raises on a short read by
+        design — so a truncating write ends the run that was reading. The same
+        answer as `state.json`, and pid-scoped for the same reason: `load`
+        itself rewrites a file whose keys have moved, so two commands started
+        together are two writers.
         """
         with tempfile.TemporaryDirectory() as td:
             with patch("ai_coc.adapters.config.os.replace"):
                 ConfigStore(path=Path(td) / "config.json").save(AppConfig())
             assert [path.name for path in Path(td).iterdir()] == [f"config.json.{os.getpid()}.tmp"]
-
-    def test_a_retry_interval_the_window_could_not_show_raises(self) -> None:
-        """The spin box clamps 0 to 1 and writes 1 back on the next save, so a
-        file saying 0 is a key that looks honoured and is not — `timings` again,
-        one field along. Out of range it fails on load, like every other value
-        this file cannot run as written.
-        """
-        with tempfile.TemporaryDirectory() as td:
-            path = Path(td) / "config.json"
-            path.write_text(json.dumps({"ui": {"cycle_minutes": 0}}), encoding="utf-8")
-            with pytest.raises(ValidationError):
-                ConfigStore(path=path).load()
 
     def test_a_setting_nothing_reads_any_more_is_dropped_from_the_file(self) -> None:
         """A key left behind reads as one still being honoured, and is not.
@@ -3130,8 +3100,8 @@ class ConfigTests(unittest.TestCase):
         `timings` stayed in every existing file for a release after every clock
         moved onto the plan, so someone editing 大守護者's thirty seconds there
         would have been editing nothing at all. `keepalive_seconds` is the next
-        one out, now that holding the session open has been dropped, and
-        `ui.jobs.walls` went with the wall loop. Pydantic ignoring the key is
+        one out, now that holding the session open has been dropped, and `ui`
+        went with the desktop window. Pydantic ignoring the key is
         what keeps the upgrade from failing; rewriting the file is what stops it
         lying about what the run will do.
         """
@@ -3153,7 +3123,7 @@ class ConfigTests(unittest.TestCase):
         assert "restart_every" not in written
         assert "timings" not in written
         assert "keepalive_seconds" not in written
-        assert written["ui"]["jobs"] == {"collect": False, "donate": False, "attack": True}
+        assert "ui" not in written
         # What it parsed is what it wrote. Rewriting `AppConfig()` instead would
         # pass every other assertion here while wiping the user's settings, and
         # this call is the first thing that runs after an upgrade.

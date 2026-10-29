@@ -16,7 +16,6 @@ from pydantic import ValidationError
 
 from ai_coc import models
 from ai_coc.models import (
-    Frame,
     RunLog,
     MapEdge,
     MapFrame,
@@ -172,13 +171,6 @@ class EntityMappingTests(unittest.TestCase):
             28000000: "Barbarian King",
             4000041: "Baby Dragon",
         }
-
-
-class FrameTests(unittest.TestCase):
-    def test_a_frame_id_names_the_emulator_and_the_sequence(self) -> None:
-        frame = Frame.create("mumu:0", "#T", b"png", 3)
-        assert frame.frame_id.startswith("mumu:0:3:")
-        assert frame.png == b"png"
 
 
 class MapFrameTests(unittest.TestCase):
