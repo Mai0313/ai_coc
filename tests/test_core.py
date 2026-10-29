@@ -22,7 +22,6 @@ from ai_coc import plans, models, commands, logging_setup
 from ai_coc.ui import world as world_ui
 from ai_coc.ui import attack
 from ai_coc.ui import runner as shared
-from ai_coc.cli import _parser
 from ai_coc.models import (
     Loan,
     World,
@@ -176,7 +175,6 @@ from ai_coc.parsers.scout import (
 )
 from ai_coc.parsers.world import DAY_GEMS_PLUS, DAY_SHIELD_PLUS, NIGHT_GEMS_PLUS, current_world
 from ai_coc.parsers.glyphs import nearest, ink_mask, signature, digits_from, glyph_columns
-from ai_coc.ui.main_window import LIVE_INTERVAL, MainWindow
 from ai_coc.adapters.config import ConfigStore, dotenv_value
 from ai_coc.parsers.village import clock_tower, parse_village, upgrade_timers, parse_village_text
 from ai_coc.parsers.boundary import DEPLOY_BOUND, fitted_line, village_box, boundary_reach
@@ -3101,66 +3099,6 @@ class ConfigTests(unittest.TestCase):
         assert ui.cycle_minutes == 10
         assert ui.live_view
         assert not ui.record_frames
-
-    def test_a_save_merges_into_what_is_on_disk_rather_than_a_snapshot(self) -> None:
-        """Every write here puts the whole file back, so a field the window has
-        not touched goes to disk from whatever copy the window is holding — and
-        `adb_serial` is such a field, written back by the first CLI run after
-        the window opened. A preview checkbox must not undo it.
-        """
-        with tempfile.TemporaryDirectory() as td:
-            store = ConfigStore(path=Path(td) / "config.json")
-            store.save(AppConfig(adb_serial="127.0.0.1:5555"))
-            window = MagicMock()
-            # What the window read when it opened, which can be hours ago.
-            window.config = AppConfig()
-            with patch("ai_coc.ui.main_window.ConfigStore", lambda: store):
-                MainWindow._save_config(window, stop_at=55)
-            written = store.load()
-        assert written.adb_serial == "127.0.0.1:5555"
-        assert written.stop_at == 55
-
-    def test_saving_the_automation_reads_every_switch_off_its_own_widget(self) -> None:
-        """A whole `ui=` block built from the window's own copy would override
-        `_save_config`'s fresh read one level down, putting back the two fields
-        this method does not otherwise set. The window has a widget for all
-        four, so each is read off its own and none is carried over.
-        """
-        with tempfile.TemporaryDirectory() as td:
-            store = ConfigStore(path=Path(td) / "config.json")
-            store.save(AppConfig(ui=UiSettings(live_view=True, record_frames=True)))
-            window = MagicMock()
-            # The copy the window opened with, which the switches have since
-            # moved away from.
-            window.config = AppConfig(ui=UiSettings(live_view=True, record_frames=True))
-            window._job_boxes.return_value = {}
-            window.live_view.isChecked.return_value = False
-            window.record_frames.isChecked.return_value = False
-            window.cycle_minutes.value.return_value = 30
-            with patch("ai_coc.ui.main_window.ConfigStore", lambda: store):
-                MainWindow.save_automation(window)
-            saved = window._save_config.call_args.kwargs["ui"]
-        assert not saved.live_view
-        assert not saved.record_frames
-        assert saved.cycle_minutes == 30
-
-    def test_clearing_the_key_takes_it_off_the_disk_and_nothing_else(self) -> None:
-        with tempfile.TemporaryDirectory() as td:
-            store = ConfigStore(path=Path(td) / "config.json")
-            on_disk = GeminiSettings(
-                api_key="AQ.saved", main=GeminiSetting(model="edited-by-hand")
-            )
-            store.save(AppConfig(gemini=on_disk))
-            window = MagicMock()
-            window.config = AppConfig()
-            window._save_config = lambda **changes: MainWindow._save_config(window, **changes)
-            with (
-                patch("ai_coc.ui.main_window.ConfigStore", lambda: store),
-                patch("ai_coc.ui.main_window.QMessageBox"),
-            ):
-                MainWindow.clear_api(window)
-            written = store.load().gemini
-        assert written == on_disk.model_copy(update={"api_key": ""})
 
     def test_the_settings_scratch_file_belongs_to_one_process(self) -> None:
         """A worker thread reads this file while the window writes it, and
@@ -6703,77 +6641,6 @@ class RunLogTests(unittest.TestCase):
         finally:
             root.handlers[:] = handlers
             root.setLevel(level)
-
-
-class WindowToggleTests(unittest.TestCase):
-    """The two checkboxes beside the preview, with no Qt event loop involved.
-
-    Called unbound against a stand-in for `self`, which is all a slot that only
-    touches its own attributes needs. This is the coverage whose absence let a
-    real regression through: a checkbox added below `_toggle_live_view` took
-    that method's timer branch with it, so unchecking 即時畫面 no longer stopped
-    the preview and the new checkbox started and stopped it instead. The whole
-    suite stayed green, because nothing here touches the window at all.
-    """
-
-    def test_the_live_toggle_still_owns_the_timer(self) -> None:
-        """Matched whole rather than call by call, because the interval is half
-        the point: a bare `start()` runs the preview every time round the event
-        loop, which is what `LIVE_INTERVAL` exists to avoid.
-        """
-        window = MagicMock()
-        MainWindow._toggle_live_view(window, True)
-        assert window.mock_calls == [
-            call._save_ui(live_view=True),
-            call.live_timer.start(LIVE_INTERVAL),
-        ]
-        window.reset_mock()
-        MainWindow._toggle_live_view(window, False)
-        assert window.mock_calls == [call._save_ui(live_view=False), call.live_timer.stop()]
-
-    def test_the_recording_toggle_touches_nothing_but_its_setting(self) -> None:
-        """What reads it is `run_attack`, when it opens the run. A round already
-        under way keeps whatever it started with, and the preview is none of its
-        business.
-        """
-        window = MagicMock()
-        MainWindow._toggle_record_frames(window, True)
-        # The whole call list, not a list of things it did not do: the
-        # regression this class exists for was a branch appearing where none
-        # belonged, and naming `live_timer` alone would miss the next one.
-        assert window.mock_calls == [call._save_ui(record_frames=True)]
-
-
-class UiJobNameTests(unittest.TestCase):
-    """The three job names, which have to line up in three places at once.
-
-    They are fields of `UiJobs`, checkboxes on the window, and sub-commands of
-    the CLI, and nothing but a name connects the three. A rename that reaches
-    two of them costs a job that quietly stops being run — the cycle skips it
-    and says nothing, because a missing checkbox is indistinguishable from an
-    unticked one.
-    """
-
-    def test_every_job_names_a_sub_command_a_terminal_could_run(self) -> None:
-        """Parsed rather than compared against a written-down list, so this asks
-        `cli.py` itself: a second list here would be one more copy to drift.
-        """
-        for name in UiJobs.model_fields:
-            assert _parser().parse_args([name]).command == name
-
-    def test_the_window_has_a_box_for_every_job_and_no_others(self) -> None:
-        """`_job_boxes` is where the widgets and the settings file are lined up,
-        so a field added to one and not the other has to fail here.
-        """
-        assert set(MainWindow._job_boxes(MagicMock())) == set(UiJobs.model_fields)
-
-    def test_a_home_village_job_is_taken_to_that_village_first(self) -> None:
-        """None of the commands sails, so the cycle that strings them together does."""
-        order = MagicMock()
-        order.task.return_value = "report"
-        with patch.object(commands, "world", order.world):
-            assert MainWindow._on_home_village(order.task)("log") == "report"
-        assert order.mock_calls[:2] == [call.world("day"), call.task("log")]
 
 
 def _menu_prices(name: str, *centres: int) -> list[int | None]:

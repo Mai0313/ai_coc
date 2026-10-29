@@ -1,13 +1,10 @@
 from pathlib import Path
 
-from ai_coc import __version__
-
 APP_NAME = "AI CoC"
 # The company name in the executable's Windows file properties, which is the
 # whole of what it is for now that no setting lives in the registry.
 ORGANISATION = "Mai0313"
 
-VERSION_LABEL = f"v{__version__}"
 COC_PACKAGE = "com.supercell.clashofclans"
 DEFAULT_GEMINI_MODEL = "gemini-3.8-flash"
 DEFAULT_ADB_HOST = "127.0.0.1"

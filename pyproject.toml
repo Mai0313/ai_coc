@@ -80,8 +80,6 @@ dependencies = [
     "pillow>=11.0",
     "psutil>=7.2.2",
     "pydantic>=2.12",
-    "PyQt5>=5.15,<6",
-    "PyQt5-Qt5==5.15.2; sys_platform == 'win32'",
     "rich>=13.9",
 ]
 readme = "README.md"
@@ -545,16 +543,8 @@ python-version = "3.12"
 # `winreg` and `ctypes.windll` do not resolve on the Linux CI runner without this.
 python-platform = "win32"
 
-# PyQt5 ships its own inaccurate stubs, so ty rejects correct calls into the GUI
-# shell. Those files are covered by Ruff; the framework-independent core, which
-# now includes `ui/render.py`, is checked here.
 [tool.ty.src]
 include = ["src/ai_coc"]
-exclude = [
-    "src/ai_coc/cli.py",
-    "src/ai_coc/ui/main_window.py",
-    "src/ai_coc/ui/workers.py",
-]
 
 [tool.ty.rules]
 blanket-ignore-comment = "error"
