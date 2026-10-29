@@ -1,17 +1,7 @@
 ---
 name: game-update
 description: >-
-  Bring ai_coc back in line after Clash of Clans changes what it draws: a UI or
-  HUD overhaul, buttons or bars that moved, a panel that opens somewhere new, or
-  a game mechanic that now behaves differently. Use it when the user says
-  「遊戲改版了」「介面大改」「更新之後都讀不到」「按鈕換位置了」「HUD 變了」, or when many
-  commands fail at once in a way that points at the screen rather than at one
-  loop: `not_a_village` on a village that is plainly up, storages or counters
-  that stop reading, a command that cannot find a screen it always found.
-  Covers finding out what changed by looking and tapping, deciding what to fix
-  first, fixing the parsers with committed evidence, proving every command live,
-  and shipping it. A single loop misbehaving on an unchanged UI is
-  watch-and-fix, and an emulator that will not come up is repair-emulator.
+  Bring ai_coc back in line after Clash of Clans changes what it draws: a UI or HUD overhaul, buttons or bars that moved, a panel that opens somewhere new, or a game mechanic that now behaves differently. Use it when the user says 「遊戲改版了」「介面大改」「更新之後都讀不到」「按鈕換位置了」「HUD 變了」, or when many commands fail at once in a way that points at the screen rather than at one loop: `not_a_village` on a village that is plainly up, storages or counters that stop reading, a command that cannot find a screen it always found. Covers finding out what changed by looking and tapping, deciding what to fix first, fixing the parsers with committed evidence, proving every command live, and shipping it. A single loop misbehaving on an unchanged UI is watch-and-fix, and an emulator that will not come up is repair-emulator.
 ---
 
 # game-update
