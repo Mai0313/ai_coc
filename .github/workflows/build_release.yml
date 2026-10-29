@@ -39,8 +39,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # MuMu Player, PyQt5-Qt5 and ctypes.windll are Windows-only, so the
-          # other runners have nothing to build.
+          # MuMu Player and ctypes.windll are Windows-only, so the other
+          # runners have nothing to build.
           - runner: windows-latest
             target: x86_64-pc-windows-msvc
             friendly_id: windows-x64
@@ -79,7 +79,7 @@ jobs:
 
       - name: Packaging to Executable file
         run: |
-          uv run pyinstaller src/${{ github.event.repository.name }}/cli.py --${{ env.PACKAGE_MODE }} --windowed `
+          uv run pyinstaller src/${{ github.event.repository.name }}/cli.py --${{ env.PACKAGE_MODE }} `
             -n ${{ github.event.repository.name }} `
             --version-file version_info.txt `
             --add-data "src/${{ github.event.repository.name }}/prompts;${{ github.event.repository.name }}/prompts" `
