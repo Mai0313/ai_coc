@@ -31,11 +31,10 @@ LOG_DIR.mkdir(parents=True, exist_ok=True)
 FRAME_RETENTION_DAYS = 7
 
 # Which command is driving the emulator, and whether it has been asked to stand
-# down. Stopping a headless run has to be a file rather than a signal: the
-# window has a stop button, but a run started from a terminal has nothing, since
-# whatever put it in the background cannot send it a Ctrl-C — and a killed
-# process never reaches the `KeyboardInterrupt` handler, which leaves the army
-# on the field and the game on a screen the next run cannot get home from.
+# down. Stopping a headless run has to be a file rather than a signal: whatever
+# put it in the background cannot send it a Ctrl-C — and a killed process
+# never reaches the `KeyboardInterrupt` handler, which leaves the army on the
+# field and the game on a screen the next run cannot get home from.
 #
 # **One file answering both questions, because they are one question asked at
 # two moments.** It replaced a `stop` flag that existed only while somebody was

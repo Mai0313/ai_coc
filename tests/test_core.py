@@ -5549,8 +5549,8 @@ class AttackTests(unittest.TestCase):
 class RunnerStateTests(unittest.TestCase):
     """Stopping a headless run, and saying who is driving, out of one file.
 
-    The window has a stop button; a run put in the background by whatever started
-    it has nothing, and killing the process never reaches the `KeyboardInterrupt`
+    Nothing can send a Ctrl-C to a run put in the background by whatever
+    started it, and killing the process never reaches the `KeyboardInterrupt`
     handler that leaves the game somewhere the next run can start from. The same
     file answers the question nothing on this machine used to record at all:
     whether anything is driving the emulator, which a second session had to be
@@ -5695,20 +5695,6 @@ class RunnerStateTests(unittest.TestCase):
                 f"state.json.{os.getpid()}.tmp"
             ]
 
-    def test_a_claim_this_process_holds_is_left_to_its_outermost_owner(self) -> None:
-        """The window runs every pass as its own `commands.*` call inside the
-        claim its automation cycle holds, so a nested release would publish
-        `idle` between passes and read, from outside, as a free emulator.
-        """
-        with tempfile.TemporaryDirectory() as folder:
-            state = Path(folder) / "state.json"
-            with patch.object(commands, "STATE_PATH", state), commands.claim("automation"):
-                with commands.claim("collect"):
-                    pass
-                held = commands.read_state()
-                assert held is not None
-                assert (held.status, held.command) == ("running", "automation")
-
     def test_a_release_leaves_a_claim_that_is_not_its_own_alone(self) -> None:
         """A run that outlived its own record must not wipe out the one after
         it, which is what another process claiming in between looks like.
@@ -5841,10 +5827,11 @@ class RunnerStateTests(unittest.TestCase):
             patch.object(commands, "holder", side_effect=[first, second, second, None]),
             patch.object(commands, "ask_to_stand_down") as asked,
             patch.object(commands, "_end") as ended,
+            patch.object(commands, "TAKEOVER_WAIT", 100),
             patch.object(commands.time, "monotonic", side_effect=lambda: clock[0]),
             patch.object(commands.time, "sleep", side_effect=a_minute_passes),
         ):
-            commands.take_over(Caller(), wait=100)
+            commands.take_over(Caller())
         assert [call.args[0] for call in asked.call_args_list] == [first, second]
         ended.assert_not_called()
 
@@ -5854,21 +5841,6 @@ class RunnerStateTests(unittest.TestCase):
         """
         with patch.object(commands.psutil, "Process") as process, pytest.raises(RuntimeError):
             commands._end(RunnerState(status="running", pid=424242, command="attack"), 720)
-        process.assert_not_called()
-
-    def test_the_window_is_never_ended_for_holding_on(self) -> None:
-        """Ending it would close the program somebody may be looking at."""
-        with tempfile.TemporaryDirectory() as folder:
-            self._held_by(folder, Caller(agent=commands.WINDOW_AGENT))
-            with (
-                patch.object(commands, "TAKEOVER_WAIT", 0),
-                patch.object(commands, "_alive", return_value=True),
-                patch.object(commands.psutil, "Process") as process,
-                patch.object(commands.time, "sleep"),
-                pytest.raises(RuntimeError),
-                commands.claim("walls"),
-            ):
-                pass
         process.assert_not_called()
 
     def test_a_torn_read_is_read_again_before_the_emulator_counts_as_free(self) -> None:
@@ -5886,10 +5858,8 @@ class RunnerStateTests(unittest.TestCase):
             assert commands.holder() == live
 
     def test_this_process_own_record_is_not_read_again_as_a_torn_one(self) -> None:
-        """Every window job leaves an honest `idle` under the window's own pid,
-        and reading that again froze the window on each start.
-        """
-        mine = RunnerState(status="idle", pid=os.getpid(), command="automation")
+        """An `idle` record under this pid is an honest one, not a torn read."""
+        mine = RunnerState(status="idle", pid=os.getpid(), command="attack")
         with (
             patch.object(commands, "read_state", return_value=mine),
             patch.object(commands.time, "sleep") as slept,
