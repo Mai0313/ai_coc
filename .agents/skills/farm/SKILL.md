@@ -167,7 +167,7 @@ uv run ai_coc attack --repeat 0 --plan src/ai_coc/plans/night_flat.json --yield 
 
 **黑水只有升英雄能消化.** 黑水滿了而使用者沒指名英雄, 那一項就停在那裡, 回報要講出來.
 
-通知時附上工人狀況: `ai_coc status` 的 `timers` 是每件升級 (`name` 是對照表的英文名, 講給他聽時換成遊戲裡的中文) 跟實際幾點好 (`done_at`, 加速算進去了), 由早到晚排好, 決定要不要叫他等; 手上已經有一張主村畫面而只要知道閒著幾個, 丟 `uv run ai_coc read <png>` 看 `builders`.
+通知時附上工人狀況: `ai_coc status` 的 `timers` 是每件升級 (`name` 是對照表的英文名, 講給他聽時換成遊戲裡的中文, 英雄怎麼叫見 `.agents/skills/upgrades/SKILL.md` 的「讀一次」) 跟實際幾點好 (`done_at`, 加速算進去了), 由早到晚排好, 決定要不要叫他等; 手上已經有一張主村畫面而只要知道閒著幾個, 丟 `uv run ai_coc read <png>` 看 `builders`.
 
 **其他停手的理由**: 遊戲一直回不到村莊, 同一個錯誤連續三次以上, 一輪也沒打成過, **連續三輪 `emulator_silent`** (log 說 `The emulator has not answered for 3 rounds`, 先看模擬器還活著沒有), **連續 `MENU_FAILURES` 輪 `no_attack_menu`** (現在是 5 輪, 比一整場戰鬥長, 所以留在畫面上的那場打完不會誤判; log 說 `The attack menu has not opened for 5 rounds in a row; ending the series`, 迴圈自己收工. 原因看每一輪自己的 log: 蓋住遊戲的畫面 (活動的劇情對話框), 一直掉線, 或有人在手機上玩, 先看畫面). 這些都停下來講, 不要一直重試: 失敗要吵.
 
