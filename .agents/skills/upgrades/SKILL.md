@@ -43,7 +43,7 @@ uv run --no-sync ai_coc status --label watch --agent <名字> --session <session
 它從遊戲自己的村莊匯出 (設定頁那一份) 讀兩個世界每件在跑的升級, 把在跑的藥水跟鐘塔算進去; 遊戲停著的那個世界, 另外讀右下角計數的閒置數字跟倉庫. **不切世界, 不問 Gemini.** `result.json` 的欄位:
 
 - **先看 `export`**: `exported` 才有 `timers` 跟 `clock_tower`. `no_village` 照「什麼時候收工」的不是村莊處理; 其他的 (`settings_shut`、`row_not_found`、`nothing_copied` 之類) 是設定頁那一趟沒走完, 過幾分鐘再讀. 沒讀到的時候 `timers` 是空的, 不能拿來說沒東西在跑
-- **`timers`** 由早到晚. `world` 是哪個世界; `role` 是 `builder` (工人)、`lab` (實驗室, 活動多給的研究格也算) 或 `pet` (寵物小屋, 他問才講), `null` 是還沒看過帶時間的那一區, 沒算加速, 回報時講明. `done_at` 是實際幾點好, `seconds` 是從匯出那一刻起還要幾秒, `timer` 是遊戲畫面上寫的正常速度倒數. `name` 是社群對照表的英文名 (沒有的是 `null`), 講給他聽時換成遊戲裡的中文
+- **`timers`** 由早到晚. `world` 是哪個世界; `role` 是 `builder` (工人)、`lab` (實驗室, 活動多給的研究格也算) 或 `pet` (寵物小屋, 他問才講), `null` 是還沒看過帶時間的那一區, 沒算加速, 回報時講明. `done_at` 是實際幾點好, `seconds` 是從匯出那一刻起還要幾秒, `timer` 是遊戲畫面上寫的正常速度倒數. `name` 是社群對照表的英文名 (沒有的是 `null`), 講給他聽時換成面板上寫的中文, 不要自己翻 (使用者 2026-10-19 糾正過: Royal Champion 是神盾勇者, 不是皇家冠軍). 英雄是 Barbarian King 野蠻人之王、Archer Queen 弓箭女皇、Grand Warden 大守護者、Royal Champion 神盾勇者、Minion Prince 亡靈王子、Dragon Duke 飛龍公爵, 夜世界的 Battle Machine 戰爭機器、Battle Copter 戰鬥直升機. 其他的不確定就看一張面板的圖, 不要猜
 - **`clock_tower`**: `ready_in` 是 0 就是現在能開, `ready_at` 是幾點能開, `boosting` 是正在跑的那一次還剩幾秒. `null` 是匯出裡沒有鐘塔, 或鐘塔正在升級
 - **`builder` / `lab`** 是遊戲停著那個世界右下角計數的數字, 另一個世界的讀不到, 不為它開船. `outcome`: `counted` 讀到了; `unread` 數字讀不到, 過幾分鐘再讀; `not_a_village` 畫面不是村莊, 兩個都是就見「什麼時候收工」
 - **主村工人的總數 5、6、7 都正常, 實驗室 1 或 2 也是**: 工人常駐 5 個, 夜世界的巴布控制台解鎖之後常駐 6 個 (第六個是普通工人, 不用寶石; 使用者的帳號 2026-10-21 解鎖了), 活動的哥布林工人再多 1 個; 實驗室常駐 1 格, 活動的哥布林研究員再多 1 格. 所以 6 可能是巴布, 也可能是沒有巴布而有哥布林. 總數不拿來判斷有沒有空, 只看閒置數 (哥布林那格要寶石, 見「先確認在哪個村莊, 有沒有空」)
