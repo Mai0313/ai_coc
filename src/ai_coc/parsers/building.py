@@ -430,8 +430,8 @@ SHEET_PRICE_SCALE: dict[World, float] = {"day": 1.0, "night": 0.7}
 # The price is drawn yellow while an event discounts it (every home sheet
 # recorded, with the old price struck through below the box), white otherwise
 # (every builder base sheet), and red, like a menu's, when the village cannot
-# pay. The worst digit on the seven discounted home prices landed 20 from its
-# template; the gem sheet's white 500 came back 35 to 40 off, so it does not
+# pay. The worst digit on the eight discounted home prices landed 28 from its
+# template (`SHEET_DIGIT_TOLERANCE`); the gem sheet's white 500 came back 35 to 40 off, so it does not
 # read as a price either. **Yellow is the home sheet's alone**: the builder
 # base's lime button carries a highlight that passes for it right across the
 # price box, so there only white and red count.
@@ -445,7 +445,9 @@ SHEET_INK_WHITE = 225
 # wrong ones (2 400 800, 2 240 080, 2 240 008) came 30 to 32. So the tolerance
 # only keeps out a glyph that is no digit at all, and what keeps a misread from
 # spending is `confirm` pressing only on exactly the price the agent passed.
-SHEET_DIGIT_TOLERANCE: dict[World, int] = {"day": 26, "night": 35}
+# The home sheet's yellow digits drift too: the Royal Champion's discounted
+# 100 000 on 2026-10-31 drew its 1 28 from its template, the rest 13 at most.
+SHEET_DIGIT_TOLERANCE: dict[World, int] = {"day": 30, "night": 35}
 # The sheet's red X, the one part of it a plain `tap` may press: on the home
 # sheets it spans about x 1383-1445 and y 40-100, centred on (1413, 70), and on
 # the builder base's x 1301-1377 and y 23-92.
