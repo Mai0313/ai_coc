@@ -7300,6 +7300,8 @@ class UpgradeSheetOfferTests(unittest.TestCase):
             ("sheet_building_elixir.png", 14400000, "elixir"),
             ("sheet_building_gold.png", 6800000, "gold"),
             ("hero_upgrade_sheet.png", 56000, "dark"),
+            # Its 1 28 from its template.
+            ("sheet_hero_dark_100000.png", 100000, "dark"),
             ("night_sheet_gold.png", 2000000, "gold"),
             ("night_sheet_elixir.png", 4000, "elixir"),
             ("night_sheet_red.png", 2560000, "elixir"),
@@ -7339,6 +7341,7 @@ class UpgradeSheetOfferTests(unittest.TestCase):
             "sheet_building_elixir.png",
             "sheet_building_gold.png",
             "sheet_hero_dark.png",
+            "sheet_hero_dark_100000.png",
             "sheet_pet_dark.png",
             "sheet_running_gems.png",
             "night_sheet_gold.png",
