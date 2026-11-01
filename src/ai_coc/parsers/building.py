@@ -23,6 +23,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 import logging
 import itertools
+from collections import Counter
 
 from PIL import Image
 
@@ -427,16 +428,22 @@ SHEET_ICON_FLOORS: dict[SheetResource, float] = {"gold": 0.12, "elixir": 0.1, "d
 # shrunk to this, its four sheets read 2 560 000, 2 000 000, 192 000 and 4 000
 # with no digit worse than 23.
 SHEET_PRICE_SCALE: dict[World, float] = {"day": 1.0, "night": 0.7}
-# The price is drawn yellow while an event discounts it (every home sheet
-# recorded, with the old price struck through below the box), white otherwise
-# (every builder base sheet), and red, like a menu's, when the village cannot
-# pay. The worst digit on the eight discounted home prices landed 28 from its
-# template (`SHEET_DIGIT_TOLERANCE`); the gem sheet's white 500 came back 35 to 40 off, so it does not
-# read as a price either. **Yellow is the home sheet's alone**: the builder
-# base's lime button carries a highlight that passes for it right across the
-# price box, so there only white and red count.
-SHEET_INK_YELLOW = (225, 200, 150)
+# The price is drawn white (every builder base sheet), red, like a menu's, when
+# the village cannot pay, and in an event's own colour while the event
+# discounts it, with the old price struck through below the box: yellow on
+# every home sheet recorded until the Barbarian King's half-price 26 100 on
+# 2026-11-01 came lime, (115, 255, 13). **So a discount's ink is learned off
+# the button, not named**: on the home sheet, a bright pixel far from both of
+# the price box's two commonest shades, which are the button's green. Every
+# home sheet read the same at any distance from 80 to 160. The worst digit on
+# the eight discounted home prices landed 28 from its template
+# (`SHEET_DIGIT_TOLERANCE`); the gem sheet's white 500 came back 35 to 40 off,
+# so it does not read as a price either. **The learned ink is the home sheet's
+# alone**: the builder base's lime button carries a highlight that passes for
+# yellow right across the price box, so there only white and red count.
 SHEET_INK_WHITE = 225
+SHEET_INK_BRIGHT = 200
+SHEET_INK_APART = 120
 # **The builder base's shrunk digits land further from their templates, and
 # the distance does not tell a right reading from a wrong one there.** At its
 # 0.7 scale the builder base sheets read right with digits up to 30 off (two
@@ -546,11 +553,35 @@ SHEET_ICONS: dict[World, tuple[tuple[SheetResource, Callable[[int, int, int], bo
 }
 
 
-def _sheet_ink(world: World, red: int, green: int, blue: int) -> bool:
-    """A pixel of the price on that village's sheet button, in any colour it is drawn in."""
-    bright, warm, cool = SHEET_INK_YELLOW
+def _button_shades(pixels: bytes) -> list[tuple[int, int, int]]:
+    """The two commonest shades of a price box, to 20 a channel, leaving out the digits' black rim."""
+    shades = Counter(
+        (
+            pixels[at] // 20 * 20 + 10,
+            pixels[at + 1] // 20 * 20 + 10,
+            pixels[at + 2] // 20 * 20 + 10,
+        )
+        for at in range(0, len(pixels), 3)
+        if min(pixels[at : at + 3]) > 40
+    )
+    return [shade for shade, _ in shades.most_common(2)]
+
+
+def _sheet_ink(shades: list[tuple[int, int, int]], red: int, green: int, blue: int) -> bool:
+    """A pixel of the price on a sheet button, in any colour it is drawn in.
+
+    `shades` is the button's own green, learned off the home sheet; the builder
+    base passes none, so only white and red count there.
+    """
     return (
-        (world == "day" and red > bright and green > warm and blue < cool)
+        (
+            bool(shades)
+            and max(red, green, blue) > SHEET_INK_BRIGHT
+            and all(
+                abs(red - r) + abs(green - g) + abs(blue - b) > SHEET_INK_APART
+                for r, g, b in shades
+            )
+        )
         or min(red, green, blue) > SHEET_INK_WHITE
         or (red > INK_RED_LEVEL and red - green > INK_RED_MARGIN and red - blue > INK_RED_MARGIN)
     )
@@ -681,9 +712,10 @@ def sheet_offer(png: bytes) -> SheetOffer | None:
         )
     width, height = band.size
     pixels = band.tobytes()
+    shades = _button_shades(pixels) if world == "day" else []
     ink = [
         [
-            _sheet_ink(world, *pixels[(y * width + x) * 3 : (y * width + x) * 3 + 3])
+            _sheet_ink(shades, *pixels[(y * width + x) * 3 : (y * width + x) * 3 + 3])
             for x in range(width)
         ]
         for y in range(height)
