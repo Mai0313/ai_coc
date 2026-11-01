@@ -7302,6 +7302,8 @@ class UpgradeSheetOfferTests(unittest.TestCase):
             ("hero_upgrade_sheet.png", 56000, "dark"),
             # Its 1 28 from its template.
             ("sheet_hero_dark_100000.png", 100000, "dark"),
+            # A half-price event's lime digits.
+            ("sheet_hero_dark_lime.png", 26100, "dark"),
             ("night_sheet_gold.png", 2000000, "gold"),
             ("night_sheet_elixir.png", 4000, "elixir"),
             ("night_sheet_red.png", 2560000, "elixir"),
@@ -7321,6 +7323,7 @@ class UpgradeSheetOfferTests(unittest.TestCase):
             # The resource button, not a magic item's 確認 beside it.
             assert offer.point in {
                 (1121, 783),
+                (1121, 788),
                 (805, 789),
                 (1228, 794),
                 (1229, 797),
@@ -7342,6 +7345,7 @@ class UpgradeSheetOfferTests(unittest.TestCase):
             "sheet_building_gold.png",
             "sheet_hero_dark.png",
             "sheet_hero_dark_100000.png",
+            "sheet_hero_dark_lime.png",
             "sheet_pet_dark.png",
             "sheet_running_gems.png",
             "night_sheet_gold.png",
