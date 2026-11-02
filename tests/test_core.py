@@ -738,15 +738,8 @@ class WorldChoiceTests(unittest.TestCase):
             patch.object(commands, "AttackRunner") as runner,
             patch.object(world_ui, "cross") as sailed,
         ):
-            runner.return_value.run.return_value = MagicMock(
-                stock_full=True,
-                attacked=None,
-                phases=0,
-                skipped=0,
-                forced=False,
-                outcome="stock_full",
-            )
-            runner.return_value.played = None
+            runner.return_value.run.return_value = AttackReport(outcome="stock_full")
+            runner.return_value.configure_mock(played=None, holding=None, capacity=None, cart=None)
             series = commands.attack(AttackOptions(plan=plan, rounds=1))
         sailed.assert_not_called()
         return series, runner
@@ -6142,7 +6135,9 @@ class RunnerStateTests(unittest.TestCase):
                 patch.object(commands, "AttackRunner") as runner,
             ):
                 runner.return_value.run.return_value = AttackReport(outcome="no_opponent")
-                runner.return_value.played = None
+                runner.return_value.configure_mock(
+                    played=None, holding=None, capacity=None, cart=None
+                )
                 commands.attack(AttackOptions(rounds=1))
             assert runner.call_args.kwargs["should_stop"] is commands.stop_requested
             # It taps no map coordinate before its battle, so it only zooms out.
@@ -6172,15 +6167,8 @@ class InRoundRestartTests(unittest.TestCase):
             patch.object(commands, "FrameTicker") as ticker,
             patch.object(commands, "AttackRunner") as runner,
         ):
-            runner.return_value.run.return_value = MagicMock(
-                stock_full=False,
-                attacked=None,
-                phases=1,
-                skipped=0,
-                forced=False,
-                outcome="took_loot",
-            )
-            runner.return_value.played = None
+            runner.return_value.run.return_value = AttackReport(outcome="took_loot", phases=1)
+            runner.return_value.configure_mock(played=None, holding=None, capacity=None, cart=None)
             runner.return_value.adb = controller
             runner.return_value.display = fresh
             commands.attack(AttackOptions(rounds=1))
@@ -6195,18 +6183,11 @@ class PlanLogTests(unittest.TestCase):
     """What an attack series writes down about the tactic each round played."""
 
     @staticmethod
-    def _fought() -> MagicMock:
-        return MagicMock(
-            stock_full=False,
-            attacked=MagicMock(),
-            phases=0,
-            skipped=0,
-            forced=False,
-            outcome="took_loot",
-        )
+    def _fought() -> AttackReport:
+        return AttackReport(outcome="took_loot", phases=1)
 
     def _play(
-        self, reports: list[MagicMock], options: AttackOptions, played: AttackPlan | None = None
+        self, reports: list[AttackReport], options: AttackOptions, played: AttackPlan | None = None
     ) -> None:
         """Run the loop over a fixed list of rounds."""
         with (
@@ -6221,7 +6202,9 @@ class PlanLogTests(unittest.TestCase):
             patch.object(commands, "AttackRunner") as runner,
         ):
             runner.return_value.run.side_effect = reports
-            runner.return_value.played = played
+            runner.return_value.configure_mock(
+                played=played, holding=None, capacity=None, cart=None
+            )
             self.series = commands.attack(options)
 
     def test_every_round_leaves_its_own_line_in_the_plan_log(self) -> None:
@@ -6294,14 +6277,8 @@ class StopAtOverrideTests(unittest.TestCase):
             patch.object(commands, "_rest", return_value=False),
             patch.object(commands, "AttackRunner") as runner,
         ):
-            runner.return_value.run.return_value = MagicMock(
-                stock_full=False,
-                attacked=MagicMock(),
-                phases=0,
-                skipped=0,
-                forced=False,
-                outcome="took_loot",
-            )
+            runner.return_value.run.return_value = AttackReport(outcome="took_loot", phases=1)
+            runner.return_value.configure_mock(played=None, holding=None, capacity=None, cart=None)
             commands.attack(options)
         return runner.call_args.kwargs
 

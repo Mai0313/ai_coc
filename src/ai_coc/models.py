@@ -10,6 +10,7 @@ from datetime import UTC, datetime, timedelta
 from pydantic import (
     Field,
     BaseModel,
+    JsonValue,
     RootModel,
     ConfigDict,
     AliasChoices,
@@ -1901,6 +1902,78 @@ class RunLog(BaseModel):
     def answer(self, text: str) -> None:
         """Keep a run's result beside the log that explains how it got there."""
         (self.directory / "result.json").write_text(text, encoding="utf-8")
+
+
+class RunStarted(BaseModel):
+    """A run's first line in `runs.jsonl`: what ran, for whom, from which code, and where it logs."""
+
+    event: Literal["start"] = "start"
+    log: Path
+    command: str
+    args: list[str]
+    caller: Caller
+    pid: int
+    version: str
+    # The checkout's commit, since a local install reports the same placeholder
+    # version whatever it runs; None outside a git checkout.
+    commit: str | None = None
+
+
+class RunEnded(BaseModel):
+    """A run's last line. A `start` with none after it is a run that was killed or crashed."""
+
+    event: Literal["end"] = "end"
+    exit: int
+    seconds: float
+    outcome: str | None = None
+    # `result.json`, or None where it is too long to copy; an attack series
+    # keeps its last round, the others being on their own `round` lines.
+    result: JsonValue = None
+
+
+# How the emulator, or the upgrade watch, changed hands. `state.json` keeps only
+# the latest of these, so who waited on, stood down or borrowed from whom was
+# otherwise pieced together out of several runs' logs.
+LockWhat = Literal["queued", "claimed", "asked_to_stand_down", "borrowed", "lent", "watch_taken"]
+
+
+class LockEvent(BaseModel):
+    """The emulator or the watch changing hands, as this run saw it."""
+
+    event: Literal["lock"] = "lock"
+    what: LockWhat
+    # The other side: who this run waited on, stood down, borrowed from or lent to.
+    other: Caller | None = None
+    other_command: str = ""
+
+
+class RoundEvent(BaseModel):
+    """One round of an attack series: its report, the tactic it played, and the storages before it."""
+
+    event: Literal["round"] = "round"
+    round: int
+    report: AttackReport
+    plan: AttackPlan | NightPlan | None = None
+    holding: VillageStock | None = None
+    capacity: StorageCapacity | None = None
+    cart: CartReport | None = None
+
+
+class Warned(BaseModel):
+    """A WARNING or worse from any module, a crash's traceback included.
+
+    A copy of a log record rather than a report, so `text` is that record's
+    line as written.
+    """
+
+    event: Literal["warn"] = "warn"
+    level: str
+    logger: str
+    text: str
+    trace: str | None = None
+
+
+JournalEvent = RunStarted | RunEnded | LockEvent | RoundEvent | Warned
 
 
 # How much to tear down before bringing the game back up. `none` is the ordinary

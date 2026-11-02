@@ -46,7 +46,7 @@ paths:
 
 ## Storage and settings
 
-`~/.ai_coc\` holds `account_json/` (one `VillageExport` per account), `config.json` (the API key included, in plain text), `state.json`, `cocMapping.json` (the community `data_id` table, read back from disk when the download fails), and `logs/`. There is no database; an old `controller.sqlite3` is left where it is and nothing creates a new one. Nothing reads an old `gemini.key.dpapi` either; its key has to be entered again.
+`~/.ai_coc\` holds `account_json/` (one `VillageExport` per account), `config.json` (the API key included, in plain text), `state.json`, `cocMapping.json` (the community `data_id` table, read back from disk when the download fails), `logs/`, and `runs.jsonl` (every run's milestones, one append per line under its own file lock; `AGENTS.md`'s Commands and their runs). Writing the journal never fails a run: a line it cannot write is said on stderr and dropped. There is no database; an old `controller.sqlite3` is left where it is and nothing creates a new one. Nothing reads an old `gemini.key.dpapi` either; its key has to be entered again.
 
 **One settings file** (`AppConfig`, `adapters/config.py`).
 

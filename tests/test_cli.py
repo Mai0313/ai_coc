@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import io
 import sys
+import json
+from typing import Any
 import logging
 from pathlib import Path
 import argparse
@@ -19,15 +21,19 @@ from unittest.mock import patch
 
 import pytest
 
-from ai_coc import cli, models, commands
+from ai_coc import cli, models, commands, logging_setup
 from ai_coc.cli import RECORDABLE, _answer, _parser, _run_command
 from ai_coc.models import (
     Caller,
     RunLog,
+    RunEnded,
+    AppConfig,
     ViewReport,
     NamedEntity,
     WorldReport,
+    AttackReport,
     AttackSeries,
+    VillageStock,
     AttackOptions,
     CollectReport,
     DonateOptions,
@@ -227,6 +233,9 @@ class DispatchTests(unittest.TestCase):
     def test_a_model_is_written_out_as_indented_json(self) -> None:
         with (
             patch.object(commands, "view", return_value=ViewReport(outcome="parked")),
+            # A claim logs, and pytest's live logging puts its own stdout back
+            # over this one on every line it shows.
+            patch.object(commands, "claim"),
             patch("sys.stdout", new_callable=io.StringIO) as out,
         ):
             assert _run_command(_args("view"), self.run) == 0
@@ -440,6 +449,138 @@ class DispatchTests(unittest.TestCase):
         ):
             _run_command(_args("collect"), self.run)
         assert '"markers": 2' in (self.run.directory / "result.json").read_text(encoding="utf-8")
+
+
+def _journal() -> list[dict[str, Any]]:
+    return [
+        json.loads(line)
+        for line in logging_setup.JOURNAL_PATH.read_text(encoding="utf-8").splitlines()
+    ]
+
+
+class JournalTests(unittest.TestCase):
+    """`runs.jsonl` answers on its own once a run's directory is gone, and never fails the run."""
+
+    def setUp(self) -> None:
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        self.folder = Path(folder.name)
+        self.run = RunLog(directory=self.folder / "2026-11-03-000000-attack")
+        self.run.directory.mkdir()
+
+    def test_a_run_leaves_a_start_and_an_end_that_lead_back_to_its_directory(self) -> None:
+        """Through `main`, so the start carries the line as typed."""
+        line = ["read", str(FRAMES / "world_day.png"), "--agent", "codex", "--session", "s1"]
+        with (
+            patch.object(models, "LOG_DIR", self.folder),
+            patch.object(sys, "argv", ["ai_coc", *line]),
+            patch.object(cli, "configure_logging"),
+            patch("sys.stdout", new_callable=io.StringIO),
+        ):
+            assert cli.main() == 0
+        start, end = _journal()
+        directory = Path(start["log"])
+        assert (start["event"], start["run"], start["args"]) == ("start", directory.name, line)
+        assert start["caller"]["agent"] == "codex"
+        assert directory.parent == self.folder
+        assert (end["event"], end["run"], end["exit"]) == ("end", directory.name, 0)
+        assert end["result"] is not None
+
+    def test_an_attack_ends_on_its_last_round_the_others_having_lines_of_their_own(self) -> None:
+        series = AttackSeries([
+            AttackReport(outcome="took_loot"),
+            AttackReport(outcome="stock_full"),
+        ])
+        with (
+            patch.object(commands, "attack", return_value=series),
+            patch.object(commands, "claim"),
+            patch("sys.stdout", new_callable=io.StringIO),
+        ):
+            _run_command(_args("attack"), self.run)
+        (end,) = _journal()
+        assert (end["outcome"], end["result"]["outcome"]) == ("stock_full", "stock_full")
+
+    def test_every_round_of_a_series_gets_a_line_with_the_storages_before_it(self) -> None:
+        """What `farm` works a run's income out of once its directory is gone."""
+        holding = VillageStock(gold=1, elixir=2, dark=3)
+        root = logging.getLogger()
+        journal, level = logging_setup.Journal(self.run), root.level
+        root.addHandler(journal)
+        root.setLevel(logging.INFO)
+        try:
+            with (
+                patch.object(commands, "_controller"),
+                patch.object(commands, "current_world", return_value="day"),
+                patch.object(commands, "_planner", return_value=None),
+                patch.object(commands.ConfigStore, "load", return_value=AppConfig()),
+                patch.object(commands, "FrameTicker"),
+                patch.object(commands, "_rest", return_value=False),
+                patch.object(commands, "AttackRunner") as runner,
+            ):
+                runner.return_value.run.side_effect = [
+                    AttackReport(outcome="took_loot", phases=1),
+                    AttackReport(outcome="stock_full"),
+                ]
+                runner.return_value.configure_mock(
+                    played=None, holding=holding, capacity=None, cart=None
+                )
+                commands.attack(AttackOptions(rounds=0))
+        finally:
+            root.removeHandler(journal)
+            root.setLevel(level)
+        rounds = [
+            (event["round"], event["report"]["outcome"], event["holding"]["dark"])
+            for event in _journal()
+            if event["event"] == "round"
+        ]
+        assert rounds == [(1, "took_loot", 3), (2, "stock_full", 3)]
+
+    def test_the_emulator_changing_hands_is_kept_with_who_was_on_the_other_side(self) -> None:
+        """`state.json` keeps only the latest of these, so this is the loan's history."""
+        farming = Caller(agent="codex", session="s1", mission="打日世界資源")
+        borrowing = Caller(agent="claude-code", session="s2", mission="測一個修正")
+        root = logging.getLogger()
+        journal, level = logging_setup.Journal(self.run), root.level
+        root.addHandler(journal)
+        root.setLevel(logging.INFO)
+        try:
+            with commands.claim("attack", caller=farming, yields=True):
+                mine = commands.read_state()
+                assert mine is not None
+                commands.ask_to_stand_down(mine, borrowing)
+                # The ask came from another process, which is where it is recorded.
+                commands._borrowed = None
+        finally:
+            root.removeHandler(journal)
+            root.setLevel(level)
+        seen = [(event["what"], (event["other"] or {}).get("agent")) for event in _journal()]
+        assert seen == [("claimed", None), ("borrowed", "codex"), ("lent", "claude-code")]
+
+    def test_a_warning_is_copied_with_its_trace_and_plain_progress_is_not(self) -> None:
+        named = logging.getLogger("ai_coc.test_journal")
+        journal = logging_setup.Journal(self.run)
+        named.addHandler(journal)
+        named.setLevel(logging.INFO)
+        try:
+            named.info("Round 1 of no limit")
+            try:
+                raise ValueError("boom")
+            except ValueError:
+                named.exception("Crashed")
+        finally:
+            named.removeHandler(journal)
+        (warned,) = _journal()
+        assert (warned["event"], warned["level"], warned["text"]) == ("warn", "ERROR", "Crashed")
+        assert "ValueError: boom" in warned["trace"]
+
+    def test_a_line_that_cannot_be_written_does_not_fail_the_run(self) -> None:
+        with (
+            # A directory where the file should be, so the append itself fails.
+            patch.object(logging_setup, "JOURNAL_PATH", self.folder),
+            patch("sys.stderr", new_callable=io.StringIO) as said,
+        ):
+            logging_setup.Journal(self.run).write(RunEnded(exit=0, seconds=1.0))
+        assert "沒寫進去" in said.getvalue()
 
 
 if __name__ == "__main__":

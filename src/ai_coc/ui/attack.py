@@ -30,6 +30,7 @@ from ai_coc.models import (
     CartReport,
     ScreenPoint,
     AttackReport,
+    VillageStock,
     AttackOutcome,
     LootThresholds,
     StorageCapacity,
@@ -1057,6 +1058,10 @@ class AttackRunner(ScreenRunner):
     # since that trip, None before the first; see `_visit_cart`.
     _cart: CartReport | None = PrivateAttr(default=None)
     _since_cart: int | None = PrivateAttr(default=None)
+    # What the storages held before this round, as `_stood_down` read them; None
+    # where the round never got that far. Two rounds' readings apart is what
+    # the round between them brought home.
+    _holding: VillageStock | None = PrivateAttr(default=None)
     # Why the last `_open_attack_menu` gave up, when the reason is worth more
     # than the round simply not finding its menu: a loading screen that
     # outlasted `SERVER_POLLS`, one that came back after a wait, or a stop that
@@ -1072,6 +1077,21 @@ class AttackRunner(ScreenRunner):
     def played(self) -> AttackPlan | NightPlan | None:
         """The plan this run actually used, once one has been settled on."""
         return self._played
+
+    @property
+    def holding(self) -> VillageStock | None:
+        """What the storages held before this round."""
+        return self._holding
+
+    @property
+    def capacity(self) -> StorageCapacity | None:
+        """This village's ceilings, once a round has read them."""
+        return self._capacity
+
+    @property
+    def cart(self) -> CartReport | None:
+        """The builder base's cart as the last trip to it found it."""
+        return self._cart
 
     @property
     def _ceiling(self) -> StorageCapacity:
@@ -1424,6 +1444,7 @@ class AttackRunner(ScreenRunner):
                     return AttackReport(world=self.world, outcome=freed)
                 logger.info("The %s counter reads %d/%d idle; farming on", role, *counted)
         stock = (read_stock if self.world == "day" else read_builder_stock)(home)
+        self._holding = stock
         if stock is None:
             return None
         full = self._ceiling.full(stock, self.stop_at)
@@ -3094,6 +3115,7 @@ class AttackRunner(ScreenRunner):
         """
         self._panned = (0, 0)
         self._played = None
+        self._holding = None
         home = self._open_attack_menu() if home is None else home
         if home is None:
             logger.warning(
@@ -3219,8 +3241,9 @@ class AttackRunner(ScreenRunner):
         # filed holding the previous round's plan. That is worse than no file:
         # a `--plan` or flat-fallback series writes identical plans round
         # after round, so nothing downstream can tell a stale copy from a real
-        # one.
+        # one. The storages are this round's for the same reason.
         self._played = None
+        self._holding = None
         home = self._open_attack_menu() if home is None else home
         if home is None:
             logger.warning(

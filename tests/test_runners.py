@@ -850,6 +850,12 @@ class FreedSlotTests(unittest.TestCase):
             assert self._stood_down(runner, "hud_day.png", self.SHORT) is None
             assert self._stood_down(runner, "hud_day.png", self.FULL) == "stock_full"
 
+    def test_the_storages_it_read_are_kept_for_the_round_s_journal_line(self) -> None:
+        """Two rounds' readings apart is what the round between them brought home."""
+        runner = self._runner(until_idle=())
+        self._stood_down(runner, "hud_day.png", self.SHORT)
+        assert runner.holding == self.SHORT
+
     def test_a_run_not_asked_to_watch_never_reads_the_plates(self) -> None:
         runner = self._runner(until_idle=())
         with patch.object(attack, "plate_count") as counted:

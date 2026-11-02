@@ -859,8 +859,8 @@ class AttackSeriesStopTests(unittest.TestCase):
 
     def _series(self, should_stop: MagicMock) -> tuple[MagicMock, list]:
         runner = MagicMock(name="AttackRunner")
+        runner.configure_mock(played=None, holding=None, capacity=None, cart=None)
         runner.run.return_value = AttackReport(outcome="no_opponent")
-        runner.played = None
         with (
             patch.object(commands, "_controller", return_value=_adb()),
             patch.object(commands.ConfigStore, "load", return_value=AppConfig()),
@@ -902,6 +902,7 @@ class AttackSeriesAdapterFailureTests(unittest.TestCase):
 
     def _series(self, played: list, rounds: int = 0) -> list:
         runner = MagicMock(name="AttackRunner")
+        runner.configure_mock(played=None, holding=None, capacity=None, cart=None)
         runner.run.side_effect = played
         # The count lives on the runner, because one runner plays one series.
         runner.lost = 0
@@ -975,6 +976,7 @@ class AttackSeriesMenuTests(unittest.TestCase):
         should_stop: MagicMock | None = None,
     ) -> list:
         runner = MagicMock(name="AttackRunner")
+        runner.configure_mock(played=None, holding=None, capacity=None, cart=None)
         runner.run.side_effect = played
         runner.lost = 0
         runner.world = "day"
@@ -1051,6 +1053,7 @@ class AttackSeriesArmyShortTests(unittest.TestCase):
 
     def _series(self, played: list) -> tuple[list, MagicMock]:
         runner = MagicMock(name="AttackRunner")
+        runner.configure_mock(played=None, holding=None, capacity=None, cart=None)
         runner.run.side_effect = played
         runner.lost = 0
         runner.world = "day"
