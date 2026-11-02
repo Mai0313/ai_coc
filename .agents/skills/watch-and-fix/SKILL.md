@@ -67,6 +67,8 @@ jq -c 'select(.round==2).plan' ~/.ai_coc/logs/<run>/plans.jsonl > .runs/tuned.js
 uv run ai_coc attack --plan .runs/tuned.json
 ```
 
+同一份戰術也在 `~/.ai_coc/runs.jsonl` 那一輪的 `round` 裡 (`.plan`, 連同那一輪的 report 跟開打前的倉庫), 執行目錄刪了就從那裡拿.
+
 **你拿來下判斷的那幾張, 用檔案傳送機制發一份給使用者**, 說清楚為什麼重要. 他看不到你的工具輸出, 只給路徑等於要他自己去幾百張裡翻.
 
 ## 每一輪都成功的時候去哪裡找

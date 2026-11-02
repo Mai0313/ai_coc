@@ -228,6 +228,8 @@ uv run ai_coc attack --repeat 0 --plan src/ai_coc/plans/night_flat.json --yield 
 
 某一輪讀不出倉庫就沒有那一行; 一個目錄一行都沒有, 那一段的進帳寫「量不到」.
 
+執行目錄已經刪了的話, 同樣的數字在 `~/.ai_coc/runs.jsonl` 那次執行 (`run` 是目錄名) 每一行 `round` 的 `holding`: 那一輪開打前的倉庫, 一樣相鄰兩輪相減.
+
 ### 樣板
 
 ```markdown

@@ -113,6 +113,8 @@ jq '.[-1] | {world, outcome, stock_full, attacked}' ~/.ai_coc/logs/<run>/result.
 
 跨好幾次跑找同一個症狀用 `grep -r ~/.ai_coc/logs/*/run.log`, 它會說每一筆出自哪一次.
 
+**誰在什麼時候跑了什麼, 模擬器怎麼換手, 先讀 `~/.ai_coc/runs.jsonl`**: 每次執行一行 `start` (完整參數、誰、執行目錄 `log`) 跟一行 `end` (exit code、`outcome`、`result.json`; `attack` 只放最後一輪, 是一個物件不是陣列, 其他輪在各自的 `round`; 太長的 (例如 `export`) 是 null), 中間是 `lock` (排隊、借走、借出)、`round` (`attack` 每一輪的 report、戰術、開打前的倉庫) 跟 `warn`. 有 `start` 沒 `end` 是被砍掉或崩掉的. 它不在 `logs/` 底下, 比那些資料夾活得久, 它指的 `log` 資料夾可能已經刪了, 那不是錯.
+
 ## 等待要有出口, 收工要清乾淨
 
 **任何一個等待的迴圈都必須自己結束得了.** 只等 `result.json` 出現的寫法, 在 run 被打死時永遠等不到, 而那正是最該有人接手的時候 (量過 2026-09-16: 一個 subagent 留了四個 `until [ -s "$RUN_DIR/result.json" ]; do sleep 15; done` 在背景, 等的那一輪被 bug 打死, 八個 process 空轉了三十五個小時, 是使用者發現的). 所以一個等待要同時:
