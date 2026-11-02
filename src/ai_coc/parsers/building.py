@@ -740,15 +740,18 @@ def sheet_offer(png: bytes) -> SheetOffer | None:
 
 # 嘿，首領, what 確認 raises instead of a sheet closing when every builder is
 # busy and an event's goblin builder is free: the goblin on the left, a pale
-# panel with its X top right, and one green button priced in gems, which hires
-# it for that upgrade. Measured once, 2026-10-27, at 15 gems over the home
-# village's build panel. Three readings, because each alone has a near miss
-# over the committed frames: its X box reads 0.354 red against 0.343 on
-# `loading_screen_badge_noise`, the panel box 1.000 pale against 0.983 on
-# `hud_settings`, and the button box 0.378 green against 0.426 on the builder
-# base research sheet; no frame but this one passes two of them. The builder
-# base's 所有建築工人都在忙碌中 offer, which finishes a running job for gems,
-# keeps its X and button elsewhere and passes none.
+# panel with its X top right, and green buttons priced in gems. It comes in two
+# layouts. One green button in the middle hires the goblin for that upgrade
+# (2026-10-27, 15 gems, home village). Two side by side (2026-11-02, home
+# village): 哥布林建築工人 on the left hires it (71 gems), and 空出一個建築工人
+# on the right (29) finishes a running job for gems, which is never pressed or
+# read. Three readings, because each alone has a near miss over the committed
+# frames: its X box reads 0.354 red on both against 0.343 on
+# `loading_screen_badge_noise`, the panel box 1.000 pale on both against 0.983
+# on `hud_settings`, and the button box 0.378 and 0.334 green against 0.426 on
+# the builder base research sheet; no other frame passes two of them. The
+# builder base's 所有建築工人都在忙碌中 offer, which finishes a running job for
+# gems, keeps its X and button elsewhere and passes none.
 GOBLIN_X_BOX = (1405, 170, 1458, 218)
 GOBLIN_PANEL_BOX = (760, 240, 1440, 290)
 GOBLIN_BUTTON_BOX = (1000, 500, 1210, 590)
@@ -759,6 +762,16 @@ GOBLIN_BUTTON_GREEN = 0.25
 # and 11 off its templates; it read right at every scale from 0.5 to 0.8.
 GOBLIN_PRICE_BOX = (995, 505, 1125, 580)
 GOBLIN_PRICE_SCALE = 0.6
+# The two-button layout is told by the strip between its buttons: 1.000 pale
+# there against 0.232 under the one button, which covers it. Its left button
+# box then reads 0.348 green (0.179 on the one-button frame, which the strip
+# already turned away). Its price sits under the button's white title, so the
+# box starts below it; at 0.6, like the one button's, the 71 read right at
+# every scale from 0.4 to 0.8.
+GOBLIN_GAP_BOX = (1090, 500, 1110, 590)
+GOBLIN_GAP_PALE = 0.6
+GOBLIN_LEFT_BUTTON_BOX = (850, 495, 1080, 590)
+GOBLIN_LEFT_PRICE_BOX = (880, 530, 995, 585)
 
 
 def _share(
@@ -771,18 +784,20 @@ def _share(
     )
 
 
+def _goblin_pale(r: int, g: int, b: int) -> bool:
+    return min(r, g, b) > 200 and max(r, g, b) - min(r, g, b) < 20
+
+
+def _goblin_green(r: int, g: int, b: int) -> bool:
+    return g > 150 and g - r > 45 and g - b > 60
+
+
 def _goblin_prompt(image: Image.Image) -> bool:
     return (
         _share(image, GOBLIN_X_BOX, lambda r, g, b: r >= 180 and g <= 80 and b <= 80)
         >= GOBLIN_X_RED
-        and _share(
-            image,
-            GOBLIN_PANEL_BOX,
-            lambda r, g, b: min(r, g, b) > 200 and max(r, g, b) - min(r, g, b) < 20,
-        )
-        >= GOBLIN_PANEL_PALE
-        and _share(image, GOBLIN_BUTTON_BOX, lambda r, g, b: g > 150 and g - r > 45 and g - b > 60)
-        >= GOBLIN_BUTTON_GREEN
+        and _share(image, GOBLIN_PANEL_BOX, _goblin_pale) >= GOBLIN_PANEL_PALE
+        and _share(image, GOBLIN_BUTTON_BOX, _goblin_green) >= GOBLIN_BUTTON_GREEN
     )
 
 
@@ -796,11 +811,20 @@ def goblin_prompt(png: bytes) -> bool:
 
 
 def goblin_offer(png: bytes) -> GoblinOffer | None:
-    """How many gems the prompt to hire the goblin builder asks, or None where it is not up."""
+    """How many gems the prompt to hire the goblin builder asks, or None where it is not up.
+
+    Where it draws two buttons, this is the left one's: the right one finishes a
+    running job for gems instead of hiring the goblin.
+    """
     image = open_frame(png)
     if not _goblin_prompt(image):
         return None
-    band = image.crop(GOBLIN_PRICE_BOX)
+    button, price = GOBLIN_BUTTON_BOX, GOBLIN_PRICE_BOX
+    if _share(image, GOBLIN_GAP_BOX, _goblin_pale) >= GOBLIN_GAP_PALE:
+        if _share(image, GOBLIN_LEFT_BUTTON_BOX, _goblin_green) < GOBLIN_BUTTON_GREEN:
+            return None
+        button, price = GOBLIN_LEFT_BUTTON_BOX, GOBLIN_LEFT_PRICE_BOX
+    band = image.crop(price)
     band = band.resize(
         (round(band.width * GOBLIN_PRICE_SCALE), round(band.height * GOBLIN_PRICE_SCALE)),
         Image.Resampling.BILINEAR,
@@ -817,7 +841,7 @@ def goblin_offer(png: bytes) -> GoblinOffer | None:
     gems = digits_from(ink, SHEET_DIGIT_TOLERANCE["day"])
     if not gems:
         return None
-    left, top, right, bottom = GOBLIN_BUTTON_BOX
+    left, top, right, bottom = button
     return GoblinOffer(gems=gems, point=((left + right) // 2, (top + bottom) // 2))
 
 
