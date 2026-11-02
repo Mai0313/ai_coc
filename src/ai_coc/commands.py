@@ -96,7 +96,6 @@ from ai_coc.parsers.home import (
     PANEL_CLOSE,
     CLOCK_TOWER_BELOW,
     reward_chest,
-    running_rows,
     free_builders,
     collect_bubbles,
     build_panel_open,
@@ -2797,8 +2796,6 @@ SWIPE_TIME = 1200
 # measured at x 476-771 and 825-1122, so this reach around 取消's middle covers
 # that button and stops well short of 確定.
 CANCEL_REACH = (140, 35)
-# Where the build panel starts across the screen; its rows sit right of this.
-PANEL_LEFT = 1170
 # The bars and their + buttons, which the open panel pushes left by its own width.
 PANEL_HUD_BOX = (810, 0, 1170, 330)
 # How many times `confirm` looks after its press, this far apart, and how many
@@ -2816,7 +2813,6 @@ PRESS_LINES: dict[PressOutcome, str] = {
     "on_hud": "那裡是遊戲自己的按鈕(商店、加號、頭像那一排),不按",
     "menu_gems": "建築選單那一排有寶石或道具的按鈕(立即完成、取消升級、加速),不按",
     "green_button": "那是綠色的按鈕(確認、立即完成、寶石補位都是綠的),要買用 ai_coc confirm",
-    "running_row": "那一列正在升級,點下去是立即完成(寶石)或那棟的選單,不按",
     "in_battle": "畫面在戰鬥中,按下去會出兵,不按",
 }
 
@@ -2841,9 +2837,13 @@ def _refused(png: bytes, point: tuple[int, int]) -> PressOutcome | None:
     the next, and its other 確認 pays with a magic item, so a sheet takes its X
     and nothing else: buying goes through `confirm`, which reads the button
     first. A dialog's 確定 is the same green whether it pays for a wall or quits
-    the game. The HUD's + buttons and its shop open the gem store. A running
-    row on the build panel opens 立即完成, or a menu whose 取消 throws the
-    upgrade away. And a press in a battle deploys whatever card is selected.
+    the game. The HUD's + buttons and its shop open the gem store. And a press
+    in a battle deploys whatever card is selected.
+
+    **A running row on the build panel is not refused, what it opens is**: a
+    hero's or a pet's 正在將X升至N級 is a sheet, and a building's menu carries
+    立即完成 on the row its 取消 sits in. The agent opens a hero's ahead of
+    time, because that sheet turns into the next level's as its countdown ends.
     """
     if in_battle(png):
         return "in_battle"
@@ -2871,13 +2871,6 @@ def _refused(png: bytes, point: tuple[int, int]) -> PressOutcome | None:
             ),
         ),
         ("green_button", lambda: any(_inside(point, box) for box in green_buttons(png))),
-        (
-            "running_row",
-            lambda: (
-                point[0] >= PANEL_LEFT
-                and any(top <= point[1] <= bottom for top, bottom in running_rows(png))
-            ),
-        ),
         (
             "menu_gems",
             lambda: (

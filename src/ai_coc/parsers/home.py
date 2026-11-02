@@ -261,24 +261,6 @@ PANEL_TITLE = (128, 113, 98)
 PANEL_TITLE_SPREAD = 14
 PANEL_TITLE_SHARE = 0.8
 
-# Each running row is itself a progress bar the width of the panel: a green fill
-# from the left over a grey-brown track, with the name on the left and the
-# countdown on the right. **The fill and the track are the only thing that says
-# which rows those are**: the 建議升級 and 其他升級 rows under them are light
-# brown and carry a time as well, and the section headers between are dark
-# brown. Read in a band clear of the name and the countdown on every panel
-# recorded, along the top half of each row, where the track is (101, 82, 71)
-# give or take and the fill at its brightest; the bottom halves are both darker.
-# Rows are 48 px apart and about 38 tall, so a top found within `ROW_GAP` of the
-# last is the same row again.
-ROW_BAND = (1300, 1460)
-ROW_COVERAGE = 0.8
-ROW_GAP = 40
-PANEL_TOP, PANEL_BOTTOM = 60, 800
-# How far apart running rows sit and how tall each is, for `running_rows`.
-RUNNING_STEP = 60
-RUNNING_HEIGHT = 44
-
 # How short a piece of a countdown may be and still be measured. Set for the
 # build panel's countdowns, written about 12 rows a digit and less for 小時;
 # their reader is gone, and the shield bar's countdown, the one left, writes
@@ -556,48 +538,6 @@ def build_panel_open(png: bytes) -> bool:
         )
     )
     return reds / (len(red) // 3) >= PANEL_X_RED and flat / (len(title) // 3) >= PANEL_TITLE_SHARE
-
-
-def _row_tops(image: Image.Image) -> list[int]:
-    """The top of each running row, read off its bar along `ROW_BAND`."""
-    width = ROW_BAND[1] - ROW_BAND[0]
-    data = image.crop((ROW_BAND[0], PANEL_TOP, ROW_BAND[1], PANEL_BOTTOM)).tobytes()
-    wanted = len(range(0, width, 4)) * ROW_COVERAGE
-    tops: list[int] = []
-    for row in range(PANEL_BOTTOM - PANEL_TOP):
-        base = row * width * 3
-        covered = 0
-        for at in range(base, base + width * 3, 12):
-            red, green, blue = data[at], data[at + 1], data[at + 2]
-            track = 90 <= red <= 112 and 74 <= green <= 92 and 60 <= blue <= 78
-            fill = green >= 150 and green - red >= 40 and green - blue >= 80
-            covered += track or fill
-        y = PANEL_TOP + row
-        if covered >= wanted and (not tops or y - tops[-1] > ROW_GAP):
-            tops.append(y)
-    return tops
-
-
-def running_rows(png: bytes) -> list[tuple[int, int]]:
-    """The spans of the open build panel's running rows, top to bottom, or none.
-
-    **A running row is the one row a tap must not land on**: on the home
-    village a hero's or a pet's opens 立即完成 for gems where 確認 would be,
-    and on the builder base a building's selects it with 取消 and 立即完成
-    beside each other. They are always the panel's first rows and 48 px
-    apart, so only the unbroken run from the top counts: further down,
-    measured on the builder base, a 其他升級 row's plate matched the track
-    colour too, at y 616.
-    """
-    image = open_frame(png)
-    if not build_panel_open(png):
-        return []
-    spans: list[tuple[int, int]] = []
-    for top in _row_tops(image):
-        if top > (spans[-1][0] if spans else PANEL_TOP) + RUNNING_STEP:
-            break
-        spans.append((top, top + RUNNING_HEIGHT))
-    return spans
 
 
 def _time_runs(

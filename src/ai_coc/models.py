@@ -1527,14 +1527,7 @@ class ViewReport(BaseModel):
 
 
 PressOutcome = Literal[
-    "pressed",
-    "sheet_up",
-    "dialog_up",
-    "on_hud",
-    "menu_gems",
-    "green_button",
-    "running_row",
-    "in_battle",
+    "pressed", "sheet_up", "dialog_up", "on_hud", "menu_gems", "green_button", "in_battle"
 ]
 
 
