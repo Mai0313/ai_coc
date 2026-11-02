@@ -51,6 +51,12 @@ FRAME_RETENTION_DAYS = 7
 # the task manager looking for a pid.
 STATE_PATH = data_root() / "state.json"
 
+# Every run's milestones, one JSON line each: its start and end, the emulator
+# changing hands, each round of an attack series, and every warning. Kept
+# outside `logs/`, which the user has wiped by hand, so the history and the way
+# into each run's directory survive it; the directory stays the full record.
+JOURNAL_PATH = data_root() / "runs.jsonl"
+
 # The community keeps this data_id → name table current with each game update.
 # Without it every imported entity shows as UNKNOWN.
 ENTITY_MAPPING_URL = "https://gist.githubusercontent.com/rahulkhatri137/a8449943df45100c5f1e1359cd9ec67a/raw/cocMapping.json"

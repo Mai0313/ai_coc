@@ -29,6 +29,7 @@ from ai_coc.models import (
     MapEdge,
     ProbeRay,
     AppConfig,
+    LockEvent,
     MapSurvey,
     NightPlan,
     PlateRole,
@@ -37,6 +38,7 @@ from ai_coc.models import (
     CartReport,
     PlateCount,
     PlayedPlan,
+    RoundEvent,
     SheetOffer,
     StopTarget,
     ViewReport,
@@ -680,6 +682,7 @@ def _queue() -> datetime | None:
                 "`ai_coc giveback` returns it",
                 loan.borrower.agent or "a command with no agent named",
                 loan.borrower.mission or "no mission given",
+                extra={"journal": LockEvent(what="queued", other=loan.borrower)},
             )
             waited = loan.since
         time.sleep(STOP_POLL)
@@ -733,6 +736,13 @@ def take_over(caller: Caller) -> None:
                 current.pid,
                 current.caller.mission or "no mission given",
                 wait,
+                extra={
+                    "journal": LockEvent(
+                        what="asked_to_stand_down",
+                        other=current.caller,
+                        other_command=current.command,
+                    )
+                },
             )
             asked = (current.pid, current.started)
         if time.monotonic() >= deadline:
@@ -773,6 +783,11 @@ def ask_to_stand_down(held: RunnerState, caller: Caller) -> None:
                     "Borrowed the emulator from %s (%s); `ai_coc giveback` hands it back",
                     current.caller.agent or "an agent with no name given",
                     current.caller.mission or "no mission given",
+                    extra={
+                        "journal": LockEvent(
+                            what="borrowed", other=current.caller, other_command=current.command
+                        )
+                    },
                 )
             _write_state(current.model_copy(update=update))
 
@@ -958,6 +973,11 @@ def claim(
                         "%s (%s) holds the emulator; waiting for it to finish",
                         current.command,
                         current.caller.mission or "no mission given",
+                        extra={
+                            "journal": LockEvent(
+                                what="queued", other=current.caller, other_command=current.command
+                            )
+                        },
                     )
                     waited = (current.pid, current.started)
                 time.sleep(STOP_POLL)
@@ -982,6 +1002,9 @@ def claim(
                 )
                 _write_state(mine)
                 _held = mine
+                # The moment the run really starts, which after a queue or a
+                # stand-down can be minutes past the moment it was started.
+                logger.info("Claimed the emulator", extra={"journal": LockEvent(what="claimed")})
                 break
     try:
         yield
@@ -1031,6 +1054,7 @@ def _release(command: str, log: Path | None) -> None:
                 "Lent to %s (%s); start again with --yield, which waits for it to come back",
                 loan.borrower.agent or "a command with no agent named",
                 loan.borrower.mission or "no mission given",
+                extra={"journal": LockEvent(what="lent", other=loan.borrower)},
             )
         _write_state(
             RunnerState(
@@ -1215,6 +1239,7 @@ def _take_watch(who: Caller, wake: datetime, about: str, log: Path | None) -> Wa
                     "%s is watching (%s); asked it to stand down",
                     current.caller.agent or "an agent with no name given",
                     current.about,
+                    extra={"journal": LockEvent(what="watch_taken", other=current.caller)},
                 )
                 asked = (current.pid, current.started)
                 deadline = time.monotonic() + WATCH_TAKEOVER
@@ -1618,7 +1643,7 @@ def _lost_round(
         # `references/running.md` tells a session there is one of those per
         # round — so without this the last round is in `result.json` and
         # missing from the log, an undercount of exactly what this preserves.
-        logger.info("Attack finished: %s", round_line(report))
+        logger.info("Attack finished: %s", round_line(report), extra=_round_event(runner, series))
         logger.error("The emulator has not answered for %d rounds; ending the series", runner.lost)
         return None
     # Handed back as an ordinary round that fought nothing, which is what it
@@ -1627,6 +1652,20 @@ def _lost_round(
     # emulator that just refused a command is the last thing to fire another
     # one at immediately.
     return report
+
+
+def _round_event(runner: AttackRunner, series: AttackSeries) -> dict[str, RoundEvent]:
+    """The journal's line for the round just added to `series`, as a log call's `extra`."""
+    return {
+        "journal": RoundEvent(
+            round=len(series.root),
+            report=series.root[-1],
+            plan=runner.played,
+            holding=runner.holding,
+            capacity=runner.capacity,
+            cart=runner.cart,
+        )
+    }
 
 
 def _series_over(report: AttackReport, played: int) -> bool:
@@ -1800,7 +1839,9 @@ def attack(
             # "did this round really fight" differently and the wait between
             # rounds has to ask both ways.
             fighting = report.attacked is not None or report.phases > 0
-            logger.info("Attack finished: %s", round_line(report))
+            logger.info(
+                "Attack finished: %s", round_line(report), extra=_round_event(runner, series)
+            )
             _write_plan(options.plan_out, runner.played)
             _log_plan(options.plan_log, len(series.root), runner.played)
             # A stop is let through first, so the series ends on its own line

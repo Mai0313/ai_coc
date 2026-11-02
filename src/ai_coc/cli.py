@@ -1,39 +1,54 @@
 from __future__ import annotations
 
+import os
 import sys
+import json
+import time
+import shlex
 from typing import TYPE_CHECKING, Any, cast, get_args
 import logging
 from pathlib import Path
 import argparse
 from datetime import datetime
 from contextlib import nullcontext
+import subprocess
 
 from rich.table import Table
 from rich.console import Console
 
 # PyInstaller runs this file as `__main__`, which has no package context, so these
 # stay absolute even for same-layer modules.
-from ai_coc import commands
+from ai_coc import commands, __version__
 from ai_coc.models import (
     World,
     Caller,
     RunLog,
+    RunEnded,
+    RunStarted,
     StopTarget,
+    AttackSeries,
     RestartScope,
     AttackOptions,
     DonateOptions,
     LootOverrides,
     VillageExport,
 )
-from ai_coc.logging_setup import configure_logging
+from ai_coc.logging_setup import Journal, configure_logging
 
 if TYPE_CHECKING:
     from contextlib import AbstractContextManager
     from collections.abc import Callable
 
-    from pydantic import BaseModel
+    from pydantic import BaseModel, JsonValue
 
 logger = logging.getLogger(__name__)
+
+# How long `git rev-parse` may take to name the commit a run is on.
+COMMIT_WAIT = 5
+# The longest `result.json` copied whole onto a run's `end` line. A village
+# export runs to hundreds of kilobytes and is kept in `account_json/` anyway;
+# a status, with every running upgrade, comes to a few.
+JOURNAL_RESULT_LIMIT = 16_000
 
 
 def _log_uncaught(kind: type[BaseException], value: BaseException, trace: Any) -> None:  # noqa: ANN401 - matches sys.excepthook
@@ -402,8 +417,10 @@ def _run_command(arguments: argparse.Namespace, run: RunLog) -> int:
     Written rather than logged: the log already carries the running commentary
     on stderr, and this is the answer. It goes into the run's own directory as
     well, so the answer and the log explaining it are found together instead of
-    that depending on whoever started the run having redirected stdout.
+    that depending on whoever started the run having redirected stdout, and
+    onto the run's `end` line in the journal, which outlives that directory.
     """
+    started = time.monotonic()
     cancelled = False
     try:
         with _claim_for(arguments, run):
@@ -433,7 +450,33 @@ def _run_command(arguments: argparse.Namespace, run: RunLog) -> int:
     # Still not zero, though: the stop meant nothing lined up behind the loan
     # runs, and a command chained after this one with `&&` would otherwise
     # start with no loan left to be cancelled.
-    return 1 if cancelled else 0
+    code = 1 if cancelled else 0
+    last = answer.root[-1] if isinstance(answer, AttackSeries) and answer.root else answer
+    kept: JsonValue = last if isinstance(last, str) else last.model_dump(mode="json")
+    Journal(run).write(
+        RunEnded(
+            exit=code,
+            seconds=round(time.monotonic() - started, 1),
+            outcome=getattr(last, "outcome", None),
+            result=kept if len(json.dumps(kept)) <= JOURNAL_RESULT_LIMIT else None,
+        )
+    )
+    return code
+
+
+def _commit() -> str | None:
+    """The commit of the checkout this code runs from, or None outside one."""
+    try:
+        done = subprocess.run(  # noqa: S603 - git with literal arguments and this file's own directory
+            ["git", "-C", str(Path(__file__).parent), "rev-parse", "--short", "HEAD"],  # noqa: S607 - git is found on PATH like any developer tool
+            capture_output=True,
+            text=True,
+            timeout=COMMIT_WAIT,
+            check=True,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return done.stdout.strip() or None
 
 
 def _claim_for(arguments: argparse.Namespace, run: RunLog) -> AbstractContextManager[None]:
@@ -473,17 +516,33 @@ def main() -> int:
     # prompt and reply).
     if getattr(arguments, "debug", False):
         logging.getLogger().setLevel(logging.DEBUG)
+    caller = _caller(arguments)
+    # Before anything this run logs reaches the journal, so its warnings follow
+    # the line saying which run they belong to.
+    Journal(run).write(
+        RunStarted(
+            log=run.directory,
+            command=arguments.command,
+            args=sys.argv[1:],
+            caller=caller,
+            pid=os.getpid(),
+            version=__version__,
+            commit=_commit(),
+        )
+    )
     # First line of every run, because a directory nobody can name is one nobody
     # goes back to: this is what a session reads to find the frames afterwards.
     logger.info("This run is being kept in %s", run.directory)
     # Second line of every run: `state.json` holds only the latest, and the
     # run directories are the history someone greps to find who ran what.
-    caller = _caller(arguments)
     logger.info(
         "Called by agent=%r session=%r mission=%r", caller.agent, caller.session, caller.mission
     )
     if not (caller.agent and caller.session and caller.mission):
         logger.warning("Missing --agent/--session/--mission; this run will not say who ran it")
+    # Third: the flags as typed, which nothing else here records, so a run is
+    # read for what it was asked to do rather than inferred from what it did.
+    logger.info("Started as: ai_coc %s", shlex.join(sys.argv[1:]))
     return _run_command(arguments, run)
 
 
