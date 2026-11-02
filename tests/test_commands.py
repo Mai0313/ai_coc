@@ -1945,12 +1945,16 @@ class PressAndConfirmTests(unittest.TestCase):
 
     def test_the_goblin_builders_prompt_takes_its_x_and_nothing_else(self) -> None:
         """Its gem button is a green `green_buttons` misses; only `confirm --goblin` pays it."""
-        for point in ((1105, 545), (1010, 520), (1200, 580)):
-            adb, report = self._run(
-                ["goblin_builder_offer.png"], lambda d, p=point: commands.tap(p, d)
-            )
+        for frame, point in (
+            ("goblin_builder_offer.png", (1105, 545)),
+            ("goblin_builder_offer.png", (1010, 520)),
+            ("goblin_builder_offer.png", (1200, 580)),
+            ("goblin_builder_two_buttons.png", (965, 542)),
+            ("goblin_builder_two_buttons.png", (1235, 542)),
+        ):
+            adb, report = self._run([frame], lambda d, p=point: commands.tap(p, d))
             adb.tap.assert_not_called()
-            assert report.outcome == "sheet_up", point
+            assert report.outcome == "sheet_up", (frame, point)
         adb, report = self._run(
             ["goblin_builder_offer.png"], lambda d: commands.swipe((1430, 193), (1105, 545), d)
         )
@@ -2096,6 +2100,22 @@ class PressAndConfirmTests(unittest.TestCase):
         assert report.goblin.gems == 15
         adb, report = self._run(
             ["goblin_builder_offer.png"], lambda d: commands.confirm(14, d, goblin=True)
+        )
+        adb.tap.assert_not_called()
+        assert report.outcome == "price_mismatch"
+
+    def test_beside_a_second_button_only_the_goblins_is_pressed(self) -> None:
+        """空出一個建築工人, on the right, finishes a running job for gems; it is never read or pressed."""
+        adb, report = self._run(
+            ["goblin_builder_two_buttons.png", "hud_day_build_panel.png"],
+            lambda d: commands.confirm(71, d, goblin=True),
+        )
+        (x, y, _), _ = adb.tap.call_args
+        assert 848 < x < 1085
+        assert 490 < y < 595
+        assert report.outcome == "confirmed"
+        adb, report = self._run(
+            ["goblin_builder_two_buttons.png"], lambda d: commands.confirm(29, d, goblin=True)
         )
         adb.tap.assert_not_called()
         assert report.outcome == "price_mismatch"

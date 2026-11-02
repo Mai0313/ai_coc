@@ -3067,8 +3067,10 @@ def confirm(
 
     **With `goblin`, it pays gems**, and only on the prompt to hire an event's
     goblin builder, which a press on 確認 raises when every other builder is
-    busy: its one button is pressed when it asks exactly `price` gems. How many
-    gems the agent may pass is the user's call, kept in the `upgrades` skill.
+    busy: its button is pressed when it asks exactly `price` gems. Where it
+    draws two, that is the left one, 哥布林建築工人; the right one, 空出一個建築工人,
+    finishes a running job for gems and is never read or pressed. How many gems
+    the agent may pass is the user's call, kept in the `upgrades` skill.
     """
     adb = _attached()
     display = adb.display_for(COC_PACKAGE)
