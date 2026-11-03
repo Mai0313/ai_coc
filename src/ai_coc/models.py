@@ -1809,7 +1809,7 @@ class RunLog(BaseModel):
     recording: bool = False
     # How many runs lost their frames to the cull that ran when this one opened.
     # It travels here because the cull happens before logging is configured; see
-    # `_cull_old_frames`, and `logging_setup._attach_run` for where it is said.
+    # `_cull_old_frames`, and `cli.main` for where it is said.
     culled: int = 0
 
     @classmethod
