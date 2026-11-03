@@ -4,7 +4,6 @@ import json
 import math
 import time
 import string
-import logging
 from pathlib import Path
 from datetime import datetime, timedelta
 import tempfile
@@ -18,7 +17,7 @@ from PIL import Image, ImageDraw, ImageChops
 import pytest
 from pydantic import ValidationError
 
-from ai_coc import plans, models, commands, logging_setup
+from ai_coc import plans, models, commands
 from ai_coc.ui import world as world_ui
 from ai_coc.ui import attack
 from ai_coc.ui import runner as shared
@@ -121,7 +120,6 @@ from ai_coc.parsers.home import (
     build_panel_open,
     clock_tower_marker,
 )
-from ai_coc.logging_setup import _attach_run
 from ai_coc.parsers.field import view_shift
 from ai_coc.parsers.frame import open_frame
 from ai_coc.parsers.scout import (
@@ -6485,38 +6483,6 @@ class RunLogTests(unittest.TestCase):
             run = self._run(folder)
             run.answer('{"ok": true}')
             assert (run.directory / "result.json").read_text(encoding="utf-8") == '{"ok": true}'
-
-    def test_a_cull_is_said_out_loud_once_a_handler_exists(self) -> None:
-        """Deleting frames is the one destructive thing in the project, and it
-        runs inside `RunLog.open` — before `configure_logging`, so a line
-        written where the deleting happens would reach no handler at all on the
-        CLI path. The count rides on the run and is said when the sinks exist.
-        Without it, a session following a path out of an old report to a
-        directory that is gone cannot tell a cull from a bug.
-        """
-        with tempfile.TemporaryDirectory() as folder:
-            run = RunLog(directory=Path(folder), culled=3)
-            log = logging.getLogger("run-cull-test")
-            with self.assertLogs("ai_coc.logging_setup", level=logging.INFO) as caught:
-                _attach_run(log, run)
-            for handler in log.handlers:
-                handler.close()
-            log.handlers.clear()
-        assert any("3 run(s)" in line for line in caught.output)
-        assert any("logs are untouched" in line for line in caught.output)
-
-    def test_a_run_that_culled_nothing_says_nothing(self) -> None:
-        """Every run opens one, so a line on each would bury the one that
-        actually deleted something.
-        """
-        with tempfile.TemporaryDirectory() as folder:
-            log = logging.getLogger("run-cull-quiet-test")
-            with patch.object(logging_setup.logging, "getLogger") as named:
-                _attach_run(log, RunLog(directory=Path(folder)))
-            for handler in log.handlers:
-                handler.close()
-            log.handlers.clear()
-        named.assert_not_called()
 
 
 def _menu_prices(name: str, *centres: int) -> list[int | None]:

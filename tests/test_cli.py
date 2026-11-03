@@ -433,6 +433,27 @@ class DispatchTests(unittest.TestCase):
             assert any(call.args[0].startswith("Called by") for call in said.call_args_list)
             assert warning.called is warned
 
+    def test_the_first_line_names_the_directory_and_a_cull_is_said_after(self) -> None:
+        """Deleting frames is the one destructive thing in the project, and it
+        runs inside `RunLog.open`, before any handler exists, so `main` says it
+        once the run's own lines are out. A run that deleted nothing says nothing.
+        """
+        for culled in (3, 0):
+            with (
+                tempfile.TemporaryDirectory() as folder,
+                patch.object(models, "LOG_DIR", Path(folder)),
+                patch.object(models, "_cull_old_frames", return_value=culled),
+                patch.object(sys, "argv", ["ai_coc", "read", str(FRAMES / "world_day.png")]),
+                patch.object(cli, "configure_logging"),
+                patch.object(cli.logger, "info") as said,
+                patch("sys.stdout", new_callable=io.StringIO),
+            ):
+                assert cli.main() == 0
+            lines = [call.args[0] for call in said.call_args_list]
+            assert lines[0].startswith("This run is being kept in")
+            deleted = [n for n, line in enumerate(lines) if line.startswith("Deleted the frames")]
+            assert deleted == ([3] if culled else []), culled
+
     def test_read_puts_the_named_file_through_every_parser(self) -> None:
         """The one command that runs its real code here: it needs no emulator."""
         with patch("sys.stdout", new_callable=io.StringIO):
