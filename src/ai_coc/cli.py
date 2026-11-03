@@ -60,7 +60,7 @@ def _log_uncaught(kind: type[BaseException], value: BaseException, trace: Any) -
 # The sub-commands that never open ADB: `read` parses a PNG off the disk,
 # `stop` and `giveback` each change one field of the state file, and `watch`
 # sleeps on its own section of it. Every other one captures the screen, so
-# every other one takes `--debug`.
+# every other one takes `--debug` and `--shot-every`.
 NO_SCREEN = ("read", "stop", "giveback", "watch")
 
 # The sub-commands that hold no claim on the emulator, listed the way round
@@ -208,13 +208,6 @@ def _parser() -> argparse.ArgumentParser:
     )
     run.add_argument("--plan-out", type=Path, help="把實際用的戰術寫成 JSON")
     run.add_argument("--repeat", type=int, default=1, help="打幾輪，0 代表打到叫停為止")
-    run.add_argument(
-        "--shot-every",
-        type=float,
-        default=0.0,
-        metavar="秒",
-        help="除了迴圈自己讀的畫面，每隔這麼多秒再存一張（要搭配 --debug）",
-    )
     # Omitted means "whatever the config file says", like the loot thresholds
     # below; 0 is how a test run attacks a village the farming has already
     # filled, where the file's percentage would stand it down first.
@@ -289,6 +282,13 @@ def _parser() -> argparse.ArgumentParser:
                 action="store_true",
                 help="把這次讀到的每張畫面存進紀錄資料夾，log 也降到 DEBUG",
             )
+            one.add_argument(
+                "--shot-every",
+                type=float,
+                default=0.0,
+                metavar="秒",
+                help="除了指令自己讀的畫面，每隔這麼多秒再存一張",
+            )
     # Every sub-command, because why a session names a run — to find it again
     # afterwards — has nothing to do with which one it ran.
     for one in sub.choices.values():
@@ -345,7 +345,6 @@ def _answer(arguments: argparse.Namespace, run: RunLog) -> BaseModel | str:
                     min_gold=a.min_gold, min_elixir=a.min_elixir, min_dark=a.min_dark
                 ),
                 rounds=a.repeat,
-                shot_every=a.shot_every,
                 stop_at=a.stop_at,
                 until_idle=[] if a.until_idle is None else a.until_idle or ["builder", "lab"],
             ),
@@ -420,7 +419,12 @@ def _run_command(arguments: argparse.Namespace, run: RunLog) -> int:
     started = time.monotonic()
     cancelled = False
     try:
-        with _claim_for(arguments, run):
+        # The heartbeat inside the claim, so a run still queued for the
+        # emulator, or refused it, takes no tick.
+        with (
+            _claim_for(arguments, run),
+            commands.FrameTicker(frames=run.frames, seconds=getattr(arguments, "shot_every", 0.0)),
+        ):
             answer = _answer(arguments, run)
     # A queue that a stop ended is written down like an answer, not left as a
     # crash: `farm` reads a run with no `result.json` as a killed process. The

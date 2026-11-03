@@ -94,13 +94,16 @@ class ParserTests(unittest.TestCase):
             bare = _args(name, *extra)
             assert (bare.agent, bare.session, bare.mission) == ("", "", ""), name
 
-    def test_every_sub_command_that_captures_takes_debug(self) -> None:
+    def test_every_sub_command_that_captures_takes_debug_and_a_heartbeat(self) -> None:
         for name, extra in MINIMAL.items():
             if name in NO_SCREEN:
-                with pytest.raises(SystemExit):
-                    _args(name, *extra, "--debug")
+                for flag in (["--debug"], ["--shot-every", "4"]):
+                    with pytest.raises(SystemExit):
+                        _args(name, *extra, *flag)
             else:
                 assert _args(name, *extra, "--debug").debug, name
+                # On its own: a heartbeat does not need `--debug`.
+                assert _args(name, *extra, "--shot-every", "4").shot_every == 4.0, name
 
     def test_stop_reaches_both_sections_unless_told_which(self) -> None:
         assert _args("stop").target == "all"
@@ -150,8 +153,6 @@ class DispatchTests(unittest.TestCase):
                     "0",
                     "--until-idle",
                     "--debug",
-                    "--shot-every",
-                    "4",
                     "--plan",
                     "a.json",
                     "--plan-out",
@@ -166,7 +167,6 @@ class DispatchTests(unittest.TestCase):
             plan_log=self.recorded.plan_log,
             minimums=LootOverrides(min_gold=0),
             rounds=0,
-            shot_every=4.0,
             stop_at=0,
             until_idle=["builder", "lab"],
         )
@@ -391,6 +391,25 @@ class DispatchTests(unittest.TestCase):
         finally:
             root.setLevel(level)
 
+    def test_the_heartbeat_runs_around_the_whole_command_inside_its_claim(self) -> None:
+        """Started where every command is run, so each one that captures has it,
+        and inside the claim, so a run still queued for the emulator takes no tick.
+        """
+        order: list[str] = []
+        with (
+            patch.object(commands, "claim") as claimed,
+            patch.object(commands, "FrameTicker") as ticker,
+            patch.object(commands, "stock", side_effect=lambda _: order.append("stock") or ""),
+            patch("sys.stdout", new_callable=io.StringIO),
+        ):
+            claimed.return_value.__enter__.side_effect = lambda: order.append("claimed")
+            claimed.return_value.__exit__.side_effect = lambda *_: order.append("released")
+            ticker.return_value.__enter__.side_effect = lambda: order.append("ticking")
+            ticker.return_value.__exit__.side_effect = lambda *_: order.append("stopped")
+            _run_command(_args("stock", "--shot-every", "4"), self.run)
+        assert ticker.call_args.kwargs == {"frames": self.run.frames, "seconds": 4.0}
+        assert order == ["claimed", "ticking", "stock", "stopped", "released"]
+
     def test_who_asked_reaches_the_claim(self) -> None:
         with (
             patch.object(
@@ -554,7 +573,6 @@ class JournalTests(unittest.TestCase):
                 patch.object(commands, "current_world", return_value="day"),
                 patch.object(commands, "_planner", return_value=None),
                 patch.object(commands.ConfigStore, "load", return_value=AppConfig()),
-                patch.object(commands, "FrameTicker"),
                 patch.object(commands, "_rest", return_value=False),
                 patch.object(commands, "AttackRunner") as runner,
             ):

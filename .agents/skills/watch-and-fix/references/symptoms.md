@@ -176,7 +176,7 @@ log 的 `The camera was not at the far zoom` 量的是拉遠之前的鏡頭, 只
 
 **不要用 log 那行判斷**: `Played rage, 18s in` 在那一步跑完才寫. 同一種法術的最後一步走 `_cast`, 包含驗證截圖, 比落地晚約一秒半; 拆成好幾步時, 前面幾步走 `_cast_some`, 不截圖.
 
-**用遊戲自己的倒數量**: 開 `--shot-every`, `tick_*.png` 寫著 `離戰鬥結束剩下 X分Y秒`, 180 減掉就是戰鬥時鐘. 秒數是相對的: 從 `Played troops` 數到 `Played rage`, 跟計畫裡 `wait` 的 `seconds` 比, 對得上就是執行沒問題.
+**用遊戲自己的倒數量**: 開 `--shot-every`, `*_tick.png` 寫著 `離戰鬥結束剩下 X分Y秒`, 180 減掉就是戰鬥時鐘. 秒數是相對的: 從 `Played troops` 數到 `Played rage`, 跟計畫裡 `wait` 的 `seconds` 比, 對得上就是執行沒問題.
 
 會讓它變晚的兩處:
 

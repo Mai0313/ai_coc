@@ -737,7 +737,6 @@ class WorldChoiceTests(unittest.TestCase):
             patch.object(commands, "_settle_game", return_value=None),
             patch.object(commands, "_planner", return_value=None),
             patch.object(commands.ConfigStore, "load", return_value=AppConfig()),
-            patch.object(commands, "FrameTicker"),
             patch.object(commands, "_rest", return_value=False),
             patch.object(commands, "AttackRunner") as runner,
             patch.object(world_ui, "cross") as sailed,
@@ -6135,7 +6134,6 @@ class RunnerStateTests(unittest.TestCase):
                 patch.object(commands, "park_camera") as parked,
                 patch.object(commands, "_planner", return_value=None),
                 patch.object(commands.ConfigStore, "load", return_value=AppConfig()),
-                patch.object(commands, "FrameTicker"),
                 patch.object(commands, "AttackRunner") as runner,
             ):
                 runner.return_value.run.return_value = AttackReport(outcome="no_opponent")
@@ -6146,41 +6144,6 @@ class RunnerStateTests(unittest.TestCase):
             assert runner.call_args.kwargs["should_stop"] is commands.stop_requested
             # It taps no map coordinate before its battle, so it only zooms out.
             parked.assert_not_called()
-
-
-class InRoundRestartTests(unittest.TestCase):
-    """A restart inside the round moves the game, and only the runner is told."""
-
-    def test_the_ticker_follows_the_runner_onto_the_new_display(self) -> None:
-        """Otherwise a later capture asks a display that no longer exists.
-
-        `AttackRunner` reassigns its own display when the idle-disconnect dialog
-        sends it through `restart_game`, and `commands.attack` holds a second
-        copy that nothing updates. Measured twice in one night: the loot cart
-        trip this loop used to make asked the display the game had left,
-        `screencap` answered `Status: -2`, and the whole series died with
-        `result.json` never written.
-        """
-        fresh = MagicMock(name="the display the game came back on")
-        controller = MagicMock(name="the controller that came back")
-        with (
-            patch.object(commands, "_controller"),
-            patch.object(commands, "_settle_game", return_value=MagicMock(name="at the start")),
-            patch.object(commands, "_planner", return_value=None),
-            patch.object(commands.ConfigStore, "load", return_value=AppConfig()),
-            patch.object(commands, "FrameTicker") as ticker,
-            patch.object(commands, "AttackRunner") as runner,
-        ):
-            runner.return_value.run.return_value = AttackReport(outcome="took_loot", phases=1)
-            runner.return_value.configure_mock(played=None, holding=None, capacity=None, cart=None)
-            runner.return_value.adb = controller
-            runner.return_value.display = fresh
-            commands.attack(AttackOptions(rounds=1), _frames(self))
-        # Both halves, so neither is left pointing at what the game left. The
-        # ticker captures from its own thread and swallows what it cannot reach,
-        # so a stale one costs warnings nobody reads rather than the run.
-        assert ticker.return_value.__enter__.return_value.adb is controller
-        assert ticker.return_value.__enter__.return_value.display is fresh
 
 
 class PlanLogTests(unittest.TestCase):
@@ -6201,7 +6164,6 @@ class PlanLogTests(unittest.TestCase):
             patch.object(commands, "park_camera", side_effect=AssertionError("parked")),
             patch.object(commands, "_planner", return_value=None),
             patch.object(commands.ConfigStore, "load", return_value=AppConfig()),
-            patch.object(commands, "FrameTicker"),
             patch.object(commands, "_rest", return_value=False),
             patch.object(commands, "AttackRunner") as runner,
         ):
@@ -6277,7 +6239,6 @@ class StopAtOverrideTests(unittest.TestCase):
             patch.object(commands, "park_camera", side_effect=AssertionError("parked")),
             patch.object(commands, "_planner", return_value=None),
             patch.object(commands.ConfigStore, "load", return_value=AppConfig(stop_at=85)),
-            patch.object(commands, "FrameTicker"),
             patch.object(commands, "_rest", return_value=False),
             patch.object(commands, "AttackRunner") as runner,
         ):

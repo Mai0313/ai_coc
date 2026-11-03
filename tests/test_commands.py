@@ -12,7 +12,6 @@ import io
 import os
 import json
 import math
-import time
 from typing import TYPE_CHECKING, get_args
 from pathlib import Path
 from datetime import UTC, datetime, timedelta
@@ -75,7 +74,7 @@ from ai_coc.models import (
 )
 from ai_coc.constants import COC_PACKAGE
 from ai_coc.ui.runner import ScreenRunner
-from ai_coc.adapters.adb import AdbController, AdbControlError
+from ai_coc.adapters.adb import PNG_MAGIC, AdbController, AdbControlError
 from ai_coc.parsers.home import PANEL_CLOSE, CLOCK_TOWER_BELOW
 
 if TYPE_CHECKING:
@@ -863,7 +862,6 @@ class AttackSeriesStopTests(unittest.TestCase):
             patch.object(commands.ConfigStore, "load", return_value=AppConfig()),
             patch.object(commands, "_planner", return_value=None),
             patch.object(commands, "_settle_game", return_value=DISPLAY),
-            patch.object(commands, "FrameTicker"),
             patch.object(commands, "AttackRunner", return_value=runner) as built,
         ):
             series = commands.attack(AttackOptions(rounds=1), _frames(self), should_stop)
@@ -909,7 +907,6 @@ class AttackSeriesAdapterFailureTests(unittest.TestCase):
             patch.object(commands.ConfigStore, "load", return_value=AppConfig()),
             patch.object(commands, "_planner", return_value=None),
             patch.object(commands, "_settle_game", return_value=DISPLAY),
-            patch.object(commands, "FrameTicker"),
             patch.object(commands, "AttackRunner", return_value=runner),
             patch.object(commands, "_rest", return_value=False),
         ):
@@ -984,7 +981,6 @@ class AttackSeriesMenuTests(unittest.TestCase):
             patch.object(commands.ConfigStore, "load", return_value=AppConfig()),
             patch.object(commands, "_planner", return_value=None),
             patch.object(commands, "_settle_game", return_value=DISPLAY),
-            patch.object(commands, "FrameTicker"),
             patch.object(commands, "AttackRunner", return_value=runner),
             patch.object(commands, "_rest", return_value=False),
         ):
@@ -1063,7 +1059,6 @@ class AttackSeriesArmyShortTests(unittest.TestCase):
             patch.object(commands.ConfigStore, "load", return_value=AppConfig()),
             patch.object(commands, "_planner", return_value=None),
             patch.object(commands, "_settle_game", return_value=DISPLAY),
-            patch.object(commands, "FrameTicker"),
             patch.object(commands, "AttackRunner", return_value=runner),
             patch.object(commands, "_rest", return_value=False) as rest,
         ):
@@ -1276,52 +1271,126 @@ class SettleGameTests(unittest.TestCase):
             self._settle([None], dropped=[True], taken=commands.SessionTakenError("taken"))
 
 
-class FrameTickerTests(unittest.TestCase):
-    def setUp(self) -> None:
-        self.frames = _frames(self, recording=True)
+def _device() -> MagicMock:
+    """A device whose every capture is a PNG ending in the physical display it was asked for."""
+    device = MagicMock(name="device")
+    device.shell.side_effect = lambda command, **_: PNG_MAGIC + command[-1].encode()
+    return device
 
-    def _ticker(self, seconds: float) -> commands.FrameTicker:
-        return commands.FrameTicker(
-            adb=_controller(), display=DISPLAY, frames=self.frames, seconds=seconds
-        )
+
+class FrameTickerTests(unittest.TestCase):
+    """The heartbeat shoots where the command last looked, numbered among its frames."""
+
+    def _command(self, frames: FrameLog) -> AdbController:
+        """The controller a command captures through, attached to the run as `_recording` does."""
+        adb = _controller()
+        adb.frames = frames
+        return adb
+
+    def _tick(self, frames: FrameLog, *between: Callable[[], object]) -> None:
+        """Run the heartbeat on this thread: each step, then one tick, with no real wait."""
+        ticker = commands.FrameTicker(frames=frames, seconds=5)
+        steps = iter(between)
+
+        def wait(_: float) -> bool:
+            step = next(steps, None)
+            if step is None:
+                return True
+            step()
+            return False
+
+        with patch.object(ticker._stop, "wait", side_effect=wait):
+            ticker._tick()
+
+    def _names(self, frames: FrameLog) -> list[str]:
+        return sorted(path.name for path in frames.directory.glob("*.png"))
 
     def test_no_interval_starts_no_thread(self) -> None:
-        with self._ticker(0) as ticker:
+        frames = _frames(self)
+        with commands.FrameTicker(frames=frames, seconds=0) as ticker:
             assert ticker._thread is None
-        assert not self.frames.directory.exists()
+        assert not frames.directory.exists()
 
-    def test_frames_are_named_by_how_far_into_the_run_they_were_taken(self) -> None:
+    def test_leaving_stops_the_heartbeat_without_waiting_out_its_interval(self) -> None:
+        with commands.FrameTicker(frames=_frames(self), seconds=60) as ticker:
+            pass
+        assert ticker._thread is not None
+        assert not ticker._thread.is_alive()
+
+    def test_nothing_is_shot_before_the_command_first_captures(self) -> None:
+        frames = _frames(self)
+        with patch.object(AdbController, "screenshot") as shot:
+            self._tick(frames, lambda: None, lambda: None)
+        shot.assert_not_called()
+        assert not frames.directory.exists()
+
+    def test_ticks_are_numbered_among_the_commands_own_frames(self) -> None:
+        """So sorting `frames/` by name is time order across both."""
+        frames = _frames(self, recording=True)
+        adb = self._command(frames)
         with (
-            patch.object(AdbController, "screenshot", return_value=b"png"),
+            patch.object(AdbController, "connect", return_value=_device()),
             self.assertLogs("ai_coc.models") as logged,
-            self._ticker(0.01),
         ):
-            time.sleep(0.1)
-        ticks = sorted(self.frames.directory.glob("tick_*.png"))
-        assert ticks
-        assert ticks[0].name == "tick_00000.0s.png"
-        assert all(tick.read_bytes() == b"png" for tick in ticks)
-        # Each named in the log as it lands, which is what lines it up with the run.
-        assert logged.output[0] == "INFO:ai_coc.models:Saved frame tick_00000.0s.png"
+            self._tick(
+                frames,
+                lambda: adb.screenshot(DISPLAY, "scout"),
+                lambda: adb.screenshot(DISPLAY, "pass"),
+            )
+        assert self._names(frames) == [
+            "0001_scout.png",
+            "0002_tick.png",
+            "0003_pass.png",
+            "0004_tick.png",
+        ]
+        assert "INFO:ai_coc.models:Saved frame 0002_tick.png" in logged.output
 
-    def test_a_failed_capture_is_a_gap_in_the_recording_rather_than_the_end_of_the_run(
-        self,
-    ) -> None:
+    def test_a_heartbeat_without_debug_keeps_its_ticks_and_not_the_commands_reads(self) -> None:
+        frames = _frames(self)
+        adb = self._command(frames)
+        with patch.object(AdbController, "connect", return_value=_device()):
+            self._tick(frames, lambda: adb.screenshot(DISPLAY, "scout"))
+        assert self._names(frames) == ["0001_tick.png"]
+
+    def test_the_tick_follows_the_command_onto_the_display_a_restart_moved_it_to(self) -> None:
+        """No re-sync: the command's own capture is what moves the heartbeat."""
+        frames = _frames(self)
+        adb = self._command(frames)
+        moved = DisplayTarget(logical_id="3", physical_id="11")
         with (
-            patch.object(AdbController, "screenshot", side_effect=AdbControlError("gone")),
-            self._ticker(0.01),
+            patch.object(AdbController, "connect", return_value=_device()),
+            patch.object(FrameLog, "looked", autospec=True, side_effect=FrameLog.looked) as looked,
         ):
-            time.sleep(0.05)
-        assert not self.frames.directory.exists()
+            self._tick(
+                frames,
+                lambda: adb.screenshot(DISPLAY, "scout"),
+                lambda: adb.screenshot(moved, "scout"),
+            )
+        first, second = (frames.directory / name for name in self._names(frames))
+        assert first.read_bytes().endswith(b"9")
+        assert second.read_bytes().endswith(b"11")
+        # Only the command's two captures say where it looked; a tick's own,
+        # landing after the command moved on, would move the heartbeat back.
+        assert looked.call_count == 2
+
+    def test_a_run_of_failing_ticks_warns_once_and_says_when_they_land_again(self) -> None:
+        """Every warning lands in `runs.jsonl` with its trace, so an outage warns once."""
+        frames = _frames(self)
+        frames.looked(_controller(), DISPLAY)
+        gone = AdbControlError("gone")
+        with (
+            patch.object(
+                AdbController, "screenshot", side_effect=[gone, gone, gone, b"png", gone]
+            ),
+            self.assertLogs("ai_coc.commands") as logged,
+        ):
+            self._tick(frames, *[lambda: None] * 5)
+        assert [line.split(":")[0] for line in logged.output] == ["WARNING", "INFO", "WARNING"]
+        assert self._names(frames) == ["0001_tick.png"]
 
 
 class RunPlumbingTests(unittest.TestCase):
     """The small pieces `attack` is built from, each with its own reason to exist."""
-
-    def test_a_heartbeat_on_a_run_that_is_not_recorded_is_refused(self) -> None:
-        with pytest.raises(ValueError, match="--debug"):
-            commands._prepare_frames(AttackOptions(shot_every=1), _frames(self))
-        commands._prepare_frames(AttackOptions(shot_every=1), _frames(self, recording=True))
 
     def test_the_plan_that_ran_is_written_where_it_was_asked_for(self) -> None:
         with tempfile.TemporaryDirectory() as folder:

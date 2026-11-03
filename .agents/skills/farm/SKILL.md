@@ -87,7 +87,7 @@ uv run ai_coc attack --repeat 0 --plan src/ai_coc/plans/night_flat.json --yield 
 
 **預設 `--repeat 0`**: 倉庫滿了迴圈自己會 break, 正是「打到資源滿」. 使用者指定輪數就照他的.
 
-**要不要留畫面是派工的人決定.** `--debug` 存這次讀過的每一張 (log 也記到 DEBUG), `--shot-every` 加一條固定心跳.
+**要不要留畫面是派工的人決定.** `--debug` 存這次讀過的每一張 (log 也記到 DEBUG), `--shot-every` 加一條固定心跳, 不用搭配 `--debug`.
 
 - **你是 subagent**: 交辦寫了 `--debug` / `--shot-every` 就帶, 沒寫就不帶, 一個都不要自己加或拿掉. 圖是派你的那一邊要看的, 你不用打開, 專心打資源, 回報列出執行目錄就好
 - **你是派工的那一邊, 或者沒人派你**: 有人要找問題 (盯著 subagent 的行為、查 bug、驗證剛修好的東西) 就開 `--debug`, 問題跟戰鬥過程有關 (兵怎麼走、法術什麼時候下) 再加 `--shot-every`, 單純打資源就不開. 交辦裡一律寫明開還是不開, 圖由你看
