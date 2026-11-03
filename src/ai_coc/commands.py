@@ -956,7 +956,8 @@ def claim(
     nothing is not stopped: it starts once a stop has ended that holder.
     Lending is keyed on `--yield` rather than on two sessions differing: keyed
     on sessions, a farming command claiming between two of a tester's commands
-    borrowed from the tester, whose next command then queued behind it for hours.
+    would borrow from the tester, whose next command would then queue behind it
+    for hours.
     """
     global _held  # noqa: PLW0603 - process-wide by nature; see `_held`
     who = caller or Caller()

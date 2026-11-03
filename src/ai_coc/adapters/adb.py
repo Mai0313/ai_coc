@@ -309,7 +309,7 @@ class AdbController(BaseModel):
         device = self.connect()
         try:
             # PNG rather than the raw dump: the raw 5.8 MB took 1.4 s against
-            # 0.45 s for a PNG (2026-08-25).
+            # 0.6-0.8 s for a PNG (2026-08-25, #45).
             data = device.shell(
                 ["screencap", "-p", "-d", display.physical_id], encoding=None, timeout=20
             )
