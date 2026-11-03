@@ -27,6 +27,7 @@ from ai_coc.models import (
     Caller,
     RunLog,
     LoanEnd,
+    FrameLog,
     ProbeRay,
     AppConfig,
     BattleRow,
@@ -190,6 +191,11 @@ from ai_coc.parsers.building import (
 from ai_coc.parsers.settings import export_row, window_open, settings_open, more_settings_open
 
 FRAMES = Path(__file__).parent / "frames"
+
+
+def _frames(case: unittest.TestCase) -> FrameLog:
+    """A run's frames in a directory of the test's own, removed when it ends."""
+    return FrameLog(directory=Path(case.enterContext(tempfile.TemporaryDirectory())) / "frames")
 
 
 # A plan has to carry both ends of its line and each of the three lists the
@@ -738,7 +744,7 @@ class WorldChoiceTests(unittest.TestCase):
         ):
             runner.return_value.run.return_value = AttackReport(outcome="stock_full")
             runner.return_value.configure_mock(played=None, holding=None, capacity=None, cart=None)
-            series = commands.attack(AttackOptions(plan=plan, rounds=1))
+            series = commands.attack(AttackOptions(plan=plan, rounds=1), _frames(self))
         sailed.assert_not_called()
         return series, runner
 
@@ -2079,7 +2085,7 @@ class CrossingTests(unittest.TestCase):
         adb = MagicMock()
         seen: list[str] = []
         adb.tap.side_effect = lambda x, y, _display: seen.append(f"tap {x},{y}")
-        adb.screenshot.side_effect = lambda _display: seen.append("shot") or b""
+        adb.screenshot.side_effect = lambda _display, _label: seen.append("shot") or b""
         with (
             patch.object(
                 world_ui.time, "sleep", side_effect=lambda seconds: seen.append(f"sleep {seconds}")
@@ -6136,7 +6142,7 @@ class RunnerStateTests(unittest.TestCase):
                 runner.return_value.configure_mock(
                     played=None, holding=None, capacity=None, cart=None
                 )
-                commands.attack(AttackOptions(rounds=1))
+                commands.attack(AttackOptions(rounds=1), _frames(self))
             assert runner.call_args.kwargs["should_stop"] is commands.stop_requested
             # It taps no map coordinate before its battle, so it only zooms out.
             parked.assert_not_called()
@@ -6169,7 +6175,7 @@ class InRoundRestartTests(unittest.TestCase):
             runner.return_value.configure_mock(played=None, holding=None, capacity=None, cart=None)
             runner.return_value.adb = controller
             runner.return_value.display = fresh
-            commands.attack(AttackOptions(rounds=1))
+            commands.attack(AttackOptions(rounds=1), _frames(self))
         # Both halves, so neither is left pointing at what the game left. The
         # ticker captures from its own thread and swallows what it cannot reach,
         # so a stale one costs warnings nobody reads rather than the run.
@@ -6203,7 +6209,7 @@ class PlanLogTests(unittest.TestCase):
             runner.return_value.configure_mock(
                 played=played, holding=None, capacity=None, cart=None
             )
-            self.series = commands.attack(options)
+            self.series = commands.attack(options, _frames(self))
 
     def test_every_round_leaves_its_own_line_in_the_plan_log(self) -> None:
         """`--plan-out` keeps whichever round went last and overwrites the rest.
@@ -6277,7 +6283,7 @@ class StopAtOverrideTests(unittest.TestCase):
         ):
             runner.return_value.run.return_value = AttackReport(outcome="took_loot", phases=1)
             runner.return_value.configure_mock(played=None, holding=None, capacity=None, cart=None)
-            commands.attack(options)
+            commands.attack(options, _frames(self))
         return runner.call_args.kwargs
 
     def test_zero_on_the_flag_is_not_the_same_as_leaving_it_out(self) -> None:
@@ -6332,6 +6338,7 @@ class LaunchTests(unittest.TestCase):
         mumu = MagicMock()
         mumu.enumerate_instances.return_value = [instance]
         mumu.ensure_coc.return_value = instance
+        mumu.controller.return_value.screenshot.return_value = b"frame"
         return mumu
 
     def test_the_game_is_left_at_a_village_and_the_far_zoom(self) -> None:
@@ -6344,7 +6351,7 @@ class LaunchTests(unittest.TestCase):
         """
         mumu = self._mumu()
         with self._driving(mumu):
-            report = commands.launch("none", lambda: False)
+            report = commands.launch("none", lambda: False, _frames(self))
         self.settled.assert_called_once()
         mumu.controller.assert_called_once_with("127.0.0.1:16384")
         assert report.at_village
@@ -6356,19 +6363,26 @@ class LaunchTests(unittest.TestCase):
         mumu = self._mumu()
         self.settled.return_value = None
         with self._driving(mumu):
-            report = commands.launch("none", lambda: False)
+            report = commands.launch("none", lambda: False, _frames(self))
         assert not report.at_village
         assert "村莊沒有出現" in commands.launch_line(report)
 
     def test_a_village_that_never_painted_leaves_its_frame(self) -> None:
-        """`launch` has no `--debug`, and this failure is the one that needs a frame."""
+        """This failure is the one that needs a frame, `--debug` or not."""
         mumu = self._mumu()
-        mumu.controller.return_value.screenshot.return_value = b"frame"
         self.settled.return_value = None
-        with tempfile.TemporaryDirectory() as folder, self._driving(mumu):
-            keep = Path(folder) / "frames" / "no_village.png"
-            commands.launch("none", lambda: False, keep)
-            assert keep.read_bytes() == b"frame"
+        frames = _frames(self)
+        with self._driving(mumu):
+            commands.launch("none", lambda: False, frames)
+        assert (frames.directory / "no_village.png").read_bytes() == b"frame"
+
+    def test_its_own_controller_records_into_the_run(self) -> None:
+        """`launch` builds its controller itself, so its polls reach `--debug` only this way."""
+        mumu = self._mumu()
+        frames = _frames(self)
+        with self._driving(mumu):
+            commands.launch("none", lambda: False, frames)
+        assert mumu.controller.return_value.frames is frames
 
     def test_a_stop_ends_the_wait_and_is_named_as_one(self) -> None:
         """`ai_coc stop` used to wait out the whole three minutes, and the report
@@ -6378,7 +6392,7 @@ class LaunchTests(unittest.TestCase):
         self.settled.return_value = None
         stop = MagicMock(return_value=True)
         with self._driving(mumu):
-            report = commands.launch("none", stop)
+            report = commands.launch("none", stop, _frames(self))
         assert self.settled.call_args.args[2] is stop
         assert report.outcome == "stopped"
         assert not report.at_village
@@ -6386,7 +6400,7 @@ class LaunchTests(unittest.TestCase):
     def test_the_ordinary_case_restarts_nothing(self) -> None:
         mumu = self._mumu()
         with self._driving(mumu):
-            report = commands.launch("none", lambda: False)
+            report = commands.launch("none", lambda: False, _frames(self))
         mumu.restart_instance.assert_not_called()
         mumu.restart_coc.assert_not_called()
         mumu.ensure_coc.assert_called_once_with(0)
@@ -6396,14 +6410,14 @@ class LaunchTests(unittest.TestCase):
         """This scope does the same work either way; only the report tells them apart."""
         mumu = self._mumu(running=False)
         with self._driving(mumu):
-            report = commands.launch("none", lambda: False)
+            report = commands.launch("none", lambda: False, _frames(self))
         assert not report.was_running
         assert "開起來" in commands.launch_line(report)
 
     def test_restarting_the_game_leaves_the_emulator_alone(self) -> None:
         mumu = self._mumu()
         with self._driving(mumu):
-            commands.launch("game", lambda: False)
+            commands.launch("game", lambda: False, _frames(self))
         mumu.restart_coc.assert_called_once()
         mumu.restart_instance.assert_not_called()
 
@@ -6427,7 +6441,7 @@ class LaunchTests(unittest.TestCase):
         mumu.instance.side_effect = [up, None, down]
         mumu.ensure_coc.return_value = down
         with self._driving(mumu), patch.object(commands, "SHUTDOWN_GAP", 0):
-            commands.launch("emulator", lambda: False)
+            commands.launch("emulator", lambda: False, _frames(self))
         assert mumu.instance.call_count == 3
         mumu.restart_instance.assert_called_once_with(0)
         mumu.restart_coc.assert_not_called()
@@ -6438,7 +6452,7 @@ class LaunchTests(unittest.TestCase):
             patch.object(commands.ConfigStore, "load", return_value=AppConfig()),
             pytest.raises(RuntimeError, match="找不到任何模擬器"),
         ):
-            commands.launch("none", lambda: False)
+            commands.launch("none", lambda: False, _frames(self))
 
 
 class RunLogTests(unittest.TestCase):
@@ -6465,18 +6479,21 @@ class RunLogTests(unittest.TestCase):
             assert run.directory.is_dir()
 
     def test_nothing_is_recorded_unless_it_was_asked_for(self) -> None:
-        """None rather than an empty directory: every loop reads None as "do not
-        save", and a directory that is always there says nothing about whether
-        this run was worth recording.
+        """No directory either: one that is always there says nothing about
+        whether this run was worth recording.
         """
         with tempfile.TemporaryDirectory() as folder:
-            assert self._run(folder).frames is None
+            run = self._run(folder)
+            run.frames.record("scout", b"png")
+            assert not run.frames.directory.exists()
 
-    def test_recording_gets_a_frames_directory_ready(self) -> None:
+    def test_a_run_has_one_writer_for_its_frames(self) -> None:
+        """A second one would number from one again over the first one's files."""
         with tempfile.TemporaryDirectory() as folder:
-            frames = self._run(folder, recording=True).frames
-            assert frames is not None
-            assert frames.is_dir()
+            run = self._run(folder, recording=True)
+            assert run.frames is run.frames
+            assert run.frames.recording
+            assert run.frames.directory == run.directory / "frames"
 
     def test_the_answer_lands_beside_the_log_that_explains_it(self) -> None:
         with tempfile.TemporaryDirectory() as folder:

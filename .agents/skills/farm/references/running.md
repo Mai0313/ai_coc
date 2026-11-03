@@ -67,7 +67,7 @@ uv run ai_coc attack --repeat 0 --plan src/ai_coc/plans/flat.json --yield --agen
 ├── run.log        # 這次執行的完整紀錄, 純文字
 ├── result.json    # 這次的答案, 跑完才會有這個檔案
 ├── plans.jsonl    # 只有 attack 有: 一場一行, 那一場的整份戰術
-└── frames/        # 迴圈自己讀的畫面要開 --debug; capture 一定會有; world 跟 launch 截得到畫面卻找不到村莊時留 no_village.png (log 會寫路徑)
+└── frames/        # 讀過的每一張要開 --debug; tap、swipe、confirm、boost 留 after.png (什麼都沒按是 refused.png); capture 一定會有; world 跟 launch 截得到畫面卻找不到村莊時留 no_village.png
 ```
 
 **目錄在開跑開頭那行 log** (`This run is being kept in ...`). 名字是「時間-指令」, `ls -t ~/.ai_coc/logs` 最上面是最近已經建好的一次 (剛開跑的那一次可能還沒建好). 任何指令加 `--label <名字>` 會接在後面 (`…-attack-baseline`), 給之後要找回來的那一次用.
@@ -82,7 +82,7 @@ jq '.[-1] | {world, outcome, stock_full, attacked}' ~/.ai_coc/logs/<run>/result.
 
 `jq '.stock_full'` 對陣列直接報錯, 別的讀法多半拿到不是 `true` 的東西, 讀起來像「還沒滿」. 其他指令 (`collect`, `world` ...) 多半寫單一個物件; `stop`、`giveback`、`capture`、被取消的借用跟遇到別的裝置登入而收手的指令寫的是純文字.
 
-`--debug` 留下迴圈讀的每一張 (每一張都是模擬器的一次 PNG 編碼, 平均兩 MB 多: `constants.py` 的 `FRAME_RETENTION_DAYS` 註解量過 11 456 張佔 27.2 GB), 開不開是派工的人決定 (`farm` 的「要不要留畫面」). 存下的每一張, `run.log` 都有一行 `Saved frame <檔名>`. `--shot-every` 另加一條固定心跳 (`tick_00012.3s.png`), 要搭配 `--debug`, 補兩張之間看不到的那段.
+`--debug` 留下這次讀過的每一張, 照讀的順序編號 (每一張都是模擬器的一次 PNG 編碼, 平均兩 MB 多: `constants.py` 的 `FRAME_RETENTION_DAYS` 註解量過 11 456 張佔 27.2 GB); 除了 `read`、`stop`、`giveback`、`watch` 這幾個不碰畫面的, 每個指令都能開. 開不開是派工的人決定 (`farm` 的「要不要留畫面」). 存下的每一張, 不管有沒有開 `--debug`, `run.log` 都有一行 `Saved frame <檔名>`. `--shot-every` 另加一條固定心跳 (`tick_00012.3s.png`), 要搭配 `--debug`, 補兩張之間看不到的那段.
 
 ## 盯
 

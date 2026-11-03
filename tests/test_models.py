@@ -356,7 +356,7 @@ class RunLogTests(unittest.TestCase):
             run = RunLog(directory=Path(folder))
             assert run.log_path == Path(folder) / "run.log"
             assert run.plan_log == Path(folder) / "plans.jsonl"
-            assert run.frames is None
+            assert run.frames.directory == Path(folder) / "frames"
 
 
 if __name__ == "__main__":

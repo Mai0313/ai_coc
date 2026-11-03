@@ -19,9 +19,11 @@ import pytest
 
 from ai_coc import plans
 from ai_coc.ui import clan as clan_ui
+from ai_coc.ui import world as world_ui
 from ai_coc.ui import attack, plates, upkeep
 from ai_coc.ui import runner as shared
 from ai_coc.models import (
+    FrameLog,
     BattleRow,
     LootOffer,
     ScoutView,
@@ -59,7 +61,7 @@ from ai_coc.ui.attack import (
 from ai_coc.ui.runner import GameRunner, ScreenRunner, SessionTakenError
 from ai_coc.ui.upkeep import UpkeepRunner
 from ai_coc.adapters.ai import GeminiClient
-from ai_coc.adapters.adb import AdbController, AdbControlError
+from ai_coc.adapters.adb import PNG_MAGIC, AdbController, AdbControlError
 from ai_coc.parsers.frame import open_frame
 
 FRAMES = Path(__file__).parent / "frames"
@@ -84,24 +86,53 @@ def _step(
 
 
 class FrameTests(unittest.TestCase):
-    """A recorded frame is named in the log, so the lines around it say what was read off it."""
+    """Every capture is recorded where it passes, under `--debug` and only then."""
 
-    def test_a_saved_frame_is_named_in_the_log(self) -> None:
-        with (
-            tempfile.TemporaryDirectory() as folder,
-            patch.object(AdbController, "screenshot", return_value=b"png"),
-            self.assertLogs(shared.logger) as logs,
-        ):
-            ScreenRunner(adb=_adb(), display=DISPLAY, frame_dir=Path(folder))._frame("scout")
-            assert (Path(folder) / "0001_scout.png").read_bytes() == b"png"
-        assert logs.output == ["INFO:ai_coc.ui.runner:Saved frame 0001_scout.png"]
+    def _recording(self, *, recording: bool = True) -> AdbController:
+        """A controller recording into a directory of the test's own, whose device answers a PNG."""
+        device = MagicMock()
+        device.shell.return_value = PNG_MAGIC
+        self.enterContext(patch.object(AdbController, "connect", return_value=device))
+        folder = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        return AdbController(
+            endpoint=AdbEndpoint(port=16384),
+            frames=FrameLog(directory=folder / "frames", recording=recording),
+        )
 
-    def test_an_unrecorded_frame_names_nothing(self) -> None:
-        with (
-            patch.object(AdbController, "screenshot", return_value=b"png"),
-            self.assertNoLogs(shared.logger),
-        ):
-            ScreenRunner(adb=_adb(), display=DISPLAY)._frame("scout")
+    def _kept(self, adb: AdbController) -> list[str]:
+        assert adb.frames is not None
+        return sorted(path.name for path in adb.frames.directory.glob("*.png"))
+
+    def test_a_recorded_frame_is_named_in_the_log(self) -> None:
+        """So the lines around it say what was read off it."""
+        adb = self._recording()
+        with self.assertLogs("ai_coc.models") as logs:
+            ScreenRunner(adb=adb, display=DISPLAY)._frame("scout")
+        assert self._kept(adb) == ["0001_scout.png"]
+        assert logs.output == ["INFO:ai_coc.models:Saved frame 0001_scout.png"]
+
+    def test_an_unrecorded_frame_is_neither_kept_nor_named(self) -> None:
+        adb = self._recording(recording=False)
+        with self.assertNoLogs("ai_coc.models"):
+            ScreenRunner(adb=adb, display=DISPLAY)._frame("scout")
+        assert self._kept(adb) == []
+
+    def test_a_capture_no_runner_takes_is_recorded_too(self) -> None:
+        """The crossing and the loot cart capture outside any runner, and kept nothing."""
+        for recording, kept in ((True, ["0001_uncover.png"]), (False, [])):
+            adb = self._recording(recording=recording)
+            with patch.object(world_ui, "current_world", return_value="day"):
+                world_ui.uncovered(adb, DISPLAY)
+            assert self._kept(adb) == kept, recording
+
+    def test_the_numbering_runs_across_the_whole_run(self) -> None:
+        """One sequence, whichever runner or call site took the capture."""
+        adb = self._recording()
+        ScreenRunner(adb=adb, display=DISPLAY)._frame("home")
+        with patch.object(world_ui, "current_world", return_value="day"):
+            world_ui.uncovered(adb, DISPLAY)
+        ScreenRunner(adb=adb, display=DISPLAY)._frame("stock")
+        assert self._kept(adb) == ["0001_home.png", "0002_uncover.png", "0003_stock.png"]
 
 
 class ReadStoragesTests(unittest.TestCase):

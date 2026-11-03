@@ -12,7 +12,6 @@ from __future__ import annotations
 import time
 from typing import Literal
 import logging
-from pathlib import Path
 from collections.abc import Callable
 
 from pydantic import BaseModel, PrivateAttr
@@ -155,7 +154,7 @@ def relogin(adb: AdbController, display: DisplayTarget) -> DisplayTarget:
     """
     adb.tap(*RELOGIN_BUTTON, display)
     time.sleep(RELOGIN_WAIT)
-    if not idle_disconnected(png := adb.screenshot(display)):
+    if not idle_disconnected(png := adb.screenshot(display, "relogin")):
         return display
     # The player can log in elsewhere during the wait, the tap's own login
     # having just logged them out, and the restart would take it back.
@@ -189,12 +188,10 @@ class ScreenRunner(BaseModel):
     **`AttackRunner` is the other subclass, and it is why this is a class at
     all.** It is not a `GameRunner` — it has no use for `_home`, since its way
     back to a village has to cope with a result screen, a matchmaker and a
-    server that takes minutes to answer — but it declared these five fields with the
-    same names, types and defaults, and both methods with the same bodies. The
-    frame naming in particular (`0006_scout`, `0010_pass`) is written down in
-    `.agents/rules/code.md` and in the `watch-and-fix` skill, and a
-    convention documented in two places and implemented in two is the drift
-    `CLAUDE.md` is a symlink to avoid.
+    server that takes minutes to answer — but it declared these fields with the
+    same names, types and defaults, and both methods with the same bodies, and
+    a convention implemented in two places is the drift `CLAUDE.md` is a
+    symlink to avoid.
     """
 
     adb: AdbController
@@ -203,10 +200,6 @@ class ScreenRunner(BaseModel):
     # halfway leaves the game on a screen the next run has to dig itself out of.
     # What a unit is belongs to each loop — a donation here, an opponent there.
     should_stop: Callable[[], bool] = lambda: False
-    # Where to keep every frame the loop reads, for a run being studied afterwards.
-    frame_dir: Path | None = None
-
-    _captures: int = PrivateAttr(default=0)
 
     def _tap(self, point: tuple[int, int]) -> None:
         self.adb.tap(point[0], point[1], self.display)
@@ -218,21 +211,8 @@ class ScreenRunner(BaseModel):
         return self._frame(label)
 
     def _frame(self, label: str) -> bytes:
-        """One capture, kept on disk when the run is being recorded.
-
-        Every screenshot a loop reads comes through here, so a recorded run is
-        the whole of it in the order the loop saw it, each frame named for what
-        it was being asked. Afterwards that is the only thing separating a frame
-        the parser misread from a tap that never landed. Each one is named in
-        the log as it is saved, so the lines around it say what was read off it.
-        """
-        png = self.adb.screenshot(self.display)
-        if self.frame_dir is not None:
-            self._captures += 1
-            name = f"{self._captures:04d}_{label}.png"
-            (self.frame_dir / name).write_bytes(png)
-            logger.info("Saved frame %s", name)
-        return png
+        """One capture of the game's display, recorded under `label` when the run is."""
+        return self.adb.screenshot(self.display, label)
 
     def read_storages(self) -> tuple[World | None, VillageStock | None]:
         """Which village is on screen and what its storages hold, in one capture.

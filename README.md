@@ -73,7 +73,7 @@ ai_coc attack --min-gold 800000
 ai_coc attack --min-gold 0 --min-elixir 0 --min-dark 0    # attack whoever comes up first
 ```
 
-A run can keep everything it looked at, which is what makes a battle worth arguing with afterwards:
+Any command that looks at the screen can keep everything it looked at, which is what makes a battle worth arguing with afterwards:
 
 ```bash
 ai_coc attack --debug                # every frame the loop reads, named for what it was asking, and a DEBUG log
@@ -145,7 +145,7 @@ Every run gets a directory of its own:
 ├── run.log        # this run's log, and nothing else
 ├── result.json    # what the command answered
 ├── plans.jsonl    # ai_coc attack only: one line per round, the tactic it played
-└── frames/        # only with --debug
+└── frames/        # every frame it read with --debug; without it, only the ones a command keeps
 ```
 
 The first line of every run says which directory it is, and the name is `<when>-<what>` so a listing reads as a history. `--label` adds a third part on any command (`2026-08-29-011423-attack-baseline`) for a run you want to find again. `~/.ai_coc/runs.jsonl` keeps one line per milestone of every run (its start and end, each attack round, the emulator changing hands, every warning), outside `logs/`, so it survives that directory being cleared; `grep -r ~/.ai_coc/logs/*/run.log` searches the full logs across runs and tells you which one each hit came from.

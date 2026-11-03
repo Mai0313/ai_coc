@@ -14,7 +14,7 @@
 
 **`launch` 等村莊** (`_settle_game`) 有兩處會出錯:
 
-- **等太短.** 冷開機時間差很多, `RESTART_POLLS` 照最壞情況抓; 每次 poll 在 DEBUG 寫下還在等什麼 (要 `COC_LOG_LEVEL=DEBUG`), 平常只看得到放棄那一行冒號後面的最後狀態.
+- **等太短.** 冷開機時間差很多, `RESTART_POLLS` 照最壞情況抓; 每次 poll 在 DEBUG 寫下還在等什麼 (要 `launch --debug`, 每次 poll 看到的畫面也會留下), 平常只看得到放棄那一行冒號後面的最後狀態.
 - **等的是畫完而不是哪個村莊.** `_settle_game` 只問 `current_world` 讀不讀得出 (不用 `read_stock`, 它在兩個世界都答得出來, 分不出是哪一個), 兩個世界都算; 落在另一邊 attack 回 `other_village`, 主村指令回 `builder_base`. 載入時倉庫水位是從零跑上來的動畫, 那時讀到的數字不能回報.
 
 ## 開不了攻擊選單
