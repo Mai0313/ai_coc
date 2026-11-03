@@ -674,6 +674,36 @@ def research_running(png: bytes) -> bool:
     return band.count(255) / len(band) >= RESEARCH_BAND_SHARE
 
 
+# 正在將X升至N級, a running upgrade's home sheet, which a home village research
+# leaves standing in its sheet's place once 確認 has started it (#527): the same
+# red X and green button, the button now 立即完成 with a gem where the resource
+# icon was. **The gem is read, never the price failing to**: a resource sheet
+# whose price stopped reading would otherwise pass for a purchase. What is read
+# is the gem's bright face, which its dark rim keeps a patch of its own. Measured
+# 2026-11-03 over every committed frame: 524 px over 29x27 (0.67 filled) on the
+# four running sheets, a hero's, a pet's and two researches', the same sprite
+# to the pixel on each. In this box the nearest anything else comes is the
+# button's own highlight, cut to bands 4 px tall and 28 to 65 across on every
+# home sheet, and the builder base buttons' lime, which runs out of the box
+# (67x23 at 0.39 inside it); no other frame holds 100 px of it here.
+SHEET_GEM_BOX = (1145, 779, 1212, 832)
+SHEET_GEM_FACE = ((195, 245), (238, 255), (0, 165))
+SHEET_GEM_ACROSS = (24, 34)
+SHEET_GEM_DOWN = (22, 32)
+SHEET_GEM_FILL = 0.5
+
+
+def sheet_running(png: bytes) -> bool:
+    """Whether the home sheet up is a running upgrade's 正在將X升至N級, by the gem on its button."""
+    if sheet_open(png) != "day":
+        return False
+    image = open_frame(png).crop(SHEET_GEM_BOX)
+    return any(
+        patch.sized(SHEET_GEM_ACROSS, SHEET_GEM_DOWN, SHEET_GEM_FILL)
+        for patch in patches(mask(image, SHEET_GEM_FACE), *image.size)
+    )
+
+
 def sheet_offer(png: bytes) -> SheetOffer | None:
     """What the upgrade sheet's 確認 costs and in which resource, or None.
 

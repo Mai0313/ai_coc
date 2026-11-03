@@ -184,6 +184,7 @@ from ai_coc.parsers.building import (
     game_dialog,
     sheet_offer,
     selection_row,
+    sheet_running,
     upgrade_sheet,
     panel_wall_menu,
     research_running,
@@ -7310,6 +7311,7 @@ class UpgradeSheetOfferTests(unittest.TestCase):
             "sheet_running_gems.png",
             "sheet_running_book.png",
             "sheet_running_research.png",
+            "sheet_running_after_confirm.png",
             "night_sheet_gold.png",
             "night_sheet_elixir.png",
             "night_sheet_red.png",
@@ -7326,7 +7328,29 @@ class UpgradeSheetOfferTests(unittest.TestCase):
             "sheet_running_gems.png",
             "sheet_running_book.png",
             "sheet_running_research.png",
+            "sheet_running_after_confirm.png",
         }
+
+    def test_only_a_running_upgrades_sheet_reads_as_one(self) -> None:
+        """Told by the gem on its button, never by a price failing to read (#527)."""
+        running = {path.name for path in FRAMES.glob("*.png") if sheet_running(path.read_bytes())}
+        # The last is what a home research's 確認 left standing.
+        assert running == {
+            "sheet_running_gems.png",
+            "sheet_running_book.png",
+            "sheet_running_research.png",
+            "sheet_running_after_confirm.png",
+        }
+
+    def test_a_resource_sheet_whose_price_does_not_read_is_not_running(self) -> None:
+        """Taking it for one would report a purchase nothing made."""
+        image = Image.open(FRAMES / "sheet_hero_dark.png").convert("RGB")
+        image.paste((166, 215, 75), (1000, 765, 1190, 803))
+        out = io.BytesIO()
+        image.save(out, format="PNG")
+        assert sheet_open(out.getvalue()) == "day"
+        assert sheet_offer(out.getvalue()) is None
+        assert not sheet_running(out.getvalue())
 
     def test_only_the_labs_running_research_window_reads_as_one(self) -> None:
         """Its greyed-out troop tile once passed for the research sheet's button (#492)."""

@@ -150,6 +150,7 @@ from ai_coc.parsers.building import (
     goblin_prompt,
     green_buttons,
     selection_row,
+    sheet_running,
     upgrade_sheet,
     panel_wall_menu,
     green_button_row,
@@ -2904,7 +2905,7 @@ def swipe(
 _RESOURCE_NAMES = {"gold": "金幣", "elixir": "聖水", "dark": "黑水"}
 
 CONFIRM_LINES: dict[ConfirmOutcome, str] = {
-    "confirmed": "按了確認,視窗關了",
+    "confirmed": "按了確認,視窗關了或換成正在升級的畫面",
     "no_sheet": "畫面上沒有升級確認視窗,什麼都沒按",
     "not_a_resource": "確認鈕上不是金幣、聖水或黑水的價格(寶石或道具),什麼都沒按",
     "price_mismatch": "確認鈕上的價格跟給的不一樣,什麼都沒按",
@@ -2940,9 +2941,10 @@ def _after_confirm(adb: AdbController, display: DisplayTarget) -> tuple[ConfirmO
 
     A dialog at any look gets its 取消 and ends it. Only `CONFIRM_SETTLED`
     looks in a row showing the panel or the village back, with no sheet over
-    them, count as done, and so does the builder base lab's 升級部隊 window,
-    which a started research opens in the sheet's place; anything else is left
-    exactly as it stands.
+    them, count as done, and so do the two screens a started research leaves
+    in the sheet's place: the builder base lab's 升級部隊 window, and on the
+    home village the sheet itself turned into the running one, 正在將X升至N級
+    (`sheet_running`). Anything else is left exactly as it stands.
     """
     settled = 0
     outcome: ConfirmOutcome = "unexpected"
@@ -2953,14 +2955,20 @@ def _after_confirm(adb: AdbController, display: DisplayTarget) -> tuple[ConfirmO
         # The sheet first, for the reason `_refused` gives: read as a dialog,
         # a builder base sheet still standing would have its "取消" pressed,
         # and that is wherever the dialog reader thought it saw orange.
-        if sheet_open(after):
+        running = sheet_running(after)
+        if sheet_open(after) and not running:
             settled, outcome = 0, "sheet_stayed"
             continue
-        if (dialog := game_dialog(after)) is not None:
+        if not running and (dialog := game_dialog(after)) is not None:
             adb.tap(*dialog.cancel, display)
             time.sleep(BACK_SETTLE)
             return "refused_by_game", adb.screenshot(display, "cancelled")
-        if build_panel_open(after) or current_world(after) is not None or research_running(after):
+        if (
+            running
+            or build_panel_open(after)
+            or current_world(after) is not None
+            or research_running(after)
+        ):
             settled += 1
             if settled >= CONFIRM_SETTLED:
                 return "confirmed", after
