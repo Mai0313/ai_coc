@@ -11,7 +11,6 @@ import math
 import time
 from typing import TYPE_CHECKING, Self, Literal
 import logging
-from pathlib import Path
 from datetime import UTC, datetime, timedelta
 import threading
 from contextlib import suppress, contextmanager
@@ -27,6 +26,7 @@ from ai_coc.models import (
     World,
     Caller,
     MapEdge,
+    FrameLog,
     ProbeRay,
     AppConfig,
     LockEvent,
@@ -179,6 +179,7 @@ from .ui.runner import (
 from .ui.upkeep import UpkeepRunner
 
 if TYPE_CHECKING:
+    from pathlib import Path
     from collections.abc import Callable, Iterable, Iterator, Generator
 
 logger = logging.getLogger(__name__)
@@ -247,13 +248,19 @@ def chosen(
     return emulator, instance
 
 
-def _controller() -> AdbController:
+def _recording(adb: AdbController, frames: FrameLog) -> AdbController:
+    """The controller, capturing into this run's frames from here on."""
+    adb.frames = frames
+    return adb
+
+
+def _controller(frames: FrameLog) -> AdbController:
     """The configured instance, with Clash of Clans already up on it."""
     emulator, instance = chosen(emulators())
-    return emulator.controller(emulator.ensure_coc(instance.index).adb_serial)
+    return _recording(emulator.controller(emulator.ensure_coc(instance.index).adb_serial), frames)
 
 
-def _attached() -> AdbController:
+def _attached(frames: FrameLog) -> AdbController:
     """The configured instance as it is, for a command that only looks.
 
     `_controller` goes through `ensure_coc`, which relaunches the game or the
@@ -265,19 +272,12 @@ def _attached() -> AdbController:
         raise RuntimeError(
             f"模擬器 {instance.adb_serial} 沒開,這個指令只看不開;要開用 ai_coc launch"
         )
-    return emulator.controller(instance.adb_serial)
+    return _recording(emulator.controller(instance.adb_serial), frames)
 
 
-def _session(frame_dir: Path | None = None) -> tuple[AdbController, DisplayTarget]:
-    """What every headless loop starts from: the game's controller, its display, and a frame directory that exists.
-
-    The directory is made here rather than left to the loop because every loop
-    takes `frame_dir: Path | None` and reads None as "do not save"; one that
-    is not None is expected to be writable by the first capture.
-    """
-    adb = _controller()
-    if frame_dir is not None:
-        frame_dir.mkdir(parents=True, exist_ok=True)
+def _session(frames: FrameLog) -> tuple[AdbController, DisplayTarget]:
+    """What every headless loop starts from: the game's controller and its display."""
+    adb = _controller(frames)
     return adb, adb.display_for(COC_PACKAGE)
 
 
@@ -333,23 +333,8 @@ def launch_line(report: LaunchReport) -> str:
     return f"{did}{LAUNCH_OUTCOME_LINES[report.outcome]},模擬器 {report.index} ({report.serial})"
 
 
-def _keep_frame(path: Path, png: bytes) -> None:
-    """Keep the frame a command could not find a village on, for whoever debugs it."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_bytes(png)
-    logger.info("Kept the frame no village read on: %s", path)
-
-
-def _keep_screen(adb: AdbController, path: Path) -> None:
-    """`_keep_frame` for what is on screen now, when a wait has already given up."""
-    try:
-        _keep_frame(path, adb.screenshot(adb.display_for(COC_PACKAGE)))
-    except AdbControlError:
-        logger.warning("The game is not on a display; there is no frame to keep")
-
-
 def launch(
-    restart: RestartScope, should_stop: Callable[[], bool], keep: Path | None = None
+    restart: RestartScope, should_stop: Callable[[], bool], frames: FrameLog
 ) -> LaunchReport:
     """Bring the game up on the configured instance, tearing down as much as asked.
 
@@ -357,8 +342,8 @@ def launch(
     through `_controller`, which calls `ensure_coc` and gives up on whatever it
     cannot fix. This is that step on its own, for the two states it cannot reach
     from there — an emulator or a game that is up and no longer answering, which
-    from here looks exactly like a working one. `keep` is where the frame goes
-    when the village never appears.
+    from here looks exactly like a working one. When the village never appears,
+    the screen it gave up on is kept as `no_village`.
     """
     emulator, found = chosen(emulators())
     index = found.index
@@ -382,7 +367,7 @@ def launch(
     # than in each of them. The position is settled there too, by parking the
     # camera against a map edge — the pinch does not do it, whatever this used
     # to say.
-    adb = emulator.controller(instance.adb_serial)
+    adb = _recording(emulator.controller(instance.adb_serial), frames)
     settled = _settle_game(adb, RESTART_POLLS, should_stop)
     # A game whose village never painted is reported rather than raised: the
     # process is up, so the caller may still have something to do with it, and
@@ -393,8 +378,10 @@ def launch(
         outcome = "stopped"
     else:
         outcome = "no_village"
-        if keep is not None:
-            _keep_screen(adb, keep)
+        try:
+            frames.write("no_village", adb.screenshot(adb.display_for(COC_PACKAGE), None))
+        except AdbControlError:
+            logger.warning("The game is not on a display; there is no frame to keep")
     report = LaunchReport(
         index=instance.index,
         serial=instance.adb_serial,
@@ -435,7 +422,7 @@ class FrameTicker(BaseModel):
 
     adb: AdbController
     display: DisplayTarget
-    out_dir: Path
+    frames: FrameLog
     seconds: float
 
     _stop: threading.Event = PrivateAttr(default_factory=threading.Event)
@@ -459,16 +446,14 @@ class FrameTicker(BaseModel):
         while not self._stop.is_set():
             elapsed = time.monotonic() - started
             try:
-                png = self.adb.screenshot(self.display)
+                png = self.adb.screenshot(self.display, None)
             except Exception:
                 # Loud, but never fatal: this is a recording of the run, not
                 # part of it, and losing the battle to a missed frame is worse
                 # than the gap in the recording.
                 logger.warning("A heartbeat capture failed", exc_info=True)
             else:
-                name = f"tick_{elapsed:07.1f}s.png"
-                (self.out_dir / name).write_bytes(png)
-                logger.info("Saved frame %s", name)
+                self.frames.write(f"tick_{elapsed:07.1f}s", png)
             self._stop.wait(self.seconds)
 
 
@@ -1406,7 +1391,7 @@ def _settle_game(
             # landed on is not this wait's to settle: nothing crosses on its own,
             # a loop that finds the other village says so, and `launch` reports
             # `at_village` rather than promising the home one.
-            png = adb.screenshot(display)
+            png = adb.screenshot(display, "settle")
             if (world := current_world(png)) is not None:
                 # The scale and the position together, and the pinch that used
                 # to be written here is inside the park now: the walk it does is
@@ -1484,17 +1469,14 @@ def _press_away(adb: AdbController, display: DisplayTarget, png: bytes) -> str |
     return None
 
 
-def _prepare_frames(options: AttackOptions) -> None:
-    """Make room for whatever this run was told to keep, and refuse what it cannot.
+def _prepare_frames(options: AttackOptions, frames: FrameLog) -> None:
+    """Refuse a heartbeat on a run that is not recorded.
 
-    A heartbeat with nowhere to write is the one combination that has to fail
-    loudly rather than quietly recording nothing: `--shot-every` is asked for by
-    somebody who wants to look at the frames afterwards.
+    Its ticks fill the gaps between the loop's own frames, which only `--debug`
+    keeps, so ticks alone line up against nothing.
     """
-    if options.frame_dir is not None:
-        options.frame_dir.mkdir(parents=True, exist_ok=True)
-    elif options.shot_every > 0:
-        raise ValueError("--shot-every 要搭配 --debug，不然心跳畫面沒有地方放")
+    if options.shot_every > 0 and not frames.recording:
+        raise ValueError("--shot-every 要搭配 --debug，心跳補的是迴圈自己存的畫面之間的空檔")
 
 
 def _write_plan(path: Path | None, plan: AttackPlan | NightPlan | None) -> None:
@@ -1733,7 +1715,7 @@ def _handed_plan(options: AttackOptions) -> tuple[AttackPlan | NightPlan | None,
 
 
 def attack(
-    options: AttackOptions, should_stop: Callable[[], bool] = stop_requested
+    options: AttackOptions, frames: FrameLog, should_stop: Callable[[], bool] = stop_requested
 ) -> AttackSeries:
     """The attack loop, for as many rounds as asked.
 
@@ -1764,8 +1746,8 @@ def attack(
     marks the run as under way for anybody looking from outside.
     """
     plan, world = _handed_plan(options)
-    adb = _controller()
-    _prepare_frames(options)
+    adb = _controller(frames)
+    _prepare_frames(options, frames)
     config = ConfigStore().load()
     # **Which village to play cannot be asked until one has painted.**
     # `_controller` is satisfied by a pid, so a run started right after a launch
@@ -1791,12 +1773,11 @@ def attack(
         ai=None if plan else _planner(config),
         plan=plan,
         should_stop=should_stop,
-        frame_dir=options.frame_dir,
     )
     series = AttackSeries()
     rounds = options.rounds
     with FrameTicker(
-        adb=adb, display=display, out_dir=options.frame_dir or Path(), seconds=options.shot_every
+        adb=adb, display=display, frames=frames, seconds=options.shot_every
     ) as ticker:
         while rounds <= 0 or len(series.root) < rounds:
             # Between rounds, which is the cheapest place to stop: the village is
@@ -1949,20 +1930,18 @@ def _survey_battle(runner: AttackRunner) -> None:
         raise SessionTakenError(SESSION_TAKEN)
 
 
-def probe(frame_dir: Path | None = None) -> BoundarySurvey:
+def probe(frames: FrameLog) -> BoundarySurvey:
     """Survey where drops are really accepted, and compare it to what the reader says.
 
     Spends a battle to answer one question the recorded frames cannot: whether
     the red line the parser found is the line the game is enforcing.
     """
-    adb, display = _session(frame_dir)
+    adb, display = _session(frames)
     if _village_now(adb, display) == "night":
         survey = BoundarySurvey(outcome="builder_base")
         logger.warning("Boundary survey: %s", SURVEY_LINES[survey.outcome])
         return survey
-    runner = _BoundarySurvey(
-        adb=adb, display=display, thresholds=LootThresholds(), frame_dir=frame_dir
-    )
+    runner = _BoundarySurvey(adb=adb, display=display, thresholds=LootThresholds())
     _survey_battle(runner)
     logger.info(
         "Boundary survey: %s", SURVEY_LINES["surveyed"].format(result=runner.survey.agreement)
@@ -2049,20 +2028,20 @@ class _MapSurvey(AttackRunner):
                 self.survey.edges.append(edge)
 
 
-def bounds(frame_dir: Path | None = None) -> MapSurvey:
+def bounds(frames: FrameLog) -> MapSurvey:
     """Spend a battle finding where the map really ends, and fit a diamond to it."""
-    adb, display = _session(frame_dir)
+    adb, display = _session(frames)
     if _village_now(adb, display) == "night":
         survey = MapSurvey(outcome="builder_base")
         logger.warning("Map survey: %s", SURVEY_LINES[survey.outcome])
         return survey
-    runner = _MapSurvey(adb=adb, display=display, thresholds=LootThresholds(), frame_dir=frame_dir)
+    runner = _MapSurvey(adb=adb, display=display, thresholds=LootThresholds())
     _survey_battle(runner)
     logger.info("Map survey: %s", SURVEY_LINES["surveyed"].format(result=runner.survey.summary))
     return runner.survey
 
 
-def stock(frame_dir: Path | None = None) -> StockReport:
+def stock(frames: FrameLog) -> StockReport:
     """What the village on screen is holding, and how close that is to full.
 
     **The one thing nothing here could answer without starting a run.** Every
@@ -2083,9 +2062,9 @@ def stock(frame_dir: Path | None = None) -> StockReport:
     every decision here is made in: `stop_at` is a share, and the storages grow
     when a builder finishes one, so reading them beats writing them down.
     """
-    adb = _controller()
+    adb = _controller(frames)
     display = _settle_game(adb, WORLD_SETTLE_POLLS) or adb.display_for(COC_PACKAGE)
-    return stock_of(ScreenRunner(adb=adb, display=display, frame_dir=frame_dir), adb, display)
+    return stock_of(ScreenRunner(adb=adb, display=display), adb, display)
 
 
 def stock_of(runner: ScreenRunner, adb: AdbController, display: DisplayTarget) -> StockReport:
@@ -2147,7 +2126,7 @@ def _entity_names() -> dict[int, str]:
         return {}
 
 
-def status(frame_dir: Path | None = None) -> StatusReport:
+def status(frames: FrameLog) -> StatusReport:
     """When every upgrade on both villages finishes, and what the village on screen holds.
 
     The timers come off the game's own export, worked through whatever
@@ -2157,12 +2136,12 @@ def status(frame_dir: Path | None = None) -> StatusReport:
     them.
     """
     names = _entity_names()
-    adb = _controller()
+    adb = _controller(frames)
     # Parks the camera although the walk below only taps fixed HUD places:
     # skipping it was offered to save time and kept as the safer default.
     settled = _settle_game(adb, WORLD_SETTLE_POLLS)
     display = settled or adb.display_for(COC_PACKAGE)
-    runner = PlateRunner(adb=adb, display=display, frame_dir=frame_dir)
+    runner = PlateRunner(adb=adb, display=display)
     # **The first reading is the check**, so there is no capture to take ahead
     # of it: the plates answer `not_a_village` for a panel over the village, and
     # clearing one then costs one retry rather than a capture on every run.
@@ -2176,7 +2155,7 @@ def status(frame_dir: Path | None = None) -> StatusReport:
     # whose ceilings are read by opening a tooltip on each bar that can be left
     # standing over the gear.
     exported = (
-        _exported(adb, display, frame_dir, names)
+        _exported(adb, display, names)
         if settled is not None and builder.world is not None
         else VillageExport(tag="", exported_at="", outcome="no_village")
     )
@@ -2313,14 +2292,14 @@ def collect_line(report: CollectReport) -> str:
 def _village_now(adb: AdbController, display: DisplayTarget) -> World | None:
     """Which village the game is on, once one has painted; None when none does in time."""
     for _ in range(WORLD_SETTLE_POLLS):
-        world = current_world(adb.screenshot(display))
+        world = current_world(adb.screenshot(display, "world"))
         if world is not None:
             return world
         time.sleep(RESTART_POLL_GAP)
     return None
 
 
-def collect(frame_dir: Path | None = None) -> CollectReport:
+def collect(frames: FrameLog) -> CollectReport:
     """Tap every collector the village has left standing.
 
     Collectors stop once they are full, so a village nobody has emptied has spent
@@ -2331,7 +2310,7 @@ def collect(frame_dir: Path | None = None) -> CollectReport:
     See `CartReport`: a cart the game had locked was reported as an empty one,
     which is the opposite instruction.
     """
-    adb, display = _session(frame_dir)
+    adb, display = _session(frames)
     # **Decided on a village that has painted, not on the first frame.** Every
     # branch but the cart's is the home village's, and a frame caught between a
     # battle and its village used to send a run meant for the cart across the
@@ -2339,7 +2318,7 @@ def collect(frame_dir: Path | None = None) -> CollectReport:
     # Only the world is waited for: both branches park the camera themselves.
     report = None
     if _village_now(adb, display) != "night":
-        report = UpkeepRunner(adb=adb, display=display, frame_dir=frame_dir).collect()
+        report = UpkeepRunner(adb=adb, display=display).collect()
     # **The builder base has no collectors to sweep and one cart instead.** Its
     # elixir is paid into that cart rather than into the storages, so this is
     # the same job on that village even though it shares none of the machinery:
@@ -2365,20 +2344,16 @@ DONATE_LINES: dict[DonateOutcome, str] = {
 }
 
 
-def donate(options: DonateOptions) -> DonateReport:
+def donate(options: DonateOptions, frames: FrameLog) -> DonateReport:
     """Give troops to whoever in the clan is asking.
 
     Cheap to run and cheap to find nothing: a clan with no request open costs one
     tap on the chat tab and one capture. `dry_run` walks the whole path and stops
     before the tap that gives something away, because the panel does not confirm.
     """
-    adb, display = _session(options.frame_dir)
+    adb, display = _session(frames)
     report = ClanRunner(
-        adb=adb,
-        display=display,
-        frame_dir=options.frame_dir,
-        dry_run=options.dry_run,
-        rounds=options.rounds,
+        adb=adb, display=display, dry_run=options.dry_run, rounds=options.rounds
     ).donate()
     logger.info(
         "Donate: %s",
@@ -2387,7 +2362,7 @@ def donate(options: DonateOptions) -> DonateReport:
     return report
 
 
-def world(go: World | None = None, keep: Path | None = None) -> WorldReport:
+def world(go: World | None, frames: FrameLog) -> WorldReport:
     """Which village the game is on, and sail to the other one when asked for it.
 
     Reading is the default and crossing is the exception: this is the question
@@ -2401,23 +2376,23 @@ def world(go: World | None = None, keep: Path | None = None) -> WorldReport:
     project's own measurement, and still enough to make the claim false. The
     patience that call also brings is not this command's to spend: a game still
     on its loading screen honestly has no village on it, and `ai_coc launch` is
-    the one that waits a cold start out. `keep` is where the frame goes when no
-    village reads on it.
+    the one that waits a cold start out. A frame no village reads on is kept as
+    `no_village`.
 
     **Reading takes no claim and starts nothing** (`_attached`): it runs beside a
     loop that holds the emulator without disturbing it. Crossing drives the game,
     so it goes through `_controller` and the claim like any other command.
     """
-    adb = _controller() if go is not None else _attached()
+    adb = _controller(frames) if go is not None else _attached(frames)
     try:
         display = adb.display_for(COC_PACKAGE)
     except AdbControlError:
         logger.warning("The game is not on a display yet; neither village can be confirmed")
         return WorldReport(found=None, world=None, outcome="no_display")
-    png = adb.screenshot(display)
+    png = adb.screenshot(display, "world")
     found = current_world(png)
-    if found is None and keep is not None:
-        _keep_frame(keep, png)
+    if found is None:
+        frames.write("no_village", png)
     if go is None or go == found:
         report = WorldReport(found=found, world=found, outcome="here" if found else "no_village")
     else:
@@ -2468,7 +2443,7 @@ def view_line(report: ViewReport) -> str:
     return f"{scaled},{VIEW_LINES[report.outcome]}"
 
 
-def view(zoom: str = "out", times: int = 3) -> ViewReport:
+def view(frames: FrameLog, zoom: str = "out", times: int = 3) -> ViewReport:
     """Put the village camera back where every coordinate here was measured.
 
     **The game has no zoom control to tap and reports no zoom level**, so this
@@ -2509,7 +2484,7 @@ def view(zoom: str = "out", times: int = 3) -> ViewReport:
     `ZOOM_PINCHES` inside the park — which past the far limit does nothing at
     all and is why the flag is still the knob it says it is.
     """
-    adb = _controller()
+    adb = _controller(frames)
     display = adb.display_for(COC_PACKAGE)
     adb.zoom(zoom, times, COC_PACKAGE, display)
     asked: Literal["in", "out"] = "out" if zoom == "out" else "in"
@@ -2522,7 +2497,7 @@ def view(zoom: str = "out", times: int = 3) -> ViewReport:
         # swipe after fourteen of them; `park_camera` pinches back out for
         # exactly that reason, which on this path is the opposite of the request.
         outcome: ViewOutcome = "zoomed_in"
-    elif (world := current_world(frame := adb.screenshot(display))) is None:
+    elif (world := current_world(frame := adb.screenshot(display, "view"))) is None:
         outcome = "not_a_village"
     elif selection_row(frame):
         outcome = "selected"
@@ -2602,9 +2577,7 @@ def _last_export() -> VillageExport:
     return export.model_copy(update={"outcome": "read_back"})
 
 
-def _copy_village(
-    adb: AdbController, display: DisplayTarget, frame_dir: Path | None
-) -> tuple[str, ExportOutcome]:
+def _copy_village(adb: AdbController, display: DisplayTarget) -> tuple[str, ExportOutcome]:
     """Walk the settings menus and come back with whatever the game copied.
 
     Every step is verified before the next tap, because these are fixed
@@ -2620,28 +2593,20 @@ def _copy_village(
     in the middle of something else, and leaving 7 KB of village JSON where
     their own copy used to be is a cost they did not agree to.
     """
-
-    def look(label: str) -> bytes:
-        png = adb.screenshot(display)
-        if frame_dir is not None:
-            (frame_dir / f"{label}.png").write_bytes(png)
-            logger.info("Saved frame %s.png", label)
-        return png
-
     adb.tap(*PROFILE_AVATAR, display)
     time.sleep(PAGE_SETTLE)
-    if not window_open(look("profile")):
+    if not window_open(adb.screenshot(display, "profile")):
         return "", "settings_shut"
     adb.tap(*SETTINGS_TAB, display)
     time.sleep(PAGE_SETTLE)
-    if not settings_open(look("settings")):
+    if not settings_open(adb.screenshot(display, "settings")):
         return "", "settings_shut"
     adb.tap(*MORE_SETTINGS, display)
     time.sleep(PAGE_SETTLE)
-    if not more_settings_open(look("more_settings")):
+    if not more_settings_open(adb.screenshot(display, "more-settings")):
         return "", "more_settings_shut"
     for attempt in range(SCROLL_TRIES):
-        spot = export_row(look(f"scroll_{attempt}"))
+        spot = export_row(adb.screenshot(display, f"scroll-{attempt}"))
         if spot is not None:
             break
         adb.swipe(*SETTINGS_SCROLL, SCROLL_MS, display)
@@ -2656,7 +2621,7 @@ def _copy_village(
             time.sleep(CLIPBOARD_GAP)
             if payload := read_clipboard():
                 return payload, "exported"
-        look("nothing_copied")
+        adb.screenshot(display, "nothing-copied")
         return "", "nothing_copied"
     finally:
         write_clipboard(held)
@@ -2684,7 +2649,7 @@ def export_line(export: VillageExport) -> str:
     return EXPORT_LINES[export.outcome].format(tag=export.tag, count=len(export.entities))
 
 
-def export(frame_dir: Path | None = None, last: bool = False) -> VillageExport:
+def export(frames: FrameLog, last: bool = False) -> VillageExport:
     """Get the village out of the game and name everything in it.
 
     The game will write the whole village out as JSON, which is the only
@@ -2705,16 +2670,14 @@ def export(frame_dir: Path | None = None, last: bool = False) -> VillageExport:
     # that fails on it after walking the menus has spent the taps and thrown the
     # answer away.
     names = fetch_entity_mapping().names()
-    adb = _controller()
+    adb = _controller(frames)
     display = _settle_game(adb, WORLD_SETTLE_POLLS)
     if display is None:
         return VillageExport(tag="", exported_at="", outcome="no_village")
-    return _exported(adb, display, frame_dir, names)
+    return _exported(adb, display, names)
 
 
-def _exported(
-    adb: AdbController, display: DisplayTarget, frame_dir: Path | None, names: dict[int, str]
-) -> VillageExport:
+def _exported(adb: AdbController, display: DisplayTarget, names: dict[int, str]) -> VillageExport:
     """The walk through the settings menus and everything after it, on a village already up.
 
     Shared with `status`, which reads its timers off the same payload. The
@@ -2722,10 +2685,8 @@ def _exported(
     a fixed place, and one aimed at a battle can deploy whatever card is
     selected there.
     """
-    if frame_dir is not None:
-        frame_dir.mkdir(parents=True, exist_ok=True)
     try:
-        payload, copied = _copy_village(adb, display, frame_dir)
+        payload, copied = _copy_village(adb, display)
         if copied != "exported":
             return VillageExport(tag="", exported_at="", outcome=copied)
         # Parsed inside the same guard, because the clipboard is the one input
@@ -2740,7 +2701,7 @@ def _exported(
         # Whatever happened, the profile window is left covering the village,
         # and every other command starts by assuming one is on screen. Only
         # where it is up: with none, that place is the gold bar.
-        if window_open(adb.screenshot(display)):
+        if window_open(adb.screenshot(display, "profile-left")):
             adb.tap(*CLOSE_SETTINGS, display)
     stamp = snapshot.raw.timestamp
     when = (
@@ -2762,7 +2723,7 @@ def _exported(
     return result
 
 
-def capture(out_dir: Path, count: int = 1, gap: float = 1.5) -> list[Path]:
+def capture(frames: FrameLog, count: int = 1, gap: float = 1.5) -> list[Path]:
     """Save frames off the live game, for measuring a screen the parsers cannot read yet.
 
     A burst rather than a single shot: the screens worth measuring are the ones
@@ -2772,15 +2733,11 @@ def capture(out_dir: Path, count: int = 1, gap: float = 1.5) -> list[Path]:
     It only looks, so it takes no claim and starts nothing (`_attached`): a game
     that is down is `ai_coc launch`'s to bring up.
     """
-    adb = _attached()
+    adb = _attached(frames)
     display = adb.display_for(COC_PACKAGE)
-    out_dir.mkdir(parents=True, exist_ok=True)
     saved: list[Path] = []
     for index in range(count):
-        path = out_dir / f"frame_{index:03d}.png"
-        path.write_bytes(adb.screenshot(display))
-        logger.info("Saved %s", path)
-        saved.append(path)
+        saved.append(frames.write(f"frame_{index:03d}", adb.screenshot(display, None)))
         if index + 1 < count:
             time.sleep(gap)
     return saved
@@ -2885,7 +2842,7 @@ def _refused(png: bytes, point: tuple[int, int]) -> PressOutcome | None:
 def _pressed(
     gesture: Literal["tap", "swipe"],
     points: list[tuple[int, int]],
-    frame_dir: Path,
+    frames: FrameLog,
     press: Callable[[AdbController, DisplayTarget], None],
     wait: float,
 ) -> PressReport:
@@ -2895,10 +2852,9 @@ def _pressed(
     the way in, so a panel the agent opened is still open when it gets here.
     A swipe is refused on a sheet even from its X, since only a tap closes one.
     """
-    adb = _attached()
+    adb = _attached(frames)
     display = adb.display_for(COC_PACKAGE)
-    frame_dir.mkdir(parents=True, exist_ok=True)
-    before = adb.screenshot(display)
+    before = adb.screenshot(display, "before-press")
     refusal = _refused(before, points[0])
     if (
         refusal is None
@@ -2907,28 +2863,26 @@ def _pressed(
     ):
         refusal = "sheet_up"
     if refusal is not None:
-        frame = frame_dir / "refused.png"
-        frame.write_bytes(before)
+        frame = frames.write("refused", before)
         report = PressReport(gesture=gesture, points=points, outcome=refusal, frame=frame)
     else:
         press(adb, display)
         time.sleep(wait)
-        frame = frame_dir / "after.png"
-        frame.write_bytes(adb.screenshot(display))
+        frame = frames.write("after", adb.screenshot(display, None))
         report = PressReport(gesture=gesture, points=points, outcome="pressed", frame=frame)
-    logger.info("Press: %s, frame %s", press_line(report), frame)
+    logger.info("Press: %s", press_line(report))
     return report
 
 
-def tap(point: tuple[int, int], frame_dir: Path, wait: float = PRESS_SETTLE) -> PressReport:
+def tap(point: tuple[int, int], frames: FrameLog, wait: float = PRESS_SETTLE) -> PressReport:
     """Tap one point, unless the screen makes that a purchase, and show what followed."""
-    return _pressed("tap", [point], frame_dir, lambda adb, display: adb.tap(*point, display), wait)
+    return _pressed("tap", [point], frames, lambda adb, display: adb.tap(*point, display), wait)
 
 
 def swipe(
     start: tuple[int, int],
     end: tuple[int, int],
-    frame_dir: Path,
+    frames: FrameLog,
     duration: int = SWIPE_TIME,
     wait: float = PRESS_SETTLE,
 ) -> PressReport:
@@ -2941,7 +2895,7 @@ def swipe(
     return _pressed(
         "swipe",
         [start, end],
-        frame_dir,
+        frames,
         lambda adb, display: adb.swipe(start, end, duration, display),
         wait,
     )
@@ -2995,7 +2949,7 @@ def _after_confirm(adb: AdbController, display: DisplayTarget) -> tuple[ConfirmO
     after = b""
     for look in range(CONFIRM_LOOKS):
         time.sleep(BUY_SETTLE if look == 0 else CONFIRM_GAP)
-        after = adb.screenshot(display)
+        after = adb.screenshot(display, "after-confirm")
         # The sheet first, for the reason `_refused` gives: read as a dialog,
         # a builder base sheet still standing would have its "取消" pressed,
         # and that is wherever the dialog reader thought it saw orange.
@@ -3005,7 +2959,7 @@ def _after_confirm(adb: AdbController, display: DisplayTarget) -> tuple[ConfirmO
         if (dialog := game_dialog(after)) is not None:
             adb.tap(*dialog.cancel, display)
             time.sleep(BACK_SETTLE)
-            return "refused_by_game", adb.screenshot(display)
+            return "refused_by_game", adb.screenshot(display, "cancelled")
         if build_panel_open(after) or current_world(after) is not None or research_running(after):
             settled += 1
             if settled >= CONFIRM_SETTLED:
@@ -3034,7 +2988,7 @@ def _raised(
     after = b""
     for look in range(CONFIRM_LOOKS):
         time.sleep(BUY_SETTLE if look == 0 else CONFIRM_GAP)
-        after = adb.screenshot(display)
+        after = adb.screenshot(display, "raised")
         if sheet_open(after):
             sheet, seen = True, sheet_offer(after)
             if (
@@ -3060,27 +3014,31 @@ def _pay_wall(
     before: bytes,
     price: int,
     pay: Literal["gold", "elixir"],
-) -> tuple[ConfirmOutcome, SheetOffer | None, SheetOffer | None, bytes]:
+) -> tuple[ConfirmOutcome, SheetOffer | None, SheetOffer | None, bytes | None]:
     """Read the wall's price button for `pay`, press it if it agrees, and pay what it raised.
 
     A sheet or a dialog already standing means no wall menu, whatever is drawn
-    under it: the dialog `_raised` presses has to be one this raised.
+    under it: the dialog `_raised` presses has to be one this raised. The frame
+    it ends on is None when it pressed nothing.
     """
     menu = None if sheet_open(before) or game_dialog(before) else panel_wall_menu(before)
     wall = None if menu is None else menu.gold if pay == "gold" else menu.elixir
     if wall is None:
-        return "no_wall_menu", None, None, before
+        return "no_wall_menu", None, None, None
     if wall.price != price:
-        return "price_mismatch", None, wall, before
+        return "price_mismatch", None, wall, None
     if not wall.affordable:
-        return "cannot_afford", None, wall, before
+        return "cannot_afford", None, wall, None
     adb.tap(*wall.point, display)
     outcome, offer, after = _raised(adb, display, price, pay)
     return outcome, offer, wall, after
 
 
 def confirm(
-    price: int, frame_dir: Path, pay: Literal["gold", "elixir"] | None = None, goblin: bool = False
+    price: int,
+    frames: FrameLog,
+    pay: Literal["gold", "elixir"] | None = None,
+    goblin: bool = False,
 ) -> ConfirmReport:
     """Press the upgrade sheet's 確認 if it asks for exactly this many of a resource.
 
@@ -3106,11 +3064,10 @@ def confirm(
     finishes a running job for gems and is never read or pressed. How many gems
     the agent may pass is the user's call, kept in the `upgrades` skill.
     """
-    adb = _attached()
+    adb = _attached(frames)
     display = adb.display_for(COC_PACKAGE)
-    frame_dir.mkdir(parents=True, exist_ok=True)
-    before = adb.screenshot(display)
-    after = before
+    before = adb.screenshot(display, "before-confirm")
+    after: bytes | None = None
     wall: SheetOffer | None = None
     hire: GoblinOffer | None = None
     offer: SheetOffer | None = None
@@ -3138,12 +3095,12 @@ def confirm(
         else:
             adb.tap(*offer.point, display)
             outcome, after = _after_confirm(adb, display)
-    frame = frame_dir / "after.png"
-    frame.write_bytes(after)
+    # Named the way `tap` names its frame: `after` only when something was pressed.
+    frame = frames.write("refused", before) if after is None else frames.write("after", after)
     report = ConfirmReport(
         asked=price, offer=offer, wall=wall, goblin=hire, outcome=outcome, frame=frame
     )
-    logger.info("Confirm: %s, frame %s", confirm_line(report), frame)
+    logger.info("Confirm: %s", confirm_line(report))
     return report
 
 
@@ -3162,7 +3119,7 @@ def boost_line(report: BoostReport) -> str:
     return f"鐘塔標記 {report.marker},加速鈕 {report.button}:{BOOST_LINES[report.outcome]}"
 
 
-def boost(frame_dir: Path) -> BoostReport:
+def boost(frames: FrameLog) -> BoostReport:
     """Start the builder base clock tower's free boost, when its ready marker says it is free.
 
     **Nothing is pressed without the marker**, which the game floats over the
@@ -3175,11 +3132,10 @@ def boost(frame_dir: Path) -> BoostReport:
     standing. The tower is left selected either way, for the agent to clear as
     it clears any building it selected.
     """
-    adb = _attached()
+    adb = _attached(frames)
     display = adb.display_for(COC_PACKAGE)
-    frame_dir.mkdir(parents=True, exist_ok=True)
-    before = adb.screenshot(display)
-    after = before
+    before = adb.screenshot(display, "before-boost")
+    after: bytes | None = None
     marker = button = None
     outcome: BoostOutcome
     if current_world(before) != "night":
@@ -3189,18 +3145,18 @@ def boost(frame_dir: Path) -> BoostReport:
     else:
         adb.tap(marker[0], marker[1] + CLOCK_TOWER_BELOW, display)
         time.sleep(PRESS_SETTLE)
-        after = adb.screenshot(display)
+        after = adb.screenshot(display, "tower-menu")
         if (button := free_boost(after)) is None:
             outcome = "no_free_boost"
         else:
             adb.tap(*button, display)
             time.sleep(PRESS_SETTLE)
-            after = adb.screenshot(display)
+            after = adb.screenshot(display, "boost-sheet")
             outcome = "not_taken" if free_boost(after) is not None else "unexpected"
             if (start := boost_sheet(after)) is not None:
                 adb.tap(*start, display)
                 time.sleep(PRESS_SETTLE)
-                after = adb.screenshot(display)
+                after = adb.screenshot(display, "boosted")
                 standing = (
                     boost_sheet(after) is not None
                     or sheet_open(after) is not None
@@ -3208,10 +3164,10 @@ def boost(frame_dir: Path) -> BoostReport:
                     or free_boost(after) is not None
                 )
                 outcome = "not_taken" if standing else "boosted"
-    frame = frame_dir / "after.png"
-    frame.write_bytes(after)
+    # Named the way `tap` names its frame: `after` only when something was pressed.
+    frame = frames.write("refused", before) if after is None else frames.write("after", after)
     report = BoostReport(marker=marker, button=button, outcome=outcome, frame=frame)
-    logger.info("Boost: %s, frame %s", boost_line(report), frame)
+    logger.info("Boost: %s", boost_line(report))
     return report
 
 

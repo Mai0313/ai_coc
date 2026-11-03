@@ -30,6 +30,7 @@ from ai_coc.models import (
     Watch,
     Caller,
     MapEdge,
+    FrameLog,
     ProbeRay,
     AppConfig,
     LootOffer,
@@ -95,6 +96,12 @@ def _adb() -> MagicMock:
 def _controller() -> AdbController:
     """A real controller with no emulator behind it, for the runners that validate their `adb`."""
     return AdbController(endpoint=AdbEndpoint(port=16384))
+
+
+def _frames(case: unittest.TestCase, *, recording: bool = False) -> FrameLog:
+    """A run's frames in a directory of the test's own, removed when it ends."""
+    folder = Path(case.enterContext(tempfile.TemporaryDirectory()))
+    return FrameLog(directory=folder / "frames", recording=recording)
 
 
 def _pair(
@@ -182,28 +189,24 @@ class EmulatorChoiceTests(unittest.TestCase):
 
 
 class SessionTests(unittest.TestCase):
-    def test_a_session_is_the_controller_its_display_and_a_frame_directory_that_exists(
-        self,
-    ) -> None:
+    def test_a_session_is_the_controller_recording_into_the_run_and_its_display(self) -> None:
         adb = _adb()
-        with (
-            tempfile.TemporaryDirectory() as folder,
-            patch.object(commands, "_controller", return_value=adb),
-        ):
-            frames = Path(folder) / "frames"
+        frames = _frames(self)
+        with patch.object(commands, "_controller", return_value=adb) as controller:
             got, display = commands._session(frames)
-            assert frames.is_dir()
+        controller.assert_called_once_with(frames)
         assert got is adb
         assert display == DISPLAY
         adb.display_for.assert_called_once_with(COC_PACKAGE)
 
-    def test_no_frame_directory_makes_none(self) -> None:
-        with (
-            patch.object(commands, "_controller", return_value=_adb()),
-            patch.object(Path, "mkdir") as made,
-        ):
-            commands._session(None)
-        made.assert_not_called()
+    def test_every_controller_a_command_gets_records_into_its_run(self) -> None:
+        """The one place a capture taken anywhere in the code finds the run's frames."""
+        emulator, instance = _pair("MuMu", "127.0.0.1:16384")
+        emulator.controller.side_effect = lambda _serial: _controller()
+        frames = _frames(self)
+        with patch.object(commands, "chosen", return_value=(emulator, instance)):
+            assert commands._controller(frames).frames is frames
+            assert commands._attached(frames).frames is frames
 
 
 class WorldCommandTests(unittest.TestCase):
@@ -226,7 +229,7 @@ class WorldCommandTests(unittest.TestCase):
             patch.object(commands, "current_world", return_value=seen),
             patch.object(commands, "cross", return_value=crossed) as sailed,
         ):
-            report = commands.world(go)
+            report = commands.world(go, _frames(self))
         # Reading only looks, and crossing drives: see `_attached`.
         assert (driving.called, looking.called) == ((True, False) if go else (False, True))
         return adb, sailed, report
@@ -273,17 +276,15 @@ class WorldCommandTests(unittest.TestCase):
         """Two `no_village` readings on 2026-09-26 left nothing to look at afterwards."""
         adb = _adb()
         adb.screenshot.return_value = b"frame"
-        with (
-            tempfile.TemporaryDirectory() as folder,
-            patch.object(commands, "_attached", return_value=adb),
-        ):
-            keep = Path(folder) / "frames" / "no_village.png"
+        frames = _frames(self)
+        keep = frames.directory / "no_village.png"
+        with patch.object(commands, "_attached", return_value=adb):
             with patch.object(commands, "current_world", return_value="day"):
-                commands.world(None, keep)
+                commands.world(None, frames)
             assert not keep.exists()
             with patch.object(commands, "current_world", return_value=None):
-                commands.world(None, keep)
-            assert keep.read_bytes() == b"frame"
+                commands.world(None, frames)
+        assert keep.read_bytes() == b"frame"
 
 
 class StockCommandTests(unittest.TestCase):
@@ -309,7 +310,7 @@ class StockCommandTests(unittest.TestCase):
             patch.object(ScreenRunner, "read_ceilings", return_value=ceilings) as ceiling_reader,
             patch.object(commands, "uncovered", return_value=under) as pressed,
         ):
-            report = commands.stock()
+            report = commands.stock(_frames(self))
         return pressed, ceiling_reader, report
 
     def test_the_home_village_answers_a_share_of_each_ceiling(self) -> None:
@@ -425,7 +426,7 @@ class StatusCommandTests(unittest.TestCase):
             patch.object(commands, "uncovered", return_value=under) as pressed,
             patch.object(commands, "_planner") as planner,
         ):
-            report = commands.status()
+            report = commands.status(_frames(self))
         return pressed, walk, planner, report
 
     def _counts(
@@ -497,7 +498,7 @@ class CollectCommandTests(unittest.TestCase):
             patch.object(commands, "collect_cart", return_value=report) as cart,
             patch.object(commands, "UpkeepRunner") as runner,
         ):
-            return adb, cart, runner, commands.collect()
+            return adb, cart, runner, commands.collect(_frames(self))
 
     def test_the_village_is_read_once_it_has_painted_not_off_the_first_frame(self) -> None:
         """Every branch but the cart's is the home village's.
@@ -518,7 +519,7 @@ class CollectCommandTests(unittest.TestCase):
             ) as cart,
             patch.object(commands, "UpkeepRunner") as runner,
         ):
-            commands.collect()
+            commands.collect(_frames(self))
         cart.assert_called_once_with(adb, DISPLAY)
         runner.assert_not_called()
         assert slept.call_count == 2
@@ -537,7 +538,7 @@ class CollectCommandTests(unittest.TestCase):
             patch.object(commands, "UpkeepRunner") as runner,
         ):
             runner.return_value.collect.return_value = CollectReport(outcome="builder_base")
-            report = commands.collect()
+            report = commands.collect(_frames(self))
         cart.assert_called_once_with(adb, DISPLAY)
         assert (report.outcome, report.elixir) == ("cart", 5)
 
@@ -599,7 +600,6 @@ class CollectCommandTests(unittest.TestCase):
 
     def test_the_home_village_hands_over_to_the_upkeep_runner(self) -> None:
         with (
-            tempfile.TemporaryDirectory() as folder,
             patch.object(commands, "_controller", return_value=_adb()),
             patch.object(commands, "current_world", return_value="day"),
             patch.object(commands, "UpkeepRunner") as runner,
@@ -607,9 +607,7 @@ class CollectCommandTests(unittest.TestCase):
             runner.return_value.collect.return_value = CollectReport(
                 markers=3, outcome="collected"
             )
-            frames = Path(folder) / "frames"
-            report = commands.collect(frames)
-            assert runner.call_args.kwargs["frame_dir"] == frames
+            report = commands.collect(_frames(self))
         assert report.markers == 3
 
 
@@ -622,7 +620,7 @@ class LoopCommandTests(unittest.TestCase):
             patch.object(commands, "ClanRunner") as runner,
         ):
             runner.return_value.donate.return_value = DonateReport(outcome="donated")
-            report = commands.donate(DonateOptions(dry_run=True, rounds=2))
+            report = commands.donate(DonateOptions(dry_run=True, rounds=2), _frames(self))
         kwargs = runner.call_args.kwargs
         assert (kwargs["dry_run"], kwargs["rounds"]) == (True, 2)
         assert report.outcome == "donated"
@@ -868,7 +866,7 @@ class AttackSeriesStopTests(unittest.TestCase):
             patch.object(commands, "FrameTicker"),
             patch.object(commands, "AttackRunner", return_value=runner) as built,
         ):
-            series = commands.attack(AttackOptions(rounds=1), should_stop)
+            series = commands.attack(AttackOptions(rounds=1), _frames(self), should_stop)
         return built, series.root
 
     def test_a_caller_that_is_already_stopping_plays_nothing(self) -> None:
@@ -915,7 +913,9 @@ class AttackSeriesAdapterFailureTests(unittest.TestCase):
             patch.object(commands, "AttackRunner", return_value=runner),
             patch.object(commands, "_rest", return_value=False),
         ):
-            series = commands.attack(AttackOptions(rounds=rounds), MagicMock(return_value=False))
+            series = commands.attack(
+                AttackOptions(rounds=rounds), _frames(self), MagicMock(return_value=False)
+            )
         return series.root
 
     def test_a_round_lost_to_the_emulator_is_recorded_and_the_series_carries_on(self) -> None:
@@ -989,7 +989,9 @@ class AttackSeriesMenuTests(unittest.TestCase):
             patch.object(commands, "_rest", return_value=False),
         ):
             series = commands.attack(
-                AttackOptions(rounds=0), should_stop or MagicMock(return_value=False)
+                AttackOptions(rounds=0),
+                _frames(self),
+                should_stop or MagicMock(return_value=False),
             )
         return series.root
 
@@ -1065,7 +1067,9 @@ class AttackSeriesArmyShortTests(unittest.TestCase):
             patch.object(commands, "AttackRunner", return_value=runner),
             patch.object(commands, "_rest", return_value=False) as rest,
         ):
-            series = commands.attack(AttackOptions(rounds=0), MagicMock(return_value=False))
+            series = commands.attack(
+                AttackOptions(rounds=0), _frames(self), MagicMock(return_value=False)
+            )
         return series.root, rest
 
     def test_an_army_short_round_ends_the_series_holding_what_it_played(self) -> None:
@@ -1273,54 +1277,51 @@ class SettleGameTests(unittest.TestCase):
 
 
 class FrameTickerTests(unittest.TestCase):
-    def _ticker(self, folder: Path, seconds: float) -> commands.FrameTicker:
+    def setUp(self) -> None:
+        self.frames = _frames(self, recording=True)
+
+    def _ticker(self, seconds: float) -> commands.FrameTicker:
         return commands.FrameTicker(
-            adb=_controller(), display=DISPLAY, out_dir=folder, seconds=seconds
+            adb=_controller(), display=DISPLAY, frames=self.frames, seconds=seconds
         )
 
     def test_no_interval_starts_no_thread(self) -> None:
-        with tempfile.TemporaryDirectory() as folder:
-            with self._ticker(Path(folder), 0) as ticker:
-                assert ticker._thread is None
-            assert not list(Path(folder).iterdir())
+        with self._ticker(0) as ticker:
+            assert ticker._thread is None
+        assert not self.frames.directory.exists()
 
     def test_frames_are_named_by_how_far_into_the_run_they_were_taken(self) -> None:
         with (
-            tempfile.TemporaryDirectory() as folder,
             patch.object(AdbController, "screenshot", return_value=b"png"),
-            self.assertLogs("ai_coc.commands") as logged,
+            self.assertLogs("ai_coc.models") as logged,
+            self._ticker(0.01),
         ):
-            with self._ticker(Path(folder), 0.01):
-                time.sleep(0.1)
-            ticks = sorted(Path(folder).glob("tick_*.png"))
-            assert ticks
-            assert ticks[0].name == "tick_00000.0s.png"
-            assert all(tick.read_bytes() == b"png" for tick in ticks)
+            time.sleep(0.1)
+        ticks = sorted(self.frames.directory.glob("tick_*.png"))
+        assert ticks
+        assert ticks[0].name == "tick_00000.0s.png"
+        assert all(tick.read_bytes() == b"png" for tick in ticks)
         # Each named in the log as it lands, which is what lines it up with the run.
-        assert logged.output[0] == "INFO:ai_coc.commands:Saved frame tick_00000.0s.png"
+        assert logged.output[0] == "INFO:ai_coc.models:Saved frame tick_00000.0s.png"
 
     def test_a_failed_capture_is_a_gap_in_the_recording_rather_than_the_end_of_the_run(
         self,
     ) -> None:
         with (
-            tempfile.TemporaryDirectory() as folder,
             patch.object(AdbController, "screenshot", side_effect=AdbControlError("gone")),
+            self._ticker(0.01),
         ):
-            with self._ticker(Path(folder), 0.01):
-                time.sleep(0.05)
-            assert not list(Path(folder).iterdir())
+            time.sleep(0.05)
+        assert not self.frames.directory.exists()
 
 
 class RunPlumbingTests(unittest.TestCase):
     """The small pieces `attack` is built from, each with its own reason to exist."""
 
-    def test_a_heartbeat_with_nowhere_to_write_is_refused(self) -> None:
+    def test_a_heartbeat_on_a_run_that_is_not_recorded_is_refused(self) -> None:
         with pytest.raises(ValueError, match="--debug"):
-            commands._prepare_frames(AttackOptions(shot_every=1))
-        with tempfile.TemporaryDirectory() as folder:
-            frames = Path(folder) / "frames"
-            commands._prepare_frames(AttackOptions(frame_dir=frames, shot_every=1))
-            assert frames.is_dir()
+            commands._prepare_frames(AttackOptions(shot_every=1), _frames(self))
+        commands._prepare_frames(AttackOptions(shot_every=1), _frames(self, recording=True))
 
     def test_the_plan_that_ran_is_written_where_it_was_asked_for(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
@@ -1637,13 +1638,12 @@ class CaptureAndViewTests(unittest.TestCase):
         adb = _adb()
         adb.screenshot.return_value = b"x"
         with (
-            tempfile.TemporaryDirectory() as folder,
             patch.object(commands, "_attached", return_value=adb),
             patch.object(commands.time, "sleep") as slept,
         ):
-            saved = commands.capture(Path(folder) / "shots", count=2, gap=0.5)
-            assert [path.name for path in saved] == ["frame_000.png", "frame_001.png"]
-            assert all(path.read_bytes() == b"x" for path in saved)
+            saved = commands.capture(_frames(self), count=2, gap=0.5)
+        assert [path.name for path in saved] == ["frame_000.png", "frame_001.png"]
+        assert all(path.read_bytes() == b"x" for path in saved)
         # Between the two, and not after the last one.
         slept.assert_called_once_with(0.5)
 
@@ -1663,7 +1663,7 @@ class CaptureAndViewTests(unittest.TestCase):
             # boat's marker reads pixels; `ParkCameraTests` is where it is tested.
             patch.object(world_ui, "boat_marker", return_value=(442, 542)),
         ):
-            return adb, commands.view(zoom, times)
+            return adb, commands.view(_frames(self), zoom, times)
 
     def test_view_sends_the_pinch_at_the_games_own_display(self) -> None:
         adb, report = self._view("day", "in")
@@ -1741,19 +1741,20 @@ class CaptureAndViewTests(unittest.TestCase):
 class PressAndConfirmTests(unittest.TestCase):
     """The hands the agent drives the build panel with, and the one press that spends."""
 
-    def _run(self, frames: list[str], act: Callable[[Path], object]) -> tuple[MagicMock, object]:
+    def _run(
+        self, frames: list[str], act: Callable[[FrameLog], object]
+    ) -> tuple[MagicMock, object]:
         adb = _adb()
         pngs = [(FRAMES / name).read_bytes() for name in frames]
         # The last frame stands for the screen staying put however often it is
         # looked at again.
         adb.screenshot.side_effect = lambda *_: pngs.pop(0) if len(pngs) > 1 else pngs[0]
         with (
-            tempfile.TemporaryDirectory() as folder,
             patch.object(commands, "_attached", return_value=adb),
             patch.object(commands.time, "sleep"),
         ):
-            report = act(Path(folder) / "frames")
-            assert report.frame.is_file()  # type: ignore[attr-defined]
+            report = act(_frames(self))
+        assert report.frame.is_file()  # type: ignore[attr-defined]
         return adb, report
 
     def test_a_tap_on_the_map_lands(self) -> None:
@@ -1811,6 +1812,7 @@ class PressAndConfirmTests(unittest.TestCase):
             (804, 614, DISPLAY),
         ]
         assert report.outcome == "boosted"  # type: ignore[attr-defined]
+        assert report.frame.name == "after.png"  # type: ignore[attr-defined]
 
     def test_a_boost_is_not_tried_where_its_marker_is_not(self) -> None:
         """Off the builder base, or on it while the boost cools down and costs gems."""
@@ -1821,6 +1823,8 @@ class PressAndConfirmTests(unittest.TestCase):
             adb, report = self._run([frame], commands.boost)
             adb.tap.assert_not_called()
             assert report.outcome == outcome, frame  # type: ignore[attr-defined]
+            # The rule `tap` follows: `after` only when something was pressed.
+            assert report.frame.name == "refused.png", frame  # type: ignore[attr-defined]
 
     def test_a_tower_tap_that_opened_no_free_boost_presses_nothing_more(self) -> None:
         adb, report = self._run(["night_clock_ready.png", "hud_night.png"], commands.boost)
@@ -2037,6 +2041,7 @@ class PressAndConfirmTests(unittest.TestCase):
         assert adb.tap.call_args.args[0] > 1000
         assert report.outcome == "confirmed"
         assert report.offer.resource == "dark"
+        assert report.frame.name == "after.png"
 
     def test_confirm_presses_nothing_on_a_price_it_was_not_given(self) -> None:
         adb, report = self._run(["sheet_hero_dark.png"], lambda d: commands.confirm(13500, d))
@@ -2052,6 +2057,7 @@ class PressAndConfirmTests(unittest.TestCase):
         adb, report = self._run(["hud_day.png"], lambda d: commands.confirm(10800, d))
         adb.tap.assert_not_called()
         assert report.outcome == "no_sheet"
+        assert report.frame.name == "refused.png"
 
     def test_confirm_presses_nothing_on_a_price_written_in_red(self) -> None:
         """Red is the game saying the village cannot pay; the press would open the gem shop."""
@@ -2067,11 +2073,10 @@ class PressAndConfirmTests(unittest.TestCase):
         adb = _adb()
         adb.screenshot.return_value = out.getvalue()
         with (
-            tempfile.TemporaryDirectory() as folder,
             patch.object(commands, "_attached", return_value=adb),
             patch.object(commands.time, "sleep"),
         ):
-            report = commands.confirm(10800, Path(folder))
+            report = commands.confirm(10800, _frames(self))
         adb.tap.assert_not_called()
         assert report.outcome == "cannot_afford"
         assert report.offer is not None
@@ -2191,6 +2196,7 @@ class PressAndConfirmTests(unittest.TestCase):
         adb.tap.assert_not_called()
         assert report.outcome == "price_mismatch"
         assert report.wall is not None
+        assert report.frame.name == "refused.png"
 
     def test_a_wall_button_written_in_red_is_not_pressed(self) -> None:
         adb, report = self._run(
@@ -2288,7 +2294,7 @@ class SurveyRunnerTests(unittest.TestCase):
                 patch.object(survey, "run", return_value=taken),
                 pytest.raises(commands.SessionTakenError),
             ):
-                command()
+                command(_frames(self))
 
     def test_a_ray_agrees_when_the_inside_drop_is_refused_and_the_outside_one_lands(self) -> None:
         runner = self._boundary()
@@ -2381,8 +2387,8 @@ class SurveyRunnerTests(unittest.TestCase):
             patch.object(commands._BoundarySurvey, "run"),
             patch.object(commands._MapSurvey, "run"),
         ):
-            assert commands.probe().outcome == "surveyed"
-            assert commands.bounds().outcome == "surveyed"
+            assert commands.probe(_frames(self)).outcome == "surveyed"
+            assert commands.bounds(_frames(self)).outcome == "surveyed"
 
     def test_the_surveys_stop_on_the_builder_base_before_spending_anything(self) -> None:
         """Both measure the home village's battlefield, and nothing here sails to it."""
@@ -2393,8 +2399,8 @@ class SurveyRunnerTests(unittest.TestCase):
             patch.object(commands, "_BoundarySurvey") as probe,
             patch.object(commands, "_MapSurvey") as bounds,
         ):
-            assert commands.probe().outcome == "builder_base"
-            assert commands.bounds().outcome == "builder_base"
+            assert commands.probe(_frames(self)).outcome == "builder_base"
+            assert commands.bounds(_frames(self)).outcome == "builder_base"
         probe.assert_not_called()
         bounds.assert_not_called()
 
@@ -2455,7 +2461,7 @@ class ExportTests(unittest.TestCase):
             patch.object(commands, "write_clipboard") as self.wrote,
             patch.object(commands, "clear_clipboard") as cleared,
         ):
-            return commands.export(), cleared
+            return commands.export(_frames(self)), cleared
 
     def test_the_village_is_named_and_written_down(self) -> None:
         report, cleared = self._export()
@@ -2478,7 +2484,7 @@ class ExportTests(unittest.TestCase):
         fixed coordinate, so none of those may be tapped on.
         """
         with patch.object(commands, "_settle_game", return_value=None):
-            report = commands.export()
+            report = commands.export(_frames(self))
         assert report.outcome == "no_village"
         self.adb.tap.assert_not_called()
         self.adb.swipe.assert_not_called()
@@ -2552,12 +2558,12 @@ class ExportTests(unittest.TestCase):
         assert commands._export_path("").name == "UNKNOWN.json"
 
     def test_reading_the_last_export_says_so_when_there_is_nothing_to_read(self) -> None:
-        assert commands.export(last=True).outcome == "never_exported"
+        assert commands.export(_frames(self), last=True).outcome == "never_exported"
 
     def test_a_file_from_before_this_command_is_named_rather_than_read_as_empty(self) -> None:
         """The old shape held the game's raw payload, which parses as a village with nothing in it."""
         (self.saved / "#OLD.json").write_text(PAYLOAD, encoding="utf-8")
-        report = commands.export(last=True)
+        report = commands.export(_frames(self), last=True)
         assert report.outcome == "wrong_format"
         assert report.entities == []
 

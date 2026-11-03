@@ -9,7 +9,7 @@ import logging
 import adbutils
 from pydantic import BaseModel
 
-from ai_coc.models import Pinch, TouchNode, AdbEndpoint, DisplayTarget
+from ai_coc.models import Pinch, FrameLog, TouchNode, AdbEndpoint, DisplayTarget
 
 logger = logging.getLogger(__name__)
 
@@ -240,6 +240,9 @@ class AdbController(BaseModel):
     """Every ADB call in the application goes through adbutils, one per serial."""
 
     endpoint: AdbEndpoint
+    # The run this controller captures for, attached by the command that got
+    # it, so a capture is recorded wherever in the code it was taken.
+    frames: FrameLog | None = None
 
     @property
     def serial(self) -> str:
@@ -297,8 +300,12 @@ class AdbController(BaseModel):
         logger.debug("%s is on display %s (physical %s)", package, logical, physical)
         return DisplayTarget(logical_id=logical, physical_id=physical)
 
-    def screenshot(self, display: DisplayTarget) -> bytes:
-        """Name the display: with several of them screencap prefixes the PNG with a warning."""
+    def screenshot(self, display: DisplayTarget, label: str | None) -> bytes:
+        """Name the display: with several of them screencap prefixes the PNG with a warning.
+
+        `label` says what the capture is asking, which is the name it is
+        recorded under; None for a frame its caller keeps under a name of its own.
+        """
         device = self.connect()
         try:
             data = device.shell(
@@ -313,6 +320,8 @@ class AdbController(BaseModel):
         logger.debug(
             "Captured %s display %s (%d bytes)", self.serial, display.logical_id, len(data)
         )
+        if label is not None and self.frames is not None:
+            self.frames.record(label, data)
         return data
 
     def tap(self, x: int, y: int, display: DisplayTarget) -> None:

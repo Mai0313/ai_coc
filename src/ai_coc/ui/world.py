@@ -292,12 +292,12 @@ def _walk(adb: AdbController, display: DisplayTarget, world: World) -> bytes | N
     # being stood on is the other one's.
     crossing = CROSSINGS["night" if world == "day" else "day"]
     landing = (crossing.start[0] + crossing.drift[0], crossing.start[1] + crossing.drift[1])
-    before = adb.screenshot(display)
+    before = adb.screenshot(display, "park")
     still = 0
     for swipe in range(1, PARK_SWIPES + 1):
         adb.swipe(crossing.start, landing, SWIPE_MS, display)
         time.sleep(SWIPE_SETTLE)
-        after = adb.screenshot(display)
+        after = adb.screenshot(display, "park")
         moved = view_shift(before, after, crossing.drift)
         before = after
         # None as well as a real move: a pair the reader could not make out is
@@ -361,7 +361,7 @@ def _free_scale(adb: AdbController, display: DisplayTarget) -> bool:
     """
     logger.info("The far zoom drew no boat marker; zooming in to where a free scenery stops")
     adb.zoom("in", 1, COC_PACKAGE, display, BOUGHT_PINCH)
-    if boat_marker(adb.screenshot(display)) is not None:
+    if boat_marker(adb.screenshot(display, "boat-marker")) is not None:
         return True
     logger.warning("The boat's marker did not come back; going back to the far zoom")
     return False
@@ -511,7 +511,7 @@ def collect_cart(adb: AdbController, display: DisplayTarget) -> CartReport:
     a builder base run, which is the one line a reader uses to tell the two
     villages apart in a log.
     """
-    if current_world(adb.screenshot(display)) != "night":
+    if current_world(adb.screenshot(display, "cart-world")) != "night":
         # **Its own outcome and not `not_found`**, because nothing was tapped
         # here: the caller read the world before it called, so arriving is the
         # two readings disagreeing — a storage tooltip left over the + does
@@ -535,7 +535,7 @@ def collect_cart(adb: AdbController, display: DisplayTarget) -> CartReport:
         # reads as an empty cart on a village whose elixir is all still in one.
         logger.warning("The camera never parked; the cart's spots are somewhere else entirely")
         return CartReport(outcome="not_parked")
-    parked = adb.screenshot(display)
+    parked = adb.screenshot(display, "cart-parked")
     before = read_builder_stock(parked)
     marker = cart_marker(parked)
     spots = (
@@ -544,7 +544,7 @@ def collect_cart(adb: AdbController, display: DisplayTarget) -> CartReport:
     for spot in spots:
         adb.tap(spot[0], spot[1], display)
         time.sleep(CART_OPENING)
-        sheet = adb.screenshot(display)
+        sheet = adb.screenshot(display, "cart-sheet")
         if loot_cart_open(sheet):
             break
         logger.info("The tap at %s did not open the cart; trying the next spot", spot)
@@ -563,7 +563,7 @@ def collect_cart(adb: AdbController, display: DisplayTarget) -> CartReport:
     # still painting its button on the capture that recognised it, and this is
     # the path that is giving up anyway, so a second look costs one capture on a
     # trip that has already spent four.
-    ready = loot_cart_ready(sheet) or loot_cart_ready(adb.screenshot(display))
+    ready = loot_cart_ready(sheet) or loot_cart_ready(adb.screenshot(display, "cart-ready"))
     if ready:
         adb.tap(*CART_COLLECT, display)
         time.sleep(CART_SETTLE)
@@ -574,7 +574,7 @@ def collect_cart(adb: AdbController, display: DisplayTarget) -> CartReport:
     time.sleep(CART_SETTLE)
     if not ready:
         return _locked_cart(sheet)
-    after = read_builder_stock(adb.screenshot(display))
+    after = read_builder_stock(adb.screenshot(display, "cart-paid"))
     if before is None or after is None:
         logger.warning("The storage bars would not read either side of the cart")
         return CartReport(outcome="unreadable")
@@ -599,14 +599,14 @@ def open_chest(adb: AdbController, display: DisplayTarget) -> None:
     for _ in range(CHEST_TAPS):
         adb.tap(*CHEST_SPOT, display)
         time.sleep(CHEST_TAP_GAP)
-        if not reward_chest(adb.screenshot(display)):
+        if not reward_chest(adb.screenshot(display, "chest")):
             break
     time.sleep(CHEST_OPENING)
     left, top, right, bottom = CHEST_CONTINUE_BOX
     # **Done only once the village reads**, since a frame with no 繼續 can also
     # be a reward still sliding in, and nothing else presses one that is missed.
     for _ in range(CHEST_REWARD_LOOKS):
-        png = adb.screenshot(display)
+        png = adb.screenshot(display, "chest-reward")
         buttons = [
             (x0, y0, x1, y1)
             for x0, y0, x1, y1 in green_buttons(png)
@@ -661,7 +661,7 @@ def uncovered(adb: AdbController, display: DisplayTarget) -> World | None:
     one. A village that reads is handed straight back untouched.
     """
     for _ in range(UNCOVER_TRIES):
-        png = adb.screenshot(display)
+        png = adb.screenshot(display, "uncover")
         if (here := current_world(png)) is not None:
             return here
         # Nothing on the loading screen answers a press, so the presses were
@@ -693,7 +693,7 @@ def uncovered(adb: AdbController, display: DisplayTarget) -> World | None:
             logger.info("Something is over the village; pressing back to get at it")
         adb.back(display)
         time.sleep(UNCOVER_SETTLE)
-    return current_world(adb.screenshot(display))
+    return current_world(adb.screenshot(display, "uncovered"))
 
 
 def _boat_spots(
@@ -708,7 +708,7 @@ def _boat_spots(
     if crossing.marked:
         if not park_camera(adb, display, here):
             return None
-        if (spot := boat_marker(adb.screenshot(display))) is not None:
+        if (spot := boat_marker(adb.screenshot(display, "boat-marker"))) is not None:
             logger.info("The boat's marker is at %s", spot)
             return (spot,)
         logger.info("No marker over the boat on the centred view; parking in the corner")
@@ -716,7 +716,7 @@ def _boat_spots(
         return None
     if not crossing.marked:
         return crossing.spots
-    if (spot := boat_marker(adb.screenshot(display))) is not None:
+    if (spot := boat_marker(adb.screenshot(display, "boat-marker"))) is not None:
         logger.info("The boat's marker is at %s", spot)
         return (spot,)
     logger.info("No marker over the boat; trying its measured spots")
@@ -764,7 +764,7 @@ def cross(adb: AdbController, display: DisplayTarget, want: World) -> World | No
         adb.tap(spot[0], spot[1], display)
         for _ in range(SAIL_POLLS):
             time.sleep(SAIL_GAP)
-            if (arrived := current_world(adb.screenshot(display))) == want:
+            if (arrived := current_world(adb.screenshot(display, "sailing"))) == want:
                 logger.info("Landed on the %s village from the boat at %s", want, spot)
                 return arrived
         logger.info("The tap at %s did not sail; trying the next spot", spot)

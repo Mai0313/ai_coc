@@ -4,8 +4,10 @@ import re
 import math
 import shutil
 from typing import Any, Literal
+import logging
 from pathlib import Path
 from datetime import UTC, datetime, timedelta
+from functools import cached_property
 
 from pydantic import (
     Field,
@@ -13,6 +15,7 @@ from pydantic import (
     JsonValue,
     RootModel,
     ConfigDict,
+    PrivateAttr,
     AliasChoices,
     computed_field,
     field_validator,
@@ -20,6 +23,8 @@ from pydantic import (
 )
 
 from .constants import LOG_DIR, DEFAULT_ADB_HOST, DEFAULT_GEMINI_MODEL, FRAME_RETENTION_DAYS
+
+logger = logging.getLogger(__name__)
 
 # Village JSON and the MuMu CLI both gain fields between game and emulator
 # releases. Models that mirror them allow extras so an unknown field is
@@ -1089,13 +1094,11 @@ IdleRole = Literal["builder", "lab"]
 class AttackOptions(BaseModel):
     """What one `attack` command was told to do, beyond the shared config file.
 
-    Everything here is about the run rather than the tactic: where to keep the
-    frames, how many rounds to play, whether to record a heartbeat alongside the
-    frames the loop reads. The tactic itself lives in the config file and in
-    whatever plan is handed in.
+    Everything here is about the run rather than the tactic: how many rounds to
+    play, whether to record a heartbeat alongside the frames the loop reads. The
+    tactic itself lives in the config file and in whatever plan is handed in.
     """
 
-    frame_dir: Path | None = None
     # A written plan for either village, played instead of asking the AI. It
     # names its own village, and a game on the other one ends the series.
     plan: Path | None = None
@@ -1782,6 +1785,41 @@ def _cull_old_frames(keep: timedelta = timedelta(days=FRAME_RETENTION_DAYS)) -> 
     return culled
 
 
+class FrameLog(BaseModel):
+    """Every frame one run keeps, written in one place and named in the log as it is written.
+
+    Two kinds. A frame a command always keeps has a fixed name (`after`,
+    `no_village`), because an agent goes looking for it by that name. A
+    capture made while recording (`--debug`) is numbered across the whole run
+    and named for what it was asking (`0006_scout`), so the directory lists in
+    the order the run saw the screen, and the `Saved frame` line lands among
+    the lines saying what was read off it.
+
+    The directory is made by the first write, so a run that keeps nothing
+    leaves none behind.
+    """
+
+    directory: Path
+    recording: bool = False
+
+    # Only the loop's own thread counts: the heartbeat names its frames by time.
+    _count: int = PrivateAttr(default=0)
+
+    def write(self, name: str, png: bytes) -> Path:
+        """Keep one frame under `name`, recording or not."""
+        self.directory.mkdir(parents=True, exist_ok=True)
+        path = self.directory / f"{name}.png"
+        path.write_bytes(png)
+        logger.info("Saved frame %s", path.name)
+        return path
+
+    def record(self, label: str, png: bytes) -> None:
+        """Keep one capture as the run's next numbered frame, when the run is recorded."""
+        if self.recording:
+            self._count += 1
+            self.write(f"{self._count:04d}_{label}", png)
+
+
 class RunLog(BaseModel):
     """One execution's own directory: its log, its answer, and what it saw.
 
@@ -1846,34 +1884,20 @@ class RunLog(BaseModel):
     def log_path(self) -> Path:
         return self.directory / "run.log"
 
-    @property
-    def frames(self) -> Path | None:
-        """Where a loop keeps what it reads, or None when nothing is recorded.
+    @cached_property
+    def frames(self) -> FrameLog:
+        """The one writer of this run's `frames/`.
 
-        None rather than a directory left empty, because every loop here already
-        takes `frame_dir: Path | None` and reads None as "do not save".
+        Cached, because the run-wide numbering lives on it: a second instance
+        would number from one again over the first one's files.
         """
-        if not self.recording:
-            return None
-        path = self.directory / "frames"
-        path.mkdir(parents=True, exist_ok=True)
-        return path
-
-    @property
-    def no_village(self) -> Path:
-        """Where `world` and `launch` keep the frame they could not find a village on.
-
-        Unconditional where `frames` is not: neither command has a `--debug`,
-        and this is one PNG written only on that failure, which is exactly the
-        one that needs a frame to be debugged from.
-        """
-        return self.directory / "frames" / "no_village.png"
+        return FrameLog(directory=self.directory / "frames", recording=self.recording)
 
     @property
     def plan_log(self) -> Path:
         """One line per round, holding the tactic that round played.
 
-        Unconditional where `frames` is not, because the two cost nothing alike:
+        Unconditional where recording is not, because the two cost nothing alike:
         a plan is a few hundred bytes of JSON written once a battle, against a
         PNG encode on the emulator for every frame a loop reads.
 
@@ -2220,7 +2244,6 @@ class ConfirmReport(BaseModel):
 class DonateOptions(BaseModel):
     """What one `donate` command was told to do."""
 
-    frame_dir: Path | None = None
     # Walk the whole path and stop before the tap that gives anything away,
     # because the panel confirms nothing.
     dry_run: bool = False

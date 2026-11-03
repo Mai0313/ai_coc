@@ -202,10 +202,10 @@ class AdbConnectionTests(unittest.TestCase):
             patch.object(AdbController, "connect", return_value=device),
             pytest.raises(AdbControlError, match="截圖失敗"),
         ):
-            _controller().screenshot(DISPLAY)
+            _controller().screenshot(DISPLAY, None)
         device.shell.return_value = b"\x89PNG\r\n..."
         with patch.object(AdbController, "connect", return_value=device):
-            assert _controller().screenshot(DISPLAY) == b"\x89PNG\r\n..."
+            assert _controller().screenshot(DISPLAY, None) == b"\x89PNG\r\n..."
         assert device.shell.call_args.args[0] == ["screencap", "-p", "-d", DISPLAY.physical_id]
 
     def test_every_input_names_the_games_own_display(self) -> None:

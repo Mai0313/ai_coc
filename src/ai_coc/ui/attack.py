@@ -1384,7 +1384,7 @@ class AttackRunner(ScreenRunner):
                 self._stuck = "stopped"
                 return False
             time.sleep(SERVER_POLL)
-            if not loading_screen(self.adb.screenshot(self.display)):
+            if not loading_screen(self._frame("loading")):
                 logger.info("The loading screen went after about %.0fs", poll * SERVER_POLL)
                 return True
         minutes = SERVER_POLLS * SERVER_POLL / 60

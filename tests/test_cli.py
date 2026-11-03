@@ -22,7 +22,7 @@ from unittest.mock import patch
 import pytest
 
 from ai_coc import cli, models, commands, logging_setup
-from ai_coc.cli import RECORDABLE, _answer, _parser, _run_command
+from ai_coc.cli import NO_SCREEN, _answer, _parser, _run_command
 from ai_coc.models import (
     Caller,
     RunLog,
@@ -94,12 +94,13 @@ class ParserTests(unittest.TestCase):
             bare = _args(name, *extra)
             assert (bare.agent, bare.session, bare.mission) == ("", "", ""), name
 
-    def test_debug_is_only_offered_where_a_loop_reads_frames(self) -> None:
-        for name in RECORDABLE:
-            assert _args(name, "--debug").debug, name
-        # `world` reads one frame and keeps nothing, so it has no such flag.
-        with pytest.raises(SystemExit):
-            _args("world", "--debug")
+    def test_every_sub_command_that_captures_takes_debug(self) -> None:
+        for name, extra in MINIMAL.items():
+            if name in NO_SCREEN:
+                with pytest.raises(SystemExit):
+                    _args(name, *extra, "--debug")
+            else:
+                assert _args(name, *extra, "--debug").debug, name
 
     def test_stop_reaches_both_sections_unless_told_which(self) -> None:
         assert _args("stop").target == "all"
@@ -158,8 +159,8 @@ class DispatchTests(unittest.TestCase):
                 ),
                 self.recorded,
             )
+        assert attacked.call_args.args[1] is self.recorded.frames
         assert attacked.call_args.args[0] == AttackOptions(
-            frame_dir=self.recorded.frames,
             plan=Path("a.json"),
             plan_out=Path("b.json"),
             plan_log=self.recorded.plan_log,
@@ -189,12 +190,12 @@ class DispatchTests(unittest.TestCase):
         assert options == AttackOptions(plan_log=self.run.plan_log)
         assert options.minimums == LootOverrides()
         assert options.stop_at is None
-        assert options.frame_dir is None
+        assert not attacked.call_args.args[1].recording
 
     def test_donate_carries_its_own_options(self) -> None:
         with patch.object(commands, "donate") as gave:
             _answer(_args("donate", "--dry-run", "--rounds", "2"), self.run)
-        assert gave.call_args.args[0] == DonateOptions(dry_run=True, rounds=2)
+        assert gave.call_args.args == (DonateOptions(dry_run=True, rounds=2), self.run.frames)
 
     def test_the_scalar_commands_pass_their_flags_through(self) -> None:
         with (
@@ -207,28 +208,25 @@ class DispatchTests(unittest.TestCase):
             _answer(_args("world"), self.run)
             _answer(_args("launch", "--restart", "game"), self.run)
             _answer(_args("launch"), self.run)
-        viewed.assert_called_once_with("in", 2)
-        # Both keep the frame no village read on; neither has a `--debug` to ask for it.
+        viewed.assert_called_once_with(self.run.frames, "in", 2)
         assert [call.args for call in asked.call_args_list] == [
-            ("day", self.run.no_village),
-            (None, self.run.no_village),
+            ("day", self.run.frames),
+            (None, self.run.frames),
         ]
         # And the state file's stop, so `ai_coc stop` ends the wait for the village.
         assert [call.args for call in launched.call_args_list] == [
-            ("game", commands.stop_requested, self.run.no_village),
-            ("none", commands.stop_requested, self.run.no_village),
+            ("game", commands.stop_requested, self.run.frames),
+            ("none", commands.stop_requested, self.run.frames),
         ]
 
-    def test_the_frame_only_commands_get_this_runs_frame_directory(self) -> None:
-        """None when nothing is recorded, which every loop reads as "do not save"."""
-        for name in ("collect", "probe", "bounds"):
+    def test_every_command_that_captures_gets_this_runs_one_writer(self) -> None:
+        """One spelling for all of them, recording or not."""
+        for name, extra in MINIMAL.items():
+            if name in NO_SCREEN:
+                continue
             with patch.object(commands, name) as ran:
-                _answer(_args(name), self.run)
-                _answer(_args(name, "--debug"), self.recorded)
-            assert [call.args for call in ran.call_args_list] == [
-                (None,),
-                (self.recorded.frames,),
-            ], name
+                _answer(_args(name, *extra), self.run)
+            assert any(arg is self.run.frames for arg in ran.call_args.args), name
 
     def test_a_model_is_written_out_as_indented_json(self) -> None:
         with (
@@ -351,11 +349,10 @@ class DispatchTests(unittest.TestCase):
         assert "取消了" in shown.getvalue()
         assert "取消了" in (self.run.directory / "result.json").read_text(encoding="utf-8")
 
-    def test_a_capture_run_records_without_being_asked(self) -> None:
-        """Saving frames is the whole of what the command does, so it carries no
-        `--debug` and there is nothing for a caller to forget. Reached through
-        `main`, because that is where the two are joined and where a `--label`
-        also has to arrive.
+    def test_a_capture_keeps_its_frames_in_its_own_run_without_debug(self) -> None:
+        """It writes its frames under names of its own, so there is nothing for a
+        caller to forget. Reached through `main`, because that is where the run
+        is opened and where a `--label` also has to arrive.
         """
         with (
             tempfile.TemporaryDirectory() as folder,
@@ -367,9 +364,9 @@ class DispatchTests(unittest.TestCase):
         ):
             assert cli.main() == 0
         frames = captured.call_args.args[0]
-        assert frames is not None
-        assert frames.name == "frames"
-        assert frames.parent.name.endswith("-capture-baseline")
+        assert not frames.recording
+        assert frames.directory.name == "frames"
+        assert frames.directory.parent.name.endswith("-capture-baseline")
 
     def test_debug_keeps_the_frames_and_logs_at_debug(self) -> None:
         root = logging.getLogger()
@@ -390,7 +387,7 @@ class DispatchTests(unittest.TestCase):
             ):
                 assert cli.main() == 0
                 assert root.level == logging.DEBUG
-            assert stocked.call_args.args[0] is not None
+            assert stocked.call_args.args[0].recording
         finally:
             root.setLevel(level)
 
@@ -568,7 +565,7 @@ class JournalTests(unittest.TestCase):
                 runner.return_value.configure_mock(
                     played=None, holding=holding, capacity=None, cart=None
                 )
-                commands.attack(AttackOptions(rounds=0))
+                commands.attack(AttackOptions(rounds=0), self.run.frames)
         finally:
             root.removeHandler(journal)
             root.setLevel(level)

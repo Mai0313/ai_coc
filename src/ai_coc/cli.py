@@ -5,7 +5,7 @@ import sys
 import json
 import time
 import shlex
-from typing import TYPE_CHECKING, Any, cast, get_args
+from typing import TYPE_CHECKING, Any, get_args
 import logging
 from pathlib import Path
 import argparse
@@ -57,18 +57,18 @@ def _log_uncaught(kind: type[BaseException], value: BaseException, trace: Any) -
     logger.critical("未處理的例外", exc_info=(kind, value, trace))
 
 
-# The sub-commands that drive a loop, and so have frames worth keeping. Declared
-# once rather than eight times over, which is what a `--frames <dir>` on each of
-# them had become — and the directory it used to take is now the run's own.
-RECORDABLE = ("attack", "collect", "stock", "status", "donate", "probe", "bounds", "export")
+# The sub-commands that never open ADB: `read` parses a PNG off the disk,
+# `stop` and `giveback` each change one field of the state file, and `watch`
+# sleeps on its own section of it. Every other one captures the screen, so
+# every other one takes `--debug`.
+NO_SCREEN = ("read", "stop", "giveback", "watch")
 
 # The sub-commands that hold no claim on the emulator, listed the way round
-# that fails safely: `read` parses a PNG off the disk, and `stop` and
-# `giveback` each change one field of the state file, so none of them ever
-# opens ADB. Everything else claims,
-# short ones included — a `collect` holds the display for the eight seconds it
-# takes, and a session reading the state file to find out whether the screen is
-# free wants that as much as it wants to know about a farming run.
+# that fails safely: the ones that never open ADB, and `capture`. Everything
+# else claims, short ones included — a `collect` holds the display for the
+# eight seconds it takes, and a session reading the state file to find out
+# whether the screen is free wants that as much as it wants to know about a
+# farming run.
 #
 # Naming the exceptions rather than the claimers is what keeps a command added
 # later honest: forgotten here it claims, which costs two writes it did not
@@ -82,7 +82,7 @@ RECORDABLE = ("attack", "collect", "stock", "status", "donate", "probe", "bounds
 # `capture` only looks, and so does a plain `world`: both take screenshots and
 # nothing else, and the file is a lock now, so a claim there would stand a
 # farming loop down for one screenshot (#290).
-WITHOUT_CLAIM = ("read", "stop", "giveback", "capture", "watch")
+WITHOUT_CLAIM = (*NO_SCREEN, "capture")
 
 
 # Every sub-command and the line `--help` gives it, in the order a person
@@ -282,12 +282,13 @@ def _parser() -> argparse.ArgumentParser:
     shot.add_argument("--count", type=int, default=1, help="存幾張")
     shot.add_argument("--gap", type=float, default=1.5, metavar="秒", help="每張間隔幾秒")
     sub.choices["read"].add_argument("png", type=Path, help="要判讀的截圖")
-    for name in RECORDABLE:
-        sub.choices[name].add_argument(
-            "--debug",
-            action="store_true",
-            help="把這次讀到的每張畫面存進紀錄資料夾，log 也降到 DEBUG",
-        )
+    for name, one in sub.choices.items():
+        if name not in NO_SCREEN:
+            one.add_argument(
+                "--debug",
+                action="store_true",
+                help="把這次讀到的每張畫面存進紀錄資料夾，log 也降到 DEBUG",
+            )
     # Every sub-command, because why a session names a run — to find it again
     # afterwards — has nothing to do with which one it ran.
     for one in sub.choices.values():
@@ -337,7 +338,6 @@ def _answer(arguments: argparse.Namespace, run: RunLog) -> BaseModel | str:
     handlers: dict[str, Callable[[], BaseModel | str]] = {
         "attack": lambda: commands.attack(
             AttackOptions(
-                frame_dir=run.frames,
                 plan=a.plan,
                 plan_out=a.plan_out,
                 plan_log=run.plan_log,
@@ -348,7 +348,8 @@ def _answer(arguments: argparse.Namespace, run: RunLog) -> BaseModel | str:
                 shot_every=a.shot_every,
                 stop_at=a.stop_at,
                 until_idle=[] if a.until_idle is None else a.until_idle or ["builder", "lab"],
-            )
+            ),
+            run.frames,
         ),
         "stop": lambda: commands.stop(_caller(a), a.target),
         "giveback": commands.giveback,
@@ -356,25 +357,20 @@ def _answer(arguments: argparse.Namespace, run: RunLog) -> BaseModel | str:
         "collect": lambda: commands.collect(run.frames),
         "stock": lambda: commands.stock(run.frames),
         "status": lambda: commands.status(run.frames),
-        "world": lambda: commands.world(a.go, run.no_village),
-        "view": lambda: commands.view(a.zoom, a.times),
-        "tap": lambda: commands.tap((a.x, a.y), run.directory / "frames", a.wait),
-        "swipe": lambda: commands.swipe(
-            (a.x1, a.y1), (a.x2, a.y2), run.directory / "frames", a.ms, a.wait
-        ),
-        "confirm": lambda: commands.confirm(a.price, run.directory / "frames", a.pay, a.goblin),
-        "boost": lambda: commands.boost(run.directory / "frames"),
-        "launch": lambda: commands.launch(a.restart, commands.stop_requested, run.no_village),
+        "world": lambda: commands.world(a.go, run.frames),
+        "view": lambda: commands.view(run.frames, a.zoom, a.times),
+        "tap": lambda: commands.tap((a.x, a.y), run.frames, a.wait),
+        "swipe": lambda: commands.swipe((a.x1, a.y1), (a.x2, a.y2), run.frames, a.ms, a.wait),
+        "confirm": lambda: commands.confirm(a.price, run.frames, a.pay, a.goblin),
+        "boost": lambda: commands.boost(run.frames),
+        "launch": lambda: commands.launch(a.restart, commands.stop_requested, run.frames),
         "donate": lambda: commands.donate(
-            DonateOptions(frame_dir=run.frames, dry_run=a.dry_run, rounds=a.rounds)
+            DonateOptions(dry_run=a.dry_run, rounds=a.rounds), run.frames
         ),
         "probe": lambda: commands.probe(run.frames),
         "bounds": lambda: commands.bounds(run.frames),
-        # `run.frames` rather than a directory of its own: `main` opens a
-        # capture's run with recording already on, because saving frames is the
-        # whole of what the command does, so this is never None here.
         "capture": lambda: "\n".join(
-            str(path) for path in commands.capture(cast("Path", run.frames), a.count, a.gap)
+            str(path) for path in commands.capture(run.frames, a.count, a.gap)
         ),
         "read": lambda: commands.read(a.png.read_bytes()),
         "export": lambda: commands.export(run.frames, a.last),
@@ -504,11 +500,9 @@ def main() -> int:
     arguments = _parser().parse_args()
     # Opened after parsing, so `--help` and a rejected flag leave no empty
     # directory behind, and so its name can say which command it holds.
-    # `capture` records by definition — saving frames is the command — so it
-    # carries no `--debug` of its own and turns recording on here instead.
     run = RunLog.open(
         arguments.command,
-        recording=getattr(arguments, "debug", False) or arguments.command == "capture",
+        recording=getattr(arguments, "debug", False),
         label=getattr(arguments, "label", ""),
     )
     configure_logging(run)
