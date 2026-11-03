@@ -433,6 +433,50 @@ class DispatchTests(unittest.TestCase):
             assert any(call.args[0].startswith("Called by") for call in said.call_args_list)
             assert warning.called is warned
 
+    def test_the_first_line_names_the_directory_and_a_cull_is_said_after(self) -> None:
+        """Deleting frames is the one destructive thing in the project, and it
+        runs inside `RunLog.open`, before any handler exists, so `main` says it
+        once the run's own lines are out. A run that deleted nothing says nothing.
+        """
+        for culled in (3, 0):
+            with (
+                tempfile.TemporaryDirectory() as folder,
+                patch.object(models, "LOG_DIR", Path(folder)),
+                patch.object(models, "_cull_old_frames", return_value=culled),
+                patch.object(sys, "argv", ["ai_coc", "read", str(FRAMES / "world_day.png")]),
+                patch.object(cli, "configure_logging"),
+                patch.object(cli.logger, "info") as said,
+                patch("sys.stdout", new_callable=io.StringIO),
+            ):
+                assert cli.main() == 0
+            lines = [call.args[0] for call in said.call_args_list]
+            assert lines[0].startswith("This run is being kept in")
+            deleted = [n for n, line in enumerate(lines) if line.startswith("Deleted the frames")]
+            assert deleted == ([3] if culled else []), culled
+
+    def test_no_library_writes_ahead_of_the_first_line_at_debug(self) -> None:
+        """The journal's file lock logs at DEBUG, and once did so before it."""
+        root = logging.getLogger()
+        handlers, level = list(root.handlers), root.level
+        try:
+            with (
+                tempfile.TemporaryDirectory() as folder,
+                patch.object(models, "LOG_DIR", Path(folder)),
+                patch.dict("os.environ", {"COC_LOG_LEVEL": "DEBUG"}),
+                patch.object(sys, "argv", ["ai_coc", "read", str(FRAMES / "world_day.png")]),
+                patch("sys.stdout", new_callable=io.StringIO),
+                patch("sys.stderr", new_callable=io.StringIO),
+            ):
+                assert cli.main() == 0
+                for handler in root.handlers:
+                    if handler not in handlers:
+                        handler.close()
+                log = next(Path(folder).glob("*/run.log")).read_text(encoding="utf-8")
+        finally:
+            root.handlers[:] = handlers
+            root.setLevel(level)
+        assert "This run is being kept in" in log.splitlines()[0]
+
     def test_read_puts_the_named_file_through_every_parser(self) -> None:
         """The one command that runs its real code here: it needs no emulator."""
         with patch("sys.stdout", new_callable=io.StringIO):

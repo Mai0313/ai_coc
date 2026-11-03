@@ -33,6 +33,7 @@ from ai_coc.models import (
     LootOverrides,
     VillageExport,
 )
+from ai_coc.constants import FRAME_RETENTION_DAYS
 from ai_coc.logging_setup import Journal, configure_logging
 
 if TYPE_CHECKING:
@@ -543,6 +544,17 @@ def main() -> int:
     # Third: the flags as typed, which nothing else here records, so a run is
     # read for what it was asked to do rather than inferred from what it did.
     logger.info("Started as: ai_coc %s", shlex.join(sys.argv[1:]))
+    # Fourth, and only when it happened: the cull runs inside `RunLog.open`,
+    # before any handler exists, and the one destructive thing in the project
+    # should not be the one that leaves no trace. A session following a path out
+    # of an old report to a directory that is gone could not otherwise tell a
+    # cull from a bug.
+    if run.culled:
+        logger.info(
+            "Deleted the frames of %d run(s) older than %d days; their logs are untouched",
+            run.culled,
+            FRAME_RETENTION_DAYS,
+        )
     return _run_command(arguments, run)
 
 

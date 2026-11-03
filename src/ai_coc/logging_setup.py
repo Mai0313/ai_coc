@@ -12,7 +12,7 @@ from rich.console import Console
 from rich.logging import RichHandler
 
 from .models import Warned
-from .constants import JOURNAL_PATH, FRAME_RETENTION_DAYS
+from .constants import JOURNAL_PATH
 
 if TYPE_CHECKING:
     from .models import RunLog, JournalEvent
@@ -81,17 +81,6 @@ def _attach_run(root: logging.Logger, run: RunLog) -> None:
     handler = logging.FileHandler(run.log_path, encoding="utf-8")
     handler.setFormatter(logging.Formatter(LOG_FORMAT, TIME_FORMAT))
     root.addHandler(handler)
-    # Said here rather than where the deleting happens, because that runs inside
-    # `RunLog.open` — before this function, so before any handler exists. The one
-    # destructive thing in the project should not be the one thing that leaves
-    # no trace: a session following a path out of an old report to a directory
-    # that is gone would otherwise be unable to tell a cull from a bug.
-    if run.culled:
-        logging.getLogger(__name__).info(
-            "Deleted the frames of %d run(s) older than %d days; their logs are untouched",
-            run.culled,
-            FRAME_RETENTION_DAYS,
-        )
 
 
 def configure_logging(run: RunLog) -> None:
@@ -129,3 +118,6 @@ def configure_logging(run: RunLog) -> None:
     # Pillow logs two chunk lines per PNG it decodes, and every parser decodes
     # its frame again: under `--debug` they buried the project's own lines.
     logging.getLogger("PIL").setLevel(logging.INFO)
+    # filelock logs four lines for every journal append, and under `--debug`
+    # they came ahead of the line that names the run's directory.
+    logging.getLogger("filelock").setLevel(logging.INFO)
