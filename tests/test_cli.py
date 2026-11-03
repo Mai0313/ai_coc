@@ -454,6 +454,29 @@ class DispatchTests(unittest.TestCase):
             deleted = [n for n, line in enumerate(lines) if line.startswith("Deleted the frames")]
             assert deleted == ([3] if culled else []), culled
 
+    def test_no_library_writes_ahead_of_the_first_line_at_debug(self) -> None:
+        """The journal's file lock logs at DEBUG, and once did so before it."""
+        root = logging.getLogger()
+        handlers, level = list(root.handlers), root.level
+        try:
+            with (
+                tempfile.TemporaryDirectory() as folder,
+                patch.object(models, "LOG_DIR", Path(folder)),
+                patch.dict("os.environ", {"COC_LOG_LEVEL": "DEBUG"}),
+                patch.object(sys, "argv", ["ai_coc", "read", str(FRAMES / "world_day.png")]),
+                patch("sys.stdout", new_callable=io.StringIO),
+                patch("sys.stderr", new_callable=io.StringIO),
+            ):
+                assert cli.main() == 0
+                for handler in root.handlers:
+                    if handler not in handlers:
+                        handler.close()
+                log = next(Path(folder).glob("*/run.log")).read_text(encoding="utf-8")
+        finally:
+            root.handlers[:] = handlers
+            root.setLevel(level)
+        assert "This run is being kept in" in log.splitlines()[0]
+
     def test_read_puts_the_named_file_through_every_parser(self) -> None:
         """The one command that runs its real code here: it needs no emulator."""
         with patch("sys.stdout", new_callable=io.StringIO):

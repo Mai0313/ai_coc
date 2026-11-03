@@ -118,3 +118,6 @@ def configure_logging(run: RunLog) -> None:
     # Pillow logs two chunk lines per PNG it decodes, and every parser decodes
     # its frame again: under `--debug` they buried the project's own lines.
     logging.getLogger("PIL").setLevel(logging.INFO)
+    # filelock logs four lines for every journal append, and under `--debug`
+    # they came ahead of the line that names the run's directory.
+    logging.getLogger("filelock").setLevel(logging.INFO)
