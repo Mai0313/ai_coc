@@ -511,11 +511,11 @@ MENU_ROW_PATCH = 800
 # over the panel when 確認 is pressed with every builder busy and which is
 # neither a sheet nor a two-button dialog. So any bright green patch this big
 # takes no tap: across the whole screen, or left of the build panel while it is
-# open, since its running rows are green bars too and have a refusal of their
-# own. Measured, that offer's button is 14915 px, a sheet's green stat boxes
-# about 10500, the hero hall's card buttons about 5500 (one of them right of
-# the panel's edge), and every village and panel frame committed has none
-# bigger than 769 (the + by the gems, which `on_hud` takes).
+# open, since its running rows are green bars too and take a tap. Measured,
+# that offer's button is 14915 px, a sheet's green stat boxes about 10500, the
+# hero hall's card buttons about 5500 (one of them right of the panel's edge),
+# and every village and panel frame committed has none bigger than 769 (the +
+# by the gems, which `on_hud` takes).
 GREEN_BUTTON_AREA = (0, 0, 1170, 900)
 GREEN_BUTTON_PATCH = 2500
 # **A paler lime button is one too** (#457). The clock tower's boost sheet draws

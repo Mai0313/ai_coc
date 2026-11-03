@@ -1875,6 +1875,15 @@ class PressAndConfirmTests(unittest.TestCase):
         adb.tap.assert_not_called()
         assert report.outcome == "sheet_up"
 
+    def test_a_running_researchs_sheet_takes_only_its_x(self) -> None:
+        """The lab's row opens the same kind of sheet: 立即完成 for gems, and 戰鬥之書."""
+        for point in ((867, 785), (1121, 785)):
+            adb, report = self._run(
+                ["sheet_running_research.png"], lambda d, p=point: commands.tap(p, d)
+            )
+            adb.tap.assert_not_called()
+            assert report.outcome == "sheet_up", point
+
     def test_a_sheet_takes_its_x_and_nothing_else(self) -> None:
         """Its green button is 立即完成 for gems on this one: buying is `confirm`'s."""
         adb, report = self._run(["sheet_running_gems.png"], lambda d: commands.tap((1121, 783), d))

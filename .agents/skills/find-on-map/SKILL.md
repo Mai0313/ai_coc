@@ -10,7 +10,7 @@ The result is a tap on the right thing, confirmed by what the game shows back, w
 
 ## A fixed route first
 
-**Use a route that does not depend on where things stand, whenever one exists.** The build panel (`upgrades`' 「面板」), the HUD buttons and the commands sit in the same place on every layout; a building moves whenever the user rearranges the village, buys a scenery or the camera parks differently. So the map is for what nothing else reaches, for example a running research: `tap` refuses its panel row, which opens 立即完成 for gems or a menu whose 取消 throws the job away, so the 升級部隊 window is reached from the lab itself.
+**Use a route that does not depend on where things stand, whenever one exists.** The build panel (`upgrades`' 「面板」), the HUD buttons and the commands sit in the same place on every layout; a building moves whenever the user rearranges the village, buys a scenery or the camera parks differently. So the map is for what nothing else reaches, for example the 升級部隊 window while a research runs: the research's panel row opens only its 正在將X升至N級 sheet, where nothing but the X takes a tap, so the window is reached from the lab itself.
 
 **Never write a position you found into code, a skill or a memory**, and never reuse one from an earlier run. It holds only for the layout, scenery and camera of the frame you read it from.
 

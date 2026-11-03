@@ -2841,8 +2841,8 @@ def _refused(png: bytes, point: tuple[int, int]) -> PressOutcome | None:
     in a battle deploys whatever card is selected.
 
     **A running row on the build panel is not refused, what it opens is**: a
-    hero's or a pet's 正在將X升至N級 is a sheet, and a building's menu carries
-    立即完成 on the row its 取消 sits in. The agent opens a hero's ahead of
+    hero's, a pet's or a research's 正在將X升至N級 is a sheet, and a building's
+    menu carries 立即完成 on the row its 取消 sits in. The agent opens a hero's ahead of
     time, because that sheet turns into the next level's as its countdown ends.
     """
     if in_battle(png):
