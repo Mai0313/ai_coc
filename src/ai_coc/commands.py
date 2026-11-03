@@ -954,6 +954,10 @@ def claim(
     loan it queued behind ends it with `LoanCancelledError`, since a stop means
     nothing lined up behind it starts. One queued behind a holder that lent
     nothing is not stopped: it starts once a stop has ended that holder.
+    Lending is keyed on `--yield` rather than on two sessions differing: keyed
+    on sessions, a farming command claiming between two of a tester's commands
+    would borrow from the tester, whose next command would then queue behind it
+    for hours.
     """
     global _held  # noqa: PLW0603 - process-wide by nature; see `_held`
     who = caller or Caller()
