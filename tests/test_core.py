@@ -6376,6 +6376,14 @@ class LaunchTests(unittest.TestCase):
             commands.launch("none", lambda: False, frames)
         assert (frames.directory / "no_village.png").read_bytes() == b"frame"
 
+    def test_its_own_controller_records_into_the_run(self) -> None:
+        """`launch` builds its controller itself, so its polls reach `--debug` only this way."""
+        mumu = self._mumu()
+        frames = _frames(self)
+        with self._driving(mumu):
+            commands.launch("none", lambda: False, frames)
+        assert mumu.controller.return_value.frames is frames
+
     def test_a_stop_ends_the_wait_and_is_named_as_one(self) -> None:
         """`ai_coc stop` used to wait out the whole three minutes, and the report
         then blamed a village that never painted.

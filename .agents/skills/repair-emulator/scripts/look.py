@@ -46,7 +46,7 @@ def main() -> None:
             )
         focus = adb.shell("dumpsys window | grep mCurrentFocus").strip()
         path = out / f"{index:03d}_{time.monotonic() - start:.1f}s.png"
-        path.write_bytes(adb.screenshot(display))
+        path.write_bytes(adb.screenshot(display, None))
         print(f"{path} display={display.logical_id} {focus}", flush=True)
         if index + 1 < count:
             time.sleep(gap)
