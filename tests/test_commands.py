@@ -2007,6 +2007,15 @@ class PressAndConfirmTests(unittest.TestCase):
         adb.tap.assert_called_once()
         assert report.outcome == "confirmed"
 
+    def test_a_home_research_whose_sheet_turns_into_the_running_one_is_confirmed(self) -> None:
+        """The home lab keeps its sheet up as 正在將X升至N級, with a gem 立即完成 (#527)."""
+        adb, report = self._run(
+            ["sheet_pet_dark.png", "sheet_running_after_confirm.png"],
+            lambda d: commands.confirm(32000, d),
+        )
+        adb.tap.assert_called_once()
+        assert report.outcome == "confirmed"
+
     def test_confirm_presses_the_builder_base_button_in_the_middle(self) -> None:
         adb, report = self._run(
             ["night_sheet_elixir.png", "night_menu_finishing.png"],
