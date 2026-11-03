@@ -929,25 +929,6 @@ class AttackPlan(BaseModel):
         return drops[0].at if drops and len(drops[0].at) >= 2 else None
 
 
-class PlayedPlan(BaseModel):
-    """One round's tactic, as one line of a run's `plans.jsonl`.
-
-    The round number is what makes the line worth having: `run.log` and
-    `result.json` both count rounds the same way, so a line here pins the
-    coordinates the planner drew to the round whose outcome is recorded there.
-    Without it a series of identical flat plans says nothing at all.
-    """
-
-    model_config = ConfigDict(frozen=True)
-
-    round: int
-    # Either village's tactic. They are different documents — the builder base
-    # has no spells and no ability clock — and the round number beside them is
-    # what says which one a line belongs to, since `result.json` records the
-    # village per round.
-    plan: AttackPlan | NightPlan
-
-
 class NightPlan(BaseModel):
     """How to attack one builder base opponent: a drop line and where each hero goes.
 
@@ -1109,10 +1090,6 @@ class AttackOptions(BaseModel):
     # names its own village, and a game on the other one ends the series.
     plan: Path | None = None
     plan_out: Path | None = None
-    # The run's own plan log, one line per round. `plan_out` is the caller's
-    # path and holds whichever round went last; this is the whole series.
-    # None only for a caller with no run directory to write into.
-    plan_log: Path | None = None
     minimums: LootOverrides = LootOverrides()
     # 0 keeps going until it is interrupted, which is what watching the loop play
     # needs: a tactic is judged over a run of battles rather than one.
@@ -1916,29 +1893,6 @@ class RunLog(BaseModel):
         """
         return FrameLog(directory=self.directory / "frames", recording=self.recording)
 
-    @property
-    def plan_log(self) -> Path:
-        """One line per round, holding the tactic that round played.
-
-        Unconditional where recording is not, because the two cost nothing alike:
-        a plan is a few hundred bytes of JSON written once a battle, against a
-        PNG encode on the emulator for every frame a loop reads.
-
-        It is the only record of what the planner actually answered. `run.log`
-        carries a one-line summary and `--plan-out` keeps the last round alone,
-        overwriting every earlier one, so a series had no way to say which round
-        drew which line — and the loop's own frames cannot answer it either,
-        since a drop is over in a fraction of the gap between two captures.
-
-        **One file rather than one per round.** `--repeat 0` runs until it is
-        stopped, so a night of farming is a hundred rounds or more, and a
-        hundred small files is a directory nobody opens. A line carries its own
-        round number, so it lines up with `run.log` and `result.json`, and the
-        whole series greps and diffs as one document. Pulling a single round
-        back out for `--plan` is a line of `jq`, on either village.
-        """
-        return self.directory / "plans.jsonl"
-
     def answer(self, text: str) -> None:
         """Keep a run's result beside the log that explains how it got there."""
         (self.directory / "result.json").write_text(text, encoding="utf-8")
@@ -1993,6 +1947,9 @@ class RoundEvent(BaseModel):
     event: Literal["round"] = "round"
     round: int
     report: AttackReport
+    # The only record of which tactic each round played: `--plan-out` keeps the
+    # last round alone, `run.log` a one-line summary, and a drop is over inside
+    # the gap between two frames. None for a round that ended before it had one.
     plan: AttackPlan | NightPlan | None = None
     holding: VillageStock | None = None
     capacity: StorageCapacity | None = None

@@ -239,7 +239,7 @@ class AdbConnectionTests(unittest.TestCase):
         shell.assert_not_called()
 
     def test_a_burst_names_every_point_it_taps(self) -> None:
-        """`plans.jsonl` says where the plan aimed; only this line says where the taps went."""
+        """The journal says where the plan aimed; only this line says where the taps went."""
         with patch.object(AdbController, "shell"), self.assertLogs(adb_module.logger) as logs:
             _controller().tap_many([(1, 2), (3, 4)], DISPLAY, gap=0.1)
         assert logs.output[-1].endswith(

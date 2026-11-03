@@ -21,10 +21,8 @@ from ai_coc.models import (
     MapFrame,
     AppConfig,
     MapSurvey,
-    NightPlan,
     AttackPlan,
     AttackStep,
-    PlayedPlan,
     AdbEndpoint,
     ScreenPoint,
     EntityMapping,
@@ -244,22 +242,6 @@ class PlanTests(unittest.TestCase):
         with pytest.raises(ValidationError):
             ScreenPoint(x_pct=101, y_pct=0)
 
-    def test_a_played_plan_round_trips_either_village(self) -> None:
-        """The union has to come back as the plan that went in, not the other kind."""
-        night = NightPlan(
-            deploy_start=ScreenPoint(x_pct=37.5, y_pct=12),
-            deploy_end=ScreenPoint(x_pct=14, y_pct=42),
-            hero_points=[],
-            troops_after=4,
-        )
-        day = AttackPlan(steps=[self._step("troops", (37.5, 12), (14, 42))])
-        for plan in (night, day):
-            line = PlayedPlan(round=2, plan=plan).model_dump_json()
-            back = PlayedPlan.model_validate_json(line)
-            assert back.round == 2
-            assert back.plan == plan
-            assert type(back.plan) is type(plan)
-
 
 class GeminiRequestTests(unittest.TestCase):
     def test_the_body_uses_the_wire_names_and_drops_what_was_not_set(self) -> None:
@@ -328,7 +310,7 @@ class RunLogTests(unittest.TestCase):
 
     def test_old_frames_are_culled_and_the_log_beside_them_is_kept(self) -> None:
         """Measured across 438 runs here, 11 456 PNGs came to 27.2 GB while
-        every `run.log`, `result.json` and `plans.jsonl` together came to 4.6 MB
+        everything else in those directories came to 4.6 MB
         — so the listing stays the history and only the frames age out.
         """
         with (
@@ -355,7 +337,6 @@ class RunLogTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             run = RunLog(directory=Path(folder))
             assert run.log_path == Path(folder) / "run.log"
-            assert run.plan_log == Path(folder) / "plans.jsonl"
             assert run.frames.directory == Path(folder) / "frames"
 
 

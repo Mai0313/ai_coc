@@ -66,13 +66,12 @@ uv run ai_coc attack --repeat 0 --plan src/ai_coc/plans/flat.json --yield --agen
 ~/.ai_coc/logs/2026-08-29-011423-attack/
 ├── run.log        # 這次執行的完整紀錄, 純文字
 ├── result.json    # 這次的答案, 跑完才會有這個檔案
-├── plans.jsonl    # 只有 attack 有: 一場一行, 那一場的整份戰術
 └── frames/        # 讀過的每一張要開 --debug; tap、swipe、confirm、boost 留 after.png (什麼都沒按是 refused.png); capture 一定會有; world 跟 launch 截得到畫面卻找不到村莊時留 no_village.png
 ```
 
 **目錄在開跑開頭那行 log** (`This run is being kept in ...`). 名字是「時間-指令」, `ls -t ~/.ai_coc/logs` 最上面是最近已經建好的一次 (剛開跑的那一次可能還沒建好). 任何指令加 `--label <名字>` 會接在後面 (`…-attack-baseline`), 給之後要找回來的那一次用.
 
-**畫面只留七天, log 永久留.** 過期的 `frames/` 在下一次有指令開跑時刪掉, 同目錄的 `run.log`、`result.json`、`plans.jsonl` 不動, 刪了幾個會寫進 log. 要留久的證據自己複製一份.
+**畫面只留七天, log 永久留.** 過期的 `frames/` 在下一次有指令開跑時刪掉, 同目錄的 `run.log`、`result.json` 不動, 刪了幾個會寫進 log. 要留久的證據自己複製一份.
 
 **`result.json` 是一個陣列, 不是一個物件.** `attack` 寫的是 `AttackSeries`, 一輪一個 `AttackReport`, 頂層沒有 `stock_full`. 「這個世界打完了沒」看**最後一個元素**:
 
@@ -109,7 +108,7 @@ jq '.[-1] | {world, outcome, stock_full, attacked}' ~/.ai_coc/logs/<run>/result.
 
 一個 run 結束而你什麼都沒接, 模擬器就閒著, 使用者卻以為還在打.
 
-`plans.jsonl` 在同一個目錄, 一場一行, 是那一輪照著打的整份戰術 (AI 規劃的, 或 `--plan` 交進去的那份). `jq -c 'select(.round==3)' plans.jsonl` 拿一輪出來看, `jq -r '"\(.round) \(.plan.deploy_from)"' plans.jsonl` 一眼看完整批打了哪些側邊. **一輪打壞先讀它**: 它說打算怎麼打, `run.log` 說實際做了什麼, 對照才知道問題在指揮還是在執行.
+每一輪照著打的整份戰術 (AI 規劃的, 或 `--plan` 交進去的那份) 在 `~/.ai_coc/runs.jsonl` 那一輪 `round` 行的 `plan`, 用執行目錄的名字 (`run`) 跟輪數 (`round`) 挑出來. `jq -c 'select(.event=="round" and .run=="<執行目錄名>" and .round==3).plan' ~/.ai_coc/runs.jsonl` 拿一輪出來看, `jq -r 'select(.event=="round" and .run=="<執行目錄名>") | "\(.round) \(.plan.deploy_from)"' ~/.ai_coc/runs.jsonl` 一眼看完整批打了哪些側邊. **一輪打壞先讀它**: 它說打算怎麼打, `run.log` 說實際做了什麼, 對照才知道問題在指揮還是在執行.
 
 跨好幾次跑找同一個症狀用 `grep -r ~/.ai_coc/logs/*/run.log`, 它會說每一筆出自哪一次.
 

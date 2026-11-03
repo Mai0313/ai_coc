@@ -23,8 +23,8 @@ LOG_DIR.mkdir(parents=True, exist_ok=True)
 
 # How long a run's recorded frames are kept. **The log beside them is never
 # culled**, and the size split is what makes that easy to draw: measured across
-# 438 runs on this machine, 11 456 PNGs came to 27.2 GB while every `run.log`,
-# `result.json` and `plans.jsonl` together came to 4.6 MB. The directory names
+# 438 runs on this machine, 11 456 PNGs came to 27.2 GB while everything else
+# in those directories came to 4.6 MB. The directory names
 # are the history and `grep -r` over the logs is how a pattern is found across
 # runs, so those cost nothing worth reclaiming; a week-old frame nobody has
 # opened is the whole of it.

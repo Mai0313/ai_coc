@@ -2291,7 +2291,7 @@ class AttackRunner(ScreenRunner):
         points = self._onscreen(tuple(point.pixels() for point in step.at))
         middle = line[len(line) // 2]
         # Where a siege machine or a hero goes; see `onto_line`. Said out loud
-        # when it moves, since `plans.jsonl` still holds where it was aimed.
+        # when it moves, since the journal's plan still holds where it was aimed.
         spot = onto_line(points[0], line, self._middle) if points else middle
         if step.act in ("siege", "hero") and points and spot != points[0]:
             logger.info(

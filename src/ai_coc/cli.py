@@ -340,7 +340,6 @@ def _answer(arguments: argparse.Namespace, run: RunLog) -> BaseModel | str:
             AttackOptions(
                 plan=a.plan,
                 plan_out=a.plan_out,
-                plan_log=run.plan_log,
                 minimums=LootOverrides(
                     min_gold=a.min_gold, min_elixir=a.min_elixir, min_dark=a.min_dark
                 ),
