@@ -703,7 +703,6 @@ class UpkeepLineTests(unittest.TestCase):
                 "on_hud": "遊戲自己的按鈕",
                 "menu_gems": "建築選單那一排",
                 "green_button": "綠色的按鈕",
-                "running_row": "正在升級",
                 "in_battle": "戰鬥中",
             },
             get_args(PressOutcome),
@@ -1864,16 +1863,26 @@ class PressAndConfirmTests(unittest.TestCase):
             adb.tap.assert_called_once_with(800, 450, DISPLAY)
             assert report.outcome == "pressed", frame  # type: ignore[attr-defined]
 
-    def test_the_panels_running_rows_take_no_tap_and_the_rest_do(self) -> None:
-        adb, report = self._run(["hud_day_build_panel.png"], lambda d: commands.tap((1300, 90), d))
-        adb.tap.assert_not_called()
-        assert report.outcome == "running_row"
+    def test_a_running_row_opens_and_its_sheet_keeps_the_book_out_of_reach(self) -> None:
+        """Opened ahead of time, a hero's sheet turns into the next level's as its countdown ends."""
         adb, report = self._run(
-            ["hud_day_build_panel.png", "hud_day_build_panel.png"],
-            lambda d: commands.tap((1300, 420), d),
+            ["hud_day_build_panel.png", "sheet_running_book.png"],
+            lambda d: commands.tap((1300, 90), d),
         )
-        adb.tap.assert_called_once_with(1300, 420, DISPLAY)
+        adb.tap.assert_called_once_with(1300, 90, DISPLAY)
         assert report.outcome == "pressed"
+        adb, report = self._run(["sheet_running_book.png"], lambda d: commands.tap((867, 785), d))
+        adb.tap.assert_not_called()
+        assert report.outcome == "sheet_up"
+
+    def test_a_running_researchs_sheet_takes_only_its_x(self) -> None:
+        """The lab's row opens the same kind of sheet: 立即完成 for gems, and 戰鬥之書."""
+        for point in ((867, 785), (1121, 785)):
+            adb, report = self._run(
+                ["sheet_running_research.png"], lambda d, p=point: commands.tap(p, d)
+            )
+            adb.tap.assert_not_called()
+            assert report.outcome == "sheet_up", point
 
     def test_a_sheet_takes_its_x_and_nothing_else(self) -> None:
         """Its green button is 立即完成 for gems on this one: buying is `confirm`'s."""

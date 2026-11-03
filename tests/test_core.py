@@ -7325,6 +7325,8 @@ class UpgradeSheetOfferTests(unittest.TestCase):
             "sheet_hero_dark_lime.png",
             "sheet_pet_dark.png",
             "sheet_running_gems.png",
+            "sheet_running_book.png",
+            "sheet_running_research.png",
             "night_sheet_gold.png",
             "night_sheet_elixir.png",
             "night_sheet_red.png",
@@ -7337,7 +7339,11 @@ class UpgradeSheetOfferTests(unittest.TestCase):
         opened = {path.name for path in FRAMES.glob("*.png") if sheet_open(path.read_bytes())}
         assert opened == sheets
         offered = {path.name for path in FRAMES.glob("*.png") if sheet_offer(path.read_bytes())}
-        assert offered == sheets - {"sheet_running_gems.png"}
+        assert offered == sheets - {
+            "sheet_running_gems.png",
+            "sheet_running_book.png",
+            "sheet_running_research.png",
+        }
 
     def test_only_the_labs_running_research_window_reads_as_one(self) -> None:
         """Its greyed-out troop tile once passed for the research sheet's button (#492)."""
