@@ -12,6 +12,7 @@ import io
 import os
 import json
 import math
+import time
 from typing import TYPE_CHECKING, get_args
 from pathlib import Path
 from datetime import UTC, datetime, timedelta
@@ -1312,8 +1313,10 @@ class FrameTickerTests(unittest.TestCase):
         assert not frames.directory.exists()
 
     def test_leaving_stops_the_heartbeat_without_waiting_out_its_interval(self) -> None:
+        started = time.monotonic()
         with commands.FrameTicker(frames=_frames(self), seconds=60) as ticker:
             pass
+        assert time.monotonic() - started < 5
         assert ticker._thread is not None
         assert not ticker._thread.is_alive()
 
