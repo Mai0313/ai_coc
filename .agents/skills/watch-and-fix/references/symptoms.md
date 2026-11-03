@@ -93,7 +93,7 @@
 **先看 outcome**, 兩種往相反方向查:
 
 - `nothing_deployed`: 一張卡都出不去, 迴圈的問題, 看這一節
-- `no_loot`: 兵下去了, 位置不對, **戰術**的問題, 先讀那一輪的 `plans.jsonl`, 再照 SKILL.md 的調整階梯從戰術檔開始 (實測過: 32%, 卡全清空, 英雄全落地, 打進了沒有倉庫的那一側). 從哪一側打是使用者定的, 見階梯第三層
+- `no_loot`: 兵下去了, 位置不對, **戰術**的問題, 先讀那一輪在 `runs.jsonl` 的 `plan`, 再照 SKILL.md 的調整階梯從戰術檔開始 (實測過: 32%, 卡全清空, 英雄全落地, 打進了沒有倉庫的那一側). 從哪一側打是使用者定的, 見階梯第三層
 - `no_loot` 而且那一輪拖滿四分鐘, 戰鬥中每十秒一行 `No battle on screen; nothing here is a card to empty`: 戰鬥畫面不見了而結算畫面也沒出來, 迴圈沒有這個狀態, 只能等 `BATTLE_TIMEOUT` 用完. 彈出視窗蓋住戰鬥會這樣; 打到一半登入被搶走以前也是, 現在報成 `session_taken`, 所以畫面上是被擠掉的對話框的話, 是 `session_taken` 沒認出來. 先看那一輪的畫面, 不要調戰術
 
 依序看:
@@ -137,7 +137,7 @@ log 的 `The camera was not at the far zoom` 量的是拉遠之前的鏡頭, 只
 
 `field_units` 讀卡片上方的血條, 靠藍色分辨血條跟草地. 英雄卡不會清空 (變成技能按鈕), 不能用 `card_drained`. 假陰性有代價: 重試再點那張卡就是放技能. 看 `_drop_singles`, `_landed`, `HERO_SETTLE`.
 
-第一次投放用 plan 那個 `siege` / `hero` 步驟自己的 `at`, 但點若正對著部隊實際那條線、在線的內側 `ONTO_LINE_SLACK` 到 `ONTO_LINE_REACH` 之間 (更遠的當成刻意放在別處, 不動), `onto_line` 先把它搬到線上的垂足 (AI 照抄 prompt 的基準線, 部隊的線卻被 `_flank` 貼到真正的紅線上, 內側的點多半被拒); 線端外面的點不動, 那是清邊英雄的位置. 搬了會有一行 `aimed inside the line`, 所以 `plans.jsonl` 的座標跟畫面對不上時先找這行. 被拒的一律走 `single_spots` 的共用階梯重試, 從線的中點開始 (不是單純再往外, 理由同 `push_out`), 不再用 plan 的點; 但離剛被拒的那個點 `REFUSED_NEAR` 以內的階梯會跳過 (平鋪的英雄瞄的就是線的中點, 中點那一階等於同一塊被拒的地), 所以 log 的重試座標可能直接是往外推的那一階. 重試前卡片已經灰掉的不再送 (`already spent, not sent again`): 單位已經在場上或死在場上, 只是血條一下場就掉到紅色, `field_units` 沒認到綠條.
+第一次投放用 plan 那個 `siege` / `hero` 步驟自己的 `at`, 但點若正對著部隊實際那條線、在線的內側 `ONTO_LINE_SLACK` 到 `ONTO_LINE_REACH` 之間 (更遠的當成刻意放在別處, 不動), `onto_line` 先把它搬到線上的垂足 (AI 照抄 prompt 的基準線, 部隊的線卻被 `_flank` 貼到真正的紅線上, 內側的點多半被拒); 線端外面的點不動, 那是清邊英雄的位置. 搬了會有一行 `aimed inside the line`, 所以 `runs.jsonl` 裡 `plan` 的座標跟畫面對不上時先找這行. 被拒的一律走 `single_spots` 的共用階梯重試, 從線的中點開始 (不是單純再往外, 理由同 `push_out`), 不再用 plan 的點; 但離剛被拒的那個點 `REFUSED_NEAR` 以內的階梯會跳過 (平鋪的英雄瞄的就是線的中點, 中點那一階等於同一塊被拒的地), 所以 log 的重試座標可能直接是往外推的那一階. 重試前卡片已經灰掉的不再送 (`already spent, not sent again`): 單位已經在場上或死在場上, 只是血條一下場就掉到紅色, `field_units` 沒認到綠條.
 
 ## 攻城機器整場亮著沒下去
 
@@ -153,7 +153,7 @@ log 的 `The camera was not at the far zoom` 量的是拉遠之前的鏡頭, 只
 
 **症狀**: 皇后的斗篷開在別人身上, 或某個英雄整場沒開大.
 
-哪張一次性卡片是攻城機具由 plan 有沒有 `siege` 步驟決定 (血條分不出來, 遊戲對攻城戰車也畫血條): `_deploy` 建 `BattleRow` 時有 `siege` 就把第一張當機具, 沒有就整排當英雄. 多寫或少寫一個 `siege`, 整排英雄的落點跟開大秒數就偏一格, **沒有下游會發現**. 對照那輪 `plans.jsonl` 有沒有 `siege` 跟 `--debug` 的 `zoomed` 畫面 (置中拖過鏡頭的話是之後那張 `camera`, `_deploy` 讀卡片列的就是它) 上有沒有攻城機具, 對不上就從 `prompts/attack_plan.md` 查.
+哪張一次性卡片是攻城機具由 plan 有沒有 `siege` 步驟決定 (血條分不出來, 遊戲對攻城戰車也畫血條): `_deploy` 建 `BattleRow` 時有 `siege` 就把第一張當機具, 沒有就整排當英雄. 多寫或少寫一個 `siege`, 整排英雄的落點跟開大秒數就偏一格, **沒有下游會發現**. 對照那輪在 `runs.jsonl` 的 `plan` 有沒有 `siege` 跟 `--debug` 的 `zoomed` 畫面 (置中拖過鏡頭的話是之後那張 `camera`, `_deploy` 讀卡片列的就是它) 上有沒有攻城機具, 對不上就從 `prompts/attack_plan.md` 查.
 
 `siege` 對得上還是晚一格, 看戰鬥中途卡片列前面有沒有多出一張 (活動卡): `BattleRow` 記的是開場讀到的 x, 前面插一張, 後面每張都往右移, `ability` 跟 `_cast` 就點到隔壁那張. 這是 `.agents/rules/attack.md` 記著的已知缺陷.
 
@@ -165,7 +165,7 @@ log 的 `The camera was not at the far zoom` 量的是拉遠之前的鏡頭, 只
 
 ## 怒吼丟在空地上
 
-**先分「畫錯」還是「被搬走」.** 在那一輪 `plans.jsonl` 找 `act` 是 `rage` 的步驟, `at` 乘上 (16, 9) 換成像素, 加上鏡頭拖過的量 (`_onscreen`; `_clear_flank` 幾乎每場都拖, 量在 `run.log` 的 `now (x, y) off where the battle opened`), 跟畫面上的圈比:
+**先分「畫錯」還是「被搬走」.** 在 `runs.jsonl` 那一輪的 `plan` 找 `act` 是 `rage` 的步驟, `at` 乘上 (16, 9) 換成像素, 加上鏡頭拖過的量 (`_onscreen`; `_clear_flank` 幾乎每場都拖, 量在 `run.log` 的 `now (x, y) off where the battle opened`), 跟畫面上的圈比:
 
 - **對得上, 位置不好**: prompt 的問題. 查 `src/ai_coc/prompts/attack_plan.md` 有沒有要它挑**這一側防禦最密的一團**, 排成**方塊** (四瓶排一橫排比村莊還寬).
 - **對不上, 或瓶數比 plan 少**: `spaced` 動過它. 太密的點推到橢圓邊緣, 推不動 (被 `clear_of_controls` 壓回, 或要推超過一個覆蓋範圍) 才丟掉, **不補位**. 從 plan 的座標對回去看是哪一點.

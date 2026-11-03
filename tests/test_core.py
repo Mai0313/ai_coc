@@ -37,7 +37,6 @@ from ai_coc.models import (
     AttackPlan,
     AttackStep,
     CartReport,
-    PlayedPlan,
     SheetOffer,
     AdbEndpoint,
     NamedEntity,
@@ -3786,7 +3785,7 @@ class AttackTests(unittest.TestCase):
         Naming the hero on its own step is what survives that: the loop matches
         `hero` steps to cards left to right, so a row one card shorter costs the
         missing hero and nothing else. The name is what makes a bad battle
-        legible afterwards — `plans.jsonl` says which hero went where.
+        legible afterwards — the journal's plan says which hero went where.
         """
         steps = [_step("hero", (20, 40), who="queen"), _step("hero", (45, 35), who="warden")]
         assert [step.who for step in steps] == ["queen", "warden"]
@@ -6149,66 +6148,13 @@ class RunnerStateTests(unittest.TestCase):
 class PlanLogTests(unittest.TestCase):
     """What an attack series writes down about the tactic each round played."""
 
-    @staticmethod
-    def _fought() -> AttackReport:
-        return AttackReport(outcome="took_loot", phases=1)
-
-    def _play(
-        self, reports: list[AttackReport], options: AttackOptions, played: AttackPlan | None = None
-    ) -> None:
-        """Run the loop over a fixed list of rounds."""
-        with (
-            patch.object(commands, "_controller"),
-            patch.object(commands, "current_world", return_value="day"),
-            # The attack only zooms out before its battle, so nothing here parks.
-            patch.object(commands, "park_camera", side_effect=AssertionError("parked")),
-            patch.object(commands, "_planner", return_value=None),
-            patch.object(commands.ConfigStore, "load", return_value=AppConfig()),
-            patch.object(commands, "_rest", return_value=False),
-            patch.object(commands, "AttackRunner") as runner,
-        ):
-            runner.return_value.run.side_effect = reports
-            runner.return_value.configure_mock(
-                played=played, holding=None, capacity=None, cart=None
-            )
-            self.series = commands.attack(options, _frames(self))
-
-    def test_every_round_leaves_its_own_line_in_the_plan_log(self) -> None:
-        """`--plan-out` keeps whichever round went last and overwrites the rest.
-
-        Which line a given round drew is otherwise unanswerable: `run.log` has a
-        one-line summary of it, and the frames cannot stand in, since a drop is
-        over inside the gap between two captures. One file rather than one per
-        round, because `--repeat 0` runs all night.
-        """
-        with tempfile.TemporaryDirectory() as td:
-            log = Path(td) / "plans.jsonl"
-            self._play(
-                [self._fought()] * 3, AttackOptions(rounds=3, plan_log=log), played=plans.flat()
-            )
-            lines = [
-                PlayedPlan.model_validate_json(line)
-                for line in log.read_text(encoding="utf-8").splitlines()
-            ]
-            assert [entry.round for entry in lines] == [1, 2, 3]
-            assert lines[1].plan == plans.flat()
-
-    def test_a_round_that_never_got_a_plan_writes_no_line(self) -> None:
-        """A round can end before there is a tactic to write down, and that is not
-        an error: an empty line would read as a plan that drew nothing.
-        """
-        with tempfile.TemporaryDirectory() as td:
-            log = Path(td) / "plans.jsonl"
-            self._play([self._fought()], AttackOptions(rounds=1, plan_log=log))
-            assert not log.exists()
-
     def test_a_round_does_not_inherit_the_last_one_s_plan(self) -> None:
         """One runner plays every round, so `played` has to be cleared with the rest.
 
         Rounds that never reach the planner are ordinary — no opponent above the
         thresholds, an army under `MIN_ARMY_RATIO`, the attack menu not opening.
         Carried over, each would be filed under its own number holding the
-        previous round's tactic, which is worse than the absent file it replaces:
+        previous round's tactic, which is worse than the empty plan it replaces:
         a `--plan` or flat-fallback series writes identical plans round after
         round, so nothing downstream could tell a stale copy from a real one.
         """

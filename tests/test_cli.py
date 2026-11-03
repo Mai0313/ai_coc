@@ -21,7 +21,7 @@ from unittest.mock import patch
 
 import pytest
 
-from ai_coc import cli, models, commands, logging_setup
+from ai_coc import cli, plans, models, commands, logging_setup
 from ai_coc.cli import NO_SCREEN, _answer, _parser, _run_command
 from ai_coc.models import (
     Caller,
@@ -164,7 +164,6 @@ class DispatchTests(unittest.TestCase):
         assert attacked.call_args.args[0] == AttackOptions(
             plan=Path("a.json"),
             plan_out=Path("b.json"),
-            plan_log=self.recorded.plan_log,
             minimums=LootOverrides(min_gold=0),
             rounds=0,
             stop_at=0,
@@ -187,7 +186,7 @@ class DispatchTests(unittest.TestCase):
         with patch.object(commands, "attack", return_value=AttackSeries()) as attacked:
             _answer(_args("attack"), self.run)
         options = attacked.call_args.args[0]
-        assert options == AttackOptions(plan_log=self.run.plan_log)
+        assert options == AttackOptions()
         assert options.minimums == LootOverrides()
         assert options.stop_at is None
         assert not attacked.call_args.args[1].recording
@@ -593,6 +592,38 @@ class JournalTests(unittest.TestCase):
             if event["event"] == "round"
         ]
         assert rounds == [(1, "took_loot", 3), (2, "stock_full", 3)]
+
+    def test_a_round_line_carries_the_plan_it_played_in_a_shape_plan_takes_back(self) -> None:
+        """The one record of which tactic each round played, on either village."""
+        played = [plans.flat(), plans.night_flat()]
+        root = logging.getLogger()
+        journal, level = logging_setup.Journal(self.run), root.level
+        root.addHandler(journal)
+        root.setLevel(logging.INFO)
+        try:
+            with (
+                patch.object(commands, "_controller"),
+                patch.object(commands, "current_world", return_value="day"),
+                patch.object(commands, "_planner", return_value=None),
+                patch.object(commands.ConfigStore, "load", return_value=AppConfig()),
+                patch.object(commands, "AttackRunner") as runner,
+            ):
+                runner.return_value.run.return_value = AttackReport(outcome="took_loot", phases=1)
+                for plan in played:
+                    runner.return_value.configure_mock(
+                        played=plan, holding=None, capacity=None, cart=None
+                    )
+                    commands.attack(AttackOptions(), self.run.frames)
+        finally:
+            root.removeHandler(journal)
+            root.setLevel(level)
+        replay = self.folder / "replay.json"
+        back = []
+        for event in _journal():
+            if event["event"] == "round":
+                replay.write_text(json.dumps(event["plan"]), encoding="utf-8")
+                back.append(plans.load_any(replay))
+        assert back == played
 
     def test_the_emulator_changing_hands_is_kept_with_who_was_on_the_other_side(self) -> None:
         """`state.json` keeps only the latest of these, so this is the loan's history."""

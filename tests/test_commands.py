@@ -39,7 +39,6 @@ from ai_coc.models import (
     CartReport,
     GameDialog,
     PlateCount,
-    PlayedPlan,
     SheetOffer,
     AdbEndpoint,
     CartOutcome,
@@ -1425,20 +1424,6 @@ class RunPlumbingTests(unittest.TestCase):
                 plans.load_any(path)
         assert "act" in str(raised.value)
         assert "deploy_start" not in str(raised.value)
-
-    def test_the_plan_log_holds_one_line_per_round_of_either_village(self) -> None:
-        with tempfile.TemporaryDirectory() as folder:
-            log = Path(folder) / "plans.jsonl"
-            commands._log_plan(log, 1, plans.flat())
-            commands._log_plan(log, 2, plans.night_flat())
-            commands._log_plan(log, 3, None)
-            lines = [
-                PlayedPlan.model_validate_json(line)
-                for line in log.read_text(encoding="utf-8").splitlines()
-            ]
-        assert [line.round for line in lines] == [1, 2]
-        assert isinstance(lines[0].plan, AttackPlan)
-        assert isinstance(lines[1].plan, NightPlan)
 
     def test_the_barracks_wait_runs_its_course_with_nobody_stopping_it(self) -> None:
         with patch.object(commands, "STOP_POLL", 0.001):

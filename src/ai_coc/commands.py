@@ -37,7 +37,6 @@ from ai_coc.models import (
     AttackPlan,
     CartReport,
     PlateCount,
-    PlayedPlan,
     RoundEvent,
     SheetOffer,
     StopTarget,
@@ -1496,25 +1495,6 @@ def _write_plan(path: Path | None, plan: AttackPlan | NightPlan | None) -> None:
     logger.info("Wrote the plan that ran to %s", path)
 
 
-def _log_plan(path: Path | None, played: int, plan: AttackPlan | NightPlan | None) -> None:
-    """Append one round's tactic to the run's plan log.
-
-    Appended rather than rewritten, and one file rather than one per round:
-    `--repeat 0` runs until it is stopped, so a night of farming is a hundred
-    rounds or more and a hundred small files is a directory nobody opens.
-
-    A round that ended before there was a plan writes nothing, which is not an
-    error — no opponent above the thresholds, an army under `MIN_ARMY_RATIO`,
-    the attack menu not opening. Its round number is simply missing from the
-    log, and `result.json` is where what happened instead is recorded.
-    """
-    if path is None or plan is None:
-        return
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a", encoding="utf-8") as log:
-        log.write(PlayedPlan(round=played, plan=plan).model_dump_json() + "\n")
-
-
 # Only ever used to build the `Attack finished:` line a person reads; the field
 # a caller decides on is `AttackReport.outcome`. **The four that fought are kept
 # distinguishable in the wording too**, because `run.log` is where a farming
@@ -1799,7 +1779,6 @@ def attack(
         fighting = report.attacked is not None or report.phases > 0
         logger.info("Attack finished: %s", round_line(report), extra=_round_event(runner, series))
         _write_plan(options.plan_out, runner.played)
-        _log_plan(options.plan_log, len(series.root), runner.played)
         # A stop is let through first, so the series ends on its own line
         # and a loan reads as one rather than as a run that gave up.
         if _series_over(report, len(series.root)) or (

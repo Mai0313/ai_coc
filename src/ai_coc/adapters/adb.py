@@ -368,7 +368,7 @@ class AdbController(BaseModel):
         the return so `Tapping 0 points` survives as the signature to grep for.
 
         **The line names every point**, because nothing else records where a
-        burst landed: `plans.jsonl` holds where the plan aimed, and each drop is
+        burst landed: the journal holds where the plan aimed, and each drop is
         pushed out, clamped and fitted to the boundary on its way here.
         """
         spots = [(int(x), int(y)) for x, y in points]

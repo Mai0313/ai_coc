@@ -144,13 +144,12 @@ Every run gets a directory of its own:
 ~/.ai_coc/logs/2026-08-29-011423-attack/
 ├── run.log        # this run's log, and nothing else
 ├── result.json    # what the command answered
-├── plans.jsonl    # ai_coc attack only: one line per round, the tactic it played
 └── frames/        # every frame it read with --debug; without it, only the ones a command keeps
 ```
 
-The first line of every run says which directory it is, and the name is `<when>-<what>` so a listing reads as a history. `--label` adds a third part on any command (`2026-08-29-011423-attack-baseline`) for a run you want to find again. `~/.ai_coc/runs.jsonl` keeps one line per milestone of every run (its start and end, each attack round, the emulator changing hands, every warning), outside `logs/`, so it survives that directory being cleared; `grep -r ~/.ai_coc/logs/*/run.log` searches the full logs across runs and tells you which one each hit came from.
+The first line of every run says which directory it is, and the name is `<when>-<what>` so a listing reads as a history. `--label` adds a third part on any command (`2026-08-29-011423-attack-baseline`) for a run you want to find again. `~/.ai_coc/runs.jsonl` keeps one line per milestone of every run (its start and end, each attack round with the tactic it played, the emulator changing hands, every warning), outside `logs/`, so it survives that directory being cleared; `grep -r ~/.ai_coc/logs/*/run.log` searches the full logs across runs and tells you which one each hit came from.
 
-**Frames are kept for a week; the logs are kept forever.** A run's `frames/` is deleted once it is older than that, and nothing else in the directory ever is. The split is worth stating because it is lopsided: on this machine 11 456 recorded PNGs came to 27.2 GB while every `run.log`, `result.json` and `plans.jsonl` together came to 4.6 MB. Copy anything you want to keep longer out of there.
+**Frames are kept for a week; the logs are kept forever.** A run's `frames/` is deleted once it is older than that, and nothing else in the directory ever is. The split is worth stating because it is lopsided: on this machine 11 456 recorded PNGs came to 27.2 GB while everything else in those directories came to 4.6 MB. Copy anything you want to keep longer out of there.
 
 ## ⚙️ Settings
 
