@@ -3,11 +3,12 @@ from __future__ import annotations
 import re
 import math
 import shutil
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 import logging
 from pathlib import Path
 from datetime import UTC, datetime, timedelta
 from functools import cached_property
+import threading
 
 from pydantic import (
     Field,
@@ -23,6 +24,11 @@ from pydantic import (
 )
 
 from .constants import LOG_DIR, DEFAULT_ADB_HOST, DEFAULT_GEMINI_MODEL, FRAME_RETENTION_DAYS
+
+if TYPE_CHECKING:
+    # Only `FrameLog`'s private attribute names it, which pydantic never
+    # resolves, and `adb.py` imports this module.
+    from ai_coc.adapters.adb import AdbController  # noqa: TC004
 
 logger = logging.getLogger(__name__)
 
@@ -1095,8 +1101,8 @@ class AttackOptions(BaseModel):
     """What one `attack` command was told to do, beyond the shared config file.
 
     Everything here is about the run rather than the tactic: how many rounds to
-    play, whether to record a heartbeat alongside the frames the loop reads. The
-    tactic itself lives in the config file and in whatever plan is handed in.
+    play, when to stand down. The tactic itself lives in the config file and in
+    whatever plan is handed in.
     """
 
     # A written plan for either village, played instead of asking the AI. It
@@ -1111,8 +1117,6 @@ class AttackOptions(BaseModel):
     # 0 keeps going until it is interrupted, which is what watching the loop play
     # needs: a tactic is judged over a run of battles rather than one.
     rounds: int = 1
-    # 0 records nothing beyond the frames the loop reads for itself.
-    shot_every: float = 0.0
     # Overrides `AppConfig.stop_at` for one run, with the `None` against `0`
     # split the loot overrides have: omitted keeps the file's percentage, zero never stands the run
     # down. Zero is what a test battle against a village the farming has just
@@ -1790,9 +1794,10 @@ class FrameLog(BaseModel):
 
     Two kinds. A frame a command always keeps has a fixed name (`after`,
     `no_village`), because an agent goes looking for it by that name. A
-    capture made while recording (`--debug`) is numbered across the whole run
-    and named for what it was asking (`0006_scout`), so the directory lists in
-    the order the run saw the screen, and the `Saved frame` line lands among
+    capture made while recording (`--debug`) and a heartbeat tick
+    (`--shot-every`, `0007_tick`) are numbered across the whole run, the
+    capture named for what it was asking (`0006_scout`), so the directory lists
+    in the order the run saw the screen, and the `Saved frame` line lands among
     the lines saying what was read off it.
 
     The directory is made by the first write, so a run that keeps nothing
@@ -1802,8 +1807,22 @@ class FrameLog(BaseModel):
     directory: Path
     recording: bool = False
 
-    # Only the loop's own thread counts: the heartbeat names its frames by time.
+    # Locked because the heartbeat's thread takes numbers too.
     _count: int = PrivateAttr(default=0)
+    _lock: threading.Lock = PrivateAttr(default_factory=threading.Lock)
+    # The controller and display of the command's latest capture, which is where
+    # the heartbeat shoots: it starts with the command's first capture, and
+    # follows a restart onto a new display without anybody telling it.
+    _source: tuple[AdbController, DisplayTarget] | None = PrivateAttr(default=None)
+
+    @property
+    def source(self) -> tuple[AdbController, DisplayTarget] | None:
+        """Where the command last captured from; None before its first capture."""
+        return self._source
+
+    def looked(self, adb: AdbController, display: DisplayTarget) -> None:
+        """Remember where a capture was just taken."""
+        self._source = (adb, display)
 
     def write(self, name: str, png: bytes) -> Path:
         """Keep one frame under `name`, recording or not."""
@@ -1816,6 +1835,11 @@ class FrameLog(BaseModel):
     def record(self, label: str, png: bytes) -> None:
         """Keep one capture as the run's next numbered frame, when the run is recorded."""
         if self.recording:
+            self.number(label, png)
+
+    def number(self, label: str, png: bytes) -> None:
+        """Keep one frame as the run's next numbered frame, recording or not."""
+        with self._lock:
             self._count += 1
             self.write(f"{self._count:04d}_{label}", png)
 
@@ -1837,8 +1861,7 @@ class RunLog(BaseModel):
     running the CLI by hand got a rotating file and nothing else.
 
     `recording` is off by default because it is not free: the frames a loop
-    reads are a PNG encode each on the emulator, and the heartbeat competes with
-    the loop for the same ADB connection.
+    reads are a PNG encode each on the emulator.
     """
 
     model_config = ConfigDict(frozen=True)

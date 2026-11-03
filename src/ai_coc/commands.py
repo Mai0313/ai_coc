@@ -86,10 +86,6 @@ from ai_coc.models import (
 )
 from ai_coc.constants import STATE_PATH, COC_PACKAGE, ACCOUNT_JSON_DIR
 from ai_coc.adapters.ai import GeminiClient
-
-# A runtime import rather than a TYPE_CHECKING one: `FrameTicker` declares it as
-# a field, and a model whose field type is only importable to a type checker
-# cannot be built at all.
 from ai_coc.adapters.adb import ZOOM_PINCHES, AdbController, AdbControlError
 from ai_coc.parsers.clan import donatable_cards
 from ai_coc.parsers.home import (
@@ -408,20 +404,23 @@ def _planner(config: AppConfig) -> GeminiClient | None:
 
 
 class FrameTicker(BaseModel):
-    """Saves a frame every few seconds for as long as a run lasts.
+    """Saves a frame every few seconds for as long as a command runs.
 
-    The loop's own captures are the ones it reads, and it only looks where it has
-    a question; between them a battle can go badly with nothing recorded at all.
-    This is the other view — a fixed heartbeat, each frame named by how far into
-    the run it was taken and named in the log as it is saved, so a recording
-    lines up against the log afterwards.
+    A command's own captures are the ones it reads, and it only looks where it
+    has a question; between them a battle can go badly with nothing recorded at
+    all. This is the other view — a fixed heartbeat, numbered among the run's
+    other frames (`0007_tick`) so the directory sorts in time order, and named in
+    the log as it is saved.
 
-    It costs the emulator a PNG encode every tick and competes with the loop for
-    the same ADB connection, which is why it is off unless asked for.
+    It shoots wherever the command last captured from (`FrameLog.source`), so it
+    takes nothing before the command's first capture and follows a restart onto
+    the display MuMu moves the game to, where a copy of its own would go on
+    asking the display the game left, which answers `Status: -2`.
+
+    It costs the emulator a PNG encode every tick and competes with the command
+    for the same ADB connection, which is why it is off unless asked for.
     """
 
-    adb: AdbController
-    display: DisplayTarget
     frames: FrameLog
     seconds: float
 
@@ -442,19 +441,31 @@ class FrameTicker(BaseModel):
             self._thread.join(timeout=self.seconds + 30)
 
     def _tick(self) -> None:
-        started = time.monotonic()
-        while not self._stop.is_set():
-            elapsed = time.monotonic() - started
+        failing = False
+        while not self._stop.wait(self.seconds):
+            source = self.frames.source
+            if source is None:
+                continue
+            adb, display = source
             try:
-                png = self.adb.screenshot(self.display, None)
+                # A copy capturing for no run, so the tick is not taken for
+                # where the command last looked.
+                png = adb.model_copy(update={"frames": None}).screenshot(display, None)
             except Exception:
                 # Loud, but never fatal: this is a recording of the run, not
                 # part of it, and losing the battle to a missed frame is worse
-                # than the gap in the recording.
-                logger.warning("A heartbeat capture failed", exc_info=True)
-            else:
-                self.frames.write(f"tick_{elapsed:07.1f}s", png)
-            self._stop.wait(self.seconds)
+                # than the gap in the recording. Once per streak, since every
+                # warning lands in `runs.jsonl` with its trace.
+                if not failing:
+                    logger.warning(
+                        "A heartbeat capture failed; skipping ticks until one lands", exc_info=True
+                    )
+                failing = True
+                continue
+            if failing:
+                logger.info("Heartbeat captures are landing again")
+                failing = False
+            self.frames.number("tick", png)
 
 
 # How long a round that attacked nothing waits before the next one is started.
@@ -1469,16 +1480,6 @@ def _press_away(adb: AdbController, display: DisplayTarget, png: bytes) -> str |
     return None
 
 
-def _prepare_frames(options: AttackOptions, frames: FrameLog) -> None:
-    """Refuse a heartbeat on a run that is not recorded.
-
-    Its ticks fill the gaps between the loop's own frames, which only `--debug`
-    keeps, so ticks alone line up against nothing.
-    """
-    if options.shot_every > 0 and not frames.recording:
-        raise ValueError("--shot-every 要搭配 --debug，心跳補的是迴圈自己存的畫面之間的空檔")
-
-
 def _write_plan(path: Path | None, plan: AttackPlan | NightPlan | None) -> None:
     """Write down the plan that actually ran, so the battle can be repeated.
 
@@ -1747,7 +1748,6 @@ def attack(
     """
     plan, world = _handed_plan(options)
     adb = _controller(frames)
-    _prepare_frames(options, frames)
     config = ConfigStore().load()
     # **Which village to play cannot be asked until one has painted.**
     # `_controller` is satisfied by a pid, so a run started right after a launch
@@ -1758,6 +1758,10 @@ def attack(
     display = _settle_game(adb, WORLD_SETTLE_POLLS, should_stop, park=False) or adb.display_for(
         COC_PACKAGE
     )
+    # The runner keeps its own display from here on and moves it through its
+    # own restarts. Known and open: one recorded series lost its display with
+    # no restart at all and died in `uncovered` on the runner's stale copy
+    # (`Status: -2`).
     runner = AttackRunner(
         adb=adb,
         display=display,
@@ -1776,69 +1780,41 @@ def attack(
     )
     series = AttackSeries()
     rounds = options.rounds
-    with FrameTicker(
-        adb=adb, display=display, frames=frames, seconds=options.shot_every
-    ) as ticker:
-        while rounds <= 0 or len(series.root) < rounds:
-            # Between rounds, which is the cheapest place to stop: the village is
-            # on screen, nothing is deployed, and the rounds already played are
-            # in the series either way.
-            if should_stop():
-                logger.info(
-                    "Stop requested; ending the series after %d round(s)", len(series.root)
-                )
+    while rounds <= 0 or len(series.root) < rounds:
+        # Between rounds, which is the cheapest place to stop: the village is
+        # on screen, nothing is deployed, and the rounds already played are
+        # in the series either way.
+        if should_stop():
+            logger.info("Stop requested; ending the series after %d round(s)", len(series.root))
+            break
+        logger.info("Round %d of %s", len(series.root) + 1, rounds or "no limit")
+        report = _round(runner, series)
+        if report is None:
+            break
+        series.root.append(report)
+        # A builder base round reports no `attacked` — there is no scout
+        # screen to have advertised any loot — so the two villages answer
+        # "did this round really fight" differently and the wait between
+        # rounds has to ask both ways.
+        fighting = report.attacked is not None or report.phases > 0
+        logger.info("Attack finished: %s", round_line(report), extra=_round_event(runner, series))
+        _write_plan(options.plan_out, runner.played)
+        _log_plan(options.plan_log, len(series.root), runner.played)
+        # A stop is let through first, so the series ends on its own line
+        # and a loan reads as one rather than as a run that gave up.
+        if _series_over(report, len(series.root)) or (
+            not should_stop() and _menu_out_of_reach(series)
+        ):
+            break
+        # A stop that arrived mid-search comes back here having attacked
+        # nothing, and a run about to walk away has no reason to wait
+        # first. Falling through to the loop's own check is what logs why
+        # the series ended, and `run.log` is the only thing a background run
+        # leaves to read while it is still going.
+        if not fighting and not should_stop() and (rounds <= 0 or len(series.root) < rounds):
+            logger.info("Nothing was attacked; waiting %ds before the next round", IDLE_REST)
+            if _rest(IDLE_REST, should_stop):
                 break
-            logger.info("Round %d of %s", len(series.root) + 1, rounds or "no limit")
-            report = _round(runner, series)
-            if report is None:
-                break
-            # **A restart moves the game to a display of MuMu's choosing, and
-            # this function is the last to hear about it.** `AttackRunner`
-            # reassigns its own `self.display` when the idle-disconnect dialog
-            # sends it through `restart_game`, so it keeps playing; the local
-            # below and the ticker's copy go on naming a display the game has
-            # left, and `screencap -d` against one answers `Failed to take
-            # screenshot. Status: -2`.
-            #
-            # Measured on two consecutive night series, both a few battles after
-            # an idle-disconnect restart — display 2 to 3 on one and 3 to 4 on
-            # the next. Both died on the trip to the loot cart this loop used to
-            # make between rounds, with `result.json` never written, so the 17
-            # and 14 battles they had played were countable only out of
-            # `run.log`. Syncing here covers whatever consumer is added to this
-            # loop next.
-            #
-            # Not every `Status: -2` is this: one recorded series lost a display
-            # with no restart at all and died in `uncovered`, where the runner's
-            # own copy is the stale one. That one is still open.
-            adb, display = runner.adb, runner.display
-            ticker.adb, ticker.display = adb, display
-            series.root.append(report)
-            # A builder base round reports no `attacked` — there is no scout
-            # screen to have advertised any loot — so the two villages answer
-            # "did this round really fight" differently and the wait between
-            # rounds has to ask both ways.
-            fighting = report.attacked is not None or report.phases > 0
-            logger.info(
-                "Attack finished: %s", round_line(report), extra=_round_event(runner, series)
-            )
-            _write_plan(options.plan_out, runner.played)
-            _log_plan(options.plan_log, len(series.root), runner.played)
-            # A stop is let through first, so the series ends on its own line
-            # and a loan reads as one rather than as a run that gave up.
-            if _series_over(report, len(series.root)) or (
-                not should_stop() and _menu_out_of_reach(series)
-            ):
-                break
-            # A stop that arrived mid-search comes back here having attacked
-            # nothing, and a run about to walk away has no reason to wait
-            # first. Falling through to the loop's own check is what logs why
-            # the series ended, and `run.log` is the only thing a background run
-            # leaves to read while it is still going.
-            if not fighting and not should_stop() and (rounds <= 0 or len(series.root) < rounds):
-                logger.info("Nothing was attacked; waiting %ds before the next round", IDLE_REST)
-                if _rest(IDLE_REST, should_stop):
-                    break
     return series
 
 

@@ -320,8 +320,10 @@ class AdbController(BaseModel):
         logger.debug(
             "Captured %s display %s (%d bytes)", self.serial, display.logical_id, len(data)
         )
-        if label is not None and self.frames is not None:
-            self.frames.record(label, data)
+        if self.frames is not None:
+            self.frames.looked(self, display)
+            if label is not None:
+                self.frames.record(label, data)
         return data
 
     def tap(self, x: int, y: int, display: DisplayTarget) -> None:
