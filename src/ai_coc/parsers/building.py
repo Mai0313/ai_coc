@@ -470,16 +470,17 @@ SHEET_CLOSE_BOX: dict[World, tuple[int, int, int, int]] = {
 # sheet included, and on a troop's info window that carries no green button;
 # 0.164 on the profile window's settings tab, and 0.03 at most anywhere else.
 # The builder base's research sheet draws its X 20 px left of the others' (x
-# 1285-1348, y 33-90), so the builder base box is the part both cover: it reads
-# 0.292 on the four building sheets, 0.35 and 0.356 on the heroes', 0.333 on the
-# research's, and 0.2 at most anywhere else (a loot cart mid-animation), where
-# the box the X used to be read in caught the research's at 0.2003. The floor
-# sits between.
+# 1285-1348, y 33-90), so the builder base box is the part both cover. It skips
+# the X's top, whose pale highlight is no red: a research sheet drawn 4 px lower
+# (2026-11-05, `night_sheet_lab_low`) read 0.231 in a box from y 33. From y 50
+# it reads 0.477 on the four building sheets, 0.368 and 0.376 on the heroes',
+# 0.356 to 0.412 on the researches', and 0.27 at most anywhere else (a loot cart
+# mid-animation). Each floor sits between.
 SHEET_X_BOX: dict[World, tuple[int, int, int, int]] = {
     "day": (1383, 40, 1445, 100),
-    "night": (1305, 33, 1348, 88),
+    "night": (1300, 50, 1348, 92),
 }
-SHEET_X_RED = 0.25
+SHEET_X_RED: dict[World, float] = {"day": 0.25, "night": 0.31}
 # **Red is the game saying the village cannot pay, and tapping it anyway opens
 # the gem shop for the shortfall**, so a red price is read but never offered as
 # affordable. On every discounted or white sheet recorded this box holds no red
@@ -640,7 +641,7 @@ def _sheet_x(image: Image.Image, world: World) -> bool:
         for at in range(0, len(data), 3)
         if data[at] >= 180 and data[at + 1] <= 80 and data[at + 2] <= 80
     )
-    return reds / (len(data) // 3) >= SHEET_X_RED
+    return reds / (len(data) // 3) >= SHEET_X_RED[world]
 
 
 def sheet_open(png: bytes) -> World | None:
