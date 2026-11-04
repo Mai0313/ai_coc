@@ -7184,6 +7184,8 @@ class UpgradeSheetOfferTests(unittest.TestCase):
             ("night_sheet_lab.png", 3440000, "elixir"),
             # The same sheet a pixel off, its digits 30 from their templates.
             ("night_sheet_lab_2.png", 3440000, "elixir"),
+            # A research sheet drawn 4 px lower, its X's highlight over the old box.
+            ("night_sheet_lab_low.png", 1360000, "elixir"),
         ):
             offer = sheet_offer((FRAMES / name).read_bytes())
             assert offer is not None, name
@@ -7196,6 +7198,7 @@ class UpgradeSheetOfferTests(unittest.TestCase):
                 (1228, 794),
                 (1229, 797),
                 (1196, 782),
+                (1199, 783),
             }, name
             assert offer.affordable == (name != "night_sheet_red.png"), name
 
@@ -7227,6 +7230,7 @@ class UpgradeSheetOfferTests(unittest.TestCase):
             "night_sheet_hero_2400000.png",
             "night_sheet_lab.png",
             "night_sheet_lab_2.png",
+            "night_sheet_lab_low.png",
         }
         opened = {path.name for path in FRAMES.glob("*.png") if sheet_open(path.read_bytes())}
         assert opened == sheets
