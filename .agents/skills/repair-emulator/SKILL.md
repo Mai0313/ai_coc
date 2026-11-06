@@ -15,7 +15,7 @@ description: >-
 - **不是模擬器的事**: 模擬器好好的而 `ai_coc` 還是失敗, 那是程式的問題, 這裡不改, 交給 watch-and-fix
 - **你是 subagent**: 不修, 看完就交回主 session (見「動手之前」)
 
-下面的壞法全部是在雷電 14 上實際看到的, 第 5 種是 2026-11-06, 其他是 2026-09-26. MuMu 還沒走過一遍: 方法一樣 (先看, 再動手, 修不好請人), 但雷電的指令跟檔案不適用, 它的 CLI 看 `src/ai_coc/adapters/mumu.py`.
+下面的壞法全部是 2026-09-26 起在雷電 14 上實際看到的. MuMu 還沒走過一遍: 方法一樣 (先看, 再動手, 修不好請人), 但雷電的指令跟檔案不適用, 它的 CLI 看 `src/ai_coc/adapters/mumu.py`.
 
 ## 先看畫面, 不要從 log 猜
 
@@ -37,7 +37,7 @@ description: >-
 
 - **你是 subagent 就不要修.** 這份 skill 要跟使用者講話、請他改設定, subagent 做不到. 停手, 把 `state.json`、`list2` 那一行跟截圖交回給主 session, 由它照這份處理
 - 照 `AGENTS.md` 的 Look before driving 讀 `~/.ai_coc/state.json`. farm subagent 還在跑就照 `.agents/skills/farm/references/running.md` 的「你自己要用畫面」先把模擬器拿回來, 模擬器只有一台; 它的迴圈多半已經跟著模擬器掛掉了, 那就等它的回報
-- **「乾淨的重開」不用先問, 你自己判斷, 做完跟他講** (使用者 2026-11-06: 「下次這種重開不用問我 你就自己判斷就好」). **強制結束程序 (`Stop-Process`、工作管理員) 之前照樣先問, 他說好才做**: 那天兩次強制結束有一次把設定洗掉了 (第 3 種). `ai_coc launch --restart emulator` 也是乾淨的重開 (雷電上就是 `quit` 再 `launch`, 見 `adapters/ldplayer.py` 的 `restart_instance`). 不帶 `--restart` 的 `ai_coc launch` 跑之前講一聲就好: 遊戲開不起來的時候 `ensure_coc` 會自己重開一次實例
+- **「乾淨的重開」不用先問, 你自己判斷, 做完跟他講** (使用者 2026-11-06: 「下次這種重開不用問我 你就自己判斷就好」). **強制結束程序 (`Stop-Process`、工作管理員) 之前照樣先問, 他說好才做**: 那天兩次強制結束有一次把設定洗掉了 (第 3 種). `ai_coc launch --restart emulator` 不算乾淨的重開, 照樣先問: 它不等 `dnplayer.exe` 跟 `Ld9BoxHeadless.exe` 收掉就開 (`adapters/ldplayer.py` 的 `restart_instance`), 碰上第 2 種會開在舊的程序上面 (雷電上就是 `quit` 再 `launch`, 見 `adapters/ldplayer.py` 的 `restart_instance`). 不帶 `--restart` 的 `ai_coc launch` 跑之前講一聲就好: 遊戲開不起來的時候 `ensure_coc` 會自己重開一次實例
 - 使用者可能正在模擬器或手機上玩 (`AGENTS.md` 的 Driving the game), 有疑慮就問
 - 每個 `ai_coc` 指令都帶 `--agent`、`--session`、`--mission` (`AGENTS.md` 的 Say who is driving), `look.py` 不用
 
@@ -126,7 +126,7 @@ description: >-
 ## 不要做的事
 
 - 不要 `ldconsole reboot`
-- 不要為了「重現閃退」去強制結束模擬器. 那天就是這樣把設定洗掉的. 結束任何程序都要使用者先同意 (第 2 種), 而且要跟他說清楚兩輪之後設定會壞 (第 3 種)
+- 不要為了「重現閃退」去強制結束模擬器. 那天就是這樣把設定洗掉的. 強制結束任何程序都要使用者先同意 (第 2 種), 而且要跟他說清楚兩輪之後設定會壞 (第 3 種)
 - 不要手改 `leidian0.config`, 理由在第 3 種
 - 不要在 `dnplayer.exe` 或 `Ld9BoxHeadless.exe` 還在的時候 `ldconsole launch`. 那天有三台雷電開出來就沒有視窗、使用者叫不出來: 兩次開的時候舊的確定還在或剛被結束十秒, 第三次舊的 VM 已經關了一分多鐘, 舊的 `dnplayer.exe` 在不在沒記到. 等兩個都不見了才開的那次有視窗
 - 不要自己下 `adb connect` / `adb disconnect`, 看 ADB 用 `look.py`: 每次 connect 都在雷電那端開一條新連線, 雷電的 port forward 曾經因此整個掛掉 (`.agents/rules/runtime.md` 的 Adapters)
