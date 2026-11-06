@@ -3743,6 +3743,16 @@ class AttackTests(unittest.TestCase):
     def test_a_threshold_left_at_zero_ignores_that_resource(self) -> None:
         assert LootThresholds().accepts(LootOffer(gold=0, elixir=0, dark=0))
 
+    def test_only_a_storage_past_its_ceiling_loses_its_minimum(self) -> None:
+        minimums = LootThresholds(min_gold=500_000, min_elixir=500_000, min_dark=5_000)
+        capacity = StorageCapacity(gold=10_000_000, elixir=10_000_000)
+        stock = VillageStock(gold=9_500_000, elixir=1_000_000, dark=0)
+        assert minimums.without_full(capacity, stock, 90) == LootThresholds(
+            min_elixir=500_000, min_dark=5_000
+        )
+        assert minimums.without_full(capacity, stock, 0) == minimums
+        assert minimums.without_full(capacity, None, 90) == minimums
+
     def test_one_full_storage_is_not_a_reason_to_stop(self) -> None:
         """A battle brings home three resources, so one ceiling earns the fee out.
 
@@ -4598,6 +4608,33 @@ class AttackTests(unittest.TestCase):
             report = runner._run_day()
         assert [c.kwargs["leaving"] for c in scouted.call_args_list] == [None, poor.loot]
         assert report.attacked == rich.loot
+
+    def test_full_storages_leave_only_the_short_one_to_choose_by(self) -> None:
+        runner = AttackRunner(
+            adb=AdbController(endpoint=AdbEndpoint(port=16384)),
+            display=DisplayTarget(logical_id="1", physical_id="2"),
+            thresholds=LootThresholds(min_gold=500_000, min_elixir=500_000, min_dark=5_000),
+            stop_at=100,
+        )
+        runner._capacity = StorageCapacity(gold=10_000_000, elixir=10_000_000, dark=200_000)
+
+        def stood_down(home: bytes) -> None:
+            runner._holding = VillageStock(gold=10_000_000, elixir=10_000_000, dark=0)
+
+        dark_only = ScoutView(loot=LootOffer(gold=1, elixir=1, dark=9_000), can_skip=True)
+        with (
+            patch.object(AttackRunner, "_open_attack_menu", return_value=b"home"),
+            patch.object(AttackRunner, "_stood_down", side_effect=stood_down),
+            patch.object(AttackRunner, "_army_short", return_value=False),
+            patch.object(AttackRunner, "_tap"),
+            patch.object(AttackRunner, "_scout", side_effect=[(dark_only, b"")]),
+            patch.object(AttackRunner, "_deploy"),
+            patch.object(AttackRunner, "_wait_out_battle", return_value=True),
+            patch.object(AttackRunner, "_outcome", return_value="took_loot"),
+            patch.object(attack.time, "sleep"),
+        ):
+            report = runner._run_day()
+        assert report.attacked == dark_only.loot
 
     def test_a_battle_another_device_took_over_still_counts_as_fought(self) -> None:
         """`farm` counts the rounds that fought by `attacked`."""
