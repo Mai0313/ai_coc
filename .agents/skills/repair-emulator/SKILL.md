@@ -15,7 +15,7 @@ description: >-
 - **不是模擬器的事**: 模擬器好好的而 `ai_coc` 還是失敗, 那是程式的問題, 這裡不改, 交給 watch-and-fix
 - **你是 subagent**: 不修, 看完就交回主 session (見「動手之前」)
 
-下面的壞法全部是 2026-09-26 在雷電 14 上實際看到的. MuMu 還沒走過一遍: 方法一樣 (先看, 再動手, 修不好請人), 但雷電的指令跟檔案不適用, 它的 CLI 看 `src/ai_coc/adapters/mumu.py`.
+下面的壞法全部是在雷電 14 上實際看到的, 第 5 種是 2026-11-06, 其他是 2026-09-26. MuMu 還沒走過一遍: 方法一樣 (先看, 再動手, 修不好請人), 但雷電的指令跟檔案不適用, 它的 CLI 看 `src/ai_coc/adapters/mumu.py`.
 
 ## 先看畫面, 不要從 log 猜
 
@@ -37,7 +37,7 @@ description: >-
 
 - **你是 subagent 就不要修.** 這份 skill 要跟使用者講話、請他改設定, subagent 做不到. 停手, 把 `state.json`、`list2` 那一行跟截圖交回給主 session, 由它照這份處理
 - 照 `AGENTS.md` 的 Look before driving 讀 `~/.ai_coc/state.json`. farm subagent 還在跑就照 `.agents/skills/farm/references/running.md` 的「你自己要用畫面」先把模擬器拿回來, 模擬器只有一台; 它的迴圈多半已經跟著模擬器掛掉了, 那就等它的回報
-- **結束程序、`quit`、重開模擬器之前先問使用者, 他說好才做.** 那是他的模擬器, 他看得到那個視窗, 一直開開關關又沒人說明, 他只會以為壞得更嚴重. `ai_coc launch --restart emulator` 也是重開 (雷電上就是 `quit` 再 `launch`, 見 `adapters/ldplayer.py` 的 `restart_instance`). 不帶 `--restart` 的 `ai_coc launch` 跑之前講一聲就好: 遊戲開不起來的時候 `ensure_coc` 會自己重開一次實例
+- **「乾淨的重開」不用先問, 你自己判斷, 做完跟他講** (使用者 2026-11-06: 「下次這種重開不用問我 你就自己判斷就好」). **強制結束程序 (`Stop-Process`、工作管理員) 之前照樣先問, 他說好才做**: 那天兩次強制結束有一次把設定洗掉了 (第 3 種). `ai_coc launch --restart emulator` 也是乾淨的重開 (雷電上就是 `quit` 再 `launch`, 見 `adapters/ldplayer.py` 的 `restart_instance`). 不帶 `--restart` 的 `ai_coc launch` 跑之前講一聲就好: 遊戲開不起來的時候 `ensure_coc` 會自己重開一次實例
 - 使用者可能正在模擬器或手機上玩 (`AGENTS.md` 的 Driving the game), 有疑慮就問
 - 每個 `ai_coc` 指令都帶 `--agent`、`--session`、`--mission` (`AGENTS.md` 的 Say who is driving), `look.py` 不用
 
@@ -53,7 +53,7 @@ description: >-
 - ADB: `look.py` 截得到圖就是通的
 - 設定檔是安裝目錄的 `vms\config\leidian0.config`, **只讀不改** (理由見第 3 種). 看 `advancedSettings.resolution` 跟 `resolutionDpi`, `basicSettings.adbDebug` (沒有這一行就是 ADB 關著), `statusSettings.isNewPlayer`
 
-## 四種壞法
+## 五種壞法
 
 ### 1. 還在開機: 閃退之後雷電在修復
 
@@ -63,7 +63,7 @@ description: >-
 
 處理: 不要動它. 等 Android 欄變 1 而且 `look.py` 截得到圖, 再跑 `ai_coc launch`. 修復到一半關掉或再開一次, 只會從頭再來.
 
-等到哪裡為止: 三分鐘還沒好, 或者 Android 欄停在 2 而 VM 沒起來 (第 7 欄 -1, 也沒有 `Ld9BoxHeadless.exe`), 就不是修復了. 後面那種是 `adapters/ldplayer.py` 的 `QUIT_SETTLE` 註解寫的卡死, 使用者同意之後照「乾淨的重開」做一次.
+等到哪裡為止: 三分鐘還沒好, 或者 Android 欄停在 2 而 VM 沒起來 (第 7 欄 -1, 也沒有 `Ld9BoxHeadless.exe`), 就不是修復了. 後面那種是 `adapters/ldplayer.py` 的 `QUIT_SETTLE` 註解寫的卡死, 照「乾淨的重開」做一次.
 
 ### 2. `ldconsole` 看不到還在跑的雷電
 
@@ -105,9 +105,15 @@ description: >-
 
 **`look.py` 拍到的不是桌面而是雷電自己的儲值廣告**, 重跑 `launch` 就沒用: 它蓋在遊戲上, `launch` 一樣等滿 180 秒放棄, `--restart game` 也是 (2026-10-25 兩次). 點它右上角的 X (約 (1217, 167)) 就關掉, 遊戲就在底下. 焦點在廣告上時 `ai_coc tap` 找不到遊戲的 display (它照焦點找), 所以直接 `adb -s <adb_serial> shell input tap 1217 167`.
 
+### 5. 雷電說在跑, ADB 卻是 `device offline`
+
+症狀: 打到一半 `ai_coc` 報 `adb read timeout`, 之後每一輪都是 `ADB 連線失敗 127.0.0.1:5555：device offline`, 連三輪 `emulator_silent` 迴圈就自己收掉; `look.py` 也報同一句. `list2` 卻一切正常: Android 欄 1, 有 pid, `1600,900,240`.
+
+處理: 照「乾淨的重開」做. 2026-11-06 這樣修好過一次: `quit` 10 秒內程序都收掉, `launch` 14 秒後 Android 欄變 1, 但 ADB 又過了半分多鐘才從 `offline` 變回 `device`, 這段時間 `look.py` 照樣報 `device offline`, 等它就好, 不算沒修好. 開遊戲時跳出第 4 種的儲值廣告.
+
 ## 乾淨的重開
 
-使用者同意之後才做, 只做一次, 照這個順序. 任何重開都可能洗掉設定 (第 3 種), 不必要就不要做.
+不用先問 (見「動手之前」), 只做一次, 照這個順序, 做完跟使用者講. 任何重開都可能洗掉設定 (第 3 種), 不必要就不要做.
 
 1. `ldconsole quit --index 0`
 2. 等 `isrunning` 說 `stop` 而且 `dnplayer.exe` 跟 `Ld9BoxHeadless.exe` 都不見了 (理由見「不要做的事」的 `ldconsole launch` 那條). 那天都是幾秒內; 一分鐘還在就請人. `Ld9BoxSVC.exe` 有時會一直留著, 不用等它
