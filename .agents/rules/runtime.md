@@ -51,7 +51,7 @@ paths:
 **One settings file** (`AppConfig`, `adapters/config.py`).
 
 - Its defaults are the ones to farm with, not the field defaults underneath (`LootThresholds()` means take anything). A file that will not parse raises.
-- `attack --min-gold` / `--min-elixir` / `--min-dark` and `--stop-at` override it for one run: omitting a flag keeps the file's value, and `0` takes it out. `probe` and `bounds` use `LootThresholds()`.
+- `attack --min-gold` / `--min-elixir` / `--min-dark` and `--stop-at` override it for one run: omitting a flag keeps the file's value, and `0` takes it out. A storage past `stop_at` loses its minimum for the round (`LootThresholds.without_full`). `probe` and `bounds` use `LootThresholds()`.
 - `gemini` holds the `main` tier (once per run, a whole screenshot), with `model`, `base_url`, its own `api_key` and `thinking_level` (default `low`). `gemini_key` falls back to `GEMINI_API_KEY` in the environment, then in `.env`, only while the tier's key is empty.
 - A file holding keys the model no longer reads is rewritten to what it does read, with missing keys filled in; a file that already matches is left untouched. No migrations.
 - `ConfigStore.save` is a scratch file and a rename, because `commands.*` reads the file from other processes while one may be writing it.

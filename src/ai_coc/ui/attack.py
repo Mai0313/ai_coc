@@ -3254,6 +3254,8 @@ class AttackRunner(ScreenRunner):
         # Before the search fee, like the army check below.
         if (full := self._stood_down(home)) is not None:
             return full
+        thresholds = self.thresholds.without_full(self._ceiling, self._holding, self.stop_at)
+        logger.info("This round's minimums are %s", thresholds.model_dump())
         self._tap(FIND_MATCH)
         time.sleep(2)
         if self._army_short():
@@ -3281,7 +3283,7 @@ class AttackRunner(ScreenRunner):
             stopping = self.should_stop() and not forced
             if stopping:
                 logger.info("Stop pressed; leaving the search after %d skip(s)", skipped)
-            if not stopping and (forced or self.thresholds.accepts(view.loot)):
+            if not stopping and (forced or thresholds.accepts(view.loot)):
                 # `forced` is an inference from an absent 下一個 rather than
                 # something the loop can see, and a report carrying only the
                 # inference is what let six rounds of one evening read as the

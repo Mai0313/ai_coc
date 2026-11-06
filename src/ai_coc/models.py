@@ -484,6 +484,27 @@ class LootThresholds(BaseModel):
             and offer.dark >= self.min_dark
         )
 
+    def without_full(
+        self, capacity: StorageCapacity, stock: VillageStock | None, percent: int
+    ) -> LootThresholds:
+        """These minimums with the one on every storage past `percent` of its ceiling taken out.
+
+        Loot a full storage cannot take is thrown away, so holding an opponent
+        to it only skips the ones carrying what the village is still short of.
+        A storage with no ceiling read, an unread stock and a `percent` of 0
+        change nothing, the same way they never stand a run down.
+        """
+        if stock is None or not percent:
+            return self
+        return self.model_copy(
+            update={
+                f"min_{name}": 0
+                for name in ("gold", "elixir", "dark")
+                if (ceiling := getattr(capacity, name))
+                and getattr(stock, name) * 100 >= ceiling * percent
+            }
+        )
+
 
 class LootOverrides(BaseModel):
     """The minimums one run was told to use in place of the configured ones.
