@@ -7,6 +7,7 @@ resolve the display it put the game on, hand over the API key.
 from __future__ import annotations
 
 import os
+import re
 import math
 import time
 from typing import TYPE_CHECKING, Self, Literal
@@ -15,12 +16,13 @@ from datetime import UTC, date, datetime, timedelta
 import itertools
 import threading
 from contextlib import suppress, contextmanager
+import statistics
 
 import psutil
 from filelock import Timeout, FileLock
 from pydantic import BaseModel, PrivateAttr
 
-from ai_coc import plans
+from ai_coc import plans, logging_setup
 from ai_coc.models import (
     Loan,
     Notes,
@@ -49,6 +51,7 @@ from ai_coc.models import (
     BoostReport,
     CartOutcome,
     GoblinOffer,
+    JournalLine,
     LevelChange,
     NamedEntity,
     NoteOutcome,
@@ -69,6 +72,7 @@ from ai_coc.models import (
     PressOutcome,
     RestartScope,
     StatusReport,
+    UpgradeTimer,
     WorldOutcome,
     AttackOptions,
     AttackOutcome,
@@ -79,6 +83,7 @@ from ai_coc.models import (
     DonateOutcome,
     ExportOutcome,
     GrowthOutcome,
+    JournalTimers,
     LaunchOutcome,
     SurveyOutcome,
     VillageEntity,
@@ -86,10 +91,15 @@ from ai_coc.models import (
     BoundarySurvey,
     CollectOutcome,
     ConfirmOutcome,
+    JournalConfirm,
     LootThresholds,
     StorageCapacity,
+    TurnaroundGroup,
     EmulatorInstance,
+    TurnaroundReport,
+    TurnaroundSample,
     PlateCountOutcome,
+    TurnaroundOutcome,
 )
 from ai_coc.constants import STATE_PATH, COC_PACKAGE, ACCOUNT_JSON_DIR
 from ai_coc.adapters.ai import GeminiClient
@@ -2887,6 +2897,151 @@ def _level_change(change: LevelChange) -> str:
         [(old, moved)], [(new, _)] = lost.items(), gained.items()
         return f"{old} → {new}" if sum(after.values()) == 1 else f"{moved} 個 {old} → {new}"
     return f"{counts(before)} → {counts(after)}"
+
+
+# How long after a timer runs out a confirm still counts as buying its next
+# level, and how close before a goblin hire a confirm is taken to have used
+# the goblin's slot. Both from the tallies made by hand on 2026-11-07.
+TURNAROUND_WINDOW = timedelta(minutes=15)
+GOBLIN_GAP = timedelta(minutes=3)
+# The first tap a `confirm` run sent, which is the press itself.
+TAP_LINE = re.compile(r"^(\d\d:\d\d:\d\d) INFO\s+ai_coc\.adapters\.adb: Tap ")
+
+
+def _journal() -> list[JournalLine]:
+    """Every line of `runs.jsonl` that reads; none when there is no journal yet."""
+    lines: list[JournalLine] = []
+    with suppress(FileNotFoundError), logging_setup.JOURNAL_PATH.open(encoding="utf-8") as journal:
+        for text in journal:
+            with suppress(ValueError):
+                lines.append(JournalLine.model_validate_json(text))
+    return lines
+
+
+def _press_time(start: JournalLine) -> datetime | None:
+    """When a `confirm` run's first tap landed, off its `run.log`; None where the log is gone."""
+    if start.log is None:
+        return None
+    with suppress(OSError), (start.log / "run.log").open(encoding="utf-8") as log:
+        for line in log:
+            if found := TAP_LINE.match(line):
+                clock = datetime.strptime(found[1], "%H:%M:%S").time()
+                return datetime.combine(start.at.date(), clock, start.at.tzinfo)
+    return None
+
+
+def _slot(timer: UpgradeTimer) -> TurnaroundGroup:
+    if timer.section in ("heroes", "heroes2"):
+        return "hero"
+    if timer.role == "lab":
+        return "lab"
+    if timer.role == "pet":
+        return "pet"
+    return "building"
+
+
+def _journal_upgrades() -> tuple[
+    list[tuple[datetime, list[UpgradeTimer]]], list[tuple[datetime, JournalConfirm]]
+]:
+    """Every `status` that read its timers, and every successful confirm with its press, oldest first."""
+    lines = _journal()
+    starts = {line.run: line for line in lines if line.event == "start"}
+    statuses: list[tuple[datetime, list[UpgradeTimer]]] = []
+    confirms: list[tuple[datetime, JournalConfirm]] = []
+    for end in (line for line in lines if line.event == "end" and line.run in starts):
+        start = starts[end.run]
+        with suppress(ValueError):
+            if start.command == "status":
+                read = JournalTimers.model_validate(end.result)
+                if read.export == "exported":
+                    statuses.append((end.at, read.timers))
+            elif start.command == "confirm" and end.outcome == "confirmed":
+                paid = JournalConfirm.model_validate(end.result)
+                if (pressed := _press_time(start)) is not None:
+                    confirms.append((pressed, paid))
+    return sorted(statuses, key=lambda one: one[0]), sorted(confirms, key=lambda one: one[0])
+
+
+def turnaround(since: date | None = None) -> TurnaroundReport:
+    """How long each upgrade waited between its timer running out and the confirm for its next level.
+
+    Off the journal alone: each successful confirm is paired with the latest
+    `status` timer that ran out within `TURNAROUND_WINDOW` before its press, and
+    a timer goes to the first confirm after it. Goblin hires and walls use up
+    their timer but are not counted, and neither is a confirm just before a
+    goblin hire, which went on the goblin's slot.
+    """
+    statuses, confirms = _journal_upgrades()
+    goblins = [pressed for pressed, paid in confirms if paid.goblin is not None]
+    taken: set[tuple[str | None, str]] = set()
+    samples: list[TurnaroundSample] = []
+    for pressed, paid in confirms:
+        if paid.wall is not None:
+            continue
+        timers = next((timers for at, timers in reversed(statuses) if at <= pressed), [])
+        due = [
+            (datetime.fromisoformat(timer.done_at), timer)
+            for timer in timers
+            if (timer.name, timer.done_at) not in taken
+            and timedelta(0)
+            <= pressed - datetime.fromisoformat(timer.done_at)
+            <= TURNAROUND_WINDOW
+        ]
+        if not due:
+            continue
+        done, timer = max(due, key=lambda one: one[0])
+        taken.add((timer.name, timer.done_at))
+        if paid.goblin is not None or any(
+            timedelta(0) <= g - pressed <= GOBLIN_GAP for g in goblins
+        ):
+            continue
+        if since is None or pressed.astimezone().date() >= since:
+            samples.append(
+                TurnaroundSample(
+                    pressed=pressed,
+                    group=_slot(timer),
+                    world=timer.world,
+                    name=timer.name,
+                    seconds=(pressed - done).total_seconds(),
+                )
+            )
+    report = TurnaroundReport(samples=samples, outcome="counted" if samples else "none")
+    logger.info("%s", TURNAROUND_LINES[report.outcome].format(count=len(samples)))
+    return report
+
+
+# One line per way `ai_coc turnaround` can end, for `run.log`.
+TURNAROUND_LINES: dict[TurnaroundOutcome, str] = {
+    "counted": "配對到 {count} 次升級",
+    "none": "紀錄裡沒有能配對的升級, 哥布林那格跟城牆本來就不算",
+}
+
+
+def turnaround_text(report: TurnaroundReport) -> str:
+    """Each slot's count, median and mean, then the latest samples."""
+    if report.outcome != "counted":
+        return TURNAROUND_LINES[report.outcome]
+    labels: dict[TurnaroundGroup, str] = {
+        "hero": "王",
+        "lab": "實驗室",
+        "building": "建築",
+        "pet": "戰寵",
+    }
+    shown = ["從升級完成到按下確認的秒數 (哥布林那格跟城牆不算)"]
+    for group, label in labels.items():
+        seconds = [sample.seconds for sample in report.samples if sample.group == group]
+        if seconds:
+            shown.append(
+                f"  {label}  {len(seconds)} 次, 中位數 {statistics.median(seconds):.0f} 秒,"
+                f" 平均 {statistics.mean(seconds):.0f} 秒"
+            )
+    shown += ["", "最近 10 次"]
+    shown += [
+        f"  {sample.pressed.astimezone():%m-%d %H:%M:%S}  {labels[sample.group]}"
+        f"  {sample.name or '?'}  {sample.seconds:.0f} 秒"
+        for sample in report.samples[-10:]
+    ]
+    return "\n".join(shown)
 
 
 def capture(frames: FrameLog, count: int = 1, gap: float = 1.5) -> list[Path]:

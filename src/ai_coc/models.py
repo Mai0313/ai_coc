@@ -2008,6 +2008,45 @@ class RoundEvent(BaseModel):
     cart: CartReport | None = None
 
 
+class JournalLine(BaseModel):
+    """One line of `runs.jsonl` as a reader takes it: which run, when, and what of it is read.
+
+    The fields each event adds besides these are kept as extras, unread.
+    """
+
+    model_config = TOLERANT
+
+    run: str
+    at: datetime
+    event: str
+    command: str = ""
+    log: Path | None = None
+    outcome: str | None = None
+    result: JsonValue = None
+
+
+class JournalTimers(BaseModel):
+    """The timers a `status` run's result carried, read back off the journal.
+
+    `export` says whether they were read at all: an empty list beside anything
+    but `exported` is a reading that failed, not one with nothing running.
+    """
+
+    model_config = TOLERANT
+
+    export: str = ""
+    timers: list[UpgradeTimer] = Field(default_factory=list)
+
+
+class JournalConfirm(BaseModel):
+    """Whether a `confirm` run paid a goblin or a wall, read back off the journal."""
+
+    model_config = TOLERANT
+
+    goblin: JsonValue = None
+    wall: JsonValue = None
+
+
 class Warned(BaseModel):
     """A WARNING or worse from any module, a crash's traceback included.
 
@@ -2070,6 +2109,34 @@ class GrowthReport(BaseModel):
     end: str = ""
     changes: list[LevelChange] = Field(default_factory=list)
     outcome: GrowthOutcome
+
+
+# Whose slot an upgrade used, as `ai_coc turnaround` counts it, in the user's
+# words: 王, 實驗室, 建築, and the pet house beside them.
+TurnaroundGroup = Literal["hero", "lab", "building", "pet"]
+# `none` is no confirm in the journal that pairs with a timer.
+TurnaroundOutcome = Literal["counted", "none"]
+
+
+class TurnaroundSample(BaseModel):
+    """One upgrade: from the timer `status` read running out to the confirm that bought the next level."""
+
+    model_config = ConfigDict(frozen=True)
+
+    pressed: datetime
+    group: TurnaroundGroup
+    world: World
+    name: str | None = None
+    seconds: float
+
+
+class TurnaroundReport(BaseModel):
+    """Every sample `ai_coc turnaround` paired, oldest first."""
+
+    model_config = ConfigDict(frozen=True)
+
+    samples: list[TurnaroundSample] = Field(default_factory=list)
+    outcome: TurnaroundOutcome
 
 
 # The counters a village draws, named for what each one counts. `lab` is the

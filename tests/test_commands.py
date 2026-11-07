@@ -24,7 +24,7 @@ from PIL import Image
 import pytest
 from pydantic import ValidationError
 
-from ai_coc import plans, commands
+from ai_coc import plans, commands, logging_setup
 from ai_coc.ui import world as world_ui
 from ai_coc.models import (
     Watch,
@@ -73,6 +73,7 @@ from ai_coc.models import (
     LootThresholds,
     StorageCapacity,
     PlateCountOutcome,
+    TurnaroundOutcome,
 )
 from ai_coc.constants import COC_PACKAGE
 from ai_coc.ui.runner import ScreenRunner
@@ -652,6 +653,13 @@ class UpkeepLineTests(unittest.TestCase):
             assert fragment in table[outcome], outcome
             others = [table[other] for other in own if other != outcome]
             assert not any(fragment in other for other in others), outcome
+
+    def test_every_turnaround_outcome_has_a_line_of_its_own(self) -> None:
+        self._each(
+            commands.TURNAROUND_LINES,
+            {"counted": "配對到", "none": "沒有能配對"},
+            get_args(TurnaroundOutcome),
+        )
 
     def test_every_growth_outcome_has_a_line_of_its_own(self) -> None:
         self._each(
@@ -1478,6 +1486,141 @@ class RunPlumbingTests(unittest.TestCase):
             assert commands.stop_requested()
         with commands.claim("collect"):
             assert not commands.stop_requested()
+
+
+class TurnaroundTests(unittest.TestCase):
+    """Seconds from a timer `status` read running out to the confirm that bought the next level.
+
+    The journal lives in this test's tmp directory (conftest), and so do the run logs here.
+    """
+
+    def setUp(self) -> None:
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        self.logs = Path(folder.name)
+        self.lines: list[dict] = []
+
+    def _status(
+        self, at: str, *timers: tuple[str, str, str, str], export: str = "exported"
+    ) -> None:
+        run = f"status-{len(self.lines)}"
+        self.lines.append({"run": run, "at": at, "event": "start", "command": "status"})
+        rows = [
+            {
+                "world": "day",
+                "role": role,
+                "section": section,
+                "data_id": 1,
+                "name": name,
+                "timer": 1,
+                "seconds": 1,
+                "done_at": done,
+            }
+            for section, role, name, done in timers
+        ]
+        result = {"export": export, "timers": rows}
+        self.lines.append({"run": run, "at": at, "event": "end", "result": result})
+
+    def _confirm(self, at: str, tapped: str, **paid: object) -> None:
+        run = f"confirm-{len(self.lines)}"
+        log = self.logs / run
+        log.mkdir()
+        (log / "run.log").write_text(
+            f"{tapped} INFO    ai_coc.adapters.adb: Tap 127.0.0.1:5555 display 0 at (1, 2)\n",
+            encoding="utf-8",
+        )
+        self.lines.append({
+            "run": run,
+            "at": at,
+            "event": "start",
+            "command": "confirm",
+            "log": str(log),
+        })
+        self.lines.append({
+            "run": run,
+            "at": at,
+            "event": "end",
+            "outcome": "confirmed",
+            "result": paid,
+        })
+
+    def _count(self, since: date | None = None) -> list[tuple[str, str | None, float]]:
+        journal = logging_setup.JOURNAL_PATH
+        journal.write_text("".join(json.dumps(line) + "\n" for line in self.lines), "utf-8")
+        report = commands.turnaround(since)
+        return [(sample.group, sample.name, sample.seconds) for sample in report.samples]
+
+    def test_each_confirm_is_timed_from_the_timer_it_bought(self) -> None:
+        self._status(
+            "2026-11-07T10:15:00+08:00",
+            ("heroes", "builder", "Archer Queen", "2026-11-07T10:20:00+08:00"),
+            ("units", "lab", "Druid", "2026-11-07T10:30:00+08:00"),
+            ("buildings", "builder", "Mortar", "2026-11-07T10:40:00+08:00"),
+        )
+        self._confirm("2026-11-07T10:20:10+08:00", "10:20:25")
+        self._confirm("2026-11-07T10:30:10+08:00", "10:30:16")
+        self._confirm("2026-11-07T10:40:10+08:00", "10:40:24")
+        assert self._count() == [
+            ("hero", "Archer Queen", 25),
+            ("lab", "Druid", 16),
+            ("building", "Mortar", 24),
+        ]
+
+    def test_goblins_walls_and_a_second_confirm_on_one_timer_are_not_counted(self) -> None:
+        self._status(
+            "2026-11-07T10:15:00+08:00",
+            ("units", "lab", "Bowler", "2026-11-07T10:20:00+08:00"),
+            ("buildings", "builder", "Wall", "2026-11-07T10:30:00+08:00"),
+        )
+        self._confirm("2026-11-07T10:20:40+08:00", "10:20:59", goblin={"price": 31})
+        self._confirm("2026-11-07T10:21:30+08:00", "10:21:40")
+        self._confirm("2026-11-07T10:30:10+08:00", "10:30:20", wall={"price": 1})
+        assert self._count() == []
+
+    def test_since_keeps_only_the_days_asked_for(self) -> None:
+        self._status(
+            "2026-11-06T10:15:00+08:00",
+            ("heroes", "builder", "Barbarian King", "2026-11-06T10:20:00+08:00"),
+        )
+        self._confirm("2026-11-06T10:20:10+08:00", "10:20:20")
+        self._status(
+            "2026-11-07T10:15:00+08:00",
+            ("heroes", "builder", "Archer Queen", "2026-11-07T10:20:00+08:00"),
+        )
+        self._confirm("2026-11-07T10:20:10+08:00", "10:20:30")
+        assert self._count(date(2026, 11, 7)) == [("hero", "Archer Queen", 30)]
+        assert len(self._count()) == 2
+
+    def test_a_status_whose_export_failed_does_not_hide_the_one_before(self) -> None:
+        self._status(
+            "2026-11-07T10:15:00+08:00",
+            ("heroes", "builder", "Archer Queen", "2026-11-07T10:20:00+08:00"),
+        )
+        self._status("2026-11-07T10:17:00+08:00", export="no_village")
+        self._confirm("2026-11-07T10:20:10+08:00", "10:20:25")
+        assert self._count() == [("hero", "Archer Queen", 25)]
+
+    def test_the_latest_due_timer_is_paired_and_one_past_the_window_is_not(self) -> None:
+        self._status(
+            "2026-11-07T10:15:00+08:00",
+            ("units", "lab", "Druid", "2026-11-07T10:20:00+08:00"),
+            ("buildings", "builder", "Mortar", "2026-11-07T10:25:00+08:00"),
+            ("heroes", "builder", "Archer Queen", "2026-11-07T11:00:00+08:00"),
+        )
+        self._confirm("2026-11-07T10:25:10+08:00", "10:25:20")
+        self._confirm("2026-11-07T11:15:50+08:00", "11:16:00")
+        assert self._count() == [("building", "Mortar", 20)]
+
+    def test_a_plain_confirm_just_before_a_goblin_hire_is_not_counted(self) -> None:
+        """It went on the goblin's slot: the hire is the game asking for the slot it just used."""
+        self._status(
+            "2026-11-07T10:15:00+08:00",
+            ("heroes", "builder", "Barbarian King", "2026-11-07T10:20:00+08:00"),
+            ("units", "lab", "Bowler", "2026-11-07T10:22:00+08:00"),
+        )
+        self._confirm("2026-11-07T10:20:20+08:00", "10:20:30")
+        self._confirm("2026-11-07T10:22:30+08:00", "10:22:40", goblin={"price": 31})
+        assert self._count() == []
 
 
 class NoteTests(unittest.TestCase):
