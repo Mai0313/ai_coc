@@ -1376,9 +1376,12 @@ def _settle_game(
     None means the village never appeared. Whether that is worth giving up over
     is the caller's decision, not this one's.
 
-    `park` False leaves the camera where it is at the far zoom: the attack taps
-    no map coordinate before its battle, which measures its own camera, and a
-    park there only came before the cart visit's own on the builder base.
+    `park` False leaves the camera where it is at the far zoom, for a caller
+    that taps no map coordinate: the attack, whose battle measures its own
+    camera and whose cart visit on the builder base parks for itself, and the
+    reads that tap only fixed HUD places (`status`, `stock`, `export`). The far
+    zoom is still taken, since a zoomed-in camera can fuse a storage bar's
+    digits (`GameRunner._settle_zoom`).
     """
     waiting = "nothing was tried"
     relogged = False
@@ -2023,7 +2026,7 @@ def stock(frames: FrameLog) -> StockReport:
     when a builder finishes one, so reading them beats writing them down.
     """
     adb = _controller(frames)
-    display = _settle_game(adb, WORLD_SETTLE_POLLS) or adb.display_for(COC_PACKAGE)
+    display = _settle_game(adb, WORLD_SETTLE_POLLS, park=False) or adb.display_for(COC_PACKAGE)
     return stock_of(ScreenRunner(adb=adb, display=display), adb, display)
 
 
@@ -2097,9 +2100,9 @@ def status(frames: FrameLog) -> StatusReport:
     """
     names = _entity_names()
     adb = _controller(frames)
-    # Parks the camera although the walk below only taps fixed HUD places:
-    # skipping it was offered to save time and kept as the safer default.
-    settled = _settle_game(adb, WORLD_SETTLE_POLLS)
+    # Not parked: everything below taps fixed HUD places, and the park cost
+    # about 14 of a status run's 50 seconds (the user's call of 2026-11-07).
+    settled = _settle_game(adb, WORLD_SETTLE_POLLS, park=False)
     display = settled or adb.display_for(COC_PACKAGE)
     runner = PlateRunner(adb=adb, display=display)
     # **The first reading is the check**, so there is no capture to take ahead
@@ -2631,7 +2634,7 @@ def export(frames: FrameLog, last: bool = False) -> VillageExport:
     # answer away.
     names = fetch_entity_mapping().names()
     adb = _controller(frames)
-    display = _settle_game(adb, WORLD_SETTLE_POLLS)
+    display = _settle_game(adb, WORLD_SETTLE_POLLS, park=False)
     if display is None:
         return VillageExport(tag="", exported_at="", outcome="no_village")
     return _exported(adb, display, names)
