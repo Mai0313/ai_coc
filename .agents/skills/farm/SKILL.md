@@ -77,7 +77,7 @@ uv run ai_coc attack --repeat 0 --plan src/ai_coc/plans/night_flat.json --yield 
 - **沒有門檻**: 沒有偵察畫面, 贏拿金幣輸拿聖水, 沒東西好跳過
 - **平鋪的理由**: 贏輸都有進帳, 兩樣倉庫都要填, 挑哪一邊打差別不大, AI 規劃卻每個 stage 要 10 到 15 秒 (慢的時候 40 秒以上, 逾時一樣退回平鋪)
 - **搜尋要等真人** (量過四秒到五分半). 搜尋中 log 不寫東西, 最久兩分半 (`SEARCH_PATIENCE`) 會有一行 `No opponent in 150s; cancelling and searching again`, 重搜 `SEARCH_ATTEMPTS` 次都沒配到才回 `no_opponent`
-- **聖水車也算一個倉庫.** 迴圈開跑第一輪跟之後每 `CART_EVERY` (五) 場去一次車子: 倉庫有空間就倒進去, 倉庫滿了就讀車上存多少. 倉庫滿了**而且**最近一次讀到車子也過同一個百分比才 `stock_full`, 所以車子剛滿之後最多還會多打四場. 同一趟看三次都讀不到車子, 就退回只看倉庫. 手動領是在夜世界跑 `uv run ai_coc collect`; 車子容量會跟著村莊長大 (現在 160 萬). 打完一輪記得確認有領到
+- **聖水車也算一個倉庫.** 迴圈開跑第一輪跟之後每 `CART_EVERY` (五) 場去一次車子: 倉庫有空間就倒進去, 倉庫滿了就讀車上存多少. 倉庫滿了**而且**最近一次讀到車子也過同一個百分比才 `stock_full`, 所以車子剛滿之後最多還會多打四場. 同一趟看三次都讀不到車子, 就退回只看倉庫. 手動領是在夜世界跑 `uv run ai_coc collect`, 他開口才跑 (見「順手做的事」); 車子容量會跟著村莊長大 (現在 160 萬). 車上存多少看那一輪 `round` 那行的 `cart`
 - **`CartReport.outcome` 有九種**, 收集鈕灰的三種在下一條: `collected` 領到了; `empty` 按了收集而儲量沒動; `not_found` 三個候選點都沒點開; `wrong_world` 不在夜世界; `not_parked` 鏡頭沒停好所以沒去找; `unreadable` 領了但有一邊的儲量條讀不到
 - **收集鈕灰的三種**: `locked_holding` 車上有東西領不出來 (`held` 車上的數字, `capacity` 上限), 幾乎一定是聖水倉庫滿了, 車子在當額外倉庫, **車子也滿了才是這個村莊不再賺了**; `locked_empty` 車上本來就空, 沒事; `locked` 按鈕灰而車上數字讀不到, 要自己去看
 
@@ -193,7 +193,7 @@ uv run ai_coc attack --repeat 0 --plan src/ai_coc/plans/night_flat.json --yield 
 
 ## 順手做的事
 
-`collect` 很便宜 (幾秒), 最值得常跑: 採集器裝滿就停工. 開跑前跑一次, 隔一段時間再跑.
+`collect` 不在流程裡跑, 他開口才跑 (使用者 2026-11-07: 「那個資源真的不多 主要的資源來源還是靠進攻」): 收集器產出不多, 倉庫多半又是滿的收不進去. 聖水車不受影響, 進攻迴圈自己會去倒 (見「聖水車也算一個倉庫」).
 
 `donate` 也幾乎沒成本, 想跑就跑, 但只做主村 (夜世界回 `builder_base`).
 
@@ -248,7 +248,7 @@ uv run ai_coc attack --repeat 0 --plan src/ai_coc/plans/night_flat.json --yield 
 ```
 
 - **第一行**: 打完沒, 總共花多久. 只打一個世界就講那一個
-- **表**: 直接印成 markdown 表格, 不要包在程式碼區塊裡. 每個打了的世界一列, 不加總; 每一格是「進帳 → 現在的水位」, 滿了加 (滿), 夜世界沒有黑水寫 —. 沒打的世界不列. 夜世界的聖水車自己一列, 寫開跑跟收工時車上各有多少 (X → Y): 收工前跑一次 `uv run ai_coc collect`, 倉庫滿時它在 `cart` 底下回 `locked_holding` 附 `held` 跟 `capacity`; 回 `locked`, `not_found`, `not_parked` 或 `wrong_world` 都是**沒讀到**, 寫「聖水車讀不到」, 不准寫成滿, 理由同上面 `stock_full` 那條
+- **表**: 直接印成 markdown 表格, 不要包在程式碼區塊裡. 每個打了的世界一列, 不加總; 每一格是「進帳 → 現在的水位」, 滿了加 (滿), 夜世界沒有黑水寫 —. 沒打的世界不列. 夜世界的聖水車自己一列, 寫開跑跟收工時車上各有多少 (X → Y), 讀 `runs.jsonl` 裡夜世界那趟第一輪跟最後一輪 `round` 那行的 `cart`, 不另外跑 `collect`: 倉庫滿時是 `locked_holding` 附 `held` 跟 `capacity`; `collected` 是車子倒進了倉庫, `elixir` 是倉庫實際多了多少, 那一格寫「倒了 N」, 倒完車上算 0; 沒有 `cart`, 或是 `locked`, `not_found`, `not_parked`, `wrong_world`, 都是**沒讀到**, 寫「聖水車讀不到」, 不准寫成滿, 理由同上面 `stock_full` 那條
 - **表下面一行**: 兩個世界的工人最快幾點好 (`status` 的 `timers`), 遊戲停著那個世界再加閒幾個/總共幾個 (另一個世界的計數讀不到, 不為它開船)
 - **他開口要花的那一趟表下面多一行**: 刷了幾片牆, 升了什麼, 各花多少
 - 數字用「萬」; 不到一萬的 (多半是黑水) 留一位小數
