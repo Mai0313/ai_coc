@@ -2808,13 +2808,20 @@ def _day(export: VillageExport) -> date:
 
 
 def growth(start: date | None = None, end: date | None = None) -> GrowthReport:
-    """What was upgraded between the first saved export on or after `start` and the last on or before `end`.
+    """What was upgraded from the start of `start` to the end of `end`, both days included.
 
-    Both default to the ends of what is saved. Reads files alone, so it touches
-    neither the game nor the emulator; `status` saves the day's export.
+    A day's file is its last export, so the baseline is the last one dated
+    before `start`, and the first on or after it only when nothing earlier is
+    saved. Both default to the ends of what is saved. Reads files alone, so it
+    touches neither the game nor the emulator; `status` saves the day's export.
     """
     saved = _snapshots()
-    first = next((one for one in saved if start is None or _day(one) >= start), None)
+    earlier = [one for one in saved if start is not None and _day(one) < start]
+    first = (
+        earlier[-1]
+        if earlier
+        else next((one for one in saved if start is None or _day(one) >= start), None)
+    )
     last = next((one for one in reversed(saved) if end is None or _day(one) <= end), None)
     if first is None or last is None or first.exported_at >= last.exported_at:
         report = GrowthReport(outcome="too_few")

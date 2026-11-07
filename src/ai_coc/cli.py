@@ -160,13 +160,11 @@ def _watch_flags(watcher: argparse.ArgumentParser, stopper: argparse.ArgumentPar
 
 def _growth_flags(grower: argparse.ArgumentParser) -> None:
     """`growth` reads only the exports `status` and `export` saved, one a day."""
-    for flag, end in (("--start-date", "最舊"), ("--end-date", "最新")):
-        grower.add_argument(
-            flag,
-            type=date.fromisoformat,
-            metavar="YYYY-MM-DD",
-            help=f"從這天起算（含）；不給就是存下的{end}那一份",
-        )
+    for flag, note in (
+        ("--start-date", "從這天一開始算起（含這天）；不給就從存下的最舊那一份"),
+        ("--end-date", "算到這天結束（含這天）；不給就到存下的最新那一份"),
+    ):
+        grower.add_argument(flag, type=date.fromisoformat, metavar="YYYY-MM-DD", help=note)
 
 
 def _note_flags(noter: argparse.ArgumentParser) -> None:

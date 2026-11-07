@@ -2654,7 +2654,10 @@ class ExportTests(unittest.TestCase):
         assert VillageExport.model_validate_json(written).tag == "#TEST"
 
     def test_growth_compares_the_saved_exports_inside_the_dates_asked_for(self) -> None:
-        """Start is the first export on or after its date, end the last on or before its."""
+        """Both days count: the baseline is the last export before the start day, the end the last on the end day.
+
+        Stamped at noon UTC, so every timezone from UTC-11 to UTC+11 reads the same days.
+        """
 
         def save(name: str, when: str, level: int) -> None:
             export = VillageExport(
@@ -2665,17 +2668,19 @@ class ExportTests(unittest.TestCase):
             )
             (self.saved / name).write_text(export.model_dump_json(), encoding="utf-8")
 
-        save("#TEST_2026-11-01.json", "2026-11-01T04:00:00+00:00", 50)
-        save("#TEST_2026-11-03.json", "2026-11-03T04:00:00+00:00", 51)
-        save("#TEST_2026-11-05.json", "2026-11-05T04:00:00+00:00", 53)
+        save("#TEST_2026-11-01.json", "2026-11-01T12:00:00+00:00", 50)
+        save("#TEST_2026-11-03.json", "2026-11-03T12:00:00+00:00", 51)
+        save("#TEST_2026-11-05.json", "2026-11-05T12:00:00+00:00", 53)
         report = commands.growth()
         assert (report.outcome, report.changes[0].before, report.changes[0].after) == (
             "compared",
             {50: 1},
             {53: 1},
         )
-        middle = commands.growth(start=date(2026, 11, 2), end=date(2026, 11, 4))
-        assert middle.outcome == "too_few"
+        # The 3rd's upgrade happened on the 3rd, so starting there still counts it.
+        third = commands.growth(start=date(2026, 11, 3), end=date(2026, 11, 3))
+        assert (third.changes[0].before, third.changes[0].after) == ({50: 1}, {51: 1})
+        assert commands.growth(start=date(2026, 11, 6)).outcome == "too_few"
         assert commands.growth(end=date(2026, 11, 3)).changes[0].after == {51: 1}
         text = commands.growth_text(report)
         assert "日世界\n  英雄\n    King  50 → 53" in text
