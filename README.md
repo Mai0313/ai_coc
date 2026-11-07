@@ -128,6 +128,7 @@ ai_coc export                         # the whole village out of the game, named
 ai_coc export --table                 # the same, drawn as a table for a person
 ai_coc export --last                  # the last one off the disk, without touching the game
 ai_coc growth                         # what was upgraded on each village between the oldest and newest saved exports; --start-date / --end-date narrow it
+ai_coc turnaround                     # seconds from each upgrade finishing to the confirm for its next level, per slot, off the run journal; --since narrows it
 ai_coc view --zoom out                # put the camera back where every coordinate was measured
 ai_coc world                          # which of the two villages the game is on
 ai_coc world --go day                 # sail there; already being there does nothing

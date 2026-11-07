@@ -128,6 +128,7 @@ ai_coc export                         # 從遊戲裡取出整個村莊,對照過
 ai_coc export --table                 # 同一份東西,畫成表格給人看
 ai_coc export --last                  # 直接讀上一次的結果,完全不碰遊戲
 ai_coc growth                         # 比對存下的最舊跟最新兩份匯出,列出兩個世界升了什麼;--start-date / --end-date 縮小範圍
+ai_coc turnaround                     # 從打資源紀錄算每次升級從到點到按下確認花了幾秒,依王、實驗室、建築、戰寵分;--since 指定起算日
 ai_coc view --zoom out                # 把鏡頭拉回所有座標當初量測的那個視野
 ai_coc world                          # 現在在日世界還是夜世界
 ai_coc world --go day                 # 坐船切過去,已經在那邊就什麼都不做
