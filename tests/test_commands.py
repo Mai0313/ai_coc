@@ -304,7 +304,7 @@ class StockCommandTests(unittest.TestCase):
         reads = [(seen, held), (under, held)]
         with (
             patch.object(commands, "_controller", return_value=_controller()),
-            patch.object(commands, "_settle_game", return_value=DISPLAY),
+            patch.object(commands, "_settle_game", return_value=DISPLAY) as self.settle_game,
             patch.object(ScreenRunner, "read_storages", side_effect=reads),
             patch.object(ScreenRunner, "read_ceilings", return_value=ceilings) as ceiling_reader,
             patch.object(commands, "uncovered", return_value=under) as pressed,
@@ -370,6 +370,11 @@ class StockCommandTests(unittest.TestCase):
             self._stock("night", VillageStock(gold=1, elixir=1, dark=0), StorageCapacity(gold=2))
         sailed.assert_not_called()
 
+    def test_it_takes_the_far_zoom_without_parking(self) -> None:
+        """The bars and their tooltips are fixed HUD places, so the park's swipes buy nothing."""
+        self._stock("day", VillageStock(gold=1, elixir=1, dark=1), StorageCapacity(gold=2))
+        assert self.settle_game.call_args.kwargs == {"park": False}
+
 
 class ShieldLineTests(unittest.TestCase):
     """The shield reading as a line for a person, built where the log is written."""
@@ -415,7 +420,7 @@ class StatusCommandTests(unittest.TestCase):
         with (
             # A real controller, because `ScreenRunner` validates the one it is given.
             patch.object(commands, "_controller", return_value=_controller()),
-            patch.object(commands, "_settle_game", return_value=settled),
+            patch.object(commands, "_settle_game", return_value=settled) as self.settle_game,
             patch.object(AdbController, "display_for", return_value=DISPLAY),
             patch.object(commands, "_entity_names", return_value={}),
             patch.object(commands, "_exported", walk),
@@ -455,6 +460,11 @@ class StatusCommandTests(unittest.TestCase):
         assert (report.world, report.builder.outcome) == ("day", "counted")
         pressed.assert_called_once()
         walk.assert_called_once()
+
+    def test_it_takes_the_far_zoom_without_parking(self) -> None:
+        """The plates, the shield, the walk and the bars are all fixed HUD places."""
+        self._status([self._counts("day")])
+        assert self.settle_game.call_args.kwargs == {"park": False}
 
     def test_no_village_is_never_walked_through_the_settings(self) -> None:
         """Every tap of the walk is a fixed place, and one on a battle can deploy a card."""
@@ -2543,6 +2553,12 @@ class ExportTests(unittest.TestCase):
         cleared.assert_called_once()
         written = (self.saved / "#TEST.json").read_text(encoding="utf-8")
         assert VillageExport.model_validate_json(written).tag == "#TEST"
+
+    def test_it_takes_the_far_zoom_without_parking(self) -> None:
+        """Every step of the walk is a fixed coordinate on a full-screen page."""
+        with patch.object(commands, "_settle_game", return_value=DISPLAY) as settle_game:
+            self._export()
+        assert settle_game.call_args.kwargs == {"park": False}
 
     def test_a_game_that_never_came_back_is_not_tapped_at(self) -> None:
         """`_settle_game` answers None for a dropped session it could not restart,
