@@ -248,7 +248,7 @@ uv run ai_coc attack --repeat 0 --plan src/ai_coc/plans/night_flat.json --yield 
 ```
 
 - **第一行**: 打完沒, 總共花多久. 只打一個世界就講那一個
-- **表**: 直接印成 markdown 表格, 不要包在程式碼區塊裡. 每個打了的世界一列, 不加總; 每一格是「進帳 → 現在的水位」, 滿了加 (滿), 夜世界沒有黑水寫 —. 沒打的世界不列. 夜世界的聖水車自己一列, 寫開跑跟收工時車上各有多少 (X → Y), 讀 `runs.jsonl` 裡夜世界那趟第一輪跟最後一輪 `round` 那行的 `cart`, 不另外跑 `collect`: 倉庫滿時是 `locked_holding` 附 `held` 跟 `capacity`; 沒有 `cart`, 或是 `locked`, `not_found`, `not_parked`, `wrong_world`, 都是**沒讀到**, 寫「聖水車讀不到」, 不准寫成滿, 理由同上面 `stock_full` 那條
+- **表**: 直接印成 markdown 表格, 不要包在程式碼區塊裡. 每個打了的世界一列, 不加總; 每一格是「進帳 → 現在的水位」, 滿了加 (滿), 夜世界沒有黑水寫 —. 沒打的世界不列. 夜世界的聖水車自己一列, 寫開跑跟收工時車上各有多少 (X → Y), 讀 `runs.jsonl` 裡夜世界那趟第一輪跟最後一輪 `round` 那行的 `cart`, 不另外跑 `collect`: 倉庫滿時是 `locked_holding` 附 `held` 跟 `capacity`; `collected` 是車子倒進了倉庫, `elixir` 是倉庫實際多了多少, 那一格寫「倒了 N」, 倒完車上算 0; 沒有 `cart`, 或是 `locked`, `not_found`, `not_parked`, `wrong_world`, 都是**沒讀到**, 寫「聖水車讀不到」, 不准寫成滿, 理由同上面 `stock_full` 那條
 - **表下面一行**: 兩個世界的工人最快幾點好 (`status` 的 `timers`), 遊戲停著那個世界再加閒幾個/總共幾個 (另一個世界的計數讀不到, 不為它開船)
 - **他開口要花的那一趟表下面多一行**: 刷了幾片牆, 升了什麼, 各花多少
 - 數字用「萬」; 不到一萬的 (多半是黑水) 留一位小數
