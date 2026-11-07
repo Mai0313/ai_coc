@@ -24,6 +24,7 @@ from ai_coc.models import (
     Caller,
     RunLog,
     RunEnded,
+    NoteAction,
     RunStarted,
     StopTarget,
     AttackSeries,
@@ -58,10 +59,11 @@ def _log_uncaught(kind: type[BaseException], value: BaseException, trace: Any) -
 
 
 # The sub-commands that never open ADB: `read` parses a PNG off the disk,
-# `stop` and `giveback` each change one field of the state file, and `watch`
-# sleeps on its own section of it. Every other one captures the screen, so
-# every other one takes `--debug` and `--shot-every`.
-NO_SCREEN = ("read", "stop", "giveback", "watch")
+# `stop` and `giveback` each change one field of the state file, `watch`
+# sleeps on its own section of it, and `note` keeps the notes section. Every
+# other one captures the screen, so every other one takes `--debug` and
+# `--shot-every`.
+NO_SCREEN = ("read", "stop", "giveback", "watch", "note")
 
 # The sub-commands that hold no claim on the emulator, listed the way round
 # that fails safely: the ones that never open ADB, and `capture`. Everything
@@ -103,6 +105,7 @@ COMMANDS = (
         "watch",
         "睡到 --next 那個時間才結束，期間在狀態檔記下是誰在盯升級；丟到背景跑，結束時叫醒你",
     ),
+    ("note", "使用者的交代，記在狀態檔裡；不給參數就列出來，add 加一條，done 刪掉做完的第幾條"),
     (
         "status",
         "兩個世界每件升級實際幾點好（藥水和鐘塔已算進去），加上這個村莊的閒置人數、倉庫和護盾",
@@ -151,6 +154,15 @@ def _watch_flags(watcher: argparse.ArgumentParser, stopper: argparse.ArgumentPar
         default="all",
         help="只停模擬器上的指令（emulator）或只停盯升級（watch）；不給就兩個都停",
     )
+
+
+def _note_flags(noter: argparse.ArgumentParser) -> None:
+    """`note` never opens ADB either: it keeps the notes section of the state file."""
+    noter.add_argument(
+        "action", nargs="?", choices=get_args(NoteAction), default="list", help="不給就是 list"
+    )
+    noter.add_argument("world", nargs="?", choices=get_args(World), help="哪個世界的交代")
+    noter.add_argument("item", nargs="?", default="", help="add 是交代的內容，done 是第幾條")
 
 
 def _press_flags(
@@ -238,6 +250,7 @@ def _parser() -> argparse.ArgumentParser:
         "--go", choices=get_args(World), help="開船到這個世界，已經在那邊就什麼都不做"
     )
     _watch_flags(sub.choices["watch"], sub.choices["stop"])
+    _note_flags(sub.choices["note"])
     give = sub.choices["donate"]
     give.add_argument("--dry-run", action="store_true", help="走完流程但不真的捐，只回報能捐什麼")
     give.add_argument("--rounds", type=int, default=0, help="最多捐幾次，0 代表捐到不能捐為止")
@@ -352,6 +365,7 @@ def _answer(arguments: argparse.Namespace, run: RunLog) -> BaseModel | str:
         "stop": lambda: commands.stop(_caller(a), a.target),
         "giveback": commands.giveback,
         "watch": lambda: commands.watch(_caller(a), a.next, a.about, run.directory),
+        "note": lambda: commands.note(a.action, a.world, a.item),
         "collect": lambda: commands.collect(run.frames),
         "stock": lambda: commands.stock(run.frames),
         "status": lambda: commands.status(run.frames),

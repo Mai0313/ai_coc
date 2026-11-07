@@ -1709,29 +1709,60 @@ class RunnerState(BaseModel):
     loan: Loan | None = None
 
 
-class StateFile(BaseModel):
-    """The whole state file: the emulator's lock, and the upgrade watch beside it.
+class Notes(BaseModel):
+    """The user's standing instructions for each village, one per item, kept by `ai_coc note`.
 
-    Two sections because they are two processes with nothing in common but the
-    agents reading them: a command driving the emulator, and a watch sleeping
-    on the timers while farming borrows and lends the emulator around it. Each
-    is written only by its own process and by `ai_coc stop`, and a write of one
-    section carries the other over as the file held it. A file written before
-    the split was the emulator's record alone, and is read as that section, so
-    a run of the old code still holding the emulator is not read as idle.
+    Things he asked for that outlive any one watch, such as what to upgrade once
+    a running upgrade finishes; an item is dropped once it is done.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    day: list[str] = Field(default_factory=list)
+    night: list[str] = Field(default_factory=list)
+
+
+NoteAction = Literal["list", "add", "done"]
+# `incomplete` is an `add` without its text or a `done` without its number;
+# `no_such_note` is a number that names no item in that village.
+NoteOutcome = Literal["listed", "added", "done", "incomplete", "no_such_note"]
+
+
+class NoteReport(BaseModel):
+    """What `ai_coc note` left in the state file, and which branch it took."""
+
+    model_config = ConfigDict(frozen=True)
+
+    notes: Notes
+    outcome: NoteOutcome
+
+
+class StateFile(BaseModel):
+    """The whole state file: the emulator's lock, the upgrade watch, and the user's notes.
+
+    The first two are two processes with nothing in common but the agents
+    reading them: a command driving the emulator, and a watch sleeping on the
+    timers while farming borrows and lends the emulator around it. Each is
+    written only by its own process and by `ai_coc stop`, the notes only by
+    `ai_coc note`, and a write of one section carries the others over as the
+    file held them. A file written before the split was the emulator's record
+    alone, and is read as that section, so a run of the old code still holding
+    the emulator is not read as idle.
     """
 
     model_config = ConfigDict(frozen=True)
 
     emulator: RunnerState = Field(default_factory=RunnerState)
     watch: Watch = Field(default_factory=Watch)
+    notes: Notes = Field(default_factory=Notes)
 
     @model_validator(mode="before")
     @classmethod
     def _before_the_split(cls, data: object) -> object:
         # Its `watch` was a record with no process behind it, so it is dropped
-        # rather than carried over; `RunnerState` ignores the key.
-        if isinstance(data, dict) and "emulator" not in data:
+        # rather than carried over; `RunnerState` ignores the key. A file of
+        # notes alone is a new one, which `_kept` builds when the file is gone.
+        if isinstance(data, dict) and not data.keys() & {"emulator", "notes"}:
             return {"emulator": data}
         return data
 

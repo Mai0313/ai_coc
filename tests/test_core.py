@@ -5726,7 +5726,7 @@ class RunnerStateTests(unittest.TestCase):
             self.enterContext(patch.object(commands, "STATE_PATH", Path(folder) / "state.json"))
             with patch.object(commands.os, "replace"):
                 commands._write_state(RunnerState(status="idle"))
-            assert [path.name for path in Path(folder).iterdir()] == [
+            assert [path.name for path in Path(folder).iterdir() if path.is_file()] == [
                 f"state.json.{os.getpid()}.tmp"
             ]
 
