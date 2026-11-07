@@ -2026,10 +2026,15 @@ class JournalLine(BaseModel):
 
 
 class JournalTimers(BaseModel):
-    """The timers a `status` run's result carried, read back off the journal."""
+    """The timers a `status` run's result carried, read back off the journal.
+
+    `export` says whether they were read at all: an empty list beside anything
+    but `exported` is a reading that failed, not one with nothing running.
+    """
 
     model_config = TOLERANT
 
+    export: str = ""
     timers: list[UpgradeTimer] = Field(default_factory=list)
 
 

@@ -2940,6 +2940,28 @@ def _slot(timer: UpgradeTimer) -> TurnaroundGroup:
     return "building"
 
 
+def _journal_upgrades() -> tuple[
+    list[tuple[datetime, list[UpgradeTimer]]], list[tuple[datetime, JournalConfirm]]
+]:
+    """Every `status` that read its timers, and every successful confirm with its press, oldest first."""
+    lines = _journal()
+    starts = {line.run: line for line in lines if line.event == "start"}
+    statuses: list[tuple[datetime, list[UpgradeTimer]]] = []
+    confirms: list[tuple[datetime, JournalConfirm]] = []
+    for end in (line for line in lines if line.event == "end" and line.run in starts):
+        start = starts[end.run]
+        with suppress(ValueError):
+            if start.command == "status":
+                read = JournalTimers.model_validate(end.result)
+                if read.export == "exported":
+                    statuses.append((end.at, read.timers))
+            elif start.command == "confirm" and end.outcome == "confirmed":
+                paid = JournalConfirm.model_validate(end.result)
+                if (pressed := _press_time(start)) is not None:
+                    confirms.append((pressed, paid))
+    return sorted(statuses, key=lambda one: one[0]), sorted(confirms, key=lambda one: one[0])
+
+
 def turnaround(since: date | None = None) -> TurnaroundReport:
     """How long each upgrade waited between its timer running out and the confirm for its next level.
 
@@ -2949,21 +2971,7 @@ def turnaround(since: date | None = None) -> TurnaroundReport:
     their timer but are not counted, and neither is a confirm just before a
     goblin hire, which went on the goblin's slot.
     """
-    lines = _journal()
-    starts = {line.run: line for line in lines if line.event == "start"}
-    statuses: list[tuple[datetime, list[UpgradeTimer]]] = []
-    confirms: list[tuple[datetime, JournalConfirm]] = []
-    for end in (line for line in lines if line.event == "end" and line.run in starts):
-        start = starts[end.run]
-        with suppress(ValueError):
-            if start.command == "status":
-                statuses.append((end.at, JournalTimers.model_validate(end.result).timers))
-            elif start.command == "confirm" and end.outcome == "confirmed":
-                paid = JournalConfirm.model_validate(end.result)
-                if (pressed := _press_time(start)) is not None:
-                    confirms.append((pressed, paid))
-    statuses.sort(key=lambda status: status[0])
-    confirms.sort(key=lambda confirm: confirm[0])
+    statuses, confirms = _journal_upgrades()
     goblins = [pressed for pressed, paid in confirms if paid.goblin is not None]
     taken: set[tuple[str | None, str]] = set()
     samples: list[TurnaroundSample] = []

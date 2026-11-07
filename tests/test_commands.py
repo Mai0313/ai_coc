@@ -1500,7 +1500,9 @@ class TurnaroundTests(unittest.TestCase):
         self.logs = Path(folder.name)
         self.lines: list[dict] = []
 
-    def _status(self, at: str, *timers: tuple[str, str, str, str]) -> None:
+    def _status(
+        self, at: str, *timers: tuple[str, str, str, str], export: str = "exported"
+    ) -> None:
         run = f"status-{len(self.lines)}"
         self.lines.append({"run": run, "at": at, "event": "start", "command": "status"})
         rows = [
@@ -1516,7 +1518,8 @@ class TurnaroundTests(unittest.TestCase):
             }
             for section, role, name, done in timers
         ]
-        self.lines.append({"run": run, "at": at, "event": "end", "result": {"timers": rows}})
+        result = {"export": export, "timers": rows}
+        self.lines.append({"run": run, "at": at, "event": "end", "result": result})
 
     def _confirm(self, at: str, tapped: str, **paid: object) -> None:
         run = f"confirm-{len(self.lines)}"
@@ -1587,6 +1590,37 @@ class TurnaroundTests(unittest.TestCase):
         self._confirm("2026-11-07T10:20:10+08:00", "10:20:30")
         assert self._count(date(2026, 11, 7)) == [("hero", "Archer Queen", 30)]
         assert len(self._count()) == 2
+
+    def test_a_status_whose_export_failed_does_not_hide_the_one_before(self) -> None:
+        self._status(
+            "2026-11-07T10:15:00+08:00",
+            ("heroes", "builder", "Archer Queen", "2026-11-07T10:20:00+08:00"),
+        )
+        self._status("2026-11-07T10:17:00+08:00", export="no_village")
+        self._confirm("2026-11-07T10:20:10+08:00", "10:20:25")
+        assert self._count() == [("hero", "Archer Queen", 25)]
+
+    def test_the_latest_due_timer_is_paired_and_one_past_the_window_is_not(self) -> None:
+        self._status(
+            "2026-11-07T10:15:00+08:00",
+            ("units", "lab", "Druid", "2026-11-07T10:20:00+08:00"),
+            ("buildings", "builder", "Mortar", "2026-11-07T10:25:00+08:00"),
+            ("heroes", "builder", "Archer Queen", "2026-11-07T11:00:00+08:00"),
+        )
+        self._confirm("2026-11-07T10:25:10+08:00", "10:25:20")
+        self._confirm("2026-11-07T11:15:50+08:00", "11:16:00")
+        assert self._count() == [("building", "Mortar", 20)]
+
+    def test_a_plain_confirm_just_before_a_goblin_hire_is_not_counted(self) -> None:
+        """It went on the goblin's slot: the hire is the game asking for the slot it just used."""
+        self._status(
+            "2026-11-07T10:15:00+08:00",
+            ("heroes", "builder", "Barbarian King", "2026-11-07T10:20:00+08:00"),
+            ("units", "lab", "Bowler", "2026-11-07T10:22:00+08:00"),
+        )
+        self._confirm("2026-11-07T10:20:20+08:00", "10:20:30")
+        self._confirm("2026-11-07T10:22:30+08:00", "10:22:40", goblin={"price": 31})
+        assert self._count() == []
 
 
 class NoteTests(unittest.TestCase):
