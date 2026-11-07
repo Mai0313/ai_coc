@@ -11,7 +11,7 @@ import math
 import time
 from typing import TYPE_CHECKING, Self, Literal
 import logging
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 import itertools
 import threading
 from contextlib import suppress, contextmanager
@@ -49,6 +49,7 @@ from ai_coc.models import (
     BoostReport,
     CartOutcome,
     GoblinOffer,
+    LevelChange,
     NamedEntity,
     NoteOutcome,
     PressReport,
@@ -63,6 +64,7 @@ from ai_coc.models import (
     BoostOutcome,
     DonateReport,
     FrameReading,
+    GrowthReport,
     LaunchReport,
     PressOutcome,
     RestartScope,
@@ -76,6 +78,7 @@ from ai_coc.models import (
     DonateOptions,
     DonateOutcome,
     ExportOutcome,
+    GrowthOutcome,
     LaunchOutcome,
     SurveyOutcome,
     VillageEntity,
@@ -134,6 +137,7 @@ from ai_coc.parsers.scout import (
 )
 from ai_coc.parsers.world import current_world
 from ai_coc.adapters.config import ConfigStore, gemini_key
+from ai_coc.parsers.village import growth as village_growth
 from ai_coc.parsers.village import clock_tower, upgrade_timers, parse_village_text
 from ai_coc.adapters.mapping import fetch_entity_mapping
 from ai_coc.parsers.boundary import PLAYFIELD, VILLAGE_CENTRE, village_box, boundary_reach
@@ -2611,15 +2615,16 @@ def _named(entities: list[VillageEntity], names: dict[int, str]) -> list[NamedEn
     ]
 
 
-def _export_path(tag: str) -> Path:
-    """Where one account's export is kept, with the tag made safe to be a filename.
+def _export_path(tag: str, when: datetime) -> Path:
+    """Where one account's export of one day is kept, with the tag made safe to be a filename.
 
-    The tag comes off the clipboard, so it is outside data: anything that parses
-    as JSON can put a `/` or a trailing dot in it, which is a path escape rather
-    than a filename.
+    One file a day, the day's last export, so `growth` has something to compare
+    against. The tag comes off the clipboard, so it is outside data: anything
+    that parses as JSON can put a `/` or a trailing dot in it, which is a path
+    escape rather than a filename.
     """
     safe = "".join(ch for ch in tag if ch.isalnum() or ch in "-_#") or "UNKNOWN"
-    return ACCOUNT_JSON_DIR / f"{safe}.json"
+    return ACCOUNT_JSON_DIR / f"{safe}_{when.astimezone():%Y-%m-%d}.json"
 
 
 def _last_export() -> VillageExport:
@@ -2768,15 +2773,13 @@ def _exported(adb: AdbController, display: DisplayTarget, names: dict[int, str])
         if window_open(adb.screenshot(display, "profile-left")):
             adb.tap(*CLOSE_SETTINGS, display)
     stamp = snapshot.raw.timestamp
-    when = (
-        datetime.fromtimestamp(stamp, UTC).isoformat() if stamp else datetime.now(UTC).isoformat()
-    )
+    when = datetime.fromtimestamp(stamp, UTC) if stamp else datetime.now(UTC)
     named = _named(snapshot.entities, names)
     unnamed = sum(1 for entity in named if entity.name is None)
-    path = _export_path(snapshot.tag)
+    path = _export_path(snapshot.tag, when)
     result = VillageExport(
         tag=snapshot.tag,
-        exported_at=when,
+        exported_at=when.isoformat(),
         timestamp=stamp,
         entities=named,
         boosts=snapshot.raw.boosts,
@@ -2785,6 +2788,105 @@ def _exported(adb: AdbController, display: DisplayTarget, names: dict[int, str])
     path.write_text(result.model_dump_json(indent=2), encoding="utf-8")
     logger.info("Export: %s,其中 %d 筆還沒有名字,存到 %s", export_line(result), unnamed, path)
     return result
+
+
+def _snapshots() -> list[VillageExport]:
+    """Every saved export of the account last exported, oldest first; unreadable files skipped."""
+    saved: list[VillageExport] = []
+    for path in ACCOUNT_JSON_DIR.glob("*.json"):
+        try:
+            saved.append(VillageExport.model_validate_json(path.read_text(encoding="utf-8")))
+        except (OSError, ValueError):
+            logger.warning("%s does not read back as an export; left out", path)
+    saved = sorted((one for one in saved if one.exported_at), key=lambda one: one.exported_at)
+    return [one for one in saved if one.tag == saved[-1].tag] if saved else []
+
+
+def _day(export: VillageExport) -> date:
+    """The local day an export was taken on."""
+    return datetime.fromisoformat(export.exported_at).astimezone().date()
+
+
+def growth(start: date | None = None, end: date | None = None) -> GrowthReport:
+    """What was upgraded from the start of `start` to the end of `end`, both days included.
+
+    A day's file is its last export, so the baseline is the last one dated
+    before `start`, and the first on or after it only when nothing earlier is
+    saved. Both default to the ends of what is saved. Reads files alone, so it
+    touches neither the game nor the emulator; `status` saves the day's export.
+    """
+    saved = _snapshots()
+    earlier = [one for one in saved if start is not None and _day(one) < start]
+    first = (
+        earlier[-1]
+        if earlier
+        else next((one for one in saved if start is None or _day(one) >= start), None)
+    )
+    last = next((one for one in reversed(saved) if end is None or _day(one) <= end), None)
+    if first is None or last is None or first.exported_at >= last.exported_at:
+        report = GrowthReport(outcome="too_few")
+    else:
+        report = GrowthReport(
+            tag=last.tag,
+            start=first.exported_at,
+            end=last.exported_at,
+            changes=village_growth(first, last),
+            outcome="compared",
+        )
+    logger.info("%s", GROWTH_LINES[report.outcome].format(count=len(report.changes)))
+    return report
+
+
+# One line per way `ai_coc growth` can end, for `run.log`.
+GROWTH_LINES: dict[GrowthOutcome, str] = {
+    "compared": "比對了兩份匯出, {count} 種有升級",
+    "too_few": "存下的匯出不到兩份可以比, 每跑一次 status 會存當天那一份",
+}
+
+
+def growth_text(report: GrowthReport) -> str:
+    """The report as a person reads it: each village, then heroes, research and buildings."""
+    if report.outcome != "compared":
+        return GROWTH_LINES[report.outcome]
+    shown = [f"{report.tag}  {_local(report.start)} → {_local(report.end)}"]
+    for world, title in (("day", "日世界"), ("night", "夜世界")):
+        shown += ["", title]
+        mine = [change for change in report.changes if change.world == world]
+        if not mine:
+            shown.append("  (沒有升級)")
+        for group, label in (("hero", "英雄"), ("lab", "實驗室"), ("building", "建築")):
+            rows = [change for change in mine if change.group == group]
+            if rows:
+                shown.append(f"  {label}")
+                shown += [
+                    f"    {row.name or f'#{row.data_id}'}  {_level_change(row)}" for row in rows
+                ]
+    return "\n".join(shown)
+
+
+def _local(when: str) -> str:
+    return datetime.fromisoformat(when).astimezone().strftime("%Y-%m-%d %H:%M")
+
+
+def _level_change(change: LevelChange) -> str:
+    """`57 → 58` for a single one, `25 個 18 → 19` for some of many, else each level's count."""
+    before, after = change.before, change.after
+    lost = {
+        level: n - after.get(level, 0) for level, n in before.items() if n > after.get(level, 0)
+    }
+    gained = {
+        level: n - before.get(level, 0) for level, n in after.items() if n > before.get(level, 0)
+    }
+
+    def counts(levels: dict[int, int]) -> str:
+        return ", ".join(f"{level} 級 {n} 個" for level, n in sorted(levels.items())) or "沒有"
+
+    if not before:
+        return f"新蓋 {counts(after)}"
+    if len(lost) == 1 and len(gained) == 1 and sum(lost.values()) == sum(gained.values()):
+        [(old, moved)], [(new, _)] = lost.items(), gained.items()
+        return f"{old} → {new}" if sum(after.values()) == 1 else f"{moved} 個 {old} → {new}"
+    return f"{counts(before)} → {counts(after)}"
 
 
 def capture(frames: FrameLog, count: int = 1, gap: float = 1.5) -> list[Path]:

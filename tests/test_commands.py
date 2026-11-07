@@ -15,7 +15,7 @@ import math
 import time
 from typing import TYPE_CHECKING, get_args
 from pathlib import Path
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 import tempfile
 import unittest
 from unittest.mock import MagicMock, patch
@@ -64,6 +64,7 @@ from ai_coc.models import (
     DonateOutcome,
     EntityMapping,
     ExportOutcome,
+    GrowthOutcome,
     LaunchOutcome,
     SurveyOutcome,
     VillageExport,
@@ -651,6 +652,13 @@ class UpkeepLineTests(unittest.TestCase):
             assert fragment in table[outcome], outcome
             others = [table[other] for other in own if other != outcome]
             assert not any(fragment in other for other in others), outcome
+
+    def test_every_growth_outcome_has_a_line_of_its_own(self) -> None:
+        self._each(
+            commands.GROWTH_LINES,
+            {"compared": "種有升級", "too_few": "不到兩份"},
+            get_args(GrowthOutcome),
+        )
 
     def test_every_note_outcome_has_a_line_of_its_own(self) -> None:
         self._each(
@@ -2640,8 +2648,43 @@ class ExportTests(unittest.TestCase):
         # never the number written into the name.
         assert names == {1000001: "Town Hall", 90000000: None}
         cleared.assert_called_once()
-        written = (self.saved / "#TEST.json").read_text(encoding="utf-8")
+        # One file a day, named for the day the game took it on, here and now.
+        day = datetime.fromtimestamp(1788624472, UTC).astimezone().strftime("%Y-%m-%d")
+        written = (self.saved / f"#TEST_{day}.json").read_text(encoding="utf-8")
         assert VillageExport.model_validate_json(written).tag == "#TEST"
+
+    def test_growth_compares_the_saved_exports_inside_the_dates_asked_for(self) -> None:
+        """Both days count: the baseline is the last export before the start day, the end the last on the end day.
+
+        Stamped at noon UTC, so every timezone from UTC-11 to UTC+11 reads the same days.
+        """
+
+        def save(name: str, when: str, level: int) -> None:
+            export = VillageExport(
+                tag="#TEST",
+                exported_at=when,
+                entities=[NamedEntity(data_id=1, section="heroes", level=level, name="King")],
+                outcome="exported",
+            )
+            (self.saved / name).write_text(export.model_dump_json(), encoding="utf-8")
+
+        save("#TEST_2026-11-01.json", "2026-11-01T12:00:00+00:00", 50)
+        save("#TEST_2026-11-03.json", "2026-11-03T12:00:00+00:00", 51)
+        save("#TEST_2026-11-05.json", "2026-11-05T12:00:00+00:00", 53)
+        report = commands.growth()
+        assert (report.outcome, report.changes[0].before, report.changes[0].after) == (
+            "compared",
+            {50: 1},
+            {53: 1},
+        )
+        # The 3rd's upgrade happened on the 3rd, so starting there still counts it.
+        third = commands.growth(start=date(2026, 11, 3), end=date(2026, 11, 3))
+        assert (third.changes[0].before, third.changes[0].after) == ({50: 1}, {51: 1})
+        assert commands.growth(start=date(2026, 11, 6)).outcome == "too_few"
+        assert commands.growth(end=date(2026, 11, 3)).changes[0].after == {51: 1}
+        text = commands.growth_text(report)
+        assert "日世界\n  英雄\n    King  50 → 53" in text
+        assert "夜世界\n  (沒有升級)" in text
 
     def test_it_takes_the_far_zoom_without_parking(self) -> None:
         """Every step of the walk is a fixed coordinate on a full-screen page."""
@@ -2724,9 +2767,11 @@ class ExportTests(unittest.TestCase):
 
     def test_a_tag_off_the_clipboard_cannot_escape_the_export_directory(self) -> None:
         """The tag is outside data: anything that parses as JSON can carry a slash."""
-        assert commands._export_path("#GOOD").parent == self.saved
-        assert commands._export_path("../../etc/passwd").name == "etcpasswd.json"
-        assert commands._export_path("").name == "UNKNOWN.json"
+        when = datetime(2026, 11, 7, 4, tzinfo=UTC)
+        day = when.astimezone().strftime("%Y-%m-%d")
+        assert commands._export_path("#GOOD", when).parent == self.saved
+        assert commands._export_path("../../etc/passwd", when).name == f"etcpasswd_{day}.json"
+        assert commands._export_path("", when).name == f"UNKNOWN_{day}.json"
 
     def test_reading_the_last_export_says_so_when_there_is_nothing_to_read(self) -> None:
         assert commands.export(_frames(self), last=True).outcome == "never_exported"

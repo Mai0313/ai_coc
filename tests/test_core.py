@@ -172,7 +172,13 @@ from ai_coc.parsers.scout import (
 from ai_coc.parsers.world import DAY_GEMS_PLUS, DAY_SHIELD_PLUS, NIGHT_GEMS_PLUS, current_world
 from ai_coc.parsers.glyphs import nearest, ink_mask, signature, digits_from, glyph_columns
 from ai_coc.adapters.config import ConfigStore, dotenv_value
-from ai_coc.parsers.village import clock_tower, parse_village, upgrade_timers, parse_village_text
+from ai_coc.parsers.village import (
+    growth,
+    clock_tower,
+    parse_village,
+    upgrade_timers,
+    parse_village_text,
+)
 from ai_coc.parsers.boundary import DEPLOY_BOUND, fitted_line, village_box, boundary_reach
 from ai_coc.parsers.building import (
     PRICE_ROWS,
@@ -451,6 +457,62 @@ class UpgradeTimerTests(unittest.TestCase):
     def test_no_clock_tower_or_one_being_upgraded_says_nothing(self) -> None:
         assert clock_tower(_exported(("buildings2", 1000034, None))) is None
         assert clock_tower(_exported(("buildings2", 1000039, 3600))) is None
+
+
+def _levels(*rows: tuple[str, int, int, int]) -> VillageExport:
+    """An export holding (section, data_id, level, count) rows."""
+    return VillageExport(
+        tag="#TEST",
+        exported_at="",
+        entities=[
+            NamedEntity(
+                data_id=data_id, section=section, level=level, count=count, name=f"n{data_id}"
+            )
+            for section, data_id, level, count in rows
+        ],
+        outcome="exported",
+    )
+
+
+class GrowthTests(unittest.TestCase):
+    """What was upgraded between two exports, counted per level."""
+
+    def test_only_what_changed_is_listed_heroes_first_then_research_then_buildings(self) -> None:
+        start = _levels(
+            ("buildings", 1, 18, 25),
+            ("buildings", 1, 19, 300),
+            ("units", 2, 4, 1),
+            ("heroes", 3, 57, 1),
+            ("buildings", 4, 10, 1),
+        )
+        end = _levels(
+            ("buildings", 1, 19, 325),
+            ("units", 2, 6, 1),
+            ("heroes", 3, 58, 1),
+            ("buildings", 4, 10, 1),
+        )
+        changes = growth(start, end)
+        assert [(c.group, c.data_id) for c in changes] == [
+            ("hero", 3),
+            ("lab", 2),
+            ("building", 1),
+        ]
+        assert (changes[2].before, changes[2].after) == ({18: 25, 19: 300}, {19: 325})
+
+    def test_each_village_is_kept_apart(self) -> None:
+        changes = growth(_levels(("heroes2", 5, 25, 1)), _levels(("heroes2", 5, 26, 1)))
+        assert [(c.world, c.group, c.before, c.after) for c in changes] == [
+            ("night", "hero", {25: 1}, {26: 1})
+        ]
+
+    def test_pets_equipment_and_obstacles_are_left_out(self) -> None:
+        start = _levels(("pets", 6, 7, 1), ("equipment", 7, 10, 1), ("obstacles", 8, 1, 3))
+        end = _levels(("pets", 6, 8, 1), ("equipment", 7, 11, 1), ("obstacles", 8, 1, 1))
+        assert growth(start, end) == []
+
+    def test_a_new_building_has_nothing_before_it(self) -> None:
+        [change] = growth(_levels(), _levels(("buildings", 9, 1, 1)))
+        assert (change.before, change.after) == ({}, {1: 1})
 
 
 class SettingsMenuTests(unittest.TestCase):

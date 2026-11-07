@@ -5,11 +5,12 @@ from typing import TYPE_CHECKING
 import logging
 from pathlib import Path
 from datetime import UTC, datetime
+from collections import Counter
 
-from ai_coc.models import ClockTower, UpgradeTimer, AccountSnapshot, VillageDocument
+from ai_coc.models import ClockTower, LevelChange, UpgradeTimer, AccountSnapshot, VillageDocument
 
 if TYPE_CHECKING:
-    from ai_coc.models import World, UpgradeRole, VillageExport
+    from ai_coc.models import World, GrowthGroup, UpgradeRole, VillageExport
 
 logger = logging.getLogger(__name__)
 
@@ -130,6 +131,64 @@ def clock_tower(export: VillageExport) -> ClockTower | None:
         ready_at=_clock(_start(export) + ready_in),
         boosting=export.boosts.clocktower_boost,
     )
+
+
+# The sections `growth` compares, by the home village's name; the builder base's
+# carry a trailing 2. Pets, hero equipment and everything bought or cleared
+# rather than upgraded are left out (the user's call of 2026-11-07).
+GROWTH_GROUPS: dict[str, GrowthGroup] = {
+    "heroes": "hero",
+    "units": "lab",
+    "spells": "lab",
+    "siege_machines": "lab",
+    "buildings": "building",
+    "traps": "building",
+}
+
+
+def growth(start: VillageExport, end: VillageExport) -> list[LevelChange]:
+    """Every hero, research and building whose levels differ between two exports of one account.
+
+    Counted per level rather than per row, since the export lumps a building's
+    copies of one level into a row and keeps no identity across exports.
+    """
+    before, names = _levels(start)
+    after, later = _levels(end)
+    names.update(later)
+    order = list(GROWTH_GROUPS.values())
+    return [
+        LevelChange(
+            world=key[0],
+            group=key[1],
+            data_id=key[2],
+            name=names.get(key[2]),
+            before=dict(before.get(key, {})),
+            after=dict(after.get(key, {})),
+        )
+        for key in sorted(
+            before.keys() | after.keys(),
+            key=lambda key: (order.index(key[1]), names.get(key[2]) or "", key[2]),
+        )
+        if before.get(key) != after.get(key)
+    ]
+
+
+def _levels(
+    export: VillageExport,
+) -> tuple[dict[tuple[World, GrowthGroup, int], Counter[int]], dict[int, str]]:
+    """How many of each kind stand at each level, and the names the export carries."""
+    levels: dict[tuple[World, GrowthGroup, int], Counter[int]] = {}
+    names: dict[int, str] = {}
+    for entity in export.entities:
+        night = entity.section.endswith("2")
+        group = GROWTH_GROUPS.get(entity.section[:-1] if night else entity.section)
+        if group is None or entity.level is None:
+            continue
+        key = ("night" if night else "day", group, entity.data_id)
+        levels.setdefault(key, Counter())[entity.level] += entity.count
+        if entity.name:
+            names[entity.data_id] = entity.name
+    return levels, names
 
 
 def _start(export: VillageExport) -> int:

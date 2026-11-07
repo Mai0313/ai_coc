@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any, get_args
 import logging
 from pathlib import Path
 import argparse
-from datetime import datetime
+from datetime import date, datetime
 from contextlib import nullcontext
 import subprocess
 
@@ -28,6 +28,7 @@ from ai_coc.models import (
     RunStarted,
     StopTarget,
     AttackSeries,
+    GrowthReport,
     RestartScope,
     AttackOptions,
     DonateOptions,
@@ -60,10 +61,10 @@ def _log_uncaught(kind: type[BaseException], value: BaseException, trace: Any) -
 
 # The sub-commands that never open ADB: `read` parses a PNG off the disk,
 # `stop` and `giveback` each change one field of the state file, `watch`
-# sleeps on its own section of it, and `note` keeps the notes section. Every
-# other one captures the screen, so every other one takes `--debug` and
-# `--shot-every`.
-NO_SCREEN = ("read", "stop", "giveback", "watch", "note")
+# sleeps on its own section of it, `note` keeps the notes section, and
+# `growth` compares saved exports. Every other one captures the screen, so
+# every other one takes `--debug` and `--shot-every`.
+NO_SCREEN = ("read", "stop", "giveback", "watch", "note", "growth")
 
 # The sub-commands that hold no claim on the emulator, listed the way round
 # that fails safely: the ones that never open ADB, and `capture`. Everything
@@ -125,6 +126,7 @@ COMMANDS = (
     ),
     ("boost", "夜世界鐘塔能開時（上面有時鐘標記）按下它的免費加速；要寶石的不按"),
     ("export", "從遊戲匯出整個村莊的資料，對上名稱後存起來"),
+    ("growth", "不碰遊戲，比對存下的兩份村莊匯出，列出兩個世界升了什麼"),
     ("capture", "連續截圖，存進這次的紀錄資料夾"),
     ("read", "不碰遊戲，把一張截圖交給每個判讀器，印出各自讀到什麼"),
     ("probe", "花一場戰鬥實測部署邊界，對照判讀器的結果"),
@@ -154,6 +156,15 @@ def _watch_flags(watcher: argparse.ArgumentParser, stopper: argparse.ArgumentPar
         default="all",
         help="只停模擬器上的指令（emulator）或只停盯升級（watch）；不給就兩個都停",
     )
+
+
+def _growth_flags(grower: argparse.ArgumentParser) -> None:
+    """`growth` reads only the exports `status` and `export` saved, one a day."""
+    for flag, note in (
+        ("--start-date", "從這天一開始算起（含這天）；不給就從存下的最舊那一份"),
+        ("--end-date", "算到這天結束（含這天）；不給就到存下的最新那一份"),
+    ):
+        grower.add_argument(flag, type=date.fromisoformat, metavar="YYYY-MM-DD", help=note)
 
 
 def _note_flags(noter: argparse.ArgumentParser) -> None:
@@ -251,6 +262,7 @@ def _parser() -> argparse.ArgumentParser:
     )
     _watch_flags(sub.choices["watch"], sub.choices["stop"])
     _note_flags(sub.choices["note"])
+    _growth_flags(sub.choices["growth"])
     give = sub.choices["donate"]
     give.add_argument("--dry-run", action="store_true", help="走完流程但不真的捐，只回報能捐什麼")
     give.add_argument("--rounds", type=int, default=0, help="最多捐幾次，0 代表捐到不能捐為止")
@@ -366,6 +378,7 @@ def _answer(arguments: argparse.Namespace, run: RunLog) -> BaseModel | str:
         "giveback": commands.giveback,
         "watch": lambda: commands.watch(_caller(a), a.next, a.about, run.directory),
         "note": lambda: commands.note(a.action, a.world, a.item),
+        "growth": lambda: commands.growth(a.start_date, a.end_date),
         "collect": lambda: commands.collect(run.frames),
         "stock": lambda: commands.stock(run.frames),
         "status": lambda: commands.status(run.frames),
@@ -459,6 +472,8 @@ def _run_command(arguments: argparse.Namespace, run: RunLog) -> int:
     # machine-readable after a `--table` that was only ever for a person.
     if getattr(arguments, "table", False) and isinstance(answer, VillageExport):
         _print_table(answer)
+    elif isinstance(answer, GrowthReport):
+        sys.stdout.write(f"{commands.growth_text(answer)}\n")
     else:
         sys.stdout.write(f"{result}\n")
     # Still not zero, though: the stop meant nothing lined up behind the loan

@@ -2040,6 +2040,37 @@ RestartScope = Literal["none", "game", "emulator"]
 # standing next to it would be read as belonging to that.
 World = Literal["day", "night"]
 
+# What `ai_coc growth` lists, in the order the user reads it: heroes, then
+# research (troops, spells, siege machines), then buildings with their traps.
+GrowthGroup = Literal["hero", "lab", "building"]
+# `too_few` is fewer than two saved exports inside the dates asked for.
+GrowthOutcome = Literal["compared", "too_few"]
+
+
+class LevelChange(BaseModel):
+    """One kind of thing whose levels differ between two exports, counted per level."""
+
+    model_config = ConfigDict(frozen=True)
+
+    world: World
+    group: GrowthGroup
+    data_id: int
+    name: str | None = None
+    before: dict[int, int]
+    after: dict[int, int]
+
+
+class GrowthReport(BaseModel):
+    """What changed between the two saved exports `ai_coc growth` compared."""
+
+    model_config = ConfigDict(frozen=True)
+
+    tag: str = ""
+    start: str = ""
+    end: str = ""
+    changes: list[LevelChange] = Field(default_factory=list)
+    outcome: GrowthOutcome
+
 
 # The counters a village draws, named for what each one counts. `lab` is the
 # research slots — on the home village two research jobs have been seen running
