@@ -52,6 +52,7 @@ MINIMAL: dict[str, list[str]] = {
     "giveback": [],
     "watch": ["--next", "2026-10-12T23:10"],
     "note": [],
+    "growth": [],
     "collect": [],
     "stock": [],
     "status": [],
