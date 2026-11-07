@@ -43,6 +43,7 @@ from ai_coc.models import (
     AdbEndpoint,
     CartOutcome,
     NamedEntity,
+    NoteOutcome,
     RunnerState,
     ShieldState,
     ViewOutcome,
@@ -650,6 +651,19 @@ class UpkeepLineTests(unittest.TestCase):
             assert fragment in table[outcome], outcome
             others = [table[other] for other in own if other != outcome]
             assert not any(fragment in other for other in others), outcome
+
+    def test_every_note_outcome_has_a_line_of_its_own(self) -> None:
+        self._each(
+            commands.NOTE_LINES,
+            {
+                "listed": "列出交代",
+                "added": "記下這一條",
+                "done": "刪掉做完的",
+                "incomplete": "要給世界跟",
+                "no_such_note": "沒有這一條",
+            },
+            get_args(NoteOutcome),
+        )
 
     def test_every_collect_outcome_has_a_line_of_its_own(self) -> None:
         """Minus `cart`, which is the builder base's trip and answers through `CartReport`."""
@@ -1456,6 +1470,81 @@ class RunPlumbingTests(unittest.TestCase):
             assert commands.stop_requested()
         with commands.claim("collect"):
             assert not commands.stop_requested()
+
+
+class NoteTests(unittest.TestCase):
+    """The user's notes, kept in the state file beside the emulator and the watch.
+
+    The state file and its `backups/` live in this test's tmp directory (conftest).
+    """
+
+    def setUp(self) -> None:
+        # A note goes only into a file that exists, which any claim writes.
+        commands._write_state(RunnerState())
+
+    def test_a_note_is_added_listed_and_dropped_by_its_number(self) -> None:
+        commands.note("add", "day", "冰人這一級升完改研究巨石投手")
+        commands.note("add", "day", "巨石投手滿級以後升空中戰車")
+        commands.note("add", "night", "  聖水瓶這一級升完改升建築大師訓練營  ")
+        assert commands.note("list").notes.night == ["聖水瓶這一級升完改升建築大師訓練營"]
+        report = commands.note("done", "day", "1")
+        assert report.outcome == "done"
+        assert commands.note("list").notes.day == ["巨石投手滿級以後升空中戰車"]
+
+    def test_a_note_that_cannot_be_named_changes_nothing(self) -> None:
+        commands.note("add", "day", "a")
+        for args, outcome in (
+            (("done", "day", "2"), "no_such_note"),
+            (("done", "day", "x"), "no_such_note"),
+            (("done", "night", "1"), "no_such_note"),
+            (("add", "day", " "), "incomplete"),
+            (("done", None, "1"), "incomplete"),
+        ):
+            assert commands.note(*args).outcome == outcome, args
+        assert commands.note("list").notes.day == ["a"]
+
+    def test_the_emulator_and_watch_writes_carry_the_notes_over(self) -> None:
+        commands.note("add", "day", "a")
+        with commands.claim("attack"):
+            commands._write_watch(Watch(status="idle"))
+        assert commands.note("list").notes.day == ["a"]
+
+    def test_a_file_that_will_not_read_carries_on_from_its_newest_backup(self) -> None:
+        """Writing an empty file over it would lose the notes, which nothing writes back."""
+        commands.note("add", "day", "a")
+        commands.STATE_PATH.write_text('{"emulator": {"status": "runn', encoding="utf-8")
+        with patch.object(commands, "TORN_GAP", 0):
+            commands._write_state(RunnerState(command="attack"))
+        assert commands.note("list").notes.day == ["a"]
+
+    def test_a_file_deleted_by_hand_starts_afresh_but_keeps_its_notes(self) -> None:
+        commands.note("add", "night", "a")
+        with commands.claim("attack"):
+            pass
+        commands.STATE_PATH.unlink()
+        commands._write_state(RunnerState(command="collect"))
+        assert commands.note("list").notes.night == ["a"]
+        state = commands.read_state()
+        assert state is not None
+        assert state.command == "collect"
+
+    def test_a_note_is_not_written_into_a_file_deleted_by_hand(self) -> None:
+        """Putting the file back would hide the stop its deletion is."""
+        commands.note("add", "day", "a")
+        with commands.claim("attack"):
+            commands.STATE_PATH.unlink()
+            with pytest.raises(commands.NoStateFileError):
+                commands.note("add", "day", "b")
+            assert commands.stop_requested()
+        assert commands.note("list").notes.day == ["a"]
+
+    def test_only_the_newest_copies_are_kept(self) -> None:
+        with patch.object(commands, "STATE_BACKUPS", 3):
+            for text in "abcde":
+                commands.note("add", "day", text)
+        copies = sorted(commands.STATE_PATH.with_name("backups").glob("state-*.json"))
+        assert len(copies) == 3
+        assert json.loads(copies[-1].read_text(encoding="utf-8"))["notes"]["day"] == list("abcde")
 
 
 class WatchTests(unittest.TestCase):

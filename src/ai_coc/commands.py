@@ -12,6 +12,7 @@ import time
 from typing import TYPE_CHECKING, Self, Literal
 import logging
 from datetime import UTC, datetime, timedelta
+import itertools
 import threading
 from contextlib import suppress, contextmanager
 
@@ -22,6 +23,7 @@ from pydantic import BaseModel, PrivateAttr
 from ai_coc import plans
 from ai_coc.models import (
     Loan,
+    Notes,
     Watch,
     World,
     Caller,
@@ -36,6 +38,8 @@ from ai_coc.models import (
     StateFile,
     AttackPlan,
     CartReport,
+    NoteAction,
+    NoteReport,
     PlateCount,
     RoundEvent,
     SheetOffer,
@@ -46,6 +50,7 @@ from ai_coc.models import (
     CartOutcome,
     GoblinOffer,
     NamedEntity,
+    NoteOutcome,
     PressReport,
     RunnerState,
     ShieldState,
@@ -556,10 +561,16 @@ LOAN_TIME = timedelta(minutes=30)
 # a moment, so a few tries a moment apart get past one.
 REPLACE_TRIES = 10
 REPLACE_GAP = 0.05
+# How many copies of the state file `_write_file` keeps in `backups/` beside
+# it. The newest is what a write carries on from when the file will not read;
+# the rest cover a write that went wrong.
+STATE_BACKUPS = 20
 
 # The loan this process wrote when it stood a run down. A borrower with no
 # session has nothing else to recognise its own loan by.
 _borrowed: datetime | None = None
+# Numbers this process's state file copies, so two in one clock tick differ.
+_copies = itertools.count()
 
 
 class LoanCancelledError(RuntimeError):
@@ -567,10 +578,10 @@ class LoanCancelledError(RuntimeError):
 
 
 class NoStateFileError(RuntimeError):
-    """`ai_coc watch` found no state file to put itself on.
+    """`ai_coc watch` or `ai_coc note` found no state file to write into.
 
     Deleting the file by hand is a stop to the emulator's holder, which reads it
-    only at its next seam, and a watch that wrote the file back in between would
+    only at its next seam, and a write that put the file back in between would
     hide that stop. Any command that drives the emulator writes it afresh.
     """
 
@@ -872,29 +883,72 @@ def _read_file() -> StateFile | None:
 
 
 def _kept() -> StateFile:
-    """The file as it stands, so a write of one section carries the other over.
+    """The file as it stands, so a write of one section carries the others over.
 
     A torn read is read again, since writing it back would hand the other
-    section to this process; one that stays torn puts that section back to idle,
-    which a live holder of it rewrites at its next claim or release.
+    sections to this process. One that stays torn carries on from the newest
+    copy in `backups/` rather than from an empty file: the emulator and the
+    watch would be rewritten by their own processes, but nothing rewrites the
+    notes. A file deleted by hand is a stop, so its emulator and watch start
+    afresh, and only its notes come back from the copies.
     """
     for _ in range(TORN_READS):
         found = _read_file()
+        if found is None:
+            return StateFile(notes=(_newest_backup() or StateFile()).notes)
         if found != _torn():
-            return found or StateFile()
+            return found
         time.sleep(TORN_GAP)
-    logger.warning("%s would not read; the other section of it goes back to idle", STATE_PATH)
-    return StateFile()
+    logger.warning("%s would not read; carrying on from its newest backup", STATE_PATH)
+    return _newest_backup() or StateFile()
+
+
+def _backups() -> Path:
+    """Where the state file's copies go: beside it, so a test's own directory holds them."""
+    return STATE_PATH.with_name("backups")
+
+
+def _newest_backup() -> StateFile | None:
+    """The newest copy in `backups/` that still parses; None when there is none."""
+    for copy in sorted(_backups().glob("state-*.json"), reverse=True):
+        try:
+            return StateFile.model_validate_json(copy.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+    return None
+
+
+def _back_up(text: str) -> None:
+    """Keep a copy of what was just written, and only the newest `STATE_BACKUPS`.
+
+    It never fails the write it follows, since one of the processes writing
+    here is in a battle.
+    """
+    folder = _backups()
+    try:
+        folder.mkdir(exist_ok=True)
+        # The count as well, because the clock can stand still between two writes.
+        stamp = f"{datetime.now():%Y%m%d-%H%M%S-%f}-{os.getpid()}-{next(_copies):06d}"
+        (folder / f"state-{stamp}.json").write_text(text, encoding="utf-8")
+        for old in sorted(folder.glob("state-*.json"))[:-STATE_BACKUPS]:
+            old.unlink(missing_ok=True)
+    except OSError:
+        logger.warning("Could not keep a copy of %s in %s", STATE_PATH, folder)
 
 
 def _write_state(state: RunnerState) -> None:
-    """Write the emulator's section, keeping the watch's as the file holds it."""
+    """Write the emulator's section, keeping the others as the file holds them."""
     _write_file(_kept().model_copy(update={"emulator": state}))
 
 
 def _write_watch(watch: Watch) -> None:
-    """Write the watch's section, keeping the emulator's as the file holds it."""
+    """Write the watch's section, keeping the others as the file holds them."""
     _write_file(_kept().model_copy(update={"watch": watch}))
+
+
+def _write_notes(notes: Notes) -> None:
+    """Write the notes, keeping the others as the file holds them."""
+    _write_file(_kept().model_copy(update={"notes": notes}))
 
 
 def _write_file(state: StateFile) -> None:
@@ -915,7 +969,8 @@ def _write_file(state: StateFile) -> None:
     `farm` uses to tell a clean stop from a killed process.
     """
     scratch = STATE_PATH.with_name(f"{STATE_PATH.name}.{os.getpid()}.tmp")
-    scratch.write_text(state.model_dump_json(indent=2), encoding="utf-8")
+    text = state.model_dump_json(indent=2)
+    scratch.write_text(text, encoding="utf-8")
     for attempt in range(REPLACE_TRIES):
         try:
             os.replace(scratch, STATE_PATH)
@@ -924,6 +979,7 @@ def _write_file(state: StateFile) -> None:
                 raise
             time.sleep(REPLACE_GAP)
         else:
+            _back_up(text)
             return
 
 
@@ -1163,6 +1219,51 @@ def giveback() -> str:
             state.model_copy(update={"loan": loan.model_copy(update={"ended": "returned"})})
         )
     return f"還了,{loan.lender.agent or '借出模擬器的那一邊'}會自己開回去。"
+
+
+# One line per way `ai_coc note` can end, for `run.log`.
+NOTE_LINES: dict[NoteOutcome, str] = {
+    "listed": "列出交代",
+    "added": "記下這一條交代",
+    "done": "刪掉做完的那一條",
+    "incomplete": "add 要給世界跟內容, done 要給世界跟第幾條, 什麼都沒改",
+    "no_such_note": "那個世界沒有這一條, 什麼都沒改",
+}
+
+
+def note(action: NoteAction, world: World | None = None, item: str = "") -> NoteReport:
+    """List the user's notes, add one to a village, or drop a done one by its number.
+
+    `item` is the text to add, or the number `done` drops, counted from 1 the
+    way the list prints them.
+    """
+    text = item.strip()
+    with _turn():
+        notes = _kept().notes
+        outcome: NoteOutcome = "listed"
+        if action != "list" and (world is None or not text):
+            outcome = "incomplete"
+        elif action != "list" and world is not None:
+            if _read_file() is None:
+                raise NoStateFileError(
+                    f"{STATE_PATH} 不在(手動刪掉是叫停),這次沒有改交代;"
+                    "先跑一個會操作模擬器的指令(例如 ai_coc status)再改"
+                )
+            held = getattr(notes, world)
+            index = int(text) if text.isdigit() else 0
+            if action == "add":
+                outcome, held = "added", [*held, text]
+            elif 1 <= index <= len(held):
+                outcome, held = "done", held[: index - 1] + held[index:]
+            else:
+                outcome = "no_such_note"
+            if outcome != "no_such_note":
+                notes = notes.model_copy(update={world: held})
+                _write_notes(notes)
+    logger.info(
+        "%s；日世界 %d 條，夜世界 %d 條", NOTE_LINES[outcome], len(notes.day), len(notes.night)
+    )
+    return NoteReport(notes=notes, outcome=outcome)
 
 
 # How long a new watch gives the one it replaces to let go before ending it. A
