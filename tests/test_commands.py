@@ -1478,6 +1478,10 @@ class NoteTests(unittest.TestCase):
     The state file and its `backups/` live in this test's tmp directory (conftest).
     """
 
+    def setUp(self) -> None:
+        # A note goes only into a file that exists, which any claim writes.
+        commands._write_state(RunnerState())
+
     def test_a_note_is_added_listed_and_dropped_by_its_number(self) -> None:
         commands.note("add", "day", "冰人這一級升完改研究巨石投手")
         commands.note("add", "day", "巨石投手滿級以後升空中戰車")
@@ -1523,6 +1527,16 @@ class NoteTests(unittest.TestCase):
         state = commands.read_state()
         assert state is not None
         assert state.command == "collect"
+
+    def test_a_note_is_not_written_into_a_file_deleted_by_hand(self) -> None:
+        """Putting the file back would hide the stop its deletion is."""
+        commands.note("add", "day", "a")
+        with commands.claim("attack"):
+            commands.STATE_PATH.unlink()
+            with pytest.raises(commands.NoStateFileError):
+                commands.note("add", "day", "b")
+            assert commands.stop_requested()
+        assert commands.note("list").notes.day == ["a"]
 
     def test_only_the_newest_copies_are_kept(self) -> None:
         with patch.object(commands, "STATE_BACKUPS", 3):

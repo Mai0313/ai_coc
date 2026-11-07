@@ -12,6 +12,7 @@ import time
 from typing import TYPE_CHECKING, Self, Literal
 import logging
 from datetime import UTC, datetime, timedelta
+import itertools
 import threading
 from contextlib import suppress, contextmanager
 
@@ -568,6 +569,8 @@ STATE_BACKUPS = 20
 # The loan this process wrote when it stood a run down. A borrower with no
 # session has nothing else to recognise its own loan by.
 _borrowed: datetime | None = None
+# Numbers this process's state file copies, so two in one clock tick differ.
+_copies = itertools.count()
 
 
 class LoanCancelledError(RuntimeError):
@@ -575,10 +578,10 @@ class LoanCancelledError(RuntimeError):
 
 
 class NoStateFileError(RuntimeError):
-    """`ai_coc watch` found no state file to put itself on.
+    """`ai_coc watch` or `ai_coc note` found no state file to write into.
 
     Deleting the file by hand is a stop to the emulator's holder, which reads it
-    only at its next seam, and a watch that wrote the file back in between would
+    only at its next seam, and a write that put the file back in between would
     hide that stop. Any command that drives the emulator writes it afresh.
     """
 
@@ -924,8 +927,9 @@ def _back_up(text: str) -> None:
     folder = _backups()
     try:
         folder.mkdir(exist_ok=True)
-        stamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
-        (folder / f"state-{stamp}-{os.getpid()}.json").write_text(text, encoding="utf-8")
+        # The count as well, because the clock can stand still between two writes.
+        stamp = f"{datetime.now():%Y%m%d-%H%M%S-%f}-{os.getpid()}-{next(_copies):06d}"
+        (folder / f"state-{stamp}.json").write_text(text, encoding="utf-8")
         for old in sorted(folder.glob("state-*.json"))[:-STATE_BACKUPS]:
             old.unlink(missing_ok=True)
     except OSError:
@@ -1240,6 +1244,11 @@ def note(action: NoteAction, world: World | None = None, item: str = "") -> Note
         if action != "list" and (world is None or not text):
             outcome = "incomplete"
         elif action != "list" and world is not None:
+            if _read_file() is None:
+                raise NoStateFileError(
+                    f"{STATE_PATH} 不在(手動刪掉是叫停),這次沒有改交代;"
+                    "先跑一個會操作模擬器的指令(例如 ai_coc status)再改"
+                )
             held = getattr(notes, world)
             index = int(text) if text.isdigit() else 0
             if action == "add":
