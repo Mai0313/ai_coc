@@ -85,11 +85,11 @@ Send that same frame to the user through the runtime's way of sending files, the
 
 ## 6. A message while the main thread waits
 
-`AGENTS.md` has whoever hears a stop order run `ai_coc stop` themselves, so what matters is when a message the user sends during a long foreground call reaches you. Before starting check 5's call, ask the user to send one short message about a minute after you say it has started, with the clock time they sent it written in it. Write to `<dir>/t6-message.txt` the time it reached you and how it arrived (alongside the call's result, interrupting the call, as a turn of its own after yours ended, something else). Row: **message during a foreground call** (the delay against the time written in it, and how it arrived).
+`AGENTS.md` has whoever hears a stop order run `ai_coc stop` themselves, so what matters is when a message the user sends during a long foreground call reaches you. After check 5's call has returned, start a second one the same way (`sleeper.py --seconds 240 --log <dir>/t6-fg.log`), and before it ask the user to send one short message about a minute after you say it has started, with the clock time they sent it written in it. It gets a call of its own because a runtime where the message cuts the call short would otherwise leave check 5 unanswered. Write to `<dir>/t6-message.txt` the time it reached you and how it arrived (alongside the call's result, interrupting the call, as a turn of its own after yours ended, something else). Row: **message during a foreground call** (the delay against the time written in it, and how it arrived).
 
 ## Order, and the end
 
-Run 3 and 4 first, then 5 and 6 together, then 1, then 2.
+Run 3 and 4 first, then 5, then 6, then 1, then 2.
 
 At the end ask the user which commands or tools stopped to ask their permission, and add a row **approvals** listing them: an unattended `takeover` halts on the first one.
 
