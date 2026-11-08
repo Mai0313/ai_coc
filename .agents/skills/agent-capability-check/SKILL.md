@@ -1,12 +1,12 @@
 ---
 name: agent-capability-check
 description: >-
-  Check whether the agent runtime running this session (Claude Code, Codex, Antigravity or any other harness) can do what this project's skills assume of it: dispatch a subagent on a weaker model it picks, let that subagent wait out a long command and take a second message, wake the session when a background command or a subagent finishes while the other is still running, fall back to its own scheduler, put an image in front of the model, and reach the user's phone with a file and a question. It runs a scratch script only and never touches the game. Use it when the user asks to check, test or compare what a runtime or harness can do here, for example 「測一下這個 harness 能不能託管」 or "run the capability check".
+  Check whether the agent runtime running this session (Claude Code, Codex, Antigravity or any other harness) can do what this project's skills assume of it: dispatch a subagent on a weaker model and lowest effort it picks, let that subagent wait out a long command and take a second message, wait out a long foreground call on the main thread and take the user's message meanwhile, wake the session when a background command or a subagent finishes while the other is still running, fall back to its own scheduler, put an image in front of the model, and reach the user's phone with a file and a question. It runs a scratch script only and never touches the game. Use it when the user asks to check, test or compare what a runtime or harness can do here, for example 「測一下這個 harness 能不能託管」 or "run the capability check".
 ---
 
 # Checking what this runtime can do
 
-The skills under `.agents/skills/` were written against what Claude Code does: `farm` hands the loop to a subagent on a cheaper model that blocks on `attack` for hours, `takeover` sleeps on `ai_coc watch` and relies on its exit to wake the session while that subagent keeps going, `upgrades` and `find-on-map` tap at coordinates read off a frame, and every trip sends the user pictures and questions on their phone. This skill finds out which of those the runtime running it can do.
+The skills under `.agents/skills/` were written against what Claude Code does: `farm` hands the loop to a subagent on a cheaper model that blocks on `attack` for hours, `takeover` sleeps on `ai_coc watch` and relies on its exit to wake the session while that subagent keeps going, wakes five minutes before an upgrade is due and waits out the rest so it can confirm seconds after the timer runs out, `upgrades` and `find-on-map` tap at coordinates read off a frame, and every trip sends the user pictures and questions on their phone. This skill finds out which of those the runtime running it can do.
 
 The result is `report.md` in the run's results directory, also shown in the reply: one row per check below, each with pass, fail, not offered (the runtime has no way to do it) or not run, the evidence file behind it, and what was seen. A header names the runtime and its version, the main thread's model, and the date.
 
@@ -30,7 +30,7 @@ uv run --no-sync python .agents/skills/agent-capability-check/scripts/sleeper.py
 
 ## 1. A subagent on a chosen model
 
-Dispatch one subagent on a model one step below your own, with a lower reasoning effort where the runtime offers one. Its brief: run `sleeper.py --seconds 900 --log <dir>/t1-sleeper.log`, wait until it exits, and reply with the token. Fifteen minutes is longer than one tool call allows in most runtimes, so the brief also says how to wait, the way `farm`'s subagent waits on `attack` (`.agents/skills/farm/references/running.md`, 「你是 subagent 的話反過來」): start the script with the runtime's own background execution, then block on it in foreground waits, each shorter than one call's limit and with that call's timeout set above it, until the log has its `exit` line; never start a second copy. A script run as one plain foreground call dies at the call's limit, which would fail this row on a runtime that can do what `farm` needs. Wait for the reply however the runtime lets you; if that means ending your turn, the wait rule above applies. Write the time to `<dir>/t1-reply.txt` when the reply arrives. Then send the same subagent a second message asking which token it reported, to be answered from what it already holds without opening any file.
+Dispatch one subagent on a model one step below your own, on the lowest reasoning effort the runtime offers, which is how `AGENTS.md` dispatches the farm subagent. Its brief: run `sleeper.py --seconds 900 --log <dir>/t1-sleeper.log`, wait until it exits, and reply with the token. Fifteen minutes is longer than one tool call allows in most runtimes, so the brief also says how to wait, the way `farm`'s subagent waits on `attack` (`.agents/skills/farm/references/running.md`, 「你是 subagent 的話反過來」): start the script with the runtime's own background execution, then block on it in foreground waits, each shorter than one call's limit and with that call's timeout set above it, until the log has its `exit` line; never start a second copy. A script run as one plain foreground call dies at the call's limit, which would fail this row on a runtime that can do what `farm` needs. Wait for the reply however the runtime lets you; if that means ending your turn, the wait rule above applies. Write the time to `<dir>/t1-reply.txt` when the reply arrives. Then send the same subagent a second message asking which token it reported, to be answered from what it already holds without opening any file.
 
 Rows:
 
@@ -44,7 +44,9 @@ Rows:
 
     Where the record names no model, write not recorded. If the runtime gave you no way to pick a model, the row is not offered.
 
-- **waited out a long command**: the reply's token matches the log's `exit` line, and the reply arrived after it. Note the longest single wait one of the subagent's tool calls allowed, where its record shows it: `.agents/skills/farm/references/running.md` sizes a subagent's wait segments by it.
+- **effort chosen**: the effort asked for against the one the same record shows for the subagent; not recorded where it shows none, not offered where the runtime gave you no way to pick one.
+
+- **waited out a long command**: the reply's token matches the log's `exit` line, and the reply arrived after it. Note the longest single wait one of the subagent's tool calls allowed, where its record shows it: `.agents/skills/farm/references/running.md` sizes a subagent's wait segments by it. Note too whether the runtime moved one of those foreground calls to the background by itself, and after how long, since that caps a wait segment whatever timeout the call was given: Claude Code moved the farm subagent's at 180 s on 2026-11-08, with the call's timeout at 590 s.
 
 - **took a second message**: the same subagent, not a new one, answered with the token.
 
@@ -61,6 +63,8 @@ A runtime that passes shows two turns in `turns.log`. The first is started by th
 
 Rows: **command exit wakes** (lateness: that turn's time minus the `exit` line's), **subagent report wakes** (lateness the same way), **subagent outlived the first wake** (its log kept going and it reported).
 
+Hold the command exit's lateness against `takeover`'s five-minute prep as well, which sleeps on a background `ai_coc watch` to the moment the timer runs out and confirms seconds later: a wake more than a few seconds late passes this row and still slows every confirm by as much, so say so in it. A runtime whose command exit wakes nothing runs that last wait in the foreground instead, which check 5 measures.
+
 **If the command's exit woke nothing**, wait out the subagent's row first, then try the runtime's own scheduler, which is what `running.md` tells such a runtime to set: one wake five minutes ahead, moved to fifteen minutes ahead, then end the turn. A scheduled wake two or three minutes late is normal (`running.md`), so the two times sit far enough apart that a late old one cannot pass for the new one. It passes with one turn at the new time and none at the old one; afterwards delete it and check the runtime no longer lists it. Row: **scheduler** (lateness, and whether moving and deleting worked), or not offered.
 
 **The long version runs only when the user asks for it**, since it holds the session for hours: the same check with the subagent at two hours and the command at three, the longest `takeover` sleeps. With the subagent finishing first, it also covers the other order.
@@ -75,9 +79,17 @@ Open `tests/frames/hud_day_build_panel.png` through the runtime's own way of rea
 
 Send that same frame to the user through the runtime's way of sending files, then put a question with three options to them through its way of asking, and as a push notification too where that is separate. The user tells you whether the image reached their phone, whether the question did, and whether they could answer it there. Note whether your turn stood waiting on the answer: some runtimes block the turn on a question, which `upgrades` plans around. Rows: **file reaches the phone**, **question reaches the phone and is answerable there**.
 
+## 5. A long foreground wait on the main thread
+
+`takeover`'s prep holds the emulator for the last five minutes before a timer runs out, and on a runtime whose command exit wakes nothing it spends them in one foreground `ai_coc watch` on the main thread. Run `sleeper.py --seconds 360 --log <dir>/t5-fg.log` as one plain foreground call on the main thread, its timeout set above six minutes. Row: **main thread waits six minutes in one call**: pass when that same call returns the token; otherwise note what ended it and after how long (a limit on the call, a move to the background, something else).
+
+## 6. A message while the main thread waits
+
+`AGENTS.md` has whoever hears a stop order run `ai_coc stop` themselves, so what matters is when a message the user sends during a long foreground call reaches you. After check 5's call has returned, start a second one the same way (`sleeper.py --seconds 240 --log <dir>/t6-fg.log`), and before it ask the user to send one short message about a minute after you say it has started, with the clock time they sent it written in it. It gets a call of its own because a runtime where the message cuts the call short would otherwise leave check 5 unanswered. Write to `<dir>/t6-message.txt` the time it reached you and how it arrived (alongside the call's result, interrupting the call, as a turn of its own after yours ended, something else). Row: **message during a foreground call** (the delay against the time written in it, and how it arrived).
+
 ## Order, and the end
 
-Run 3 and 4 first, then 1, then 2.
+Run 3 and 4 first, then 5, then 6, then 1, then 2.
 
 At the end ask the user which commands or tools stopped to ask their permission, and add a row **approvals** listing them: an unattended `takeover` halts on the first one.
 
