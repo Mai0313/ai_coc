@@ -1,7 +1,7 @@
 ---
-name: agent-capability-check
+name: harness-check
 description: >-
-  Check whether the agent runtime running this session (Claude Code, Codex, Antigravity or any other harness) can do what this project's skills assume of it: dispatch a subagent on a weaker model and lowest effort it picks, let that subagent wait out a long command and take a second message, wait out a long foreground call on the main thread and take the user's message meanwhile, wake the session when a background command or a subagent finishes while the other is still running, fall back to its own scheduler, put an image in front of the model, and reach the user's phone with a file and a question. It runs a scratch script only and never touches the game. Use it when the user asks to check, test or compare what a runtime or harness can do here, for example 「測一下這個 harness 能不能託管」 or "run the capability check".
+  Check whether the harness running this session (Claude Code, Codex, Antigravity or any other) can do what this project's skills assume of it: dispatch a subagent on a weaker model and lowest effort it picks, let that subagent wait out a long command and take a second message, wait out a long foreground call on the main thread and take the user's message meanwhile, wake the session when a background command or a subagent finishes while the other is still running, fall back to its own scheduler, put an image in front of the model, and reach the user's phone with a file and a question. It runs a scratch script only and never touches the game. Use it when the user asks to check, test or compare what a runtime or harness can do here, for example 「測一下這個 harness 能不能託管」 or "run the capability check".
 ---
 
 # Checking what this runtime can do
@@ -14,7 +14,7 @@ The result is `report.md` in the run's results directory, also shown in the repl
 
 - **Nothing here drives the game.** Run no `ai_coc` command and spawn no farm subagent for the whole run (`AGENTS.md` says the same). The checks are about the runtime, and the commands they might borrow have side effects: a new `ai_coc watch` stands down whichever one is sleeping, and any command that touches the emulator stands down, or borrows from, a loop that is running.
 - **Evidence is what the script wrote**, not anyone's account of it. Times come from the script's logs, or from the clock read and written down at that moment.
-- **One results directory per run**, `.runs/capability-check/<runtime>-<YYYYMMDD-HHMM>/` under the checkout (git ignores `.runs/`), written `<dir>` below. Every file named below goes in it.
+- **One results directory per run**, `.runs/harness-check/<runtime>-<YYYYMMDD-HHMM>/` under the checkout (git ignores `.runs/`), written `<dir>` below. Every file named below goes in it.
 - **The first thing on every turn of the run** is a line appended to `<dir>/turns.log`: the time, and what started the turn as the runtime presents it (a user message, a command's exit notice, a subagent's report, a scheduled wake, something else). Which of these starts a turn is half of what this skill measures.
 - **Before any wait that ends your turn**, tell the user the clock time you expect to be back by, with a few minutes' slack, and that they must not type until then: their message starts a turn too, and the wake could no longer be told apart from it. If you have not spoken by that time, they send any message, and that wait is recorded as not woken.
 
@@ -23,7 +23,7 @@ The result is `report.md` in the run's results directory, also shown in the repl
 It runs the same way in every shell, from the checkout root:
 
 ```bash
-uv run --no-sync python .agents/skills/agent-capability-check/scripts/sleeper.py --seconds <N> --log <file>
+uv run --no-sync python .agents/skills/harness-check/scripts/sleeper.py --seconds <N> --log <file>
 ```
 
 `sleeper.py` writes a `start` line with its pid, an `alive` line every minute, and an `exit` line with a random token that it also prints; a report that quotes the token was written after the script ended, so the agent under test cannot make the answer up.
