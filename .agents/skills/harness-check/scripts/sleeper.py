@@ -1,6 +1,6 @@
-"""Sleep for a set time and log that it is alive, for agent-capability-check.
+"""Sleep for a set time and log that it is alive, for harness-check.
 
-    uv run --no-sync python .agents/skills/agent-capability-check/scripts/sleeper.py --seconds 120 --log <file>
+    uv run --no-sync python .agents/skills/harness-check/scripts/sleeper.py --seconds 120 --log <file>
 
 The log gets a ``start`` line with the pid, an ``alive`` line every minute and an
 ``exit`` line with a random token, which is also printed. Each line starts with the
