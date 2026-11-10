@@ -517,7 +517,7 @@ STOP_POLL = 2.0
 # How many rounds in a row may die on the emulator before the series gives up.
 # One is a blip an overnight run should survive; three in a row is an emulator
 # that has gone, and there is nothing to gain by aiming more rounds at it. Three
-# is the line `farm` already draws for whoever is reading the log, rather than a
+# is the line `takeover` already draws for whoever is reading the log, rather than a
 # number measured here.
 ADAPTER_FAILURES = 3
 
@@ -985,7 +985,7 @@ def _write_file(state: StateFile) -> None:
     wants its source unopened — so the loser raises `PermissionError` out of
     `_release`, inside `claim`'s `finally`, which propagates past `run.answer`
     and leaves the run with no `result.json` at all. That file is the signal
-    `farm` uses to tell a clean stop from a killed process.
+    `takeover` uses to tell a clean stop from a killed process.
     """
     scratch = STATE_PATH.with_name(f"{STATE_PATH.name}.{os.getpid()}.tmp")
     text = state.model_dump_json(indent=2)
@@ -1714,7 +1714,7 @@ def _lost_round(
     run should survive, and the next round opens with `_settle_game`, which is
     built to pick a game up from wherever the last one left it. An emulator that
     has really gone answers nothing, and there is no reason to keep aiming
-    rounds at it. Three is the line `farm` already draws for whoever is reading
+    rounds at it. Three is the line `takeover` already draws for whoever is reading
     the log rather than a number measured here, so the code draws it in the same
     place.
     """
@@ -1730,7 +1730,7 @@ def _lost_round(
         # round off the count this whole function exists to preserve.
         series.root.append(report)
         # The caller breaks before its own `Attack finished:` line, and
-        # the `farm` skill tells a session there is one of those per
+        # the `takeover` skill tells a session there is one of those per
         # round — so without this the last round is in `result.json` and
         # missing from the log, an undercount of exactly what this preserves.
         logger.info("Attack finished: %s", round_line(report), extra=_round_event(runner, series))
@@ -1761,7 +1761,7 @@ def _round_event(runner: AttackRunner, series: AttackSeries) -> dict[str, RoundE
 def _series_over(report: AttackReport, played: int) -> bool:
     """Whether this round's outcome stands the whole series down, and says why.
 
-    Six outcomes do. A full storage is the goal being met, and `farm` owns where
+    Six outcomes do. A full storage is the goal being met, and `takeover` owns where
     that leads; there is nothing left for the round loop to farm for either
     way. An idle builder or research slot on a run asked to watch them is the
     other goal. The game

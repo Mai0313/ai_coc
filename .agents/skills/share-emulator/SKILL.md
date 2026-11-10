@@ -27,15 +27,15 @@ user-invocable: false
 
 ## 背景跑
 
-一輪進攻四到五分鐘起跳, `--repeat 0` 打到倉庫滿可能是好幾個小時. **主 session 的角色是監督, 不是執行**: 迴圈在背景跑, 你在前景讀 log、改東西、回答使用者, 他隨時插得了話. 打資源的迴圈交給一個 farm subagent 跑, 它照 `.agents/skills/farm/references/runner.md` 在前景分段阻塞; 主 session 自己送背景的, 是 `watch-and-fix` 親自盯的迴圈跟其他會跑很久的指令.
+一輪進攻四到五分鐘起跳, `--repeat 0` 打到倉庫滿可能是好幾個小時. **主 session 的角色是監督, 不是執行**: 迴圈在背景跑, 你在前景讀 log、改東西、回答使用者, 他隨時插得了話. 打資源的迴圈交給一個 farm subagent 跑, 它照 `.agents/skills/takeover/references/runner.md` 在前景分段阻塞; 主 session 自己送背景的, 是 `watch-and-fix` 親自盯的迴圈跟其他會跑很久的指令.
 
 **會跑很久的都用背景送出去, 這裡是唯一一份清單**: `attack`; `donate --rounds 0`. `watch` 睡到 `--next` 才結束, 一定背景跑. 幾秒就回來的前景跑: `world`, `read`, `collect`, `capture`, `view`, `tap`, `swipe`, `confirm`; `world --go` 真的坐船約一分鐘, `status` 要走設定頁拿村莊匯出, 也約一分鐘, 都前景跑; 被借走之後開回去的那一次例外, 它可能要排隊很久. 迴圈在跑的時候, 其中會 claim 的要先等它打完那一場 (見「借, 用完還」).
 
 **送到背景只能用 runtime 自己管的背景執行** (跑完會通知你的那一種): 它是唯一跑完會把你叫醒的開法, harness 送進對話的那個通知就是接下一步的時刻. `Start-Process`, `nohup … &`, PowerShell 的 job, 任何 shell 層的 detach 都不行: 程序照跑, 但結束時沒有東西叫醒你, 輸出跟 exit code 也回不來 (量過: 夜世界打到 `stock_full` 自己收工之後, session 就停在原地).
 
-**背景指令跑完叫不醒你的 runtime, 改用它自己的排程叫醒自己.** 有的 runtime 背景指令結束不會通知你, 只有排程叫得醒對話 (量過: 一個 `ai_coc watch` 在 `--next` 那一刻結束, 對話一直到排程觸發才醒). 在那種 runtime 上要睡到某個時間 (`upgrades` 盯升級、`takeover` 的第 2 步、派 farm subagent 時的心跳):
+**背景指令跑完叫不醒你的 runtime, 改用它自己的排程叫醒自己.** 有的 runtime 背景指令結束不會通知你, 只有排程叫得醒對話 (量過: 一個 `ai_coc watch` 在 `--next` 那一刻結束, 對話一直到排程觸發才醒). 在那種 runtime 上要睡到某個時間 (`takeover` 的第 2 步、派 farm subagent 時的心跳):
 
-- `upgrades` 跟 `takeover` 的 `ai_coc watch` 照開: 別的 session 靠它知道有人在顧, `ai_coc stop` 也停得到它. 心跳不開 watch, 只設排程: 新開的 watch 會把別的 session 睡著的那個請下來
+- `takeover` 的 `ai_coc watch` 照開: 別的 session 靠它知道有人在顧, `ai_coc stop` 也停得到它. 心跳不開 watch, 只設排程: 新開的 watch 會把別的 session 睡著的那個請下來
 - 另外設一個排程叫醒你, 用「每天 HH:MM」這種固定時刻, 取 `--next` 那一分鐘的下一分鐘 (排程只到分鐘, 準時響的話會比 watch 早幾十秒). 不要用「每隔 N 小時」: 固定間隔照它自己的節奏走, 對不準升級好的時間. 固定時刻的排程哪次忘了改, 隔天同一時間還會叫醒你, 圈不會就此斷掉
 - 整件事只留一個排程: 每次醒來排好下一次, 就把同一個排程改到新的時間, 不另外建
 - 醒來時 watch 還在睡 (`state.json` 的 `watch` 還是你的, `next_at` 還沒到), 是排程先響了 (要等超過一天的話, 每天那個時刻都會先響一次): 什麼指令都不跑, 直接結束回合

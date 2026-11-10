@@ -339,7 +339,7 @@ class DispatchTests(unittest.TestCase):
             claimed.assert_called_once()
 
     def test_a_queue_a_stop_ended_answers_rather_than_crashes(self) -> None:
-        """`farm` reads a run with no `result.json` as a killed process, so the
+        """`takeover` reads a run with no `result.json` as a killed process, so the
         line is written; and a command chained after it with `&&` must not start,
         so the exit is not zero.
         """
@@ -563,7 +563,7 @@ class JournalTests(unittest.TestCase):
         assert (end["outcome"], end["result"]["outcome"]) == ("stock_full", "stock_full")
 
     def test_every_round_of_a_series_gets_a_line_with_the_storages_before_it(self) -> None:
-        """What `farm` works a run's income out of once its directory is gone."""
+        """What `takeover` works a run's income out of once its directory is gone."""
         holding = VillageStock(gold=1, elixir=2, dark=3)
         root = logging.getLogger()
         journal, level = logging_setup.Journal(self.run), root.level

@@ -6,7 +6,7 @@ description: >-
 
 # Checking what this runtime can do
 
-The skills under `.agents/skills/` were written against what Claude Code does: `farm` hands the loop to a subagent on a cheaper model that blocks on `attack` for hours, `takeover` sleeps on `ai_coc watch` and relies on its exit to wake the session while that subagent keeps going, wakes five minutes before an upgrade is due and waits out the rest so it can confirm seconds after the timer runs out, `upgrades` and `find-on-map` tap at coordinates read off a frame, and every trip sends the user pictures and questions on their phone. This skill finds out which of those the runtime running it can do.
+The skills under `.agents/skills/` were written against what Claude Code does: `takeover` hands the farming loop to a subagent on a cheaper model that blocks on `attack` for hours, sleeps on `ai_coc watch` and relies on its exit to wake the session while that subagent keeps going, wakes five minutes before an upgrade is due and waits out the rest so it can confirm seconds after the timer runs out, `upgrades` and `find-on-map` tap at coordinates read off a frame, and every trip sends the user pictures and questions on their phone. This skill finds out which of those the runtime running it can do.
 
 The result is `report.md` in the run's results directory, also shown in the reply: one row per check below, each with pass, fail, not offered (the runtime has no way to do it) or not run, the evidence file behind it, and what was seen. A header names the runtime and its version, the main thread's model, and the date.
 
@@ -30,7 +30,7 @@ uv run --no-sync python .agents/skills/harness-check/scripts/sleeper.py --second
 
 ## 1. A subagent on a chosen model
 
-Dispatch one subagent on a model one step below your own, on the lowest reasoning effort the runtime offers, which is how `AGENTS.md` dispatches the farm subagent. Its brief: run `sleeper.py --seconds 900 --log <dir>/t1-sleeper.log`, wait until it exits, and reply with the token. Fifteen minutes is longer than one tool call allows in most runtimes, so the brief also says how to wait, the way `farm`'s subagent waits on `attack` (`.agents/skills/farm/references/runner.md`, 「開跑跟等」): start the script with the runtime's own background execution, then block on it in foreground waits, each shorter than one call's limit and with that call's timeout set above it, until the log has its `exit` line; never start a second copy. A script run as one plain foreground call dies at the call's limit, which would fail this row on a runtime that can do what `farm` needs. Wait for the reply however the runtime lets you; if that means ending your turn, the wait rule above applies. Write the time to `<dir>/t1-reply.txt` when the reply arrives. Then send the same subagent a second message asking which token it reported, to be answered from what it already holds without opening any file.
+Dispatch one subagent on a model one step below your own, on the lowest reasoning effort the runtime offers, which is how `takeover` dispatches its farm subagent. Its brief: run `sleeper.py --seconds 900 --log <dir>/t1-sleeper.log`, wait until it exits, and reply with the token. Fifteen minutes is longer than one tool call allows in most runtimes, so the brief also says how to wait, the way `takeover`'s farm subagent waits on `attack` (`.agents/skills/takeover/references/runner.md`, 「開跑跟等」): start the script with the runtime's own background execution, then block on it in foreground waits, each shorter than one call's limit and with that call's timeout set above it, until the log has its `exit` line; never start a second copy. A script run as one plain foreground call dies at the call's limit, which would fail this row on a runtime that can do what `takeover`'s farming needs. Wait for the reply however the runtime lets you; if that means ending your turn, the wait rule above applies. Write the time to `<dir>/t1-reply.txt` when the reply arrives. Then send the same subagent a second message asking which token it reported, to be answered from what it already holds without opening any file.
 
 Rows:
 
@@ -46,7 +46,7 @@ Rows:
 
 - **effort chosen**: the effort asked for against the one the same record shows for the subagent; not recorded where it shows none, not offered where the runtime gave you no way to pick one.
 
-- **waited out a long command**: the reply's token matches the log's `exit` line, and the reply arrived after it. Note the longest single wait one of the subagent's tool calls allowed, where its record shows it: `.agents/skills/farm/references/runner.md` sizes a subagent's wait segments by it. Note too whether the runtime moved one of those foreground calls to the background by itself, and after how long, since that caps a wait segment whatever timeout the call was given: Claude Code moved the farm subagent's at 180 s on 2026-11-08, with the call's timeout at 590 s.
+- **waited out a long command**: the reply's token matches the log's `exit` line, and the reply arrived after it. Note the longest single wait one of the subagent's tool calls allowed, where its record shows it: `.agents/skills/takeover/references/runner.md` sizes a subagent's wait segments by it. Note too whether the runtime moved one of those foreground calls to the background by itself, and after how long, since that caps a wait segment whatever timeout the call was given: Claude Code moved the farm subagent's at 180 s on 2026-11-08, with the call's timeout at 590 s.
 
 - **took a second message**: the same subagent, not a new one, answered with the token.
 
@@ -67,7 +67,7 @@ Hold the command exit's lateness against `takeover`'s five-minute prep as well, 
 
 **If the command's exit woke nothing**, wait out the subagent's row first, then try the runtime's own scheduler, which is what `share-emulator` tells such a runtime to set: one wake five minutes ahead, moved to fifteen minutes ahead, then end the turn. A scheduled wake two or three minutes late is normal (`share-emulator`), so the two times sit far enough apart that a late old one cannot pass for the new one. It passes with one turn at the new time and none at the old one; afterwards delete it and check the runtime no longer lists it. Row: **scheduler** (lateness, and whether moving and deleting worked), or not offered.
 
-**The long version runs only when the user asks for it**, since it holds the session for hours: the same check with the subagent at two hours and the command at three, the longest `takeover` sleeps. With the subagent finishing first, it also covers the other order.
+**The long version runs only when the user asks for it**, since it holds the session for hours: the same check with the subagent at two hours and the command at three, the longest `takeover` sleeps while it farms. With the subagent finishing first, it also covers the other order.
 
 ## 3. Seeing an image
 
@@ -77,7 +77,7 @@ Open `tests/frames/hud_day_build_panel.png` through the runtime's own way of rea
 
 ## 4. Reaching the user
 
-Send that same frame to the user through the runtime's way of sending files, then put a question with three options to them through its way of asking, and as a push notification too where that is separate. The user tells you whether the image reached their phone, whether the question did, and whether they could answer it there. Note whether your turn stood waiting on the answer: some runtimes block the turn on a question, which `upgrades` plans around. Rows: **file reaches the phone**, **question reaches the phone and is answerable there**.
+Send that same frame to the user through the runtime's way of sending files, then put a question with three options to them through its way of asking, and as a push notification too where that is separate. The user tells you whether the image reached their phone, whether the question did, and whether they could answer it there. Note whether your turn stood waiting on the answer: some runtimes block the turn on a question, which `takeover` plans around. Rows: **file reaches the phone**, **question reaches the phone and is answerable there**.
 
 ## 5. A long foreground wait on the main thread
 

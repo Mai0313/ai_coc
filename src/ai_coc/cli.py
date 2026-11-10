@@ -460,7 +460,7 @@ def _run_command(arguments: argparse.Namespace, run: RunLog) -> int:
         ):
             answer = _answer(arguments, run)
     # A queue that a stop ended is written down like an answer, not left as a
-    # crash: `farm` reads a run with no `result.json` as a killed process. The
+    # crash: `takeover` reads a run with no `result.json` as a killed process. The
     # exit below still says it did not run. So is a command that stood down
     # because another device logged in, which can happen to any of them, and a
     # watch that found no state file to sit on.
