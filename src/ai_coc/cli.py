@@ -90,50 +90,78 @@ NO_SCREEN = ("read", "stop", "giveback", "watch", "note", "growth", "turnaround"
 WITHOUT_CLAIM = (*NO_SCREEN, "capture")
 
 
-# Every sub-command and the line `--help` gives it, in the order a person
-# reaches for them, which is the order the help lists them in: farming, the
-# readings, the rest of the village, the emulator and its camera, spending, the
-# export, then the tools for working on the parsers.
+# Every sub-command and the line `--help` gives it, under the heading the help
+# lists it under, in the order a person reaches for them: playing the game,
+# reading it without spending, upgrading, sharing the emulator, then the tools
+# for working on the parsers.
 COMMANDS = (
-    ("attack", "進攻遊戲當下所在的村莊，預設打一輪"),
-    # Its own command rather than a flag on `attack`, because the run being
-    # stopped is a different process: whatever put that one in the background
-    # cannot send it a Ctrl-C, and killing it leaves the game mid-battle.
     (
-        "stop",
-        "請正在用模擬器的指令做完手上這件事就收工，盯升級的也一起停；後面加 emulator 或 watch 只停一個",
+        "操作遊戲",
+        (
+            ("attack", "進攻遊戲當下所在的村莊，預設打一輪"),
+            ("collect", "收掉採集器裡的資源；在夜世界收的是聖水車"),
+            ("donate", "部落有人要兵就捐"),
+            ("world", "看遊戲停在日世界還是夜世界，加 --go 就開船過去"),
+            ("launch", "開模擬器和部落衝突，停在村莊畫面"),
+            ("view", "把村莊鏡頭拉遠或拉近"),
+        ),
     ),
-    ("giveback", "把借來的模擬器還回去，借出的那一邊會自己接著跑"),
     (
-        "watch",
-        "睡到 --next 那個時間才結束，期間在狀態檔記下是誰在盯升級；丟到背景跑，結束時叫醒你",
+        "讀資訊（不花資源）",
+        (
+            (
+                "status",
+                "兩個世界每件升級實際幾點好（藥水和鐘塔已算進去），加上這個村莊的閒置人數、倉庫和護盾",
+            ),
+            ("stock", "這個村莊的倉庫存量和容量"),
+            ("export", "從遊戲匯出整個村莊的資料，對上名稱後存起來"),
+            ("growth", "不碰遊戲，比對存下的兩份村莊匯出，列出兩個世界升了什麼"),
+            ("turnaround", "不碰遊戲，從紀錄算每次升級從到點到按下確認花了幾秒"),
+            ("capture", "連續截圖，存進這次的紀錄資料夾"),
+        ),
     ),
-    ("note", "使用者的交代，記在狀態檔裡；不給參數就列出來，add 加一條，done 刪掉做完的第幾條"),
     (
-        "status",
-        "兩個世界每件升級實際幾點好（藥水和鐘塔已算進去），加上這個村莊的閒置人數、倉庫和護盾",
+        "升級（建造面板和鐘塔）",
+        (
+            ("tap", "點畫面上一個點，存下點完的畫面；升級確認視窗只能點它的 X"),
+            ("swipe", "從一點滑到另一點，例如捲動建造面板，存下滑完的畫面"),
+            (
+                "confirm",
+                "確認鈕上的價格跟 --price 一樣、而且是金幣聖水黑水，才按下確認；加 --pay 是從城牆選單的升級鈕開始付；"
+                "加 --goblin 是付寶石聘請哥布林工人",
+            ),
+            ("boost", "夜世界鐘塔能開時（上面有時鐘標記）按下它的免費加速；要寶石的不按"),
+        ),
     ),
-    ("stock", "這個村莊的倉庫存量和容量"),
-    ("world", "看遊戲停在日世界還是夜世界，加 --go 就開船過去"),
-    ("collect", "收掉採集器裡的資源；在夜世界收的是聖水車"),
-    ("donate", "部落有人要兵就捐"),
-    ("launch", "開模擬器和部落衝突，停在村莊畫面"),
-    ("view", "把村莊鏡頭拉遠或拉近"),
-    ("tap", "點畫面上一個點，存下點完的畫面；升級確認視窗只能點它的 X"),
-    ("swipe", "從一點滑到另一點，例如捲動建造面板，存下滑完的畫面"),
     (
-        "confirm",
-        "確認鈕上的價格跟 --price 一樣、而且是金幣聖水黑水，才按下確認；加 --pay 是從城牆選單的升級鈕開始付；"
-        "加 --goblin 是付寶石聘請哥布林工人",
+        "共用模擬器",
+        (
+            # Its own command rather than a flag on `attack`, because the run being
+            # stopped is a different process: whatever put that one in the background
+            # cannot send it a Ctrl-C, and killing it leaves the game mid-battle.
+            (
+                "stop",
+                "請正在用模擬器的指令做完手上這件事就收工，盯升級的也一起停；後面加 emulator 或 watch 只停一個",
+            ),
+            ("giveback", "把借來的模擬器還回去，借出的那一邊會自己接著跑"),
+            (
+                "watch",
+                "睡到 --next 那個時間才結束，期間在狀態檔記下是誰在盯升級；丟到背景跑，結束時叫醒你",
+            ),
+            (
+                "note",
+                "使用者的交代，記在狀態檔裡；不給參數就列出來，add 加一條，done 刪掉做完的第幾條",
+            ),
+        ),
     ),
-    ("boost", "夜世界鐘塔能開時（上面有時鐘標記）按下它的免費加速；要寶石的不按"),
-    ("export", "從遊戲匯出整個村莊的資料，對上名稱後存起來"),
-    ("growth", "不碰遊戲，比對存下的兩份村莊匯出，列出兩個世界升了什麼"),
-    ("turnaround", "不碰遊戲，從紀錄算每次升級從到點到按下確認花了幾秒"),
-    ("capture", "連續截圖，存進這次的紀錄資料夾"),
-    ("read", "不碰遊戲，把一張截圖交給每個判讀器，印出各自讀到什麼"),
-    ("probe", "花一場戰鬥實測部署邊界，對照判讀器的結果"),
-    ("bounds", "花一場戰鬥實測地圖邊緣，推回村莊範圍"),
+    (
+        "開發與量測",
+        (
+            ("read", "不碰遊戲，把一張截圖交給每個判讀器，印出各自讀到什麼"),
+            ("probe", "花一場戰鬥實測部署邊界，對照判讀器的結果"),
+            ("bounds", "花一場戰鬥實測地圖邊緣，推回村莊範圍"),
+        ),
+    ),
 )
 
 
@@ -215,15 +243,26 @@ def _parser() -> argparse.ArgumentParser:
     """Every argument the entry point takes; a sub-command is required."""
     parser = argparse.ArgumentParser(
         prog="ai_coc",
+        # Written out, because the action that parses the sub-commands is hidden
+        # below and argparse leaves a hidden action out of the usage line too.
+        usage="%(prog)s [-h] <指令> ...",
         description=(
             "在模擬器上自動玩部落衝突。每個指令只處理遊戲當下停著的那個村莊，換村莊用 world --go。"
         ),
     )
-    # A metavar instead of the default brace list, which printed every name
-    # twice over on one unbroken line.
-    sub = parser.add_subparsers(dest="command", title="指令", metavar="<指令>", required=True)
-    for name, note in COMMANDS:
-        sub.add_parser(name, help=note)
+    # A metavar instead of the default brace list of every name, which an
+    # error naming this argument would print.
+    sub = parser.add_subparsers(
+        dest="command", metavar="<指令>", required=True, help=argparse.SUPPRESS
+    )
+    # argparse lists every sub-command under the one action that parses them,
+    # so that action is hidden and the line it makes for each sub-command is
+    # moved into a section of its own heading.
+    for heading, group in COMMANDS:
+        section = parser.add_argument_group(heading)
+        for name, note in group:
+            sub.add_parser(name, help=note)
+            section._group_actions.append(sub._choices_actions.pop())  # noqa: SLF001 - argparse has no public way to group sub-commands
     # It plays whichever village the game is on and never sails there itself:
     # crossing is `world --go`, which is the one command that moves the game.
     run = sub.choices["attack"]
@@ -538,7 +577,13 @@ def _claim_for(arguments: argparse.Namespace, run: RunLog) -> AbstractContextMan
 
 def main() -> int:
     sys.excepthook = _log_uncaught
-    arguments = _parser().parse_args()
+    parser = _parser()
+    # Nothing at all, or `help`, is somebody asking what there is: the same
+    # answer as `--help`, and like it no run.
+    if sys.argv[1:] in ([], ["help"]):
+        parser.print_help()
+        return 0
+    arguments = parser.parse_args()
     # Opened after parsing, so `--help` and a rejected flag leave no empty
     # directory behind, and so its name can say which command it holds.
     run = RunLog.open(

@@ -90,6 +90,34 @@ class ParserTests(unittest.TestCase):
             _args()
         assert stopped.value.code != 0
 
+    def test_help_and_nothing_at_all_answer_what_dash_help_does_and_open_no_run(self) -> None:
+        expected = _parser().format_help()
+        for line in ([], ["help"]):
+            with (
+                patch.object(sys, "argv", ["ai_coc", *line]),
+                patch.object(cli, "RunLog") as opened,
+                patch("sys.stdout", new_callable=io.StringIO) as out,
+            ):
+                assert cli.main() == 0, line
+            assert out.getvalue() == expected, line
+            opened.open.assert_not_called()
+        for flag in ("--help", "-h"):
+            with (
+                patch("sys.stdout", new_callable=io.StringIO) as out,
+                pytest.raises(SystemExit) as stopped,
+            ):
+                _args(flag)
+            assert (stopped.value.code, out.getvalue()) == (0, expected), flag
+
+    def test_the_help_lists_each_sub_command_under_its_own_heading(self) -> None:
+        """The sections are made by hand, since argparse cannot group sub-commands itself."""
+        blocks = {block.splitlines()[0]: block for block in _parser().format_help().split("\n\n")}
+        for heading, group in cli.COMMANDS:
+            lines = blocks[f"{heading}:"].splitlines()[1:]
+            # A line too long for the terminal goes on, indented past the names.
+            listed = [line.split()[0] for line in lines if not line.startswith("   ")]
+            assert listed == [name for name, _ in group], heading
+
     def test_every_sub_command_takes_who_is_asking_and_none_needs_it(self) -> None:
         for name, extra in MINIMAL.items():
             asked = _args(name, *extra, "--agent", "codex", "--session", "s1", "--mission", "m")
