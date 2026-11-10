@@ -93,7 +93,7 @@
 **先看 outcome**, 兩種往相反方向查:
 
 - `nothing_deployed`: 一張卡都出不去, 迴圈的問題, 看這一節
-- `no_loot`: 兵下去了, 位置不對, **戰術**的問題, 先讀那一輪在 `runs.jsonl` 的 `plan`, 再照 SKILL.md 的調整階梯從戰術檔開始 (實測過: 32%, 卡全清空, 英雄全落地, 打進了沒有倉庫的那一側). 從哪一側打是使用者定的, 見階梯第三層
+- `no_loot`: 兵下去了, 位置不對, **戰術**的問題, 先讀那一輪在 `runs.jsonl` 的 `plan`, 再照 SKILL.md 的「調整的階梯」從戰術檔開始 (實測過: 32%, 卡全清空, 英雄全落地, 打進了沒有倉庫的那一側). 從哪一側打是使用者定的, 見 `.agents/rules/attack.md` 的 The plan
 - `no_loot` 而且那一輪拖滿四分鐘, 戰鬥中每十秒一行 `No battle on screen; nothing here is a card to empty`: 戰鬥畫面不見了而結算畫面也沒出來, 迴圈沒有這個狀態, 只能等 `BATTLE_TIMEOUT` 用完. 彈出視窗蓋住戰鬥會這樣; 打到一半登入被搶走以前也是, 現在報成 `session_taken`, 所以畫面上是被擠掉的對話框的話, 是 `session_taken` 沒認出來. 先看那一輪的畫面, 不要調戰術
 
 依序看:
@@ -200,7 +200,7 @@ log 的 `The camera was not at the far zoom` 量的是拉遠之前的鏡頭, 只
 
 ## 刷牆停了
 
-**不在打資源這條路上**: 壞了照 SKILL.md 的「管到哪裡為止」記下來, 主線達成以後另開 PR.
+**不在打資源這條路上**: 壞了照 SKILL.md 的「報告」記下來, 另開 PR, 不在打資源的途中順手修.
 
 ## 夜世界特有的幾種
 

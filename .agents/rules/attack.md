@@ -42,6 +42,7 @@ paths:
 
 **The plan** (`_plan`, `AttackPlan`, `AttackStep`, `prompts/attack_plan.md`).
 
+- **The default tactic and the prompt's tactic are the user's.** `flat.json`'s drop order is the one he dictated (#349) and its spell times the ones he tuned (#362), and it is the default farming tactic; the prompt's choices below (the side with the heaviest defences, the siege machine after every troop and hero, rage behind the troops) are his too. Ask him before changing either; a variant for a comparison is saved as a file of its own and fed through `--plan`. What he reports about a tactic is a hypothesis to measure, not a conclusion.
 - One Gemini call per battle, after the thresholds have passed, so a skipped opponent costs nothing. `--plan` plays a written plan with no call, `--plan-out` writes whichever ran, and `plans.flat()` (`plans/flat.json`) is what a run with no key or a failed call gets.
 - A plan is an ordered list of steps, played in order, and it carries every clock: where each hero goes (`hero`), when each ability fires (`ability`), where each spell goes and when. `act`, `who`, `at` and `seconds` have no defaults, because Gemini leaves out fields that have one. Nothing in `config.json` holds a clock.
 - A `wait` counts from the previous move finishing, so nothing depends on how long the call or the boundary read took.
