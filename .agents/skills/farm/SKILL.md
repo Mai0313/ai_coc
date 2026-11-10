@@ -83,7 +83,7 @@ uv run ai_coc attack --repeat 0 --plan src/ai_coc/plans/night_flat.json --yield 
 
 ## 怎麼跑
 
-**迴圈交給一個 farm subagent 跑, 它前景分段阻塞** (`AGENTS.md` 的 Every session farms while it works); **主 session 自己把迴圈送背景, 只在 `watch-and-fix` 決定親自監督的時候.** 兩種各怎麼做, 目錄佈局, 以及每個指令都要帶的 `--agent`、`--session`、`--mission` 跟 subagent 要用的 `uv run --no-sync`, 都在 `references/running.md` 的「為什麼一定要背景跑」跟「開跑」; 這份 skill 裡的指令為了好讀都省略了.
+**迴圈交給一個 farm subagent 跑, 它前景分段阻塞** (`AGENTS.md` 的 Dispatching a farm subagent); **主 session 自己把迴圈送背景, 只在 `watch-and-fix` 決定親自監督的時候.** 兩種各怎麼做, 目錄佈局, 以及每個指令都要帶的 `--agent`、`--session`、`--mission` 跟 subagent 要用的 `uv run --no-sync`, 都在 `references/running.md` 的「為什麼一定要背景跑」跟「開跑」; 這份 skill 裡的指令為了好讀都省略了.
 
 **預設 `--repeat 0`**: 倉庫滿了迴圈自己會 break, 正是「打到資源滿」. 使用者指定輪數就照他的.
 
@@ -94,7 +94,7 @@ uv run ai_coc attack --repeat 0 --plan src/ai_coc/plans/night_flat.json --yield 
 
 ## 怎麼盯
 
-**你是 subagent 就不看畫面**: 圖上是什麼是判斷, 歸派工的那一邊 (`AGENTS.md` 的 Every session farms while it works). 照 `result.json` 的 `outcome` 走, 碰到這份 skill 說要停手的, 或交辦以外的狀況, 就停下來回報執行目錄; 交辦要你截的圖照截, 不用打開, 回報列出路徑. 這一節底下是派工的那一邊, 或沒人派你時的你.
+**你是 subagent 就不看畫面**: 圖上是什麼是判斷, 歸派工的那一邊 (`AGENTS.md` 的 Dispatching a farm subagent). 照 `result.json` 的 `outcome` 走, 碰到這份 skill 說要停手的, 或交辦以外的狀況, 就停下來回報執行目錄; 交辦要你截的圖照截, 不用打開, 回報列出路徑. 這一節底下是派工的那一邊, 或沒人派你時的你.
 
 **log 跟畫面都能用, 自己判斷**, log 講不清楚就截一張, 那很便宜.
 
