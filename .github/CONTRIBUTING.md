@@ -61,7 +61,7 @@ This project uses [`uv`](https://docs.astral.sh/uv/) for Python and dependency m
 make uv-install
 
 # Clone your fork (on Windows add `-c core.symlinks=true`, which needs Developer Mode,
-# or CLAUDE.md and .claude/skills arrive as text files instead of links)
+# or .claude/skills and .claude/rules arrive as text files instead of links)
 git clone https://github.com/<your-username>/<repo>.git
 cd <repo>
 

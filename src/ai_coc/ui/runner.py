@@ -190,8 +190,7 @@ class ScreenRunner(BaseModel):
     back to a village has to cope with a result screen, a matchmaker and a
     server that takes minutes to answer — but it declared these fields with the
     same names, types and defaults, and both methods with the same bodies, and
-    a convention implemented in two places is the drift `CLAUDE.md` is a
-    symlink to avoid.
+    a convention implemented in two places drifts apart.
     """
 
     adb: AdbController
