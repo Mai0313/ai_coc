@@ -7,7 +7,6 @@ the emulator is a fake that answers `dumpsys`, `pm path` and `unzip -p`.
 
 from __future__ import annotations
 
-import lzma
 import struct
 from typing import TYPE_CHECKING
 import unittest
@@ -60,12 +59,61 @@ def _entity(tables: GameEntities, data_id: int) -> GameEntity:
     return next(entity for entity in tables.entities if entity.data_id == data_id)
 
 
+def _lzma(data: bytes) -> bytes:
+    """LZMA as the game writes it: properties, a 4-byte size, and a stream with no end marker.
+
+    Encoded here, every byte a literal, because `lzma` can only write a stream
+    that ends in an end marker, which the game's files never carry (measured
+    on 18.647.5: they do not decode with the size unknown). Under a known size
+    the CI runner's Python refused that marker as corrupt input while this
+    machine's accepted it, so tables `lzma` compressed passed here and failed
+    there.
+    """
+    is_match, literal = [1024] * (12 << 4), [1024] * (0x300 << 3)
+    low, span, cache, pending, out = 0, 0xFFFFFFFF, 0, 1, bytearray()
+
+    def shift() -> None:
+        nonlocal low, cache, pending
+        if low < 0xFF000000 or low >= 1 << 32:
+            carry, byte = low >> 32, cache
+            while pending:
+                out.append((byte + carry) & 0xFF)
+                byte, pending = 0xFF, pending - 1
+            cache = (low >> 24) & 0xFF
+        pending += 1
+        low = (low & 0x00FFFFFF) << 8
+
+    def encode(probs: list[int], index: int, value: int) -> None:
+        nonlocal low, span
+        bound = (span >> 11) * probs[index]
+        if value:
+            low, span = low + bound, span - bound
+            probs[index] -= probs[index] >> 5
+        else:
+            span = bound
+            probs[index] += (2048 - probs[index]) >> 5
+        while span < 1 << 24:
+            span <<= 8
+            shift()
+
+    previous = 0
+    for position, byte in enumerate(data):
+        encode(is_match, position & 3, 0)
+        base, symbol = 0x300 * (previous >> 5), 1
+        for place in range(7, -1, -1):
+            value = (byte >> place) & 1
+            encode(literal, base + symbol, value)
+            symbol = symbol << 1 | value
+        previous = byte
+    for _ in range(5):
+        shift()
+    return bytes([0x5D]) + struct.pack("<II", 1 << 16, len(data)) + bytes(out)
+
+
 def _ship(text: str, *, signed: bool) -> bytes:
-    """A table compressed as the game ships it: LZMA under a 4-byte size, a logic table signed."""
-    data = text.encode()
-    packed = lzma.compress(data, format=lzma.FORMAT_ALONE)
-    short = packed[:5] + struct.pack("<I", len(data)) + packed[13:]
-    return b"Sig:" + bytes(64) + short if signed else short
+    """A table as the game ships it: its LZMA, and a logic table signed ahead of it."""
+    packed = _lzma(text.encode())
+    return b"Sig:" + bytes(64) + packed if signed else packed
 
 
 class DecodeTests(unittest.TestCase):

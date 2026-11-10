@@ -23,7 +23,8 @@ if TYPE_CHECKING:
 SIGNATURE = b"Sig:"
 SIGNATURE_SIZE = len(SIGNATURE) + 64
 # Supercell's LZMA header is the 5 property bytes and a 4-byte uncompressed
-# size, where the `.lzma` format `lzma` reads wants that size in 8 bytes.
+# size, where the `.lzma` format `lzma` reads wants that size in 8 bytes. The
+# stream carries no end marker (18.647.5), so the size is what ends it.
 SHORT_HEADER = 9
 # What a zstd stream opens with. Supercell has shipped other games' tables this
 # way, and 18.647.5 ships none. Reading one needs Python 3.14's
