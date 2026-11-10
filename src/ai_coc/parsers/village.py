@@ -7,7 +7,14 @@ from pathlib import Path
 from datetime import UTC, datetime
 from collections import Counter
 
-from ai_coc.models import ClockTower, LevelChange, UpgradeTimer, AccountSnapshot, VillageDocument
+from ai_coc.models import (
+    ClockTower,
+    LevelChange,
+    UpgradeTimer,
+    HelperCooldown,
+    AccountSnapshot,
+    VillageDocument,
+)
 
 if TYPE_CHECKING:
     from ai_coc.models import World, GrowthGroup, UpgradeRole, VillageExport
@@ -130,6 +137,30 @@ def clock_tower(export: VillageExport) -> ClockTower | None:
         ready_in=ready_in,
         ready_at=_clock(_start(export) + ready_in),
         boosting=export.boosts.clocktower_boost,
+    )
+
+
+def helper_cooldowns(export: VillageExport) -> list[HelperCooldown]:
+    """When each helper of the Helper Hut can next be sent, soonest first.
+
+    One with no `helper_cooldown` can be sent now: the Lab Assistant carried
+    none in both exports of 2026-11-07, while the player had not sent it, and
+    69437 the next day, after he had.
+    """
+    start = _start(export)
+    return sorted(
+        (
+            HelperCooldown(
+                data_id=entity.data_id,
+                name=entity.name,
+                level=entity.level,
+                ready_in=entity.helper_cooldown or 0,
+                ready_at=_clock(start + (entity.helper_cooldown or 0)),
+            )
+            for entity in export.entities
+            if entity.section == "helpers"
+        ),
+        key=lambda helper: helper.ready_in,
     )
 
 

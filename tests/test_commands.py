@@ -489,6 +489,12 @@ class StatusCommandTests(unittest.TestCase):
             entities=[
                 NamedEntity(data_id=28000000, section="heroes", name="Archer Queen", timer=28614),
                 NamedEntity(data_id=1000039, section="buildings2", name="Clock Tower"),
+                NamedEntity(
+                    data_id=93000000,
+                    section="helpers",
+                    name="Builder's Apprentice",
+                    helper_cooldown=79823,
+                ),
             ],
             boosts={"builder_boost": 4606, "clocktower_cooldown": 79754},
             outcome="exported",
@@ -499,6 +505,9 @@ class StatusCommandTests(unittest.TestCase):
         assert [(timer.name, timer.seconds) for timer in report.timers] == [("Archer Queen", 2862)]
         assert report.clock_tower is not None
         assert report.clock_tower.ready_in == 79754
+        assert [(helper.name, helper.ready_in) for helper in report.helpers] == [
+            ("Builder's Apprentice", 79823)
+        ]
 
 
 class CollectCommandTests(unittest.TestCase):
