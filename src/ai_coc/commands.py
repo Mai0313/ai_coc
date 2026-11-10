@@ -148,7 +148,12 @@ from ai_coc.parsers.scout import (
 from ai_coc.parsers.world import current_world
 from ai_coc.adapters.config import ConfigStore, gemini_key
 from ai_coc.parsers.village import growth as village_growth
-from ai_coc.parsers.village import clock_tower, upgrade_timers, parse_village_text
+from ai_coc.parsers.village import (
+    clock_tower,
+    upgrade_timers,
+    helper_cooldowns,
+    parse_village_text,
+)
 from ai_coc.adapters.mapping import fetch_entity_mapping
 from ai_coc.parsers.boundary import PLAYFIELD, VILLAGE_CENTRE, village_box, boundary_reach
 from ai_coc.parsers.building import (
@@ -2249,6 +2254,7 @@ def status(frames: FrameLog) -> StatusReport:
         report.boosts = exported.boosts
         report.timers = upgrade_timers(exported)
         report.clock_tower = clock_tower(exported)
+        report.helpers = helper_cooldowns(exported)
     report.world = builder.world or lab.world or report.stock.world
     logger.info(
         "Status: %s；%s；%s；%s",

@@ -177,6 +177,7 @@ from ai_coc.parsers.village import (
     clock_tower,
     parse_village,
     upgrade_timers,
+    helper_cooldowns,
     parse_village_text,
 )
 from ai_coc.parsers.boundary import DEPLOY_BOUND, fitted_line, village_box, boundary_reach
@@ -317,7 +318,7 @@ class CoreTests(unittest.TestCase):
         snapshot = parse_village_text(
             json.dumps({
                 "tag": "#TEST",
-                "buildings": [{"data": 1000001, "lvl": 16}],
+                "buildings": [{"data": 1000001, "lvl": 16, "helper_timer": 623}],
                 "helpers": [{"data": 93000000, "lvl": 1, "helper_cooldown": 36772}],
                 "obstacles": [{"data": 8000009, "cnt": 7}],
                 "a_section_added_next_release": [{"data": 99000001, "lvl": 2}],
@@ -329,11 +330,13 @@ class CoreTests(unittest.TestCase):
             "obstacles",
             "a_section_added_next_release",
         }
-        # Whatever the row carried beyond the three declared fields is still on
-        # it, which is what makes "nothing is thrown away" true rather than a
-        # claim about the sections alone.
+        # Whatever the row carried beyond the declared fields is still on it,
+        # which is what makes "nothing is thrown away" true rather than a claim
+        # about the sections alone.
+        [building] = [one for one in snapshot.entities if one.section == "buildings"]
+        assert (building.model_extra or {})["helper_timer"] == 623
         [helper] = [one for one in snapshot.entities if one.section == "helpers"]
-        assert (helper.model_extra or {})["helper_cooldown"] == 36772
+        assert helper.helper_cooldown == 36772
 
     def test_a_section_of_bare_ids_is_read_too(self) -> None:
         """`skins` and `house_parts` are written as numbers, not objects."""
@@ -453,6 +456,17 @@ class UpgradeTimerTests(unittest.TestCase):
         cooling = clock_tower(_exported(tower, clocktower_boost=613, clocktower_cooldown=79813))
         assert cooling is not None
         assert (cooling.ready_in, cooling.boosting) == (79813, 613)
+
+    def test_a_helper_with_no_cooldown_can_be_sent_now(self) -> None:
+        export = _exported(("buildings2", 1000039, None))
+        export.entities += [
+            NamedEntity(data_id=93000000, section="helpers", helper_cooldown=79823),
+            NamedEntity(data_id=93000001, section="helpers"),
+        ]
+        [ready, cooling] = helper_cooldowns(export)
+        assert (ready.data_id, ready.ready_in) == (93000001, 0)
+        assert (cooling.data_id, cooling.ready_in) == (93000000, 79823)
+        assert datetime.fromisoformat(cooling.ready_at).timestamp() == 1791626042 + 79823
 
     def test_no_clock_tower_or_one_being_upgraded_says_nothing(self) -> None:
         assert clock_tower(_exported(("buildings2", 1000034, None))) is None

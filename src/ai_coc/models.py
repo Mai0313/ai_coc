@@ -288,6 +288,9 @@ class VillageEntry(BaseModel):
     # Seconds still to run at normal speed, on a row being upgraded; the game
     # writes it on those rows alone, and so does the file this is saved back to.
     timer: int | None = Field(default=None, exclude_if=lambda value: value is None)
+    # Seconds until a helper in the `helpers` section can be sent again; the
+    # game writes it only while that helper is cooling down.
+    helper_cooldown: int | None = Field(default=None, exclude_if=lambda value: value is None)
 
     @field_validator("level", mode="before")
     @classmethod
@@ -1461,6 +1464,18 @@ class ClockTower(BaseModel):
     boosting: int | None = None
 
 
+class HelperCooldown(BaseModel):
+    """When one helper of the Helper Hut can be sent again; `ready_in` 0 is now."""
+
+    model_config = ConfigDict(frozen=True)
+
+    data_id: int
+    name: str | None = None
+    level: int | None = None
+    ready_in: int
+    ready_at: str
+
+
 class StatusReport(BaseModel):
     """Where both villages' upgrades stand, and what the village on screen holds.
 
@@ -1497,6 +1512,7 @@ class StatusReport(BaseModel):
     timers: list[UpgradeTimer] = Field(default_factory=list)
     # None where the export has no clock tower, or one being upgraded.
     clock_tower: ClockTower | None = None
+    helpers: list[HelperCooldown] = Field(default_factory=list)
 
 
 # How one `view` command left the camera. `parked` is the whole job done;
