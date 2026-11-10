@@ -83,7 +83,7 @@ uv run ai_coc attack --repeat 0 --plan src/ai_coc/plans/night_flat.json --yield 
 
 ## 怎麼跑
 
-**迴圈交給一個 farm subagent 跑, 它前景分段阻塞** (`AGENTS.md` 的 Every session farms while it works); **主 session 自己把迴圈送背景, 只在 `watch-and-fix` 決定親自監督的時候.** 兩種各怎麼做, 目錄佈局, 以及每個指令都要帶的 `--agent`、`--session`、`--mission` 跟 subagent 要用的 `uv run --no-sync`, 都在 `references/running.md` 的「為什麼一定要背景跑」跟「開跑」; 這份 skill 裡的指令為了好讀都省略了.
+**迴圈交給一個 farm subagent 跑, 它前景分段阻塞** (`AGENTS.md` 的 Dispatching a farm subagent); **主 session 自己把迴圈送背景, 只在 `watch-and-fix` 決定親自監督的時候.** 兩種各怎麼做, 目錄佈局, 以及每個指令都要帶的 `--agent`、`--session`、`--mission` 跟 subagent 要用的 `uv run --no-sync`, 都在 `references/running.md` 的「為什麼一定要背景跑」跟「開跑」; 這份 skill 裡的指令為了好讀都省略了.
 
 **預設 `--repeat 0`**: 倉庫滿了迴圈自己會 break, 正是「打到資源滿」. 使用者指定輪數就照他的.
 
@@ -94,7 +94,7 @@ uv run ai_coc attack --repeat 0 --plan src/ai_coc/plans/night_flat.json --yield 
 
 ## 怎麼盯
 
-**你是 subagent 就不看畫面**: 圖上是什麼是判斷, 歸派工的那一邊 (`AGENTS.md` 的 Every session farms while it works). 照 `result.json` 的 `outcome` 走, 碰到這份 skill 說要停手的, 或交辦以外的狀況, 就停下來回報執行目錄; 交辦要你截的圖照截, 不用打開, 回報列出路徑. 這一節底下是派工的那一邊, 或沒人派你時的你.
+**你是 subagent 就不看畫面**: 圖上是什麼是判斷, 歸派工的那一邊 (`AGENTS.md` 的 Dispatching a farm subagent). 照 `result.json` 的 `outcome` 走, 碰到這份 skill 說要停手的, 或交辦以外的狀況, 就停下來回報執行目錄; 交辦要你截的圖照截, 不用打開, 回報列出路徑. 這一節底下是派工的那一邊, 或沒人派你時的你.
 
 **log 跟畫面都能用, 自己判斷**, log 講不清楚就截一張, 那很便宜.
 
@@ -138,7 +138,7 @@ uv run ai_coc attack --repeat 0 --plan src/ai_coc/plans/night_flat.json --yield 
 
 **預設情況下倉庫滿了就是終點.** 使用者 2026-09-15 的常設交代, 原話是「默認就是打到設定的值, 除非我有特地說 打資源跟升級牆壁之類的」. 他只說「幫我打資源」的那一趟, 任務就到兩個世界都打到 `stop_at`: 讀結束水位, 附上工人狀況, 交報告, 收工. **工人跟實驗室用 `ai_coc status`**: 兩個世界的升級各幾點好 (加速算進去), 加上遊戲停著那個世界右下角的計數跟倉庫, 不切世界. **不要自己接下去花**, 工人閒著或某棟很划算也一樣; 值得花就寫成選項讓他挑 (「通知跟要他拍板的事」).
 
-**他開口了才有下面這一圈**: 打到滿 → 花掉 → 回來繼續打, 繞到花不掉為止. 開口是他交辦時就講了要花 (「打完順便刷牆」「把資源花掉」「打資源跟升級牆壁」), 不是你判斷出來的. **底下這一整節都只在那種情況下適用.** **花是派工的那一邊在接** (或者沒人派你時的你): 你是 subagent 就不花, 打到 `stock_full` 照「任務報告」交回去, 由它花完再派下一趟 (`AGENTS.md` 的 Every session farms while it works).
+**他開口了才有下面這一圈**: 打到滿 → 花掉 → 回來繼續打, 繞到花不掉為止. 開口是他交辦時就講了要花 (「打完順便刷牆」「把資源花掉」「打資源跟升級牆壁」), 不是你判斷出來的. **底下這一整節都只在那種情況下適用.** **花是派工的那一邊在接** (或者沒人派你時的你): 你是 subagent 就不花, 打到 `stock_full` 照「任務報告」交回去, 由它花完再派下一趟 (`AGENTS.md` 的 Dispatching a farm subagent).
 
 **第一步是問 `ai_coc world`, 沒有例外.** 面板上列的是遊戲停著那一邊的建築跟牆, 站錯村莊花的就是另一邊的倉庫. 要花主村的先 `world --go day`. **夜世界打滿了就換去打日世界**, 兩邊倉庫不相通; 夜世界的建築跟牆一樣走 `upgrades` 的面板, 牆值不值得刷是使用者的決定. 兩個世界都滿了才通知他.
 

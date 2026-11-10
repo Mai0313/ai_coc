@@ -8,6 +8,8 @@ description: >-
 
 **主線是把資源打滿, 修東西是順便.** 迴圈永遠在跑, 你在它跑的空檔思考跟改東西.
 
+**交辦講明是託管 session 派來的, 就只修**: 迴圈是託管在跑, 這個 skill 的主線、誰來跑迴圈、「merge 以後要讓迴圈用上」都不歸你, 你修到 merge 就回報 (`AGENTS.md` 的 While a takeover runs).
+
 先讀 `.agents/skills/farm/SKILL.md`: 開跑前的檢查, 盯的方式, 倉庫滿了怎麼花跟哪些要先問使用者, 停手的條件, 全部照那邊. 背景跑的機制在 `.agents/skills/farm/references/running.md`.
 
 ## 做完的樣子
@@ -31,7 +33,7 @@ description: >-
 你自己決定, 中途也可以換:
 
 - **自己跑**: 用 runtime 自己管的背景執行送出去 (見 `running.md` 的「開跑」), 前景讀 log 改東西. `--repeat 0` 整批跑完才通知一次, 不是每一輪, 所以代價只是你自己去讀 log 的那幾次. 迴圈照樣跑在主 checkout 上 (`uv run --no-sync`), 改東西在另一個 worktree, 理由在 `AGENTS.md` 的 The loop runs the main checkout.
-- **交給 subagent**: 照 `AGENTS.md` 的 Every session farms while it works, through one subagent 派一個跑 `farm` 的 subagent (模型跟 thinking budget 照那一段), 你只讀它留下的檔案. 省下盯的成本, 代價是你不在現場. 交辦寫明 `--debug` (要看戰鬥過程再加 `--shot-every`), 並交代它帶上就好、圖不用看, 圖由你看 (`farm` 的「要不要留畫面」).
+- **交給 subagent**: 照 `AGENTS.md` 的 Dispatching a farm subagent 派一個跑 `farm` 的 subagent (模型跟 thinking budget 照那一段), 你只讀它留下的檔案. 省下盯的成本, 代價是你不在現場. 交辦寫明 `--debug` (要看戰鬥過程再加 `--shot-every`), 並交代它帶上就好、圖不用看, 圖由你看 (`farm` 的「要不要留畫面」).
 
 **使用者指名就照他的**: 「你親自監督執行」是第一種, 不要為了省 context 轉包出去.
 
