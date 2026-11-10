@@ -1998,10 +1998,9 @@ class CaptureAndViewTests(unittest.TestCase):
         """
         adb, report = self._view("day", "in")
         adb.swipe.assert_not_called()
-        # Refused before the capture, not after it: the village reading is only
-        # there to tell the park which corner to push into, and this path has no
-        # park to aim. Asking anyway is 0.7 s a run spends on nothing.
-        adb.screenshot.assert_not_called()
+        # Only the capture that let the pinch through: there is no park to aim,
+        # so a second one would be 0.7 s spent on nothing.
+        adb.screenshot.assert_called_once()
         assert report.outcome == "zoomed_in"
 
     def test_view_parks_the_camera_as_well_as_zooming_it(self) -> None:
@@ -2041,17 +2040,34 @@ class CaptureAndViewTests(unittest.TestCase):
             (crossing.start, landing)
         ] * world_ui.PARK_STILL + [world_ui.CENTRE_DRAGS["night"]]
 
-    def test_a_screen_that_is_not_a_village_keeps_the_zoom_and_nothing_else(self) -> None:
+    def test_a_screen_that_is_not_a_village_gets_no_gesture_at_all(self) -> None:
         """A killed run leaves the game mid-battle, and that is when this gets reached for.
 
-        A swipe with a card selected deploys troops along its path rather than
-        panning, so the park is gated on the same capture that says which village
-        it is. The pinch is safe on any screen and still goes.
+        A pinch's fingers land on whatever is drawn under them, and a swipe with
+        a card selected deploys troops, so neither goes before a capture reads a
+        village, whichever way the zoom was asked.
         """
-        adb, report = self._view(None)
-        adb.zoom.assert_called_once()
+        for zoom in ("out", "in"):
+            adb, report = self._view(None, zoom)
+            adb.zoom.assert_not_called()
+            adb.swipe.assert_not_called()
+            assert (report.outcome, report.world, report.times) == ("not_a_village", None, 0)
+
+    def test_the_open_build_panel_is_not_pinched(self) -> None:
+        """One finger of the pinch starts on the lab tab's rows (2026-11-10).
+
+        It opened 將亡靈升至13級？ on the live game. The frame goes through the
+        real village reading here, since that reading is the whole guard.
+        """
+        adb = _adb()
+        adb.screenshot.return_value = (FRAMES / "hud_day_lab_panel.png").read_bytes()
+        with patch.object(commands, "_controller", return_value=adb):
+            report = commands.view(_frames(self))
+        adb.zoom.assert_not_called()
         adb.swipe.assert_not_called()
-        assert (report.outcome, report.world) == ("not_a_village", None)
+        adb.tap.assert_not_called()
+        assert (report.outcome, report.times) == ("not_a_village", 0)
+        assert commands.view_line(report) == "鏡頭沒有拉遠,畫面不是村莊,沒有把鏡頭停回定位"
 
 
 class PressAndConfirmTests(unittest.TestCase):

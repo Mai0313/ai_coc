@@ -20,7 +20,7 @@ The parsers read what the game paints at fixed places on a 1600x900 frame, so a 
 
 **The screen is the evidence; the log only says that something failed.** Start by taking frames of both villages and of every screen the commands pass through (village, attack menu, scout, battle, result, the panels behind the bottom-right buttons, settings, the builder base's cart), and put each next to a committed frame of the same screen from before. Send the user the ones you judge by. Ask what the user noticed: they play the game and see changes first, but treat their account as a lead to check against frames, not as the inventory.
 
-Before the first tap, follow `AGENTS.md`'s Driving the game: read `state.json` and park the camera (while no village reads, `view --zoom out` can only pinch out, not park). The user may be playing on the same emulator; a game that changes between two of your taps is a reason to ask.
+Before the first tap, follow `AGENTS.md`'s Driving the game: read `state.json` and park the camera (while no village reads, `view --zoom out` touches nothing and answers `not_a_village`). The user may be playing on the same emulator; a game that changes between two of your taps is a reason to ask.
 
 ## Explore by driving the game
 

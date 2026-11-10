@@ -1516,8 +1516,9 @@ class StatusReport(BaseModel):
 
 
 # How one `view` command left the camera. `parked` is the whole job done;
-# `not_a_village` is a screen the park may not be aimed at, since a swipe with a
-# card selected deploys troops along its path; `zoomed_in` is `--zoom in`, where
+# `not_a_village` is a screen no gesture may be aimed at, since a finger lands on
+# whatever is drawn under it, and is answered with `times` 0 when it was found
+# before the pinch rather than after; `zoomed_in` is `--zoom in`, where
 # the park would undo the request and could not settle anyway; and
 # `never_settled` is a camera that would not stop moving, which leaves every
 # remembered coordinate off by however far it was short; and `selected` is a

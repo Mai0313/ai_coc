@@ -2514,7 +2514,7 @@ def world_line(report: WorldReport) -> str:
 
 VIEW_LINES: dict[ViewOutcome, str] = {
     "parked": "並把鏡頭停回定位",
-    "not_a_village": "但畫面不是村莊,沒有把鏡頭停回定位",
+    "not_a_village": "畫面不是村莊,沒有把鏡頭停回定位",
     "zoomed_in": "拉近的鏡頭停不住,沒有把鏡頭停回定位",
     "never_settled": "但鏡頭一直沒有停下來,定位失敗",
     "selected": "但有建築或城牆還選著,拖曳可能拖到它,沒有停鏡頭;先點一塊空地取消選取再來",
@@ -2523,7 +2523,8 @@ VIEW_LINES: dict[ViewOutcome, str] = {
 
 def view_line(report: ViewReport) -> str:
     """What this command asked of the camera, and what it settled."""
-    scaled = f"鏡頭{'拉遠' if report.zoom == 'out' else '拉近'}了 {report.times} 次"
+    verb = "拉遠" if report.zoom == "out" else "拉近"
+    scaled = f"鏡頭{verb}了 {report.times} 次" if report.times else f"鏡頭沒有{verb}"
     return f"{scaled},{VIEW_LINES[report.outcome]}"
 
 
@@ -2533,7 +2534,8 @@ def view(frames: FrameLog, zoom: str = "out", times: int = 3) -> ViewReport:
     **The game has no zoom control to tap and reports no zoom level**, so this
     writes the two-finger gesture straight to the touch device — see
     `AdbController.pinch` for why `input` cannot. Zooming out past the far limit
-    does nothing at all, which is what makes `--zoom out` safe to run blind.
+    does nothing at all, which is what makes `--zoom out` safe to send without
+    knowing where the camera is.
 
     **One pinch does not cover the whole range, and this said it did.** Swept
     from a camera zoomed fully in, one `out` takes the bare-ground share of the
@@ -2548,39 +2550,49 @@ def view(frames: FrameLog, zoom: str = "out", times: int = 3) -> ViewReport:
     settled separately, by running the camera into a map corner where it clamps —
     see `park_camera` for the measurement. `--zoom` stays the knob for scale.
 
-    **The park is gated on a village and this command's own pinch is not**,
-    which is the difference between a gesture that is safe on any screen and one
-    that is not. A swipe with a card selected deploys troops along its path
-    instead of panning, and this command's whole reputation is that it can be run
-    blind at whatever the game is showing — a killed run leaves the game
-    mid-battle, and that is exactly when somebody reaches for it. The one capture
-    answers the three questions the park has: whether this is a village at all,
+    **Nothing touches the screen until a capture says it is a village**, the
+    pinch included. A pinch is two fingers put down on whatever is drawn under
+    them, not a gesture only the camera hears: run with the build panel's lab tab
+    still open, one finger started on the 亡靈 row and opened its upgrade sheet
+    (2026-11-10). A swipe with a card selected deploys troops along its path, and
+    a killed run leaves the game mid-battle, which is exactly when somebody
+    reaches for this. So any screen `current_world` does not read as a village
+    gets no gesture at all and `times` 0.
+
+    **The park is gated a second time, on a capture after the pinch**, which
+    answers the three questions the park has: whether this is still a village,
     which of the two, since the maps clamp in opposite corners, and whether
     something on it is still selected (`selection_row`). Anything else keeps the
     zoom and says the camera was left where it was.
 
-    **And `--zoom in` is refused a park before the capture is even taken**, for
-    the reason `park_camera` pinches at all: its walk is only bounded at the far
-    zoom, and measured two pinches in the camera runs off the village and was
-    still moving after fourteen swipes. So a park asked for there would undo the
-    zoom just requested and then claim a position it never reached. The cost on
-    the ordinary path is that `--zoom out` pinches twice — `--times` here and
-    `ZOOM_PINCHES` inside the park — which past the far limit does nothing at
-    all and is why the flag is still the knob it says it is.
+    **And `--zoom in` is refused a park**, for the reason `park_camera` pinches
+    at all: its walk is only bounded at the far zoom, and measured two pinches in
+    the camera runs off the village and was still moving after fourteen swipes.
+    So a park asked for there would undo the zoom just requested and then claim a
+    position it never reached. The cost on the ordinary path is that
+    `--zoom out` pinches twice — `--times` here and `ZOOM_PINCHES` inside the
+    park — which past the far limit does nothing at all and is why the flag is
+    still the knob it says it is.
     """
     adb = _controller(frames)
     display = adb.display_for(COC_PACKAGE)
-    adb.zoom(zoom, times, COC_PACKAGE, display)
     asked: Literal["in", "out"] = "out" if zoom == "out" else "in"
+    village = current_world(adb.screenshot(display, "before-zoom")) is not None
+    if village:
+        adb.zoom(zoom, times, COC_PACKAGE, display)
+    else:
+        times = 0
     world = None
-    if zoom != "out":
+    if not village:
+        outcome: ViewOutcome = "not_a_village"
+    elif zoom != "out":
         # **A camera that has just been zoomed in cannot be parked**, so asking
         # would undo the thing that was asked for and claim a position it never
         # reached. Measured two pinches in, the camera runs off the village into
         # the map's dark border and was still walking hundreds of pixels per
         # swipe after fourteen of them; `park_camera` pinches back out for
         # exactly that reason, which on this path is the opposite of the request.
-        outcome: ViewOutcome = "zoomed_in"
+        outcome = "zoomed_in"
     elif (world := current_world(frame := adb.screenshot(display, "view"))) is None:
         outcome = "not_a_village"
     elif selection_row(frame):
