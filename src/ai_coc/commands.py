@@ -3212,7 +3212,7 @@ def _hit_lines(hit: SearchHit, exported: bool) -> list[str]:
     top = "—" if hit.max_lvl is None else hit.max_lvl
     lines = [f"{names}  #{hit.data_id}  {WORLD_NAMES[hit.world]} {hit.table or '—'}  滿級 {top}"]
     if not hit.count:
-        return [*lines, "  村莊裡沒有"] if exported else lines
+        return [*lines, f"  村莊裡沒有{_unlock_text(hit)}"] if exported else lines
     if hit.rows is not None:
         return lines + [f"  {_row_text(one)}" for one in hit.rows]
     held = ", ".join(f"{lvl} 級 {n} 個" for lvl, n in hit.owned.items()) or "沒有等級"
@@ -3224,6 +3224,16 @@ def _hit_lines(hit: SearchHit, exported: bool) -> list[str]:
     if hit.ready_at:
         lines.append(f"  {_local(hit.ready_at)} 能再派")
     return lines + [f"  下一次 {_upgrade_text(one, hit.limited_lvl)}" for one in hit.next]
+
+
+def _unlock_text(hit: SearchHit) -> str:
+    """What a missing hit's first level needs and where the village stands on each; nothing when the tables say nothing."""
+    needs = ", ".join(
+        f"{need.zh or need.hall} {need.lvl} 級"
+        f" (村莊裡{f' {need.village} 級' if need.village else '還沒有'})"
+        for need in hit.unlock
+    )
+    return f", 解鎖要 {needs}" if needs else ""
 
 
 def _row_text(one: SearchRow) -> str:

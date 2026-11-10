@@ -68,6 +68,13 @@ TABLES = (
         resource="UpgradeResource",
         time="UpgradeTime",
         needs={"LaboratoryLevel": "laboratory"},
+        unlock="BarrackLevel",
+        untrained=(
+            "DisableProduction",
+            "Deprecated",
+            "EnabledByCalendar",
+            "EnabledBySuperLicence",
+        ),
     ),
     GameTableSpec(
         table="spells",
@@ -76,6 +83,8 @@ TABLES = (
         resource="UpgradeResource",
         time="UpgradeTime",
         needs={"LaboratoryLevel": "laboratory"},
+        unlock="SpellForgeLevel",
+        untrained=("DisableProduction", "EnabledByCalendar"),
     ),
     GameTableSpec(
         table="heroes",
@@ -132,7 +141,27 @@ HALL_NAMES: dict[Hall, str] = {
     "blacksmith": "Blacksmith",
     "builder_hall": "BB Builder Hall",
     "star_laboratory": "BB Star Laboratory",
+    "barracks": "Barracks",
+    "dark_barracks": "Dark Barracks",
+    "siege_workshop": "Siege Workshop",
+    "spell_factory": "Spell Factory",
+    "dark_spell_factory": "Dark Spell Factory",
+    "builder_barracks": "BB Barracks",
 }
+# The column naming the building that trains a troop, siege machine or spell,
+# by the internal name `HALL_NAMES` gives. Its level in the table's `unlock`
+# column, written on the first row only, is what unlocks the entity's first
+# level, which is unlocked rather than researched: that row's laboratory cell
+# gates nothing (the Barbarian's asks laboratory 1, which needs town hall 3,
+# while the barracks that trains it stands from town hall 1). Checked on
+# 18.647.5 against the account's export of 2026-11-11: every troop, siege
+# machine and spell it holds stands at or past its building's level, and the
+# two builder base troops it lacks ask a Builder Barracks past its 10. A row
+# flagged `untrained` is not unlocked by the building it writes: one that
+# cannot be trained, an event's (its calendar), or a super troop (its licence,
+# which these tables do not hold, asks for its base troop's level, and its
+# `BarrackLevel` is that troop's).
+TRAINED_IN = "ProductionBuilding"
 # The game's resource names as `GameLevel.cost` spells them; the builder base's
 # `Gold2` and `Elixir2` are its own gold and elixir.
 RESOURCES = {
@@ -151,7 +180,7 @@ TIME_UNITS = (("D", 86_400), ("H", 3_600), ("M", 60), ("S", 1))
 # another is read again from the emulator rather than used, so raise this with
 # any change to what `build` writes from the same tables, a value as much as
 # the shape.
-READING = 1
+READING = 2
 # A table with no `GlobalID` numbers its entities from its class times this.
 CLASS_SIZE = 1_000_000
 
@@ -224,6 +253,8 @@ def _seconds(row: Row, prefix: str, header: list[str]) -> int | None:
 def _check_columns(spec: GameTableSpec, header: list[str]) -> None:
     wanted = ["Name", "TID", *spec.needs]
     wanted += [column for column in (spec.level, spec.cost, spec.resource) if column]
+    if spec.unlock:
+        wanted += [TRAINED_IN, spec.unlock, *spec.untrained]
     if spec.prefix is None:
         wanted.append("GlobalID")
     missing = [column for column in wanted if column not in header]
@@ -242,7 +273,8 @@ def _levels(
     requirement cell is the row above's, within the entity. Where a row's price
     buys the next level, level L takes the price and time of the row at level
     L-1 and keeps its own requirements. A level written twice keeps its first
-    row.
+    row. In a table with an `unlock` column, the first row's requirement is
+    what unlocks it (`_unlock`) in place of its own.
     """
     carried: Row = {}
     read: dict[int, tuple[dict[Hall, int], dict[str, int], int | None]] = {}
@@ -257,6 +289,8 @@ def _levels(
         for column, hall in spec.needs.items():
             if value := _number(carried.get(column, "")):
                 needs[NIGHT_HALLS.get(hall, hall) if night else hall] = value
+        if spec.unlock and row is rows[0]:
+            needs = _unlock(spec, row)
         price = (
             _price(row.get(spec.cost, ""), carried.get(spec.resource or "", ""))
             if spec.cost
@@ -270,6 +304,22 @@ def _levels(
         cost, time = (bought[1], bought[2]) if bought else ({}, None)
         levels.append(GameLevel(lvl=lvl, needs=needs, cost=cost, time=time))
     return levels
+
+
+def _unlock(spec: GameTableSpec, row: Row) -> dict[Hall, int]:
+    """The building that trains a troop or spell, at the level of it its first row says unlocks it.
+
+    Empty for a row that names no building or level, or that a flag marks as
+    not unlocked by it.
+    """
+    building = row.get(TRAINED_IN, "").strip()
+    level = _number(row.get(spec.unlock or "", ""))
+    if not building or not level or any(row.get(flag) == "TRUE" for flag in spec.untrained):
+        return {}
+    hall = next((hall for hall, name in HALL_NAMES.items() if name == building), None)
+    if hall is None:
+        raise GameDataError(f"{spec.table} 的 {row['Name']} 由 {building} 訓練，不認得這棟建築")
+    return {hall: level}
 
 
 def _entities(

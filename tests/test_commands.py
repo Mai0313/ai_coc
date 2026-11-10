@@ -41,6 +41,7 @@ from ai_coc.models import (
     GameDialog,
     GameEntity,
     PlateCount,
+    SearchNeed,
     SheetOffer,
     AdbEndpoint,
     CartOutcome,
@@ -85,7 +86,7 @@ from ai_coc.ui.runner import ScreenRunner
 from ai_coc.adapters.adb import PNG_MAGIC, AdbController, AdbControlError
 from ai_coc.parsers.home import PANEL_CLOSE, CLOCK_TOWER_BELOW
 from ai_coc.parsers.village import merge
-from ai_coc.parsers.gamedata import GameDataError
+from ai_coc.parsers.gamedata import READING, GameDataError
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -3094,12 +3095,45 @@ class SearchTests(unittest.TestCase):
 
     TABLES = GameEntities(
         game_version="1.2.3",
-        reading=1,
-        halls={"town_hall": 1000001},
+        reading=READING,
+        halls={"town_hall": 1000001, "builder_barracks": 1000040, "siege_workshop": 1000059},
         entities=[
             _tower(1000009, "箭塔", "Archer Tower", "day", 5),
             _tower(1000048, "箭塔", "Archer Tower", "night", 5),
             _tower(1000084, "多人箭塔", "Multi-Archer Tower", "day", 4),
+            _tower(1000040, "建築大師訓練營", "Builder Barracks", "night", 12),
+            _tower(1000059, "攻城機器工坊", "Workshop", "day", 9),
+            GameEntity(
+                data_id=4000070,
+                zh="飛豬騎士",
+                en="Hog Glider",
+                world="night",
+                table="characters",
+                max_lvl=16,
+                levels=[
+                    GameLevel(lvl=15, needs={"builder_barracks": 11}),
+                    GameLevel(lvl=16, needs={"star_laboratory": 9}, cost={"elixir": 5}, time=60),
+                ],
+            ),
+            GameEntity(
+                data_id=4000051,
+                zh="攻城戰車",
+                en="Wall Wrecker",
+                world="day",
+                table="characters",
+                max_lvl=1,
+                levels=[GameLevel(lvl=1, needs={"siege_workshop": 1})],
+            ),
+            # A super troop, which these tables give nothing to unlock it by.
+            GameEntity(
+                data_id=4000063,
+                zh="地獄飛龍",
+                en="Inferno Dragon",
+                world="day",
+                table="characters",
+                max_lvl=1,
+                levels=[GameLevel(lvl=1)],
+            ),
             GameEntity(
                 data_id=4000059,
                 zh="雷電飛龍",
@@ -3133,7 +3167,7 @@ class SearchTests(unittest.TestCase):
         ],
         "units": [{"data": 4000059, "lvl": 1}],
         "helpers": [{"data": 93000000, "lvl": 8, "helper_cooldown": 120}],
-        "buildings2": [{"data": 1000048, "lvl": 2}],
+        "buildings2": [{"data": 1000048, "lvl": 2}, {"data": 1000040, "lvl": 10}],
     })
     AT = 1793534400
 
@@ -3258,12 +3292,41 @@ class SearchTests(unittest.TestCase):
         # Level 4 needs a town hall 4 and this village's is 3.
         assert "  下一次 4 級 400 金幣, 4 分鐘 (大本營或殿堂等級還不夠)" in text
         assert "  下一次 3 級 300 金幣, 3 分鐘\n" in text
-        assert "箭塔 / Archer Tower  #1000009  日世界 buildings  滿級 5\n  村莊裡沒有" in text
+        # A building's first level is not said to unlock it.
+        assert "箭塔 / Archer Tower  #1000009  日世界 buildings  滿級 5\n  村莊裡沒有\n" in text
         assert text.endswith(commands.LIST_PRICE)
         every = commands.search_text(commands.search("多人箭塔", every_row=True))
         assert "  日世界  buildings  3 級 1 個  在升級, " in every
         assert "  日世界  buildings  2 級 2 個  下一次 3 級 300 金幣, 3 分鐘" in every
         assert " 能再派" in commands.search_text(commands.search("", section="helpers"))
+
+    def test_one_the_village_lacks_says_what_unlocks_it_and_where_the_village_stands(self) -> None:
+        self._keep()
+        # An export saved before the tables named the barracks has no level of
+        # it in its own halls; the rows still have it.
+        path = commands.ACCOUNT_JSON_DIR / "#TEST_2026-11-01.json"
+        saved = VillageExport.model_validate_json(path.read_text(encoding="utf-8"))
+        path.write_text(saved.model_copy(update={"halls": {}}).model_dump_json(), encoding="utf-8")
+        [glider] = commands.search("飛豬騎士").hits
+        assert glider.unlock == [
+            SearchNeed(hall="builder_barracks", zh="建築大師訓練營", lvl=11, village=10)
+        ]
+        assert commands.search("多人箭塔").hits[0].unlock == []
+        text = commands.search_text(commands.search("騎士"))
+        assert (
+            "飛豬騎士 / Hog Glider  #4000070  夜世界 characters  滿級 16\n"
+            "  村莊裡沒有, 解鎖要 建築大師訓練營 11 級 (村莊裡 10 級)\n"
+        ) in text
+        text = commands.search_text(commands.search("4000051"))
+        assert "  村莊裡沒有, 解鎖要 攻城機器工坊 1 級 (村莊裡還沒有)\n" in text
+        # Nothing in the tables unlocks it, so nothing is said.
+        text = commands.search_text(commands.search("地獄飛龍"))
+        assert "  村莊裡沒有\n" in text
+        # Tables an older reading built name the laboratory there, so they unlock nothing.
+        older = self.TABLES.model_copy(update={"reading": READING - 1})
+        kept = gamedata.GAME_DATA_DIR / "1.2.3" / "entities.json"
+        kept.write_text(older.model_dump_json(), encoding="utf-8")
+        assert commands.search("飛豬騎士").hits[0].unlock == []
 
 
 class StorageCeilingTests(unittest.TestCase):

@@ -2181,7 +2181,8 @@ class GrowthReport(BaseModel):
 # `GameLevel.needs` gives each. A builder base entity's town hall is the builder
 # hall and its laboratory the star laboratory; the pet house and the blacksmith
 # are what the pet and equipment tables call their own `LaboratoryLevel` and
-# `RequiredBlacksmithLevel`.
+# `RequiredBlacksmithLevel`. The last six train the troops, siege machines and
+# spells, whose first level is unlocked by the one that trains each.
 Hall = Literal[
     "town_hall",
     "laboratory",
@@ -2190,6 +2191,12 @@ Hall = Literal[
     "blacksmith",
     "builder_hall",
     "star_laboratory",
+    "barracks",
+    "dark_barracks",
+    "siege_workshop",
+    "spell_factory",
+    "dark_spell_factory",
+    "builder_barracks",
 ]
 # The game's logic tables `ai_coc gamedata` reads, by file name. `character_items`
 # is the hero equipment and `villager_apprentices` the helpers.
@@ -2232,13 +2239,19 @@ class GameTableSpec(BaseModel):
     buys_own_level: bool = False
     # Requirement column -> the hall it names.
     needs: dict[str, Hall] = Field(default_factory=dict)
+    # For a table whose first level is unlocked rather than bought: the column
+    # holding the level of the building named in its `ProductionBuilding` that
+    # unlocks it, which stands in for `needs` on that level, and the flag
+    # columns that, any of them TRUE, mark a row that building does not unlock.
+    unlock: str | None = None
+    untrained: tuple[str, ...] = ()
 
 
 class GameLevel(BaseModel):
     """One level of one entity in the game's own tables.
 
-    `needs` is the level each hall has to be at for this level to be bought.
-    `cost` (resource -> amount) and `time` (seconds) are what buying this level
+    `needs` is the level each hall has to be at for this level to be bought,
+    or, on a troop's or spell's first level, unlocked. `cost` (resource -> amount) and `time` (seconds) are what buying this level
     takes at **list price**: the gold pass and events discount upgrades, so what
     the build panel asks today can be less, and a level with no price written
     for it (level 1 of a troop, which is unlocked rather than bought) has an
@@ -2353,6 +2366,21 @@ class SearchRow(BaseModel):
     row: ExportRow
 
 
+class SearchNeed(BaseModel):
+    """One hall the first level of a troop or spell the village lacks needs.
+
+    `zh` is the game's name for the hall's building, `lvl` the level it needs,
+    and `village` the village's level of it in the newest export, 0 for none.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    hall: Hall
+    zh: str | None = None
+    lvl: int
+    village: int
+
+
 class SearchHit(BaseModel):
     """One data_id `ai_coc search` matched: what the game's tables say of it, and the player's rows of it.
 
@@ -2365,7 +2393,9 @@ class SearchHit(BaseModel):
     different next upgrade the rows can start, at list price, and `ready_at`
     when a helper can next be sent. `count` 0 is one the newest export does
     not hold, or every hit when no export is saved (`SearchReport.exported_at`
-    None). `rows` is every row as the export has it, only under `--all`.
+    None); `unlock` is what the first level of a troop, siege machine or
+    spell it does not hold needs.
+    `rows` is every row as the export has it, only under `--all`.
     """
 
     data_id: int
@@ -2377,6 +2407,7 @@ class SearchHit(BaseModel):
     levels: list[GameLevel] = Field(default_factory=list)
     count: int = 0
     owned: dict[int, int] = Field(default_factory=dict)
+    unlock: list[SearchNeed] = Field(default_factory=list)
     limited_lvl: int | None = None
     upgrading: list[SearchUpgrade] = Field(default_factory=list)
     next: list[NextUpgrade] = Field(default_factory=list)

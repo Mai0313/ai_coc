@@ -27,8 +27,8 @@ if TYPE_CHECKING:
 COLUMNS: dict[GameTable, str] = {
     "buildings": "Name,GlobalID,BuildingLevel,TID,BuildTimeD,BuildTimeH,BuildTimeM,BuildTimeS,BuildResource,BuildCost,TownHallLevel",
     "traps": "Name,GlobalID,Level,TID,BuildResource,BuildTimeD,BuildTimeH,BuildTimeM,BuildCost,TownHallLevel,VillageType",
-    "characters": "Name,GlobalID,VisualLevel,TID,LaboratoryLevel,UpgradeTimeH,UpgradeTimeM,UpgradeResource,UpgradeCost",
-    "spells": "Name,GlobalID,Level,TID,LaboratoryLevel,UpgradeTimeH,UpgradeResource,UpgradeCost",
+    "characters": "Name,GlobalID,VisualLevel,TID,LaboratoryLevel,UpgradeTimeH,UpgradeTimeM,UpgradeResource,UpgradeCost,ProductionBuilding,BarrackLevel,DisableProduction,Deprecated,EnabledByCalendar,EnabledBySuperLicence",
+    "spells": "Name,GlobalID,Level,TID,LaboratoryLevel,UpgradeTimeH,UpgradeResource,UpgradeCost,ProductionBuilding,SpellForgeLevel,DisableProduction,EnabledByCalendar",
     "heroes": "Name,VisualLevel,TID,UpgradeTimeH,UpgradeResource,UpgradeCost,RequiredTownHallLevel,RequiredHeroTavernLevel",
     "pets": "Name,TroopLevel,TID,LaboratoryLevel,UpgradeTimeH,UpgradeTimeM,UpgradeResource,UpgradeCost",
     "character_items": "Name,Level,TID,RequiredBlacksmithLevel,UpgradeResources,UpgradeCosts",
@@ -43,6 +43,8 @@ LABORATORY = "Laboratory,1000007,1,,,,,,Elixir,100,1"
 HERO_HALL = "Hero Hall,1000071,1,,,,,,Gold,100,7"
 BUILDER_HALL = "BB Builder Hall,1000034,1,,,,,,Gold2,0,"
 STAR_LABORATORY = "BB Star Laboratory,1000046,1,,,,,,Elixir2,100,2"
+BARRACKS = "Barracks,1000006,1,,,,,,Elixir,100,1"
+SPELL_FACTORY = "Spell Factory,1000020,1,,,,,,Elixir,150000,5"
 
 
 def _table(table: GameTable, *rows: str, header: str | None = None) -> str:
@@ -138,12 +140,13 @@ class BuildTests(unittest.TestCase):
                 "buildings",
                 TOWN_HALL,
                 LABORATORY,
+                BARRACKS,
                 "Cannon,1000008,1,,,,,,Gold,250,1",
                 ",,2,,1,2,,,,1000,2",
             ),
             characters=_table(
                 "characters",
-                "Barbarian,4000000,1,,1,1,,Elixir,300",
+                "Barbarian,4000000,1,,1,1,,Elixir,300,Barracks,1",
                 ",,2,,1,2,30,,900",
                 ",,3,,2,,,,",
             ),
@@ -159,9 +162,10 @@ class BuildTests(unittest.TestCase):
             ({"elixir": 900}, 2 * 3_600 + 30 * 60),
         ]
         # A requirement is for having the level of the row it is written on,
-        # so it does not move with the price.
+        # so it does not move with the price; the first level is unlocked by
+        # the barracks, not researched.
         assert [level.needs for level in barbarian] == [
-            {"laboratory": 1},
+            {"barracks": 1},
             {"laboratory": 1},
             {"laboratory": 2},
         ]
@@ -234,7 +238,9 @@ class BuildTests(unittest.TestCase):
                 "BB Barracks,1000040,1,,,,,,Elixir2,1000,1",
             ),
             characters=_table(
-                "characters", "BB Night Witch,4000042,9,,6,48,,Elixir2,1400000", ",,10,,6,,,,"
+                "characters",
+                "BB Night Witch,4000042,9,,6,48,,Elixir2,1400000,BB Barracks,8",
+                ",,10,,6,,,,",
             ),
             heroes=_table("heroes", "BB Battle Machine,1,,12,Elixir2,1000000,5,0"),
             # Not named `BB `, and the builder base's all the same.
@@ -256,6 +262,8 @@ class BuildTests(unittest.TestCase):
             "cost": {"elixir": 1_400_000},
             "time": 48 * 3_600,
         }
+        # Its first level is unlocked by the builder base's own barracks.
+        assert witch.levels[0].needs == {"builder_barracks": 8}
         # The builder base's heroes write their hall as 0, which is no requirement.
         assert _entity(tables, 28000000).levels[0].needs == {"builder_hall": 5}
 
@@ -283,11 +291,59 @@ class BuildTests(unittest.TestCase):
             )
 
     def test_halls_resolve_to_building_ids_and_a_missing_one_is_refused(self) -> None:
-        troop = _table("characters", "Barbarian,4000000,1,,1,1,,Elixir,300")
-        tables = _build(buildings=_table("buildings", TOWN_HALL, LABORATORY), characters=troop)
-        assert tables.halls == {"town_hall": 1000001, "laboratory": 1000007}
-        with pytest.raises(GameDataError, match="laboratory"):
-            _build(buildings=_table("buildings", TOWN_HALL), characters=troop)
+        troop = _table(
+            "characters", "Barbarian,4000000,1,,1,1,,Elixir,300,Barracks,1", ",,2,,1,,,,"
+        )
+        tables = _build(
+            buildings=_table("buildings", TOWN_HALL, LABORATORY, BARRACKS), characters=troop
+        )
+        assert tables.halls == {"town_hall": 1000001, "laboratory": 1000007, "barracks": 1000006}
+        for kept, missing in ((LABORATORY, "barracks"), (BARRACKS, "laboratory")):
+            with pytest.raises(GameDataError, match=missing):
+                _build(buildings=_table("buildings", TOWN_HALL, kept), characters=troop)
+
+    def test_a_troop_or_spell_is_unlocked_by_the_building_that_trains_it(self) -> None:
+        tables = _build(
+            buildings=_table("buildings", TOWN_HALL, LABORATORY, BARRACKS, SPELL_FACTORY),
+            characters=_table(
+                "characters",
+                "Barbarian,4000000,1,,1,,,Elixir,300,Barracks,1",
+                # A super troop writes its base troop's barracks level, and an
+                # untrainable, retired or event one a building that does not
+                # unlock it, each flagged by its own column.
+                "Inferno Dragon,4000063,1,,10,,,Elixir,,Barracks,11,,,,TRUE",
+                ",,2,,,,,,",
+                "Prototype3,4000093,1,,1,,,Elixir,,Barracks,1,TRUE",
+                "UnusedSiegePrototype,4000189,1,,9,,,Elixir,,Siege Workshop,1,,TRUE",
+                "Ice Wizard,4000030,1,,1,,,Elixir,,Barracks,1,,,TRUE",
+            ),
+            spells=_table(
+                "spells",
+                "Freeze,26000005,1,,7,24,Elixir,1200000,Spell Factory,4",
+                ",,2,,7,36,,1700000,,",
+                "Santas Surprise,26000006,1,,1,,Elixir,,Spell Factory,1,,TRUE",
+                "Slow,26000007,1,,1,,Elixir,,Spell Factory,1,TRUE",
+            ),
+        )
+        assert _entity(tables, 4000000).levels[0].needs == {"barracks": 1}
+        freeze = _entity(tables, 26000005)
+        assert [level.needs for level in freeze.levels] == [
+            {"spell_factory": 4},
+            {"laboratory": 7},
+        ]
+        # A flagged row is not unlocked by the building it writes, and its own
+        # first laboratory cell is no unlock either; a later level keeps it.
+        dragon = _entity(tables, 4000063)
+        assert [level.needs for level in dragon.levels] == [{}, {"laboratory": 10}]
+        for flagged in (4000093, 4000189, 4000030, 26000006, 26000007):
+            assert _entity(tables, flagged).levels[0].needs == {}, flagged
+
+    def test_a_troop_trained_in_a_building_with_no_hall_is_refused(self) -> None:
+        with pytest.raises(GameDataError, match="Hut"):
+            _build(
+                buildings=_table("buildings", TOWN_HALL),
+                characters=_table("characters", "Hut Troop,4000999,1,,1,,,Elixir,,Hut,1"),
+            )
 
     def test_a_renamed_column_is_refused_rather_than_read_as_blank(self) -> None:
         renamed = COLUMNS["buildings"].replace("BuildCost", "BuildPrice")
