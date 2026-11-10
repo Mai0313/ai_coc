@@ -289,6 +289,18 @@ class AdbController(BaseModel):
         except adbutils.AdbError as exc:
             raise AdbControlError(f"ADB 指令失敗 {printable}：{exc}") from exc
 
+    def shell_bytes(self, command: list[str], timeout: float = 30) -> bytes:
+        """What a command writes to stdout, byte for byte, for output that is not text.
+
+        Safe for binary because adbutils runs the command without a terminal,
+        which is what lets `screenshot` take a PNG the same way.
+        """
+        logger.debug("adb -s %s shell %s (bytes)", self.serial, " ".join(command))
+        try:
+            return self.connect().shell(command, encoding=None, timeout=timeout)
+        except adbutils.AdbError as exc:
+            raise AdbControlError(f"ADB 指令失敗 {' '.join(command)}：{exc}") from exc
+
     def display_for(self, package: str) -> DisplayTarget:
         """Locate the display holding a package; MuMu leaves display 0 on its own launcher."""
         logical = focused_display(self.shell(["dumpsys", "window", "displays"]), package)

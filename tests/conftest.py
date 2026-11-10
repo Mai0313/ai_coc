@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from ai_coc import commands, logging_setup
-from ai_coc.adapters import config
+from ai_coc.adapters import config, gamedata
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -30,7 +30,7 @@ if TYPE_CHECKING:
 
 @pytest.fixture(autouse=True)
 def _state_file_in_tmp(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Point the state file, the settings file and the journal at paths of this test's own, for every test.
+    """Point the state file, the settings file, the journal and the game's tables at paths of this test's own, for every test.
 
     `_held` goes back with it: it is module state that outlives one test, and
     left set by a test that claimed, the next test's `stop_requested` would read
@@ -42,3 +42,4 @@ def _state_file_in_tmp(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(commands, "_borrowed", None)
     monkeypatch.setattr(config, "data_root", lambda: tmp_path)
     monkeypatch.setattr(logging_setup, "JOURNAL_PATH", tmp_path / "runs.jsonl")
+    monkeypatch.setattr(gamedata, "GAME_DATA_DIR", tmp_path / "game_data")

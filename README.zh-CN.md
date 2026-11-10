@@ -129,6 +129,7 @@ ai_coc export --table                 # 同一份东西,画成表格给人看
 ai_coc export --last                  # 直接读上一次的结果,完全不碰游戏
 ai_coc growth                         # 比对存下的最旧跟最新两份导出,列出两个世界升了什么;--start-date / --end-date 缩小范围
 ai_coc turnaround                     # 从运行记录算每次升级从到点到按下确认花了几秒,按王、实验室、建筑、战宠分;--since 指定起算日
+ai_coc gamedata                       # 从模拟器上的游戏文件读出游戏自己的表(中英文名称、最高等级、每级的要求、标价和时间),每个游戏版本读一次,存在 ~/.ai_coc/game_data/<版本>/;--refresh 重新读
 ai_coc view --zoom out                # 把镜头拉回所有坐标当初测量的那个视野
 ai_coc world                          # 现在在日世界还是夜世界
 ai_coc world --go day                 # 坐船切过去,已经在那边就什么都不做

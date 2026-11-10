@@ -60,16 +60,17 @@ def _log_uncaught(kind: type[BaseException], value: BaseException, trace: Any) -
     logger.critical("未處理的例外", exc_info=(kind, value, trace))
 
 
-# The sub-commands that never open ADB: `read` parses a PNG off the disk,
-# `stop` and `giveback` each change one field of the state file, `watch`
+# The sub-commands that never capture the screen: `read` parses a PNG off the
+# disk, `stop` and `giveback` each change one field of the state file, `watch`
 # sleeps on its own section of it, `note` keeps the notes section, and
-# `growth` compares saved exports, and `turnaround` reads the journal. Every
+# `growth` compares saved exports, and `turnaround` reads the journal, none of
+# them opening ADB; `gamedata` opens it only to read the game's files. Every
 # other one captures the screen, so
 # every other one takes `--debug` and `--shot-every`.
-NO_SCREEN = ("read", "stop", "giveback", "watch", "note", "growth", "turnaround")
+NO_SCREEN = ("read", "stop", "giveback", "watch", "note", "growth", "turnaround", "gamedata")
 
 # The sub-commands that hold no claim on the emulator, listed the way round
-# that fails safely: the ones that never open ADB, and `capture`. Everything
+# that fails safely: the ones that never capture the screen, and `capture`. Everything
 # else claims, short ones included — a `collect` holds the display for the
 # eight seconds it takes, and a session reading the state file to find out
 # whether the screen is free wants that as much as it wants to know about a
@@ -117,6 +118,10 @@ COMMANDS = (
             ("export", "從遊戲匯出整個村莊的資料，對上名稱後存起來"),
             ("growth", "不碰遊戲，比對存下的兩份村莊匯出，列出兩個世界升了什麼"),
             ("turnaround", "不碰遊戲，從紀錄算每次升級從到點到按下確認花了幾秒"),
+            (
+                "gamedata",
+                "從模擬器上的遊戲檔讀出中英文名稱、最高等級和每級的要求、牌價、時間，照遊戲版本存起來；不碰畫面",
+            ),
             ("capture", "連續截圖，存進這次的紀錄資料夾"),
         ),
     ),
@@ -338,6 +343,9 @@ def _parser() -> argparse.ArgumentParser:
         "--table", action="store_true", help="印成表格給人看；不給就跟其他指令一樣輸出 JSON"
     )
     village.add_argument("--last", action="store_true", help="不碰遊戲，直接讀上一次匯出的結果")
+    sub.choices["gamedata"].add_argument(
+        "--refresh", action="store_true", help="這個版本已經存過也重新讀一次"
+    )
     # No directory argument: it writes into this run's own `frames/` like every
     # other command that saves what it saw. Whoever ran it used to invent a
     # path, and `--label` is what that need becomes.
@@ -445,6 +453,7 @@ def _answer(arguments: argparse.Namespace, run: RunLog) -> BaseModel | str:
         ),
         "read": lambda: commands.read(a.png.read_bytes()),
         "export": lambda: commands.export(run.frames, a.last),
+        "gamedata": lambda: commands.gamedata(run.frames, a.refresh),
     }
     return handlers[a.command]()
 
