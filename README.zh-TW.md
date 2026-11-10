@@ -130,6 +130,7 @@ ai_coc export --last                  # 直接讀上一次的結果,完全不碰
 ai_coc growth                         # 比對存下的最舊跟最新兩份匯出,列出兩個世界升了什麼;--start-date / --end-date 縮小範圍
 ai_coc turnaround                     # 從打資源紀錄算每次升級從到點到按下確認花了幾秒,依王、實驗室、建築、戰寵分;--since 指定起算日
 ai_coc gamedata                       # 從模擬器上的遊戲檔讀出遊戲自己的表(中英文名稱、最高等級、每級的要求、牌價和時間),每個遊戲版本讀一次,存在 ~/.ai_coc/game_data/<版本>/;--refresh 重新讀
+ai_coc search "Electro Dragon"        # 照 data_id 或中英文名稱的一段查那份表,村莊裡有的再列出等級、升級中幾點好跟下一級的牌價;--all 每一列分開列,--section helpers 列最後那份匯出的一區;不碰遊戲
 ai_coc view --zoom out                # 把鏡頭拉回所有座標當初量測的那個視野
 ai_coc world                          # 現在在日世界還是夜世界
 ai_coc world --go day                 # 坐船切過去,已經在那邊就什麼都不做

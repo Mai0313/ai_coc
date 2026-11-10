@@ -2325,6 +2325,83 @@ class GameDataReport(BaseModel):
         return len(self.tables.entities)
 
 
+# How `ai_coc search` ended. `no_tables` is no game tables kept to search, and
+# `no_export` no saved export for `--section` to list; `no_section` is a
+# section name the newest export does not hold, and `no_match` nothing named
+# or numbered like the query.
+SearchOutcome = Literal["found", "no_match", "no_tables", "no_export", "no_section"]
+
+
+class SearchUpgrade(BaseModel):
+    """One of the player's copies being upgraded from `lvl`, finishing at `done_at`.
+
+    `extra` is the job of an event's goblin builder or researcher.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    lvl: int | None
+    done_at: str | None
+    extra: bool = False
+
+
+class SearchRow(BaseModel):
+    """One row of the newest export, with the village and section it sits in."""
+
+    world: World
+    section: str
+    row: ExportRow
+
+
+class SearchHit(BaseModel):
+    """One data_id `ai_coc search` matched: what the game's tables say of it, and the player's rows of it.
+
+    The names, `world`, `table`, `max_lvl` and `levels` are the tables'; a
+    data_id they lack takes its names and `max_lvl` from its rows and has no
+    `table` or `levels`. `levels` is every level's `needs`, `cost` and `time`
+    at list price. The rest is the newest export: `count` copies in all,
+    `owned` how many stand at each level (a row with no level counts only in
+    `count`), `upgrading` each copy being upgraded, soonest first, `next` each
+    different next upgrade the rows can start, at list price, and `ready_at`
+    when a helper can next be sent. `count` 0 is one the newest export does
+    not hold, or every hit when no export is saved (`SearchReport.exported_at`
+    None). `rows` is every row as the export has it, only under `--all`.
+    """
+
+    data_id: int
+    zh: str | None = None
+    en: str | None = None
+    world: World
+    table: GameTable | None = None
+    max_lvl: int | None = None
+    levels: list[GameLevel] = Field(default_factory=list)
+    count: int = 0
+    owned: dict[int, int] = Field(default_factory=dict)
+    limited_lvl: int | None = None
+    upgrading: list[SearchUpgrade] = Field(default_factory=list)
+    next: list[NextUpgrade] = Field(default_factory=list)
+    ready_at: str | None = None
+    rows: list[SearchRow] | None = None
+
+
+class SearchReport(BaseModel):
+    """What `ai_coc search` answers: what it searched, in which tables and export, and what it found.
+
+    `game_version` is the tables searched and `exported_at` the export the
+    player's rows come from, each None where none is kept. `sections` is the
+    newest export's section names, given only under `no_section`.
+    """
+
+    query: str
+    section: str | None = None
+    outcome: SearchOutcome
+    game_version: str | None = None
+    tag: str | None = None
+    exported_at: str | None = None
+    sections: list[str] = Field(default_factory=list)
+    hits: list[SearchHit] = Field(default_factory=list)
+
+
 # Whose slot an upgrade used, as `ai_coc turnaround` counts it, in the user's
 # words: 王, 實驗室, 建築, and the pet house beside them.
 TurnaroundGroup = Literal["hero", "lab", "building", "pet"]

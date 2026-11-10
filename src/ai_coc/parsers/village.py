@@ -7,10 +7,13 @@ from datetime import UTC, datetime
 from collections import Counter
 
 from ai_coc.models import (
+    SearchHit,
+    SearchRow,
     ClockTower,
     LevelChange,
     NextUpgrade,
     UpgradeTimer,
+    SearchUpgrade,
     VillageExport,
     HelperCooldown,
     VillageDocument,
@@ -326,6 +329,79 @@ def growth(start: VillageExport, end: VillageExport) -> list[LevelChange]:
             change.zh or "",
             change.data_id,
         ),
+    )
+
+
+def search(
+    tables: GameEntities | None,
+    export: VillageExport | None,
+    query: str,
+    section: str | None = None,
+    every_row: bool = False,
+) -> list[SearchHit]:
+    """Every data_id named or numbered like `query`, with the player's rows of it, the owned ones first.
+
+    An all-digit query is one exact data_id; anything else is a piece of the
+    Chinese name or, ignoring case, of the English one, and an empty one
+    matches everything. Without `section` it searches every entity of the
+    tables, plus any data_id the export holds that they lack; with it, only
+    the data_ids in that section of the export, on both villages.
+    """
+    known = {entity.data_id: entity for entity in tables.entities} if tables else {}
+    owned: dict[int, list[tuple[World, str, ExportRow]]] = {}
+    for world, name, row in export.rows() if export else ():
+        if section is None or name == section:
+            owned.setdefault(row.data, []).append((world, name, row))
+    ids = list(owned) if section is not None else [*known, *(i for i in owned if i not in known)]
+    hits = [_hit(i, known.get(i), owned.get(i, []), every_row) for i in ids]
+    found = [hit for hit in hits if _named(hit, query)]
+    return sorted(found, key=lambda hit: (hit.count == 0, hit.data_id))
+
+
+def _named(hit: SearchHit, query: str) -> bool:
+    if query.isdigit():
+        return hit.data_id == int(query)
+    return query in (hit.zh or "") or query.casefold() in (hit.en or "").casefold()
+
+
+def _hit(
+    data_id: int,
+    entity: GameEntity | None,
+    rows: list[tuple[World, str, ExportRow]],
+    every_row: bool,
+) -> SearchHit:
+    """One data_id as the tables describe it, with its rows summed up; `rows` is never empty without `entity`."""
+    named: GameEntity | ExportRow = entity if entity is not None else rows[0][2]
+    levels: Counter[int] = Counter()
+    nexts: list[NextUpgrade] = []
+    for _, _, row in rows:
+        if row.lvl is not None:
+            levels[row.lvl] += row.cnt or 1
+        # By equality: a frozen model holding a dict cannot be hashed.
+        if row.next is not None and row.next not in nexts:
+            nexts.append(row.next)
+    return SearchHit(
+        data_id=data_id,
+        zh=named.zh,
+        en=named.en,
+        world=entity.world if entity is not None else rows[0][0],
+        table=entity.table if entity is not None else None,
+        max_lvl=named.max_lvl,
+        levels=entity.levels if entity is not None else [],
+        count=sum(row.cnt or 1 for _, _, row in rows),
+        owned=dict(sorted(levels.items())),
+        limited_lvl=next((row.limited_lvl for _, _, row in rows), None),
+        upgrading=sorted(
+            (
+                SearchUpgrade(lvl=row.lvl, done_at=row.done_at, extra=bool(row.extra))
+                for _, _, row in rows
+                if row.timer is not None
+            ),
+            key=lambda one: one.done_at or "",
+        ),
+        next=sorted(nexts, key=lambda one: one.lvl),
+        ready_at=min((row.ready_at for _, _, row in rows if row.ready_at), default=None),
+        rows=[SearchRow(world=w, section=s, row=row) for w, s, row in rows] if every_row else None,
     )
 
 

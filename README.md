@@ -130,6 +130,7 @@ ai_coc export --last                  # the last one off the disk, without touch
 ai_coc growth                         # what was upgraded on each village between the oldest and newest saved exports; --start-date / --end-date narrow it
 ai_coc turnaround                     # seconds from each upgrade finishing to the confirm for its next level, per slot, off the run journal; --since narrows it
 ai_coc gamedata                       # the game's own tables (zh and en names, max levels, each level's requirements, list price and time), read off the emulator once per game version into ~/.ai_coc/game_data/<version>/; --refresh reads them again
+ai_coc search "Electro Dragon"        # look a thing up by data_id or by a piece of its Chinese or English name in those tables, with the levels, running upgrades and next list price of the ones the village has; --all lists each row, --section helpers lists one section of the last export; touches nothing
 ai_coc view --zoom out                # put the camera back where every coordinate was measured
 ai_coc world                          # which of the two villages the game is on
 ai_coc world --go day                 # sail there; already being there does nothing

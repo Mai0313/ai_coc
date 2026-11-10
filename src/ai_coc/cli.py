@@ -31,6 +31,7 @@ from ai_coc.models import (
     ExportReport,
     GrowthReport,
     RestartScope,
+    SearchReport,
     AttackOptions,
     DonateOptions,
     LootOverrides,
@@ -63,11 +64,21 @@ def _log_uncaught(kind: type[BaseException], value: BaseException, trace: Any) -
 # The sub-commands that never capture the screen: `read` parses a PNG off the
 # disk, `stop` and `giveback` each change one field of the state file, `watch`
 # sleeps on its own section of it, `note` keeps the notes section, and
-# `growth` compares saved exports, and `turnaround` reads the journal, none of
-# them opening ADB; `gamedata` opens it only to read the game's files. Every
-# other one captures the screen, so
-# every other one takes `--debug` and `--shot-every`.
-NO_SCREEN = ("read", "stop", "giveback", "watch", "note", "growth", "turnaround", "gamedata")
+# `growth` compares saved exports, `turnaround` reads the journal, and
+# `search` reads the kept tables and exports, none of them opening ADB;
+# `gamedata` opens it only to read the game's files. Every other one captures
+# the screen, so every other one takes `--debug` and `--shot-every`.
+NO_SCREEN = (
+    "read",
+    "stop",
+    "giveback",
+    "watch",
+    "note",
+    "growth",
+    "turnaround",
+    "search",
+    "gamedata",
+)
 
 # The sub-commands that hold no claim on the emulator, listed the way round
 # that fails safely: the ones that never capture the screen, and `capture`. Everything
@@ -118,6 +129,10 @@ COMMANDS = (
             ("export", "從遊戲匯出整個村莊的資料，對上名稱後存起來"),
             ("growth", "不碰遊戲，比對存下的兩份村莊匯出，列出兩個世界升了什麼"),
             ("turnaround", "不碰遊戲，從紀錄算每次升級從到點到按下確認花了幾秒"),
+            (
+                "search",
+                "不碰遊戲，照名稱或 data_id 查遊戲的表，村莊裡有的再列出等級、升級中幾點好跟下一級的牌價",
+            ),
             (
                 "gamedata",
                 "從模擬器上的遊戲檔讀出中英文名稱、最高等級和每級的要求、牌價、時間，照遊戲版本存起來；不碰畫面",
@@ -201,6 +216,27 @@ def _growth_flags(grower: argparse.ArgumentParser) -> None:
         ("--end-date", "算到這天結束（含這天）；不給就到存下的最新那一份"),
     ):
         grower.add_argument(flag, type=date.fromisoformat, metavar="YYYY-MM-DD", help=note)
+
+
+def _search_flags(searcher: argparse.ArgumentParser) -> None:
+    """`search` reads only the game's tables kept on disk and the exports `status` and `export` saved."""
+    searcher.add_argument(
+        "query",
+        nargs="?",
+        default="",
+        help="全是數字就是 data_id，不然是中文或英文名稱的一段（英文不分大小寫）",
+    )
+    searcher.add_argument(
+        "--section",
+        metavar="分類",
+        help="只列最新那份村莊匯出的這一區，兩個世界都列，例如 helpers、pets、heroes；有給名稱就在裡面找",
+    )
+    searcher.add_argument(
+        "--all",
+        dest="every_row",
+        action="store_true",
+        help="村莊裡的每一列分開列，各自的等級、升級幾點好、是不是哥布林那格",
+    )
 
 
 def _note_flags(noter: argparse.ArgumentParser) -> None:
@@ -310,6 +346,7 @@ def _parser() -> argparse.ArgumentParser:
     _watch_flags(sub.choices["watch"], sub.choices["stop"])
     _note_flags(sub.choices["note"])
     _growth_flags(sub.choices["growth"])
+    _search_flags(sub.choices["search"])
     sub.choices["turnaround"].add_argument(
         "--since", type=date.fromisoformat, metavar="YYYY-MM-DD", help="只算這天起的；不給就是全部"
     )
@@ -433,6 +470,7 @@ def _answer(arguments: argparse.Namespace, run: RunLog) -> BaseModel | str:
         "note": lambda: commands.note(a.action, a.world, a.item),
         "growth": lambda: commands.growth(a.start_date, a.end_date),
         "turnaround": lambda: commands.turnaround(a.since),
+        "search": lambda: commands.search(a.query, a.section, a.every_row),
         "collect": lambda: commands.collect(run.frames),
         "stock": lambda: commands.stock(run.frames),
         "status": lambda: commands.status(run.frames),
@@ -533,6 +571,8 @@ def _run_command(arguments: argparse.Namespace, run: RunLog) -> int:
         sys.stdout.write(f"{commands.growth_text(answer)}\n")
     elif isinstance(answer, TurnaroundReport):
         sys.stdout.write(f"{commands.turnaround_text(answer)}\n")
+    elif isinstance(answer, SearchReport):
+        sys.stdout.write(f"{commands.search_text(answer)}\n")
     else:
         sys.stdout.write(f"{result}\n")
     # Still not zero, though: the stop meant nothing lined up behind the loan
@@ -595,6 +635,10 @@ def main() -> int:
         parser.print_help()
         return 0
     arguments = parser.parse_args()
+    # Here rather than in `search`, so a search with nothing to look for opens
+    # no run directory, like any other line the parser refuses.
+    if arguments.command == "search" and not (arguments.query or arguments.section):
+        parser.error("search 要給名稱、data_id 或 --section")
     # Opened after parsing, so `--help` and a rejected flag leave no empty
     # directory behind, and so its name can say which command it holds.
     run = RunLog.open(

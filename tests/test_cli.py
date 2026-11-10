@@ -33,6 +33,7 @@ from ai_coc.models import (
     AttackReport,
     AttackSeries,
     ExportReport,
+    SearchReport,
     VillageStock,
     AttackOptions,
     CollectReport,
@@ -54,6 +55,7 @@ MINIMAL: dict[str, list[str]] = {
     "note": [],
     "growth": [],
     "turnaround": [],
+    "search": ["4000059"],
     "collect": [],
     "stock": [],
     "status": [],
@@ -234,14 +236,21 @@ class DispatchTests(unittest.TestCase):
             patch.object(commands, "world") as asked,
             patch.object(commands, "launch") as launched,
             patch.object(commands, "gamedata") as tabled,
+            patch.object(commands, "search") as searched,
         ):
             _answer(_args("gamedata", "--refresh"), self.run)
             _answer(_args("gamedata"), self.run)
+            _answer(_args("search", "箭塔", "--section", "buildings", "--all"), self.run)
+            _answer(_args("search", "--section", "helpers"), self.run)
             _answer(_args("view", "--zoom", "in", "--times", "2"), self.run)
             _answer(_args("world", "--go", "day"), self.run)
             _answer(_args("world"), self.run)
             _answer(_args("launch", "--restart", "game"), self.run)
             _answer(_args("launch"), self.run)
+        assert [call.args for call in searched.call_args_list] == [
+            ("箭塔", "buildings", True),
+            ("", "helpers", False),
+        ]
         viewed.assert_called_once_with(self.run.frames, "in", 2)
         assert [call.args for call in tabled.call_args_list] == [
             (self.run.frames, True),
@@ -361,6 +370,7 @@ class DispatchTests(unittest.TestCase):
             patch.object(commands, "giveback", return_value=""),
             patch.object(commands, "watch", return_value=""),
             patch.object(commands, "gamedata", return_value=""),
+            patch.object(commands, "search", return_value=""),
             patch.object(commands, "claim") as claimed,
             patch("sys.stdout", new_callable=io.StringIO),
         ):
@@ -370,9 +380,33 @@ class DispatchTests(unittest.TestCase):
             _run_command(_args("watch", "--next", "2026-10-12T23:10"), self.run)
             # It reads the game's files over ADB, never the screen.
             _run_command(_args("gamedata", "--refresh"), self.run)
+            # It reads the files `gamedata`, `status` and `export` kept.
+            _run_command(_args("search", "箭塔"), self.run)
             claimed.assert_not_called()
             _run_command(_args("world", "--go", "night"), self.run)
             claimed.assert_called_once()
+
+    def test_a_search_prints_its_lines_and_writes_its_model(self) -> None:
+        found = SearchReport(query="箭塔", outcome="no_match")
+        with (
+            patch.object(commands, "search", return_value=found),
+            patch("sys.stdout", new_callable=io.StringIO) as out,
+        ):
+            _run_command(_args("search", "箭塔"), self.run)
+        written = (self.run.directory / "result.json").read_text(encoding="utf-8")
+        assert written == found.model_dump_json(indent=2)
+        assert out.getvalue() == f"{commands.search_text(found)}\n"
+
+    def test_a_search_for_nothing_is_refused_before_a_run_opens(self) -> None:
+        with (
+            patch.object(sys, "argv", ["ai_coc", "search"]),
+            patch.object(cli, "RunLog") as opened,
+            patch("sys.stderr", new_callable=io.StringIO),
+            pytest.raises(SystemExit) as stopped,
+        ):
+            cli.main()
+        assert stopped.value.code != 0
+        opened.open.assert_not_called()
 
     def test_a_queue_a_stop_ended_answers_rather_than_crashes(self) -> None:
         """`takeover` reads a run with no `result.json` as a killed process, so the
