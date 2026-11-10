@@ -2128,6 +2128,154 @@ class GrowthReport(BaseModel):
     outcome: GrowthOutcome
 
 
+# The buildings whose level gates another entity's levels, under the name
+# `GameLevel.needs` gives each. A builder base entity's town hall is the builder
+# hall and its laboratory the star laboratory; the pet house and the blacksmith
+# are what the pet and equipment tables call their own `LaboratoryLevel` and
+# `RequiredBlacksmithLevel`.
+Hall = Literal[
+    "town_hall",
+    "laboratory",
+    "hero_hall",
+    "pet_house",
+    "blacksmith",
+    "builder_hall",
+    "star_laboratory",
+]
+# The game's logic tables `ai_coc gamedata` reads, by file name. `character_items`
+# is the hero equipment and `villager_apprentices` the helpers.
+GameTable = Literal[
+    "buildings",
+    "traps",
+    "characters",
+    "spells",
+    "heroes",
+    "pets",
+    "character_items",
+    "villager_apprentices",
+    "guardians",
+]
+
+
+class GameTableSpec(BaseModel):
+    """How one of the game's logic tables is read into `GameEntity` rows.
+
+    The tables agree on their layout and on little else: each names its level,
+    price and requirement columns differently, and they disagree on which level
+    a row's price buys, which `buys_own_level` records.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    table: GameTable
+    # The class number for a table with no `GlobalID` column, whose ids are this
+    # times a million plus the entity's position among the table's entities.
+    prefix: int | None = None
+    # None for a table that writes no level, whose rows count up from 1.
+    level: str | None = None
+    cost: str | None = None
+    resource: str | None = None
+    # What the time columns start with; each of `D`, `H`, `M` and `S` after it
+    # that the table has is added up.
+    time: str | None = None
+    # True where a row's price buys that row's level (buildings, traps); False
+    # where it buys the next one, so the last row's is blank.
+    buys_own_level: bool = False
+    # Requirement column -> the hall it names.
+    needs: dict[str, Hall] = Field(default_factory=dict)
+
+
+class GameLevel(BaseModel):
+    """One level of one entity in the game's own tables.
+
+    `needs` is the level each hall has to be at for this level to be bought.
+    `cost` (resource -> amount) and `time` (seconds) are what buying this level
+    takes at **list price**: the gold pass and events discount upgrades, so what
+    the build panel asks today can be less, and a level with no price written
+    for it (level 1 of a troop, which is unlocked rather than bought) has an
+    empty `cost` and no `time`. Resources are `gold`, `elixir` and `dark` (a
+    builder base entity's `gold` and `elixir` are its own), `gems`, and the ores
+    `shiny_ore`, `glowy_ore` and `starry_ore`; one the game adds later keeps the
+    game's own name.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    lvl: int
+    needs: dict[Hall, int] = Field(default_factory=dict)
+    cost: dict[str, int] = Field(default_factory=dict)
+    time: int | None = None
+
+
+class GameEntity(BaseModel):
+    """One building, trap, troop, spell, hero, pet, piece of equipment, helper or guardian.
+
+    `data_id` is the number the village export writes as `data`. `zh` and `en`
+    are the game's own Traditional Chinese and English names, None where the
+    game has no text for it (unused and event variants). `max_lvl` is the
+    highest level the table has, not how many it has: some builder base troops
+    start above 1.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    data_id: int
+    zh: str | None = None
+    en: str | None = None
+    world: World
+    table: GameTable
+    max_lvl: int
+    levels: list[GameLevel]
+
+
+class GameEntities(BaseModel):
+    """`~/.ai_coc/game_data/<version>/entities.json`: every entity of one game version.
+
+    `halls` is the data_id of each building `GameLevel.needs` names, so a
+    requirement can be held against a village export's levels. `reading` is
+    the `parsers.gamedata.READING` that built the file.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    game_version: str
+    reading: int
+    halls: dict[Hall, int]
+    entities: list[GameEntity]
+
+
+# How `ai_coc gamedata` came by its tables: `cached` found the installed
+# version already extracted, `extracted` read it off the emulator now, and
+# `fallback` could do neither and took the newest version kept on disk.
+GameDataOutcome = Literal["cached", "extracted", "fallback"]
+
+
+class GameDataReport(BaseModel):
+    """Which version's tables are in use, where they are kept, and how they were come by.
+
+    `installed` is the version the emulator reports, None when it could not be
+    asked; under `fallback` a value different from `game_version` means the
+    tables are behind the game. `tables` is the whole of them, for a caller in
+    the code; it is left out of the answer, which would run to most of a
+    megabyte.
+    """
+
+    outcome: GameDataOutcome
+    installed: str | None
+    directory: Path
+    tables: GameEntities = Field(exclude=True, repr=False)
+
+    @computed_field
+    @property
+    def game_version(self) -> str:
+        return self.tables.game_version
+
+    @computed_field
+    @property
+    def entities(self) -> int:
+        return len(self.tables.entities)
+
+
 # Whose slot an upgrade used, as `ai_coc turnaround` counts it, in the user's
 # words: 王, 實驗室, 建築, and the pet house beside them.
 TurnaroundGroup = Literal["hero", "lab", "building", "pet"]

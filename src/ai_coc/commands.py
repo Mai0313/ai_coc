@@ -91,6 +91,7 @@ from ai_coc.models import (
     BoundarySurvey,
     CollectOutcome,
     ConfirmOutcome,
+    GameDataReport,
     JournalConfirm,
     LootThresholds,
     StorageCapacity,
@@ -178,6 +179,7 @@ from ai_coc.parsers.building import (
 )
 from ai_coc.parsers.settings import export_row, window_open, settings_open, more_settings_open
 from ai_coc.adapters.emulator import Emulator, EmulatorError
+from ai_coc.adapters.gamedata import game_data
 from ai_coc.adapters.ldplayer import LDPlayerAdapter
 from ai_coc.adapters.clipboard import read_clipboard, clear_clipboard, write_clipboard
 
@@ -3080,6 +3082,15 @@ def capture(frames: FrameLog, count: int = 1, gap: float = 1.5) -> list[Path]:
         if index + 1 < count:
             time.sleep(gap)
     return saved
+
+
+def gamedata(frames: FrameLog, refresh: bool = False) -> GameDataReport:
+    """The game's own tables for the installed version, read off the emulator once per version.
+
+    It reads files over ADB and never the screen, so it takes no claim and
+    starts nothing (`_attached`), like `capture`.
+    """
+    return game_data(lambda: _attached(frames), refresh)
 
 
 # The build panel's rows, its tabs and every sheet a row opens are driven by the

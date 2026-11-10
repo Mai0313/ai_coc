@@ -70,6 +70,7 @@ MINIMAL: dict[str, list[str]] = {
     "capture": [],
     "read": ["shot.png"],
     "export": [],
+    "gamedata": [],
 }
 
 
@@ -232,13 +233,20 @@ class DispatchTests(unittest.TestCase):
             patch.object(commands, "view") as viewed,
             patch.object(commands, "world") as asked,
             patch.object(commands, "launch") as launched,
+            patch.object(commands, "gamedata") as tabled,
         ):
+            _answer(_args("gamedata", "--refresh"), self.run)
+            _answer(_args("gamedata"), self.run)
             _answer(_args("view", "--zoom", "in", "--times", "2"), self.run)
             _answer(_args("world", "--go", "day"), self.run)
             _answer(_args("world"), self.run)
             _answer(_args("launch", "--restart", "game"), self.run)
             _answer(_args("launch"), self.run)
         viewed.assert_called_once_with(self.run.frames, "in", 2)
+        assert [call.args for call in tabled.call_args_list] == [
+            (self.run.frames, True),
+            (self.run.frames, False),
+        ]
         assert [call.args for call in asked.call_args_list] == [
             ("day", self.run.frames),
             (None, self.run.frames),
@@ -355,6 +363,7 @@ class DispatchTests(unittest.TestCase):
             patch.object(commands, "capture", return_value=[]),
             patch.object(commands, "giveback", return_value=""),
             patch.object(commands, "watch", return_value=""),
+            patch.object(commands, "gamedata", return_value=""),
             patch.object(commands, "claim") as claimed,
             patch("sys.stdout", new_callable=io.StringIO),
         ):
@@ -362,6 +371,8 @@ class DispatchTests(unittest.TestCase):
             _run_command(_args("capture"), self.run)
             _run_command(_args("giveback"), self.run)
             _run_command(_args("watch", "--next", "2026-10-12T23:10"), self.run)
+            # It reads the game's files over ADB, never the screen.
+            _run_command(_args("gamedata", "--refresh"), self.run)
             claimed.assert_not_called()
             _run_command(_args("world", "--go", "night"), self.run)
             claimed.assert_called_once()
