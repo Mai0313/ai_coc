@@ -10,6 +10,7 @@ from ai_coc.models import (
     SearchHit,
     SearchRow,
     ClockTower,
+    SearchNeed,
     LevelChange,
     NextUpgrade,
     UpgradeTimer,
@@ -18,6 +19,8 @@ from ai_coc.models import (
     HelperCooldown,
     VillageDocument,
 )
+
+from .gamedata import TABLES, READING
 
 if TYPE_CHECKING:
     from ai_coc.models import (
@@ -73,6 +76,13 @@ DROPPED = frozenset({"decos", "obstacles", "house_parts", "skins", "sceneries"})
 # The builder base's clock tower, by its `GlobalID` in the game's buildings table.
 CLOCK_TOWER = 1000039
 
+# The tables whose first level `search` says what unlocks: the troops' and
+# spells', where rows that building does not unlock are told apart. Elsewhere
+# the village lacks mostly rows it never gets, whose first level asks what it
+# already has (a duplicate of an equipment it owns asks blacksmith 1) or never
+# will (a retired trap asks town hall 9999).
+UNLOCKED = frozenset(spec.table for spec in TABLES if spec.unlock)
+
 
 def parse_village(path: str | Path) -> VillageDocument:
     return parse_village_text(Path(path).read_text(encoding="utf-8-sig"))
@@ -99,18 +109,7 @@ def merge(document: VillageDocument, tables: GameEntities | None, at: int) -> Vi
     """
     known = {entity.data_id: entity for entity in tables.entities} if tables else {}
     sections = {section: document.entries(section) for section in document.sections()}
-    # A data_id is one entity across both villages, so its highest level
-    # anywhere is that hall's level.
-    levels: dict[int, int] = {}
-    for rows in sections.values():
-        for row in rows:
-            if row.lvl is not None:
-                levels[row.data] = max(levels.get(row.data, 0), row.lvl)
-    halls = (
-        {hall: levels[data_id] for hall, data_id in tables.halls.items() if data_id in levels}
-        if tables
-        else {}
-    )
+    halls = _hall_levels([row for rows in sections.values() for row in rows], tables)
     villages: dict[World, dict[str, list[ExportRow]]] = {"day": {}, "night": {}}
     for section, rows in sections.items():
         world: World = "night" if section.endswith("2") else "day"
@@ -136,6 +135,20 @@ def merge(document: VillageDocument, tables: GameEntities | None, at: int) -> Vi
         day=villages["day"],
         night=villages["night"],
     )
+
+
+def _hall_levels(rows: list[ExportRow], tables: GameEntities | None) -> dict[Hall, int]:
+    """The village's level of each hall the tables name that it has.
+
+    A data_id is one entity across both villages, so its highest level
+    anywhere is that hall's level.
+    """
+    levels: dict[int, int] = {}
+    for row in rows:
+        if row.lvl is not None:
+            levels[row.data] = max(levels.get(row.data, 0), row.lvl)
+    halls = tables.halls if tables else {}
+    return {hall: levels[data_id] for hall, data_id in halls.items() if data_id in levels}
 
 
 def _tabled(
@@ -345,7 +358,12 @@ def search(
     Chinese name or, ignoring case, of the English one, and an empty one
     matches everything. Without `section` it searches every entity of the
     tables, plus any data_id the export holds that they lack; with it, only
-    the data_ids in that section of the export, on both villages.
+    the data_ids in that section of the export, on both villages. A troop or
+    spell the export does not hold carries what its first level needs, against the
+    levels the export's rows stand at, which an export saved with older
+    tables lacks in its own `halls`. Tables an older `READING` built carry
+    none: they give a troop's first level the laboratory rather than what
+    unlocks it.
     """
     known = {entity.data_id: entity for entity in tables.entities} if tables else {}
     owned: dict[int, list[tuple[World, str, ExportRow]]] = {}
@@ -353,7 +371,21 @@ def search(
         if section is None or name == section:
             owned.setdefault(row.data, []).append((world, name, row))
     ids = list(owned) if section is not None else [*known, *(i for i in owned if i not in known)]
-    hits = [_hit(i, known.get(i), owned.get(i, []), every_row) for i in ids]
+    current = tables is not None and tables.reading == READING
+    halls = tables.halls if tables else {}
+    village = _hall_levels([row for _, _, row in export.rows()], tables) if export else {}
+    hits = [
+        _hit(
+            i,
+            known.get(i),
+            owned.get(i, []),
+            every_row,
+            _unlock(known.get(i), known, halls, village)
+            if current and export is not None and i not in owned
+            else [],
+        )
+        for i in ids
+    ]
     found = [hit for hit in hits if _named(hit, query)]
     return sorted(found, key=lambda hit: (hit.count == 0, hit.data_id))
 
@@ -364,11 +396,32 @@ def _named(hit: SearchHit, query: str) -> bool:
     return query in (hit.zh or "") or query.casefold() in (hit.en or "").casefold()
 
 
+def _unlock(
+    entity: GameEntity | None,
+    known: dict[int, GameEntity],
+    halls: dict[Hall, int],
+    village: dict[Hall, int],
+) -> list[SearchNeed]:
+    """Each hall the first level of a troop or spell the village lacks needs, with the village's level of it."""
+    if entity is None or entity.table not in UNLOCKED or not entity.levels:
+        return []
+    return [
+        SearchNeed(
+            hall=hall,
+            zh=building.zh if (building := known.get(halls.get(hall, 0))) else None,
+            lvl=lvl,
+            village=village.get(hall, 0),
+        )
+        for hall, lvl in entity.levels[0].needs.items()
+    ]
+
+
 def _hit(
     data_id: int,
     entity: GameEntity | None,
     rows: list[tuple[World, str, ExportRow]],
     every_row: bool,
+    unlock: list[SearchNeed],
 ) -> SearchHit:
     """One data_id as the tables describe it, with its rows summed up; `rows` is never empty without `entity`."""
     named: GameEntity | ExportRow = entity if entity is not None else rows[0][2]
@@ -390,6 +443,7 @@ def _hit(
         levels=entity.levels if entity is not None else [],
         count=sum(row.cnt or 1 for _, _, row in rows),
         owned=dict(sorted(levels.items())),
+        unlock=unlock,
         limited_lvl=next((row.limited_lvl for _, _, row in rows), None),
         upgrading=sorted(
             (
