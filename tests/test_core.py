@@ -6479,7 +6479,7 @@ class LaunchTests(unittest.TestCase):
 class RunLogTests(unittest.TestCase):
     """One directory per run, which used to be a convention in a skill file.
 
-    The layout came from `.agents/skills/farm/references/running.md`, built with
+    The layout came from the `farm` skill's notes on running a loop, built with
     shell redirection, so it existed only for the reader who could have built it
     anyway. A person running the CLI by hand got a rotating file and nothing
     else.

@@ -36,7 +36,7 @@ description: >-
 ## 動手之前
 
 - **你是 subagent 就不要修.** 這份 skill 要跟使用者講話、請他改設定, subagent 做不到. 停手, 把 `state.json`、`list2` 那一行跟截圖交回給主 session, 由它照這份處理
-- 照 `AGENTS.md` 的 Look before driving 讀 `~/.ai_coc/state.json`. farm subagent 還在跑就照 `.agents/skills/farm/references/running.md` 的「你自己要用畫面」先把模擬器拿回來, 模擬器只有一台; 它的迴圈多半已經跟著模擬器掛掉了, 那就等它的回報
+- 照 `AGENTS.md` 的 Look before driving 讀 `~/.ai_coc/state.json`. farm subagent 還在跑就照 `share-emulator` 的「借, 用完還」先把模擬器拿回來, 模擬器只有一台; 它的迴圈多半已經跟著模擬器掛掉了, 那就等它的回報
 - **「乾淨的重開」不用先問, 你自己判斷, 做完跟他講** (使用者 2026-11-06: 「下次這種重開不用問我 你就自己判斷就好」). **強制結束程序 (`Stop-Process`、工作管理員) 之前照樣先問, 他說好才做**: 那天兩次強制結束有一次把設定洗掉了 (第 3 種). `ai_coc launch --restart emulator` 不算乾淨的重開, 照樣先問: 它不等 `dnplayer.exe` 跟 `Ld9BoxHeadless.exe` 收掉就開 (`adapters/ldplayer.py` 的 `restart_instance`), 碰上第 2 種會開在舊的程序上面 (雷電上就是 `quit` 再 `launch`, 見 `adapters/ldplayer.py` 的 `restart_instance`). 不帶 `--restart` 的 `ai_coc launch` 跑之前講一聲就好: 遊戲開不起來的時候 `ensure_coc` 會自己重開一次實例
 - 使用者可能正在模擬器或手機上玩 (`AGENTS.md` 的 Driving the game), 有疑慮就問
 - 每個 `ai_coc` 指令都帶 `--agent`、`--session`、`--mission` (`AGENTS.md` 的 Say who is driving), `look.py` 不用
@@ -145,4 +145,4 @@ description: >-
 
 ## 修好的標準
 
-`uv run --no-sync ai_coc launch` 回 `at_village: true`, 而且你看過 `look.py` 截的那一張: 1600x900, 站在村莊上, 鏡頭停好 (拉到最遠; 花錢買的場景會再拉近一次, 回到免費場景的大小). 發給使用者. 模擬器是從 farm subagent 手上拿來的, 就照 `running.md` 的「用完一定要還」還回去, 並在回覆裡講一聲: 使用者看不到 subagent 的輸出.
+`uv run --no-sync ai_coc launch` 回 `at_village: true`, 而且你看過 `look.py` 截的那一張: 1600x900, 站在村莊上, 鏡頭停好 (拉到最遠; 花錢買的場景會再拉近一次, 回到免費場景的大小). 發給使用者. 模擬器是從 farm subagent 手上拿來的, 就照 `share-emulator` 的「借, 用完還」還回去, 並在回覆裡講一聲: 使用者看不到 subagent 的輸出.
