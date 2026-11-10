@@ -37,6 +37,8 @@ from ai_coc.models import (
     MapSurvey,
     NightPlan,
     PlateRole,
+    SearchHit,
+    SearchRow,
     StateFile,
     AttackPlan,
     CartReport,
@@ -53,6 +55,7 @@ from ai_coc.models import (
     GoblinOffer,
     JournalLine,
     LevelChange,
+    NextUpgrade,
     NoteOutcome,
     PressReport,
     RunnerState,
@@ -73,6 +76,7 @@ from ai_coc.models import (
     LegacyExport,
     PressOutcome,
     RestartScope,
+    SearchReport,
     StatusReport,
     UpgradeTimer,
     WorldOutcome,
@@ -87,6 +91,7 @@ from ai_coc.models import (
     GrowthOutcome,
     JournalTimers,
     LaunchOutcome,
+    SearchOutcome,
     SurveyOutcome,
     VillageExport,
     BoundarySurvey,
@@ -158,6 +163,7 @@ from ai_coc.parsers.village import (
     parse_village_text,
 )
 from ai_coc.parsers.village import growth as village_growth
+from ai_coc.parsers.village import search as village_search
 from ai_coc.parsers.boundary import PLAYFIELD, VILLAGE_CENTRE, village_box, boundary_reach
 from ai_coc.parsers.building import (
     GOBLIN_X_BOX,
@@ -3119,6 +3125,137 @@ def gamedata(frames: FrameLog, refresh: bool = False) -> GameDataReport:
     return game_data(lambda: _attached(frames), refresh)
 
 
+def search(query: str, section: str | None = None, every_row: bool = False) -> SearchReport:
+    """Look a thing up by name or data_id in the game's tables, with what the newest export says of the player's.
+
+    Reads files alone, the tables kept on disk and the saved exports, so it
+    touches neither the game nor the emulator. `section` lists one section of
+    the newest export instead, which needs no tables; `every_row` gives each
+    row of the export where the default sums one data_id's rows up.
+    """
+    tables = _kept_tables()
+    saved = _saved_exports(tables)
+    export = saved[-1] if saved else None
+    held = sorted({*export.day, *export.night}) if export else []
+    if section is not None and export is None:
+        outcome: SearchOutcome = "no_export"
+    elif section is not None and section not in held:
+        outcome = "no_section"
+    elif section is None and tables is None:
+        outcome = "no_tables"
+    else:
+        outcome = "found"
+    hits = village_search(tables, export, query, section, every_row) if outcome == "found" else []
+    report = SearchReport(
+        query=query,
+        section=section,
+        outcome="no_match" if outcome == "found" and not hits else outcome,
+        game_version=tables.game_version if tables else None,
+        tag=export.tag if export else None,
+        exported_at=export.exported_at if export else None,
+        sections=held if outcome == "no_section" else [],
+        hits=hits,
+    )
+    logger.info("%s", _search_head(report))
+    return report
+
+
+SEARCH_LINES: dict[SearchOutcome, str] = {
+    "found": "找到 {count} 種",
+    "no_match": "沒有名稱或 data_id 符合的",
+    "no_tables": "還沒有存下遊戲的表可以查, 先跑一次 ai_coc gamedata",
+    "no_export": "還沒有存下村莊匯出可以列, 跑一次 ai_coc status 或 export 就有",
+    "no_section": "最新那份村莊匯出沒有這一區, 有的是 {sections}",
+}
+# The tables' prices are the game's list prices; the gold pass and events
+# discount upgrades, and the build panel says what one costs today.
+LIST_PRICE = "價格跟時間是遊戲表上的牌價, 活動跟金券會打折, 實際要多少照建造面板"
+WORLD_NAMES: dict[World, str] = {"day": "日世界", "night": "夜世界"}
+
+
+def _search_head(report: SearchReport) -> str:
+    asked = " ".join(
+        part
+        for part in (
+            f"「{report.query}」" if report.query else "",
+            f"--section {report.section}" if report.section else "",
+        )
+        if part
+    )
+    line = SEARCH_LINES[report.outcome].format(
+        count=len(report.hits), sections=", ".join(report.sections)
+    )
+    return f"找 {asked}: {line}"
+
+
+def search_text(report: SearchReport) -> str:
+    """The report as a person reads it: where it looked, each hit, and that the prices are list prices."""
+    shown = [_search_head(report)]
+    if report.outcome != "found":
+        return shown[0]
+    shown.append(
+        f"遊戲的表 {report.game_version or '沒有'}, "
+        + (
+            f"村莊匯出 {report.tag} {_local(report.exported_at)}"
+            if report.exported_at
+            else "沒有存下村莊匯出, 只查遊戲的表"
+        )
+    )
+    for hit in report.hits:
+        shown += ["", *_hit_lines(hit, exported=report.exported_at is not None)]
+    return "\n".join([*shown, "", LIST_PRICE])
+
+
+def _hit_lines(hit: SearchHit, exported: bool) -> list[str]:
+    """One hit's lines; with no export read, nothing is said about whether the village has it."""
+    names = " / ".join(name for name in (hit.zh, hit.en) if name) or "(遊戲的表沒有名字)"
+    top = "—" if hit.max_lvl is None else hit.max_lvl
+    lines = [f"{names}  #{hit.data_id}  {WORLD_NAMES[hit.world]} {hit.table or '—'}  滿級 {top}"]
+    if not hit.count:
+        return [*lines, "  村莊裡沒有"] if exported else lines
+    if hit.rows is not None:
+        return lines + [f"  {_row_text(one)}" for one in hit.rows]
+    held = ", ".join(f"{lvl} 級 {n} 個" for lvl, n in hit.owned.items()) or "沒有等級"
+    lines.append(f"  有 {hit.count} 個: {held}")
+    lines += [
+        f"  {_level(one.lvl)} 級在升級, {_when(one.done_at)} 好{' (哥布林那格)' if one.extra else ''}"
+        for one in hit.upgrading
+    ]
+    if hit.ready_at:
+        lines.append(f"  {_local(hit.ready_at)} 能再派")
+    return lines + [f"  下一次 {_upgrade_text(one, hit.limited_lvl)}" for one in hit.next]
+
+
+def _row_text(one: SearchRow) -> str:
+    row = one.row
+    parts = [WORLD_NAMES[one.world], one.section, f"{_level(row.lvl)} 級 {row.cnt or 1} 個"]
+    if row.timer is not None:
+        parts.append(f"在升級, {_when(row.done_at)} 好{' (哥布林那格)' if row.extra else ''}")
+    if row.ready_at:
+        parts.append(f"{_local(row.ready_at)} 能再派")
+    if row.next is not None:
+        parts.append(f"下一次 {_upgrade_text(row.next, row.limited_lvl)}")
+    return "  ".join(parts)
+
+
+def _upgrade_text(upgrade: NextUpgrade, limited: int | None) -> str:
+    """A next upgrade's level, list price and time, and whether a hall holds it back."""
+    cost = ", ".join(
+        f"{amount:,} {_RESOURCE_NAMES.get(name, name)}" for name, amount in upgrade.cost.items()
+    )
+    took = "" if upgrade.time is None else f", {spell_out(upgrade.time)}"
+    blocked = " (大本營或殿堂等級還不夠)" if limited is not None and upgrade.lvl > limited else ""
+    return f"{upgrade.lvl} 級 {cost or '—'}{took}{blocked}"
+
+
+def _level(lvl: int | None) -> str:
+    return "—" if lvl is None else str(lvl)
+
+
+def _when(moment: str | None) -> str:
+    return "—" if moment is None else _local(moment)
+
+
 # The build panel's rows, its tabs and every sheet a row opens are driven by the
 # agent reading the frames these leave behind, so these are the hands and not
 # the eyes: they press where they are told and report what the screen became.
@@ -3277,7 +3414,9 @@ def swipe(
     )
 
 
-_RESOURCE_NAMES = {"gold": "金幣", "elixir": "聖水", "dark": "黑水"}
+# `search` prints the tables' gems too; the ores keep the tables' own key, since
+# nothing here has read the game's Chinese name for them.
+_RESOURCE_NAMES = {"gold": "金幣", "elixir": "聖水", "dark": "黑水", "gems": "寶石"}
 
 CONFIRM_LINES: dict[ConfirmOutcome, str] = {
     "confirmed": "按了確認,視窗關了或換成正在升級的畫面",

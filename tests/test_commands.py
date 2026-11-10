@@ -68,6 +68,7 @@ from ai_coc.models import (
     ExportOutcome,
     GrowthOutcome,
     LaunchOutcome,
+    SearchOutcome,
     SurveyOutcome,
     VillageExport,
     CollectOutcome,
@@ -88,6 +89,8 @@ from ai_coc.parsers.gamedata import GameDataError
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+
+    from ai_coc.models import World
 
 FRAMES = Path(__file__).parent / "frames"
 
@@ -859,6 +862,19 @@ class UpkeepLineTests(unittest.TestCase):
                 "not_a_village": "不是村莊資料",
             },
             get_args(ExportOutcome),
+        )
+
+    def test_every_search_outcome_has_a_line_of_its_own(self) -> None:
+        self._each(
+            commands.SEARCH_LINES,
+            {
+                "found": "找到",
+                "no_match": "沒有名稱或 data_id 符合",
+                "no_tables": "ai_coc gamedata",
+                "no_export": "還沒有存下村莊匯出",
+                "no_section": "沒有這一區",
+            },
+            get_args(SearchOutcome),
         )
 
     def test_a_launch_says_which_of_the_four_things_it_did(self) -> None:
@@ -3056,6 +3072,198 @@ class ExportTests(unittest.TestCase):
         report = commands.export(_frames(self), last=True)
         assert report.outcome == "wrong_format"
         assert report.export is None
+
+
+def _tower(data_id: int, zh: str, en: str, world: World, max_lvl: int) -> GameEntity:
+    return GameEntity(
+        data_id=data_id,
+        zh=zh,
+        en=en,
+        world=world,
+        table="buildings",
+        max_lvl=max_lvl,
+        levels=[
+            GameLevel(lvl=lvl, needs={"town_hall": lvl}, cost={"gold": lvl * 100}, time=lvl * 60)
+            for lvl in range(1, max_lvl + 1)
+        ],
+    )
+
+
+class SearchTests(unittest.TestCase):
+    """`search` over tables and an export kept in the test's own directories, which conftest points the code at."""
+
+    TABLES = GameEntities(
+        game_version="1.2.3",
+        reading=1,
+        halls={"town_hall": 1000001},
+        entities=[
+            _tower(1000009, "箭塔", "Archer Tower", "day", 5),
+            _tower(1000048, "箭塔", "Archer Tower", "night", 5),
+            _tower(1000084, "多人箭塔", "Multi-Archer Tower", "day", 4),
+            GameEntity(
+                data_id=4000059,
+                zh="雷電飛龍",
+                en="Electro Dragon",
+                world="day",
+                table="characters",
+                max_lvl=9,
+                levels=[GameLevel(lvl=1), GameLevel(lvl=2, cost={"elixir": 6}, time=345600)],
+            ),
+            GameEntity(
+                data_id=93000000,
+                zh="建築工人學徒",
+                en="Builder's Apprentice",
+                world="day",
+                table="villager_apprentices",
+                max_lvl=8,
+                levels=[],
+            ),
+        ],
+    )
+    DOCUMENT = VillageDocument.model_validate({
+        "tag": "#TEST",
+        "buildings": [
+            {"data": 1000084, "lvl": 2, "cnt": 2},
+            {"data": 1000084, "lvl": 3, "timer": 600, "extra": True},
+            {"data": 1000084, "lvl": 2, "timer": 60},
+            # A second level 2 being upgraded, whose next upgrade is the same as the first's.
+            {"data": 1000084, "lvl": 2, "timer": 300},
+            # The town hall, which these tables name as a hall and do not list.
+            {"data": 1000001, "lvl": 3},
+        ],
+        "units": [{"data": 4000059, "lvl": 1}],
+        "helpers": [{"data": 93000000, "lvl": 8, "helper_cooldown": 120}],
+        "buildings2": [{"data": 1000048, "lvl": 2}],
+    })
+    AT = 1793534400
+
+    def _keep(self, tables: bool = True, export: bool = True) -> None:
+        if tables:
+            folder = gamedata.GAME_DATA_DIR / "1.2.3"
+            folder.mkdir(parents=True)
+            (folder / "entities.json").write_text(self.TABLES.model_dump_json(), encoding="utf-8")
+        if export:
+            village = merge(self.DOCUMENT, self.TABLES, self.AT)
+            path = commands.ACCOUNT_JSON_DIR / "#TEST_2026-11-01.json"
+            path.write_text(village.model_dump_json(), encoding="utf-8")
+
+    def test_a_number_is_one_data_id_and_anything_else_a_piece_of_either_name(self) -> None:
+        self._keep()
+        for query in ("4000059", "雷電飛龍", "電飛", "electro DRAGON"):
+            assert [hit.data_id for hit in commands.search(query).hits] == [4000059], query
+        # Every hit, the player's own first: the night tower and the Multi-Archer
+        # Tower are owned, the home village's tower is not.
+        found = commands.search("箭塔")
+        assert (found.outcome, [hit.data_id for hit in found.hits]) == (
+            "found",
+            [1000048, 1000084, 1000009],
+        )
+        assert (found.game_version, found.tag) == ("1.2.3", "#TEST")
+        # A number is never a piece of a name or of another number.
+        assert commands.search("40000").outcome == "no_match"
+
+    def test_the_players_rows_of_one_data_id_are_summed_up(self) -> None:
+        self._keep()
+        [owned] = commands.search("多人箭塔").hits
+        assert (owned.count, owned.owned, owned.limited_lvl, owned.rows) == (
+            5,
+            {2: 4, 3: 1},
+            3,
+            None,
+        )
+        # Soonest first, each with the level it is leaving and whose slot it is on.
+        assert [(one.lvl, one.extra) for one in owned.upgrading] == [
+            (2, False),
+            (2, False),
+            (3, True),
+        ]
+        # The idle level 2 buys 3, the two upgrading level 2s both buy 4, listed
+        # once, and the level 3 is already buying the last level.
+        assert [(one.lvl, one.cost) for one in owned.next] == [
+            (3, {"gold": 300}),
+            (4, {"gold": 400}),
+        ]
+        assert len(owned.levels) == 4
+        unowned = commands.search("1000009").hits[0]
+        assert (unowned.count, unowned.owned, unowned.upgrading, unowned.next) == (0, {}, [], [])
+        assert unowned.levels == self.TABLES.entities[0].levels
+
+    def test_all_gives_every_row_with_its_own_level_timer_and_slot(self) -> None:
+        self._keep()
+        [owned] = commands.search("Multi-Archer", every_row=True).hits
+        assert owned.rows is not None
+        assert [
+            (one.world, one.section, one.row.lvl, one.row.cnt, one.row.timer, one.row.extra)
+            for one in owned.rows
+        ] == [
+            ("day", "buildings", 2, 2, None, None),
+            ("day", "buildings", 3, None, 600, True),
+            ("day", "buildings", 2, None, 60, None),
+            ("day", "buildings", 2, None, 300, None),
+        ]
+        assert all(one.row.done_at for one in owned.rows if one.row.timer)
+
+    def test_a_section_lists_that_section_on_both_villages_and_a_query_narrows_it(self) -> None:
+        self._keep()
+        [helper] = commands.search("", section="helpers").hits
+        assert (helper.data_id, helper.ready_at is not None) == (93000000, True)
+        towers = commands.search("箭塔", section="buildings")
+        assert [hit.data_id for hit in towers.hits] == [1000048, 1000084]
+        assert commands.search("", section="buildings").outcome == "found"
+
+    def test_a_data_id_the_tables_lack_is_still_found_with_what_its_row_says(self) -> None:
+        self._keep()
+        [hit] = commands.search("1000001").hits
+        assert (hit.zh, hit.world, hit.table, hit.count, hit.owned) == (
+            None,
+            "day",
+            None,
+            1,
+            {3: 1},
+        )
+
+    def test_a_section_needs_an_export_and_no_tables(self) -> None:
+        self._keep(tables=False)
+        report = commands.search("", section="units")
+        assert (report.outcome, report.game_version) == ("found", None)
+        # The names were merged into the export when it was saved.
+        assert report.hits[0].zh == "雷電飛龍"
+
+    def test_each_way_a_search_finds_nothing_is_named(self) -> None:
+        assert commands.search("箭塔").outcome == "no_tables"
+        assert commands.search("", section="helpers").outcome == "no_export"
+        self._keep()
+        nothing = commands.search("不存在的東西")
+        assert (nothing.outcome, nothing.hits) == ("no_match", [])
+        wrong = commands.search("", section="helper")
+        assert (wrong.outcome, wrong.sections) == ("no_section", ["buildings", "helpers", "units"])
+        assert "buildings, helpers, units" in commands.search_text(wrong)
+
+    def test_without_an_export_the_tables_are_still_searched(self) -> None:
+        self._keep(export=False)
+        report = commands.search("箭塔")
+        assert (report.outcome, report.exported_at, len(report.hits)) == ("found", None, 3)
+        text = commands.search_text(report)
+        assert "沒有存下村莊匯出" in text
+        # No export was read, so nothing is said about what the village has.
+        assert "村莊裡沒有" not in text
+
+    def test_the_text_says_what_is_owned_and_that_prices_are_list_prices(self) -> None:
+        self._keep()
+        text = commands.search_text(commands.search("箭塔"))
+        assert "多人箭塔 / Multi-Archer Tower  #1000084  日世界 buildings  滿級 4" in text
+        assert "  有 5 個: 2 級 4 個, 3 級 1 個" in text
+        assert "  3 級在升級, " in text
+        assert "(哥布林那格)" in text
+        # Level 4 needs a town hall 4 and this village's is 3.
+        assert "  下一次 4 級 400 金幣, 4 分鐘 (大本營或殿堂等級還不夠)" in text
+        assert "  下一次 3 級 300 金幣, 3 分鐘\n" in text
+        assert "箭塔 / Archer Tower  #1000009  日世界 buildings  滿級 5\n  村莊裡沒有" in text
+        assert text.endswith(commands.LIST_PRICE)
+        every = commands.search_text(commands.search("多人箭塔", every_row=True))
+        assert "  日世界  buildings  3 級 1 個  在升級, " in every
+        assert "  日世界  buildings  2 級 2 個  下一次 3 級 300 金幣, 3 分鐘" in every
+        assert " 能再派" in commands.search_text(commands.search("", section="helpers"))
 
 
 class StorageCeilingTests(unittest.TestCase):
