@@ -25,4 +25,4 @@ The result is a tap on the right thing, confirmed by what the game shows back, w
 
 ## Leaving it as you found it
 
-Close any window by its X, tap empty ground until the menu row is gone, then `ai_coc view --zoom out` again: it parks only once nothing is selected and answers `selected` while something still is. Take one last `capture` to show the village clear. A command run under someone else's loop gives the emulator back as `.agents/skills/farm/references/running.md` says.
+Close any window by its X, tap empty ground until the menu row is gone, then `ai_coc view --zoom out` again: it parks only once nothing is selected and answers `selected` while something still is. Take one last `capture` to show the village clear. A command run under someone else's loop gives the emulator back as `share-emulator` says.

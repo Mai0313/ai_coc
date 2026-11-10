@@ -8,7 +8,7 @@ description: >-
 
 **主線是把資源打滿, 修東西是順便.** 迴圈永遠在跑, 你在它跑的空檔思考跟改東西.
 
-先讀 `.agents/skills/farm/SKILL.md`: 開跑前的檢查, 盯的方式, 倉庫滿了怎麼花跟哪些要先問使用者, 停手的條件, 全部照那邊. 背景跑的機制在 `.agents/skills/farm/references/running.md`.
+先讀 `.agents/skills/farm/SKILL.md`: 開跑前的檢查, 盯的方式, 倉庫滿了怎麼花跟哪些要先問使用者, 停手的條件, 全部照那邊. 背景跑、借跟還、停的機制在 `share-emulator`; `result.json` 怎麼讀、每種結果代表什麼在 `.agents/skills/farm/references/runner.md` 的「讀結果」(那份是寫給打資源的 subagent 的, 它寫「回報」的地方, 你自己跑時就是該你判斷的時候).
 
 ## 做完的樣子
 
@@ -30,12 +30,12 @@ description: >-
 
 你自己決定, 中途也可以換:
 
-- **自己跑**: 用 runtime 自己管的背景執行送出去 (見 `running.md` 的「開跑」), 前景讀 log 改東西. `--repeat 0` 整批跑完才通知一次, 不是每一輪, 所以代價只是你自己去讀 log 的那幾次. 迴圈照樣跑在主 checkout 上 (`uv run --no-sync`), 改東西在另一個 worktree, 理由在 `AGENTS.md` 的 The loop runs the main checkout.
+- **自己跑**: 用 runtime 自己管的背景執行送出去 (見 `share-emulator` 的「背景跑」), 前景讀 log 改東西; 結果怎麼讀照 `runner.md` 的「讀結果」. `--repeat 0` 整批跑完才通知一次, 不是每一輪, 所以代價只是你自己去讀 log 的那幾次. 迴圈照樣跑在主 checkout 上 (`uv run --no-sync`), 改東西在另一個 worktree, 理由在 `AGENTS.md` 的 The loop runs the main checkout.
 - **交給 subagent**: 照 `AGENTS.md` 的 Dispatching a farm subagent 派一個跑 `farm` 的 subagent (模型跟 thinking budget 照那一段), 你只讀它留下的檔案. 省下盯的成本, 代價是你不在現場. 交辦寫明 `--debug` (要看戰鬥過程再加 `--shot-every`), 並交代它帶上就好、圖不用看, 圖由你看 (`farm` 的「要不要留畫面」).
 
 **使用者指名就照他的**: 「你親自監督執行」是第一種, 不要為了省 context 轉包出去.
 
-**迴圈在跑的時候看畫面, 看迴圈自己存的** (`--debug`、`--shot-every`, 開跑時就決定): 跟 `run.log` 在同一個目錄, 每存一張 log 就有一行 `Saved frame <檔名>`, 一張對得上一步. `ai_coc capture`、`.agents/skills/repair-emulator/scripts/look.py` 只留給迴圈自己沒在拍的時候 (卡在某個畫面不動、開跑時沒開 `--debug`): 它們存在別的地方, 時間對不上這輪的 log, 還跟迴圈搶 ADB. 這兩個只截圖, 不佔 `state.json` 也不開任何東西. `stock`、`status` 這類要操作畫面的指令會借走迴圈 (見 `running.md` 的「絕對不要同時跑兩個」), 用完要 `giveback`.
+**迴圈在跑的時候看畫面, 看迴圈自己存的** (`--debug`、`--shot-every`, 開跑時就決定): 跟 `run.log` 在同一個目錄, 每存一張 log 就有一行 `Saved frame <檔名>`, 一張對得上一步. `ai_coc capture`、`.agents/skills/repair-emulator/scripts/look.py` 只留給迴圈自己沒在拍的時候 (卡在某個畫面不動、開跑時沒開 `--debug`): 它們存在別的地方, 時間對不上這輪的 log, 還跟迴圈搶 ADB. 這兩個只截圖, 不佔 `state.json` 也不開任何東西. `stock`、`status` 這類要操作畫面的指令會借走迴圈 (見 `share-emulator` 的「開工先讀 `state.json`」), 用完要 `giveback`.
 
 **存畫面是事前決定, 看畫面是事後決定.** 問題幾乎都是事後才發現, 而這個 skill 本來就在找問題, 所以迴圈一律開著 `--debug`: 存了不看不花什麼, 沒存就得再賠一整場. 貴的是看: 一晚幾百張, 所以圖拿來確認, 不拿來巡邏, 順序見「卡住的時候先問對問題」.
 
@@ -103,8 +103,8 @@ uv run ai_coc attack --plan .runs/tuned.json
 - **一次只動一件事**, 跑幾輪看差別.
 - **流程照 `AGENTS.md` 的 `## Development flow`**, 不用另外問使用者.
 - **量到的新東西寫進常數旁邊的註解, 不寫進 `AGENTS.md` 或 `.agents/rules/`**: 那兩處只收規則, 不變式跟未修的已知缺陷; 要加規則就直接寫, 不用先給使用者看.
-- 改的時候讓迴圈繼續跑. **要活的遊戲才驗得了的, 直接下驗證的指令借走迴圈, 驗完 `giveback`**, 不用問, 規矩在 `.agents/skills/farm/references/running.md` 的「你自己要用畫面」那節. **驗的是分支自己的程式, 在 review 跟 CI 跑的時候就驗, 不等 merge**: 在那個 worktree 裡下 `uv run --no-sync ai_coc …` (使用者 2026-10-16: 「你不是應該趁現在在 review 的時候 趕快測試看看新程式實際升級牆壁嗎 … 這樣本末倒置吧」); 從主 checkout 下的跑的是 main 的舊程式, 那天一次「讀不到」就是這樣看錯的. 分支動到 `AppConfig` 的例外: 它一跑就把共用的 `~/.ai_coc/config.json` 改成分支的形狀, 所以先停掉迴圈再驗 (`AGENTS.md` 的 The loop runs the main checkout). 驗證場對著的多半是打滿的村莊, 所以加 `--stop-at 0`; 驗的是日世界的行為, 就趁日世界剛打滿, 還沒坐船去夜世界之前驗, 省兩趟船.
-- **merge 以後要讓迴圈用上.** 背景那輪跑的還是開跑時載入的程式碼. 在接縫停掉 (`ai_coc stop emulator`, 等它真的退出), 主 checkout `git pull --ff-only` (帶進的 `pyproject.toml` 或 `uv.lock` 有變就趁停著 `uv sync`), 同一個世界同一組旗標開回去, 剩下的場次就是驗證. 迴圈是 farm subagent 在跑的話, 它的回報進來才算退出, 開回去是傳訊息給同一個 subagent: `ai_coc stop` 是真的停, 它不會自己開回去 (`running.md` 的「中止」).
+- 改的時候讓迴圈繼續跑. **要活的遊戲才驗得了的, 直接下驗證的指令借走迴圈, 驗完 `giveback`**, 不用問, 規矩在 `share-emulator` 的「借, 用完還」那節. **驗的是分支自己的程式, 在 review 跟 CI 跑的時候就驗, 不等 merge**: 在那個 worktree 裡下 `uv run --no-sync ai_coc …` (使用者 2026-10-16: 「你不是應該趁現在在 review 的時候 趕快測試看看新程式實際升級牆壁嗎 … 這樣本末倒置吧」); 從主 checkout 下的跑的是 main 的舊程式, 那天一次「讀不到」就是這樣看錯的. 分支動到 `AppConfig` 的例外: 它一跑就把共用的 `~/.ai_coc/config.json` 改成分支的形狀, 所以先停掉迴圈再驗 (`AGENTS.md` 的 The loop runs the main checkout). 驗證場對著的多半是打滿的村莊, 所以加 `--stop-at 0`; 驗的是日世界的行為, 就趁日世界剛打滿, 還沒坐船去夜世界之前驗, 省兩趟船.
+- **merge 以後要讓迴圈用上**, 剩下的場次就是驗證: 照 `share-emulator` 的「merge 進來的修正, 迴圈怎麼用上」.
 
 ## 對照要怎麼做
 

@@ -1730,7 +1730,7 @@ def _lost_round(
         # round off the count this whole function exists to preserve.
         series.root.append(report)
         # The caller breaks before its own `Attack finished:` line, and
-        # `references/running.md` tells a session there is one of those per
+        # the `farm` skill tells a session there is one of those per
         # round — so without this the last round is in `result.json` and
         # missing from the log, an undercount of exactly what this preserves.
         logger.info("Attack finished: %s", round_line(report), extra=_round_event(runner, series))

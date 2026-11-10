@@ -57,11 +57,11 @@ uv run --no-sync ai_coc status --label watch --agent <名字> --session <session
 
 他要看的每一件 (`timers` 裡 `world` 跟 `role` 對得上的) 跟鐘塔取**最早**的. 睡到它的**五分鐘前**, 醒來就講; 鐘塔睡到 `ready_at` (「講給使用者聽」的鐘塔那條). **不管多遠都睡** (使用者 2026-10-16 拿掉了只睡八小時內的限制: 「你是完全可以自己安排打資源 自己安排升級 自己借用模擬器 升級完繼續打資源之類的」). 睡超過八小時的, 跟他講一聲這台電腦跟這個 session 要一直開著: 斷了 `ai_coc watch` 就不會叫醒任何人. **鐘塔每次都盯**, 不用他交代 (使用者 2026-10-10 要的, 鐘塔每天能開一次), 到了就開 (「講給使用者聽」的鐘塔那條); 開不成而講過之後就不再算進最早的那一個, 直到之後的讀數又是 `ready_in` 大於 0. 講完就照同一份讀數排下一件, 不用重讀.
 
-**睡在 `ai_coc watch` 上, 它就是計時器**: `uv run --no-sync ai_coc watch --next <醒來的時間, ISO> --about "<在等什麼>"` (帶 `--agent`、`--session`、`--mission`), 用 runtime 自己管的背景執行開 (`.agents/skills/farm/references/running.md` 的「開跑」). 它睡到 `--next` 才結束, 結束的通知就是叫醒你的那一下; 睡的時候它記在 `state.json` 的 `watch` 那一塊, 別的 agent 看得到有人在盯, `ai_coc stop` 也停得到它. 它不碰模擬器. 不要另外排 sleep 或排程 (背景指令跑完叫不醒你的 runtime 例外, 照 `running.md` 的「開跑」另外設一個排程): 以前記錄跟計時是兩件事, 2026-10-11、10-12 都有 agent 只記了一筆就結束回合, 到點沒有人回來. 升級的完成時間也不另存成檔案或寫進 `state.json`, 每一趟從 `status` 讀; 使用者否掉過: 「如果我們多存一個檔案 好像意義不大, 因為不太可能出現你打資源打一半 我跑去加速的情況 (這種 edge case 根本不會發生) 而且也可以避免 subagent 認為 可以直接讀取該文件之類的」.
+**睡在 `ai_coc watch` 上, 它就是計時器**: `uv run --no-sync ai_coc watch --next <醒來的時間, ISO> --about "<在等什麼>"` (帶 `--agent`、`--session`、`--mission`), 用 runtime 自己管的背景執行開 (`share-emulator` 的「背景跑」). 它睡到 `--next` 才結束, 結束的通知就是叫醒你的那一下; 睡的時候它記在 `state.json` 的 `watch` 那一塊, 別的 agent 看得到有人在盯, `ai_coc stop` 也停得到它. 它不碰模擬器. 不要另外排 sleep 或排程 (背景指令跑完叫不醒你的 runtime 例外, 照 `share-emulator` 的「背景跑」另外設一個排程): 以前記錄跟計時是兩件事, 2026-10-11、10-12 都有 agent 只記了一筆就結束回合, 到點沒有人回來. 升級的完成時間也不另存成檔案或寫進 `state.json`, 每一趟從 `status` 讀; 使用者否掉過: 「如果我們多存一個檔案 好像意義不大, 因為不太可能出現你打資源打一半 我跑去加速的情況 (這種 edge case 根本不會發生) 而且也可以避免 subagent 認為 可以直接讀取該文件之類的」.
 
 **醒來先看它的輸出** (`WatchReport`, 跟那次的 `result.json` 是同一份): `outcome` 是 `due` 就是時間到了; 是 `stopped` 就是有人叫停或接手了, `stop_by` 是誰、他的 `mission` 是為什麼, 什麼都不講, 直接收工. 例外是 `stop_by.session` 是你自己的: 那是你重讀時間後開的新 watch 接手了舊的, 照常等新的那個. 另一個例外是它睡著是為了花他交辦的東西 (見「講給使用者聽」): 那一筆還沒花, 回覆裡講一聲沒花成、是誰接手的. 輸出只有一行說 `state.json` 不在 (exit code 不是 0) 的話, 它根本沒睡: 先跑一個會操作模擬器的指令 (例如 `status`) 再開一次.
 
-要再讀之前 (讀不到要重來, 或他說動過遊戲) 照 `AGENTS.md` 的 Look before driving 先看 `state.json`: 模擬器上可能已經有別的 run 在跑, 這時下 `status` 會借走它 (它帶 `--yield` 的話), 讀完馬上 `uv run --no-sync ai_coc giveback` (使用者叫停時例外, 見 `.agents/skills/farm/references/running.md` 的「用完一定要還」), 不然它要等 30 分鐘才接回去 (見 `.agents/skills/farm/references/running.md` 的「絕對不要同時跑兩個」).
+要再讀之前 (讀不到要重來, 或他說動過遊戲) 照 `AGENTS.md` 的 Look before driving 先看 `state.json`: 模擬器上可能已經有別的 run 在跑, 這時下 `status` 會借走它 (它帶 `--yield` 的話), 讀完馬上 `uv run --no-sync ai_coc giveback` (使用者叫停時例外, 見 `share-emulator` 的「借, 用完還」), 不然它要等 30 分鐘才接回去 (見 `share-emulator` 的「借, 用完還」).
 
 **不要每十分鐘戳一次**, 這是使用者自己否掉 `--watch` 的理由: 等待是算術不是觀察, 而 `--watch` 那種在程序裡睡的迴圈佔住的是模擬器那一塊, 讓別的 session 以為模擬器在忙 (`ai_coc watch` 睡在自己那一塊, 不佔模擬器). 一整晚一次讀取, 不是四十八次; 只有讀不到的時候 (上一節說過要再讀的那幾種) 過幾分鐘再讀.
 
@@ -85,7 +85,7 @@ uv run --no-sync ai_coc status --label watch --agent <名字> --session <session
 ## 什麼時候收工
 
 - **問完、升完都不收工**, 接著睡下一件 (「做完的樣子」). 沒有東西可等了才收工: 重讀一次 `status`, 他要看的那幾塊還是沒有一件在跑, 鐘塔也講過了. `farm` 的「打到有空閒」那一趟例外: 空出來講完就是終點
-- 他說停: 下 `ai_coc stop`, 一次就停掉你睡著的那個 `ai_coc watch`, 連同模擬器上在跑的指令; 你剛好借著模擬器 (在讀 `status`) 的話, 照 `.agents/skills/farm/references/running.md` 的「中止」等指令停了再下一次, 才取消借用
+- 他說停: 下 `ai_coc stop`, 一次就停掉你睡著的那個 `ai_coc watch`, 連同模擬器上在跑的指令; 你剛好借著模擬器 (在讀 `status`) 的話, 照 `share-emulator` 的「停」等指令停了再下一次, 才取消借用
 - **讀到一次不是村莊就停**: `export` 是 `no_village`, 或兩個計數的 `outcome` 都是 `not_a_village`. 常見的原因是使用者正在手機上玩, 模擬器那邊被登出了, 而每跑一次 `ai_coc status` 都會經過 `ensure_coc` 把遊戲搶回來, 等於把他從手機上踢掉 (`AGENTS.md` 的 Driving the game). 所以不重試: 停下來, 問他玩完了沒 (見「講給使用者聽」), 他說可以了再讀. 看欄位不要看句子, 那句話只在 `run.log` 裡
 - **另一部裝置登入了**: `status` 兩種都不回, exit code 不是 0, `result.json` 只有一句 `另一部裝置登入了這個帳號,沒有把登入搶回來`. 一樣停下來告訴他, 他說可以之前一個 `ai_coc` 指令都不要下 (`AGENTS.md` 的 Driving the game)
 
@@ -131,9 +131,9 @@ uv run --no-sync ai_coc swipe 1385 740 1385 240   # 面板往下捲大約一頁 
 uv run --no-sync ai_coc confirm --price 10800 # 確認鈕上的價格要是這個才按
 ```
 
-**每個指令都帶同一個 `--session`** (還有 `--agent`、`--mission`): 少帶一次, 那一步一結束就把借用還回去, 打資源的迴圈會在你兩步之間插進來.
+**每個指令都帶同一個 `--session`** (還有 `--agent`、`--mission`): 借到的那個指令沒帶的話, 它一跑完就把借用還回去, 打資源的迴圈會在你兩步之間插進來 (`share-emulator` 的「借, 用完還」).
 
-**`tap`「建造」是第一步, 不用先 `view --zoom out`**: 面板、視窗跟它們的按鈕畫在固定的位置, 鏡頭在哪都一樣, 點建築那一列遊戲自己會把鏡頭移過去 (使用者 2026-11-07 拿掉的, 一次 `view` 要二十幾秒). 背景有打資源的迴圈時, 這一下會等迴圈打完手上那一場再借走模擬器, 所以座標從它回來的那張圖量, 不要從借到之前截的圖量. 之後的 `tap`、`swipe`、`confirm` 都在這次借用裡, 不會再等. 用完照 `.agents/skills/farm/references/running.md` 的「你自己要用畫面」`giveback`.
+**`tap`「建造」是第一步, 不用先 `view --zoom out`**: 面板、視窗跟它們的按鈕畫在固定的位置, 鏡頭在哪都一樣, 點建築那一列遊戲自己會把鏡頭移過去 (使用者 2026-11-07 拿掉的, 一次 `view` 要二十幾秒). 背景有打資源的迴圈時, 這一下會等迴圈打完手上那一場再借走模擬器, 所以座標從它回來的那張圖量, 不要從借到之前截的圖量. 之後的 `tap`、`swipe`、`confirm` 都在這次借用裡, 不會再等. 用完照 `share-emulator` 的「借, 用完還」`giveback`.
 
 **`tap` 跟 `swipe` 每次都回一張點完的圖** (`result.json` 的 `frame`), 下一步看那張決定, **永遠照最新那張圖上的位置點**: 面板捲過、視窗開關過, 舊圖上的座標就不準了. 它們會拒絕幾種會花錢或毀掉東西的點法 (`outcome`): 確認視窗開著時只准點它右上角的 X; 遊戲對話框只准按取消; 商店跟加號那排不點 (面板開著時那排往左移, 一樣不點); 大顆的綠色按鈕不點 (確認、立即完成、寶石補位都是綠的; 面板沒開時整個畫面都算, 開著時算面板左邊); 建築選單那一排只要有「立即完成」就整排不點 (旁邊的「取消」會把在升的取消掉); 戰鬥中什麼都不點. 被拒絕的那張圖就是當下的畫面.
 
