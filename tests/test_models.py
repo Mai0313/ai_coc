@@ -25,7 +25,6 @@ from ai_coc.models import (
     AttackStep,
     AdbEndpoint,
     ScreenPoint,
-    EntityMapping,
     GeminiRequest,
     GeminiTextPart,
     GeminiImagePart,
@@ -144,27 +143,12 @@ class VillageDocumentTests(unittest.TestCase):
         document = VillageDocument.model_validate({
             "buildings": [{"data": 1000055, "lvl": 3}, "not a row", {"lvl": 2}]
         })
-        [entity] = document.entries("buildings")
-        assert (entity.data_id, entity.level, entity.section) == (1000055, 3, "buildings")
+        [row] = document.entries("buildings")
+        assert (row.data, row.lvl) == (1000055, 3)
 
     def test_a_blank_tag_reads_as_unknown(self) -> None:
         assert VillageDocument.model_validate({"tag": "  "}).tag == "UNKNOWN"
         assert VillageDocument.model_validate({}).tag == "UNKNOWN"
-
-
-class EntityMappingTests(unittest.TestCase):
-    def test_the_community_table_flattens_to_one_name_per_id(self) -> None:
-        """The groups separate the two villages, which is not what a caller asks."""
-        mapping = EntityMapping.model_validate({
-            "th_buildings": {1000001: "Cannon", 28000000: "Barbarian King"},
-            "bh_troops": {4000041: "Baby Dragon"},
-            "heroes": {28000000: "Barbarian King"},
-        })
-        assert mapping.names() == {
-            1000001: "Cannon",
-            28000000: "Barbarian King",
-            4000041: "Baby Dragon",
-        }
 
 
 class MapFrameTests(unittest.TestCase):

@@ -5,7 +5,7 @@ import math
 import time
 import string
 from pathlib import Path
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 import tempfile
 import unittest
 import itertools
@@ -31,20 +31,23 @@ from ai_coc.models import (
     ProbeRay,
     AppConfig,
     BattleRow,
+    GameLevel,
     LootOffer,
     ScoutView,
     TouchNode,
     AttackPlan,
     AttackStep,
     CartReport,
+    GameEntity,
     SheetOffer,
     AdbEndpoint,
-    NamedEntity,
     RunnerState,
     ScreenPoint,
     ShieldState,
     AttackReport,
     AttackSeries,
+    GameEntities,
+    LegacyExport,
     VillageStock,
     AttackOptions,
     DisplayTarget,
@@ -55,6 +58,7 @@ from ai_coc.models import (
     GeminiSettings,
     LootThresholds,
     StorageCapacity,
+    VillageDocument,
 )
 from ai_coc.parsers import scout as scout_parser
 from ai_coc.parsers import building as building_parser
@@ -173,8 +177,10 @@ from ai_coc.parsers.world import DAY_GEMS_PLUS, DAY_SHIELD_PLUS, NIGHT_GEMS_PLUS
 from ai_coc.parsers.glyphs import nearest, ink_mask, signature, digits_from, glyph_columns
 from ai_coc.adapters.config import ConfigStore, dotenv_value
 from ai_coc.parsers.village import (
+    merge,
     growth,
     clock_tower,
+    from_legacy,
     parse_village,
     upgrade_timers,
     helper_cooldowns,
@@ -283,9 +289,11 @@ class CoreTests(unittest.TestCase):
                 }),
                 encoding="utf-8",
             )
-            snapshot = parse_village(source)
-            assert snapshot.tag == "#TEST"
-            assert snapshot.entities[0].count == 2
+            document = parse_village(source)
+            assert document.tag == "#TEST"
+            [row] = document.entries("buildings2")
+            assert row.cnt == 2
+            assert (row.model_extra or {})["future"] == 1
 
     def test_village_entry_keeps_unknown_fields(self) -> None:
         with tempfile.TemporaryDirectory() as td:
@@ -300,22 +308,21 @@ class CoreTests(unittest.TestCase):
                 }),
                 encoding="utf-8",
             )
-            snapshot = parse_village(source)
-            assert snapshot.tag == "#ALIAS"
+            document = parse_village(source)
+            assert document.tag == "#ALIAS"
             # The row without a data_id is dropped; the other keeps its unknown field.
-            assert len(snapshot.entities) == 1
-            entity = snapshot.entities[0]
-            assert (entity.data_id, entity.level, entity.count) == (4000041, 3, 1)
-            assert (entity.model_extra or {})["unreleased"] is True
+            [row] = document.entries("units")
+            assert (row.data, row.lvl, row.cnt) == (4000041, 3, None)
+            assert (row.model_extra or {})["unreleased"] is True
 
     def test_every_section_is_read_rather_than_a_written_down_list(self) -> None:
         """A list of twelve section names was dropping ten of the game's own.
 
         Measured against a real export: `helpers`, `decos`, `obstacles`,
         `skins`, `house_parts` and their builder-base twins never reached the
-        snapshot, including three helpers the community mapping does name.
+        snapshot, including three helpers.
         """
-        snapshot = parse_village_text(
+        document = parse_village_text(
             json.dumps({
                 "tag": "#TEST",
                 "buildings": [{"data": 1000001, "lvl": 16, "helper_timer": 623}],
@@ -324,7 +331,7 @@ class CoreTests(unittest.TestCase):
                 "a_section_added_next_release": [{"data": 99000001, "lvl": 2}],
             })
         )
-        assert {entity.section for entity in snapshot.entities} == {
+        assert set(document.sections()) == {
             "buildings",
             "helpers",
             "obstacles",
@@ -333,35 +340,37 @@ class CoreTests(unittest.TestCase):
         # Whatever the row carried beyond the declared fields is still on it,
         # which is what makes "nothing is thrown away" true rather than a claim
         # about the sections alone.
-        [building] = [one for one in snapshot.entities if one.section == "buildings"]
+        [building] = document.entries("buildings")
         assert (building.model_extra or {})["helper_timer"] == 623
-        [helper] = [one for one in snapshot.entities if one.section == "helpers"]
+        [helper] = document.entries("helpers")
         assert helper.helper_cooldown == 36772
 
     def test_a_section_of_bare_ids_is_read_too(self) -> None:
         """`skins` and `house_parts` are written as numbers, not objects."""
-        snapshot = parse_village_text(
+        document = parse_village_text(
             json.dumps({"tag": "#TEST", "skins": [52000379], "house_parts": [82000000]})
         )
-        assert sorted(entity.data_id for entity in snapshot.entities) == [52000379, 82000000]
+        assert [row.data for row in document.entries("skins")] == [52000379]
+        assert [row.data for row in document.entries("house_parts")] == [82000000]
 
     def test_the_export_time_and_boosts_survive(self) -> None:
         """Neither is a section, and both are read: the timestamp says which export this is."""
         document = parse_village_text(
             json.dumps({"tag": "#TEST", "timestamp": 1788624472, "boosts": {"clocktower": 77842}})
-        ).raw
+        )
         assert document.timestamp == 1788624472
         assert document.boosts.model_dump() == {"clocktower": 77842}
 
     def test_a_timer_on_a_row_is_a_declared_field_and_only_written_where_it_is(self) -> None:
-        snapshot = parse_village_text(
+        document = parse_village_text(
             json.dumps({
                 "tag": "#TEST",
                 "heroes": [{"data": 28000001, "lvl": 13, "timer": 29199}, {"data": 28000000}],
             })
         )
-        assert [entity.timer for entity in snapshot.entities] == [29199, None]
-        assert "timer" not in snapshot.entities[1].model_dump()
+        rows = document.entries("heroes")
+        assert [row.timer for row in rows] == [29199, None]
+        assert rows[1].model_dump() == {"data": 28000000}
 
     def test_display_lookup_picks_the_game_over_the_launcher(self) -> None:
         logical = focused_display(WINDOW_DISPLAYS, "com.supercell.clashofclans")
@@ -376,18 +385,66 @@ class CoreTests(unittest.TestCase):
         assert physical_display(DISPLAY_DEVICES, "9") == ""
 
 
+AT = 1791626042
+
+
+def _village(sections: dict[str, list[object]], **boosts: int) -> VillageDocument:
+    """The game's export at its fixed moment, holding the sections given as the game writes them."""
+    return VillageDocument.model_validate({
+        "tag": "#TEST",
+        "timestamp": AT,
+        "boosts": boosts,
+        **sections,
+    })
+
+
 def _exported(*rows: tuple[str, int, int | None], **boosts: int) -> VillageExport:
-    """An export at a fixed moment, one row per (section, data_id, timer)."""
-    return VillageExport(
-        tag="#TEST",
-        exported_at="",
-        timestamp=1791626042,
+    """An export merged at a fixed moment with no tables, one row per (section, data_id, timer)."""
+    sections: dict[str, list[object]] = {}
+    for section, data_id, timer in rows:
+        row: dict[str, object] = {"data": data_id, "lvl": 1}
+        if timer is not None:
+            row["timer"] = timer
+        sections.setdefault(section, []).append(row)
+    return merge(_village(sections, **boosts), None, AT)
+
+
+def _tables(*entities: GameEntity) -> GameEntities:
+    """Synthetic game tables whose town hall and builder hall are 1 and 2."""
+    return GameEntities(
+        game_version="1.2.3",
+        reading=1,
+        halls={"town_hall": 1, "builder_hall": 2},
         entities=[
-            NamedEntity(data_id=data_id, section=section, timer=timer)
-            for section, data_id, timer in rows
+            GameEntity(
+                data_id=1,
+                zh="大本營",
+                en="Town Hall",
+                world="day",
+                table="buildings",
+                max_lvl=3,
+                levels=[GameLevel(lvl=lvl, cost={"gold": lvl}, time=lvl) for lvl in (1, 2, 3)],
+            ),
+            *entities,
         ],
-        boosts=boosts,
-        outcome="exported",
+    )
+
+
+def _gated(data_id: int, top: int = 4) -> GameEntity:
+    """A building whose level N needs town hall N, priced N thousand gold and N hours."""
+    return GameEntity(
+        data_id=data_id,
+        zh=f"建築{data_id}",
+        en=f"Building {data_id}",
+        world="day",
+        table="buildings",
+        max_lvl=top,
+        levels=[
+            GameLevel(
+                lvl=lvl, needs={"town_hall": lvl}, cost={"gold": lvl * 1000}, time=lvl * 3600
+            )
+            for lvl in range(1, top + 1)
+        ],
     )
 
 
@@ -397,8 +454,8 @@ class UpgradeTimerTests(unittest.TestCase):
     The numbers are the 2026-10-10 export taken with all four speed-ups on.
     """
 
-    def _seconds(self, export: VillageExport) -> dict[str, int]:
-        return {timer.section: timer.seconds for timer in upgrade_timers(export)}
+    def _seconds(self, export: VillageExport) -> dict[tuple[str, str], int]:
+        return {(timer.world, timer.section): timer.seconds for timer in upgrade_timers(export)}
 
     def test_each_speed_up_runs_its_own_slots_at_its_own_rate(self) -> None:
         export = _exported(
@@ -413,24 +470,29 @@ class UpgradeTimerTests(unittest.TestCase):
         )
         assert self._seconds(export) == {
             # Done inside the potion: a tenth of the timer, rounded up.
-            "heroes": 2920,
+            ("day", "heroes"): 2920,
             # Outlasts it: 24 times faster for 3406 s, then at normal speed.
-            "units": 3406 + 417558 - 24 * 3406,
-            "pets": 3539 + 272446 - 24 * 3539,
+            ("day", "units"): 3406 + 417558 - 24 * 3406,
+            ("day", "pets"): 3539 + 272446 - 24 * 3539,
             # The clock tower speeds the builder base up ten times.
-            "heroes2": 613 + 220905 - 10 * 613,
+            ("night", "heroes"): 613 + 220905 - 10 * 613,
         }
 
     def test_a_slot_with_no_speed_up_running_takes_its_timer(self) -> None:
         export = _exported(("buildings", 1000011, 96192), ("units2", 4000033, 5227))
         [first, second] = upgrade_timers(export)
-        assert (first.section, first.seconds, first.boost) == ("units2", 5227, None)
+        assert (first.world, first.section, first.seconds, first.boost) == (
+            "night",
+            "units",
+            5227,
+            None,
+        )
         assert (second.world, second.role, second.seconds) == ("day", "builder", 96192)
 
     def test_a_section_nobody_has_seen_timed_is_reported_unboosted(self) -> None:
-        [timer] = upgrade_timers(
-            _exported(("a_section_added_next2", 99000001, 4000), clocktower_boost=600)
-        )
+        with self.assertLogs("ai_coc.parsers.village", "WARNING"):
+            export = _exported(("a_section_added_next2", 99000001, 4000), clocktower_boost=600)
+        [timer] = upgrade_timers(export)
         assert (timer.world, timer.role, timer.seconds, timer.boost) == ("night", None, 4000, None)
 
     def test_a_trap_holds_a_builder_and_a_siege_machine_a_research_slot(self) -> None:
@@ -441,9 +503,18 @@ class UpgradeTimerTests(unittest.TestCase):
         assert roles == {"traps": ("builder", 2000), "siege_machines": ("lab", 48000)}
 
     def test_the_finish_is_the_export_moment_plus_the_real_time(self) -> None:
-        [timer] = upgrade_timers(_exported(("heroes", 28000001, 29199), builder_boost=4665))
+        export = _exported(("heroes", 28000001, 29199), builder_boost=4665)
+        [timer] = upgrade_timers(export)
         finished = datetime.fromisoformat(timer.done_at).timestamp()
-        assert finished == 1791626042 + 2920
+        assert finished == AT + 2920
+        # The row in the file says the same instant.
+        assert export.day["heroes"][0].done_at == timer.done_at
+
+    def test_a_goblins_job_is_marked_on_its_timer(self) -> None:
+        export = merge(
+            _village({"units": [{"data": 4000059, "lvl": 4, "timer": 9, "extra": True}]}), None, AT
+        )
+        assert [timer.extra for timer in upgrade_timers(export)] == [True]
 
     def test_rows_with_no_timer_are_not_upgrades(self) -> None:
         assert upgrade_timers(_exported(("buildings", 1000015, None))) == []
@@ -453,80 +524,262 @@ class UpgradeTimerTests(unittest.TestCase):
         ready = clock_tower(_exported(tower))
         assert ready is not None
         assert (ready.ready_in, ready.boosting) == (0, None)
-        cooling = clock_tower(_exported(tower, clocktower_boost=613, clocktower_cooldown=79813))
-        assert cooling is not None
-        assert (cooling.ready_in, cooling.boosting) == (79813, 613)
+        cooling = _exported(tower, clocktower_boost=613, clocktower_cooldown=79813)
+        tower_now = clock_tower(cooling)
+        assert tower_now is not None
+        assert (tower_now.ready_in, tower_now.boosting) == (79813, 613)
+        assert cooling.clock_tower_ready_at == tower_now.ready_at
 
     def test_a_helper_with_no_cooldown_can_be_sent_now(self) -> None:
-        export = _exported(("buildings2", 1000039, None))
-        export.entities += [
-            NamedEntity(data_id=93000000, section="helpers", helper_cooldown=79823),
-            NamedEntity(data_id=93000001, section="helpers"),
-        ]
+        export = merge(
+            _village({
+                "helpers": [
+                    {"data": 93000000, "lvl": 8, "helper_cooldown": 79823},
+                    {"data": 93000001, "lvl": 12},
+                ]
+            }),
+            None,
+            AT,
+        )
         [ready, cooling] = helper_cooldowns(export)
         assert (ready.data_id, ready.ready_in) == (93000001, 0)
         assert (cooling.data_id, cooling.ready_in) == (93000000, 79823)
-        assert datetime.fromisoformat(cooling.ready_at).timestamp() == 1791626042 + 79823
+        assert datetime.fromisoformat(cooling.ready_at).timestamp() == AT + 79823
+        # Only the one cooling down carries the instant in the file, and no helper takes a slot.
+        assert [row.ready_at for row in export.day["helpers"]] == [cooling.ready_at, None]
+        assert [row.role for row in export.day["helpers"]] == [None, None]
 
     def test_no_clock_tower_or_one_being_upgraded_says_nothing(self) -> None:
         assert clock_tower(_exported(("buildings2", 1000034, None))) is None
-        assert clock_tower(_exported(("buildings2", 1000039, 3600))) is None
+        upgrading = _exported(("buildings2", 1000039, 3600))
+        assert clock_tower(upgrading) is None
+        assert upgrading.clock_tower_ready_at is None
+
+
+class MergeTests(unittest.TestCase):
+    """The game's export with its tables merged in: what each row gains, and what it keeps."""
+
+    def test_a_row_keeps_every_key_the_game_wrote_and_gains_names_levels_and_its_next_upgrade(
+        self,
+    ) -> None:
+        document = _village({
+            "buildings": [
+                {"data": 1, "lvl": 2, "cnt": 1},
+                {"data": 5, "lvl": 1, "gear_up": 1, "types": [{"data": 7, "lvl": 1}]},
+            ]
+        })
+        export = merge(document, _tables(_gated(5)), AT)
+        written = json.loads(export.model_dump_json())
+        assert written["day"]["buildings"][1] == {
+            "data": 5,
+            "lvl": 1,
+            "gear_up": 1,
+            "types": [{"data": 7, "lvl": 1}],
+            "zh": "建築5",
+            "en": "Building 5",
+            "role": "builder",
+            "max_lvl": 4,
+            # Town hall 2 allows level 2 of a building whose level N needs town hall N.
+            "limited_lvl": 2,
+            "next": {"lvl": 2, "cost": {"gold": 2000}, "time": 7200},
+        }
+        assert (export.halls, export.game_version) == ({"town_hall": 2}, "1.2.3")
+        # And it reads back as itself.
+        assert VillageExport.model_validate_json(export.model_dump_json()) == export
+
+    def test_an_upgrading_row_offers_the_level_after_the_one_it_is_buying(self) -> None:
+        rows = [{"data": 5, "lvl": 1, "timer": 60}, {"data": 5, "lvl": 3, "timer": 60}]
+        export = merge(_village({"buildings": rows}), _tables(_gated(5)), AT)
+        buying, last = export.day["buildings"]
+        assert buying.next is not None
+        assert buying.next.lvl == 3
+        # Past the last level the next upgrade is null, and still written.
+        assert last.next is None
+        assert json.loads(last.model_dump_json())["next"] is None
+
+    def test_a_table_that_prices_nothing_gives_no_next_upgrade(self) -> None:
+        guardian = GameEntity(
+            data_id=107000000,
+            zh="遠襲者",
+            en="Longshot",
+            world="day",
+            table="guardians",
+            max_lvl=5,
+            levels=[GameLevel(lvl=lvl) for lvl in range(1, 6)],
+        )
+        export = merge(
+            _village({"guardians": [{"data": 107000000, "lvl": 1}]}), _tables(guardian), AT
+        )
+        assert json.loads(export.model_dump_json())["day"]["guardians"] == [
+            {"data": 107000000, "lvl": 1, "zh": "遠襲者", "en": "Longshot", "max_lvl": 5}
+        ]
+
+    def test_the_builder_base_goes_under_night_and_what_is_bought_or_cleared_is_left_out(
+        self,
+    ) -> None:
+        document = _village({
+            "buildings2": [{"data": 2, "lvl": 1}],
+            "decos": [{"data": 18000003, "cnt": 1}],
+            "obstacles2": [{"data": 8000055, "cnt": 1}],
+            "skins": [52000379],
+            "house_parts": [82000000],
+            "sceneries": [60000096],
+        })
+        export = merge(document, None, AT)
+        assert (list(export.day), list(export.night)) == ([], ["buildings"])
+
+    def test_a_level_past_the_tables_says_the_tables_are_behind(self) -> None:
+        with self.assertLogs("ai_coc.parsers.village", "WARNING") as logged:
+            merge(_village({"buildings": [{"data": 5, "lvl": 9}]}), _tables(_gated(5)), AT)
+        assert "behind the game" in logged.output[0]
+
+    def test_without_tables_a_row_keeps_what_needs_none(self) -> None:
+        document = _village({"heroes": [{"data": 28000000, "lvl": 3, "timer": 100}]})
+        export = merge(document, None, AT)
+        [row] = export.day["heroes"]
+        assert json.loads(row.model_dump_json()) == {
+            "data": 28000000,
+            "lvl": 3,
+            "timer": 100,
+            "role": "builder",
+            "done_at": row.done_at,
+        }
+        assert (export.halls, export.game_version) == ({}, None)
+
+    def test_a_file_saved_before_the_merge_converts_to_the_game_keys(self) -> None:
+        old = LegacyExport.model_validate({
+            "tag": "#TEST",
+            "exported_at": "2026-10-10T09:54:02+00:00",
+            "timestamp": AT,
+            "boosts": {"builder_boost": 100},
+            "outcome": "exported",
+            "entities": [
+                {
+                    "data_id": 1,
+                    "level": 2,
+                    "count": 1,
+                    "section": "buildings",
+                    "name": "Town Hall",
+                },
+                {"data_id": 5, "level": 1, "count": 3, "section": "buildings", "name": None},
+                {
+                    "data_id": 5,
+                    "level": 1,
+                    "count": 1,
+                    "section": "buildings",
+                    "name": None,
+                    "timer": 500,
+                    "extra": True,
+                },
+                {
+                    "data_id": 1000097,
+                    "level": None,
+                    "count": 1,
+                    "section": "buildings",
+                    "types": [],
+                },
+                {"data_id": 52000379, "level": None, "count": 1, "section": "skins", "name": None},
+            ],
+        })
+        export = from_legacy(old, _tables(_gated(5)))
+        written = json.loads(export.model_dump_json())
+        assert [
+            {
+                key: row[key]
+                for key in row
+                if key in ("data", "lvl", "cnt", "timer", "extra", "types")
+            }
+            for row in written["day"]["buildings"]
+        ] == [
+            {"data": 1, "lvl": 2},
+            {"data": 5, "lvl": 1, "cnt": 3},
+            {"data": 5, "lvl": 1, "timer": 500, "extra": True},
+            {"data": 1000097, "types": []},
+        ]
+        assert "name" not in written["day"]["buildings"][0]
+        assert written["day"]["buildings"][0]["zh"] == "大本營"
+        assert "skins" not in written["day"]
+        assert export.exported_at == datetime.fromtimestamp(AT, UTC).astimezone().isoformat()
+        # Its own moment and boosts, not today's.
+        assert (
+            datetime.fromisoformat(written["day"]["buildings"][2]["done_at"]).timestamp()
+            == AT + 50
+        )
 
 
 def _levels(*rows: tuple[str, int, int, int]) -> VillageExport:
-    """An export holding (section, data_id, level, count) rows."""
-    return VillageExport(
-        tag="#TEST",
-        exported_at="",
-        entities=[
-            NamedEntity(
-                data_id=data_id, section=section, level=level, count=count, name=f"n{data_id}"
-            )
-            for section, data_id, level, count in rows
-        ],
-        outcome="exported",
-    )
+    """An export holding (section, data_id, level, count) rows, named by synthetic tables."""
+    sections: dict[str, list[object]] = {}
+    for section, data_id, level, count in rows:
+        sections.setdefault(section, []).append({"data": data_id, "lvl": level, "cnt": count})
+    named = [
+        GameEntity(
+            data_id=data_id,
+            zh=f"n{data_id}",
+            world="day",
+            table="buildings",
+            max_lvl=99,
+            levels=[],
+        )
+        for data_id in range(2, 10)
+    ]
+    return merge(_village(sections), _tables(*named), AT)
 
 
 class GrowthTests(unittest.TestCase):
     """What was upgraded between two exports, counted per level."""
 
-    def test_only_what_changed_is_listed_heroes_first_then_research_then_buildings(self) -> None:
+    def test_only_what_changed_is_listed_the_builders_first_heroes_leading(self) -> None:
         start = _levels(
-            ("buildings", 1, 18, 25),
-            ("buildings", 1, 19, 300),
-            ("units", 2, 4, 1),
-            ("heroes", 3, 57, 1),
-            ("buildings", 4, 10, 1),
+            ("buildings", 2, 18, 25),
+            ("buildings", 2, 19, 300),
+            ("units", 3, 4, 1),
+            ("heroes", 4, 57, 1),
+            ("buildings", 5, 10, 1),
         )
         end = _levels(
-            ("buildings", 1, 19, 325),
-            ("units", 2, 6, 1),
-            ("heroes", 3, 58, 1),
-            ("buildings", 4, 10, 1),
+            ("buildings", 2, 19, 325),
+            ("units", 3, 6, 1),
+            ("heroes", 4, 58, 1),
+            ("buildings", 5, 10, 1),
         )
         changes = growth(start, end)
-        assert [(c.group, c.data_id) for c in changes] == [
-            ("hero", 3),
-            ("lab", 2),
-            ("building", 1),
+        assert [(c.role, c.section, c.data_id, c.zh) for c in changes] == [
+            ("builder", "heroes", 4, "n4"),
+            ("builder", "buildings", 2, "n2"),
+            ("lab", "units", 3, "n3"),
         ]
-        assert (changes[2].before, changes[2].after) == ({18: 25, 19: 300}, {19: 325})
+        assert (changes[1].before, changes[1].after) == ({18: 25, 19: 300}, {19: 325})
 
     def test_each_village_is_kept_apart(self) -> None:
         changes = growth(_levels(("heroes2", 5, 25, 1)), _levels(("heroes2", 5, 26, 1)))
-        assert [(c.world, c.group, c.before, c.after) for c in changes] == [
-            ("night", "hero", {25: 1}, {26: 1})
+        assert [(c.world, c.role, c.before, c.after) for c in changes] == [
+            ("night", "builder", {25: 1}, {26: 1})
         ]
 
-    def test_pets_equipment_and_obstacles_are_left_out(self) -> None:
-        start = _levels(("pets", 6, 7, 1), ("equipment", 7, 10, 1), ("obstacles", 8, 1, 3))
-        end = _levels(("pets", 6, 8, 1), ("equipment", 7, 11, 1), ("obstacles", 8, 1, 1))
+    def test_pets_equipment_helpers_and_obstacles_are_left_out(self) -> None:
+        start = _levels(
+            ("pets", 6, 7, 1),
+            ("equipment", 7, 10, 1),
+            ("helpers", 8, 1, 1),
+            ("obstacles", 9, 1, 3),
+        )
+        end = _levels(
+            ("pets", 6, 8, 1),
+            ("equipment", 7, 11, 1),
+            ("helpers", 8, 2, 1),
+            ("obstacles", 9, 1, 1),
+        )
         assert growth(start, end) == []
 
     def test_a_new_building_has_nothing_before_it(self) -> None:
         [change] = growth(_levels(), _levels(("buildings", 9, 1, 1)))
         assert (change.before, change.after) == ({}, {1: 1})
+
+    def test_a_row_with_no_level_is_not_counted(self) -> None:
+        """The Crafting Station writes no `lvl`."""
+        start = merge(_village({"buildings": [{"data": 1000097}]}), None, AT)
+        assert growth(start, _levels()) == []
 
 
 class SettingsMenuTests(unittest.TestCase):

@@ -57,11 +57,6 @@ STATE_PATH = data_root() / "state.json"
 # into each run's directory survive it; the directory stays the full record.
 JOURNAL_PATH = data_root() / "runs.jsonl"
 
-# The community keeps this data_id → name table current with each game update.
-# Without it every imported entity shows as UNKNOWN.
-ENTITY_MAPPING_URL = "https://gist.githubusercontent.com/rahulkhatri137/a8449943df45100c5f1e1359cd9ec67a/raw/cocMapping.json"
-ENTITY_MAPPING_PATH = data_root() / "cocMapping.json"
-
 # The game's own tables, one folder per game version (`ai_coc gamedata`):
 # the decoded CSVs as the game ships them, and the `entities.json` built from
 # them. Created on the first extraction, not here.

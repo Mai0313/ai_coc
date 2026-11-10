@@ -100,13 +100,21 @@ def _version_key(folder: Path) -> tuple[int, ...]:
     return tuple(int(part) for part in re.findall(r"\d+", folder.name))
 
 
+def newest_kept() -> tuple[Path, GameEntities] | None:
+    """The newest version folder whose tables this code can read, without asking the emulator."""
+    for folder in sorted(GAME_DATA_DIR.glob("*/"), key=_version_key, reverse=True):
+        if (kept := _kept(folder)) is not None:
+            return folder, kept
+    return None
+
+
 def game_data(connect: Callable[[], AdbController], refresh: bool = False) -> GameDataReport:
     """The installed version's tables: kept ones when the version was read before, else read now.
 
     `refresh` reads them again whatever is kept. `connect` is called inside, so
     an emulator that is down falls back like any other failure: to the newest
-    version kept on disk, with a warning, much as the community mapping falls
-    back to its cached copy. With nothing kept the failure is raised.
+    version kept on disk, with a warning. With nothing kept the failure is
+    raised.
     """
     installed = None
     try:
@@ -136,15 +144,14 @@ def game_data(connect: Callable[[], AdbController], refresh: bool = False) -> Ga
     # RuntimeError covers ADB failing and the emulator being down; ValueError
     # covers tables this code cannot read, and a file that does not decode.
     except (RuntimeError, OSError, ValueError):
-        folders = sorted(GAME_DATA_DIR.glob("*/"), key=_version_key, reverse=True)
-        for folder in folders:
-            if (kept := _kept(folder)) is not None:
-                logger.warning(
-                    "Could not read the game's tables off the emulator; using %s's",
-                    folder.name,
-                    exc_info=True,
-                )
-                return GameDataReport(
-                    outcome="fallback", installed=installed, directory=folder, tables=kept
-                )
-        raise
+        if (newest := newest_kept()) is None:
+            raise
+        folder, kept = newest
+        logger.warning(
+            "Could not read the game's tables off the emulator; using %s's",
+            folder.name,
+            exc_info=True,
+        )
+        return GameDataReport(
+            outcome="fallback", installed=installed, directory=folder, tables=kept
+        )

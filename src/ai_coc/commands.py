@@ -53,7 +53,6 @@ from ai_coc.models import (
     GoblinOffer,
     JournalLine,
     LevelChange,
-    NamedEntity,
     NoteOutcome,
     PressReport,
     RunnerState,
@@ -66,9 +65,12 @@ from ai_coc.models import (
     AttackSeries,
     BoostOutcome,
     DonateReport,
+    ExportReport,
     FrameReading,
+    GameEntities,
     GrowthReport,
     LaunchReport,
+    LegacyExport,
     PressOutcome,
     RestartScope,
     StatusReport,
@@ -86,7 +88,6 @@ from ai_coc.models import (
     JournalTimers,
     LaunchOutcome,
     SurveyOutcome,
-    VillageEntity,
     VillageExport,
     BoundarySurvey,
     CollectOutcome,
@@ -148,14 +149,15 @@ from ai_coc.parsers.scout import (
 )
 from ai_coc.parsers.world import current_world
 from ai_coc.adapters.config import ConfigStore, gemini_key
-from ai_coc.parsers.village import growth as village_growth
 from ai_coc.parsers.village import (
+    merge,
     clock_tower,
+    from_legacy,
     upgrade_timers,
     helper_cooldowns,
     parse_village_text,
 )
-from ai_coc.adapters.mapping import fetch_entity_mapping
+from ai_coc.parsers.village import growth as village_growth
 from ai_coc.parsers.boundary import PLAYFIELD, VILLAGE_CENTRE, village_box, boundary_reach
 from ai_coc.parsers.building import (
     GOBLIN_X_BOX,
@@ -179,7 +181,7 @@ from ai_coc.parsers.building import (
 )
 from ai_coc.parsers.settings import export_row, window_open, settings_open, more_settings_open
 from ai_coc.adapters.emulator import Emulator, EmulatorError
-from ai_coc.adapters.gamedata import game_data
+from ai_coc.adapters.gamedata import game_data, newest_kept
 from ai_coc.adapters.ldplayer import LDPlayerAdapter
 from ai_coc.adapters.clipboard import read_clipboard, clear_clipboard, write_clipboard
 
@@ -2197,20 +2199,6 @@ def stock_of(runner: ScreenRunner, adb: AdbController, display: DisplayTarget) -
     return report
 
 
-def _entity_names() -> dict[int, str]:
-    """The community mapping's names, or none at all where it cannot be had.
-
-    `status` wants the names to make its timers readable and nothing more, so a
-    machine offline with no cached copy still gets every timer, unnamed, rather
-    than losing the whole reading to the download.
-    """
-    try:
-        return fetch_entity_mapping().names()
-    except OSError:
-        logger.warning("No name mapping to be had; the timers come back unnamed", exc_info=True)
-        return {}
-
-
 def status(frames: FrameLog) -> StatusReport:
     """When every upgrade on both villages finishes, and what the village on screen holds.
 
@@ -2220,7 +2208,6 @@ def status(frames: FrameLog) -> StatusReport:
     shield come off the village on screen, which is the only one that draws
     them.
     """
-    names = _entity_names()
     adb = _controller(frames)
     # Not parked: everything below taps fixed HUD places, and the park cost
     # about 14 of a status run's 50 seconds (the user's call of 2026-11-07).
@@ -2240,9 +2227,9 @@ def status(frames: FrameLog) -> StatusReport:
     # whose ceilings are read by opening a tooltip on each bar that can be left
     # standing over the gear.
     exported = (
-        _exported(adb, display, names)
+        _exported(adb, display)
         if settled is not None and builder.world is not None
-        else VillageExport(tag="", exported_at="", outcome="no_village")
+        else ExportReport(outcome="no_village")
     )
     report = StatusReport(
         builder=builder,
@@ -2251,12 +2238,12 @@ def status(frames: FrameLog) -> StatusReport:
         shield=shield,
         export=exported.outcome,
     )
-    if exported.outcome == "exported":
-        report.exported_at = exported.exported_at
-        report.boosts = exported.boosts
-        report.timers = upgrade_timers(exported)
-        report.clock_tower = clock_tower(exported)
-        report.helpers = helper_cooldowns(exported)
+    if (village := exported.export) is not None:
+        report.exported_at = village.exported_at
+        report.boosts = village.boosts
+        report.timers = upgrade_timers(village)
+        report.clock_tower = clock_tower(village)
+        report.helpers = helper_cooldowns(village)
     report.world = builder.world or lab.world or report.stock.world
     logger.info(
         "Status: %s；%s；%s；%s",
@@ -2290,9 +2277,8 @@ def _timers_line(report: StatusReport) -> str:
     if not report.timers:
         return "兩個世界都沒有在升的"
     soonest = report.timers[0]
-    return (
-        f"最快好的是 {soonest.world} 的 {soonest.name or soonest.section},{soonest.done_at[11:16]}"
-    )
+    name = soonest.zh or soonest.en or soonest.section
+    return f"最快好的是 {soonest.world} 的 {name},{soonest.done_at[11:16]}"
 
 
 # Only ever used to build a log line, which is why these live here rather than
@@ -2637,14 +2623,6 @@ CLIPBOARD_POLLS = 15
 CLIPBOARD_GAP = 0.4
 
 
-def _named(entities: list[VillageEntity], names: dict[int, str]) -> list[NamedEntity]:
-    """Every entity with whatever the community mapping calls it, None where it has nothing."""
-    return [
-        NamedEntity.model_validate({**entity.model_dump(), "name": names.get(entity.data_id)})
-        for entity in entities
-    ]
-
-
 def _export_path(tag: str, when: datetime) -> Path:
     """Where one account's export of one day is kept, with the tag made safe to be a filename.
 
@@ -2657,23 +2635,82 @@ def _export_path(tag: str, when: datetime) -> Path:
     return ACCOUNT_JSON_DIR / f"{safe}_{when.astimezone():%Y-%m-%d}.json"
 
 
-def _last_export() -> VillageExport:
-    """The most recent export on this machine, without touching the emulator.
+def _tables(adb: AdbController) -> GameEntities | None:
+    """The installed game's tables to merge into an export, or None where none can be had.
 
-    This is what `--last` prints. A file written before this command existed
-    holds the game's raw payload rather than an export, and says so rather than
-    coming back as an empty village.
+    The export is saved either way: what it says about the village is the
+    game's own, and the tables only add names, levels and prices to it, so a
+    first run on a version whose tables do not read still keeps the day's file.
     """
-    saved = sorted(ACCOUNT_JSON_DIR.glob("*.json"), key=lambda one: one.stat().st_mtime)
-    if not saved:
-        return VillageExport(tag="", exported_at="", outcome="never_exported")
     try:
-        export = VillageExport.model_validate_json(saved[-1].read_text(encoding="utf-8"))
-    except ValueError:
-        logger.warning("%s does not read back as an export", saved[-1])
-        return VillageExport(tag="", exported_at="", outcome="wrong_format")
-    logger.info("Read %s back off %s", export.tag, saved[-1])
-    return export.model_copy(update={"outcome": "read_back"})
+        return game_data(lambda: adb).tables
+    except (RuntimeError, OSError, ValueError):
+        logger.warning(
+            "No game tables to be had; the export is saved without names, levels or prices",
+            exc_info=True,
+        )
+        return None
+
+
+def _kept_tables() -> GameEntities | None:
+    """The newest game tables kept on disk, for converting an old export without the emulator."""
+    newest = newest_kept()
+    return newest[1] if newest else None
+
+
+def _saved_exports(tables: GameEntities | None) -> list[VillageExport]:
+    """Every export kept in `account_json/`, oldest first, an old-format one converted on the way.
+
+    A file saved before the merge (`LegacyExport`) is rewritten in place as a
+    merged one the first time it is read with the game's tables at hand, so
+    the days before the merge keep counting in `growth`. Without tables it is
+    left as it is, and out, since converting drops the name it carried. A file
+    that reads as neither is left out.
+    """
+    saved: list[VillageExport] = []
+    for path in ACCOUNT_JSON_DIR.glob("*.json"):
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError:
+            logger.warning("%s could not be read; left out", path, exc_info=True)
+            continue
+        with suppress(ValueError):
+            saved.append(VillageExport.model_validate_json(text))
+            continue
+        try:
+            old = LegacyExport.model_validate_json(text)
+        except ValueError:
+            logger.warning("%s does not read back as an export; left out", path)
+            continue
+        if tables is None:
+            logger.warning(
+                "%s is in the shape before the merge and no game tables are kept to convert it; left out",
+                path,
+            )
+            continue
+        export = from_legacy(old, tables)
+        path.write_text(export.model_dump_json(indent=2), encoding="utf-8")
+        logger.info(
+            "Converted %s to the merged shape with the tables of %s", path, tables.game_version
+        )
+        saved.append(export)
+    return sorted(saved, key=lambda one: one.timestamp)
+
+
+def _last_export() -> ExportReport:
+    """The most recent export on this machine, by when the game took it, without touching the emulator.
+
+    This is what `--last` prints. Files that are there but none of which reads
+    as an export (the game's raw payload, saved before this command existed)
+    say so rather than coming back as an empty village.
+    """
+    saved = _saved_exports(_kept_tables())
+    if saved:
+        logger.info("Read %s back, taken %s", saved[-1].tag, saved[-1].exported_at)
+        return ExportReport(outcome="read_back", export=saved[-1])
+    return ExportReport(
+        outcome="wrong_format" if any(ACCOUNT_JSON_DIR.glob("*.json")) else "never_exported"
+    )
 
 
 def _copy_village(adb: AdbController, display: DisplayTarget) -> tuple[str, ExportOutcome]:
@@ -2743,13 +2780,16 @@ EXPORT_LINES: dict[ExportOutcome, str] = {
 }
 
 
-def export_line(export: VillageExport) -> str:
+def export_line(report: ExportReport) -> str:
     """The one line a person reads off an export, whether it was taken or read back."""
-    return EXPORT_LINES[export.outcome].format(tag=export.tag, count=len(export.entities))
+    export = report.export
+    return EXPORT_LINES[report.outcome].format(
+        tag=export.tag if export else "", count=len(list(export.rows())) if export else 0
+    )
 
 
-def export(frames: FrameLog, last: bool = False) -> VillageExport:
-    """Get the village out of the game and name everything in it.
+def export(frames: FrameLog, last: bool = False) -> ExportReport:
+    """Get the village out of the game and merge the game's own tables into it.
 
     The game will write the whole village out as JSON, which is the only
     complete account of what a village holds — every building, every level,
@@ -2759,24 +2799,19 @@ def export(frames: FrameLog, last: bool = False) -> VillageExport:
     never moves. The coordinates are measured now and the reading is what
     decides whether to tap them.
 
-    Only the named result is kept. The game's own payload is not thrown away in
-    the process: every section it carries becomes entities, every field of every
-    row survives on them, and the export time and boosts come across whole.
+    Only the merged result is kept (`VillageExport`), and it keeps every key
+    the game wrote on every row it keeps.
     """
     if last:
         return _last_export()
-    # Fetched before the emulator is touched: it reaches the network, and a run
-    # that fails on it after walking the menus has spent the taps and thrown the
-    # answer away.
-    names = fetch_entity_mapping().names()
     adb = _controller(frames)
     display = _settle_game(adb, WORLD_SETTLE_POLLS, park=False)
     if display is None:
-        return VillageExport(tag="", exported_at="", outcome="no_village")
-    return _exported(adb, display, names)
+        return ExportReport(outcome="no_village")
+    return _exported(adb, display)
 
 
-def _exported(adb: AdbController, display: DisplayTarget, names: dict[int, str]) -> VillageExport:
+def _exported(adb: AdbController, display: DisplayTarget) -> ExportReport:
     """The walk through the settings menus and everything after it, on a village already up.
 
     Shared with `status`, which reads its timers off the same payload. The
@@ -2787,54 +2822,44 @@ def _exported(adb: AdbController, display: DisplayTarget, names: dict[int, str])
     try:
         payload, copied = _copy_village(adb, display)
         if copied != "exported":
-            return VillageExport(tag="", exported_at="", outcome=copied)
+            return ExportReport(outcome=copied)
         # Parsed inside the same guard, because the clipboard is the one input
         # here that comes from outside: anything else copied during the poll is
         # read as the payload, and a `ValidationError` reaching the top would
         # leave `result.json` unwritten with only the log to reconstruct from.
-        snapshot = parse_village_text(payload)
+        document = parse_village_text(payload)
     except ValueError as exc:
         logger.warning("The clipboard payload was not a village: %s", exc)
-        return VillageExport(tag="", exported_at="", outcome="not_a_village")
+        return ExportReport(outcome="not_a_village")
     finally:
         # Whatever happened, the profile window is left covering the village,
         # and every other command starts by assuming one is on screen. Only
         # where it is up: with none, that place is the gold bar.
         if window_open(adb.screenshot(display, "profile-left")):
             adb.tap(*CLOSE_SETTINGS, display)
-    stamp = snapshot.raw.timestamp
-    when = datetime.fromtimestamp(stamp, UTC) if stamp else datetime.now(UTC)
-    named = _named(snapshot.entities, names)
-    unnamed = sum(1 for entity in named if entity.name is None)
-    path = _export_path(snapshot.tag, when)
-    result = VillageExport(
-        tag=snapshot.tag,
-        exported_at=when.isoformat(),
-        timestamp=stamp,
-        entities=named,
-        boosts=snapshot.raw.boosts,
-        outcome="exported",
-    )
-    path.write_text(result.model_dump_json(indent=2), encoding="utf-8")
-    logger.info("Export: %s,其中 %d 筆還沒有名字,存到 %s", export_line(result), unnamed, path)
-    return result
+    at = document.timestamp or int(time.time())
+    tables = _tables(adb)
+    village = merge(document, tables, at)
+    path = _export_path(village.tag, datetime.fromtimestamp(at, UTC))
+    path.write_text(village.model_dump_json(indent=2), encoding="utf-8")
+    report = ExportReport(outcome="exported", export=village)
+    unnamed = sum(1 for _, _, row in village.rows() if row.zh is None)
+    logger.info("Export: %s,其中 %d 筆還沒有名字,存到 %s", export_line(report), unnamed, path)
+    # While the installed game's tables are at hand, any file still in the
+    # shape before the merge is converted.
+    _saved_exports(tables)
+    return report
 
 
 def _snapshots() -> list[VillageExport]:
-    """Every saved export of the account last exported, oldest first; unreadable files skipped."""
-    saved: list[VillageExport] = []
-    for path in ACCOUNT_JSON_DIR.glob("*.json"):
-        try:
-            saved.append(VillageExport.model_validate_json(path.read_text(encoding="utf-8")))
-        except (OSError, ValueError):
-            logger.warning("%s does not read back as an export; left out", path)
-    saved = sorted((one for one in saved if one.exported_at), key=lambda one: one.exported_at)
+    """Every saved export of the account last exported, oldest first."""
+    saved = _saved_exports(_kept_tables())
     return [one for one in saved if one.tag == saved[-1].tag] if saved else []
 
 
 def _day(export: VillageExport) -> date:
     """The local day an export was taken on."""
-    return datetime.fromisoformat(export.exported_at).astimezone().date()
+    return datetime.fromtimestamp(export.timestamp, UTC).astimezone().date()
 
 
 def growth(start: date | None = None, end: date | None = None) -> GrowthReport:
@@ -2853,7 +2878,7 @@ def growth(start: date | None = None, end: date | None = None) -> GrowthReport:
         else next((one for one in saved if start is None or _day(one) >= start), None)
     )
     last = next((one for one in reversed(saved) if end is None or _day(one) <= end), None)
-    if first is None or last is None or first.exported_at >= last.exported_at:
+    if first is None or last is None or first.timestamp >= last.timestamp:
         report = GrowthReport(outcome="too_few")
     else:
         report = GrowthReport(
@@ -2875,7 +2900,7 @@ GROWTH_LINES: dict[GrowthOutcome, str] = {
 
 
 def growth_text(report: GrowthReport) -> str:
-    """The report as a person reads it: each village, then heroes, research and buildings."""
+    """The report as a person reads it: each village, then the builders' upgrades and the laboratory's."""
     if report.outcome != "compared":
         return GROWTH_LINES[report.outcome]
     shown = [f"{report.tag}  {_local(report.start)} → {_local(report.end)}"]
@@ -2884,12 +2909,12 @@ def growth_text(report: GrowthReport) -> str:
         mine = [change for change in report.changes if change.world == world]
         if not mine:
             shown.append("  (沒有升級)")
-        for group, label in (("hero", "英雄"), ("lab", "實驗室"), ("building", "建築")):
-            rows = [change for change in mine if change.group == group]
+        for role, label in (("builder", "建築 (含英雄)"), ("lab", "實驗室")):
+            rows = [change for change in mine if change.role == role]
             if rows:
                 shown.append(f"  {label}")
                 shown += [
-                    f"    {row.name or f'#{row.data_id}'}  {_level_change(row)}" for row in rows
+                    f"    {row.zh or f'#{row.data_id}'}  {_level_change(row)}" for row in rows
                 ]
     return "\n".join(shown)
 
@@ -2951,6 +2976,7 @@ def _press_time(start: JournalLine) -> datetime | None:
 
 
 def _slot(timer: UpgradeTimer) -> TurnaroundGroup:
+    # `heroes2` is the builder base's heroes on a journal line written before the merge.
     if timer.section in ("heroes", "heroes2"):
         return "hero"
     if timer.role == "lab":
@@ -2993,7 +3019,7 @@ def turnaround(since: date | None = None) -> TurnaroundReport:
     """
     statuses, confirms = _journal_upgrades()
     goblins = [pressed for pressed, paid in confirms if paid.goblin is not None]
-    taken: set[tuple[str | None, str]] = set()
+    taken: set[tuple[int, str]] = set()
     samples: list[TurnaroundSample] = []
     for pressed, paid in confirms:
         if paid.wall is not None:
@@ -3002,7 +3028,7 @@ def turnaround(since: date | None = None) -> TurnaroundReport:
         due = [
             (datetime.fromisoformat(timer.done_at), timer)
             for timer in timers
-            if (timer.name, timer.done_at) not in taken
+            if (timer.data_id, timer.done_at) not in taken
             and timedelta(0)
             <= pressed - datetime.fromisoformat(timer.done_at)
             <= TURNAROUND_WINDOW
@@ -3010,7 +3036,7 @@ def turnaround(since: date | None = None) -> TurnaroundReport:
         if not due:
             continue
         done, timer = max(due, key=lambda one: one[0])
-        taken.add((timer.name, timer.done_at))
+        taken.add((timer.data_id, timer.done_at))
         if paid.goblin is not None or any(
             timedelta(0) <= g - pressed <= GOBLIN_GAP for g in goblins
         ):
@@ -3021,7 +3047,7 @@ def turnaround(since: date | None = None) -> TurnaroundReport:
                     pressed=pressed,
                     group=_slot(timer),
                     world=timer.world,
-                    name=timer.name,
+                    name=timer.zh or timer.en,
                     seconds=(pressed - done).total_seconds(),
                 )
             )
