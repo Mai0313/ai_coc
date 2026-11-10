@@ -941,7 +941,7 @@ class NightAttackTests(unittest.TestCase):
         assert deployed.call_count == 1
 
     def test_the_stages_played_before_another_device_took_over_still_count(self) -> None:
-        """`farm` counts this village's battles by `phases`.
+        """`takeover` counts this village's battles by `phases`.
 
         Measured 2026-10-09: a round taken over in its second stage reported 0.
         """
@@ -1100,7 +1100,7 @@ class NightAttackTests(unittest.TestCase):
         assert (report.outcome, report.phases) == ("deployed", 1)
 
     def test_a_stop_during_the_matchmaker_is_not_a_village_with_nobody_queueing(self) -> None:
-        """`_find_opponent` answers None for both, and `farm` acts on them differently."""
+        """`_find_opponent` answers None for both, and `takeover` acts on them differently."""
         runner = self._runner()
         runner.should_stop = lambda: True
         with (
@@ -4713,7 +4713,7 @@ class AttackTests(unittest.TestCase):
         assert report.attacked == dark_only.loot
 
     def test_a_battle_another_device_took_over_still_counts_as_fought(self) -> None:
-        """`farm` counts the rounds that fought by `attacked`."""
+        """`takeover` counts the rounds that fought by `attacked`."""
         runner = self._runner()
         rich = ScoutView(loot=LootOffer(gold=900_000, elixir=900_000, dark=1), can_skip=False)
         with (
@@ -6479,7 +6479,7 @@ class LaunchTests(unittest.TestCase):
 class RunLogTests(unittest.TestCase):
     """One directory per run, which used to be a convention in a skill file.
 
-    The layout came from the `farm` skill's notes on running a loop, built with
+    The layout came from a skill's notes on running a loop, built with
     shell redirection, so it existed only for the reader who could have built it
     anyway. A person running the CLI by hand got a rotating file and nothing
     else.

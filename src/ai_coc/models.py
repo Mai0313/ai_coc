@@ -1090,7 +1090,7 @@ class AttackReport(BaseModel):
 
         **Derived rather than stored**, because it was the one thing the old
         sentence said that a field also said, and two places to look is how they
-        drift. Kept under its own name because `farm` owns where it leads and
+        drift. Kept under its own name because `takeover` owns where it leads and
         that skill reads it — and computed rather than plain
         so `result.json` carries it exactly as it did.
         """

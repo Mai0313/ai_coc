@@ -1407,7 +1407,7 @@ class AttackRunner(ScreenRunner):
         **Only the idle count decides, never the total**, because events add a
         builder or a research slot (drawn with a goblin face) and take it away
         again. **And any idle slot, not one more than the run started with**:
-        `farm` restarts this command around every loan and every side errand,
+        `takeover` restarts this command around every loan and every side errand,
         and a count remembered here would take whatever freed up in the gap for
         the new starting line and never report it.
 
@@ -2655,7 +2655,7 @@ class AttackRunner(ScreenRunner):
         """How the battle went, a takeover by another device included.
 
         Answered here rather than left to `commands._round`, so the round still
-        carries the opponent it fought: `farm` counts battles by `attacked`.
+        carries the opponent it fought: `takeover` counts battles by `attacked`.
         """
         try:
             return self._outcome(self._wait_out_battle(opening))
@@ -3129,7 +3129,7 @@ class AttackRunner(ScreenRunner):
         if battle is None:
             # `_find_opponent` answers None for a stop as readily as for a
             # matchmaker that never matched, and those are not the same news:
-            # `farm` treats a run of `no_opponent` as worth reporting upwards.
+            # `takeover` treats a run of `no_opponent` as worth reporting upwards.
             # A dialog that would not reopen after a cancel is a third, and it
             # names itself in `_stuck`.
             if self.should_stop():
@@ -3145,7 +3145,7 @@ class AttackRunner(ScreenRunner):
             if deployed is None:
                 break
             played += 1
-            # The stages already played count, as `phases` is what `farm`
+            # The stages already played count, as `phases` is what `takeover`
             # counts this village's battles by.
             try:
                 self._wait_out_night(*deployed)
