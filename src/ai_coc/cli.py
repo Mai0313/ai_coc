@@ -28,12 +28,12 @@ from ai_coc.models import (
     RunStarted,
     StopTarget,
     AttackSeries,
+    ExportReport,
     GrowthReport,
     RestartScope,
     AttackOptions,
     DonateOptions,
     LootOverrides,
-    VillageExport,
     TurnaroundReport,
 )
 from ai_coc.constants import FRAME_RETENTION_DAYS
@@ -458,34 +458,36 @@ def _answer(arguments: argparse.Namespace, run: RunLog) -> BaseModel | str:
     return handlers[a.command]()
 
 
-def _print_table(export: VillageExport) -> None:
+def _print_table(report: ExportReport) -> None:
     """The export as a table for a person, which is what `--table` asks for.
 
-    An entity the community mapping has no entry for shows `—` rather than its
-    number: the number is already in the column beside it, and this project's
-    rule is that a blank says "not known" where an invented value would not.
+    A row the game's tables have no name for shows `—` rather than its number:
+    the number is already in the column beside it, and this project's rule is
+    that a blank says "not known" where an invented value would not.
     """
-    table = Table(title=f"{export.tag}  {len(export.entities)} 筆  {export.exported_at}")
-    for column in ("Section", "Data ID", "Name", "Level", "Count"):
-        table.add_column(column)
-    for entity in export.entities:
-        table.add_row(
-            entity.section,
-            str(entity.data_id),
-            entity.name or "—",
-            "—" if entity.level is None else str(entity.level),
-            str(entity.count),
-        )
     console = Console()
-    if export.entities:
+    if (export := report.export) is not None:
+        table = Table(title=f"{export.tag}  {len(list(export.rows()))} 筆  {export.exported_at}")
+        for column in ("World", "Section", "Data ID", "Name", "Level", "Max", "Count"):
+            table.add_column(column)
+        for world, section, row in export.rows():
+            table.add_row(
+                world,
+                section,
+                str(row.data),
+                row.zh or "—",
+                "—" if row.lvl is None else str(row.lvl),
+                "—" if row.max_lvl is None else str(row.max_lvl),
+                str(row.cnt or 1),
+            )
         console.print(table)
-    # Always, and it is the whole output when there are no rows: an export that
+    # Always, and it is the whole output when there is no export: one that
     # failed says here which step it stopped at — nothing saved yet, a menu that
     # did not open, a clipboard that stayed empty — and the JSON branch that
     # would have shown it is the one `--table` replaced. `--last --table` on a
     # machine that has never run this is exactly that case, and it is the line
     # the `upgrades` skill tells a session to start with.
-    console.print(commands.export_line(export))
+    console.print(commands.export_line(report))
 
 
 def _run_command(arguments: argparse.Namespace, run: RunLog) -> int:
@@ -525,7 +527,7 @@ def _run_command(arguments: argparse.Namespace, run: RunLog) -> int:
     run.answer(result)
     # `result.json` is the answer whatever the terminal is shown, so a run stays
     # machine-readable after a `--table` that was only ever for a person.
-    if getattr(arguments, "table", False) and isinstance(answer, VillageExport):
+    if getattr(arguments, "table", False) and isinstance(answer, ExportReport):
         _print_table(answer)
     elif isinstance(answer, GrowthReport):
         sys.stdout.write(f"{commands.growth_text(answer)}\n")

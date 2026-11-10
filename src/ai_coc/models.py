@@ -18,14 +18,18 @@ from pydantic import (
     ConfigDict,
     PrivateAttr,
     AliasChoices,
+    SerializerFunctionWrapHandler,
     computed_field,
     field_validator,
     model_validator,
+    model_serializer,
 )
 
 from .constants import LOG_DIR, DEFAULT_ADB_HOST, DEFAULT_GEMINI_MODEL, FRAME_RETENTION_DAYS
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
+
     # Only `FrameLog`'s private attribute names it, which pydantic never
     # resolves, and `adb.py` imports this module.
     from ai_coc.adapters.adb import AdbController  # noqa: TC004
@@ -277,36 +281,70 @@ class EmulatorInstance(BaseModel):
         return AdbEndpoint.parse(self.adb_serial)
 
 
-class VillageEntry(BaseModel):
-    """One row of a Village JSON section, under any of its historical key names."""
+class NextUpgrade(BaseModel):
+    """The next upgrade a row of an export could start, at the game's list price.
+
+    `cost` and `time` are the tables' `GameLevel` for that level: the gold pass
+    and events discount upgrades, so what the build panel asks can be less, and
+    they rank one upgrade against another rather than say what one will cost.
+    `time` is None where the table writes none (hero equipment).
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    lvl: int
+    cost: dict[str, int]
+    time: int | None = None
+
+
+class ExportRow(BaseModel):
+    """One row of a village export: every key the game wrote, and what its tables add to it.
+
+    The game's own keys stay as it wrote them, the undeclared ones (`types`,
+    `gear_up`, `helper_recurrent`, whatever a release adds) as extras. **A row
+    writes back only the fields set on it**, so a key the game left out stays
+    out and an added one is there only where it applies: `next` is null past
+    the last level and absent where the table prices nothing (guardians,
+    helpers). `role` is whose slot upgrading the row takes
+    (`parsers.village.ROLES`), `limited_lvl` the highest level the village's
+    halls allow, and `done_at` and `ready_at` the instants its `timer` and
+    `helper_cooldown` run out, speed-ups included.
+    """
 
     model_config = TOLERANT
 
-    data_id: int = Field(validation_alias=AliasChoices("data", "data_id", "id"))
-    level: int | None = Field(default=None, validation_alias=AliasChoices("lvl", "level"))
-    count: int = Field(default=1, validation_alias=AliasChoices("cnt", "count"))
-    # Seconds still to run at normal speed, on a row being upgraded; the game
-    # writes it on those rows alone, and so does the file this is saved back to.
-    timer: int | None = Field(default=None, exclude_if=lambda value: value is None)
-    # Seconds until a helper in the `helpers` section can be sent again; the
-    # game writes it only while that helper is cooling down.
-    helper_cooldown: int | None = Field(default=None, exclude_if=lambda value: value is None)
+    data: int = Field(validation_alias=AliasChoices("data", "data_id", "id"))
+    lvl: int | None = Field(default=None, validation_alias=AliasChoices("lvl", "level"))
+    cnt: int | None = Field(default=None, validation_alias=AliasChoices("cnt", "count"))
+    # Seconds still to run at normal speed, on a row being upgraded.
+    timer: int | None = None
+    # True on the job an event's goblin builder or researcher is doing, whose
+    # slot goes away when the job is done.
+    extra: bool | None = None
+    # Seconds until a helper can be sent again, written only while it cools down.
+    helper_cooldown: int | None = None
+    zh: str | None = None
+    en: str | None = None
+    role: UpgradeRole | None = None
+    max_lvl: int | None = None
+    limited_lvl: int | None = None
+    next: NextUpgrade | None = None
+    done_at: str | None = None
+    ready_at: str | None = None
 
-    @field_validator("level", mode="before")
+    @field_validator("lvl", "cnt", mode="before")
     @classmethod
-    def _tolerant_level(cls, value: Any) -> int | None:  # noqa: ANN401 - arbitrary JSON value
+    def _tolerant(cls, value: Any) -> int | None:  # noqa: ANN401 - arbitrary JSON value
         return tolerant_int(value)
 
-    @field_validator("count", mode="before")
-    @classmethod
-    def _tolerant_count(cls, value: Any) -> int:  # noqa: ANN401 - arbitrary JSON value
-        return tolerant_int(value, 1) or 1
-
-
-class VillageEntity(VillageEntry):
-    """One building, troop, hero or spell read out of a Village JSON export."""
-
-    section: str
+    @model_serializer(mode="wrap")
+    def _as_set(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+        written = handler(self)
+        return {
+            key: value
+            for key, value in written.items()
+            if key in self.model_fields_set or key not in type(self).model_fields
+        }
 
 
 def _absent(value: int | None) -> bool:
@@ -353,7 +391,7 @@ class VillageDocument(BaseModel):
         """Every key holding a list of entities, which is what a section is."""
         return [key for key, value in (self.model_extra or {}).items() if isinstance(value, list)]
 
-    def entries(self, section: str) -> list[VillageEntity]:
+    def entries(self, section: str) -> list[ExportRow]:
         """Rows of one section; a row without a usable data_id is skipped, not fatal.
 
         A row is usually an object, but `skins` and `house_parts` are written as
@@ -363,36 +401,16 @@ class VillageDocument(BaseModel):
         values = (self.model_extra or {}).get(section)
         if not isinstance(values, list):
             return []
-        entities: list[VillageEntity] = []
+        rows: list[ExportRow] = []
         for item in values:
             row = {"data": item} if isinstance(item, int) else item
             if not isinstance(row, dict):
                 continue
             try:
-                entities.append(VillageEntity.model_validate({**row, "section": section}))
+                rows.append(ExportRow.model_validate(row))
             except ValueError:
                 continue
-        return entities
-
-
-class AccountSnapshot(BaseModel):
-    tag: str
-    raw: VillageDocument
-    entities: list[VillageEntity] = Field(default_factory=list)
-
-
-class NamedEntity(VillageEntity):
-    """One entity with whatever the community mapping calls it.
-
-    None rather than the number when the mapping has no entry, so the file stays
-    honest about which names are real: measured on one real export, 65 of 226
-    have no name — 39 hero equipment, 7 house parts, 6 skins, 8 obstacles, 4
-    decorations and 1 helper, none of which the community gist covers. Writing
-    the data_id into `name` would hide which ones to revisit once the mapping
-    catches up, and the id is right there in its own field anyway.
-    """
-
-    name: str | None = None
+        return rows
 
 
 # How one `export` ended. `read_back` is `--last`, off the disk without touching
@@ -415,49 +433,71 @@ ExportOutcome = Literal[
 
 
 class VillageExport(BaseModel):
-    """What `ai_coc export` answers with, and what it writes to `account_json/`.
+    """One file in `account_json/`: the game's village export merged with the game's own tables.
 
-    The game's own payload is not kept. Everything in it is here — every
-    section, every field of every row through `VillageEntity`'s tolerance, the
-    export time and the boosts — so this is the same data named rather than a
-    subset of it.
+    `day` and `night` hold the game's sections by name, a builder base one
+    without its trailing `2`; the decorations, obstacles, house parts, skins and
+    sceneries are left out (the user's call). `timestamp` is the game's own
+    export time, this machine's where the game wrote none, and `exported_at`
+    the same instant on the local clock. `halls` is the village's level of
+    each hall it has, `game_version` the version of the tables merged in, and
+    both are empty, with no names, levels or prices on any row, for an export
+    saved when no tables could be had. Required `day` and `night` are what
+    tell this from a file saved in the shape before (`LegacyExport`).
     """
 
     tag: str
-    # The game's own export time, which is what says a clipboard payload is this
-    # export rather than the one still sitting there from last time. ISO for
-    # reading, the raw counter for comparing.
+    exported_at: str
+    timestamp: int
+    game_version: str | None = None
+    halls: dict[Hall, int] = Field(default_factory=dict)
+    boosts: Boosts = Field(default_factory=Boosts)
+    # None for a builder base with no clock tower, or one being upgraded.
+    clock_tower_ready_at: str | None = None
+    day: dict[str, list[ExportRow]]
+    night: dict[str, list[ExportRow]]
+
+    def rows(self) -> Iterator[tuple[World, str, ExportRow]]:
+        """Every row with the village and section it sits in."""
+        for world, sections in (("day", self.day), ("night", self.night)):
+            for section, rows in sections.items():
+                for row in rows:
+                    yield world, section, row
+
+
+class ExportReport(BaseModel):
+    """What `ai_coc export` answers, and `status`'s walk through the same menus: how it ended and the export it took."""
+
+    outcome: ExportOutcome
+    export: VillageExport | None = None
+
+
+class LegacyRow(BaseModel):
+    """One row of a file saved before the merge, as `parsers.village.from_legacy` reads it back.
+
+    `name` was the community table's, which nothing reads any more; every
+    other field the game wrote is an extra, under the name the game gave it.
+    """
+
+    model_config = TOLERANT
+
+    data_id: int
+    level: int | None = None
+    count: int = 1
+    section: str
+    name: str | None = None
+
+
+class LegacyExport(BaseModel):
+    """A file saved in `account_json/` before the merge: every section's rows in one list."""
+
+    model_config = TOLERANT
+
+    tag: str
     exported_at: str
     timestamp: int | None = None
-    entities: list[NamedEntity] = Field(default_factory=list)
     boosts: Boosts = Field(default_factory=Boosts)
-    # Required, and an export written before this field existed therefore reads
-    # back as `wrong_format` rather than as one that cannot say how it ended.
-    # Re-running the command is a few taps, which is cheaper than a file that
-    # looks current and is not.
-    outcome: ExportOutcome
-
-
-class EntityMapping(RootModel[dict[str, dict[int, str]]]):
-    """The community data_id → name table, keyed by group such as `th_buildings`."""
-
-    def names(self) -> dict[int, str]:
-        """Every data_id the table has a name for, flattened across its groups.
-
-        The groups only separate the home village from the builder base, which
-        is not a question anything asks: the one caller wants a name for an id.
-        A few ids appear in two groups — the heroes are also under
-        `th_buildings` — with the same name in each, so flattening loses
-        nothing.
-
-        This used to build a `RegistryEntry` per row, carrying a world, a
-        category derived from the data_id block, a source URL and a
-        verification status. All four were read by the `id_registry` table and
-        the join it fed, and both went with the database.
-        """
-        return {
-            data_id: name for entries in self.root.values() for data_id, name in entries.items()
-        }
+    entities: list[LegacyRow]
 
 
 class LootOffer(BaseModel):
@@ -1440,11 +1480,18 @@ class UpgradeTimer(BaseModel):
 
     world: World
     role: UpgradeRole | None
+    # The export's section, without the builder base's trailing `2`; a journal
+    # line written before the merge still carries it.
     section: str
     data_id: int
-    name: str | None = None
+    zh: str | None = None
+    # A journal line written before the merge has the community table's
+    # English name, under `name`.
+    en: str | None = Field(default=None, validation_alias=AliasChoices("en", "name"))
     level: int | None = None
     timer: int
+    # On the job an event's goblin builder or researcher is doing.
+    extra: bool = False
     boost: str | None = None
     seconds: int
     done_at: str
@@ -1470,7 +1517,8 @@ class HelperCooldown(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     data_id: int
-    name: str | None = None
+    zh: str | None = None
+    en: str | None = None
     level: int | None = None
     ready_in: int
     ready_at: str
@@ -2096,22 +2144,23 @@ RestartScope = Literal["none", "game", "emulator"]
 # standing next to it would be read as belonging to that.
 World = Literal["day", "night"]
 
-# What `ai_coc growth` lists, in the order the user reads it: heroes, then
-# research (troops, spells, siege machines), then buildings with their traps.
-GrowthGroup = Literal["hero", "lab", "building"]
 # `too_few` is fewer than two saved exports inside the dates asked for.
 GrowthOutcome = Literal["compared", "too_few"]
 
 
 class LevelChange(BaseModel):
-    """One kind of thing whose levels differ between two exports, counted per level."""
+    """One kind of thing whose levels differ between two exports, counted per level.
+
+    `section` is the export's, without the builder base's trailing `2`.
+    """
 
     model_config = ConfigDict(frozen=True)
 
     world: World
-    group: GrowthGroup
+    role: UpgradeRole
+    section: str
     data_id: int
-    name: str | None = None
+    zh: str | None = None
     before: dict[int, int]
     after: dict[int, int]
 

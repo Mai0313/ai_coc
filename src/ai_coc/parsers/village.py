@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import time
 from typing import TYPE_CHECKING
 import logging
 from pathlib import Path
@@ -10,35 +9,42 @@ from collections import Counter
 from ai_coc.models import (
     ClockTower,
     LevelChange,
+    NextUpgrade,
     UpgradeTimer,
+    VillageExport,
     HelperCooldown,
-    AccountSnapshot,
     VillageDocument,
 )
 
 if TYPE_CHECKING:
-    from ai_coc.models import World, GrowthGroup, UpgradeRole, VillageExport
+    from ai_coc.models import (
+        Hall,
+        World,
+        Boosts,
+        ExportRow,
+        GameEntity,
+        UpgradeRole,
+        GameEntities,
+        LegacyExport,
+    )
 
 logger = logging.getLogger(__name__)
 
-# Which village and whose slot an upgrade in each section is waiting on. The
-# first eight were seen carrying a `timer`. Traps and siege machines have not
-# been yet, but a trap is always a builder's job and a siege machine always a
-# research slot's, and leaving them out would hide a builder they hold. One that
-# turns up with a timer and is not here is reported with no role and no
-# speed-up rather than guessed at.
-TIMED_SECTIONS: dict[str, tuple[World, UpgradeRole]] = {
-    "buildings": ("day", "builder"),
-    "heroes": ("day", "builder"),
-    "units": ("day", "lab"),
-    "spells": ("day", "lab"),
-    "pets": ("day", "pet"),
-    "buildings2": ("night", "builder"),
-    "heroes2": ("night", "builder"),
-    "units2": ("night", "lab"),
-    "traps": ("day", "builder"),
-    "siege_machines": ("day", "lab"),
-    "traps2": ("night", "builder"),
+# Whose slot upgrading a row of each section takes, by the home village's name
+# (a builder base section carries a trailing 2 and the same role). The first
+# eight sections were seen carrying a `timer`. Traps and siege machines have
+# not been yet, but a trap is always a builder's job and a siege machine always
+# a research slot's, and leaving them out would hide a builder they hold.
+# Helpers, guardians and hero equipment take none of the three. The order is
+# the one `growth` lists in: heroes first, as the user reads it.
+ROLES: dict[str, UpgradeRole] = {
+    "heroes": "builder",
+    "buildings": "builder",
+    "traps": "builder",
+    "units": "lab",
+    "spells": "lab",
+    "siege_machines": "lab",
+    "pets": "pet",
 }
 
 # The `boosts` key that speeds each slot up, and by how much. Measured on
@@ -57,29 +63,158 @@ SPEED_UPS: dict[tuple[World, UpgradeRole], tuple[str, int]] = {
     ("night", "lab"): ("clocktower_boost", 10),
 }
 
-# The builder base's clock tower, by the community mapping's id.
+# Sections the saved export leaves out on both villages: bought or cleared
+# rather than upgraded, and long (the user's call of 2026-11-11).
+DROPPED = frozenset({"decos", "obstacles", "house_parts", "skins", "sceneries"})
+
+# The builder base's clock tower, by its `GlobalID` in the game's buildings table.
 CLOCK_TOWER = 1000039
 
 
-def parse_village(path: str | Path) -> AccountSnapshot:
+def parse_village(path: str | Path) -> VillageDocument:
     return parse_village_text(Path(path).read_text(encoding="utf-8-sig"))
 
 
-def parse_village_text(text: str) -> AccountSnapshot:
-    """Every section the export carries, whichever ones this release happens to hold.
+def parse_village_text(text: str) -> VillageDocument:
+    """The game's export as it comes off the clipboard, every section it holds included.
 
-    There used to be a written-down list of twelve, which is what a game that
-    adds a section between releases silently drops. Measured against one real
-    export it was dropping ten of them — `helpers`, `decos`, `obstacles`,
-    `skins`, `house_parts` and their builder-base twins — including the three
-    named helpers the mapping does know. So the sections are whatever the
-    document holds a list under, which is also what the tolerance rule in
-    .agents/rules/runtime.md asks for: a section nobody has heard of
-    survives instead of needing a code change first.
+    There used to be a written-down list of twelve sections, which is what a
+    game that adds a section between releases silently drops. So a section is
+    whatever the document holds a list under (`VillageDocument.sections`),
+    which is also what the tolerance rule in .agents/rules/runtime.md asks
+    for: a section nobody has heard of survives instead of needing a code
+    change first.
     """
-    document = VillageDocument.model_validate_json(text.lstrip("﻿").strip())
-    entities = [entity for section in document.sections() for entity in document.entries(section)]
-    return AccountSnapshot(tag=document.tag, raw=document, entities=entities)
+    return VillageDocument.model_validate_json(text.lstrip("﻿").strip())
+
+
+def merge(document: VillageDocument, tables: GameEntities | None, at: int) -> VillageExport:
+    """The game's export with the game's own tables merged into every row, taken at `at`.
+
+    Without `tables` the rows keep what the game wrote plus what needs no
+    table: `role`, `done_at` and `ready_at`.
+    """
+    known = {entity.data_id: entity for entity in tables.entities} if tables else {}
+    sections = {section: document.entries(section) for section in document.sections()}
+    # A data_id is one entity across both villages, so its highest level
+    # anywhere is that hall's level.
+    levels: dict[int, int] = {}
+    for rows in sections.values():
+        for row in rows:
+            if row.lvl is not None:
+                levels[row.data] = max(levels.get(row.data, 0), row.lvl)
+    halls = (
+        {hall: levels[data_id] for hall, data_id in tables.halls.items() if data_id in levels}
+        if tables
+        else {}
+    )
+    villages: dict[World, dict[str, list[ExportRow]]] = {"day": {}, "night": {}}
+    for section, rows in sections.items():
+        world: World = "night" if section.endswith("2") else "day"
+        name = section.removesuffix("2") if world == "night" else section
+        if name in DROPPED:
+            continue
+        villages[world][name] = [
+            row.model_copy(
+                update=_tabled(row, name, known.get(row.data), halls)
+                | _clocked(row, world, name, document.boosts, at)
+            )
+            for row in rows
+        ]
+    tower = _tower(villages["night"].get("buildings", []), document.boosts, at)
+    return VillageExport(
+        tag=document.tag,
+        exported_at=_clock(at),
+        timestamp=at,
+        game_version=tables.game_version if tables else None,
+        halls=halls,
+        boosts=document.boosts,
+        clock_tower_ready_at=tower.ready_at if tower else None,
+        day=villages["day"],
+        night=villages["night"],
+    )
+
+
+def _tabled(
+    row: ExportRow, section: str, entity: GameEntity | None, halls: dict[Hall, int]
+) -> dict[str, object]:
+    """What the game's tables add to one row: its names, its level caps and its next upgrade."""
+    if entity is None:
+        return {}
+    added: dict[str, object] = {"zh": entity.zh, "en": entity.en, "max_lvl": entity.max_lvl}
+    if any(level.needs for level in entity.levels):
+        allowed = [
+            level.lvl
+            for level in entity.levels
+            if all(halls.get(hall, 0) >= need for hall, need in level.needs.items())
+        ]
+        if allowed:
+            added["limited_lvl"] = max(allowed)
+    # A row with no level (the Crafting Station writes none) has no next one.
+    if row.lvl is None:
+        return added
+    if row.lvl > entity.max_lvl:
+        logger.warning(
+            "%s %s is at level %d, past the %d its tables know: the tables are behind the game",
+            section,
+            entity.en or row.data,
+            row.lvl,
+            entity.max_lvl,
+        )
+    if any(level.cost for level in entity.levels):
+        # An upgrading row is already buying the level above its own.
+        target = row.lvl + (2 if row.timer is not None else 1)
+        level = next((level for level in entity.levels if level.lvl == target), None)
+        added["next"] = (
+            NextUpgrade(lvl=level.lvl, cost=level.cost, time=level.time) if level else None
+        )
+    return added
+
+
+def _clocked(
+    row: ExportRow, world: World, section: str, boosts: Boosts, at: int
+) -> dict[str, object]:
+    """Whose slot upgrading one row takes, and when its timer and its helper cooldown run out."""
+    added: dict[str, object] = {}
+    role = ROLES.get(section)
+    if role is not None:
+        added["role"] = role
+    if row.timer is not None:
+        if role is None:
+            logger.warning(
+                "Section %s carries a timer and has no known slot; reported unboosted", section
+            )
+        _, seconds = _finish(world, role, row.timer, boosts)
+        added["done_at"] = _clock(at + seconds)
+    if row.helper_cooldown is not None:
+        added["ready_at"] = _clock(at + row.helper_cooldown)
+    return added
+
+
+def from_legacy(old: LegacyExport, tables: GameEntities) -> VillageExport:
+    """A file saved before the merge, merged as if the game had just exported it.
+
+    The rows go back to the game's own keys, which the old file kept under
+    other names. It wrote a count of 1 on every row, so a `cnt` of 1 the game
+    did write cannot be told from one it left out, and neither is written;
+    both mean one.
+    """
+    sections: dict[str, list[dict[str, object]]] = {}
+    for row in old.entities:
+        raw: dict[str, object] = {"data": row.data_id}
+        if row.level is not None:
+            raw["lvl"] = row.level
+        if row.count != 1:
+            raw["cnt"] = row.count
+        sections.setdefault(row.section, []).append(raw | (row.model_extra or {}))
+    document = VillageDocument.model_validate({
+        "tag": old.tag,
+        "timestamp": old.timestamp,
+        "boosts": old.boosts,
+        **sections,
+    })
+    at = old.timestamp or int(datetime.fromisoformat(old.exported_at).timestamp())
+    return merge(document, tables, at)
 
 
 def upgrade_timers(export: VillageExport) -> list[UpgradeTimer]:
@@ -90,53 +225,49 @@ def upgrade_timers(export: VillageExport) -> list[UpgradeTimer]:
     `helper_recurrent` finishes earlier than this says. Left that way on
     purpose for now.
     """
-    start = _start(export)
     timers: list[UpgradeTimer] = []
-    for entity in export.entities:
-        if entity.timer is None:
+    for world, section, row in export.rows():
+        if row.timer is None:
             continue
-        place = TIMED_SECTIONS.get(entity.section)
-        if place is None:
-            logger.warning(
-                "Section %s carries a timer and has no known slot; reported unboosted",
-                entity.section,
-            )
-        boost, rate = SPEED_UPS[place] if place else (None, 1)
-        left = getattr(export.boosts, boost) if boost else None
-        seconds = _real_seconds(entity.timer, left, rate)
+        boost, seconds = _finish(world, row.role, row.timer, export.boosts)
         timers.append(
             UpgradeTimer(
-                world=place[0] if place else ("night" if entity.section.endswith("2") else "day"),
-                role=place[1] if place else None,
-                section=entity.section,
-                data_id=entity.data_id,
-                name=entity.name,
-                level=entity.level,
-                timer=entity.timer,
-                boost=boost if left else None,
+                world=world,
+                role=row.role,
+                section=section,
+                data_id=row.data,
+                zh=row.zh,
+                en=row.en,
+                level=row.lvl,
+                timer=row.timer,
+                extra=bool(row.extra),
+                boost=boost,
                 seconds=seconds,
-                done_at=_clock(start + seconds),
+                done_at=_clock(export.timestamp + seconds),
             )
         )
     return sorted(timers, key=lambda timer: timer.seconds)
 
 
 def clock_tower(export: VillageExport) -> ClockTower | None:
-    """When the builder base's clock tower can next be started, or None for no tower.
+    """When the builder base's clock tower can next be started, or None for no tower."""
+    return _tower(export.night.get("buildings", []), export.boosts, export.timestamp)
+
+
+def _tower(buildings: list[ExportRow], boosts: Boosts, at: int) -> ClockTower | None:
+    """The clock tower among the builder base's buildings, as of `at`.
 
     Neither of its two counters in `boosts` means it can be started now: seen
     that way until the player started it, after which both appeared. A tower
     that is being upgraded is None as well, since whether it can be started
     then has not been seen either way.
     """
-    tower = next((entity for entity in export.entities if entity.data_id == CLOCK_TOWER), None)
+    tower = next((row for row in buildings if row.data == CLOCK_TOWER), None)
     if tower is None or tower.timer is not None:
         return None
-    ready_in = export.boosts.clocktower_cooldown or 0
+    ready_in = boosts.clocktower_cooldown or 0
     return ClockTower(
-        ready_in=ready_in,
-        ready_at=_clock(_start(export) + ready_in),
-        boosting=export.boosts.clocktower_boost,
+        ready_in=ready_in, ready_at=_clock(at + ready_in), boosting=boosts.clocktower_boost
     )
 
 
@@ -147,84 +278,83 @@ def helper_cooldowns(export: VillageExport) -> list[HelperCooldown]:
     none in both exports of 2026-11-07, while the player had not sent it, and
     69437 the next day, after he had.
     """
-    start = _start(export)
     return sorted(
         (
             HelperCooldown(
-                data_id=entity.data_id,
-                name=entity.name,
-                level=entity.level,
-                ready_in=entity.helper_cooldown or 0,
-                ready_at=_clock(start + (entity.helper_cooldown or 0)),
+                data_id=row.data,
+                zh=row.zh,
+                en=row.en,
+                level=row.lvl,
+                ready_in=row.helper_cooldown or 0,
+                ready_at=_clock(export.timestamp + (row.helper_cooldown or 0)),
             )
-            for entity in export.entities
-            if entity.section == "helpers"
+            for row in export.day.get("helpers", [])
         ),
         key=lambda helper: helper.ready_in,
     )
 
 
-# The sections `growth` compares, by the home village's name; the builder base's
-# carry a trailing 2. Pets, hero equipment and everything bought or cleared
-# rather than upgraded are left out (the user's call of 2026-11-07).
-GROWTH_GROUPS: dict[str, GrowthGroup] = {
-    "heroes": "hero",
-    "units": "lab",
-    "spells": "lab",
-    "siege_machines": "lab",
-    "buildings": "building",
-    "traps": "building",
-}
-
-
 def growth(start: VillageExport, end: VillageExport) -> list[LevelChange]:
-    """Every hero, research and building whose levels differ between two exports of one account.
+    """Every row a builder or a research slot upgrades whose levels differ between two exports of one account.
 
     Counted per level rather than per row, since the export lumps a building's
-    copies of one level into a row and keeps no identity across exports.
+    copies of one level into a row and keeps no identity across exports. Pets,
+    hero equipment and everything bought or cleared rather than upgraded are
+    left out (the user's call of 2026-11-07). The later export's name wins.
     """
-    before, names = _levels(start)
+    before, earlier = _levels(start)
     after, later = _levels(end)
-    names.update(later)
-    order = list(GROWTH_GROUPS.values())
-    return [
+    order = list(ROLES)
+    changes = [
         LevelChange(
             world=key[0],
-            group=key[1],
-            data_id=key[2],
-            name=names.get(key[2]),
+            role=role,
+            section=section,
+            data_id=key[1],
+            zh=zh,
             before=dict(before.get(key, {})),
             after=dict(after.get(key, {})),
         )
-        for key in sorted(
-            before.keys() | after.keys(),
-            key=lambda key: (order.index(key[1]), names.get(key[2]) or "", key[2]),
-        )
+        for key, (role, section, zh) in (earlier | later).items()
         if before.get(key) != after.get(key)
     ]
+    return sorted(
+        changes,
+        key=lambda change: (
+            change.role != "builder",
+            order.index(change.section),
+            change.zh or "",
+            change.data_id,
+        ),
+    )
 
 
 def _levels(
     export: VillageExport,
-) -> tuple[dict[tuple[World, GrowthGroup, int], Counter[int]], dict[int, str]]:
-    """How many of each kind stand at each level, and the names the export carries."""
-    levels: dict[tuple[World, GrowthGroup, int], Counter[int]] = {}
-    names: dict[int, str] = {}
-    for entity in export.entities:
-        night = entity.section.endswith("2")
-        group = GROWTH_GROUPS.get(entity.section[:-1] if night else entity.section)
-        if group is None or entity.level is None:
+) -> tuple[
+    dict[tuple[World, int], Counter[int]],
+    dict[tuple[World, int], tuple[UpgradeRole, str, str | None]],
+]:
+    """How many of each kind stand at each level, and each kind's role, section and name."""
+    levels: dict[tuple[World, int], Counter[int]] = {}
+    kinds: dict[tuple[World, int], tuple[UpgradeRole, str, str | None]] = {}
+    for world, section, row in export.rows():
+        role = row.role
+        if role not in ("builder", "lab") or row.lvl is None:
             continue
-        key = ("night" if night else "day", group, entity.data_id)
-        levels.setdefault(key, Counter())[entity.level] += entity.count
-        if entity.name:
-            names[entity.data_id] = entity.name
-    return levels, names
+        key = (world, row.data)
+        levels.setdefault(key, Counter())[row.lvl] += row.cnt or 1
+        kinds[key] = (role, section, row.zh)
+    return levels, kinds
 
 
-def _start(export: VillageExport) -> int:
-    """The moment every counter in an export was read at."""
-    return export.timestamp if export.timestamp is not None else int(time.time())
+def _finish(
+    world: World, role: UpgradeRole | None, timer: int, boosts: Boosts
+) -> tuple[str | None, int]:
+    """The speed-up a timer is running under, if any, and the real seconds it has left."""
+    boost, rate = SPEED_UPS.get((world, role), (None, 1)) if role else (None, 1)
+    left = getattr(boosts, boost) if boost else None
+    return (boost if left else None), _real_seconds(timer, left, rate)
 
 
 def _real_seconds(timer: int, left: int | None, rate: int) -> int:

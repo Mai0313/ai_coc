@@ -29,7 +29,7 @@ from ai_coc.models import (
     MuMuInstanceTable,
 )
 from ai_coc.adapters import adb as adb_module
-from ai_coc.adapters import config, mapping, clipboard
+from ai_coc.adapters import config, clipboard
 from ai_coc.adapters import emulator as emulator_module
 from ai_coc.adapters import ldplayer as ldplayer_module
 from ai_coc.constants import COC_PACKAGE
@@ -753,38 +753,6 @@ class GeminiKeyTests(unittest.TestCase):
             patch.object(config, "dotenv_value", return_value=""),
         ):
             assert config.gemini_key(GeminiSetting()) == ""
-
-
-class EntityMappingDownloadTests(unittest.TestCase):
-    def _download(self, body: bytes | Exception, cached: str | None) -> object:
-        with tempfile.TemporaryDirectory() as folder:
-            path = Path(folder) / "cocMapping.json"
-            if cached is not None:
-                path.write_text(cached, encoding="utf-8")
-            response = MagicMock()
-            response.__enter__.return_value.read.return_value = body
-            opener = patch.object(
-                mapping.urllib.request,
-                "urlopen",
-                side_effect=body if isinstance(body, Exception) else None,
-                return_value=response,
-            )
-            with opener, patch.object(mapping, "ENTITY_MAPPING_PATH", path):
-                fetched = mapping.fetch_entity_mapping()
-                assert path.read_text(encoding="utf-8")
-            return fetched
-
-    def test_a_download_is_kept_beside_the_data_directory(self) -> None:
-        fetched = self._download(b'{"th_buildings": {"1000001": "Cannon"}}', cached=None)
-        assert fetched.root["th_buildings"][1000001] == "Cannon"
-
-    def test_a_failed_download_falls_back_to_the_cached_copy(self) -> None:
-        fetched = self._download(OSError("offline"), cached='{"bh_troops": {"4000041": "Baby"}}')
-        assert fetched.root["bh_troops"][4000041] == "Baby"
-
-    def test_a_failed_download_with_nothing_cached_raises(self) -> None:
-        with pytest.raises(OSError, match="offline"):
-            self._download(OSError("offline"), cached=None)
 
 
 class ClipboardTests(unittest.TestCase):

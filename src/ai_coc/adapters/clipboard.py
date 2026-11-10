@@ -38,7 +38,7 @@ directly. It is a real option and it was measured as available on this emulator
 needed). What it costs is a Java toolchain in a pure-Python project: a dex to
 build in CI and to ship inside both the wheel and the PyInstaller bundle.
 
-Plain functions rather than a model, like `mapping.py`: there is no state to
+Plain functions rather than a model, like `gamedata.py`: there is no state to
 carry, and the ctypes structures a model could not hold anyway.
 """
 

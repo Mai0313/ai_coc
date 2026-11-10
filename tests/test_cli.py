@@ -29,17 +29,17 @@ from ai_coc.models import (
     RunEnded,
     AppConfig,
     ViewReport,
-    NamedEntity,
     WorldReport,
     AttackReport,
     AttackSeries,
+    ExportReport,
     VillageStock,
     AttackOptions,
     CollectReport,
     DonateOptions,
     LootOverrides,
-    VillageExport,
 )
+from ai_coc.parsers.village import merge
 
 FRAMES = Path(__file__).parent / "frames"
 
@@ -300,14 +300,11 @@ class DispatchTests(unittest.TestCase):
 
     def test_a_table_is_only_for_the_terminal_and_the_answer_is_still_json(self) -> None:
         """`--table` changes what a person sees, never what the run wrote down."""
-        export = VillageExport(
-            tag="#TEST",
-            exported_at="2026-09-06T00:00:00+00:00",
-            entities=[
-                NamedEntity(section="buildings", data_id=1000001, level=16, name="Town Hall")
-            ],
-            outcome="exported",
-        )
+        document = models.VillageDocument.model_validate({
+            "tag": "#TEST",
+            "buildings": [{"data": 1000001, "lvl": 16, "zh": "大本營"}],
+        })
+        export = ExportReport(outcome="exported", export=merge(document, None, 1788624472))
         with (
             patch.object(commands, "export", return_value=export),
             patch.object(commands, "claim"),
@@ -317,14 +314,14 @@ class DispatchTests(unittest.TestCase):
         written = (self.run.directory / "result.json").read_text(encoding="utf-8")
         assert written == export.model_dump_json(indent=2)
         # The table, not the JSON: rich draws the row rather than the field names.
-        assert "Town Hall" in out.getvalue()
-        assert '"data_id"' not in out.getvalue()
+        assert "大本營" in out.getvalue()
+        assert '"data"' not in out.getvalue()
 
     def test_a_table_with_no_rows_still_says_why(self) -> None:
         """`--last --table` on a machine that has never run this is the line both
         skills open with, and its outcome is the failure's only explanation.
         """
-        blank = VillageExport(tag="", exported_at="", outcome="never_exported")
+        blank = ExportReport(outcome="never_exported")
         with (
             patch.object(commands, "export", return_value=blank),
             patch.object(commands, "claim"),
@@ -337,7 +334,7 @@ class DispatchTests(unittest.TestCase):
         """`--last` reads one file. A claim there would overwrite a farming run's
         own record and release it as `idle` while a battle was still going on.
         """
-        blank = VillageExport(tag="", exported_at="", outcome="never_exported")
+        blank = ExportReport(outcome="never_exported")
         with (
             patch.object(commands, "export", return_value=blank) as exported,
             patch.object(commands, "claim") as claimed,

@@ -33,16 +33,17 @@ from ai_coc.models import (
     FrameLog,
     ProbeRay,
     AppConfig,
+    GameLevel,
     LootOffer,
     NightPlan,
     AttackPlan,
     CartReport,
     GameDialog,
+    GameEntity,
     PlateCount,
     SheetOffer,
     AdbEndpoint,
     CartOutcome,
-    NamedEntity,
     NoteOutcome,
     RunnerState,
     ShieldState,
@@ -50,6 +51,8 @@ from ai_coc.models import (
     AttackReport,
     BoostOutcome,
     DonateReport,
+    ExportReport,
+    GameEntities,
     LaunchReport,
     PressOutcome,
     RestartScope,
@@ -62,7 +65,6 @@ from ai_coc.models import (
     DisplayTarget,
     DonateOptions,
     DonateOutcome,
-    EntityMapping,
     ExportOutcome,
     GrowthOutcome,
     LaunchOutcome,
@@ -72,13 +74,17 @@ from ai_coc.models import (
     ConfirmOutcome,
     LootThresholds,
     StorageCapacity,
+    VillageDocument,
     PlateCountOutcome,
     TurnaroundOutcome,
 )
+from ai_coc.adapters import gamedata
 from ai_coc.constants import COC_PACKAGE
 from ai_coc.ui.runner import ScreenRunner
 from ai_coc.adapters.adb import PNG_MAGIC, AdbController, AdbControlError
 from ai_coc.parsers.home import PANEL_CLOSE, CLOCK_TOWER_BELOW
+from ai_coc.parsers.village import merge
+from ai_coc.parsers.gamedata import GameDataError
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -98,6 +104,44 @@ def _adb() -> MagicMock:
 def _controller() -> AdbController:
     """A real controller with no emulator behind it, for the runners that validate their `adb`."""
     return AdbController(endpoint=AdbEndpoint(port=16384))
+
+
+def _tables() -> GameEntities:
+    """Synthetic game tables naming the town hall, a hero and a helper."""
+    return GameEntities(
+        game_version="1.2.3",
+        reading=1,
+        halls={"town_hall": 1000001},
+        entities=[
+            GameEntity(
+                data_id=1000001,
+                zh="大本營",
+                en="Town Hall",
+                world="day",
+                table="buildings",
+                max_lvl=17,
+                levels=[GameLevel(lvl=16), GameLevel(lvl=17, cost={"gold": 2}, time=60)],
+            ),
+            GameEntity(
+                data_id=28000000,
+                zh="野蠻人之王",
+                en="Barbarian King",
+                world="day",
+                table="heroes",
+                max_lvl=99,
+                levels=[],
+            ),
+            GameEntity(
+                data_id=93000000,
+                zh="建築工人學徒",
+                en="Builder's Apprentice",
+                world="day",
+                table="villager_apprentices",
+                max_lvl=8,
+                levels=[],
+            ),
+        ],
+    )
 
 
 def _frames(case: unittest.TestCase, *, recording: bool = False) -> FrameLog:
@@ -405,9 +449,8 @@ class ShieldLineTests(unittest.TestCase):
 class StatusCommandTests(unittest.TestCase):
     """The plates, the storages and the shield off the village on screen, the timers off the export.
 
-    The export walk itself is patched out on every test here, along with the
-    names, so nothing reaches the real account directory, the mapping download
-    or the clipboard.
+    The export walk itself is patched out on every test here, so nothing
+    reaches the account directory, the game's tables or the clipboard.
     """
 
     def _status(
@@ -415,17 +458,14 @@ class StatusCommandTests(unittest.TestCase):
         counts: list[tuple[PlateCount, PlateCount]],
         under: str | None = None,
         settled: DisplayTarget | None = DISPLAY,
-        exported: VillageExport | None = None,
+        exported: ExportReport | None = None,
     ) -> tuple[MagicMock, MagicMock, MagicMock, StatusReport]:
-        walk = MagicMock(
-            return_value=exported or VillageExport(tag="", exported_at="", outcome="settings_shut")
-        )
+        walk = MagicMock(return_value=exported or ExportReport(outcome="settings_shut"))
         with (
             # A real controller, because `ScreenRunner` validates the one it is given.
             patch.object(commands, "_controller", return_value=_controller()),
             patch.object(commands, "_settle_game", return_value=settled) as self.settle_game,
             patch.object(AdbController, "display_for", return_value=DISPLAY),
-            patch.object(commands, "_entity_names", return_value={}),
             patch.object(commands, "_exported", walk),
             patch.object(commands.PlateRunner, "counts", side_effect=counts),
             patch.object(commands.PlateRunner, "shield", return_value=None),
@@ -482,32 +522,34 @@ class StatusCommandTests(unittest.TestCase):
         assert report.export == "no_village"
 
     def test_the_timers_are_worked_out_of_a_successful_export(self) -> None:
-        exported = VillageExport(
-            tag="#TEST",
-            exported_at="2026-10-10T09:55:01+00:00",
-            timestamp=1791626101,
-            entities=[
-                NamedEntity(data_id=28000000, section="heroes", name="Archer Queen", timer=28614),
-                NamedEntity(data_id=1000039, section="buildings2", name="Clock Tower"),
-                NamedEntity(
-                    data_id=93000000,
-                    section="helpers",
-                    name="Builder's Apprentice",
-                    helper_cooldown=79823,
-                ),
-            ],
-            boosts={"builder_boost": 4606, "clocktower_cooldown": 79754},
-            outcome="exported",
-        )
+        document = VillageDocument.model_validate({
+            "tag": "#TEST",
+            "timestamp": 1791626101,
+            "heroes": [{"data": 28000000, "lvl": 60, "timer": 28614}],
+            "buildings2": [{"data": 1000039, "lvl": 9}],
+            "helpers": [{"data": 93000000, "lvl": 8, "helper_cooldown": 79823}],
+            "boosts": {"builder_boost": 4606, "clocktower_cooldown": 79754},
+        })
+        exported = ExportReport(outcome="exported", export=merge(document, _tables(), 1791626101))
         _, _, _, report = self._status([self._counts("day")], exported=exported)
         assert report.export == "exported"
         assert report.boosts.builder_boost == 4606
-        assert [(timer.name, timer.seconds) for timer in report.timers] == [("Archer Queen", 2862)]
+        assert [(timer.zh, timer.en, timer.seconds) for timer in report.timers] == [
+            ("野蠻人之王", "Barbarian King", 2862)
+        ]
         assert report.clock_tower is not None
         assert report.clock_tower.ready_in == 79754
-        assert [(helper.name, helper.ready_in) for helper in report.helpers] == [
-            ("Builder's Apprentice", 79823)
+        assert [(helper.zh, helper.en, helper.ready_in) for helper in report.helpers] == [
+            ("建築工人學徒", "Builder's Apprentice", 79823)
         ]
+
+    def test_tables_that_cannot_be_had_are_none_rather_than_a_failure(self) -> None:
+        """The day's export is then saved unnamed rather than lost."""
+        with (
+            patch.object(commands, "game_data", side_effect=GameDataError("no tables")),
+            self.assertLogs("ai_coc.commands", "WARNING"),
+        ):
+            assert commands._tables(_adb()) is None
 
 
 class CollectCommandTests(unittest.TestCase):
@@ -2775,11 +2817,10 @@ class ExportTests(unittest.TestCase):
         self.addCleanup(folder.cleanup)
         self.saved = Path(folder.name)
         self.adb = _adb()
-        mapping = EntityMapping.model_validate({"th_buildings": {1000001: "Town Hall"}})
         stack = [
             patch.object(commands, "_controller", return_value=self.adb),
             patch.object(commands, "_settle_game", return_value=DISPLAY),
-            patch.object(commands, "fetch_entity_mapping", return_value=mapping),
+            patch.object(commands, "_tables", return_value=_tables()),
             patch.object(commands, "ACCOUNT_JSON_DIR", self.saved),
             patch.object(commands, "PAGE_SETTLE", 0),
             patch.object(commands, "CLIPBOARD_GAP", 0),
@@ -2804,22 +2845,87 @@ class ExportTests(unittest.TestCase):
         ):
             return commands.export(_frames(self)), cleared
 
-    def test_the_village_is_named_and_written_down(self) -> None:
+    def test_the_village_is_merged_with_the_tables_and_written_down(self) -> None:
         report, cleared = self._export()
-        assert report.tag == "#TEST"
-        # The game's own export time, not this machine's clock.
-        assert report.exported_at == datetime.fromtimestamp(1788624472, UTC).isoformat()
-        assert report.timestamp == 1788624472
-        assert report.boosts.clocktower_cooldown == 77842
-        names = {entity.data_id: entity.name for entity in report.entities}
-        # Mapped where the community table has it, None where it does not —
+        assert report.outcome == "exported"
+        village = report.export
+        assert village is not None
+        assert village.tag == "#TEST"
+        # The game's own export time, not this machine's clock, on the local clock.
+        moment = datetime.fromtimestamp(1788624472, UTC).astimezone()
+        assert village.exported_at == moment.isoformat()
+        assert village.timestamp == 1788624472
+        assert village.boosts.clocktower_cooldown == 77842
+        names = {row.data: row.zh for _, _, row in village.rows()}
+        # Named where the game's tables have it, None where they do not —
         # never the number written into the name.
-        assert names == {1000001: "Town Hall", 90000000: None}
+        assert names == {1000001: "大本營", 90000000: None}
+        assert village.halls == {"town_hall": 16}
         cleared.assert_called_once()
         # One file a day, named for the day the game took it on, here and now.
-        day = datetime.fromtimestamp(1788624472, UTC).astimezone().strftime("%Y-%m-%d")
-        written = (self.saved / f"#TEST_{day}.json").read_text(encoding="utf-8")
-        assert VillageExport.model_validate_json(written).tag == "#TEST"
+        written = (self.saved / f"#TEST_{moment:%Y-%m-%d}.json").read_text(encoding="utf-8")
+        assert VillageExport.model_validate_json(written) == village
+
+    def test_with_no_tables_to_be_had_the_day_is_still_saved(self) -> None:
+        with patch.object(commands, "_tables", return_value=None):
+            report, _ = self._export()
+        assert report.outcome == "exported"
+        [path] = self.saved.glob("*.json")
+        written = VillageExport.model_validate_json(path.read_text(encoding="utf-8"))
+        assert (written.game_version, written.halls) == (None, {})
+        assert [row.zh for _, _, row in written.rows()] == [None, None]
+
+    def _save_old(self) -> Path:
+        """A file in the shape saved before the merge, as the real ones are."""
+        old = {
+            "tag": "#TEST",
+            "exported_at": "2026-11-01T12:00:00+00:00",
+            "timestamp": 1793534400,
+            "entities": [
+                {
+                    "data_id": 1000001,
+                    "level": 16,
+                    "count": 1,
+                    "section": "buildings",
+                    "name": "TH",
+                },
+                {"data_id": 52000379, "level": None, "count": 1, "section": "skins", "name": None},
+            ],
+            "boosts": {},
+            "outcome": "exported",
+        }
+        path = self.saved / "#TEST_2026-11-01.json"
+        path.write_text(json.dumps(old), encoding="utf-8")
+        return path
+
+    def test_an_old_file_is_converted_where_it_lies_when_the_village_is_exported(self) -> None:
+        old = self._save_old()
+        self._export()
+        converted = VillageExport.model_validate_json(old.read_text(encoding="utf-8"))
+        assert converted.timestamp == 1793534400
+        assert [(section, row.data, row.zh) for _, section, row in converted.rows()] == [
+            ("buildings", 1000001, "大本營")
+        ]
+
+    def test_reading_back_converts_an_old_file_with_the_tables_kept_on_disk(self) -> None:
+        old = self._save_old()
+        kept = gamedata.GAME_DATA_DIR / "1.2.3"
+        kept.mkdir(parents=True)
+        (kept / "entities.json").write_text(_tables().model_dump_json(), encoding="utf-8")
+        report = commands.export(_frames(self), last=True)
+        assert report.outcome == "read_back"
+        assert report.export is not None
+        assert report.export.game_version == "1.2.3"
+        assert VillageExport.model_validate_json(old.read_text(encoding="utf-8")) == report.export
+
+    def test_an_old_file_with_no_tables_kept_is_left_as_it_is(self) -> None:
+        """Converting drops the name the old file carried, so it waits for tables."""
+        old = self._save_old()
+        before = old.read_text(encoding="utf-8")
+        with self.assertLogs("ai_coc.commands", "WARNING"):
+            report = commands.export(_frames(self), last=True)
+        assert report.outcome == "wrong_format"
+        assert old.read_text(encoding="utf-8") == before
 
     def test_growth_compares_the_saved_exports_inside_the_dates_asked_for(self) -> None:
         """Both days count: the baseline is the last export before the start day, the end the last on the end day.
@@ -2827,18 +2933,18 @@ class ExportTests(unittest.TestCase):
         Stamped at noon UTC, so every timezone from UTC-11 to UTC+11 reads the same days.
         """
 
-        def save(name: str, when: str, level: int) -> None:
-            export = VillageExport(
-                tag="#TEST",
-                exported_at=when,
-                entities=[NamedEntity(data_id=1, section="heroes", level=level, name="King")],
-                outcome="exported",
-            )
+        def save(name: str, day: int, level: int) -> None:
+            at = int(datetime(2026, 11, day, 12, tzinfo=UTC).timestamp())
+            document = VillageDocument.model_validate({
+                "tag": "#TEST",
+                "heroes": [{"data": 28000000, "lvl": level}],
+            })
+            export = merge(document, _tables(), at)
             (self.saved / name).write_text(export.model_dump_json(), encoding="utf-8")
 
-        save("#TEST_2026-11-01.json", "2026-11-01T12:00:00+00:00", 50)
-        save("#TEST_2026-11-03.json", "2026-11-03T12:00:00+00:00", 51)
-        save("#TEST_2026-11-05.json", "2026-11-05T12:00:00+00:00", 53)
+        save("#TEST_2026-11-01.json", 1, 50)
+        save("#TEST_2026-11-03.json", 3, 51)
+        save("#TEST_2026-11-05.json", 5, 53)
         report = commands.growth()
         assert (report.outcome, report.changes[0].before, report.changes[0].after) == (
             "compared",
@@ -2851,7 +2957,7 @@ class ExportTests(unittest.TestCase):
         assert commands.growth(start=date(2026, 11, 6)).outcome == "too_few"
         assert commands.growth(end=date(2026, 11, 3)).changes[0].after == {51: 1}
         text = commands.growth_text(report)
-        assert "日世界\n  英雄\n    King  50 → 53" in text
+        assert "日世界\n  建築 (含英雄)\n    野蠻人之王  50 → 53" in text
         assert "夜世界\n  (沒有升級)" in text
 
     def test_it_takes_the_far_zoom_without_parking(self) -> None:
@@ -2875,7 +2981,7 @@ class ExportTests(unittest.TestCase):
         """The whole point of reading: the second tap is a fixed coordinate."""
         report, _ = self._export(settings=False)
         assert report.outcome == "settings_shut"
-        assert report.entities == []
+        assert report.export is None
         # The avatar, the tab, and then the close — never 更多設定 at a screen
         # nobody confirmed.
         assert [call.args[:2] for call in self.adb.tap.call_args_list] == [
@@ -2910,7 +3016,7 @@ class ExportTests(unittest.TestCase):
         """It belongs to whoever is at the keyboard, and this runs while they are working."""
         held = "something the user was copying"
         report, _ = self._export(clip=[held, PAYLOAD])
-        assert report.tag == "#TEST"
+        assert report.outcome == "exported"
         self.wrote.assert_called_once_with(held)
 
     def test_the_clipboard_is_put_back_even_when_nothing_was_copied(self) -> None:
@@ -2949,7 +3055,7 @@ class ExportTests(unittest.TestCase):
         (self.saved / "#OLD.json").write_text(PAYLOAD, encoding="utf-8")
         report = commands.export(_frames(self), last=True)
         assert report.outcome == "wrong_format"
-        assert report.entities == []
+        assert report.export is None
 
 
 class StorageCeilingTests(unittest.TestCase):
