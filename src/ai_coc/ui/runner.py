@@ -383,9 +383,9 @@ class GameRunner(ScreenRunner):
         # world is the one where `current_world` answered None and `read_stock` —
         # which cannot tell the two villages apart — is the only test left.
         # Picking a side there is a coin flip that runs the builder base away
-        # from the one corner its boat and its 聖水車 are moored at. `view` has
-        # made this call already, for the same reason and in the same shape: the
-        # pinch is safe on any screen and the swipe is not.
+        # from the one corner its boat and its 聖水車 are moored at. The pinch is
+        # still gated on a village, since its fingers land on whatever is drawn
+        # under them (`view`); it is the swipe that needs the village named.
         if world is None:
             logger.warning(
                 "The storages read but the corner's + buttons did not place the village; "
