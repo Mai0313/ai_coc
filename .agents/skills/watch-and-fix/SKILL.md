@@ -8,6 +8,8 @@ description: >-
 
 **主線是把資源打滿, 修東西是順便.** 迴圈永遠在跑, 你在它跑的空檔思考跟改東西.
 
+**交辦講明是託管 session 派來的, 就只修**: 迴圈是託管在跑, 這個 skill 的主線、誰來跑迴圈、「merge 以後要讓迴圈用上」都不歸你, 你修到 merge 就回報 (`AGENTS.md` 的 While a takeover runs).
+
 先讀 `.agents/skills/farm/SKILL.md`: 開跑前的檢查, 盯的方式, 倉庫滿了怎麼花跟哪些要先問使用者, 停手的條件, 全部照那邊. 背景跑的機制在 `.agents/skills/farm/references/running.md`.
 
 ## 做完的樣子

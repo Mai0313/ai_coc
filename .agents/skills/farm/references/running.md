@@ -126,7 +126,7 @@ jq '.[-1] | {world, outcome, stock_full, attacked}' ~/.ai_coc/logs/<run>/result.
 
 ## 跑好幾個小時的圈
 
-使用者開口要花而牆有指名 (`farm` 的「倉庫滿了」), 這一圈一跑就是好幾個小時, 他加一句「循環到我說停」「打到早上」就是要它跑到他叫停. **花是判斷, 歸派工的那一邊** (`AGENTS.md` 的 Every session farms while it works), 所以這一圈是你在繞: 派 farm subagent 打到 `stock_full`, 它回報了你照 `farm` 花, 再派下一趟. `watch-and-fix` 親自監督而由主 session 自己跑的, 就照常: 每個指令送背景, 通知進來就接下一步.
+使用者開口要花而牆有指名 (`farm` 的「倉庫滿了」), 這一圈一跑就是好幾個小時, 他加一句「循環到我說停」「打到早上」就是要它跑到他叫停. **花是判斷, 歸派工的那一邊** (`AGENTS.md` 的 Dispatching a farm subagent), 所以這一圈是你在繞: 派 farm subagent 打到 `stock_full`, 它回報了你照 `farm` 花, 再派下一趟. `watch-and-fix` 親自監督而由主 session 自己跑的, 就照常: 每個指令送背景, 通知進來就接下一步.
 
 **交給 subagent 的每一趟都要有終點, 不要叫它「跑到叫停為止」.** 2026-10-08 凌晨一個被交代跑到早上的 subagent 打了 3 圈 (約 2 小時 20 分), 在一次刷牆跑完時結束了回合, 沒有回報, 之後傳給它的訊息也叫不醒, 模擬器閒了 40 分鐘才被發現. 改成每個只跑 3 圈 (那時打到 `stock_full` 加一次刷牆算一圈) 之後, 接手的每一個都跑完回報了. 所以:
 
