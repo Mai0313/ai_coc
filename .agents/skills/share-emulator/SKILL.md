@@ -15,7 +15,7 @@ user-invocable: false
 
 `attack`, `collect`, `donate`, `confirm` 全都在驅動同一個模擬器的同一個 display. 兩個一起跑, 一邊點開選單, 另一邊截到那張圖判讀成完全不同的東西, 而且沒有任何機制會發現. 開下一個之前先確定上一個真的結束了.
 
-**`state.json` 是一把鎖.** 除了 `read`、`stop`、`giveback`、`watch`、`note`、`growth`、`turnaround`、`search`、`gamedata`、`capture`、`export --last` 跟不帶 `--go` 的 `world`, 每個 `ai_coc` 指令開跑時先看有沒有別的活著的程序佔著: 有, 就照 `ai_coc stop` 的流程請它收工, 記下是你叫停的, 等它打完手上那一場退出才開始; 它是帶 `--yield` 開的 (打資源的迴圈都是) 就是借走, 用完要 `giveback`. 帶 `--yield` 的指令反過來, 誰都不請, 排隊等. 所以**迴圈在跑的時候下 `stock`、`status` 這種要操作畫面的指令, 就是把那輪借走**, 不是你要的就不要下. 只想看畫面, 用 `capture` 或 `repair-emulator` 的 `look.py` (`uv run --no-sync python .agents/skills/repair-emulator/scripts/look.py <資料夾>`): 都只截圖, 不佔鎖也不開任何東西, 代價是跟迴圈多搶一條 ADB.
+**`state.json` 是一把鎖.** 除了 `read`、`stop`、`giveback`、`watch`、`note`、`growth`、`turnaround`、`search`、`gamedata`、`capture`、`export --last`、`status --last` 跟不帶 `--go` 的 `world`, 每個 `ai_coc` 指令開跑時先看有沒有別的活著的程序佔著: 有, 就照 `ai_coc stop` 的流程請它收工, 記下是你叫停的, 等它打完手上那一場退出才開始; 它是帶 `--yield` 開的 (打資源的迴圈都是) 就是借走, 用完要 `giveback`. 帶 `--yield` 的指令反過來, 誰都不請, 排隊等. 所以**迴圈在跑的時候下 `stock`、`status` 這種要操作畫面的指令, 就是把那輪借走**, 不是你要的就不要下. 只想看畫面, 用 `capture` 或 `repair-emulator` 的 `look.py` (`uv run --no-sync python .agents/skills/repair-emulator/scripts/look.py <資料夾>`): 都只截圖, 不佔鎖也不開任何東西, 代價是跟迴圈多搶一條 ADB.
 
 **而「上一個」不一定是你開的**, 使用者可能同時開著另一個 session. 所以**開第一個會碰模擬器的指令之前, 先讀 `~/.ai_coc/state.json`**:
 
@@ -93,7 +93,7 @@ user-invocable: false
 
 **不要去砍背景程序.** 砍掉的話迴圈的 `KeyboardInterrupt` 出口執行不到 (只有前景的 Ctrl-C 走得到), 軍隊留在場上, 遊戲停在回不了家的畫面, 沒有 `result.json`, 只剩 `run.log` 能數. **卡死的也不用你砍**: 別的**不帶 `--yield`** 的指令等滿 `TAKEOVER_WAIT` (約 12 分鐘) 還等不到它收工, 會自己結束它並在自己的 `run.log` 記下是誰的 run; 下一個指令照常把遊戲帶回村莊. 沒有 `pid_created` 的舊紀錄例外, 不會被結束, 那個指令只會報錯. 帶 `--yield` 的指令不會結束任何人, 排在卡死的 run 後面會一直等.
 
-**使用者說停, 停的是整件事而不是一個指令.** `state.json` 只停得下當下在跑的那個迴圈, 不知道你打算接著做什麼. 所以收到停止之後**不要再開下一個指令**, 只讀倉庫的 `stock`、`status` 也算, 除非使用者又說要繼續: 叫停就是他要接手, 回報的數字從 `run.log` 讀. 這一條沒有機制在管, 只有你. 程式上的「黏住的停止」(停了就拒絕所有 claim, 直到一個 `ai_coc resume`) 提過, 使用者否掉了, 要的是把 skill 修好; 照 skill 走的迴圈又衝過一次停止, 才重新提.
+**使用者說停, 停的是整件事而不是一個指令.** `state.json` 只停得下當下在跑的那個迴圈, 不知道你打算接著做什麼. 所以收到停止之後**不要再開下一個碰模擬器的指令**, 只讀倉庫的 `stock`、`status` 也算, 除非使用者又說要繼續: 叫停就是他要接手, 回報的數字從 `run.log` 讀. 不碰模擬器的照樣能跑 (`status --last`、`search`、`growth`、`note` 只讀檔案, 不會把遊戲登入). 這一條沒有機制在管, 只有你. 程式上的「黏住的停止」(停了就拒絕所有 claim, 直到一個 `ai_coc resume`) 提過, 使用者否掉了, 要的是把 skill 修好; 照 skill 走的迴圈又衝過一次停止, 才重新提.
 
 **每一步各自一次呼叫, 不要把幾步寫成一支只看 exit code 的腳本** (`world --go … && attack … && confirm …`): 在回合之間被停掉的 `attack` 照樣 exit 0, `world --go` 根本不讀叫停, 串在後面的那一步照樣開跑. 一個 subagent 這樣跑, 兩次 `ai_coc stop` 之後又刷了兩次牆、開了一場進攻.
 
