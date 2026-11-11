@@ -34,6 +34,7 @@ from ai_coc.models import (
     ProbeRay,
     AppConfig,
     LockEvent,
+    LostLogin,
     MapSurvey,
     NightPlan,
     PlateRole,
@@ -81,6 +82,7 @@ from ai_coc.models import (
     RestartScope,
     SearchReport,
     StatusReport,
+    TendedReport,
     UpgradeTimer,
     VillageStock,
     WorldOutcome,
@@ -98,6 +100,7 @@ from ai_coc.models import (
     LaunchOutcome,
     SearchOutcome,
     SurveyOutcome,
+    TendedUpgrade,
     VillageExport,
     BoundarySurvey,
     CollectOutcome,
@@ -3494,6 +3497,122 @@ def turnaround_text(report: TurnaroundReport) -> str:
     return "\n".join(shown)
 
 
+def tended(by: str | None = None, since: datetime | None = None) -> TendedReport:
+    """What a session did to the village besides farming since `since`, off `runs.jsonl` alone.
+
+    `by` takes the session's own runs and its farm subagent's (`<id>-farm`),
+    as `farmed_runs` does. **A goblin hire is one upgrade with the press
+    before it**: the `confirm` that pressed the price ends `unexpected` on
+    the hire prompt, and the `confirm --goblin` after it pays the gems that
+    start the upgrade, so a hire within `GOBLIN_GAP` of such a press takes its
+    price and its item. **A lost login is counted once** however many runs
+    stood down on it, since the farm subagent and the session both run into
+    it, and it is back at the end of the next run that claimed the emulator
+    and came through.
+    """
+    since = since.astimezone() if since is not None else None
+    lines = _journal()
+    starts = {
+        line.run: line
+        for line in lines
+        if line.event == "start"
+        and (by is None or line.caller.session in (by, f"{by}-farm"))
+        and (since is None or line.at >= since)
+    }
+    claimed = {line.run for line in lines if line.event == "lock" and line.what == "claimed"}
+    report = TendedReport(by=by, since=since)
+    pressed: TendedUpgrade | None = None
+    for end in (line for line in lines if line.event == "end" and line.run in starts):
+        start = starts[end.run]
+        if _lost_login(report, end, end.run in claimed):
+            continue
+        if start.command == "boost" and end.outcome == "boosted":
+            report.boosts.append(end.at)
+        elif start.command == "confirm":
+            with suppress(ValueError):
+                paid = ConfirmReport.model_validate(end.result)
+                pressed = _bought(report, paid, end.at, paid.item or start.caller.mission, pressed)
+    logger.info(
+        "Tended: %d upgrade(s), %d boost(s), %d lost login(s)",
+        len(report.upgrades),
+        len(report.boosts),
+        len(report.lost),
+    )
+    return report
+
+
+def _lost_login(report: TendedReport, end: JournalLine, claimed: bool) -> bool:
+    """Whether this run stood down on a lost login, counting it unless one is still open.
+
+    A run that claimed the emulator and came through closes the open one.
+    """
+    lost = report.lost[-1] if report.lost else None
+    if end.outcome == "session_taken" or end.result == SESSION_TAKEN:
+        if lost is None or lost.back is not None:
+            report.lost.append(LostLogin(taken=end.at))
+        return True
+    if lost is not None and lost.back is None and claimed:
+        lost.back = end.at
+    return False
+
+
+def _bought(
+    report: TendedReport,
+    paid: ConfirmReport,
+    at: datetime,
+    item: str,
+    pressed: TendedUpgrade | None,
+) -> TendedUpgrade | None:
+    """Add what one `confirm` bought, and hand back the press a goblin hire may follow, if this was one."""
+    offer = paid.wall or paid.offer
+    if paid.goblin is None:
+        bought = TendedUpgrade(
+            at=at,
+            item=item,
+            price=offer.price if offer else None,
+            resource=offer.resource if offer else None,
+        )
+        if paid.outcome == "confirmed":
+            report.upgrades.append(bought)
+        return bought if paid.outcome == "unexpected" and offer else None
+    if paid.outcome != "confirmed":
+        return pressed
+    if pressed is not None and at - pressed.at <= GOBLIN_GAP:
+        report.upgrades.append(pressed.model_copy(update={"gems": paid.goblin.gems}))
+    else:
+        report.upgrades.append(TendedUpgrade(at=at, item=item, gems=paid.goblin.gems))
+    return None
+
+
+def tended_text(report: TendedReport, now: datetime | None = None) -> str:
+    """The upgrade, clock tower and lost login lines of the takeover's stop report."""
+    now = now or datetime.now().astimezone()
+
+    def when(at: datetime) -> str:
+        return _moment(at.isoformat(), now)
+
+    # No total: the builder base's gold and elixir are other currencies under
+    # the same names, and a confirm does not record which village it paid on.
+    rows = []
+    for one in report.upgrades:
+        costs = []
+        if one.price is not None and one.resource is not None:
+            costs.append(f"{one.price:,} {_RESOURCE_NAMES[one.resource]}")
+        if one.gems is not None:
+            costs.append(f"哥布林 {one.gems:,} 寶石")
+        rows.append(f"  - {when(one.at)} {one.item} ({', '.join(costs)})")
+    shown = [f"- 升級: {len(report.upgrades)} 件", *rows]
+    boosts = ", ".join(when(at) for at in report.boosts)
+    shown.append(f"- 鐘塔: 開了 {len(report.boosts)} 次 ({boosts})" if boosts else "- 鐘塔: 沒開")
+    losses = ", ".join(
+        f"{when(one.taken)} 被搶, "
+        + ("還沒接回" if one.back is None else f"{when(one.back)} 接回")
+        for one in report.lost
+    )
+    shown.append(f"- 被搶登: {len(report.lost)} 次 ({losses})" if losses else "- 被搶登: 沒有")
+    return "\n".join(shown)
+
+
 def capture(frames: FrameLog, count: int = 1, gap: float = 1.5) -> list[Path]:
     """Save frames off the live game, for measuring a screen the parsers cannot read yet.
 
@@ -3677,6 +3796,8 @@ def answer_text(answer: BaseModel, within: int | None = None) -> str | None:
             text = farmed_text(farmed(answer))
         case FarmedReport():
             text = farmed_report_text(answer)
+        case TendedReport():
+            text = tended_text(answer)
         case GrowthReport():
             text = growth_text(answer)
         case TurnaroundReport():
@@ -3993,6 +4114,7 @@ def confirm(
     frames: FrameLog,
     pay: Literal["gold", "elixir"] | None = None,
     goblin: bool = False,
+    item: str | None = None,
 ) -> ConfirmReport:
     """Press the upgrade sheet's 確認 if it asks for exactly this many of a resource.
 
@@ -4052,7 +4174,7 @@ def confirm(
     # Named the way `tap` names its frame: `after` only when something was pressed.
     frame = frames.write("refused", before) if after is None else frames.write("after", after)
     report = ConfirmReport(
-        asked=price, offer=offer, wall=wall, goblin=hire, outcome=outcome, frame=frame
+        asked=price, offer=offer, wall=wall, goblin=hire, outcome=outcome, frame=frame, item=item
     )
     logger.info("Confirm: %s", confirm_line(report))
     return report
