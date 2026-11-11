@@ -796,7 +796,16 @@ class JournalTests(unittest.TestCase):
                 runner.return_value.run.return_value = AttackReport(outcome="took_loot", phases=1)
                 for plan in played:
                     runner.return_value.configure_mock(
-                        played=plan, holding=None, capacity=None, cart=None
+                        played=plan,
+                        holding=None,
+                        capacity=None,
+                        cart=None,
+                        **{
+                            "read_storages.return_value": (
+                                "day",
+                                VillageStock(gold=0, elixir=0, dark=0),
+                            )
+                        },
                     )
                     commands.attack(AttackOptions(), self.run.frames)
         finally:

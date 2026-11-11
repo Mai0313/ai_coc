@@ -1344,6 +1344,69 @@ class AttackSummaryTests(unittest.TestCase):
         [report] = series.root
         assert (report.outcome, report.holding) == ("session_taken", held)
 
+    def _ended(
+        self, last: AttackReport, read: list[tuple[World | None, VillageStock | None]] | Exception
+    ) -> tuple[AttackSeries, MagicMock]:
+        """A one-round series ending on `last`, the storages reading `read` in turn once it has."""
+        runner = MagicMock(name="AttackRunner")
+        runner.configure_mock(
+            played=None, holding=None, capacity=None, cart=None, since_cart=None, lost=0
+        )
+        runner.run.return_value = last
+        runner.read_storages.side_effect = read
+        runner.world = last.world
+        with (
+            patch.object(commands, "_controller", return_value=_adb()),
+            patch.object(commands.ConfigStore, "load", return_value=AppConfig()),
+            patch.object(commands, "_planner", return_value=None),
+            patch.object(commands, "_settle_game", return_value=DISPLAY),
+            patch.object(commands, "AttackRunner", return_value=runner),
+            patch.object(commands.time, "sleep"),
+        ):
+            series = commands.attack(
+                AttackOptions(rounds=1), _frames(self), MagicMock(return_value=False)
+            )
+        return series, runner
+
+    def test_a_series_that_ends_on_a_battle_reads_the_storages_once_more(self) -> None:
+        held = VillageStock(gold=3, elixir=3, dark=0)
+        # A frame caught as the village paints is looked past.
+        series, _ = self._ended(
+            AttackReport(world="night", outcome="deployed", phases=1),
+            [(None, None), ("night", held)],
+        )
+        assert series.root[-1].after == held
+        series, _ = self._ended(
+            AttackReport(outcome="took_loot", attacked=LootOffer(gold=1, elixir=1, dark=1)),
+            [("night", held)] * commands.AFTER_LOOKS,
+        )
+        assert series.root[-1].after is None
+
+    def test_no_reading_after_a_round_that_did_not_fight_or_lost_the_login(self) -> None:
+        for last in (
+            AttackReport(outcome="stock_full"),
+            AttackReport(world="night", outcome="session_taken", phases=1),
+        ):
+            series, runner = self._ended(last, [])
+            runner.read_storages.assert_not_called()
+            assert series.root[-1].after is None
+
+    def test_an_emulator_lost_at_the_last_reading_still_hands_the_series_back(self) -> None:
+        series, _ = self._ended(
+            AttackReport(world="night", outcome="deployed", phases=1), AdbControlError("timeout")
+        )
+        assert [report.outcome for report in series.root] == ["deployed"]
+        assert series.root[-1].after is None
+
+    def test_the_reading_after_the_last_battle_brackets_it(self) -> None:
+        series = _played("day", ("took_loot", (1, 1, 1)), ("took_loot", (2, 2, 2)))
+        series.root[-1].after = VillageStock(gold=5, elixir=5, dark=5)
+        village = commands.farmed(series)
+        assert village is not None
+        assert (village.battles, village.uncounted) == (2, 0)
+        assert village.gained == VillageStock(gold=4, elixir=4, dark=4)
+        assert village.held == VillageStock(gold=5, elixir=5, dark=5)
+
     def test_the_loot_is_the_last_reading_less_the_first(self) -> None:
         village = commands.farmed(
             _played(
@@ -1455,8 +1518,13 @@ class FarmedRunsTests(unittest.TestCase):
         ended: bool = True,
         cart: dict[str, object] | None = None,
         old: bool = False,
+        after: tuple[int, int, int] | None = None,
     ) -> None:
-        """One attack run's start, its rounds a minute apart, and its end; `old` writes the storages beside the report only."""
+        """One attack run's start, its rounds a minute apart, and its end carrying the last round.
+
+        `old` writes the storages beside the report only; `after` is the
+        reading the series took after its last battle, which only the end has.
+        """
         start = datetime.fromisoformat(f"2026-11-11T{at}:00+08:00")
         self.lines.append({
             "run": run,
@@ -1465,6 +1533,7 @@ class FarmedRunsTests(unittest.TestCase):
             "command": "attack",
             "caller": {"agent": "a", "session": session, "mission": "m"},
         })
+        dumped: dict[str, object] = {}
         for number, report in enumerate(_played(world, *rounds).root, 1):
             dumped = report.model_dump(mode="json")
             beside = ("holding", "capacity", "cart")
@@ -1484,6 +1553,12 @@ class FarmedRunsTests(unittest.TestCase):
                 "at": (start + timedelta(minutes=len(rounds) + 1)).isoformat(),
                 "event": "end",
                 "outcome": None,
+                "result": {
+                    **dumped,
+                    "after": dict(zip(("gold", "elixir", "dark"), after, strict=False)),
+                }
+                if after
+                else None,
             })
 
     def _farmed(self, **asked: object) -> FarmedReport:
@@ -1516,6 +1591,14 @@ class FarmedRunsTests(unittest.TestCase):
         assert not report.running
         later = self._farmed(by="s1", since=datetime.fromisoformat("2026-11-11T10:05:00+08:00"))
         assert later.villages[0].battles == 1
+
+    def test_the_reading_a_series_took_after_its_last_battle_is_on_its_end(self) -> None:
+        self._run(
+            "r1", "10:00", [("took_loot", (1, 1, 1)), ("took_loot", (2, 2, 2))], after=(4, 4, 4)
+        )
+        [day] = self._farmed(by="s1").villages
+        assert (day.battles, day.uncounted) == (2, 0)
+        assert day.gained == VillageStock(gold=3, elixir=3, dark=3)
 
     def test_a_round_line_written_before_the_reports_carried_storages_still_counts(self) -> None:
         self._run("r1", "10:00", [("took_loot", (1, 1, 1)), ("stock_full", (3, 3, 3))], old=True)

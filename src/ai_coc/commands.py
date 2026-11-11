@@ -1695,6 +1695,8 @@ def farmed(series: AttackSeries) -> FarmedVillage | None:
         return None
     fought = [at for at, one in enumerate(played) if one.attacked is not None or one.phases > 0]
     read = [(at, one.holding) for at, one in enumerate(played) if one.holding is not None]
+    if played[-1].after is not None:
+        read.append((len(played), played[-1].after))
     carts = [one.cart for one in played if one.cart is not None]
     start = _cart_level(carts[0]) if carts else None
     now = _cart_level(carts[-1]) if carts else None
@@ -1773,7 +1775,9 @@ def farmed_runs(by: str | None = None, since: datetime | None = None) -> FarmedR
     runs is not taken off the loot; the cart's last battles in each run stay
     unread, since the next run's first trip empties them into the storages
     before its first reading. A round line written before the rounds carried
-    their own storages has them beside its report.
+    their own storages has them beside its report, and the reading a series
+    took after its last battle is on its `end` line alone, written after the
+    last round line.
     """
     since = since.astimezone() if since is not None else None
     lines: list[JournalLine] = []
@@ -1793,7 +1797,7 @@ def farmed_runs(by: str | None = None, since: datetime | None = None) -> FarmedR
         and (by is None or line.caller.session in (by, f"{by}-farm"))
         and (since is None or line.at >= since)
     }
-    ends = {line.run: line.at for line in lines if line.event == "end" and line.run in starts}
+    ends = {line.run: line for line in lines if line.event == "end" and line.run in starts}
     played: dict[str, list[JournalRound]] = {}
     for one in rounds:
         if one.run in starts:
@@ -1801,16 +1805,14 @@ def farmed_runs(by: str | None = None, since: datetime | None = None) -> FarmedR
     runs = sorted(played, key=lambda run: starts[run].at)
     report = FarmedReport(by=by, since=since)
     villages = [
-        village
-        for run in runs
-        if (village := farmed(AttackSeries([_with_storages(one) for one in played[run]])))
+        village for run in runs if (village := farmed(_run_series(played[run], ends.get(run))))
     ]
     for world in ("day", "night"):
         if mine := [village for village in villages if village.world == world]:
             report.villages.append(_summed(mine))
     if runs:
         report.started = starts[runs[0]].at
-        report.ended = max(ends.get(run, played[run][-1].at) for run in runs)
+        report.ended = max(ends[run].at if run in ends else played[run][-1].at for run in runs)
     # Any run of the session holding the emulator, one still before its first
     # round included: the loop starts again after every loan.
     held = read_state()
@@ -1822,6 +1824,16 @@ def farmed_runs(by: str | None = None, since: datetime | None = None) -> FarmedR
     )
     logger.info("Farmed: %d run(s) of %d round(s)", len(runs), sum(map(len, played.values())))
     return report
+
+
+def _run_series(rounds: list[JournalRound], end: JournalLine | None) -> AttackSeries:
+    """One attack run's rounds as its series, the reading after its last battle taken off its `end`."""
+    series = AttackSeries([_with_storages(one) for one in rounds])
+    if end is not None:
+        with suppress(ValueError):
+            after = AttackReport.model_validate(end.result).after
+            series.root[-1] = series.root[-1].model_copy(update={"after": after})
+    return series
 
 
 def _with_storages(line: JournalRound) -> AttackReport:
@@ -2150,7 +2162,45 @@ def attack(
             logger.info("Nothing was attacked; waiting %ds before the next round", IDLE_REST)
             if _rest(IDLE_REST, should_stop):
                 break
+    _read_after(runner, series)
     return series
+
+
+# How many captures the reading after a series' last battle takes at most, and
+# how far apart. The round hands back the village as soon as its result screen
+# is gone, which the next round's capture has always read, so the later looks
+# are only for a frame caught as the village paints.
+AFTER_LOOKS = 3
+AFTER_GAP = 1.0
+
+
+def _read_after(runner: AttackRunner, series: AttackSeries) -> None:
+    """Read the storages once more when the series ended on a battle, onto its last round.
+
+    Each round reads them before its search, so the last battle of a series
+    lent, stopped or run out of rounds sat in no difference. Captures alone:
+    nothing is tapped, and a frame that is not this village (a reward the game
+    raised, a session another device took) leaves the battle uncounted as
+    before. The builder base's cart is not visited for it, since a trip parks
+    the camera and pays the cart out.
+    """
+    last = series.root[-1] if series.root else None
+    if last is None or last.outcome == "session_taken":
+        return
+    if last.attacked is None and last.phases == 0:
+        return
+    for look in range(AFTER_LOOKS):
+        if look:
+            time.sleep(AFTER_GAP)
+        try:
+            world, held = runner.read_storages()
+        except AdbControlError as exc:
+            logger.warning("The storages after the last battle were not read: %s", exc)
+            return
+        if world == last.world and held is not None:
+            series.root[-1] = last.model_copy(update={"after": held})
+            return
+    logger.info("The storages after the last battle did not read; that battle stays uncounted")
 
 
 # Only ever used to build the line a person reads; `outcome` is what a caller
