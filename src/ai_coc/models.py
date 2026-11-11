@@ -1198,11 +1198,12 @@ class FarmedVillage(BaseModel):
     storages never read. They are read before each round, so `uncounted` is
     the battles fought before the first reading or after the last, whose loot
     is in no difference. `held` and `capacity` are the last reading.
-    `cart_start` and `cart_now` are what the builder base's cart held after the
-    first trip to it and the last (0 after one that emptied it), None where
-    that trip could not say, and `cart_capacity` its ceiling where a trip read
-    one; `cart_unread` is the battles since the last trip, whose elixir is in
-    the cart and in neither reading. `ending` is how the last round ended.
+    `cart_now` is what the builder base's cart held after the last trip to it
+    (0 after one that emptied it) and `cart_gained` what it held more than
+    after the first, each None where a trip could not say, and `cart_capacity`
+    its ceiling where a trip read one; `cart_unread` is the battles since the
+    last trip, whose elixir is in the cart and in neither reading. `ending` is
+    how the last round ended.
     """
 
     world: World
@@ -1211,7 +1212,7 @@ class FarmedVillage(BaseModel):
     uncounted: int = 0
     held: VillageStock | None = None
     capacity: StorageCapacity | None = None
-    cart_start: int | None = None
+    cart_gained: int | None = None
     cart_now: int | None = None
     cart_capacity: int | None = None
     cart_unread: int = 0
@@ -2125,8 +2126,45 @@ class JournalLine(BaseModel):
     event: str
     command: str = ""
     log: Path | None = None
+    # On a `start` line.
+    caller: Caller = Field(default_factory=Caller)
     outcome: str | None = None
     result: JsonValue = None
+
+
+class JournalRound(BaseModel):
+    """One `round` line of `runs.jsonl` as `farmed` reads it.
+
+    The storages, ceilings and cart beside the report are the ones a line
+    written before the report carried them has; the plan is left among the
+    extras, since an old line's need not parse as today's.
+    """
+
+    model_config = TOLERANT
+
+    run: str
+    at: datetime
+    report: AttackReport
+    holding: VillageStock | None = None
+    capacity: StorageCapacity | None = None
+    cart: CartReport | None = None
+
+
+class FarmedReport(BaseModel):
+    """What one session's farming came to over a stretch, every attack run of it summed.
+
+    `by` and `since` are what was asked, either None where it was not;
+    `started` and `ended` when its first attack run started and its last ended
+    (its last round, for one still going), and `running` whether that last
+    run holds the emulator now.
+    """
+
+    by: str | None = None
+    since: datetime | None = None
+    started: datetime | None = None
+    ended: datetime | None = None
+    running: bool = False
+    villages: list[FarmedVillage] = Field(default_factory=list)
 
 
 class JournalTimers(BaseModel):
