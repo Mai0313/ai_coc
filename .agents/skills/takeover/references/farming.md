@@ -32,23 +32,31 @@
 
 ## 派工
 
-**迴圈交給一個 farm subagent 跑**: 在背景跑, 取一個名字讓你傳得到訊息, **模型比你低一級, 不再更低**, thinking budget 用 runtime 給得出的最低那一級. 交辦裡告訴它它是 subagent, 照 `.agents/skills/takeover/references/runner.md` 跑; 那一份是每一趟都一樣的那一半, 這一趟才有的寫進交辦. **分工是判斷對上跑腿**: subagent 是為了讓指令的輸出不進主 thread, 它又快又便宜是因為它什麼都不判斷. 要判斷的 (門檻、花不花、畫面上是什麼、一個結果算不算 bug) 都留在你這裡; 它照交辦跑, 碰到交辦以外的第一件事就回報. 所以它不花任何東西 (買東西要看建造面板), 打到 `stock_full` 就回報. **最低那一級 budget 還在試行** (#548): subagent 沒回報就停了, 或回報的跟 `state.json`、`result.json`、`runs.jsonl` 對不上, 就到那張 issue 留一則; 第二則就把 budget 調高一級. 它佔模擬器的指令都帶 `--yield`, 所以 live test 是借走它而不是停掉它, 它也從不把測試請下來. **使用者在模擬器上玩, 或說過不要控制遊戲, 就一個都不派**, 他說可以之前什麼都不開.
+**迴圈交給一個 farm subagent 跑**: 在背景跑, 取一個名字讓你傳得到訊息, **模型跟 thinking budget 都從 runtime 給得出的最低那一級開始**. 交辦裡告訴它它是 subagent, 照 `.agents/skills/takeover/references/runner.md` 跑; 那一份是每一趟都一樣的那一半, 這一趟才有的寫進交辦. **分工是判斷對上跑腿**: subagent 是為了讓指令的輸出不進主 thread, 它又快又便宜是因為它什麼都不判斷. 要判斷的 (門檻、花不花、畫面上是什麼、一個結果算不算 bug) 都留在你這裡; 它照交辦跑, 碰到交辦以外的第一件事就回報. 所以它不花任何東西 (買東西要看建造面板), 打到 `stock_full` 就回報. **它沒照交辦跑才往上調, 一次一格**: 沒回報就停了, 回報的跟 `state.json`、`result.json`、`runs.jsonl` 對不上, 或者改了、併了、跳了交辦裡的步驟, 下一個就把 budget 調高一級, budget 到頂了再換高一級的模型, 調上去的那一級用到這個 session 結束. 每一次都到 #548 留一則 (哪個 session, 模型跟 budget, 它說的跟檔案上的); 第二則就把這裡的起點調高一格, 照 #548 記下現在在哪一格. 最低那一級跑得穩, 靠的是交辦把每一步寫成完整的指令 (下面的「交辦」). 它佔模擬器的指令都帶 `--yield`, 所以 live test 是借走它而不是停掉它, 它也從不把測試請下來. **使用者在模擬器上玩, 或說過不要控制遊戲, 就一個都不派**, 他說可以之前什麼都不開.
 
 runtime 沒有 subagent 的話, 你自己照 `runner.md` 跑; 指令照 `share-emulator` 的「背景跑」送背景, 通知進來照 `runner.md` 的「讀結果」接下一步.
 
-**交辦**, 照這個骨架填, 每一格都寫, 沒有的寫「不要」:
+**交辦把每一步寫成完整的一行指令**, 照順序編號, 它照抄不加不改. 照這個骨架填 (先打日世界的那一種): 先打夜世界就把兩段對調, 只打一個世界就刪掉另一段, `--debug` / `--shot-every` 加在 `attack` 那一行, 不截圖或不回日世界就刪掉那一行. 不打滿而打 N 輪的, 把 `--repeat 0` 換成 `--repeat N`, 「stock_full 之後」換成「跑完之後」.
 
 ```text
-你是打資源的 subagent, 照 .agents/skills/takeover/references/runner.md 跑, 不載入其他 skill.
-session: <你的 session id>-farm
-先打: <day|night>, 再打: <另一個|不打>
-日世界: attack --repeat 0 --plan src/ai_coc/plans/flat.json <門檻旗標>
-夜世界: attack --repeat 0 --plan src/ai_coc/plans/night_flat.json
-label 前綴: <這一趟的代號, 例如 t3>
---debug / --shot-every: <不要 | 要, 為了什麼>
-終點: 兩個世界各打到 stock_full (或: 各打 N 輪)
-收尾 (只在正常收工時): <world --day | 不要>; <每個世界 stock_full 後 ai_coc capture 一張 | 不要>
+你是打資源的 subagent. 先用讀檔工具完整讀一遍 <主 checkout>/.agents/skills/takeover/references/runner.md, 照它跑, 不載入其他 skill. 你不判斷任何事, 只照下面的清單一步一步跑, 碰到 runner.md 說要停下來的狀況或清單以外的事, 就停下來回報.
+工作目錄: <主 checkout> (不切分支; git pull 跟 uv sync 只在 runner.md 說的時候)
 暫存檔: <你的暫存資料夾路徑>
+
+每一行最後都加上這一段 (下面寫成 <身分>): --agent <runtime 的名字> --session <你的 session id>-farm --mission "<這一趟為了什麼>"
+每一個 world 都等它跑完、讀完它的結果, 確認到了該到的世界才下一步, 不跟下一步放在同一次執行裡.
+
+1. uv run --no-sync ai_coc world --day --yield --label <代號>-d-w1 <身分>
+2. uv run --no-sync ai_coc attack --repeat 0 --plan src/ai_coc/plans/flat.json <門檻旗標> --yield --label <代號>-d-a1 <身分>
+3. 日世界最後一輪 stock_full 是 true 之後: uv run --no-sync ai_coc capture --label <代號>-d-cap <身分> (capture 不帶 --yield)
+4. uv run --no-sync ai_coc world --night --yield --label <代號>-n-w1 <身分>
+5. uv run --no-sync ai_coc attack --repeat 0 --plan src/ai_coc/plans/night_flat.json --yield --label <代號>-n-a1 <身分>
+6. 夜世界最後一輪 stock_full 是 true 之後: uv run --no-sync ai_coc capture --label <代號>-n-cap <身分>
+7. uv run --no-sync ai_coc world --day --yield --label <代號>-d-w2 <身分>
+然後回報.
+
+被借走時照 runner.md「被叫停, 被借走」: 是借走就開回被借走時在打的那個世界, 同一組旗標, 先 world 再 attack, label 的數字往下編 (日世界第二次是 <代號>-d-w3 跟 <代號>-d-a2, 夜世界第二次是 <代號>-n-w2 跟 <代號>-n-a2). 是真的叫停就不開回去, 回報.
+回報照 runner.md「回報」, 用中文寫, 每一個執行目錄都列, 各附那次 attack 印的那一段照貼. 被借走過的寫借了幾次、每次多久接回去.
 ```
 
 兩個 `--plan` 都要寫: 交辦沒寫的 `--plan` 它不會自己補, 日世界那個漏寫了, 每場就去問 AI (託管曾經漏了兩天).
