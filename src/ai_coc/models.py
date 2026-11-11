@@ -1388,6 +1388,12 @@ class CartReport(BaseModel):
     held: int | None = None
     capacity: int | None = None
 
+    @field_validator("outcome", mode="before")
+    @classmethod
+    def _renamed(cls, value: object) -> object:
+        """A journal line from before the villages were day and night calls `not_night` `wrong_world`."""
+        return "not_night" if value == "wrong_world" else value
+
 
 class ShieldState(BaseModel):
     """Whether a shield is up over the home village, and for how much longer.

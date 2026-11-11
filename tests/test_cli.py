@@ -178,13 +178,14 @@ class ParserTests(unittest.TestCase):
             _args("search", "--section", "heroes")
 
     def test_a_note_names_its_village_with_a_flag_and_a_list_takes_none(self) -> None:
-        added = _args("note", "add", "--night", "冰人升完改研究巨石投手")
+        # The flag last, as the documented lines write it.
+        added = _args("note", "add", "冰人升完改研究巨石投手", "--night")
         assert (added.action, added.world, added.item) == (
             "add",
             "night",
             "冰人升完改研究巨石投手",
         )
-        done = _args("note", "done", "--day", "2")
+        done = _args("note", "done", "2", "--day")
         assert (done.action, done.world, done.item) == ("done", "day", "2")
         for line in (["note", "--day"], ["note", "list", "--night"]):
             with (

@@ -1525,6 +1525,17 @@ class FarmedRunsTests(unittest.TestCase):
         [day] = self._farmed(by="s1").villages
         assert day.gained == VillageStock(gold=2, elixir=2, dark=2)
 
+    def test_a_round_line_carrying_the_carts_old_outcome_still_counts(self) -> None:
+        """`not_night` was written `wrong_world`, and a line that no longer parses is left out of the sum."""
+        self._run(
+            "r1",
+            "10:00",
+            [("took_loot", (1, 1, 1)), ("stock_full", (3, 3, 3))],
+            cart={"outcome": "wrong_world"},
+        )
+        [day] = self._farmed(by="s1").villages
+        assert day.gained == VillageStock(gold=2, elixir=2, dark=2)
+
     def test_a_run_still_holding_the_emulator_is_said_to_be_going(self) -> None:
         self._run("r1", "10:00", [("took_loot", (1, 1, 1))], ended=False)
         with patch.object(

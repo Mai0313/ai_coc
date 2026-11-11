@@ -278,7 +278,12 @@ def _farmed_flags(farm: argparse.ArgumentParser) -> None:
 
 
 def _note_flags(noter: argparse.ArgumentParser) -> None:
-    """`note` never opens ADB either: it keeps the notes section of the state file."""
+    """`note` never opens ADB either: it keeps the notes section of the state file.
+
+    The documented lines write the village flag last (`note add "…" --day`):
+    an argparse older than 3.12.7 ends the positionals at a flag written
+    between them and then refuses the text.
+    """
     noter.add_argument(
         "action",
         nargs="?",

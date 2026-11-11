@@ -104,7 +104,7 @@ ai_coc collect                        # 把有东西的采集器全部收掉
 ai_coc status                         # 两个世界的升级实际几点好（药水算进去），加上这个世界的仓库，每个世界印成一张表；--json 印字段
 ai_coc status --last                  # 不碰游戏，从存下的最新导出印同样的表；--within 24 把之后才好的并成一行
 ai_coc watch --next <时间> --about "..."   # 睡到那个时间才结束，期间在 state.json 记下是谁在盯升级；放到后台跑
-ai_coc note add --day "..."          # 在 state.json 记下用户对一个世界的一条交代；`note` 列出来，`note done --day 1` 删掉一条
+ai_coc note add "..." --day          # 在 state.json 记下用户对一个世界的一条交代；`note` 列出来，`note done 1 --day` 删掉一条
 ai_coc donate                         # 部落里有人要兵就捐
 ai_coc donate --dry-run               # 走完整个流程但停在真的捐出去之前
 ```
