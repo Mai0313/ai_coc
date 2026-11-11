@@ -92,6 +92,7 @@ ai_coc attack --plan used.json     # 照那份再打一次, 改過的也算
 ```bash
 ai_coc confirm --price 10800                 # 確認視窗要的價格剛好是這個才按確認
 ai_coc confirm --price 1600000 --pay gold    # 從面板選起來的那面牆, 用金幣付
+ai_coc confirm --price 10800 --item "加農炮 12 級"  # 一樣, 再把買的是什麼記進紀錄給 tended 列
 ```
 
 升級都走建造面板, 城牆也是: `tap` 跟 `swipe` 負責點跟捲, 並留下按完的畫面; `confirm` 是唯一會花錢的那一下, 只有確認視窗要的價格跟給的一樣、而且是金幣聖水黑水才按。加 `--pay` 時從面板點出來的城牆選單開始: 那顆升級鈕要的價格跟給的一樣、而且買得起才按, 再按它跳出來的確認視窗或批次的對話框。
@@ -131,6 +132,7 @@ ai_coc export --last                  # 直接讀上一次的結果,完全不碰
 ai_coc growth                         # 比對存下的最舊跟最新兩份匯出,列出兩個世界升了什麼;--start-date / --end-date 縮小範圍
 ai_coc turnaround                     # 從打資源紀錄算每次升級從到點到按下確認花了幾秒,依王、實驗室、建築、戰寵分;--since 指定起算日
 ai_coc farmed --by <session> --since <時間>  # 從執行紀錄把一個 session 每一次打資源加起來, 每個世界一段; 不碰遊戲
+ai_coc tended --by <session> --since <時間>  # 從執行紀錄列出一個 session 升了什麼、各花多少, 開了幾次鐘塔, 被搶登幾次; 不碰遊戲
 ai_coc gamedata                       # 從模擬器上的遊戲檔讀出遊戲自己的表(中英文名稱、最高等級、每級的要求、牌價和時間),每個遊戲版本讀一次,存在 ~/.ai_coc/game_data/<版本>/;--refresh 重新讀
 ai_coc search "Electro Dragon"        # 照 data_id 或中英文名稱的一段查那份表,村莊裡有的再列出等級、升級中幾點好跟下一級的牌價,沒有的兵種跟法術列出解鎖要什麼;--all 每一列分開列,--section helpers 列最後那份匯出的一區;不碰遊戲
 ai_coc view --zoom out                # 把鏡頭拉回所有座標當初量測的那個視野

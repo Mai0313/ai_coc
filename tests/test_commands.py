@@ -63,6 +63,7 @@ from ai_coc.models import (
     PressOutcome,
     RestartScope,
     StatusReport,
+    TendedReport,
     UpgradeTimer,
     VillageStock,
     WorldOutcome,
@@ -89,7 +90,7 @@ from ai_coc.models import (
 )
 from ai_coc.adapters import gamedata
 from ai_coc.constants import COC_PACKAGE
-from ai_coc.ui.runner import ScreenRunner
+from ai_coc.ui.runner import SESSION_TAKEN, ScreenRunner
 from ai_coc.adapters.adb import PNG_MAGIC, AdbController, AdbControlError
 from ai_coc.parsers.home import PANEL_CLOSE, CLOCK_TOWER_BELOW
 from ai_coc.parsers.village import merge
@@ -1559,6 +1560,127 @@ class FarmedRunsTests(unittest.TestCase):
 
     def test_nothing_farmed_says_so(self) -> None:
         assert commands.farmed_report_text(self._farmed(by="s1")) == "這段時間沒有打資源的紀錄"
+
+
+class TendedTests(unittest.TestCase):
+    """A session's upgrades, boosts and lost logins, off the journal alone (conftest's tmp copy)."""
+
+    def setUp(self) -> None:
+        self.lines: list[dict[str, object]] = []
+
+    def _run(  # noqa: PLR0913, PLR0917 - one run's journal fields
+        self,
+        command: str,
+        at: str,
+        outcome: str | None = None,
+        result: object = None,
+        session: str = "s1",
+        mission: str = "m",
+        claimed: bool = True,
+        exit_code: int = 0,
+    ) -> None:
+        """One run's start, its claim, and its end ten seconds later, named for the minute it started."""
+        start = datetime.fromisoformat(f"2026-11-11T{at}:00+08:00")
+        run = f"{at}-{command}"
+        self.lines.append({
+            "run": run,
+            "at": start.isoformat(),
+            "event": "start",
+            "command": command,
+            "caller": {"agent": "a", "session": session, "mission": mission},
+        })
+        if claimed:
+            self.lines.append({
+                "run": run,
+                "at": start.isoformat(),
+                "event": "lock",
+                "what": "claimed",
+            })
+        self.lines.append({
+            "run": run,
+            "at": (start + timedelta(seconds=10)).isoformat(),
+            "event": "end",
+            "exit": exit_code,
+            "outcome": outcome,
+            "result": result,
+        })
+
+    def _confirm(self, at: str, outcome: str, **paid: object) -> None:
+        mission = str(paid.pop("mission", "m"))
+        report = {"asked": 1, "outcome": outcome, "frame": "after.png", **paid}
+        self._run("confirm", at, outcome, report, mission=mission)
+
+    def _tended(self, **asked: object) -> TendedReport:
+        logging_setup.JOURNAL_PATH.write_text(
+            "".join(json.dumps(line, ensure_ascii=False) + "\n" for line in self.lines),
+            encoding="utf-8",
+        )
+        return commands.tended(**asked)
+
+    def test_a_goblin_hire_is_one_upgrade_with_the_press_before_it(self) -> None:
+        elixir = {"price": 8_000_000, "resource": "elixir", "point": [1121, 788]}
+        hire = {"point": [965, 542]}
+        self._confirm("17:20", "unexpected", offer=elixir, item="雷電飛龍 8 級")
+        # A hire that read other gems pressed nothing and leaves the press to the next.
+        self._confirm("17:21", "price_mismatch", goblin={"gems": 150, **hire})
+        self._confirm("17:22", "confirmed", goblin={"gems": 160, **hire})
+        dark = {"price": 116_000, "resource": "dark", "point": [1121, 788]}
+        self._confirm("18:26", "confirmed", offer=dark, mission="全天候託管: 亡靈王子續升81級")
+        # A press the game turned away bought nothing, and a hire past the gap
+        # after it pays its gems alone.
+        self._confirm("18:40", "unexpected", offer=dark)
+        self._confirm("18:44", "confirmed", goblin={"gems": 99, **hire}, item="X")
+        # Nor does a press that read the wrong price leave anything for a hire.
+        self._confirm("18:57", "unexpected", offer=dark)
+        self._confirm("18:58", "price_mismatch", offer=dark)
+        self._confirm("19:00", "confirmed", goblin={"gems": 50, **hire}, item="Y")
+        first, second, third, fourth = self._tended(by="s1").upgrades
+        assert (first.item, first.price, first.resource, first.gems) == (
+            "雷電飛龍 8 級",
+            8_000_000,
+            "elixir",
+            160,
+        )
+        assert (second.item, second.gems) == ("全天候託管: 亡靈王子續升81級", None)
+        assert (third.item, third.price, third.gems) == ("X", None, 99)
+        assert (fourth.item, fourth.price, fourth.gems) == ("Y", None, 50)
+        text = commands.tended_text(self._tended(by="s1"))
+        assert text.splitlines()[0] == "- 升級: 4 件"
+        assert "雷電飛龍 8 級 (8,000,000 聖水, 哥布林 160 寶石)" in text
+
+    def test_only_the_session_and_its_farmer_since_the_time_asked(self) -> None:
+        self._run("boost", "09:00", "boosted")
+        self._run("boost", "10:00", "boosted", session="s1-farm")
+        self._run("boost", "10:30", "not_ready")
+        self._run("boost", "11:00", "boosted", session="someone-else")
+        report = self._tended(by="s1", since=datetime.fromisoformat("2026-11-11T09:30:00+08:00"))
+        assert report.boosts == [datetime.fromisoformat("2026-11-11T10:00:10+08:00")]
+
+    def test_a_lost_login_is_counted_once_and_back_at_the_next_run_that_got_in(self) -> None:
+        self._run("attack", "12:22", "session_taken", session="s1-farm")
+        # The session's own status stood down on the same loss, and its watch
+        # and its stop claimed nothing.
+        self._run("status", "12:23", None, SESSION_TAKEN, exit_code=1)
+        self._run("watch", "12:24", "due", claimed=False)
+        self._run("launch", "12:28")
+        self._run("attack", "13:00", "session_taken", session="s1-farm")
+        [first, second] = self._tended(by="s1").lost
+        assert (first.taken, first.back) == (
+            datetime.fromisoformat("2026-11-11T12:22:10+08:00"),
+            datetime.fromisoformat("2026-11-11T12:28:10+08:00"),
+        )
+        assert second.back is None
+        assert (
+            commands
+            .tended_text(self._tended(by="s1"))
+            .splitlines()[-1]
+            .endswith(f"{second.taken.astimezone():%H:%M} 被搶, 還沒接回)")
+        )
+
+    def test_nothing_done_says_so_line_by_line(self) -> None:
+        assert commands.tended_text(self._tended(by="s1")) == (
+            "- 升級: 0 件\n- 鐘塔: 沒開\n- 被搶登: 沒有"
+        )
 
 
 class AttackSeriesMenuTests(unittest.TestCase):

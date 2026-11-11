@@ -61,8 +61,8 @@ def _log_uncaught(kind: type[BaseException], value: BaseException, trace: Any) -
 # The sub-commands that never capture the screen: `read` parses a PNG off the
 # disk, `stop` and `giveback` each change one field of the state file, `watch`
 # sleeps on its own section of it, `note` keeps the notes section, and
-# `growth` compares saved exports, `turnaround` and `farmed` read the journal,
-# and `search` reads the kept tables and exports, none of them opening ADB;
+# `growth` compares saved exports, `turnaround`, `farmed` and `tended` read the
+# journal, and `search` reads the kept tables and exports, none of them opening ADB;
 # `gamedata` opens it only to read the game's files. Every other one captures
 # the screen, so every other one takes `--debug` and `--shot-every`.
 NO_SCREEN = (
@@ -75,6 +75,7 @@ NO_SCREEN = (
     "turnaround",
     "search",
     "farmed",
+    "tended",
     "gamedata",
 )
 
@@ -105,7 +106,7 @@ WITHOUT_CLAIM = (*NO_SCREEN, "capture")
 # because whoever reads their stdout is an agent about to write that report, and
 # every reshaping it did by hand was a step a skill had to spell out; a program
 # reads `result.json`, which is the model whatever the terminal was shown.
-TEXT_ANSWERS = ("attack", "status", "growth", "turnaround", "search", "farmed")
+TEXT_ANSWERS = ("attack", "status", "growth", "turnaround", "search", "farmed", "tended")
 
 
 # Every sub-command and the line `--help` gives it, under the heading the help
@@ -138,6 +139,10 @@ COMMANDS = (
             (
                 "farmed",
                 "不碰遊戲，從紀錄把一個 session 打資源的每一趟加起來：打了幾場、進帳多少、現在多少",
+            ),
+            (
+                "tended",
+                "不碰遊戲，從紀錄列出一個 session 升了什麼、各花多少，開了幾次鐘塔，被搶登幾次",
             ),
             (
                 "search",
@@ -250,7 +255,7 @@ def _search_flags(searcher: argparse.ArgumentParser) -> None:
 
 
 def _farmed_flags(farm: argparse.ArgumentParser) -> None:
-    """`farmed` reads only the journal; at least one of the two is required (`main`)."""
+    """`farmed` and `tended` read only the journal; at least one of the two is required (`main`)."""
     farm.add_argument(
         "--by", metavar="ID", help="這個 session 跟它的打資源 subagent（ID 加 -farm）的"
     )
@@ -287,6 +292,7 @@ def _press_flags(
             "--wait", type=float, default=commands.PRESS_SETTLE, metavar="秒", help="等多久再截圖"
         )
     buy.add_argument("--price", type=int, required=True, help="在面板那一列讀到的價格")
+    buy.add_argument("--item", metavar="名稱", help="買的是哪一件、升到幾級，記進紀錄給 tended 列")
     how = buy.add_mutually_exclusive_group()
     how.add_argument(
         "--pay",
@@ -368,6 +374,7 @@ def _parser() -> argparse.ArgumentParser:
     _growth_flags(sub.choices["growth"])
     _search_flags(sub.choices["search"])
     _farmed_flags(sub.choices["farmed"])
+    _farmed_flags(sub.choices["tended"])
     sub.choices["turnaround"].add_argument(
         "--since", type=date.fromisoformat, metavar="YYYY-MM-DD", help="只算這天起的；不給就是全部"
     )
@@ -505,6 +512,7 @@ def _answer(arguments: argparse.Namespace, run: RunLog) -> BaseModel | str:
         "turnaround": lambda: commands.turnaround(a.since),
         "search": lambda: commands.search(a.query, a.section, a.every_row),
         "farmed": lambda: commands.farmed_runs(a.by, a.since),
+        "tended": lambda: commands.tended(a.by, a.since),
         "collect": lambda: commands.collect(run.frames),
         "stock": lambda: commands.stock(run.frames),
         "status": lambda: commands.status(run.frames, a.last),
@@ -512,7 +520,7 @@ def _answer(arguments: argparse.Namespace, run: RunLog) -> BaseModel | str:
         "view": lambda: commands.view(run.frames, a.zoom, a.times),
         "tap": lambda: commands.tap((a.x, a.y), run.frames, a.wait),
         "swipe": lambda: commands.swipe((a.x1, a.y1), (a.x2, a.y2), run.frames, a.ms, a.wait),
-        "confirm": lambda: commands.confirm(a.price, run.frames, a.pay, a.goblin),
+        "confirm": lambda: commands.confirm(a.price, run.frames, a.pay, a.goblin, a.item),
         "boost": lambda: commands.boost(run.frames),
         "launch": lambda: commands.launch(a.restart, commands.stop_requested, run.frames),
         "donate": lambda: commands.donate(
@@ -672,8 +680,8 @@ def main() -> int:
     # no run directory, like any other line the parser refuses.
     if arguments.command == "search" and not (arguments.query or arguments.section):
         parser.error("search 要給名稱、data_id 或 --section")
-    if arguments.command == "farmed" and not (arguments.by or arguments.since):
-        parser.error("farmed 要給 --by 或 --since")
+    if arguments.command in ("farmed", "tended") and not (arguments.by or arguments.since):
+        parser.error(f"{arguments.command} 要給 --by 或 --since")
     # Opened after parsing, so `--help` and a rejected flag leave no empty
     # directory behind, and so its name can say which command it holds.
     run = RunLog.open(

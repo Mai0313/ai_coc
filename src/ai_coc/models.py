@@ -2128,6 +2128,8 @@ class JournalLine(BaseModel):
     log: Path | None = None
     # On a `start` line.
     caller: Caller = Field(default_factory=Caller)
+    # On a `lock` line.
+    what: str = ""
     outcome: str | None = None
     result: JsonValue = None
 
@@ -2165,6 +2167,46 @@ class FarmedReport(BaseModel):
     ended: datetime | None = None
     running: bool = False
     villages: list[FarmedVillage] = Field(default_factory=list)
+
+
+class TendedUpgrade(BaseModel):
+    """One upgrade a session bought, as its `confirm` runs left it in the journal.
+
+    `at` is when the run that pressed its price ended (the hire's, for a hire
+    with no press before it). `item` is what that run was told it bought
+    (`confirm --item`), or its `--mission` where it was told nothing. `price` and `resource` are what the sheet or the wall's button
+    asked, None for a goblin hire with no priced press before it; `gems` is
+    what an event's goblin was hired for to take the upgrade on.
+    """
+
+    at: datetime
+    item: str
+    price: int | None = None
+    resource: SheetResource | None = None
+    gems: int | None = None
+
+
+class LostLogin(BaseModel):
+    """Another device taking the login: when a run stood down on it, and when a later one got in again."""
+
+    taken: datetime
+    back: datetime | None = None
+
+
+class TendedReport(BaseModel):
+    """What one session did to the village besides farming over a stretch, off the journal alone.
+
+    `by` and `since` are what was asked, either None where it was not.
+    `upgrades` is each upgrade it confirmed, `boosts` when each clock tower
+    boost it started began, and `lost` each time another device took the
+    login from it, all oldest first.
+    """
+
+    by: str | None = None
+    since: datetime | None = None
+    upgrades: list[TendedUpgrade] = Field(default_factory=list)
+    boosts: list[datetime] = Field(default_factory=list)
+    lost: list[LostLogin] = Field(default_factory=list)
 
 
 class JournalTimers(BaseModel):
@@ -2758,6 +2800,8 @@ class ConfirmReport(BaseModel):
     `--pay` run read and pressed first, and `offer` then the sheet that button
     raised, if it raised one rather than the batch's dialog. `goblin` is the
     goblin builder's prompt a `--goblin` run read, `asked` then being gems.
+    `item` is what the agent said it was buying (`--item`), kept for
+    `ai_coc tended`, since nothing on the sheet but its price is read.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -2768,6 +2812,7 @@ class ConfirmReport(BaseModel):
     goblin: GoblinOffer | None = None
     outcome: ConfirmOutcome
     frame: Path
+    item: str | None = None
 
 
 class DonateOptions(BaseModel):

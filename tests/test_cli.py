@@ -58,6 +58,7 @@ MINIMAL: dict[str, list[str]] = {
     "turnaround": [],
     "search": ["4000059"],
     "farmed": ["--by", "s1"],
+    "tended": ["--by", "s1"],
     "collect": [],
     "stock": [],
     "status": [],
@@ -158,6 +159,10 @@ class ParserTests(unittest.TestCase):
         assert _args("confirm", "--price", "800000", "--pay", "elixir").pay == "elixir"
         with pytest.raises(SystemExit):
             _args("confirm", "--price", "800000", "--pay", "dark")
+
+    def test_confirm_keeps_what_it_was_told_it_buys(self) -> None:
+        assert _args("confirm", "--price", "15").item is None
+        assert _args("confirm", "--price", "15", "--item", "雷電飛龍 8 級").item == "雷電飛龍 8 級"
 
     def test_confirm_hires_a_goblin_only_when_asked_and_never_with_a_wall(self) -> None:
         assert not _args("confirm", "--price", "15").goblin
@@ -482,6 +487,27 @@ class DispatchTests(unittest.TestCase):
         claimed.assert_not_called()
         assert summed.call_args.args[0] == "s1"
         assert out.getvalue() == "這段時間沒有打資源的紀錄\n"
+
+    def test_an_upkeep_summary_for_nobody_is_refused_and_one_asked_for_claims_nothing(
+        self,
+    ) -> None:
+        with (
+            patch.object(sys, "argv", ["ai_coc", "tended"]),
+            patch.object(cli, "RunLog") as opened,
+            patch("sys.stderr", new_callable=io.StringIO),
+            pytest.raises(SystemExit),
+        ):
+            cli.main()
+        opened.open.assert_not_called()
+        with (
+            patch.object(commands, "tended", return_value=models.TendedReport()) as listed,
+            patch.object(commands, "claim") as claimed,
+            patch("sys.stdout", new_callable=io.StringIO) as out,
+        ):
+            _run_command(_args("tended", "--by", "s1"), self.run)
+        claimed.assert_not_called()
+        assert listed.call_args.args[0] == "s1"
+        assert out.getvalue() == "- 升級: 0 件\n- 鐘塔: 沒開\n- 被搶登: 沒有\n"
 
     def test_a_search_for_nothing_is_refused_before_a_run_opens(self) -> None:
         with (

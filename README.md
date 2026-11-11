@@ -92,6 +92,7 @@ ai_coc attack --plan used.json     # play that one again, edits included
 ```bash
 ai_coc confirm --price 10800                 # press the sheet's 確認 only if it asks exactly this
 ai_coc confirm --price 1600000 --pay gold    # pay in gold for the wall picked from the panel
+ai_coc confirm --price 10800 --item "Cannon 12"  # the same, recording what was bought for tended
 ```
 
 Every upgrade goes through the build panel, walls included: `tap` and `swipe` press and scroll and keep the frame they left, and `confirm` is the one press that spends, made only when the sheet asks exactly the price given, in gold, elixir or dark elixir. With `--pay` it starts on the menu of a wall picked from the panel: it presses that wall's price button only when it asks the price given and the village can pay, then the sheet or the batch's dialog that button raises.
@@ -131,6 +132,7 @@ ai_coc export --last                  # the last one off the disk, without touch
 ai_coc growth                         # what was upgraded on each village between the oldest and newest saved exports; --start-date / --end-date narrow it
 ai_coc turnaround                     # seconds from each upgrade finishing to the confirm for its next level, per slot, off the run journal; --since narrows it
 ai_coc farmed --by <session> --since <time>  # one session's farming summed over every attack run, per village, off the run journal; touches nothing
+ai_coc tended --by <session> --since <time>  # one session's upgrades with what each cost, clock tower boosts and lost logins, off the run journal; touches nothing
 ai_coc gamedata                       # the game's own tables (zh and en names, max levels, each level's requirements, list price and time), read off the emulator once per game version into ~/.ai_coc/game_data/<version>/; --refresh reads them again
 ai_coc search "Electro Dragon"        # look a thing up by data_id or by a piece of its Chinese or English name in those tables, with the levels, running upgrades and next list price of the ones the village has and what unlocks the troops and spells it lacks; --all lists each row, --section helpers lists one section of the last export; touches nothing
 ai_coc view --zoom out                # put the camera back where every coordinate was measured
