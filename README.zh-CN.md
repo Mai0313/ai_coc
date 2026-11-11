@@ -130,6 +130,7 @@ ai_coc export --table                 # 同一份东西,画成表格给人看
 ai_coc export --last                  # 直接读上一次的结果,完全不碰游戏
 ai_coc growth                         # 比对存下的最旧跟最新两份导出,列出两个世界升了什么;--start-date / --end-date 缩小范围
 ai_coc turnaround                     # 从运行记录算每次升级从到点到按下确认花了几秒,按王、实验室、建筑、战宠分;--since 指定起算日
+ai_coc farmed --by <session> --since <时间>  # 从运行记录把一个 session 每一次打资源加起来, 每个世界一段; 不碰游戏
 ai_coc gamedata                       # 从模拟器上的游戏文件读出游戏自己的表(中英文名称、最高等级、每级的要求、标价和时间),每个游戏版本读一次,存在 ~/.ai_coc/game_data/<版本>/;--refresh 重新读
 ai_coc search "Electro Dragon"        # 按 data_id 或中英文名称的一段查那份表,村庄里有的再列出等级、升级中几点好和下一级的标价,没有的兵种和法术列出解锁要什么;--all 每一行分开列,--section helpers 列最后那份导出的一个分区;不碰游戏
 ai_coc view --zoom out                # 把镜头拉回所有坐标当初测量的那个视野
