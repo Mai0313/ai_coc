@@ -635,25 +635,29 @@ class StatusTextTests(unittest.TestCase):
         assert "夜世界: 遊戲停在日世界, 倉庫跟計數這次沒讀" in shown
         assert shown.count("沒有在升的") == 2
 
-    def test_each_row_says_what_it_allows_once_done(self) -> None:
+    def test_each_row_is_the_slot_and_the_levels_with_no_verdict(self) -> None:
+        """What follows a row is the agent's call, so the table prints only what it rests on."""
         text = commands.status_text(
             self._report(
                 _timer(1, "13:00"),
                 _timer(2, "14:00", level=9),
                 _timer(3, "15:00", limited_lvl=5),
-                _timer(4, "16:00", extra=True),
+                _timer(4, "16:00", role="lab", extra=True),
                 _timer(5, "17:00", max_lvl=None),
                 _timer(6, "18:00", role=None),
+                _timer(7, "19:00", level=None),
             ),
             NOW,
         )
+        assert "| 時間 | 目標 | 項目 |\n| --- | --- | --- |" in text
         for row in (
-            "| 今天 13:00 | 工人 | 建築1 (5 級) | 續升 (lv 5 → lv 6) |",
-            "| 今天 14:00 | 工人 | 建築2 (10 級) | 已滿級 |",
-            "| 今天 15:00 | 工人 | 建築3 (5 級) | 大本營或殿堂卡住 |",
-            "| 今天 16:00 | 工人 | 建築4 (5 級) | 做完收回 |",
-            "| 今天 17:00 | 工人 | 建築5 (5 級) | — |",
-            "| 今天 18:00 (沒算加速) | — | 建築6 (5 級) | 續升 (lv 5 → lv 6) |",
+            "| 今天 13:00 | 工人 | 建築1 (5/10) |",
+            "| 今天 14:00 | 工人 | 建築2 (10/10) |",
+            "| 今天 15:00 | 工人 | 建築3 (5/10, 上限 5) |",
+            "| 今天 16:00 | 實驗室 (哥布林) | 建築4 (5/10) |",
+            "| 今天 17:00 | 工人 | 建築5 (5/—) |",
+            "| 今天 18:00 (沒算加速) | — | 建築6 (5/10) |",
+            "| 今天 19:00 | 工人 | 建築7 |",
         ):
             assert row in text, row
 
@@ -667,11 +671,10 @@ class StatusTextTests(unittest.TestCase):
             ),
             NOW,
         )
-        assert (
-            f"| 今天 13:00 | 工人 | 建築1 {commands.TIMES}2 (5 級) | 續升 (lv 5 → lv 6) |" in text
-        )
-        assert "| 今天 13:06 | 工人 | 建築1 (5 級) | 續升 (lv 5 → lv 6) |" in text
-        assert "| 今天 13:05 | 工人 | 建築1 (5 級) | 做完收回 |" in text
+        assert f"| 今天 13:00 | 工人 | 建築1 {commands.TIMES}2 (5/10) |" in text
+        assert "| 今天 13:06 | 工人 | 建築1 (5/10) |" in text
+        # A goblin's slot is a row of its own, since it is paid for apart.
+        assert "| 今天 13:05 | 工人 (哥布林) | 建築1 (5/10) |" in text
 
     def test_the_clock_tower_is_a_builder_base_row_in_its_turn(self) -> None:
         later = self._report(
@@ -683,12 +686,12 @@ class StatusTextTests(unittest.TestCase):
         )
         night = commands.status_text(later, NOW).split("夜世界")[1].splitlines()
         assert night[-3:] == [
-            "| 明天 05:00 | 工人 | 建築1 (5 級) | 續升 (lv 5 → lv 6) |",
-            "| 明天 12:00 | — | 鐘塔冷卻結束 | 開加速 |",
-            "| 11-14 01:00 | 工人 | 建築2 (5 級) | 續升 (lv 5 → lv 6) |",
+            "| 明天 05:00 | 工人 | 建築1 (5/10) |",
+            "| 明天 12:00 | — | 鐘塔冷卻結束 |",
+            "| 11-14 01:00 | 工人 | 建築2 (5/10) |",
         ]
         ready = self._report(clock_tower=ClockTower(ready_in=0, ready_at=NOW.isoformat()))
-        assert "| 現在 | — | 鐘塔冷卻結束 | 開加速 |" in commands.status_text(ready, NOW)
+        assert "| 現在 | — | 鐘塔冷卻結束 |" in commands.status_text(ready, NOW)
 
     def test_only_the_helpers_that_speed_upgrades_are_said_to_be_ready(self) -> None:
         def helper(data_id: int, ready_in: int) -> HelperCooldown:
@@ -710,14 +713,14 @@ class StatusTextTests(unittest.TestCase):
             _timer(1, "13:00"), _timer(2, "2026-11-13T09:00"), _timer(3, "2026-11-14T10:19")
         )
         text = commands.status_text(report, NOW, within=24)
-        assert "| 今天 13:00 | 工人 | 建築1 (5 級) | 續升 (lv 5 → lv 6) |" in text
-        assert "之後還有 建築2 (5 級)、建築3 (5 級), 最晚 11-14 10:19" in text
+        assert "| 今天 13:00 | 工人 | 建築1 (5/10) |" in text
+        assert "之後還有 建築2 (5/10)、建築3 (5/10), 最晚 11-14 10:19" in text
         assert "| 11-13" not in text
         alone = commands.status_text(self._report(_timer(2, "2026-11-13T09:00")), NOW, within=24)
         day = alone.split("夜世界")[0]
-        assert "| 幾點好" not in day
+        assert "| 時間" not in day
         assert "沒有在升的" not in day
-        assert "之後還有 建築2 (5 級), 最晚 11-13 09:00" in day
+        assert "之後還有 建築2 (5/10), 最晚 11-13 09:00" in day
 
     def test_a_reading_from_earlier_says_what_has_finished_since(self) -> None:
         """`--last` prints an export from a while ago, read against the clock now."""
@@ -728,13 +731,13 @@ class StatusTextTests(unittest.TestCase):
             ),
         )
         text = commands.status_text(report, NOW)
-        assert "| 今天 11:00 (已過) | 工人 | 建築1 (5 級) |" in text
-        assert "| 現在 | — | 鐘塔冷卻結束 | 開加速 |" in text
+        assert "| 今天 11:00 (已過) | 工人 | 建築1 (5/10) |" in text
+        assert "| 現在 | — | 鐘塔冷卻結束 |" in text
 
     def test_an_export_that_failed_says_so_and_prints_no_table(self) -> None:
         text = commands.status_text(self._report(export="settings_shut", exported_at=None), NOW)
         assert text.splitlines()[0] == f"村莊匯出沒讀到: {commands.EXPORT_LINES['settings_shut']}"
-        assert "| 幾點好" not in text
+        assert "| 時間" not in text
         assert "沒有在升的" not in text
 
     def test_a_reading_off_the_saved_export_says_nothing_was_read_on_screen(self) -> None:
@@ -3907,7 +3910,7 @@ class SearchTests(unittest.TestCase):
         assert "  3 級在升級, " in text
         assert "(哥布林那格)" in text
         # Level 4 needs a town hall 4 and this village's is 3.
-        assert "  下一次 4 級 400 金幣, 4 分鐘 (大本營或殿堂等級還不夠)" in text
+        assert "  下一次 4 級 400 金幣, 4 分鐘 (上限 3 級)" in text
         assert "  下一次 3 級 300 金幣, 3 分鐘\n" in text
         # A building's first level is not said to unlock it.
         assert "箭塔 / Archer Tower  #1000009  日世界 buildings  滿級 5\n  村莊裡沒有\n" in text
