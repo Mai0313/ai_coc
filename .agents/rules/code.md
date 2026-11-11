@@ -23,7 +23,7 @@ paths:
 ```bash
 uv sync --group test                 # the suite needs the `test` group
 uv run pytest                        # full suite (xdist, coverage gate, JUnit/XML into .github/reports)
-uv run pytest --no-cov tests/test_core.py::ScoutTests::test_loot_is_read_over_grass   # single test; the gate is in addopts and a partial run cannot meet it
+uv run pytest --no-cov tests/test_core.py::ScoutTests::test_loot_is_read_over_grass   # single test; the gate is in addopts and a partial run cannot meet it. addopts also runs xdist, under which a failure with -x exits 2, not 1, so a script judging a run reads the summary line
 make fmt                             # pre-commit: ruff, mdformat, codespell, ty, gitleaks, uv-sync/lock
 make gen-docs                        # rebuild docs/ from the READMEs and the source
 ```
