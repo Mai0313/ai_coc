@@ -2493,7 +2493,7 @@ def _timed(report: StatusReport, village: VillageExport | None) -> StatusReport:
     return report
 
 
-# Rows of one kind and level whose upgrades end this close together are one row
+# Rows of one kind, level and slot whose upgrades end this close together are one row
 # of the report, with a count: `takeover` wakes five minutes ahead of a finish and handles
 # whatever ends inside that window in the same wake.
 MERGE_WITHIN = 5 * 60
@@ -2516,10 +2516,10 @@ def status_text(
 
     **This, not the JSON, is what `status` prints**, because whoever reads its
     stdout is an agent about to write this report; the fields stay in
-    `result.json` and behind `--json`. The 好了以後 column says what the timer's
-    row allows (continue, maxed, held back by a hall, a goblin's slot going
-    away); a choice that rests on the user's notes or the skills' order is the
-    agent's, written over it. Times are read against `now`, since `--last`
+    `result.json` and behind `--json`. Each row is facts only: when, whose slot
+    (a goblin's marked) and the item with its levels. What follows a row
+    (continue it, switch, ask) is the agent's to decide and add. Times are
+    read against `now`, since `--last`
     prints an export taken a while ago. `within` keeps the rows finishing in
     that many hours and folds the rest into one line, as the report a stop
     hands over lists them.
@@ -2539,12 +2539,10 @@ def status_text(
         rows = _timer_rows(report, world, now)
         near = [row for row in rows if within is None or row[0] <= now + timedelta(hours=within)]
         if near:
-            shown += ["", "| 幾點好 | 誰 | 升級中 | 好了以後 |", "| --- | --- | --- | --- |"]
-            shown += [
-                f"| {when} | {who} | {doing} | {after} |" for _, when, who, doing, after in near
-            ]
+            shown += ["", "| 時間 | 目標 | 項目 |", "| --- | --- | --- |"]
+            shown += [f"| {when} | {slot} | {item} |" for _, when, slot, item in near]
         if later := rows[len(near) :]:
-            names = "、".join(doing for _, _, _, doing, _ in later)
+            names = "、".join(item for _, _, _, item in later)
             shown += ["", f"之後還有 {names}, 最晚 {later[-1][1]}"]
         if not rows:
             shown.append("沒有在升的")
@@ -2588,64 +2586,56 @@ def _world_line(report: StatusReport, world: World) -> str:
 
 def _timer_rows(
     report: StatusReport, world: World, now: datetime
-) -> list[tuple[datetime, str, str, str, str]]:
+) -> list[tuple[datetime, str, str, str]]:
     """One village's rows of the table, soonest first, the clock tower among them.
 
-    Each is the instant it finishes, then its four cells.
+    Each is the instant it finishes, then its three cells.
     """
-    merged: list[tuple[UpgradeTimer, str, int]] = []
+    merged: list[tuple[UpgradeTimer, int]] = []
     for timer in (one for one in report.timers if one.world == world):
-        after = _after(timer)
         same = next(
             (
                 index
-                for index, (first, said, _) in enumerate(merged)
-                if (first.data_id, first.level, said) == (timer.data_id, timer.level, after)
+                for index, (first, _) in enumerate(merged)
+                if (first.data_id, first.level, first.extra)
+                == (timer.data_id, timer.level, timer.extra)
                 and timer.seconds - first.seconds <= MERGE_WITHIN
             ),
             None,
         )
         if same is None:
-            merged.append((timer, after, 1))
+            merged.append((timer, 1))
         else:
-            first, said, count = merged[same]
-            merged[same] = (first, said, count + 1)
+            first, count = merged[same]
+            merged[same] = (first, count + 1)
     rows = [
         (
             done := datetime.fromisoformat(first.done_at),
             _moment(first.done_at, now)
             + ("" if first.role else " (沒算加速)")
             + (" (已過)" if done <= now else ""),
-            ROLE_NAMES[first.role] if first.role else "—",
+            (ROLE_NAMES[first.role] if first.role else "—") + (" (哥布林)" if first.extra else ""),
             (first.zh or first.en or f"#{first.data_id}")
             + (f" {TIMES}{count}" if count > 1 else "")
-            + ("" if first.level is None else f" ({first.level + 1} 級)"),
-            said,
+            + _levels(first),
         )
-        for first, said, count in merged
+        for first, count in merged
     ]
     tower = report.clock_tower
     if world == "night" and tower is not None:
         ready = datetime.fromisoformat(tower.ready_at)
         when = "現在" if ready <= now else _moment(tower.ready_at, now)
-        rows.append((ready, when, "—", "鐘塔冷卻結束", "開加速"))
+        rows.append((ready, when, "—", "鐘塔冷卻結束"))
     return sorted(rows, key=lambda row: row[0])
 
 
-def _after(timer: UpgradeTimer) -> str:
-    """What the row allows once this upgrade is done, off the tables merged into the export."""
-    if timer.extra:
-        return "做完收回"
-    if timer.level is None or timer.max_lvl is None:
-        return "—"
-    bought = timer.level + 1
-    if bought >= timer.max_lvl:
-        return "已滿級"
-    if timer.limited_lvl is not None and bought >= timer.limited_lvl:
-        return "大本營或殿堂卡住"
-    if timer.next is None:
-        return "—"
-    return f"續升 (lv {bought} → lv {timer.next.lvl})"
+def _levels(timer: UpgradeTimer) -> str:
+    """` (bought/max)`, with the hall's cap where it stops short of the max; nothing for a row with no level."""
+    if timer.level is None:
+        return ""
+    top, cap = timer.max_lvl, timer.limited_lvl
+    held = f", 上限 {cap}" if top is not None and cap is not None and cap < top else ""
+    return f" ({timer.level + 1}/{'—' if top is None else top}{held})"
 
 
 def _moment(when: str, now: datetime) -> str:
@@ -3766,12 +3756,12 @@ def _row_text(one: SearchRow) -> str:
 
 
 def _upgrade_text(upgrade: NextUpgrade, limited: int | None) -> str:
-    """A next upgrade's level, list price and time, and whether a hall holds it back."""
+    """A next upgrade's level, list price and time, and the hall's cap where it is below that level."""
     cost = ", ".join(
         f"{amount:,} {_RESOURCE_NAMES.get(name, name)}" for name, amount in upgrade.cost.items()
     )
     took = "" if upgrade.time is None else f", {spell_out(upgrade.time)}"
-    blocked = " (大本營或殿堂等級還不夠)" if limited is not None and upgrade.lvl > limited else ""
+    blocked = f" (上限 {limited} 級)" if limited is not None and upgrade.lvl > limited else ""
     return f"{upgrade.lvl} 級 {cost or '—'}{took}{blocked}"
 
 
