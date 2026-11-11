@@ -519,6 +519,16 @@ class UpgradeTimerTests(unittest.TestCase):
     def test_rows_with_no_timer_are_not_upgrades(self) -> None:
         assert upgrade_timers(_exported(("buildings", 1000015, None))) == []
 
+    def test_each_timer_carries_its_rows_caps_and_next_upgrade(self) -> None:
+        """What `status` says can come after it, without the agent opening the export."""
+        document = _village({
+            "buildings": [{"data": 1, "lvl": 3}, {"data": 2, "lvl": 2, "timer": 60}]
+        })
+        [timer] = upgrade_timers(merge(document, _tables(_gated(2)), AT))
+        assert (timer.max_lvl, timer.limited_lvl) == (4, 3)
+        assert timer.next is not None
+        assert timer.next.lvl == 4
+
     def test_the_clock_tower_is_ready_when_neither_of_its_counters_is_running(self) -> None:
         tower = ("buildings2", 1000039, None)
         ready = clock_tower(_exported(tower))

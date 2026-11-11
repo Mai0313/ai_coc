@@ -43,7 +43,7 @@ uv run --no-sync ai_coc status --label watch
 它從遊戲自己的村莊匯出 (設定頁那一份) 讀兩個世界每件在跑的升級, 把在跑的藥水跟鐘塔算進去; 遊戲停著的那個世界, 另外讀右下角計數的閒置數字跟倉庫. **不切世界, 不問 Gemini.** 先照 `share-emulator` 的「開工先讀 `state.json`」: 背景有帶 `--yield` 的迴圈在跑時, `status` 會借走它, 讀完馬上 `ai_coc giveback` (自己一步; 使用者叫停時例外, 見 `share-emulator` 的「借, 用完還」), 不然它要等 30 分鐘才接回去. `result.json` 的欄位:
 
 - **先看 `export`**: `exported` 才有 `timers` 跟 `clock_tower`. `no_village` 照下面的不是村莊處理; 其他的 (`settings_shut`、`row_not_found`、`nothing_copied` 之類) 是設定頁那一趟沒走完, 過幾分鐘再讀. 沒讀到的時候 `timers` 是空的, 不能拿來說沒東西在跑
-- **`timers`** 由早到晚. `world` 是哪個世界; `role` 是 `builder` (工人)、`lab` (實驗室, 活動多給的研究格也算) 或 `pet` (寵物小屋, 他問才講), `null` 是還沒看過帶時間的那一區, 沒算加速, 回報時講明. `done_at` 是實際幾點好, `seconds` 是從匯出那一刻起還要幾秒, `timer` 是遊戲畫面上寫的正常速度倒數. `zh` 是遊戲自己的中文名, `en` 是英文名, 講給他聽用 `zh`; 是 `null` 的 (遊戲的表沒讀到) 不要自己翻, 看一張面板的圖. `extra` 是 `true` 的是活動哥布林那格在做的, 做完那格就收回
+- **`timers`** 由早到晚. `world` 是哪個世界; `role` 是 `builder` (工人)、`lab` (實驗室, 活動多給的研究格也算) 或 `pet` (寵物小屋, 他問才講), `null` 是還沒看過帶時間的那一區, 沒算加速, 回報時講明. `done_at` 是實際幾點好, `seconds` 是從匯出那一刻起還要幾秒, `timer` 是遊戲畫面上寫的正常速度倒數. `zh` 是遊戲自己的中文名, `en` 是英文名, 講給他聽用 `zh`; 是 `null` 的 (遊戲的表沒讀到) 不要自己翻, 看一張面板的圖. `extra` 是 `true` 的是活動哥布林那格在做的, 做完那格就收回. `max_lvl` 是遊戲的滿級, `limited_lvl` 是現在大本營或殿堂最多讓它升到幾級, `next` 是這一級升完之後的下一級 (`lvl`、牌價 `cost`、`time`), 滿級的是 `null`
 - **`clock_tower`**: `ready_in` 是 0 就是現在能開, `ready_at` 是幾點能開, `boosting` 是正在跑的那一次還剩幾秒. `null` 是匯出裡沒有鐘塔, 或鐘塔正在升級
 - **`helpers`**: 助手小屋裡每個助手幾點能再派, `ready_in` 是 0 就是現在能派, 名字一樣在 `zh`、`en`. 建築工人學徒跟實驗助手這兩個能派了就在下一次回話裡順口講一句, 講過就不再重講, 等它下一次冷卻完; 不幫他派, 也不為它推播
 - **`builder` / `lab`** 是遊戲停著那個世界右下角計數的數字, 另一個世界的讀不到, 不為它開船. `outcome`: `counted` 讀到了; `unread` 數字讀不到, 過幾分鐘再讀; `not_a_village` 畫面不是村莊, 兩個都是就照下面的不是村莊處理
