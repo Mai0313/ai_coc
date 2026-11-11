@@ -57,6 +57,7 @@ MINIMAL: dict[str, list[str]] = {
     "growth": [],
     "turnaround": [],
     "search": ["4000059"],
+    "farmed": ["--by", "s1"],
     "collect": [],
     "stock": [],
     "status": [],
@@ -460,6 +461,27 @@ class DispatchTests(unittest.TestCase):
             _run_command(_args("status"), self.run)
             claimed.assert_called_once()
         assert [call.args[1] for call in read.call_args_list] == [True, False]
+
+    def test_a_farming_summary_for_nobody_is_refused_and_one_asked_for_claims_nothing(
+        self,
+    ) -> None:
+        with (
+            patch.object(sys, "argv", ["ai_coc", "farmed"]),
+            patch.object(cli, "RunLog") as opened,
+            patch("sys.stderr", new_callable=io.StringIO),
+            pytest.raises(SystemExit),
+        ):
+            cli.main()
+        opened.open.assert_not_called()
+        with (
+            patch.object(commands, "farmed_runs", return_value=models.FarmedReport()) as summed,
+            patch.object(commands, "claim") as claimed,
+            patch("sys.stdout", new_callable=io.StringIO) as out,
+        ):
+            _run_command(_args("farmed", "--by", "s1", "--since", "2026-11-11T10:00"), self.run)
+        claimed.assert_not_called()
+        assert summed.call_args.args[0] == "s1"
+        assert out.getvalue() == "這段時間沒有打資源的紀錄\n"
 
     def test_a_search_for_nothing_is_refused_before_a_run_opens(self) -> None:
         with (

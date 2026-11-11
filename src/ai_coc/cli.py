@@ -61,8 +61,8 @@ def _log_uncaught(kind: type[BaseException], value: BaseException, trace: Any) -
 # The sub-commands that never capture the screen: `read` parses a PNG off the
 # disk, `stop` and `giveback` each change one field of the state file, `watch`
 # sleeps on its own section of it, `note` keeps the notes section, and
-# `growth` compares saved exports, `turnaround` reads the journal, and
-# `search` reads the kept tables and exports, none of them opening ADB;
+# `growth` compares saved exports, `turnaround` and `farmed` read the journal,
+# and `search` reads the kept tables and exports, none of them opening ADB;
 # `gamedata` opens it only to read the game's files. Every other one captures
 # the screen, so every other one takes `--debug` and `--shot-every`.
 NO_SCREEN = (
@@ -74,6 +74,7 @@ NO_SCREEN = (
     "growth",
     "turnaround",
     "search",
+    "farmed",
     "gamedata",
 )
 
@@ -104,7 +105,7 @@ WITHOUT_CLAIM = (*NO_SCREEN, "capture")
 # because whoever reads their stdout is an agent about to write that report, and
 # every reshaping it did by hand was a step a skill had to spell out; a program
 # reads `result.json`, which is the model whatever the terminal was shown.
-TEXT_ANSWERS = ("attack", "status", "growth", "turnaround", "search")
+TEXT_ANSWERS = ("attack", "status", "growth", "turnaround", "search", "farmed")
 
 
 # Every sub-command and the line `--help` gives it, under the heading the help
@@ -134,6 +135,10 @@ COMMANDS = (
             ("export", "從遊戲匯出整個村莊的資料，對上名稱後存起來"),
             ("growth", "不碰遊戲，比對存下的兩份村莊匯出，列出兩個世界升了什麼"),
             ("turnaround", "不碰遊戲，從紀錄算每次升級從到點到按下確認花了幾秒"),
+            (
+                "farmed",
+                "不碰遊戲，從紀錄把一個 session 打資源的每一趟加起來：打了幾場、進帳多少、現在多少",
+            ),
             (
                 "search",
                 "不碰遊戲，照名稱或 data_id 查遊戲的表，村莊裡有的再列出等級、升級中幾點好跟下一級的牌價",
@@ -241,6 +246,16 @@ def _search_flags(searcher: argparse.ArgumentParser) -> None:
         dest="every_row",
         action="store_true",
         help="村莊裡的每一列分開列，各自的等級、升級幾點好、是不是哥布林那格",
+    )
+
+
+def _farmed_flags(farm: argparse.ArgumentParser) -> None:
+    """`farmed` reads only the journal; at least one of the two is required (`main`)."""
+    farm.add_argument(
+        "--by", metavar="ID", help="這個 session 跟它的打資源 subagent（ID 加 -farm）的"
+    )
+    farm.add_argument(
+        "--since", type=datetime.fromisoformat, metavar="時間", help="從這個時間起開跑的，ISO 格式"
     )
 
 
@@ -352,6 +367,7 @@ def _parser() -> argparse.ArgumentParser:
     _note_flags(sub.choices["note"])
     _growth_flags(sub.choices["growth"])
     _search_flags(sub.choices["search"])
+    _farmed_flags(sub.choices["farmed"])
     sub.choices["turnaround"].add_argument(
         "--since", type=date.fromisoformat, metavar="YYYY-MM-DD", help="只算這天起的；不給就是全部"
     )
@@ -488,6 +504,7 @@ def _answer(arguments: argparse.Namespace, run: RunLog) -> BaseModel | str:
         "growth": lambda: commands.growth(a.start_date, a.end_date),
         "turnaround": lambda: commands.turnaround(a.since),
         "search": lambda: commands.search(a.query, a.section, a.every_row),
+        "farmed": lambda: commands.farmed_runs(a.by, a.since),
         "collect": lambda: commands.collect(run.frames),
         "stock": lambda: commands.stock(run.frames),
         "status": lambda: commands.status(run.frames, a.last),
@@ -655,6 +672,8 @@ def main() -> int:
     # no run directory, like any other line the parser refuses.
     if arguments.command == "search" and not (arguments.query or arguments.section):
         parser.error("search 要給名稱、data_id 或 --section")
+    if arguments.command == "farmed" and not (arguments.by or arguments.since):
+        parser.error("farmed 要給 --by 或 --since")
     # Opened after parsing, so `--help` and a rejected flag leave no empty
     # directory behind, and so its name can say which command it holds.
     run = RunLog.open(

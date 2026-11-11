@@ -57,6 +57,7 @@ from ai_coc.models import (
     BoostOutcome,
     DonateReport,
     ExportReport,
+    FarmedReport,
     GameEntities,
     LaunchReport,
     PressOutcome,
@@ -1378,8 +1379,8 @@ class AttackSummaryTests(unittest.TestCase):
         series.root[-1].since_cart = 3
         village = commands.farmed(series)
         assert village is not None
-        assert (village.cart_start, village.cart_now, village.cart_capacity) == (
-            0,
+        assert (village.cart_gained, village.cart_now, village.cart_capacity) == (
+            1_550_000,
             1_550_000,
             1_600_000,
         )
@@ -1388,7 +1389,7 @@ class AttackSummaryTests(unittest.TestCase):
             _played("night", ("deployed", (1, 1, 0)), cart=CartReport(outcome="not_found"))
         )
         assert lost is not None
-        assert (lost.cart_start, lost.cart_now) == (None, None)
+        assert (lost.cart_gained, lost.cart_now) == (None, None)
 
     def test_a_round_on_neither_village_counts_towards_none(self) -> None:
         series = AttackSeries([
@@ -1430,11 +1431,134 @@ class AttackSummaryTests(unittest.TestCase):
             "| 金幣 | +568 萬 | 578 萬 (57%) |",
             "| 聖水車 | +0 萬 | 160 萬 / 160 萬 |",
             "有 2 場打完之後沒讀到倉庫, 沒算進進帳",
-            "最後一次去聖水車之後打了 2 場, 那幾場的聖水還在車上, 沒算進進帳",
+            "有 2 場的聖水在最後一次去聖水車之後才進車, 沒算進進帳",
         ):
             assert row in text, row
         assert "| 黑水" not in text
         assert commands.farmed_text(None) == "一輪都沒有讀到是哪個村莊, 一場也沒打"
+
+
+class FarmedRunsTests(unittest.TestCase):
+    """A session's farming summed over its attack runs, off the journal alone (conftest's tmp copy)."""
+
+    def setUp(self) -> None:
+        self.lines: list[dict[str, object]] = []
+
+    def _run(  # noqa: PLR0913, PLR0917 - one line of the journal's fields
+        self,
+        run: str,
+        at: str,
+        rounds: list[tuple[str, tuple[int, int, int] | None]],
+        world: World = "day",
+        session: str = "s1-farm",
+        ended: bool = True,
+        cart: dict[str, object] | None = None,
+        old: bool = False,
+    ) -> None:
+        """One attack run's start, its rounds a minute apart, and its end; `old` writes the storages beside the report only."""
+        start = datetime.fromisoformat(f"2026-11-11T{at}:00+08:00")
+        self.lines.append({
+            "run": run,
+            "at": start.isoformat(),
+            "event": "start",
+            "command": "attack",
+            "caller": {"agent": "a", "session": session, "mission": "m"},
+        })
+        for number, report in enumerate(_played(world, *rounds).root, 1):
+            dumped = report.model_dump(mode="json")
+            beside = ("holding", "capacity", "cart")
+            self.lines.append({
+                "run": run,
+                "at": (start + timedelta(minutes=number)).isoformat(),
+                "event": "round",
+                "round": number,
+                "report": {k: v for k, v in dumped.items() if k not in beside} if old else dumped,
+                "holding": dumped["holding"],
+                "capacity": dumped["capacity"],
+                "cart": cart,
+            })
+        if ended:
+            self.lines.append({
+                "run": run,
+                "at": (start + timedelta(minutes=len(rounds) + 1)).isoformat(),
+                "event": "end",
+                "outcome": None,
+            })
+
+    def _farmed(self, **asked: object) -> FarmedReport:
+        logging_setup.JOURNAL_PATH.write_text(
+            "".join(json.dumps(line, ensure_ascii=False) + "\n" for line in self.lines),
+            encoding="utf-8",
+        )
+        return commands.farmed_runs(**asked)
+
+    def test_every_run_of_the_session_and_its_farmer_is_summed_per_run(self) -> None:
+        self._run(
+            "r1",
+            "10:00",
+            [("took_loot", (1_000_000, 1_000_000, 0)), ("took_loot", (2_000_000, 1_500_000, 0))],
+        )
+        # Lent for an upgrade that spent eight million between the two runs.
+        self._run(
+            "r2",
+            "10:10",
+            [("took_loot", (500_000, 1_500_000, 0)), ("stock_full", (1_500_000, 2_000_000, 0))],
+        )
+        self._run("other", "10:20", [("took_loot", (1, 1, 1))], session="someone-else")
+        report = self._farmed(by="s1")
+        [day] = report.villages
+        assert (day.battles, day.uncounted, day.ending) == (3, 1, "stock_full")
+        assert day.gained == VillageStock(gold=2_000_000, elixir=1_000_000, dark=0)
+        assert day.held == VillageStock(gold=1_500_000, elixir=2_000_000, dark=0)
+        assert report.started == datetime.fromisoformat("2026-11-11T10:00:00+08:00")
+        assert report.ended == datetime.fromisoformat("2026-11-11T10:13:00+08:00")
+        assert not report.running
+        later = self._farmed(by="s1", since=datetime.fromisoformat("2026-11-11T10:05:00+08:00"))
+        assert later.villages[0].battles == 1
+
+    def test_a_round_line_written_before_the_reports_carried_storages_still_counts(self) -> None:
+        self._run("r1", "10:00", [("took_loot", (1, 1, 1)), ("stock_full", (3, 3, 3))], old=True)
+        [day] = self._farmed(by="s1").villages
+        assert day.gained == VillageStock(gold=2, elixir=2, dark=2)
+
+    def test_a_run_still_holding_the_emulator_is_said_to_be_going(self) -> None:
+        self._run("r1", "10:00", [("took_loot", (1, 1, 1))], ended=False)
+        with patch.object(
+            commands,
+            "read_state",
+            return_value=RunnerState(status="running", log=Path("C:/logs/r1")),
+        ):
+            report = self._farmed(by="s1")
+        assert report.running
+        assert report.ended == datetime.fromisoformat("2026-11-11T10:01:00+08:00")
+        assert commands.farmed_report_text(report).splitlines()[0].endswith(", 還在打")
+        # Started again after a loan, and still before its first round.
+        self._run("r2", "10:10", [], ended=False)
+        with patch.object(
+            commands,
+            "read_state",
+            return_value=RunnerState(status="running", log=Path("C:/logs/r2")),
+        ):
+            assert self._farmed(by="s1").running
+
+    def test_the_cart_is_summed_per_run_and_unread_where_a_run_that_fought_could_not_say(
+        self,
+    ) -> None:
+        holding = {"outcome": "locked_holding", "held": 800_000, "capacity": 1_600_000}
+        self._run(
+            "r1", "10:00", [("deployed", (1, 1, 0))], world="night", cart={"outcome": "collected"}
+        )
+        self._run("r2", "10:10", [("deployed", (1, 1, 0))], world="night", cart=holding)
+        [night] = self._farmed(by="s1").villages
+        assert (night.cart_gained, night.cart_now) == (0, 800_000)
+        self._run(
+            "r3", "10:20", [("deployed", (1, 1, 0))], world="night", cart={"outcome": "not_found"}
+        )
+        [night] = self._farmed(by="s1").villages
+        assert night.cart_gained is None
+
+    def test_nothing_farmed_says_so(self) -> None:
+        assert commands.farmed_report_text(self._farmed(by="s1")) == "這段時間沒有打資源的紀錄"
 
 
 class AttackSeriesMenuTests(unittest.TestCase):

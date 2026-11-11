@@ -70,9 +70,11 @@ from ai_coc.models import (
     BoostOutcome,
     DonateReport,
     ExportReport,
+    FarmedReport,
     FrameReading,
     GameEntities,
     GrowthReport,
+    JournalRound,
     LaunchReport,
     LegacyExport,
     PressOutcome,
@@ -1691,13 +1693,15 @@ def farmed(series: AttackSeries) -> FarmedVillage | None:
     fought = [at for at, one in enumerate(played) if one.attacked is not None or one.phases > 0]
     read = [(at, one.holding) for at, one in enumerate(played) if one.holding is not None]
     carts = [one.cart for one in played if one.cart is not None]
+    start = _cart_level(carts[0]) if carts else None
+    now = _cart_level(carts[-1]) if carts else None
     village = FarmedVillage(
         world=world,
         battles=len(fought),
         uncounted=len(fought),
         capacity=next((one.capacity for one in reversed(played) if one.capacity), None),
-        cart_start=_cart_level(carts[0]) if carts else None,
-        cart_now=_cart_level(carts[-1]) if carts else None,
+        cart_gained=None if start is None or now is None else now - start,
+        cart_now=now,
         cart_capacity=next((cart.capacity for cart in reversed(carts) if cart.capacity), None),
         cart_unread=played[-1].since_cart or 0,
         ending=series.root[-1].outcome,
@@ -1738,11 +1742,11 @@ def farmed_text(village: FarmedVillage | None) -> str:
         for one in names
     ]
     if village.world == "night":
-        start, now = village.cart_start, village.cart_now
+        now = village.cart_now
         held = "讀不到" if now is None else _wan(now)
         if now is not None and village.cart_capacity:
             held += f" / {_wan(village.cart_capacity)}"
-        gain = "讀不到" if start is None or now is None else _signed(now - start)
+        gain = "讀不到" if village.cart_gained is None else _signed(village.cart_gained)
         rows.append(("聖水車", gain, held))
     shown = [
         f"{WORLD_NAMES[village.world]}: {village.battles} 場, 最後一輪: {ROUND_LINES[village.ending]}",
@@ -1754,10 +1758,117 @@ def farmed_text(village: FarmedVillage | None) -> str:
     if village.uncounted:
         shown += ["", f"有 {village.uncounted} 場打完之後沒讀到倉庫, 沒算進進帳"]
     if village.cart_unread:
-        shown += [
-            f"最後一次去聖水車之後打了 {village.cart_unread} 場, 那幾場的聖水還在車上, 沒算進進帳"
-        ]
+        shown += [f"有 {village.cart_unread} 場的聖水在最後一次去聖水車之後才進車, 沒算進進帳"]
     return "\n".join(shown)
+
+
+def farmed_runs(by: str | None = None, since: datetime | None = None) -> FarmedReport:
+    """What a session's farming came to since `since`, every attack run summed, off `runs.jsonl` alone.
+
+    `by` takes the session's own runs and its farm subagent's (`<id>-farm`).
+    Each run is summed as `farmed` sums a series, so what was spent between
+    runs is not taken off the loot; the cart's last battles in each run stay
+    unread, since the next run's first trip empties them into the storages
+    before its first reading. A round line written before the rounds carried
+    their own storages has them beside its report.
+    """
+    since = since.astimezone() if since is not None else None
+    lines: list[JournalLine] = []
+    rounds: list[JournalRound] = []
+    with suppress(FileNotFoundError), logging_setup.JOURNAL_PATH.open(encoding="utf-8") as journal:
+        for text in journal:
+            with suppress(ValueError):
+                line = JournalLine.model_validate_json(text)
+                lines.append(line)
+                if line.event == "round":
+                    rounds.append(JournalRound.model_validate_json(text))
+    starts = {
+        line.run: line
+        for line in lines
+        if line.event == "start"
+        and line.command == "attack"
+        and (by is None or line.caller.session in (by, f"{by}-farm"))
+        and (since is None or line.at >= since)
+    }
+    ends = {line.run: line.at for line in lines if line.event == "end" and line.run in starts}
+    played: dict[str, list[JournalRound]] = {}
+    for one in rounds:
+        if one.run in starts:
+            played.setdefault(one.run, []).append(one)
+    runs = sorted(played, key=lambda run: starts[run].at)
+    report = FarmedReport(by=by, since=since)
+    villages = [
+        village
+        for run in runs
+        if (village := farmed(AttackSeries([_with_storages(one) for one in played[run]])))
+    ]
+    for world in ("day", "night"):
+        if mine := [village for village in villages if village.world == world]:
+            report.villages.append(_summed(mine))
+    if runs:
+        report.started = starts[runs[0]].at
+        report.ended = max(ends.get(run, played[run][-1].at) for run in runs)
+    # Any run of the session holding the emulator, one still before its first
+    # round included: the loop starts again after every loan.
+    held = read_state()
+    report.running = (
+        held is not None
+        and held.status != "idle"
+        and held.log is not None
+        and held.log.name in starts
+    )
+    logger.info("Farmed: %d run(s) of %d round(s)", len(runs), sum(map(len, played.values())))
+    return report
+
+
+def _with_storages(line: JournalRound) -> AttackReport:
+    """A journal round's report with the storages it was written beside."""
+    return line.report.model_copy(
+        update={"holding": line.holding, "capacity": line.capacity, "cart": line.cart}
+    )
+
+
+def _summed(villages: list[FarmedVillage]) -> FarmedVillage:
+    """One village's runs as one: counts and loot added, the readings the last run's.
+
+    The cart's gain is unread as a whole where a run that fought could not read it.
+    """
+    gained = [one.gained for one in villages if one.gained is not None]
+    carts = [one.cart_gained for one in villages if one.battles or one.cart_gained is not None]
+    last = villages[-1]
+    return last.model_copy(
+        update={
+            "battles": sum(one.battles for one in villages),
+            "gained": VillageStock(
+                gold=sum(one.gold for one in gained),
+                elixir=sum(one.elixir for one in gained),
+                dark=sum(one.dark for one in gained),
+            )
+            if gained
+            else None,
+            "uncounted": sum(one.uncounted for one in villages),
+            "held": next((one.held for one in reversed(villages) if one.held), None),
+            "capacity": next((one.capacity for one in reversed(villages) if one.capacity), None),
+            "cart_gained": None if None in carts else sum(c for c in carts if c is not None),
+            "cart_now": next(
+                (one.cart_now for one in reversed(villages) if one.cart_now is not None), None
+            ),
+            "cart_unread": sum(one.cart_unread for one in villages),
+        }
+    )
+
+
+def farmed_report_text(report: FarmedReport, now: datetime | None = None) -> str:
+    """A session's farming as the farming report writes it: when and how long, then each village."""
+    if report.started is None or report.ended is None:
+        return "這段時間沒有打資源的紀錄"
+    now = now or datetime.now().astimezone()
+    span = spell_out(int((report.ended - report.started).total_seconds()))
+    head = (
+        f"{_moment(report.started.isoformat(), now)} 到 {_moment(report.ended.isoformat(), now)},"
+        f" {span}{', 還在打' if report.running else ''}"
+    )
+    return "\n\n".join([head, *(farmed_text(village) for village in report.villages)])
 
 
 def _share(now: int | None, ceiling: int | None) -> str:
@@ -3559,17 +3670,22 @@ def answer_text(answer: BaseModel, within: int | None = None) -> str | None:
     The one place a report becomes text (`cli.TEXT_ANSWERS`); each report's own
     wording sits beside its command. `within` is `status --within`.
     """
-    if isinstance(answer, StatusReport):
-        return status_text(answer, within=within)
-    if isinstance(answer, AttackSeries):
-        return farmed_text(farmed(answer))
-    if isinstance(answer, GrowthReport):
-        return growth_text(answer)
-    if isinstance(answer, TurnaroundReport):
-        return turnaround_text(answer)
-    if isinstance(answer, SearchReport):
-        return search_text(answer)
-    return None
+    match answer:
+        case StatusReport():
+            text = status_text(answer, within=within)
+        case AttackSeries():
+            text = farmed_text(farmed(answer))
+        case FarmedReport():
+            text = farmed_report_text(answer)
+        case GrowthReport():
+            text = growth_text(answer)
+        case TurnaroundReport():
+            text = turnaround_text(answer)
+        case SearchReport():
+            text = search_text(answer)
+        case _:
+            text = None
+    return text
 
 
 # The build panel's rows, its tabs and every sheet a row opens are driven by the
