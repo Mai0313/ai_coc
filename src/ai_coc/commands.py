@@ -80,6 +80,7 @@ from ai_coc.models import (
     SearchReport,
     StatusReport,
     UpgradeTimer,
+    VillageStock,
     WorldOutcome,
     AttackOptions,
     AttackOutcome,
@@ -89,6 +90,7 @@ from ai_coc.models import (
     DonateOptions,
     DonateOutcome,
     ExportOutcome,
+    FarmedVillage,
     GrowthOutcome,
     JournalTimers,
     LaunchOutcome,
@@ -1680,6 +1682,95 @@ def round_line(report: AttackReport) -> str:
     return line
 
 
+def farmed(series: AttackSeries) -> FarmedVillage | None:
+    """What a series brought home on the village it played; None for one that never read which."""
+    played = [one for one in series.root if one.world is not None]
+    world = played[0].world if played else None
+    if world is None:
+        return None
+    fought = [at for at, one in enumerate(played) if one.attacked is not None or one.phases > 0]
+    read = [(at, one.holding) for at, one in enumerate(played) if one.holding is not None]
+    carts = [one.cart for one in played if one.cart is not None]
+    village = FarmedVillage(
+        world=world,
+        battles=len(fought),
+        uncounted=len(fought),
+        capacity=next((one.capacity for one in reversed(played) if one.capacity), None),
+        cart_start=_cart_level(carts[0]) if carts else None,
+        cart_now=_cart_level(carts[-1]) if carts else None,
+        cart_capacity=next((cart.capacity for cart in reversed(carts) if cart.capacity), None),
+        cart_unread=played[-1].since_cart or 0,
+        ending=series.root[-1].outcome,
+    )
+    if read:
+        (first, before), (last, after) = read[0], read[-1]
+        village.gained = VillageStock(
+            gold=after.gold - before.gold,
+            elixir=after.elixir - before.elixir,
+            dark=after.dark - before.dark,
+        )
+        village.held = after
+        village.uncounted = sum(1 for at in fought if at < first or at >= last)
+    return village
+
+
+def _cart_level(cart: CartReport) -> int | None:
+    """What the cart held when a trip left it, where the trip says."""
+    if cart.outcome in ("collected", "empty", "locked_empty"):
+        return 0
+    return cart.held if cart.outcome == "locked_holding" else None
+
+
+def farmed_text(village: FarmedVillage | None) -> str:
+    """A series as the farming report writes it: battles and how it ended, then the loot table."""
+    if village is None:
+        return "一輪都沒有讀到是哪個村莊, 一場也沒打"
+    names = ("gold", "elixir", "dark") if village.world == "day" else ("gold", "elixir")
+    rows = [
+        (
+            _RESOURCE_NAMES[one],
+            "讀不到" if village.gained is None else _signed(getattr(village.gained, one)),
+            _share(
+                getattr(village.held, one) if village.held else None,
+                getattr(village.capacity, one) if village.capacity else None,
+            ),
+        )
+        for one in names
+    ]
+    if village.world == "night":
+        start, now = village.cart_start, village.cart_now
+        held = "讀不到" if now is None else _wan(now)
+        if now is not None and village.cart_capacity:
+            held += f" / {_wan(village.cart_capacity)}"
+        gain = "讀不到" if start is None or now is None else _signed(now - start)
+        rows.append(("聖水車", gain, held))
+    shown = [
+        f"{WORLD_NAMES[village.world]}: {village.battles} 場, 最後一輪: {ROUND_LINES[village.ending]}",
+        "",
+        "| 資源 | 進帳 | 現在 |",
+        "| --- | --- | --- |",
+        *(f"| {name} | {gain} | {now} |" for name, gain, now in rows),
+    ]
+    if village.uncounted:
+        shown += ["", f"有 {village.uncounted} 場打完之後沒讀到倉庫, 沒算進進帳"]
+    if village.cart_unread:
+        shown += [
+            f"最後一次去聖水車之後打了 {village.cart_unread} 場, 那幾場的聖水還在車上, 沒算進進帳"
+        ]
+    return "\n".join(shown)
+
+
+def _share(now: int | None, ceiling: int | None) -> str:
+    """An amount held, with its share of the ceiling where one was read."""
+    if now is None:
+        return "讀不到"
+    return f"{_wan(now)} ({now * 100 // ceiling}%)" if ceiling else _wan(now)
+
+
+def _signed(amount: int) -> str:
+    return f"+{_wan(amount)}" if amount >= 0 else f"-{_wan(-amount)}"
+
+
 def _round(runner: AttackRunner, series: AttackSeries) -> AttackReport | None:
     """One round, with the ways it can end badly folded in. None ends the series.
 
@@ -1700,9 +1791,21 @@ def _round(runner: AttackRunner, series: AttackSeries) -> AttackReport | None:
     # Read before the battle; one read during it the runner reports itself, so
     # the round keeps the battle it fought. `_series_over` ends on either.
     except SessionTakenError:
-        return AttackReport(world=runner.world, outcome="session_taken")
+        return _seen(AttackReport(world=runner.world, outcome="session_taken"), runner)
     runner.lost = 0
-    return report
+    return _seen(report, runner)
+
+
+def _seen(report: AttackReport, runner: AttackRunner) -> AttackReport:
+    """The round's report with what the runner read around it: the storages before it, the ceilings, the cart."""
+    return report.model_copy(
+        update={
+            "holding": runner.holding,
+            "capacity": runner.capacity,
+            "cart": runner.cart,
+            "since_cart": runner.since_cart,
+        }
+    )
 
 
 def _lost_round(
@@ -1733,7 +1836,7 @@ def _lost_round(
     logger.error(
         "Round %d died on the emulator (%d in a row): %s", len(series.root) + 1, runner.lost, exc
     )
-    report = AttackReport(world=runner.world, outcome="emulator_silent")
+    report = _seen(AttackReport(world=runner.world, outcome="emulator_silent"), runner)
     if runner.lost >= ADAPTER_FAILURES:
         # Recorded here rather than handed back, because the caller records
         # what it is given and this one ends the series instead of reaching it.
@@ -3458,6 +3561,8 @@ def answer_text(answer: BaseModel, within: int | None = None) -> str | None:
     """
     if isinstance(answer, StatusReport):
         return status_text(answer, within=within)
+    if isinstance(answer, AttackSeries):
+        return farmed_text(farmed(answer))
     if isinstance(answer, GrowthReport):
         return growth_text(answer)
     if isinstance(answer, TurnaroundReport):

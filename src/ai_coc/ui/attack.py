@@ -1094,6 +1094,11 @@ class AttackRunner(ScreenRunner):
         return self._cart
 
     @property
+    def since_cart(self) -> int | None:
+        """Builder base battles since that trip, whose elixir waits in the cart; None before the first."""
+        return self._since_cart
+
+    @property
     def _ceiling(self) -> StorageCapacity:
         """The ceilings this run read, or none at all before it has read them.
 

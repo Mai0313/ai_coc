@@ -87,7 +87,7 @@ jq '.[-1] | {world, outcome, stock_full, attacked}' ~/.ai_coc/logs/<run>/result.
 
 - `loan` 在, `lender` 是你, `ended` 不是 `cancelled`: **馬上開回去**, 同一個世界同一組旗標, 都帶 `--yield`, 換一個新的 `--label`, **分兩步**: 先 `world --go <那個世界> --yield …` (借的那一邊可能把遊戲留在另一個村莊), 它會自己等 `giveback` 或借用逾時才真的開跑, 排隊可能超過一次前景呼叫的上限, 照常分段等; 它跑完讀一次 `state.json`, 沒被叫停才開 `attack … --yield …`. 不用等誰傳話, 最後的回報裡提一句被借走多久就好
 - 開回去的指令 `result.json` 是 `借用被 ai_coc stop 取消了,這個指令沒有開跑` (exit code 不是 0): 有人在借用期間下了 `ai_coc stop`, 照下一條處理, 不要再開
-- 沒有 `loan`, 或 `ended` 是 `cancelled`: 那是有人用 `ai_coc stop` 真的叫停. **不要自己開回去**, 馬上回報停在哪 (打的世界跟旗標, 執行目錄, 打了幾場, 最後一行 `holds` 的水位). 之後一個 `ai_coc` 指令都不要下, 只讀倉庫的 `stock`、`status` 也算. 有人傳話叫你接回去, 才同一個世界同一組旗標開回去
+- 沒有 `loan`, 或 `ended` 是 `cancelled`: 那是有人用 `ai_coc stop` 真的叫停. **不要自己開回去**, 馬上回報停在哪 (打的世界跟旗標, 執行目錄, 那次 `attack` 印的那一段). 之後一個 `ai_coc` 指令都不要下, 只讀倉庫的 `stock`、`status` 也算. 有人傳話叫你接回去, 才同一個世界同一組旗標開回去
 
 **使用者直接跟你說停**, 你自己下 `uv run --no-sync ai_coc stop` (`AGENTS.md` 的 A stop the user orders is run by whoever hears it), 等它停好, 照上一條回報. **`ai_coc stop` 是停止的唯一方式, 不要去砍背景程序**: 砍掉的話迴圈的 `KeyboardInterrupt` 出口執行不到, 軍隊留在場上, 遊戲停在回不了家的畫面, 沒有 `result.json`. 停不是立刻的, 最久要等當下那一場戰鬥打完; `state.json` 的 `status` 是 `stopping` 就是還在打完手上那一場, 等它變成 `idle`.
 
@@ -99,8 +99,8 @@ jq '.[-1] | {world, outcome, stock_full, attacked}' ~/.ai_coc/logs/<run>/result.
 
 **交辦的終點到了, 或碰到上面要停下來的情況, 才結束回合, 交一份回報給派你的 session.** 它看不到你的工具輸出, 要判斷的東西都在這份裡:
 
-- 每個打了的世界: 每一個執行目錄 (被借走或換世界而重開過的每一個都列), 最後一個元素的 `outcome`, 真的開打的場數 (主村 `jq '[.[] | select(.attacked != null)] | length' result.json`, 夜世界 `select(.phases > 0)`), 每個目錄 `run.log` 第一行跟最後一行 `Village holds …` (夜世界 `Builder base holds …`), 有的話那行 `Storage limit reached` 跟 `the storages decide alone`
-- 停下來的: 停在哪 (世界, 旗標, 執行目錄, 打了幾場, 最後一行 `holds`), 為什麼 (上面哪一條), 誰停的 (`stop_by`)
+- 每個打了的世界: 每一個執行目錄 (被借走或換世界而重開過的每一個都列), 各附那次 `attack` 跑完印的那一段, 照貼不改 (場數、最後一輪怎麼收工、進帳跟現在的倉庫, 夜世界多一列聖水車)
+- 停下來的: 停在哪 (世界, 旗標, 執行目錄, 那次 `attack` 印的那一段), 為什麼 (上面哪一條), 誰停的 (`stop_by`)
 - 被借走過的: 借了多久
 - 交辦要你截的圖: 路徑. 圖你不用打開
 - 交辦以外的狀況: 照原樣寫, 例如每輪 `skipped` 都是幾十

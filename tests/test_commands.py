@@ -53,6 +53,7 @@ from ai_coc.models import (
     StockReport,
     ViewOutcome,
     AttackReport,
+    AttackSeries,
     BoostOutcome,
     DonateReport,
     ExportReport,
@@ -1258,6 +1259,182 @@ class AttackSeriesAdapterFailureTests(unittest.TestCase):
         ])
         assert len(rounds) == 6
         assert rounds[-1].stock_full
+
+
+def _played(
+    world: World, *rounds: tuple[str, tuple[int, int, int] | None], cart: CartReport | None = None
+) -> AttackSeries:
+    """A series of (outcome, storages before the round) on one village, each round seeing `cart`."""
+    capacity = StorageCapacity(
+        gold=10_000_000, elixir=10_000_000, dark=200_000 if world == "day" else None
+    )
+    fought = ("took_loot", "deployed", "no_loot", "loot_unread", "nothing_deployed")
+    return AttackSeries([
+        AttackReport(
+            world=world,
+            outcome=outcome,
+            attacked=LootOffer(gold=1, elixir=1, dark=1)
+            if outcome in fought and world == "day"
+            else None,
+            phases=1 if outcome in fought and world == "night" else 0,
+            holding=None
+            if held is None
+            else VillageStock(gold=held[0], elixir=held[1], dark=held[2]),
+            capacity=capacity,
+            cart=cart,
+        )
+        for outcome, held in rounds
+    ])
+
+
+class AttackSummaryTests(unittest.TestCase):
+    """What a series brought home, said by the series itself rather than pieced together out of `run.log`."""
+
+    def test_each_round_carries_what_the_runner_read_around_it(self) -> None:
+        runner = MagicMock(name="AttackRunner")
+        held = VillageStock(gold=1, elixir=2, dark=3)
+        cart = CartReport(outcome="locked_holding", held=5, capacity=10)
+        runner.configure_mock(
+            played=None,
+            holding=held,
+            capacity=StorageCapacity(gold=9),
+            cart=cart,
+            since_cart=2,
+            lost=0,
+        )
+        runner.run.side_effect = [AttackReport(outcome="took_loot"), AdbControlError("timeout")]
+        runner.world = "day"
+        with (
+            patch.object(commands, "_controller", return_value=_adb()),
+            patch.object(commands.ConfigStore, "load", return_value=AppConfig()),
+            patch.object(commands, "_planner", return_value=None),
+            patch.object(commands, "_settle_game", return_value=DISPLAY),
+            patch.object(commands, "AttackRunner", return_value=runner),
+            patch.object(commands, "_rest", return_value=False),
+        ):
+            series = commands.attack(
+                AttackOptions(rounds=2), _frames(self), MagicMock(return_value=False)
+            )
+        for report in series.root:
+            assert (report.holding, report.capacity, report.cart) == (
+                held,
+                StorageCapacity(gold=9),
+                cart,
+            )
+
+    def test_a_round_another_device_cut_short_carries_them_too(self) -> None:
+        runner = MagicMock(name="AttackRunner")
+        held = VillageStock(gold=1, elixir=2, dark=3)
+        runner.configure_mock(played=None, holding=held, capacity=None, cart=None, since_cart=None)
+        runner.run.side_effect = [commands.SessionTakenError("taken")]
+        runner.world = "day"
+        runner.lost = 0
+        with (
+            patch.object(commands, "_controller", return_value=_adb()),
+            patch.object(commands.ConfigStore, "load", return_value=AppConfig()),
+            patch.object(commands, "_planner", return_value=None),
+            patch.object(commands, "_settle_game", return_value=DISPLAY),
+            patch.object(commands, "AttackRunner", return_value=runner),
+        ):
+            series = commands.attack(
+                AttackOptions(rounds=0), _frames(self), MagicMock(return_value=False)
+            )
+        [report] = series.root
+        assert (report.outcome, report.holding) == ("session_taken", held)
+
+    def test_the_loot_is_the_last_reading_less_the_first(self) -> None:
+        village = commands.farmed(
+            _played(
+                "day",
+                ("took_loot", (1_000_000, 1_000_000, 10_000)),
+                ("took_loot", (2_000_000, 1_500_000, 13_000)),
+                ("stock_full", (3_000_000, 2_000_000, 16_000)),
+            )
+        )
+        assert village is not None
+        assert (village.battles, village.uncounted, village.ending) == (2, 0, "stock_full")
+        assert village.gained == VillageStock(gold=2_000_000, elixir=1_000_000, dark=6_000)
+        assert village.held == VillageStock(gold=3_000_000, elixir=2_000_000, dark=16_000)
+
+    def test_battles_no_two_readings_bracket_are_counted_apart(self) -> None:
+        village = commands.farmed(
+            _played("day", ("took_loot", None), ("took_loot", (1, 1, 1)), ("took_loot", None))
+        )
+        assert village is not None
+        assert (village.battles, village.uncounted) == (3, 3)
+        assert village.gained == VillageStock(gold=0, elixir=0, dark=0)
+        village = commands.farmed(_played("day", ("took_loot", None), ("no_attack_menu", None)))
+        assert village is not None
+        assert (village.battles, village.uncounted, village.gained) == (1, 1, None)
+        assert village.ending == "no_attack_menu"
+
+    def test_the_cart_is_read_from_its_first_trip_to_its_last(self) -> None:
+        emptied, banking = (
+            CartReport(outcome="collected", elixir=400),
+            CartReport(outcome="locked_holding", held=1_550_000, capacity=1_600_000),
+        )
+        series = _played("night", ("deployed", (1, 1, 0)), cart=emptied)
+        series.root += _played("night", ("deployed", (2, 2, 0)), cart=banking).root
+        series.root[-1].since_cart = 3
+        village = commands.farmed(series)
+        assert village is not None
+        assert (village.cart_start, village.cart_now, village.cart_capacity) == (
+            0,
+            1_550_000,
+            1_600_000,
+        )
+        assert village.cart_unread == 3
+        lost = commands.farmed(
+            _played("night", ("deployed", (1, 1, 0)), cart=CartReport(outcome="not_found"))
+        )
+        assert lost is not None
+        assert (lost.cart_start, lost.cart_now) == (None, None)
+
+    def test_a_round_on_neither_village_counts_towards_none(self) -> None:
+        series = AttackSeries([
+            AttackReport(world=None, outcome="no_attack_menu"),
+            *_played("night", ("deployed", (1, 1, 0))).root,
+        ])
+        village = commands.farmed(series)
+        assert village is not None
+        assert (village.world, village.battles) == ("night", 1)
+        assert commands.farmed(AttackSeries([AttackReport(world=None, outcome="stopped")])) is None
+
+    def test_the_text_is_the_farming_reports_table(self) -> None:
+        day = _played(
+            "day",
+            ("took_loot", (1_000_000, 2_000_000, 6_000)),
+            ("stock_full", (10_000_000, 2_760_000, 12_000)),
+        )
+        text = commands.farmed_text(commands.farmed(day))
+        assert text.splitlines() == [
+            f"日世界: 1 場, 最後一輪: {commands.ROUND_LINES['stock_full']}",
+            "",
+            "| 資源 | 進帳 | 現在 |",
+            "| --- | --- | --- |",
+            "| 金幣 | +900 萬 | 1000 萬 (100%) |",
+            "| 聖水 | +76 萬 | 276 萬 (27%) |",
+            "| 黑水 | +0.6 萬 | 1 萬 (6%) |",
+        ]
+        night = _played(
+            "night",
+            ("deployed", (100_000, 100_000, 0)),
+            ("deployed", (5_780_000, 5_070_000, 0)),
+            ("deployed", None),
+            cart=CartReport(outcome="locked_holding", held=1_600_000, capacity=1_600_000),
+        )
+        night.root[-1].since_cart = 2
+        text = commands.farmed_text(commands.farmed(night))
+        for row in (
+            f"夜世界: 3 場, 最後一輪: {commands.ROUND_LINES['deployed']}",
+            "| 金幣 | +568 萬 | 578 萬 (57%) |",
+            "| 聖水車 | +0 萬 | 160 萬 / 160 萬 |",
+            "有 2 場打完之後沒讀到倉庫, 沒算進進帳",
+            "最後一次去聖水車之後打了 2 場, 那幾場的聖水還在車上, 沒算進進帳",
+        ):
+            assert row in text, row
+        assert "| 黑水" not in text
+        assert commands.farmed_text(None) == "一輪都沒有讀到是哪個村莊, 一場也沒打"
 
 
 class AttackSeriesMenuTests(unittest.TestCase):

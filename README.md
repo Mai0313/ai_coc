@@ -135,7 +135,7 @@ ai_coc search "Electro Dragon"        # look a thing up by data_id or by a piece
 ai_coc view --zoom out                # put the camera back where every coordinate was measured
 ai_coc world                          # which of the two villages the game is on
 ai_coc world --go day                 # sail there; already being there does nothing
-ai_coc attack                         # attack whichever village the game is on
+ai_coc attack                         # attack whichever village the game is on, then print what it brought home; --json prints each round
 ```
 
 The game keeps two villages — the home village and the builder base — and reopens on whichever one it was closed on, so `world` is worth asking before anything that assumes one of them. Reading it is a single screenshot: no tap, no swipe, no camera move. **No command sails on its own**: `world --go` is the only one that changes villages, and one with nothing to do on the village it finds — `donate` on the builder base, say — says so and leaves the game where it is.
