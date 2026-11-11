@@ -585,7 +585,7 @@ class OpenAttackMenuTests(unittest.TestCase):
         assert got == b"after the payout"
 
     def test_the_other_village_ends_the_round_rather_than_being_sailed_to(self) -> None:
-        """Nothing here sails; crossing is `ai_coc world --go`, which the module does not even import."""
+        """Nothing here sails; crossing is `ai_coc world --day` / `--night`, which the module does not even import."""
         assert not hasattr(attack, "cross")
         got, seen = self._open("day", ["night", "night"])
         assert got is None

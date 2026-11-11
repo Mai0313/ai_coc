@@ -11,7 +11,7 @@ from __future__ import annotations
 import io
 import sys
 import json
-from typing import Any
+from typing import Any, get_args
 import logging
 from pathlib import Path
 import argparse
@@ -22,7 +22,7 @@ from unittest.mock import patch
 import pytest
 
 from ai_coc import cli, plans, models, commands, logging_setup
-from ai_coc.cli import NO_SCREEN, _answer, _parser, _run_command
+from ai_coc.cli import NO_SCREEN, WITHOUT_CLAIM, _answer, _parser, _run_command
 from ai_coc.models import (
     Caller,
     RunLog,
@@ -40,6 +40,8 @@ from ai_coc.models import (
     CollectReport,
     DonateOptions,
     LootOverrides,
+    SearchOptions,
+    SearchSection,
 )
 from ai_coc.parsers.village import merge
 
@@ -142,6 +144,58 @@ class ParserTests(unittest.TestCase):
                 # On its own: a heartbeat does not need `--debug`.
                 assert _args(name, *extra, "--shot-every", "4").shot_every == 4.0, name
 
+    def test_only_a_command_that_claims_the_emulator_can_yield_it(self) -> None:
+        for name, extra in MINIMAL.items():
+            if name in WITHOUT_CLAIM:
+                with pytest.raises(SystemExit):
+                    _args(name, *extra, "--yield")
+            else:
+                assert _args(name, *extra, "--yield").yields, name
+                assert not _args(name, *extra).yields, name
+
+    def test_a_sub_commands_help_names_itself_and_lists_its_own_flags_first(self) -> None:
+        [group] = [a for a in _parser()._actions if isinstance(a, argparse._SubParsersAction)]
+        shown = group.choices["search"].format_help()
+        assert shown.startswith("usage: ai_coc search [-h]")
+        own, shared, who = (
+            shown.index(mark) for mark in ("\n  --skip-max-lvl ", "\n共用的旗標:", "\n  --agent ")
+        )
+        assert own < shared < who
+
+    def test_a_village_is_day_or_night_and_never_both(self) -> None:
+        for name, extra in (("world", ()), ("search", ("箭塔",)), ("note", ("add", "a"))):
+            assert _args(name, *extra).world is None, name
+            assert _args(name, *extra, "--day").world == "day", name
+            assert _args(name, *extra, "--night").world == "night", name
+            with pytest.raises(SystemExit):
+                _args(name, *extra, "--day", "--night")
+
+    def test_a_search_section_is_one_of_the_listed_ones(self) -> None:
+        for section in (*get_args(SearchSection), "all"):
+            assert _args("search", "--section", section).section == section
+        with pytest.raises(SystemExit):
+            # The export's own section names are not sections here.
+            _args("search", "--section", "heroes")
+
+    def test_a_note_names_its_village_with_a_flag_and_a_list_takes_none(self) -> None:
+        added = _args("note", "add", "--night", "冰人升完改研究巨石投手")
+        assert (added.action, added.world, added.item) == (
+            "add",
+            "night",
+            "冰人升完改研究巨石投手",
+        )
+        done = _args("note", "done", "--day", "2")
+        assert (done.action, done.world, done.item) == ("done", "day", "2")
+        for line in (["note", "--day"], ["note", "list", "--night"]):
+            with (
+                patch.object(sys, "argv", ["ai_coc", *line]),
+                patch.object(cli, "RunLog") as opened,
+                pytest.raises(SystemExit) as stopped,
+            ):
+                cli.main()
+            assert stopped.value.code != 0, line
+            opened.open.assert_not_called()
+
     def test_stop_reaches_both_sections_unless_told_which(self) -> None:
         assert _args("stop").target == "all"
         assert _args("stop", "watch").target == "watch"
@@ -234,7 +288,7 @@ class DispatchTests(unittest.TestCase):
 
     def test_donate_carries_its_own_options(self) -> None:
         with patch.object(commands, "donate") as gave:
-            _answer(_args("donate", "--dry-run", "--rounds", "2"), self.run)
+            _answer(_args("donate", "--dry-run", "--repeat", "2"), self.run)
         assert gave.call_args.args == (DonateOptions(dry_run=True, rounds=2), self.run.frames)
 
     def test_the_scalar_commands_pass_their_flags_through(self) -> None:
@@ -247,16 +301,29 @@ class DispatchTests(unittest.TestCase):
         ):
             _answer(_args("gamedata", "--refresh"), self.run)
             _answer(_args("gamedata"), self.run)
-            _answer(_args("search", "箭塔", "--section", "buildings", "--all"), self.run)
-            _answer(_args("search", "--section", "helpers"), self.run)
+            _answer(
+                _args(
+                    "search", "箭塔", "--section", "builder", "--night", "--skip-max-lvl", "--rows"
+                ),
+                self.run,
+            )
+            _answer(_args("search", "--section", "all"), self.run)
             _answer(_args("view", "--zoom", "in", "--times", "2"), self.run)
-            _answer(_args("world", "--go", "day"), self.run)
+            _answer(_args("world", "--day"), self.run)
             _answer(_args("world"), self.run)
             _answer(_args("launch", "--restart", "game"), self.run)
             _answer(_args("launch"), self.run)
         assert [call.args for call in searched.call_args_list] == [
-            ("箭塔", "buildings", True),
-            ("", "helpers", False),
+            (
+                SearchOptions(
+                    query="箭塔",
+                    section="builder",
+                    world="night",
+                    skip_max_lvl=True,
+                    every_row=True,
+                ),
+            ),
+            (SearchOptions(section="all"),),
         ]
         viewed.assert_called_once_with(self.run.frames, "in", 2)
         assert [call.args for call in tabled.call_args_list] == [
@@ -390,7 +457,7 @@ class DispatchTests(unittest.TestCase):
             # It reads the files `gamedata`, `status` and `export` kept.
             _run_command(_args("search", "箭塔"), self.run)
             claimed.assert_not_called()
-            _run_command(_args("world", "--go", "night"), self.run)
+            _run_command(_args("world", "--night"), self.run)
             claimed.assert_called_once()
 
     def test_a_search_prints_its_lines_and_writes_its_model(self) -> None:

@@ -2080,7 +2080,7 @@ class CrossingTests(unittest.TestCase):
         """A panel swallows every tap after it, so one missed spot used to cost the rest.
 
         Measured live: a `collect` run left an 8級聖水收集器 panel up and two
-        `world --go night` runs in a row reported 畫面還停在不明的畫面 without
+        `world --night` runs in a row reported 畫面還停在不明的畫面 without
         moving anything.
         """
         adb, landed = self._cross([
@@ -2389,7 +2389,7 @@ class CrossingTests(unittest.TestCase):
             patch.object(world_ui, "current_world", return_value="day"),
         ):
             report = world_ui.collect_cart(adb, DisplayTarget(logical_id="1", physical_id="2"))
-        assert report == CartReport(outcome="wrong_world")
+        assert report == CartReport(outcome="not_night")
         adb.tap.assert_not_called()
         adb.swipe.assert_not_called()
 
@@ -2477,7 +2477,7 @@ class CrossingTests(unittest.TestCase):
     def test_a_battle_on_screen_is_never_pressed_at(self) -> None:
         """`back` there is aimed at 放棄, and a killed run leaves exactly this state.
 
-        The callers hand this whatever is on screen — `world --go` and a run that
+        The callers hand this whatever is on screen — `world --day` / `--night` and a run that
         named a village both go straight into the crossing on a frame nothing
         could read — so the filter lives here rather than in a docstring asking
         them not to.
@@ -6355,7 +6355,7 @@ class RunnerStateTests(unittest.TestCase):
         assert after.loan.ended == "returned"
 
     def test_a_yielding_claim_queues_behind_a_loan_and_clears_it_once_back(self) -> None:
-        """Starting again, or a `world --go` between rounds, must not take the
+        """Starting again, or a crossing between rounds, must not take the
         emulator back off the borrower: that is the ping-pong a loan exists to end.
         """
         statuses: list[str] = []
@@ -7118,7 +7118,7 @@ class HomeTests(unittest.TestCase):
         return found, swiped.call_count + tapped.call_count
 
     def test_the_builder_base_is_reported_rather_than_sailed_from(self) -> None:
-        """No command sails on its own; crossing is `ai_coc world --go`.
+        """No command sails on its own; crossing is `ai_coc world --day` / `--night`.
 
         This used to cross, which moved the game to the other village under five
         commands without any of them saying so. Now the run ends on a name its
@@ -7128,7 +7128,7 @@ class HomeTests(unittest.TestCase):
         found, moved = self._walked(run, ["night"])
         assert not found
         assert moved == 0
-        assert run._lost() == "builder_base"
+        assert run._lost() == "on_night"
 
     def test_one_builder_base_reading_is_not_enough_to_end_a_run(self) -> None:
         """A single frame read as the other village costs a capture, not the run."""
@@ -7154,7 +7154,7 @@ class HomeTests(unittest.TestCase):
             patch.object(shared, "current_world", return_value="night"),
         ):
             for entry in entries:
-                assert entry().outcome == "builder_base", entry
+                assert entry().outcome == "on_night", entry
 
     def test_a_restart_puts_the_launch_patience_back(self) -> None:
         """The one branch that stops `back` being pressed at a game that is cold again.

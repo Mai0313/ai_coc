@@ -973,7 +973,7 @@ class AttackRunner(ScreenRunner):
     # card row — which is why this is a field rather than a second runner.
     #
     # **None plays whichever village the game is on**, read the first time a
-    # round finds one; nothing here sails, since crossing is `ai_coc world --go`.
+    # round finds one; nothing here sails, since crossing is `ai_coc world --day` / `--night`.
     # Once read or named it holds for the series, and a round that finds the
     # other village ends the series rather than crossing to this one.
     world: World | None = "day"
@@ -1268,7 +1268,7 @@ class AttackRunner(ScreenRunner):
         base's and `night_attack_menu` does not recognise the home village's.
         The game reopens on whichever village it was closed on, so a run
         pointed at one can find the other. It says so rather than crossing:
-        nothing here sails, since crossing is `ai_coc world --go`. A runner
+        nothing here sails, since crossing is `ai_coc world --day` / `--night`. A runner
         with no village named takes the first one it reads here.
         """
         self._stuck = None
@@ -1318,7 +1318,7 @@ class AttackRunner(ScreenRunner):
                 if elsewhere:
                     logger.warning(
                         "The game is on the %s village and this series plays the %s one; "
-                        "`ai_coc world --go` changes villages",
+                        "`ai_coc world --day` / `--night` changes villages",
                         here,
                         self.world,
                     )

@@ -9,7 +9,7 @@ its own in the top right, on the home village alone.
 `UpkeepRunner` is a `GameRunner`, and `GameRunner._home` works on the home
 village alone — right for a loop about to spend the home village's loot, wrong
 for a question about whichever village is up. Neither crosses: `ai_coc world
---go` is how a caller moves the game, and `status` only ever looks, the same
+--day` / `--night` is how a caller moves the game, and `status` only ever looks, the same
 bargain `ai_coc stock` makes.
 """
 
