@@ -38,6 +38,7 @@ from ai_coc.models import (
     NightPlan,
     AttackPlan,
     CartReport,
+    ClockTower,
     GameDialog,
     GameEntity,
     PlateCount,
@@ -45,9 +46,11 @@ from ai_coc.models import (
     SheetOffer,
     AdbEndpoint,
     CartOutcome,
+    NextUpgrade,
     NoteOutcome,
     RunnerState,
     ShieldState,
+    StockReport,
     ViewOutcome,
     AttackReport,
     BoostOutcome,
@@ -58,6 +61,7 @@ from ai_coc.models import (
     PressOutcome,
     RestartScope,
     StatusReport,
+    UpgradeTimer,
     VillageStock,
     WorldOutcome,
     AttackOptions,
@@ -74,6 +78,7 @@ from ai_coc.models import (
     VillageExport,
     CollectOutcome,
     ConfirmOutcome,
+    HelperCooldown,
     LootThresholds,
     StorageCapacity,
     VillageDocument,
@@ -554,6 +559,195 @@ class StatusCommandTests(unittest.TestCase):
             self.assertLogs("ai_coc.commands", "WARNING"),
         ):
             assert commands._tables(_adb()) is None
+
+    def test_the_last_saved_export_is_read_without_the_emulator(self) -> None:
+        """What a report after a stop is written from, when a new run would log the player out."""
+        document = VillageDocument.model_validate({
+            "tag": "#TEST",
+            "heroes": [{"data": 28000000, "lvl": 60, "timer": 600}],
+        })
+        saved = ExportReport(outcome="read_back", export=merge(document, _tables(), 1791626101))
+        with (
+            patch.object(commands, "_last_export", return_value=saved),
+            patch.object(commands, "_controller") as opened,
+        ):
+            report = commands.status(_frames(self), last=True)
+        opened.assert_not_called()
+        assert (report.export, report.builder, report.stock) == ("read_back", None, None)
+        assert [timer.zh for timer in report.timers] == ["野蠻人之王"]
+
+
+# The moment every `status_text` case reads from, on this machine's clock like
+# the report itself, so the wall-clock times below hold in any time zone.
+NOW = datetime(2026, 11, 11, 12, 0).astimezone()
+
+
+def _timer(
+    data_id: int, at: str, level: int | None = 4, world: World = "day", **row: object
+) -> UpgradeTimer:
+    """A running upgrade finishing at `at` on this machine's clock, on 2026-11-11 unless dated."""
+    when = datetime.fromisoformat(at if "T" in at else f"2026-11-11T{at}").astimezone()
+    fields: dict[str, object] = {
+        "world": world,
+        "role": "builder",
+        "section": "buildings",
+        "data_id": data_id,
+        "zh": f"建築{data_id}",
+        "level": level,
+        "max_lvl": 10,
+        "limited_lvl": 10,
+        "next": NextUpgrade(lvl=(level or 0) + 2, cost={"gold": 1}),
+        "timer": 1,
+        "seconds": int((when - NOW).total_seconds()),
+        "done_at": when.isoformat(),
+    }
+    return UpgradeTimer.model_validate(fields | row)
+
+
+class StatusTextTests(unittest.TestCase):
+    """What `status` prints: the report's own tables, for an agent to hand on."""
+
+    def _report(self, *timers: UpgradeTimer, **fields: object) -> StatusReport:
+        held = VillageStock(gold=43_699_900, elixir=9_800_000, dark=6_000)
+        defaults: dict[str, object] = {
+            "world": "day",
+            "builder": PlateCount(role="builder", world="day", free=0, total=7, outcome="counted"),
+            "lab": PlateCount(role="lab", world="day", outcome="unread"),
+            "stock": StockReport(world="day", held=held, filled={"gold": "150%", "elixir": "33%"}),
+            "export": "exported",
+            "exported_at": datetime(2026, 11, 11, 11, 58).astimezone().isoformat(),
+            "timers": list(timers),
+        }
+        return StatusReport.model_validate(defaults | fields)
+
+    def test_the_village_on_screen_gets_its_storages_and_counters_and_the_other_says_why_not(
+        self,
+    ) -> None:
+        shown = commands.status_text(self._report(), NOW).splitlines()
+        assert shown[0] == "村莊匯出: 今天 11:58"
+        assert (
+            "日世界: 金幣 4370 萬 (150%)、聖水 980 萬 (33%)、黑水 0.6 萬; 工人 0/7、實驗室 讀不到"
+            in shown
+        )
+        assert "夜世界: 遊戲停在日世界, 倉庫跟計數這次沒讀" in shown
+        assert shown.count("沒有在升的") == 2
+
+    def test_each_row_says_what_it_allows_once_done(self) -> None:
+        text = commands.status_text(
+            self._report(
+                _timer(1, "13:00"),
+                _timer(2, "14:00", level=9),
+                _timer(3, "15:00", limited_lvl=5),
+                _timer(4, "16:00", extra=True),
+                _timer(5, "17:00", max_lvl=None),
+                _timer(6, "18:00", role=None),
+            ),
+            NOW,
+        )
+        for row in (
+            "| 今天 13:00 | 工人 | 建築1 (5 級) | 續升 (lv 5 → lv 6) |",
+            "| 今天 14:00 | 工人 | 建築2 (10 級) | 已滿級 |",
+            "| 今天 15:00 | 工人 | 建築3 (5 級) | 大本營或殿堂卡住 |",
+            "| 今天 16:00 | 工人 | 建築4 (5 級) | 做完收回 |",
+            "| 今天 17:00 | 工人 | 建築5 (5 級) | — |",
+            "| 今天 18:00 (沒算加速) | — | 建築6 (5 級) | 續升 (lv 5 → lv 6) |",
+        ):
+            assert row in text, row
+
+    def test_alike_rows_finishing_within_a_wake_are_one_row(self) -> None:
+        text = commands.status_text(
+            self._report(
+                _timer(1, "13:00"),
+                _timer(1, "13:04"),
+                _timer(1, "13:06"),
+                _timer(1, "13:05", extra=True),
+            ),
+            NOW,
+        )
+        assert (
+            f"| 今天 13:00 | 工人 | 建築1 {commands.TIMES}2 (5 級) | 續升 (lv 5 → lv 6) |" in text
+        )
+        assert "| 今天 13:06 | 工人 | 建築1 (5 級) | 續升 (lv 5 → lv 6) |" in text
+        assert "| 今天 13:05 | 工人 | 建築1 (5 級) | 做完收回 |" in text
+
+    def test_the_clock_tower_is_a_builder_base_row_in_its_turn(self) -> None:
+        later = self._report(
+            _timer(1, "2026-11-12T05:00", world="night"),
+            _timer(2, "2026-11-14T01:00", world="night"),
+            clock_tower=ClockTower(
+                ready_in=86400, ready_at=datetime(2026, 11, 12, 12, 0).astimezone().isoformat()
+            ),
+        )
+        night = commands.status_text(later, NOW).split("夜世界")[1].splitlines()
+        assert night[-3:] == [
+            "| 明天 05:00 | 工人 | 建築1 (5 級) | 續升 (lv 5 → lv 6) |",
+            "| 明天 12:00 | — | 鐘塔冷卻結束 | 開加速 |",
+            "| 11-14 01:00 | 工人 | 建築2 (5 級) | 續升 (lv 5 → lv 6) |",
+        ]
+        ready = self._report(clock_tower=ClockTower(ready_in=0, ready_at=NOW.isoformat()))
+        assert "| 現在 | — | 鐘塔冷卻結束 | 開加速 |" in commands.status_text(ready, NOW)
+
+    def test_only_the_helpers_that_speed_upgrades_are_said_to_be_ready(self) -> None:
+        def helper(data_id: int, ready_in: int) -> HelperCooldown:
+            ready_at = (NOW + timedelta(seconds=ready_in)).isoformat()
+            return HelperCooldown(
+                data_id=data_id, zh=f"助手{data_id}", ready_in=ready_in, ready_at=ready_at
+            )
+
+        report = self._report(
+            helpers=[helper(93000000, 0), helper(93000001, 600), helper(93000002, 0)]
+        )
+        assert "助手: 助手93000000 現在能派" in commands.status_text(report, NOW)
+        report = self._report(helpers=[helper(93000002, 0)])
+        assert "助手" not in commands.status_text(report, NOW)
+
+    def test_rows_past_the_window_fold_into_one_line(self) -> None:
+        """How the report a stop hands over lists what nobody will continue."""
+        report = self._report(
+            _timer(1, "13:00"), _timer(2, "2026-11-13T09:00"), _timer(3, "2026-11-14T10:19")
+        )
+        text = commands.status_text(report, NOW, within=24)
+        assert "| 今天 13:00 | 工人 | 建築1 (5 級) | 續升 (lv 5 → lv 6) |" in text
+        assert "之後還有 建築2 (5 級)、建築3 (5 級), 最晚 11-14 10:19" in text
+        assert "| 11-13" not in text
+        alone = commands.status_text(self._report(_timer(2, "2026-11-13T09:00")), NOW, within=24)
+        day = alone.split("夜世界")[0]
+        assert "| 幾點好" not in day
+        assert "沒有在升的" not in day
+        assert "之後還有 建築2 (5 級), 最晚 11-13 09:00" in day
+
+    def test_a_reading_from_earlier_says_what_has_finished_since(self) -> None:
+        """`--last` prints an export from a while ago, read against the clock now."""
+        report = self._report(
+            _timer(1, "11:00"),
+            clock_tower=ClockTower(
+                ready_in=600, ready_at=datetime(2026, 11, 11, 11, 30).astimezone().isoformat()
+            ),
+        )
+        text = commands.status_text(report, NOW)
+        assert "| 今天 11:00 (已過) | 工人 | 建築1 (5 級) |" in text
+        assert "| 現在 | — | 鐘塔冷卻結束 | 開加速 |" in text
+
+    def test_an_export_that_failed_says_so_and_prints_no_table(self) -> None:
+        text = commands.status_text(self._report(export="settings_shut", exported_at=None), NOW)
+        assert text.splitlines()[0] == f"村莊匯出沒讀到: {commands.EXPORT_LINES['settings_shut']}"
+        assert "| 幾點好" not in text
+        assert "沒有在升的" not in text
+
+    def test_a_reading_off_the_saved_export_says_nothing_was_read_on_screen(self) -> None:
+        report = self._report(
+            _timer(1, "13:00"), world=None, builder=None, lab=None, stock=None, export="read_back"
+        )
+        shown = commands.status_text(report, NOW).splitlines()
+        assert shown[0] == "村莊匯出: 今天 11:58 (存下的那份, 倉庫跟計數這次沒讀)"
+        assert shown[2] == "日世界"
+        assert "夜世界" in shown
+
+    def test_no_village_on_screen_is_said_for_both(self) -> None:
+        report = self._report(
+            world=None, stock=StockReport(), export="no_village", exported_at=None
+        )
+        assert commands.status_text(report, NOW).count("畫面不是村莊, 倉庫跟計數沒讀到") == 2
 
 
 class CollectCommandTests(unittest.TestCase):

@@ -29,13 +29,10 @@ from ai_coc.models import (
     StopTarget,
     AttackSeries,
     ExportReport,
-    GrowthReport,
     RestartScope,
-    SearchReport,
     AttackOptions,
     DonateOptions,
     LootOverrides,
-    TurnaroundReport,
 )
 from ai_coc.constants import FRAME_RETENTION_DAYS
 from ai_coc.logging_setup import Journal, configure_logging
@@ -92,14 +89,22 @@ NO_SCREEN = (
 # need, where a positive list forgotten would have it drive the emulator while
 # the file says nobody is.
 #
-# `export --last` is the same exception reached by a flag rather than by a name,
-# and `_claim_for` is where the two meet: the command drives the emulator, that
-# one invocation of it does not. So is `world` without `--go`.
+# `export --last` and `status --last` are the same exception reached by a flag
+# rather than by a name, and `_claim_for` is where the two meet: the command
+# drives the emulator, that one invocation of it does not. So is `world`
+# without `--go`.
 #
 # `capture` only looks, and so does a plain `world`: both take screenshots and
 # nothing else, and the file is a lock now, so a claim there would stand a
 # farming loop down for one screenshot (#290).
 WITHOUT_CLAIM = (*NO_SCREEN, "capture")
+
+# The sub-commands whose stdout is text shaped like the report a skill hands the
+# user, and which take `--json` for the model instead. Text is the default
+# because whoever reads their stdout is an agent about to write that report, and
+# every reshaping it did by hand was a step a skill had to spell out; a program
+# reads `result.json`, which is the model whatever the terminal was shown.
+TEXT_ANSWERS = ("status", "growth", "turnaround", "search")
 
 
 # Every sub-command and the line `--help` gives it, under the heading the help
@@ -380,6 +385,18 @@ def _parser() -> argparse.ArgumentParser:
         "--table", action="store_true", help="印成表格給人看；不給就跟其他指令一樣輸出 JSON"
     )
     village.add_argument("--last", action="store_true", help="不碰遊戲，直接讀上一次匯出的結果")
+    sub.choices["status"].add_argument(
+        "--last",
+        action="store_true",
+        help="不碰遊戲，從存下的最新那份村莊匯出印升級時間；倉庫跟計數不讀",
+    )
+    sub.choices["status"].add_argument(
+        "--within", type=int, metavar="小時", help="表上只列這麼多小時內好的，之後的併成一行"
+    )
+    for name in TEXT_ANSWERS:
+        sub.choices[name].add_argument(
+            "--json", action="store_true", help="印 JSON（跟 result.json 一樣），不印給人看的文字"
+        )
     sub.choices["gamedata"].add_argument(
         "--refresh", action="store_true", help="這個版本已經存過也重新讀一次"
     )
@@ -473,7 +490,7 @@ def _answer(arguments: argparse.Namespace, run: RunLog) -> BaseModel | str:
         "search": lambda: commands.search(a.query, a.section, a.every_row),
         "collect": lambda: commands.collect(run.frames),
         "stock": lambda: commands.stock(run.frames),
-        "status": lambda: commands.status(run.frames),
+        "status": lambda: commands.status(run.frames, a.last),
         "world": lambda: commands.world(a.go, run.frames),
         "view": lambda: commands.view(run.frames, a.zoom, a.times),
         "tap": lambda: commands.tap((a.x, a.y), run.frames, a.wait),
@@ -529,7 +546,7 @@ def _print_table(report: ExportReport) -> None:
 
 
 def _run_command(arguments: argparse.Namespace, run: RunLog) -> int:
-    """Run one headless command; its result goes to stdout so it can be piped.
+    """Run one headless command; its answer goes to stdout, as text for the commands in `TEXT_ANSWERS`.
 
     Written rather than logged: the log already carries the running commentary
     on stderr, and this is the answer. It goes into the run's own directory as
@@ -567,14 +584,13 @@ def _run_command(arguments: argparse.Namespace, run: RunLog) -> int:
     # machine-readable after a `--table` that was only ever for a person.
     if getattr(arguments, "table", False) and isinstance(answer, ExportReport):
         _print_table(answer)
-    elif isinstance(answer, GrowthReport):
-        sys.stdout.write(f"{commands.growth_text(answer)}\n")
-    elif isinstance(answer, TurnaroundReport):
-        sys.stdout.write(f"{commands.turnaround_text(answer)}\n")
-    elif isinstance(answer, SearchReport):
-        sys.stdout.write(f"{commands.search_text(answer)}\n")
     else:
-        sys.stdout.write(f"{result}\n")
+        text = (
+            None
+            if getattr(arguments, "json", False) or isinstance(answer, str)
+            else commands.answer_text(answer, getattr(arguments, "within", None))
+        )
+        sys.stdout.write(f"{result if text is None else text}\n")
     # Still not zero, though: the stop meant nothing lined up behind the loan
     # runs, and a command chained after this one with `&&` would otherwise
     # start with no loan left to be cancelled.
@@ -610,8 +626,8 @@ def _commit() -> str | None:
 def _claim_for(arguments: argparse.Namespace, run: RunLog) -> AbstractContextManager[None]:
     """Hold the emulator for this command, or nothing at all for one that never touches it.
 
-    Mostly that is a property of the command, but `export --last` only reads a
-    file this machine already has. A claim there would overwrite whatever a
+    Mostly that is a property of the command, but `export --last` and
+    `status --last` only read a file this machine already has. A claim there would overwrite whatever a
     farming run had written, and release it as `idle` — which reads from
     outside as an emulator nobody is driving, while a battle is still going on.
     """
