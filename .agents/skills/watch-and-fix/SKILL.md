@@ -6,7 +6,7 @@ description: >-
 
 # watch-and-fix
 
-查出迴圈在遊戲裡哪裡做錯, 修掉. 盯的是**一輪的整條路**: 開起遊戲 -> 站上日世界或夜世界 -> 打完一場 -> 回到村莊 -> 開下一輪. 卡在載入、船沒坐成、彈窗蓋住攻擊鈕、結算畫面認不出來, 都跟戰術一樣是這裡的題目, 而在 log 上都像「這場打得爛」. 迴圈照 `takeover` 的 `references/farming.md` 開 (門檻、兩個 `--plan`, 要查的是 AI 規劃本身才不帶 `--plan`), 平常照它交給 subagent 跑; 使用者說「你親自監督執行」, 就是你自己跑, 不轉包給 subagent: 步驟照 `takeover` 的 `references/runner.md` (每個指令帶 `--yield`, `result.json` 是陣列, 每一步讀 `state.json`, 迴圈的指令帶 `<你的 session id>-farm`, 跟你自己驗證用的分開), 送背景照 `share-emulator` 的「背景跑」; runner.md 寫「回報」的地方, 就是該你判斷的時候. `--yield` 不能省: 沒帶的話, 你自己驗證用的指令會把這輪停掉而不是借走, 也沒有人會把它開回去. 改程式碼的規矩在 `.agents/rules/code.md`, 流程照 `AGENTS.md` 的 Development flow.
+查出迴圈在遊戲裡哪裡做錯, 修掉. 盯的是**一輪的整條路**: 開起遊戲 -> 站上日世界或夜世界 -> 打完一場 -> 回到村莊 -> 開下一輪. 卡在載入、船沒坐成、彈窗蓋住攻擊鈕、結算畫面認不出來, 都跟戰術一樣是這裡的題目, 而在 log 上都像「這場打得爛」. 迴圈照 `takeover` 的 `references/farming.md` 開 (門檻、兩個 `--plan`, 要查的是 AI 規劃本身才不帶 `--plan`), 平常照它交給 subagent 跑; 使用者說「你親自監督執行」, 就是你自己跑, 不轉包給 subagent: 步驟照 `takeover` 的 `references/runner.md` (會佔模擬器的指令帶 `--yield`, `result.json` 是陣列, 每一步讀 `state.json`, 迴圈的指令帶 `<你的 session id>-farm`, 跟你自己驗證用的分開), 送背景照 `share-emulator` 的「背景跑」; runner.md 寫「回報」的地方, 就是該你判斷的時候. `--yield` 不能省: 沒帶的話, 你自己驗證用的指令會把這輪停掉而不是借走, 也沒有人會把它開回去. 改程式碼的規矩在 `.agents/rules/code.md`, 流程照 `AGENTS.md` 的 Development flow.
 
 ## 做完的樣子
 

@@ -15,7 +15,7 @@ user-invocable: false
 
 `attack`, `collect`, `donate`, `confirm` 全都在驅動同一個模擬器的同一個 display. 兩個一起跑, 一邊點開選單, 另一邊截到那張圖判讀成完全不同的東西, 而且沒有任何機制會發現. 開下一個之前先確定上一個真的結束了.
 
-**`state.json` 是一把鎖.** 除了 `read`、`stop`、`giveback`、`watch`、`note`、`growth`、`turnaround`、`search`、`farmed`、`tended`、`gamedata`、`capture`、`export --last`、`status --last` 跟不帶 `--go` 的 `world`, 每個 `ai_coc` 指令開跑時先看有沒有別的活著的程序佔著: 有, 就照 `ai_coc stop` 的流程請它收工, 記下是你叫停的, 等它打完手上那一場退出才開始; 它是帶 `--yield` 開的 (打資源的迴圈都是) 就是借走, 用完要 `giveback`. 帶 `--yield` 的指令反過來, 誰都不請, 排隊等. 所以**迴圈在跑的時候下 `stock`、`status` 這種要操作畫面的指令, 就是把那輪借走**, 不是你要的就不要下. 只想看畫面, 用 `capture` 或 `repair-emulator` 的 `look.py` (`uv run --no-sync python .agents/skills/repair-emulator/scripts/look.py <資料夾>`): 都只截圖, 不佔鎖也不開任何東西, 代價是跟迴圈多搶一條 ADB.
+**`state.json` 是一把鎖.** 除了 `read`、`stop`、`giveback`、`watch`、`note`、`growth`、`turnaround`、`search`、`farmed`、`tended`、`gamedata`、`capture`、`export --last`、`status --last` 跟不帶 `--day`、`--night` 的 `world`, 每個 `ai_coc` 指令開跑時先看有沒有別的活著的程序佔著: 有, 就照 `ai_coc stop` 的流程請它收工, 記下是你叫停的, 等它打完手上那一場退出才開始; 它是帶 `--yield` 開的 (打資源的迴圈都是) 就是借走, 用完要 `giveback`. 帶 `--yield` 的指令反過來, 誰都不請, 排隊等. 所以**迴圈在跑的時候下 `stock`、`status` 這種要操作畫面的指令, 就是把那輪借走**, 不是你要的就不要下. 只想看畫面, 用 `capture` 或 `repair-emulator` 的 `look.py` (`uv run --no-sync python .agents/skills/repair-emulator/scripts/look.py <資料夾>`): 都只截圖, 不佔鎖也不開任何東西, 代價是跟迴圈多搶一條 ADB.
 
 **而「上一個」不一定是你開的**, 使用者可能同時開著另一個 session. 所以**開第一個會碰模擬器的指令之前, 先讀 `~/.ai_coc/state.json`**:
 
@@ -29,7 +29,7 @@ user-invocable: false
 
 一輪進攻四到五分鐘起跳, `--repeat 0` 打到倉庫滿可能是好幾個小時. **主 session 的角色是監督, 不是執行**: 迴圈在背景跑, 你在前景讀 log、改東西、回答使用者, 他隨時插得了話. 打資源的迴圈交給一個 farm subagent 跑, 它照 `.agents/skills/takeover/references/runner.md` 在前景分段阻塞; 主 session 自己送背景的, 是 `watch-and-fix` 親自盯的迴圈跟其他會跑很久的指令.
 
-**會跑很久的都用背景送出去, 這裡是唯一一份清單**: `attack`; `donate --rounds 0`. `watch` 睡到 `--next` 才結束, 一定背景跑. 幾秒就回來的前景跑: `world`, `read`, `collect`, `capture`, `view`, `tap`, `swipe`, `confirm`; `world --go` 真的坐船約一分鐘, `status` 要走設定頁拿村莊匯出, 也約一分鐘, 都前景跑; 被借走之後開回去的那一次例外, 它可能要排隊很久. 迴圈在跑的時候, 其中會 claim 的要先等它打完那一場 (見「借, 用完還」).
+**會跑很久的都用背景送出去, 這裡是唯一一份清單**: `attack`; `donate --repeat 0`. `watch` 睡到 `--next` 才結束, 一定背景跑. 幾秒就回來的前景跑: `world`, `read`, `collect`, `capture`, `view`, `tap`, `swipe`, `confirm`; `world --day` / `--night` 真的坐船約一分鐘, `status` 要走設定頁拿村莊匯出, 也約一分鐘, 都前景跑; 被借走之後開回去的那一次例外, 它可能要排隊很久. 迴圈在跑的時候, 其中會 claim 的要先等它打完那一場 (見「借, 用完還」).
 
 **送到背景只能用 runtime 自己管的背景執行** (跑完會通知你的那一種): 它是唯一跑完會把你叫醒的開法, harness 送進對話的那個通知就是接下一步的時刻. `Start-Process`, `nohup … &`, PowerShell 的 job, 任何 shell 層的 detach 都不行: 程序照跑, 但結束時沒有東西叫醒你, 輸出跟 exit code 也回不來 (量過: 夜世界打到 `stock_full` 自己收工之後, session 就停在原地).
 
@@ -95,17 +95,17 @@ user-invocable: false
 
 **使用者說停, 停的是整件事而不是一個指令.** `state.json` 只停得下當下在跑的那個迴圈, 不知道你打算接著做什麼. 所以收到停止之後**不要再開下一個碰模擬器的指令**, 只讀倉庫的 `stock`、`status` 也算, 除非使用者又說要繼續: 叫停就是他要接手, 打資源的數字從 `ai_coc farmed` 讀, 其他的從那次執行的 `run.log` 讀. 不碰模擬器的照樣能跑 (`status --last`、`farmed`、`search`、`growth`、`note` 只讀檔案, 不會把遊戲登入). 這一條沒有機制在管, 只有你. 程式上的「黏住的停止」(停了就拒絕所有 claim, 直到一個 `ai_coc resume`) 提過, 使用者否掉了, 要的是把 skill 修好; 照 skill 走的迴圈又衝過一次停止, 才重新提.
 
-**每一步各自一次呼叫, 不要把幾步寫成一支只看 exit code 的腳本** (`world --go … && attack … && confirm …`): 在回合之間被停掉的 `attack` 照樣 exit 0, `world --go` 根本不讀叫停, 串在後面的那一步照樣開跑. 一個 subagent 這樣跑, 兩次 `ai_coc stop` 之後又刷了兩次牆、開了一場進攻.
+**每一步各自一次呼叫, 不要把幾步寫成一支只看 exit code 的腳本** (`world --day|--night … && attack … && confirm …`): 在回合之間被停掉的 `attack` 照樣 exit 0, `world --day` / `--night` 根本不讀叫停, 串在後面的那一步照樣開跑. 一個 subagent 這樣跑, 兩次 `ai_coc stop` 之後又刷了兩次牆、開了一場進攻.
 
 **`ai_coc stop` 剛好下在兩步之間就不會叫停任何指令**: 沒有指令在跑, 它只回 `現在沒有指令在跑` (有人在盯升級的話, 盯升級照樣停), subagent 的下一步照常開跑. 下 stop 的那一邊看到這句, 要馬上傳話給打資源的 subagent; 它一步一次呼叫的話, 下一步之前就收得到. **排在別人指令後面的 `--yield` 指令也停不到**: 它停在 `holds the emulator; waiting for it to finish`, 前面那個不是借用, stop 收掉前面那個之後它就開跑 (只有被取消的借用會讓排隊的不開跑). 所以佔著的不是借用時, 一樣要傳話給排在後面那個迴圈的 agent.
 
 ## 遊戲卡住, 或者根本沒開
 
-會操作畫面的指令都經過 `_controller()` 的 `ensure_coc`, 正常情況**不用自己開模擬器或遊戲** (只看的 `capture`、不帶 `--go` 的 `world`, 跟點面板的 `tap`、`swipe`、`confirm`、`boost` 例外, 模擬器沒開就報錯). 但它只處理得了「沒開」, 處理不了「開著但不理人」: 模擬器在跑、adb 也回話, 只有看畫面的人分得出來.
+會操作畫面的指令都經過 `_controller()` 的 `ensure_coc`, 正常情況**不用自己開模擬器或遊戲** (只看的 `capture`、不帶 `--day`、`--night` 的 `world`, 跟點面板的 `tap`、`swipe`、`confirm`、`boost` 例外, 模擬器沒開就報錯). 但它只處理得了「沒開」, 處理不了「開著但不理人」: 模擬器在跑、adb 也回話, 只有看畫面的人分得出來.
 
 那種時候 `ai_coc launch --restart game` 重開遊戲而不動模擬器, `--restart emulator` 連模擬器一起重開.
 
-**`launch` 三種 scope 都會等村莊畫出來再把鏡頭放好**: 輪詢到村莊畫出來 (最久三分鐘, 等不到就放棄), pinch 回最遠, 再用 `park_camera` 滑到地圖角落, 從那裡把村莊拖到畫面中間停好 (花錢買的場景拖好後會以畫面中間為準再拉近一次, 回到免費場景的大小). `LaunchReport.at_village` 說村莊有沒有出現, `outcome` 說沒出現是等到放棄 (`no_village`) 還是等的時候收到 `ai_coc stop` (`stopped`). 其他指令等得短得多, 會等村莊的最多半分鐘上下, `capture` 跟不帶 `--go` 的 `world` 不等, `world --go` 不等村莊. 所以遊戲剛開而村莊還沒出來, 修法是 `launch` 而不是重跑原本的指令.
+**`launch` 三種 scope 都會等村莊畫出來再把鏡頭放好**: 輪詢到村莊畫出來 (最久三分鐘, 等不到就放棄), pinch 回最遠, 再用 `park_camera` 滑到地圖角落, 從那裡把村莊拖到畫面中間停好 (花錢買的場景拖好後會以畫面中間為準再拉近一次, 回到免費場景的大小). `LaunchReport.at_village` 說村莊有沒有出現, `outcome` 說沒出現是等到放棄 (`no_village`) 還是等的時候收到 `ai_coc stop` (`stopped`). 其他指令等得短得多, 會等村莊的最多半分鐘上下, `capture` 跟不帶 `--day`、`--night` 的 `world` 不等, `world --day` / `--night` 不等村莊. 所以遊戲剛開而村莊還沒出來, 修法是 `launch` 而不是重跑原本的指令.
 
 log 裡的 `stopped moving after 2 swipe(s)` 是正常的. `camera was still moving` 的 warning 是鏡頭沒停好: 坐船跟收聖水車會因此收工, `launch` 的 `_settle_game` 不會 (後面點的是固定的畫面角落), 所以看到這行而指令仍回報成功不是矛盾. 攻擊迴圈開頭只拉遠不停鏡頭, 它的 run.log 裡這行只會來自夜世界的收聖水車.
 

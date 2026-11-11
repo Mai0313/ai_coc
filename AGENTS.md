@@ -16,7 +16,7 @@ The skills under `.agents/skills/` own the judgement of driving the game, and th
 
 `share-emulator` owns what every command on the one emulator shares: the lock, borrowing a loop and giving it back, how a stop works and when it is safe, which commands run in the background and how a wait ends. `.agents/skills/takeover/references/runner.md` is what the farm subagent follows.
 
-**A question about what the village has (an item's level, its max or cap, what its next level costs or takes, what is upgrading) is answered from `ai_coc search` and the newest saved export (`ai_coc status --last` for what is upgrading, `ai_coc export --last` for the rest) before `status` or the build panel**: neither touches the emulator, and `upgrades` says what each prints and when the answer has to be read fresh.
+**A question about what the village has (an item's level, its max or cap, what its next level costs or takes, what is upgrading) is answered from `ai_coc search` and the newest saved export (`ai_coc status --last` for what is upgrading, `ai_coc search --section all` for everything a village holds) before `status` or the build panel**: neither touches the emulator, and `upgrades` says what each prints and when the answer has to be read fresh.
 
 **Nothing drives the game while the user is playing on the emulator or has said not to**, no farm subagent and no takeover either, until he says so.
 
