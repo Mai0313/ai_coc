@@ -34,6 +34,7 @@ from ai_coc.models import (
     AttackSeries,
     ExportReport,
     SearchReport,
+    StatusReport,
     VillageStock,
     AttackOptions,
     CollectReport,
@@ -396,6 +397,52 @@ class DispatchTests(unittest.TestCase):
         written = (self.run.directory / "result.json").read_text(encoding="utf-8")
         assert written == found.model_dump_json(indent=2)
         assert out.getvalue() == f"{commands.search_text(found)}\n"
+
+    def test_a_status_prints_its_tables_unless_asked_for_json(self) -> None:
+        """The text is for the agent writing the report; the model stays in `result.json`."""
+        report = StatusReport(export="never_exported")
+        for line, shown in (
+            (("status",), commands.status_text(report)),
+            (("status", "--json"), report.model_dump_json(indent=2)),
+        ):
+            with (
+                patch.object(commands, "status", return_value=report),
+                patch.object(commands, "claim"),
+                patch("sys.stdout", new_callable=io.StringIO) as out,
+            ):
+                _run_command(_args(*line), self.run)
+            written = (self.run.directory / "result.json").read_text(encoding="utf-8")
+            assert written == report.model_dump_json(indent=2), line
+            assert out.getvalue() == f"{shown}\n", line
+
+    def test_the_window_reaches_the_text(self) -> None:
+        report = StatusReport(export="read_back")
+        with (
+            patch.object(commands, "status", return_value=report),
+            patch.object(commands, "answer_text", return_value="表") as shown,
+            patch("sys.stdout", new_callable=io.StringIO) as out,
+        ):
+            _run_command(_args("status", "--last", "--within", "24"), self.run)
+        shown.assert_called_once_with(report, 24)
+        assert out.getvalue() == "表\n"
+
+    def test_every_text_answer_takes_json(self) -> None:
+        for name in cli.TEXT_ANSWERS:
+            assert _args(name, *MINIMAL[name], "--json").json, name
+
+    def test_a_status_off_the_saved_export_takes_no_claim(self) -> None:
+        with (
+            patch.object(
+                commands, "status", return_value=StatusReport(export="read_back")
+            ) as read,
+            patch.object(commands, "claim") as claimed,
+            patch("sys.stdout", new_callable=io.StringIO),
+        ):
+            _run_command(_args("status", "--last"), self.run)
+            claimed.assert_not_called()
+            _run_command(_args("status"), self.run)
+            claimed.assert_called_once()
+        assert [call.args[1] for call in read.call_args_list] == [True, False]
 
     def test_a_search_for_nothing_is_refused_before_a_run_opens(self) -> None:
         with (

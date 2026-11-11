@@ -1544,20 +1544,15 @@ class StatusReport(BaseModel):
     What the export does not carry comes off the village on screen: the plates'
     idle counts, the storages, and the shield. `export` says whether the timers
     were read at all, since an empty list is also a village with nothing
-    running.
+    running. `status --last` reads the newest saved export and nothing on
+    screen, so its `builder`, `lab` and `stock` are None and its `export`
+    `read_back`.
     """
 
-    # Built on demand rather than at class definition: an annotation resolves
-    # later but a default is evaluated where it is written, and `World` is
-    # defined further down this file than any of these.
     world: World | None = None
-    builder: PlateCount = Field(
-        default_factory=lambda: PlateCount(role="builder", outcome="not_a_village")
-    )
-    lab: PlateCount = Field(
-        default_factory=lambda: PlateCount(role="lab", outcome="not_a_village")
-    )
-    stock: StockReport = Field(default_factory=StockReport)
+    builder: PlateCount | None = None
+    lab: PlateCount | None = None
+    stock: StockReport | None = None
     # None on the builder base, which has no shield plate at all rather than one
     # saying there is no shield.
     shield: ShieldState | None = None

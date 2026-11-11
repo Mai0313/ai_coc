@@ -61,6 +61,7 @@ from ai_coc.models import (
     RunnerState,
     ShieldState,
     StockReport,
+    UpgradeRole,
     ViewOutcome,
     WatchReport,
     WorldReport,
@@ -2205,15 +2206,20 @@ def stock_of(runner: ScreenRunner, adb: AdbController, display: DisplayTarget) -
     return report
 
 
-def status(frames: FrameLog) -> StatusReport:
+def status(frames: FrameLog, last: bool = False) -> StatusReport:
     """When every upgrade on both villages finishes, and what the village on screen holds.
 
     The timers come off the game's own export, worked through whatever
     speed-ups are running, so both villages are read without sailing and no
     model is asked anything. The plates' idle counts, the storages and the
     shield come off the village on screen, which is the only one that draws
-    them.
+    them. `last` reads the newest saved export instead and touches nothing,
+    which is how a report is written after a stop, when a new run would log
+    the player out.
     """
+    if last:
+        read = _last_export()
+        return _timed(StatusReport(export=read.outcome), read.export)
     adb = _controller(frames)
     # Not parked: everything below taps fixed HUD places, and the park cost
     # about 14 of a status run's 50 seconds (the user's call of 2026-11-07).
@@ -2237,20 +2243,18 @@ def status(frames: FrameLog) -> StatusReport:
         if settled is not None and builder.world is not None
         else ExportReport(outcome="no_village")
     )
-    report = StatusReport(
-        builder=builder,
-        lab=lab,
-        stock=stock_of(runner, adb, display),
-        shield=shield,
-        export=exported.outcome,
+    stock = stock_of(runner, adb, display)
+    report = _timed(
+        StatusReport(
+            world=builder.world or lab.world or stock.world,
+            builder=builder,
+            lab=lab,
+            stock=stock,
+            shield=shield,
+            export=exported.outcome,
+        ),
+        exported.export,
     )
-    if (village := exported.export) is not None:
-        report.exported_at = village.exported_at
-        report.boosts = village.boosts
-        report.timers = upgrade_timers(village)
-        report.clock_tower = clock_tower(village)
-        report.helpers = helper_cooldowns(village)
-    report.world = builder.world or lab.world or report.stock.world
     logger.info(
         "Status: %s；%s；%s；%s",
         _count_line(builder),
@@ -2259,6 +2263,186 @@ def status(frames: FrameLog) -> StatusReport:
         _shield_line(report.shield, report.world),
     )
     return report
+
+
+def _timed(report: StatusReport, village: VillageExport | None) -> StatusReport:
+    """The report with what the export says filled in: the timers, the clock tower and the helpers."""
+    if village is not None:
+        report.exported_at = village.exported_at
+        report.boosts = village.boosts
+        report.timers = upgrade_timers(village)
+        report.clock_tower = clock_tower(village)
+        report.helpers = helper_cooldowns(village)
+    return report
+
+
+# Rows of one kind and level whose upgrades end this close together are one row
+# of the report, with a count: `takeover` wakes five minutes ahead of a finish and handles
+# whatever ends inside that window in the same wake.
+MERGE_WITHIN = 5 * 60
+# The multiplication sign the reports count merged rows with, escaped for Ruff.
+TIMES = "\u00d7"
+# The counters as the reports name them, shorter than the log's `PLATE_NAMES`.
+COUNT_NAMES: dict[PlateRole, str] = {"builder": "工人", "lab": "實驗室"}
+# Whose slot each row of the table holds, which the names alone leave to guessing.
+ROLE_NAMES: dict[UpgradeRole, str] = {"builder": "工人", "lab": "實驗室", "pet": "戰寵"}
+# The Builder's Apprentice and the Lab Assistant, the two helpers that speed up
+# the upgrades the report lists; the Alchemist and the Prospector do not, and an
+# unused one reads as ready on every export.
+UPGRADE_HELPERS = (93000000, 93000001)
+
+
+def status_text(
+    report: StatusReport, now: datetime | None = None, within: int | None = None
+) -> str:
+    """The report as `takeover` and `upgrades` hand it to the user: each village, then its upgrades as a table.
+
+    **This, not the JSON, is what `status` prints**, because whoever reads its
+    stdout is an agent about to write this report; the fields stay in
+    `result.json` and behind `--json`. The 好了以後 column says what the timer's
+    row allows (continue, maxed, held back by a hall, a goblin's slot going
+    away); a choice that rests on the user's notes or the skills' order is the
+    agent's, written over it. Times are read against `now`, since `--last`
+    prints an export taken a while ago. `within` keeps the rows finishing in
+    that many hours and folds the rest into one line, as the report a stop
+    hands over lists them.
+    """
+    now = now or datetime.now().astimezone()
+    if report.exported_at is None:
+        head = f"村莊匯出沒讀到: {EXPORT_LINES[report.export].format(tag='', count=0)}"
+    else:
+        head = f"村莊匯出: {_moment(report.exported_at, now)}"
+        if report.stock is None:
+            head += " (存下的那份, 倉庫跟計數這次沒讀)"
+    shown = [head]
+    for world in ("day", "night"):
+        shown += ["", _world_line(report, world)]
+        if report.exported_at is None:
+            continue
+        rows = _timer_rows(report, world, now)
+        near = [row for row in rows if within is None or row[0] <= now + timedelta(hours=within)]
+        if near:
+            shown += ["", "| 幾點好 | 誰 | 升級中 | 好了以後 |", "| --- | --- | --- | --- |"]
+            shown += [
+                f"| {when} | {who} | {doing} | {after} |" for _, when, who, doing, after in near
+            ]
+        if later := rows[len(near) :]:
+            names = "、".join(doing for _, _, _, doing, _ in later)
+            shown += ["", f"之後還有 {names}, 最晚 {later[-1][1]}"]
+        if not rows:
+            shown.append("沒有在升的")
+        ready = [
+            helper.zh or helper.en or f"#{helper.data_id}"
+            for helper in report.helpers
+            if helper.data_id in UPGRADE_HELPERS and datetime.fromisoformat(helper.ready_at) <= now
+        ]
+        if world == "day" and ready:
+            shown += ["", f"助手: {'、'.join(ready)} 現在能派"]
+    return "\n".join(shown)
+
+
+def _world_line(report: StatusReport, world: World) -> str:
+    """A village's heading, with its storages and counters where the game was standing on it."""
+    name = WORLD_NAMES[world]
+    if report.stock is None:
+        return name
+    if report.world is None:
+        return f"{name}: 畫面不是村莊, 倉庫跟計數沒讀到"
+    if report.world != world:
+        return f"{name}: 遊戲停在{WORLD_NAMES[report.world]}, 倉庫跟計數這次沒讀"
+    stock = report.stock
+    if stock.held is None:
+        held = "倉庫讀不到"
+    else:
+        names = ("gold", "elixir", "dark") if world == "day" else ("gold", "elixir")
+        held = "、".join(
+            f"{_RESOURCE_NAMES[one]} {_wan(getattr(stock.held, one))}"
+            + (f" ({stock.filled[one]})" if one in stock.filled else "")
+            for one in names
+        )
+    counts = "、".join(
+        f"{COUNT_NAMES[count.role]} "
+        + (f"{count.free}/{count.total}" if count.outcome == "counted" else "讀不到")
+        for count in (report.builder, report.lab)
+        if count is not None
+    )
+    return f"{name}: {held}; {counts}"
+
+
+def _timer_rows(
+    report: StatusReport, world: World, now: datetime
+) -> list[tuple[datetime, str, str, str, str]]:
+    """One village's rows of the table, soonest first, the clock tower among them.
+
+    Each is the instant it finishes, then its four cells.
+    """
+    merged: list[tuple[UpgradeTimer, str, int]] = []
+    for timer in (one for one in report.timers if one.world == world):
+        after = _after(timer)
+        same = next(
+            (
+                index
+                for index, (first, said, _) in enumerate(merged)
+                if (first.data_id, first.level, said) == (timer.data_id, timer.level, after)
+                and timer.seconds - first.seconds <= MERGE_WITHIN
+            ),
+            None,
+        )
+        if same is None:
+            merged.append((timer, after, 1))
+        else:
+            first, said, count = merged[same]
+            merged[same] = (first, said, count + 1)
+    rows = [
+        (
+            done := datetime.fromisoformat(first.done_at),
+            _moment(first.done_at, now)
+            + ("" if first.role else " (沒算加速)")
+            + (" (已過)" if done <= now else ""),
+            ROLE_NAMES[first.role] if first.role else "—",
+            (first.zh or first.en or f"#{first.data_id}")
+            + (f" {TIMES}{count}" if count > 1 else "")
+            + ("" if first.level is None else f" ({first.level + 1} 級)"),
+            said,
+        )
+        for first, said, count in merged
+    ]
+    tower = report.clock_tower
+    if world == "night" and tower is not None:
+        ready = datetime.fromisoformat(tower.ready_at)
+        when = "現在" if ready <= now else _moment(tower.ready_at, now)
+        rows.append((ready, when, "—", "鐘塔冷卻結束", "開加速"))
+    return sorted(rows, key=lambda row: row[0])
+
+
+def _after(timer: UpgradeTimer) -> str:
+    """What the row allows once this upgrade is done, off the tables merged into the export."""
+    if timer.extra:
+        return "做完收回"
+    if timer.level is None or timer.max_lvl is None:
+        return "—"
+    bought = timer.level + 1
+    if bought >= timer.max_lvl:
+        return "已滿級"
+    if timer.limited_lvl is not None and bought >= timer.limited_lvl:
+        return "大本營或殿堂卡住"
+    if timer.next is None:
+        return "—"
+    return f"續升 (lv {bought} → lv {timer.next.lvl})"
+
+
+def _moment(when: str, now: datetime) -> str:
+    """`今天 18:25`, `明天 05:00`, or the date for anything further off."""
+    at = datetime.fromisoformat(when).astimezone()
+    day = {0: "今天", 1: "明天"}.get((at.date() - now.date()).days, f"{at:%m-%d}")
+    return f"{day} {at:%H:%M}"
+
+
+def _wan(amount: int) -> str:
+    """An amount in 萬, with one decimal under ten thousand, as the reports write them."""
+    if amount and abs(amount) < 10_000:
+        return f"{amount / 10_000:.1f} 萬"
+    return f"{round(amount / 10_000)} 萬"
 
 
 # One line per way a plate's count can come back, for `run.log`.
@@ -3264,6 +3448,23 @@ def _level(lvl: int | None) -> str:
 
 def _when(moment: str | None) -> str:
     return "—" if moment is None else _local(moment)
+
+
+def answer_text(answer: BaseModel, within: int | None = None) -> str | None:
+    """The text a command prints for the skill reading it, or None for one printed as its JSON.
+
+    The one place a report becomes text (`cli.TEXT_ANSWERS`); each report's own
+    wording sits beside its command. `within` is `status --within`.
+    """
+    if isinstance(answer, StatusReport):
+        return status_text(answer, within=within)
+    if isinstance(answer, GrowthReport):
+        return growth_text(answer)
+    if isinstance(answer, TurnaroundReport):
+        return turnaround_text(answer)
+    if isinstance(answer, SearchReport):
+        return search_text(answer)
+    return None
 
 
 # The build panel's rows, its tabs and every sheet a row opens are driven by the
