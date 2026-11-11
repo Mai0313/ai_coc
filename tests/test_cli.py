@@ -426,6 +426,23 @@ class DispatchTests(unittest.TestCase):
         shown.assert_called_once_with(report, 24)
         assert out.getvalue() == "表\n"
 
+    def test_an_attack_prints_what_it_brought_home_unless_asked_for_json(self) -> None:
+        """`result.json` stays the rounds, which `runner.md` reads the last of."""
+        series = AttackSeries([AttackReport(outcome="stock_full")])
+        for line, shown in (
+            (("attack",), commands.farmed_text(commands.farmed(series))),
+            (("attack", "--json"), series.model_dump_json(indent=2)),
+        ):
+            with (
+                patch.object(commands, "attack", return_value=series),
+                patch.object(commands, "claim"),
+                patch("sys.stdout", new_callable=io.StringIO) as out,
+            ):
+                _run_command(_args(*line), self.run)
+            written = (self.run.directory / "result.json").read_text(encoding="utf-8")
+            assert written == series.model_dump_json(indent=2), line
+            assert out.getvalue() == f"{shown}\n", line
+
     def test_every_text_answer_takes_json(self) -> None:
         for name in cli.TEXT_ANSWERS:
             assert _args(name, *MINIMAL[name], "--json").json, name

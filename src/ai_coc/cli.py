@@ -104,7 +104,7 @@ WITHOUT_CLAIM = (*NO_SCREEN, "capture")
 # because whoever reads their stdout is an agent about to write that report, and
 # every reshaping it did by hand was a step a skill had to spell out; a program
 # reads `result.json`, which is the model whatever the terminal was shown.
-TEXT_ANSWERS = ("status", "growth", "turnaround", "search")
+TEXT_ANSWERS = ("attack", "status", "growth", "turnaround", "search")
 
 
 # Every sub-command and the line `--help` gives it, under the heading the help

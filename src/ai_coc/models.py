@@ -1122,6 +1122,16 @@ class AttackReport(BaseModel):
     # exactly as a chosen one can, and `can_skip` — the reading it comes from —
     # is not on the report.
     forced: bool = False
+    # What the round read around it, so a series says what it brought home on
+    # its own: the storages before its search (None where it never got that
+    # far), the village's ceilings as the run read them, the builder base's
+    # cart as the last trip to it found it, and the builder base battles since
+    # that trip, whose elixir waits in the cart unread. Two rounds' storages
+    # apart is what the rounds between them won.
+    holding: VillageStock | None = None
+    capacity: StorageCapacity | None = None
+    cart: CartReport | None = None
+    since_cart: int | None = None
 
     @computed_field
     @property
@@ -1179,6 +1189,33 @@ class AttackSeries(RootModel[list[AttackReport]]):
     """
 
     root: list[AttackReport] = Field(default_factory=list)
+
+
+class FarmedVillage(BaseModel):
+    """What one attack series brought home on the village it played.
+
+    `gained` is the last storage reading less the first, None where the
+    storages never read. They are read before each round, so `uncounted` is
+    the battles fought before the first reading or after the last, whose loot
+    is in no difference. `held` and `capacity` are the last reading.
+    `cart_start` and `cart_now` are what the builder base's cart held after the
+    first trip to it and the last (0 after one that emptied it), None where
+    that trip could not say, and `cart_capacity` its ceiling where a trip read
+    one; `cart_unread` is the battles since the last trip, whose elixir is in
+    the cart and in neither reading. `ending` is how the last round ended.
+    """
+
+    world: World
+    battles: int
+    gained: VillageStock | None = None
+    uncounted: int = 0
+    held: VillageStock | None = None
+    capacity: StorageCapacity | None = None
+    cart_start: int | None = None
+    cart_now: int | None = None
+    cart_capacity: int | None = None
+    cart_unread: int = 0
+    ending: AttackOutcome
 
 
 class Patch(BaseModel):
