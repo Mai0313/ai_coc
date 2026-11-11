@@ -6567,6 +6567,10 @@ class StopAtOverrideTests(unittest.TestCase):
         ):
             runner.return_value.run.return_value = AttackReport(outcome="took_loot", phases=1)
             runner.return_value.configure_mock(played=None, holding=None, capacity=None, cart=None)
+            runner.return_value.read_storages.return_value = (
+                "day",
+                VillageStock(gold=0, elixir=0, dark=0),
+            )
             commands.attack(options, _frames(self))
         return runner.call_args.kwargs
 

@@ -1132,6 +1132,9 @@ class AttackReport(BaseModel):
     capacity: StorageCapacity | None = None
     cart: CartReport | None = None
     since_cart: int | None = None
+    # The storages read once more after this round, only on the last round of
+    # a series that ended on a battle, which no later round's `holding` reads.
+    after: VillageStock | None = None
 
     @computed_field
     @property
@@ -1195,9 +1198,10 @@ class FarmedVillage(BaseModel):
     """What one attack series brought home on the village it played.
 
     `gained` is the last storage reading less the first, None where the
-    storages never read. They are read before each round, so `uncounted` is
-    the battles fought before the first reading or after the last, whose loot
-    is in no difference. `held` and `capacity` are the last reading.
+    storages never read. They are read before each round, and once more after
+    the last when a series ends on a battle (`AttackReport.after`), so
+    `uncounted` is the battles fought before the first reading or after the
+    last, whose loot is in no difference. `held` and `capacity` are the last reading.
     `cart_now` is what the builder base's cart held after the last trip to it
     (0 after one that emptied it) and `cart_gained` what it held more than
     after the first, each None where a trip could not say, and `cart_capacity`
