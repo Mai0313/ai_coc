@@ -8,7 +8,6 @@ from collections import Counter
 
 from ai_coc.models import (
     SearchHit,
-    SearchRow,
     ClockTower,
     SearchNeed,
     LevelChange,
@@ -28,10 +27,13 @@ if TYPE_CHECKING:
         World,
         Boosts,
         ExportRow,
+        GameTable,
         GameEntity,
         UpgradeRole,
         GameEntities,
         LegacyExport,
+        SearchOptions,
+        SearchSection,
     )
 
 logger = logging.getLogger(__name__)
@@ -51,6 +53,36 @@ ROLES: dict[str, UpgradeRole] = {
     "spells": "lab",
     "siege_machines": "lab",
     "pets": "pet",
+}
+
+# Which `search --section` each export section is listed under, as the build
+# panel groups them (the user's grouping of 2026-11-12): the builders' tab
+# holds the guardians too, though `ROLES` gives them no slot. A section missing
+# here is listed under its own name.
+SECTIONS: dict[str, SearchSection] = {
+    "heroes": "builder",
+    "buildings": "builder",
+    "traps": "builder",
+    "guardians": "builder",
+    "units": "lab",
+    "spells": "lab",
+    "siege_machines": "lab",
+    "pets": "pets",
+    "equipment": "equipment",
+    "helpers": "helpers",
+}
+# The same for one the village lacks, which has only its game table to go by;
+# a siege machine is a `characters` row.
+TABLE_SECTIONS: dict[GameTable, SearchSection] = {
+    "heroes": "builder",
+    "buildings": "builder",
+    "traps": "builder",
+    "guardians": "builder",
+    "characters": "lab",
+    "spells": "lab",
+    "pets": "pets",
+    "character_items": "equipment",
+    "villager_apprentices": "helpers",
 }
 
 # The `boosts` key that speeds each slot up, and by how much. Measured on
@@ -349,19 +381,18 @@ def growth(start: VillageExport, end: VillageExport) -> list[LevelChange]:
 
 
 def search(
-    tables: GameEntities | None,
-    export: VillageExport | None,
-    query: str,
-    section: str | None = None,
-    every_row: bool = False,
+    tables: GameEntities | None, export: VillageExport | None, asked: SearchOptions
 ) -> list[SearchHit]:
-    """Every data_id named or numbered like `query`, with the player's rows of it, the owned ones first.
+    """Every data_id the query and the filters leave, with the player's rows of it, the owned ones first.
 
     An all-digit query is one exact data_id; anything else is a piece of the
-    Chinese name or, ignoring case, of the English one, and an empty one
-    matches everything. Without `section` it searches every entity of the
-    tables, plus any data_id the export holds that they lack; with it, only
-    the data_ids in that section of the export, on both villages. A troop or
+    Chinese name or, ignoring case, of the English one. A query searches every
+    entity of the tables, plus any data_id the export holds that they lack;
+    without one only what the export holds is listed. Each filter narrows
+    either the same way: `section` keeps one `SearchSection` (`all` and None
+    keep every one), `world` one village, and `skip_max_lvl` drops a data_id
+    whose every row stands at its last level, and under `every_row` each such
+    row. One held under its last level by a hall stays. A troop or
     spell the export does not hold carries what its first level needs, against the
     levels the export's rows stand at, which an export saved with older
     tables lacks in its own `halls`. Tables an older `READING` built carry
@@ -370,27 +401,40 @@ def search(
     """
     known = {entity.data_id: entity for entity in tables.entities} if tables else {}
     owned: dict[int, list[tuple[World, str, ExportRow]]] = {}
-    for world, name, row in export.rows() if export else ():
-        if section is None or name == section:
-            owned.setdefault(row.data, []).append((world, name, row))
-    ids = list(owned) if section is not None else [*known, *(i for i in owned if i not in known)]
+    for where, name, row in export.rows() if export else ():
+        owned.setdefault(row.data, []).append((where, name, row))
+    ids = [*known, *(i for i in owned if i not in known)] if asked.query else list(owned)
     current = tables is not None and tables.reading == READING
     halls = tables.halls if tables else {}
     village = _hall_levels([row for _, _, row in export.rows()], tables) if export else {}
-    hits = [
-        _hit(
+    found = []
+    for i in ids:
+        entity, rows = known.get(i), owned.get(i, [])
+        shown = [row for _, _, row in rows if not (asked.skip_max_lvl and _maxed(row, entity))]
+        if rows and not shown:
+            continue
+        hit = _hit(
             i,
-            known.get(i),
-            owned.get(i, []),
-            every_row,
-            _unlock(known.get(i), known, halls, village)
-            if current and export is not None and i not in owned
+            entity,
+            rows,
+            shown if asked.every_row else None,
+            _unlock(entity, known, halls, village)
+            if current and export is not None and not rows
             else [],
         )
-        for i in ids
-    ]
-    found = [hit for hit in hits if _named(hit, query)]
+        if (
+            asked.section in (None, "all", hit.section)
+            and asked.world in (None, hit.world)
+            and _named(hit, asked.query)
+        ):
+            found.append(hit)
     return sorted(found, key=lambda hit: (hit.count == 0, hit.data_id))
+
+
+def _maxed(row: ExportRow, entity: GameEntity | None) -> bool:
+    """Whether a row stands at the game's last level of it; False where either level is unknown."""
+    top = entity.max_lvl if entity is not None else row.max_lvl
+    return row.lvl is not None and top is not None and row.lvl >= top
 
 
 def _named(hit: SearchHit, query: str) -> bool:
@@ -423,11 +467,19 @@ def _hit(
     data_id: int,
     entity: GameEntity | None,
     rows: list[tuple[World, str, ExportRow]],
-    every_row: bool,
+    shown: list[ExportRow] | None,
     unlock: list[SearchNeed],
 ) -> SearchHit:
-    """One data_id as the tables describe it, with its rows summed up; `rows` is never empty without `entity`."""
+    """One data_id as the tables describe it, with its rows summed up; `rows` is never empty without `entity`.
+
+    `shown` is the rows it lists one by one, None when it lists none.
+    """
     named: GameEntity | ExportRow = entity if entity is not None else rows[0][2]
+    # Where its rows sit; the tables place only one the village lacks.
+    if entity is not None and not rows:
+        world, section = entity.world, TABLE_SECTIONS[entity.table]
+    else:
+        world, section = rows[0][0], SECTIONS.get(rows[0][1], rows[0][1])
     levels: Counter[int] = Counter()
     nexts: list[NextUpgrade] = []
     for _, _, row in rows:
@@ -440,7 +492,8 @@ def _hit(
         data_id=data_id,
         zh=named.zh,
         en=named.en,
-        world=entity.world if entity is not None else rows[0][0],
+        world=world,
+        section=section,
         table=entity.table if entity is not None else None,
         max_lvl=named.max_lvl,
         levels=entity.levels if entity is not None else [],
@@ -458,7 +511,7 @@ def _hit(
         ),
         next=sorted(nexts, key=lambda one: one.lvl),
         ready_at=min((row.ready_at for _, _, row in rows if row.ready_at), default=None),
-        rows=[SearchRow(world=w, section=s, row=row) for w, s, row in rows] if every_row else None,
+        rows=shown,
     )
 
 

@@ -302,11 +302,11 @@ class GameRunner(ScreenRunner):
     _settled: bool = PrivateAttr(default=False)
     # Whether `_home` gave up because the game is on the builder base, which is
     # the one reason for no village that a report names on its own.
-    _builder_base: bool = PrivateAttr(default=False)
+    _on_night: bool = PrivateAttr(default=False)
 
-    def _lost(self) -> Literal["builder_base", "no_village"]:
+    def _lost(self) -> Literal["on_night", "no_village"]:
         """Why the first `_home` found nothing to work on, as a report names it."""
-        return "builder_base" if self._builder_base else "no_village"
+        return "on_night" if self._on_night else "no_village"
 
     def _settle_zoom(self, world: World | None) -> None:
         """Put the camera back at the far zoom, once per village these loops see.
@@ -500,7 +500,7 @@ class GameRunner(ScreenRunner):
             # ordinary empty one.
             #
             # **It stops there rather than sailing**, because no command sails
-            # on its own: crossing is `ai_coc world --go`, so whoever started a
+            # on its own: crossing is `ai_coc world --day` / `--night`, so whoever started a
             # command knows which village it left the game on. This used to
             # cross, which moved the game to the other village under five
             # commands without any of them saying so. Two readings in a row
@@ -511,9 +511,9 @@ class GameRunner(ScreenRunner):
                 if night:
                     logger.warning(
                         "The game is on the builder base and this works on the home village; "
-                        "`ai_coc world --go day` changes villages"
+                        "`ai_coc world --day` changes villages"
                     )
-                    self._builder_base = True
+                    self._on_night = True
                     return None
                 night = True
                 continue

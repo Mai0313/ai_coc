@@ -13,7 +13,7 @@ import os
 import json
 import math
 import time
-from typing import TYPE_CHECKING, get_args
+from typing import TYPE_CHECKING, Literal, get_args
 from pathlib import Path
 from datetime import UTC, date, datetime, timedelta
 import tempfile
@@ -76,6 +76,7 @@ from ai_coc.models import (
     ExportOutcome,
     GrowthOutcome,
     LaunchOutcome,
+    SearchOptions,
     SearchOutcome,
     SurveyOutcome,
     VillageExport,
@@ -99,7 +100,7 @@ from ai_coc.parsers.gamedata import READING, GameDataError
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from ai_coc.models import World
+    from ai_coc.models import World, SearchReport, SearchSection
 
 FRAMES = Path(__file__).parent / "frames"
 
@@ -424,7 +425,7 @@ class StockCommandTests(unittest.TestCase):
         assert report.filled == {"gold": "25%"}
 
     def test_it_never_crosses_to_the_other_village(self) -> None:
-        """Sailing is `world --go`, and a status check that moves the game is not one."""
+        """Sailing is `world --day` / `--night`, and a status check that moves the game is not one."""
         with patch.object(commands, "cross") as sailed:
             self._stock("night", VillageStock(gold=1, elixir=1, dark=0), StorageCapacity(gold=2))
         sailed.assert_not_called()
@@ -804,7 +805,7 @@ class CollectCommandTests(unittest.TestCase):
             ) as cart,
             patch.object(commands, "UpkeepRunner") as runner,
         ):
-            runner.return_value.collect.return_value = CollectReport(outcome="builder_base")
+            runner.return_value.collect.return_value = CollectReport(outcome="on_night")
             report = commands.collect(_frames(self))
         cart.assert_called_once_with(adb, DISPLAY)
         assert (report.outcome, report.elixir) == ("cart", 5)
@@ -851,7 +852,7 @@ class CollectCommandTests(unittest.TestCase):
             "locked_empty": "推車是空的",
             "not_found": "三個候選點",
             "not_parked": "鏡頭沒辦法停回定位",
-            "wrong_world": "不在建築大師基地",
+            "not_night": "不在夜世界",
             "unreadable": "有一邊的儲量條讀不到",
         }
         assert set(own) == set(get_args(CartOutcome))
@@ -944,7 +945,7 @@ class UpkeepLineTests(unittest.TestCase):
                 "collected": "收了",
                 "nothing_to_collect": "沒有採集器等著收",
                 "no_village": "收集沒有開始",
-                "builder_base": "主村的採集器沒有收",
+                "on_night": "日世界的採集器沒有收",
                 "stock_unread": "讀不到儲量",
             },
             tuple(one for one in get_args(CollectOutcome) if one != "cart"),
@@ -967,7 +968,7 @@ class UpkeepLineTests(unittest.TestCase):
                 "nobody_asking": "沒有人在請求增援",
                 "panel_shut": "捐贈畫面沒有打開",
                 "no_village": "捐兵沒有開始",
-                "builder_base": "捐兵只在主村",
+                "on_night": "捐兵只在日世界",
             },
             get_args(DonateOutcome),
         )
@@ -1025,7 +1026,7 @@ class UpkeepLineTests(unittest.TestCase):
             commands.BOOST_LINES,
             {
                 "boosted": "鐘塔開始加速",
-                "not_builder_base": "遊戲不在夜世界",
+                "not_night": "遊戲不在夜世界",
                 "not_ready": "沒有鐘塔能開的時鐘標記",
                 "no_free_boost": "找不到沒標價的免費加速鈕",
                 "not_taken": "加速沒有生效",
@@ -1070,10 +1071,9 @@ class UpkeepLineTests(unittest.TestCase):
             commands.SEARCH_LINES,
             {
                 "found": "找到",
-                "no_match": "沒有名稱或 data_id 符合",
+                "no_match": "沒有符合的",
                 "no_tables": "ai_coc gamedata",
                 "no_export": "還沒有存下村莊匯出",
-                "no_section": "沒有這一區",
             },
             get_args(SearchOutcome),
         )
@@ -1522,6 +1522,17 @@ class FarmedRunsTests(unittest.TestCase):
 
     def test_a_round_line_written_before_the_reports_carried_storages_still_counts(self) -> None:
         self._run("r1", "10:00", [("took_loot", (1, 1, 1)), ("stock_full", (3, 3, 3))], old=True)
+        [day] = self._farmed(by="s1").villages
+        assert day.gained == VillageStock(gold=2, elixir=2, dark=2)
+
+    def test_a_round_line_carrying_the_carts_old_outcome_still_counts(self) -> None:
+        """`not_night` was written `wrong_world`, and a line that no longer parses is left out of the sum."""
+        self._run(
+            "r1",
+            "10:00",
+            [("took_loot", (1, 1, 1)), ("stock_full", (3, 3, 3))],
+            cart={"outcome": "wrong_world"},
+        )
         [day] = self._farmed(by="s1").villages
         assert day.gained == VillageStock(gold=2, elixir=2, dark=2)
 
@@ -2827,10 +2838,7 @@ class PressAndConfirmTests(unittest.TestCase):
 
     def test_a_boost_is_not_tried_where_its_marker_is_not(self) -> None:
         """Off the builder base, or on it while the boost cools down and costs gems."""
-        for frame, outcome in (
-            ("hud_day.png", "not_builder_base"),
-            ("hud_night.png", "not_ready"),
-        ):
+        for frame, outcome in (("hud_day.png", "not_night"), ("hud_night.png", "not_ready")):
             adb, report = self._run([frame], commands.boost)
             adb.tap.assert_not_called()
             assert report.outcome == outcome, frame  # type: ignore[attr-defined]
@@ -3419,13 +3427,13 @@ class SurveyRunnerTests(unittest.TestCase):
             patch.object(commands, "_BoundarySurvey") as probe,
             patch.object(commands, "_MapSurvey") as bounds,
         ):
-            assert commands.probe(_frames(self)).outcome == "builder_base"
-            assert commands.bounds(_frames(self)).outcome == "builder_base"
+            assert commands.probe(_frames(self)).outcome == "on_night"
+            assert commands.bounds(_frames(self)).outcome == "on_night"
         probe.assert_not_called()
         bounds.assert_not_called()
 
     def test_every_survey_outcome_has_a_line_of_its_own(self) -> None:
-        own = {"surveyed": "量完了", "builder_base": "遊戲停在夜世界"}
+        own = {"surveyed": "量完了", "on_night": "遊戲停在夜世界"}
         assert set(own) == set(get_args(SurveyOutcome))
         for outcome, fragment in own.items():
             assert fragment in commands.SURVEY_LINES[outcome], outcome
@@ -3710,6 +3718,25 @@ def _tower(data_id: int, zh: str, en: str, world: World, max_lvl: int) -> GameEn
     )
 
 
+def _search(
+    query: str = "",
+    section: SearchSection | Literal["all"] | None = None,
+    world: World | None = None,
+    skip_max_lvl: bool = False,
+    every_row: bool = False,
+) -> SearchReport:
+    """`commands.search` asked for `query` under whichever filters are named."""
+    return commands.search(
+        SearchOptions(
+            query=query,
+            section=section,
+            world=world,
+            skip_max_lvl=skip_max_lvl,
+            every_row=every_row,
+        )
+    )
+
+
 class SearchTests(unittest.TestCase):
     """`search` over tables and an export kept in the test's own directories, which conftest points the code at."""
 
@@ -3791,34 +3818,36 @@ class SearchTests(unittest.TestCase):
     })
     AT = 1793534400
 
-    def _keep(self, tables: bool = True, export: bool = True) -> None:
+    def _keep(
+        self, tables: bool = True, export: bool = True, document: VillageDocument = DOCUMENT
+    ) -> None:
         if tables:
             folder = gamedata.GAME_DATA_DIR / "1.2.3"
             folder.mkdir(parents=True)
             (folder / "entities.json").write_text(self.TABLES.model_dump_json(), encoding="utf-8")
         if export:
-            village = merge(self.DOCUMENT, self.TABLES, self.AT)
+            village = merge(document, self.TABLES, self.AT)
             path = commands.ACCOUNT_JSON_DIR / "#TEST_2026-11-01.json"
             path.write_text(village.model_dump_json(), encoding="utf-8")
 
     def test_a_number_is_one_data_id_and_anything_else_a_piece_of_either_name(self) -> None:
         self._keep()
         for query in ("4000059", "雷電飛龍", "電飛", "electro DRAGON"):
-            assert [hit.data_id for hit in commands.search(query).hits] == [4000059], query
+            assert [hit.data_id for hit in _search(query).hits] == [4000059], query
         # Every hit, the player's own first: the night tower and the Multi-Archer
         # Tower are owned, the home village's tower is not.
-        found = commands.search("箭塔")
+        found = _search("箭塔")
         assert (found.outcome, [hit.data_id for hit in found.hits]) == (
             "found",
             [1000048, 1000084, 1000009],
         )
         assert (found.game_version, found.tag) == ("1.2.3", "#TEST")
         # A number is never a piece of a name or of another number.
-        assert commands.search("40000").outcome == "no_match"
+        assert _search("40000").outcome == "no_match"
 
     def test_the_players_rows_of_one_data_id_are_summed_up(self) -> None:
         self._keep()
-        [owned] = commands.search("多人箭塔").hits
+        [owned] = _search("多人箭塔").hits
         assert (owned.count, owned.owned, owned.limited_lvl, owned.rows) == (
             5,
             {2: 4, 3: 1},
@@ -3838,39 +3867,116 @@ class SearchTests(unittest.TestCase):
             (4, {"gold": 400}),
         ]
         assert len(owned.levels) == 4
-        unowned = commands.search("1000009").hits[0]
+        unowned = _search("1000009").hits[0]
         assert (unowned.count, unowned.owned, unowned.upgrading, unowned.next) == (0, {}, [], [])
         assert unowned.levels == self.TABLES.entities[0].levels
 
-    def test_all_gives_every_row_with_its_own_level_timer_and_slot(self) -> None:
+    def test_rows_gives_every_row_with_its_own_level_timer_and_slot(self) -> None:
         self._keep()
-        [owned] = commands.search("Multi-Archer", every_row=True).hits
+        [owned] = _search("Multi-Archer", every_row=True).hits
         assert owned.rows is not None
-        assert [
-            (one.world, one.section, one.row.lvl, one.row.cnt, one.row.timer, one.row.extra)
-            for one in owned.rows
-        ] == [
-            ("day", "buildings", 2, 2, None, None),
-            ("day", "buildings", 3, None, 600, True),
-            ("day", "buildings", 2, None, 60, None),
-            ("day", "buildings", 2, None, 300, None),
+        assert [(row.lvl, row.cnt, row.timer, row.extra) for row in owned.rows] == [
+            (2, 2, None, None),
+            (3, None, 600, True),
+            (2, None, 60, None),
+            (2, None, 300, None),
         ]
-        assert all(one.row.done_at for one in owned.rows if one.row.timer)
+        assert all(row.done_at for row in owned.rows if row.timer)
 
-    def test_a_section_lists_that_section_on_both_villages_and_a_query_narrows_it(self) -> None:
+    def test_a_section_lists_what_the_village_holds_of_it_on_both_villages(self) -> None:
         self._keep()
-        [helper] = commands.search("", section="helpers").hits
-        assert (helper.data_id, helper.ready_at is not None) == (93000000, True)
-        towers = commands.search("箭塔", section="buildings")
-        assert [hit.data_id for hit in towers.hits] == [1000048, 1000084]
-        assert commands.search("", section="buildings").outcome == "found"
+        [helper] = _search("", section="helpers").hits
+        assert (helper.data_id, helper.section, helper.ready_at is not None) == (
+            93000000,
+            "helpers",
+            True,
+        )
+        # The town hall, which the tables lack, is placed by where its row sits.
+        built = _search("", section="builder")
+        assert [(hit.data_id, hit.world) for hit in built.hits] == [
+            (1000001, "day"),
+            (1000040, "night"),
+            (1000048, "night"),
+            (1000084, "day"),
+        ]
+        assert [hit.data_id for hit in _search("", section="lab").hits] == [4000059]
+        everything = _search("", section="all").hits
+        assert len(everything) == 6
+        assert {hit.section for hit in everything} == {"builder", "lab", "helpers"}
+
+    def test_every_filter_narrows_a_listing_and_a_query_the_same_way(self) -> None:
+        self._keep()
+        # A query reaches the tower the village lacks, inside the section asked for.
+        towers = _search("箭塔", section="builder")
+        assert [hit.data_id for hit in towers.hits] == [1000048, 1000084, 1000009]
+        night = _search("箭塔", section="builder", world="night")
+        assert [hit.data_id for hit in night.hits] == [1000048]
+        assert _search("箭塔", section="lab").outcome == "no_match"
+        listed = _search("", section="all", world="night")
+        assert [hit.data_id for hit in listed.hits] == [1000040, 1000048]
+        # One the village lacks is placed by its game table.
+        [wrecker] = _search("4000051").hits
+        assert (wrecker.world, wrecker.section) == ("day", "lab")
+        asked = _search("", section="pets", world="day", skip_max_lvl=True)
+        assert (asked.outcome, asked.section, asked.world, asked.skip_max_lvl) == (
+            "no_match",
+            "pets",
+            "day",
+            True,
+        )
+
+    def test_skip_max_lvl_drops_a_kind_only_when_every_copy_is_at_its_last_level(self) -> None:
+        document = VillageDocument.model_validate({
+            "tag": "#TEST",
+            "buildings": [
+                {"data": 1000009, "lvl": 5},
+                {"data": 1000009, "lvl": 4},
+                {"data": 1000059, "lvl": 9},
+                # The tables lack it, so nothing says where it tops out.
+                {"data": 1000001, "lvl": 3},
+            ],
+            "helpers": [{"data": 93000000, "lvl": 8}],
+        })
+        self._keep(document=document)
+        kept = _search("", section="all", skip_max_lvl=True)
+        assert [hit.data_id for hit in kept.hits] == [1000001, 1000009]
+        # Summed up the kind stays whole; row by row it loses the one at its last level.
+        assert kept.hits[1].owned == {4: 1, 5: 1}
+        [tower] = _search("1000009", skip_max_lvl=True, every_row=True).hits
+        assert tower.rows is not None
+        assert [row.lvl for row in tower.rows] == [4]
+        # One the village lacks has no level to stand at.
+        assert _search("多人箭塔", skip_max_lvl=True).hits[0].count == 0
+
+    def test_one_held_under_its_last_level_by_a_hall_is_not_skipped(self) -> None:
+        self._keep()
+        # Its level 3 cannot buy 4 under a town hall 3, and 4 is still its last level.
+        [towers] = _search("多人箭塔", skip_max_lvl=True, every_row=True).hits
+        assert towers.rows is not None
+        assert (towers.limited_lvl, towers.max_lvl, [row.lvl for row in towers.rows]) == (
+            3,
+            4,
+            [2, 3, 2, 2],
+        )
+
+    def test_a_section_this_code_has_not_heard_of_is_listed_under_its_own_name(self) -> None:
+        document = VillageDocument.model_validate({
+            "tag": "#TEST",
+            "gizmos": [{"data": 99000001, "lvl": 1}],
+        })
+        self._keep(document=document)
+        report = _search("", section="all")
+        assert [hit.section for hit in report.hits] == ["gizmos"]
+        assert "-- gizmos --" in commands.search_text(report)
+        assert _search("", section="builder").outcome == "no_match"
 
     def test_a_data_id_the_tables_lack_is_still_found_with_what_its_row_says(self) -> None:
         self._keep()
-        [hit] = commands.search("1000001").hits
-        assert (hit.zh, hit.world, hit.table, hit.count, hit.owned) == (
+        [hit] = _search("1000001").hits
+        assert (hit.zh, hit.world, hit.section, hit.table, hit.count, hit.owned) == (
             None,
             "day",
+            "builder",
             None,
             1,
             {3: 1},
@@ -3878,25 +3984,27 @@ class SearchTests(unittest.TestCase):
 
     def test_a_section_needs_an_export_and_no_tables(self) -> None:
         self._keep(tables=False)
-        report = commands.search("", section="units")
+        report = _search("", section="lab")
         assert (report.outcome, report.game_version) == ("found", None)
         # The names were merged into the export when it was saved.
         assert report.hits[0].zh == "雷電飛龍"
+        # So a name can be looked for inside one, though not across the tables.
+        assert _search("雷電", section="lab").outcome == "found"
+        assert _search("雷電").outcome == "no_tables"
 
     def test_each_way_a_search_finds_nothing_is_named(self) -> None:
-        assert commands.search("箭塔").outcome == "no_tables"
-        assert commands.search("", section="helpers").outcome == "no_export"
+        assert _search("箭塔").outcome == "no_tables"
+        assert _search("箭塔", section="builder").outcome == "no_tables"
+        assert _search("", section="helpers").outcome == "no_export"
         self._keep()
-        nothing = commands.search("不存在的東西")
+        nothing = _search("不存在的東西")
         assert (nothing.outcome, nothing.hits) == ("no_match", [])
-        wrong = commands.search("", section="helper")
-        assert (wrong.outcome, wrong.sections) == ("no_section", ["buildings", "helpers", "units"])
-        assert "buildings, helpers, units" in commands.search_text(wrong)
 
     def test_without_an_export_the_tables_are_still_searched(self) -> None:
         self._keep(export=False)
-        report = commands.search("箭塔")
+        report = _search("箭塔")
         assert (report.outcome, report.exported_at, len(report.hits)) == ("found", None, 3)
+        assert len(_search("箭塔", section="builder", world="day").hits) == 2
         text = commands.search_text(report)
         assert "沒有存下村莊匯出" in text
         # No export was read, so nothing is said about what the village has.
@@ -3904,8 +4012,8 @@ class SearchTests(unittest.TestCase):
 
     def test_the_text_says_what_is_owned_and_that_prices_are_list_prices(self) -> None:
         self._keep()
-        text = commands.search_text(commands.search("箭塔"))
-        assert "多人箭塔 / Multi-Archer Tower  #1000084  日世界 buildings  滿級 4" in text
+        text = commands.search_text(_search("箭塔"))
+        assert "多人箭塔 / Multi-Archer Tower  #1000084  buildings  滿級 4" in text
         assert "  有 5 個: 2 級 4 個, 3 級 1 個" in text
         assert "  3 級在升級, " in text
         assert "(哥布林那格)" in text
@@ -3913,12 +4021,33 @@ class SearchTests(unittest.TestCase):
         assert "  下一次 4 級 400 金幣, 4 分鐘 (上限 3 級)" in text
         assert "  下一次 3 級 300 金幣, 3 分鐘\n" in text
         # A building's first level is not said to unlock it.
-        assert "箭塔 / Archer Tower  #1000009  日世界 buildings  滿級 5\n  村莊裡沒有\n" in text
+        assert "箭塔 / Archer Tower  #1000009  buildings  滿級 5\n  村莊裡沒有\n" in text
         assert text.endswith(commands.LIST_PRICE)
-        every = commands.search_text(commands.search("多人箭塔", every_row=True))
-        assert "  日世界  buildings  3 級 1 個  在升級, " in every
-        assert "  日世界  buildings  2 級 2 個  下一次 3 級 300 金幣, 3 分鐘" in every
-        assert " 能再派" in commands.search_text(commands.search("", section="helpers"))
+        every = commands.search_text(_search("多人箭塔", every_row=True))
+        assert "\n  3 級 1 個  在升級, " in every
+        assert "\n  2 級 2 個  下一次 3 級 300 金幣, 3 分鐘" in every
+        assert " 能再派" in commands.search_text(_search("", section="helpers"))
+
+    def test_the_text_gives_each_village_a_block_of_its_own_split_by_section(self) -> None:
+        self._keep()
+        text = commands.search_text(_search("", section="all"))
+        day, night = text.index("== 日世界 =="), text.index("== 夜世界 ==")
+        builder, lab, helpers = (
+            text.index(f"-- {name} --")
+            for name in ("工人 (builder)", "實驗室 (lab)", "助手 (helpers)")
+        )
+        assert day < builder < lab < helpers < night < text.index("-- 工人 (builder) --", night)
+        # The Builder Barracks is the night village's, the Multi-Archer Tower the day's.
+        assert day < text.index("多人箭塔") < night < text.index("建築大師訓練營 /")
+        # Both villages unless one is asked for, and an empty one says so.
+        helped = commands.search_text(_search("", section="helpers"))
+        assert helped.index("== 夜世界 ==") < helped.index("\n沒有符合的\n")
+        only = commands.search_text(_search("", section="helpers", world="day"))
+        assert ("== 日世界 ==" in only, "夜世界" in only) == (True, False)
+        head = commands.search_text(
+            _search("箭塔", section="builder", world="night", skip_max_lvl=True)
+        ).splitlines()[0]
+        assert head == "找 「箭塔」 --section builder --night --skip-max-lvl: 找到 1 種"
 
     def test_one_the_village_lacks_says_what_unlocks_it_and_where_the_village_stands(self) -> None:
         self._keep()
@@ -3927,26 +4056,26 @@ class SearchTests(unittest.TestCase):
         path = commands.ACCOUNT_JSON_DIR / "#TEST_2026-11-01.json"
         saved = VillageExport.model_validate_json(path.read_text(encoding="utf-8"))
         path.write_text(saved.model_copy(update={"halls": {}}).model_dump_json(), encoding="utf-8")
-        [glider] = commands.search("飛豬騎士").hits
+        [glider] = _search("飛豬騎士").hits
         assert glider.unlock == [
             SearchNeed(hall="builder_barracks", zh="建築大師訓練營", lvl=11, village=10)
         ]
-        assert commands.search("多人箭塔").hits[0].unlock == []
-        text = commands.search_text(commands.search("騎士"))
+        assert _search("多人箭塔").hits[0].unlock == []
+        text = commands.search_text(_search("騎士"))
         assert (
-            "飛豬騎士 / Hog Glider  #4000070  夜世界 characters  滿級 16\n"
+            "飛豬騎士 / Hog Glider  #4000070  characters  滿級 16\n"
             "  村莊裡沒有, 解鎖要 建築大師訓練營 11 級 (村莊裡 10 級)\n"
         ) in text
-        text = commands.search_text(commands.search("4000051"))
+        text = commands.search_text(_search("4000051"))
         assert "  村莊裡沒有, 解鎖要 攻城機器工坊 1 級 (村莊裡還沒有)\n" in text
         # Nothing in the tables unlocks it, so nothing is said.
-        text = commands.search_text(commands.search("地獄飛龍"))
+        text = commands.search_text(_search("地獄飛龍"))
         assert "  村莊裡沒有\n" in text
         # Tables an older reading built name the laboratory there, so they unlock nothing.
         older = self.TABLES.model_copy(update={"reading": READING - 1})
         kept = gamedata.GAME_DATA_DIR / "1.2.3" / "entities.json"
         kept.write_text(older.model_dump_json(), encoding="utf-8")
-        assert commands.search("飛豬騎士").hits[0].unlock == []
+        assert _search("飛豬騎士").hits[0].unlock == []
 
 
 class StorageCeilingTests(unittest.TestCase):

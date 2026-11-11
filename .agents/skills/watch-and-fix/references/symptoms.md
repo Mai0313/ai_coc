@@ -15,7 +15,7 @@
 **`launch` 等村莊** (`_settle_game`) 有兩處會出錯:
 
 - **等太短.** 冷開機時間差很多, `RESTART_POLLS` 照最壞情況抓; 每次 poll 在 DEBUG 寫下還在等什麼 (要 `launch --debug`, 每次 poll 看到的畫面也會留下), 平常只看得到放棄那一行冒號後面的最後狀態.
-- **等的是畫完而不是哪個村莊.** `_settle_game` 只問 `current_world` 讀不讀得出 (不用 `read_stock`, 它在兩個世界都答得出來, 分不出是哪一個), 兩個世界都算; 落在另一邊 attack 回 `other_village`, 主村指令回 `builder_base`. 載入時倉庫水位是從零跑上來的動畫, 那時讀到的數字不能回報.
+- **等的是畫完而不是哪個村莊.** `_settle_game` 只問 `current_world` 讀不讀得出 (不用 `read_stock`, 它在兩個世界都答得出來, 分不出是哪一個), 兩個世界都算; 落在另一邊 attack 回 `other_village`, 日世界的指令回 `on_night`. 載入時倉庫水位是從零跑上來的動畫, 那時讀到的數字不能回報.
 
 ## 開不了攻擊選單
 
@@ -38,7 +38,7 @@
 
 ## 坐船沒坐成
 
-**症狀**: `ai_coc world --go night` 回「畫面還停在不明的畫面」, 或整輪在打錯的村莊.
+**症狀**: `ai_coc world --night` 回「畫面還停在不明的畫面」, 或整輪在打錯的村莊.
 
 沒有判讀器找船本身 (活動會換造型, 主村換場景船就換地方停), 找的是遊戲浮在主村船上方的標誌 (`boat_marker`): 先在置中的停法上找, 那裡船靠左下角按鈕, 標誌常被擋住 (log 的 `No marker over the boat on the centred view`), 找不到就把相機推到地圖角落夾住再找, 點標誌, 再看世界變了沒. 花錢買的場景拉到最遠時遊戲不畫任何標誌, 所以角落那一次看不到船的標誌就拉近一次 (`BOUGHT_PINCH`), 回到免費場景停好的大小跟位置 (log 的 `The far zoom drew no boat marker`). 停好後還是沒有標誌才點量過的固定像素, 而那些像素只在量的那個場景上對. 夜世界的標誌被右側按鈕列蓋住, 那邊也沒有場景可換, 直接點固定像素. log 的 `The boat's marker is at` 跟 `No marker over the boat` 說走的是哪一條. `park_camera` 滑到 `view_shift` 連兩次回 (0, 0) 為止; `camera was still moving` 的 warning 要查的是鏡頭, 不是船的座標. 它先 pinch 再滑, 因為拉近時 `view_shift` 沒東西可比而回 None. 在最遠處主村一下就滑到底, 夜世界根本滑不動, 而要連兩次沒動才算停, 所以 `stopped moving after 2 swipe(s)` (主村從別處滑過來是 3) 是正常的.
 
@@ -221,4 +221,4 @@ log 的 `The camera was not at the far zoom` 量的是拉遠之前的鏡頭, 只
 只能看 log 的兩件:
 
 - **第二階段**: 第一場打到 100% 才可能有, 不是每次. `_wait_out_night` 看卡片列的數量角被重畫 (`0x` 變回倖存兵數) 就算這階段結束, 但選取框剛換過的卡不算 (按技能會移動選取框, 角落也跟著重畫, 曾經在第二階段還在倒數時就誤判結束), `_next_stage` 分辨結算還是下一階段. log 依序是 `The card row was repainted; this stage is over` 跟 `共出兵 2 次`.
-- **聖水沒入庫不是 bug**: 夜世界聖水進推車, 看 `The loot cart paid N elixir`. 沒那行就看 `CartReport.outcome`: **`locked_holding`** 是車上有東西領不出來 (`held` 是面板數字), 幾乎一定是聖水倉庫滿了; **`locked_empty`** 是車空; **`locked`** 是按鈕灰而數字讀不到. 數字**要先確認面板開著才能讀** (卡片 `xN` 角落壓在同一排). `not_found` 是車上的標記底下跟三個候選點都沒點開 (車空的時候沒有標記, 只試三個點), `wrong_world` 是不在夜世界.
+- **聖水沒入庫不是 bug**: 夜世界聖水進推車, 看 `The loot cart paid N elixir`. 沒那行就看 `CartReport.outcome`: **`locked_holding`** 是車上有東西領不出來 (`held` 是面板數字), 幾乎一定是聖水倉庫滿了; **`locked_empty`** 是車空; **`locked`** 是按鈕灰而數字讀不到. 數字**要先確認面板開著才能讀** (卡片 `xN` 角落壓在同一排). `not_found` 是車上的標記底下跟三個候選點都沒點開 (車空的時候沒有標記, 只試三個點), `not_night` 是不在夜世界.

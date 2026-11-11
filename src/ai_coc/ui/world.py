@@ -118,7 +118,7 @@ CROSSINGS: dict[World, Crossing] = {
 # builder base animates, and measured live an already-parked home village spent
 # three swipes where two would have done. Every such reading resets `still`, and
 # **a spurious False is expensive** — `cross` returns without tapping, and
-# `ai_coc world --go` reports a crossing that never happened. What ten buys
+# `ai_coc world --day` / `--night` reports a crossing that never happened. What ten buys
 # depends on where the bad readings fall: seven in a row still leave a clean
 # pair at the end, while five alternating with zeros leave no adjacent pair at
 # all.
@@ -518,7 +518,7 @@ def collect_cart(adb: AdbController, display: DisplayTarget) -> CartReport:
         # it — and a sentence about
         # three candidate spots would be describing taps that never happened.
         logger.info("The loot cart is the builder base's; there is none here")
-        return CartReport(outcome="wrong_world")
+        return CartReport(outcome="not_night")
     # The cart is moored beside this village's own boat, so the view that finds
     # it is the parked one — the same push `park_camera` makes, which is why
     # this asks for it rather than repeating the swipes. **Nothing puts the zoom
@@ -630,7 +630,7 @@ def uncovered(adb: AdbController, display: DisplayTarget) -> World | None:
     swipes and taps that come after it, which is how one missed spot used to
     cost the whole crossing and the two remaining candidates with it. Measured
     live: a `collect` run left an 8級聖水收集器 panel up, and `ai_coc world
-    --go night` then reported 畫面還停在不明的畫面 twice in a row without
+    --night` then reported 畫面還停在不明的畫面 twice in a row without
     moving anything.
 
     **A battle is never pressed at**, and that is the whole reason this filters

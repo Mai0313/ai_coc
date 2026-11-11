@@ -33,13 +33,13 @@ from ai_coc.models import (
     FrameLog,
     ProbeRay,
     AppConfig,
+    ExportRow,
     LockEvent,
     LostLogin,
     MapSurvey,
     NightPlan,
     PlateRole,
     SearchHit,
-    SearchRow,
     StateFile,
     AttackPlan,
     CartReport,
@@ -98,7 +98,9 @@ from ai_coc.models import (
     GrowthOutcome,
     JournalTimers,
     LaunchOutcome,
+    SearchOptions,
     SearchOutcome,
+    SearchSection,
     SurveyOutcome,
     TendedUpgrade,
     VillageExport,
@@ -1040,7 +1042,7 @@ def claim(
 
     **A yielding claim** (`--yield`, the farming loops) is background work: it
     stands nobody down, and waits until nothing holds the emulator and no loan
-    stands (`_queue`), so starting again after a loan, or a `world --go`
+    stands (`_queue`), so starting again after a loan, or a crossing
     between rounds, never takes the emulator back off whoever borrowed it. Any
     other claim may borrow from it, and never queues behind a loan, so a
     borrower's own next command is not locked out. `ai_coc stop` cancelling the
@@ -1663,7 +1665,7 @@ ROUND_LINES: dict[AttackOutcome, str] = {
     "server_loading": "遊戲卡在載入畫面,伺服器可能連不上,這一輪停手",
     "server_flapping": "遊戲又回到載入畫面,伺服器可能還連不上,這一輪停手",
     "emulator_silent": "模擬器沒有回應",
-    "other_village": "遊戲停在另一個村莊,這一批不打那邊;換村莊用 ai_coc world --go",
+    "other_village": "遊戲停在另一個村莊,這一批不打那邊;換村莊用 ai_coc world --day 或 --night",
     "session_taken": "另一部裝置登入了這個帳號,沒有把登入搶回來,停止刷資源",
 }
 
@@ -2068,7 +2070,7 @@ def attack(
     worth repeating can be repeated and one worth arguing with can be edited.
     A plan is written for one village, so the series plays that one and ends
     at once on the other. Without a plan it plays whichever the game is on, and
-    in neither case does it sail: crossing is `ai_coc world --go`.
+    in neither case does it sail: crossing is `ai_coc world --day` / `--night`.
 
     `rounds` of 0 keeps going until it is stopped, which is what watching the
     loop play needs: a tactic is judged over a run of battles rather than one,
@@ -2159,7 +2161,7 @@ def attack(
 # run there, one would walk the menus of a village it cannot fight on.
 SURVEY_LINES: dict[SurveyOutcome, str] = {
     "surveyed": "量完了:{result}",
-    "builder_base": "遊戲停在夜世界,量的是主村的戰場;要量先跑 ai_coc world --go day",
+    "on_night": "遊戲停在夜世界,量的是日世界的戰場;要量先跑 ai_coc world --day",
 }
 
 
@@ -2249,7 +2251,7 @@ def probe(frames: FrameLog) -> BoundarySurvey:
     """
     adb, display = _session(frames)
     if _village_now(adb, display) == "night":
-        survey = BoundarySurvey(outcome="builder_base")
+        survey = BoundarySurvey(outcome="on_night")
         logger.warning("Boundary survey: %s", SURVEY_LINES[survey.outcome])
         return survey
     runner = _BoundarySurvey(adb=adb, display=display, thresholds=LootThresholds())
@@ -2343,7 +2345,7 @@ def bounds(frames: FrameLog) -> MapSurvey:
     """Spend a battle finding where the map really ends, and fit a diamond to it."""
     adb, display = _session(frames)
     if _village_now(adb, display) == "night":
-        survey = MapSurvey(outcome="builder_base")
+        survey = MapSurvey(outcome="on_night")
         logger.warning("Map survey: %s", SURVEY_LINES[survey.outcome])
         return survey
     runner = _MapSurvey(adb=adb, display=display, thresholds=LootThresholds())
@@ -2365,7 +2367,7 @@ def stock(frames: FrameLog) -> StockReport:
 
     **About the village on screen, and it does not cross.** `world` reports
     which one that turned out to be rather than promising either; sailing is
-    `ai_coc world --go` and belongs to whoever asked, since a status check that
+    `ai_coc world --day` / `--night` and belongs to whoever asked, since a status check that
     moves the game is no longer one. The two are meant to be used together.
 
     The ceilings cost six taps and three captures, which is what makes the
@@ -2499,7 +2501,7 @@ def _timed(report: StatusReport, village: VillageExport | None) -> StatusReport:
 MERGE_WITHIN = 5 * 60
 # The multiplication sign the reports count merged rows with, escaped for Ruff.
 TIMES = "\u00d7"
-# The counters as the reports name them, shorter than the log's `PLATE_NAMES`.
+# The counters as the reports and the log name them.
 COUNT_NAMES: dict[PlateRole, str] = {"builder": "工人", "lab": "實驗室"}
 # Whose slot each row of the table holds, which the names alone leave to guessing.
 ROLE_NAMES: dict[UpgradeRole, str] = {"builder": "工人", "lab": "實驗室", "pet": "戰寵"}
@@ -2663,7 +2665,7 @@ COUNT_LINES: dict[PlateCountOutcome, str] = {
 def _count_line(count: PlateCount) -> str:
     """One plate's count as a line for a person."""
     return COUNT_LINES[count.outcome].format(
-        held=PLATE_NAMES[count.role], free=count.free, total=count.total
+        held=COUNT_NAMES[count.role], free=count.free, total=count.total
     )
 
 
@@ -2675,14 +2677,7 @@ def _timers_line(report: StatusReport) -> str:
         return "兩個世界都沒有在升的"
     soonest = report.timers[0]
     name = soonest.zh or soonest.en or soonest.section
-    return f"最快好的是 {soonest.world} 的 {name},{soonest.done_at[11:16]}"
-
-
-# Only ever used to build a log line, which is why these live here rather than
-# with the reader: nothing under `ui/` cares what a plate is called, and these
-# were the last Chinese *values* `ui/plates.py` held — what is left there quotes
-# the game's own screen in a comment.
-PLATE_NAMES: dict[PlateRole, str] = {"lab": "實驗室", "builder": "建築工人"}
+    return f"最快好的是{WORLD_NAMES[soonest.world]}的 {name},{soonest.done_at[11:16]}"
 
 
 def _shield_line(shield: ShieldState | None, world: World | None) -> str:
@@ -2716,14 +2711,14 @@ def _shield_line(shield: ShieldState | None, world: World | None) -> str:
 # 推車裡沒有東西可以收 this reported for it: the cart is standing full and the
 # game will not open its gate.
 CART_LINES: dict[CartOutcome, str] = {
-    "collected": "建築大師基地的推車收到聖水 {elixir}",
+    "collected": "夜世界的推車收到聖水 {elixir}",
     "empty": "按了收集,但儲量沒有變,推車應該是空的",
     "locked": "推車是開的,收集鈕是灰的,而車上的數字讀不到",
     "locked_holding": "推車裡存著 {held}／{capacity} 聖水,收集鈕是灰的 —— 聖水倉庫滿了,倉庫有空間再收",
     "locked_empty": "推車是空的,收集鈕是灰的,沒有東西可以收",
     "not_found": "三個候選點都沒有打開推車",
     "not_parked": "鏡頭沒辦法停回定位,這一趟沒有去找聖水車",
-    "wrong_world": "現在不在建築大師基地,沒有推車可以收",
+    "not_night": "現在不在夜世界,沒有推車可以收",
     "unreadable": "按了收集,但有一邊的儲量條讀不到,不知道進帳多少",
 }
 
@@ -2739,7 +2734,7 @@ COLLECT_LINES: dict[CollectOutcome, str] = {
     "collected": "收了 {markers} 個採集器,金幣 +{gold}／聖水 +{elixir}／黑水 +{dark}",
     "nothing_to_collect": "沒有採集器等著收",
     "no_village": "畫面沒辦法回到村莊,收集沒有開始",
-    "builder_base": "遊戲停在夜世界,主村的採集器沒有收",
+    "on_night": "遊戲停在夜世界,日世界的採集器沒有收",
     "stock_unread": "{markers} 個採集器的標記點掉了,但之後讀不到儲量",
 }
 
@@ -2795,7 +2790,7 @@ def collect(frames: FrameLog) -> CollectReport:
     # A village slower to paint than the wait above goes down the home path,
     # which stops rather than sails on the builder base, so its cart is taken
     # here as well.
-    if report is None or report.outcome == "builder_base":
+    if report is None or report.outcome == "on_night":
         cart = collect_cart(adb, display)
         report = CollectReport(outcome="cart", elixir=cart.elixir, cart=cart)
     logger.info("Collect: %s", collect_line(report))
@@ -2809,7 +2804,7 @@ DONATE_LINES: dict[DonateOutcome, str] = {
     "nobody_asking": "部落聊天裡目前沒有人在請求增援",
     "panel_shut": "點了增援,但捐贈畫面沒有打開",
     "no_village": "畫面沒辦法回到村莊,捐兵沒有開始",
-    "builder_base": "遊戲停在夜世界,捐兵只在主村;要捐先跑 ai_coc world --go day",
+    "on_night": "遊戲停在夜世界,捐兵只在日世界;要捐先跑 ai_coc world --day",
 }
 
 
@@ -3632,35 +3627,34 @@ def gamedata(frames: FrameLog, refresh: bool = False) -> GameDataReport:
     return game_data(lambda: _attached(frames), refresh)
 
 
-def search(query: str, section: str | None = None, every_row: bool = False) -> SearchReport:
-    """Look a thing up by name or data_id in the game's tables, with what the newest export says of the player's.
+def search(asked: SearchOptions) -> SearchReport:
+    """Look things up in the game's tables and the newest export: by name or data_id, by section, or both.
 
     Reads files alone, the tables kept on disk and the saved exports, so it
-    touches neither the game nor the emulator. `section` lists one section of
-    the newest export instead, which needs no tables; `every_row` gives each
-    row of the export where the default sums one data_id's rows up.
+    touches neither the game nor the emulator. A query searches the tables, so
+    it finds what the village lacks too; without one it lists what the export
+    holds, which needs no tables. Inside one section a query can still be
+    answered off the export alone.
     """
     tables = _kept_tables()
     saved = _saved_exports(tables)
     export = saved[-1] if saved else None
-    held = sorted({*export.day, *export.night}) if export else []
-    if section is not None and export is None:
+    if not asked.query and export is None:
         outcome: SearchOutcome = "no_export"
-    elif section is not None and section not in held:
-        outcome = "no_section"
-    elif section is None and tables is None:
+    elif asked.query and tables is None and (asked.section is None or export is None):
         outcome = "no_tables"
     else:
         outcome = "found"
-    hits = village_search(tables, export, query, section, every_row) if outcome == "found" else []
+    hits = village_search(tables, export, asked) if outcome == "found" else []
     report = SearchReport(
-        query=query,
-        section=section,
+        query=asked.query,
+        section=asked.section,
+        world=asked.world,
+        skip_max_lvl=asked.skip_max_lvl,
         outcome="no_match" if outcome == "found" and not hits else outcome,
         game_version=tables.game_version if tables else None,
         tag=export.tag if export else None,
         exported_at=export.exported_at if export else None,
-        sections=held if outcome == "no_section" else [],
         hits=hits,
     )
     logger.info("%s", _search_head(report))
@@ -3669,15 +3663,22 @@ def search(query: str, section: str | None = None, every_row: bool = False) -> S
 
 SEARCH_LINES: dict[SearchOutcome, str] = {
     "found": "找到 {count} 種",
-    "no_match": "沒有名稱或 data_id 符合的",
+    "no_match": "沒有符合的",
     "no_tables": "還沒有存下遊戲的表可以查, 先跑一次 ai_coc gamedata",
     "no_export": "還沒有存下村莊匯出可以列, 跑一次 ai_coc status 或 export 就有",
-    "no_section": "最新那份村莊匯出沒有這一區, 有的是 {sections}",
 }
 # The tables' prices are the game's list prices; the gold pass and events
 # discount upgrades, and the build panel says what one costs today.
 LIST_PRICE = "價格跟時間是遊戲表上的牌價, 活動跟金券會打折, 實際要多少照建造面板"
 WORLD_NAMES: dict[World, str] = {"day": "日世界", "night": "夜世界"}
+# The sections as `search` heads them, in the order it lists them.
+SECTION_NAMES: dict[SearchSection, str] = {
+    "builder": "工人",
+    "lab": "實驗室",
+    "pets": "戰寵",
+    "equipment": "英雄裝備",
+    "helpers": "助手",
+}
 
 
 def _search_head(report: SearchReport) -> str:
@@ -3686,17 +3687,20 @@ def _search_head(report: SearchReport) -> str:
         for part in (
             f"「{report.query}」" if report.query else "",
             f"--section {report.section}" if report.section else "",
+            f"--{report.world}" if report.world else "",
+            "--skip-max-lvl" if report.skip_max_lvl else "",
         )
         if part
     )
-    line = SEARCH_LINES[report.outcome].format(
-        count=len(report.hits), sections=", ".join(report.sections)
-    )
-    return f"找 {asked}: {line}"
+    return f"找 {asked}: {SEARCH_LINES[report.outcome].format(count=len(report.hits))}"
 
 
 def search_text(report: SearchReport) -> str:
-    """The report as a person reads it: where it looked, each hit, and that the prices are list prices."""
+    """The report as a person reads it: where it looked, each village's hits by section, and that the prices are list prices.
+
+    Both villages get a block unless one was asked for, and one with nothing
+    in it says so.
+    """
     shown = [_search_head(report)]
     if report.outcome != "found":
         return shown[0]
@@ -3708,8 +3712,22 @@ def search_text(report: SearchReport) -> str:
             else "沒有存下村莊匯出, 只查遊戲的表"
         )
     )
-    for hit in report.hits:
-        shown += ["", *_hit_lines(hit, exported=report.exported_at is not None)]
+    exported = report.exported_at is not None
+    worlds: tuple[World, ...] = (report.world,) if report.world else ("day", "night")
+    for world in worlds:
+        shown += ["", f"== {WORLD_NAMES[world]} =="]
+        here = [hit for hit in report.hits if hit.world == world]
+        if not here:
+            shown += ["", "沒有符合的"]
+        # The known sections in their own order, then any the export added.
+        for section in dict.fromkeys([*SECTION_NAMES, *(hit.section for hit in here)]):
+            listed = [hit for hit in here if hit.section == section]
+            if not listed:
+                continue
+            name = SECTION_NAMES.get(section)
+            shown += ["", f"-- {name} ({section}) --" if name else f"-- {section} --"]
+            for hit in listed:
+                shown += ["", *_hit_lines(hit, exported)]
     return "\n".join([*shown, "", LIST_PRICE])
 
 
@@ -3717,11 +3735,11 @@ def _hit_lines(hit: SearchHit, exported: bool) -> list[str]:
     """One hit's lines; with no export read, nothing is said about whether the village has it."""
     names = " / ".join(name for name in (hit.zh, hit.en) if name) or "(遊戲的表沒有名字)"
     top = "—" if hit.max_lvl is None else hit.max_lvl
-    lines = [f"{names}  #{hit.data_id}  {WORLD_NAMES[hit.world]} {hit.table or '—'}  滿級 {top}"]
+    lines = [f"{names}  #{hit.data_id}  {hit.table or '—'}  滿級 {top}"]
     if not hit.count:
         return [*lines, f"  村莊裡沒有{_unlock_text(hit)}"] if exported else lines
     if hit.rows is not None:
-        return lines + [f"  {_row_text(one)}" for one in hit.rows]
+        return lines + [f"  {_row_text(row)}" for row in hit.rows]
     held = ", ".join(f"{lvl} 級 {n} 個" for lvl, n in hit.owned.items()) or "沒有等級"
     lines.append(f"  有 {hit.count} 個: {held}")
     lines += [
@@ -3743,9 +3761,8 @@ def _unlock_text(hit: SearchHit) -> str:
     return f", 解鎖要 {needs}" if needs else ""
 
 
-def _row_text(one: SearchRow) -> str:
-    row = one.row
-    parts = [WORLD_NAMES[one.world], one.section, f"{_level(row.lvl)} 級 {row.cnt or 1} 個"]
+def _row_text(row: ExportRow) -> str:
+    parts = [f"{_level(row.lvl)} 級 {row.cnt or 1} 個"]
     if row.timer is not None:
         parts.append(f"在升級, {_when(row.done_at)} 好{' (哥布林那格)' if row.extra else ''}")
     if row.ready_at:
@@ -4172,7 +4189,7 @@ def confirm(
 
 BOOST_LINES: dict[BoostOutcome, str] = {
     "boosted": "按了鐘塔的免費加速跟它的確認,鐘塔開始加速",
-    "not_builder_base": "遊戲不在夜世界,鐘塔在夜世界,什麼都沒按",
+    "not_night": "遊戲不在夜世界,鐘塔在夜世界,什麼都沒按",
     "not_ready": "畫面上沒有鐘塔能開的時鐘標記(冷卻中,或鐘塔被擋住、選著別的東西),什麼都沒按",
     "no_free_boost": "點了鐘塔,選單上找不到沒標價的免費加速鈕,沒有按;鐘塔還選著",
     "not_taken": "按了但加速沒有生效(確認視窗或免費加速鈕還在),沒有再按",
@@ -4205,7 +4222,7 @@ def boost(frames: FrameLog) -> BoostReport:
     marker = button = None
     outcome: BoostOutcome
     if current_world(before) != "night":
-        outcome = "not_builder_base"
+        outcome = "not_night"
     elif (marker := clock_tower_marker(before)) is None:
         outcome = "not_ready"
     else:

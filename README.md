@@ -104,7 +104,7 @@ ai_coc collect                        # empty every collector that has something
 ai_coc status                         # when every upgrade on both villages really finishes, potions included, plus this village's storages, printed as one table per village; --json prints the fields
 ai_coc status --last                  # the same tables off the last saved export, without touching the game; --within 24 folds what finishes later into one line
 ai_coc watch --next <time> --about "..."   # sleep until then as the one watching the upgrades, named on state.json; run it in the background
-ai_coc note add day "..."            # keep one of the user's instructions for a village in state.json; `note` lists them, `note done day 1` drops one
+ai_coc note add "..." --day          # keep one of the user's instructions for a village in state.json; `note` lists them, `note done 1 --day` drops one
 ai_coc donate                         # give troops to whoever in the clan is asking
 ai_coc donate --dry-run               # walk the whole path and stop before giving anything
 ```
@@ -134,14 +134,15 @@ ai_coc turnaround                     # seconds from each upgrade finishing to t
 ai_coc farmed --by <session> --since <time>  # one session's farming summed over every attack run, per village, off the run journal; touches nothing
 ai_coc tended --by <session> --since <time>  # one session's upgrades with what each cost, clock tower boosts and lost logins, off the run journal; touches nothing
 ai_coc gamedata                       # the game's own tables (zh and en names, max levels, each level's requirements, list price and time), read off the emulator once per game version into ~/.ai_coc/game_data/<version>/; --refresh reads them again
-ai_coc search "Electro Dragon"        # look a thing up by data_id or by a piece of its Chinese or English name in those tables, with the levels, running upgrades and next list price of the ones the village has and what unlocks the troops and spells it lacks; --all lists each row, --section helpers lists one section of the last export; touches nothing
+ai_coc search "Electro Dragon"        # look a thing up by data_id or by a piece of its Chinese or English name in those tables, with the levels, running upgrades and next list price of the ones the village has and what unlocks the troops and spells it lacks; --rows lists each row; touches nothing
+ai_coc search --section builder --day --skip-max-lvl  # list what the village holds of one section (builder, lab, pets, equipment, helpers, or all), each village in its own block; --day / --night keep one village, --skip-max-lvl leaves out what is at its last level, and a name narrows it further
 ai_coc view --zoom out                # put the camera back where every coordinate was measured
 ai_coc world                          # which of the two villages the game is on
-ai_coc world --go day                 # sail there; already being there does nothing
+ai_coc world --day                    # sail to the home village, --night to the builder base; already being there does nothing
 ai_coc attack                         # attack whichever village the game is on, then print what it brought home; --json prints each round
 ```
 
-The game keeps two villages — the home village and the builder base — and reopens on whichever one it was closed on, so `world` is worth asking before anything that assumes one of them. Reading it is a single screenshot: no tap, no swipe, no camera move. **No command sails on its own**: `world --go` is the only one that changes villages, and one with nothing to do on the village it finds — `donate` on the builder base, say — says so and leaves the game where it is.
+The game keeps two villages — the home village and the builder base — and reopens on whichever one it was closed on, so `world` is worth asking before anything that assumes one of them. Reading it is a single screenshot: no tap, no swipe, no camera move. **No command sails on its own**: `world --day` or `world --night` is the only one that changes villages, and one with nothing to do on the village it finds — `donate` on the builder base, say — says so and leaves the game where it is.
 
 `read` is the quickest way to answer "did it misread the screen, or did the tap miss?" It prints what every reader got from one frame: the loot panel, the storages, the card row and the builder counter.
 

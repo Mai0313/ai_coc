@@ -20,7 +20,6 @@ from rich.console import Console
 # stay absolute even for same-layer modules.
 from ai_coc import commands, __version__
 from ai_coc.models import (
-    World,
     Caller,
     RunLog,
     RunEnded,
@@ -33,6 +32,8 @@ from ai_coc.models import (
     AttackOptions,
     DonateOptions,
     LootOverrides,
+    SearchOptions,
+    SearchSection,
 )
 from ai_coc.constants import FRAME_RETENTION_DAYS
 from ai_coc.logging_setup import Journal, configure_logging
@@ -94,7 +95,7 @@ NO_SCREEN = (
 # `export --last` and `status --last` are the same exception reached by a flag
 # rather than by a name, and `_claim_for` is where the two meet: the command
 # drives the emulator, that one invocation of it does not. So is `world`
-# without `--go`.
+# without `--day` or `--night`.
 #
 # `capture` only looks, and so does a plain `world`: both take screenshots and
 # nothing else, and the file is a lock now, so a claim there would stand a
@@ -120,7 +121,7 @@ COMMANDS = (
             ("attack", "進攻遊戲當下所在的村莊，預設打一輪"),
             ("collect", "收掉採集器裡的資源；在夜世界收的是聖水車"),
             ("donate", "部落有人要兵就捐"),
-            ("world", "看遊戲停在日世界還是夜世界，加 --go 就開船過去"),
+            ("world", "看遊戲停在日世界還是夜世界，加 --day 或 --night 就開船過去"),
             ("launch", "開模擬器和部落衝突，停在村莊畫面"),
             ("view", "把村莊鏡頭拉遠或拉近"),
         ),
@@ -146,7 +147,7 @@ COMMANDS = (
             ),
             (
                 "search",
-                "不碰遊戲，照名稱或 data_id 查遊戲的表，村莊裡有的再列出等級、升級中幾點好跟下一級的牌價",
+                "不碰遊戲，照名稱、data_id 或分類查遊戲的表跟村莊匯出，兩個世界分開列出等級、升級中幾點好跟下一級的牌價",
             ),
             (
                 "gamedata",
@@ -185,7 +186,8 @@ COMMANDS = (
             ),
             (
                 "note",
-                "使用者的交代，記在狀態檔裡；不給參數就列出來，add 加一條，done 刪掉做完的第幾條",
+                "使用者的交代，記在狀態檔裡；不給參數就列出來，add 加一條，done 刪掉做完的第幾條，"
+                "哪個世界的用 --day 或 --night",
             ),
         ),
     ),
@@ -233,21 +235,32 @@ def _growth_flags(grower: argparse.ArgumentParser) -> None:
         grower.add_argument(flag, type=date.fromisoformat, metavar="YYYY-MM-DD", help=note)
 
 
+def _village_flags(command: argparse.ArgumentParser, day: str, night: str) -> None:
+    """`--day` and `--night`, the one way a command is told which village; never both."""
+    which = command.add_mutually_exclusive_group()
+    which.add_argument("--day", dest="world", action="store_const", const="day", help=day)
+    which.add_argument("--night", dest="world", action="store_const", const="night", help=night)
+
+
 def _search_flags(searcher: argparse.ArgumentParser) -> None:
     """`search` reads only the game's tables kept on disk and the exports `status` and `export` saved."""
     searcher.add_argument(
         "query",
         nargs="?",
         default="",
-        help="全是數字就是 data_id，不然是中文或英文名稱的一段（英文不分大小寫）",
+        help="全是數字就是 data_id，不然是中文或英文名稱的一段（英文不分大小寫）；"
+        "村莊還沒有的也查得到，不給就只列村莊裡有的",
     )
     searcher.add_argument(
         "--section",
-        metavar="分類",
-        help="只列最新那份村莊匯出的這一區，兩個世界都列，例如 helpers、pets、heroes；有給名稱就在裡面找",
+        choices=(*get_args(SearchSection), "all"),
+        help="只列這一類：builder 是工人升的（建築、英雄、陷阱、守護者），lab 是實驗室研究的"
+        "（兵種、法術、攻城機器），pets 戰寵，equipment 英雄裝備，helpers 助手，all 每一類都列",
     )
+    _village_flags(searcher, "只列日世界；兩個都不給就兩個世界各列一段", "只列夜世界")
+    searcher.add_argument("--skip-max-lvl", action="store_true", help="已經升到遊戲滿級的不列")
     searcher.add_argument(
-        "--all",
+        "--rows",
         dest="every_row",
         action="store_true",
         help="村莊裡的每一列分開列，各自的等級、升級幾點好、是不是哥布林那格",
@@ -265,12 +278,21 @@ def _farmed_flags(farm: argparse.ArgumentParser) -> None:
 
 
 def _note_flags(noter: argparse.ArgumentParser) -> None:
-    """`note` never opens ADB either: it keeps the notes section of the state file."""
+    """`note` never opens ADB either: it keeps the notes section of the state file.
+
+    The documented lines write the village flag last (`note add "…" --day`):
+    an argparse older than 3.12.7 ends the positionals at a flag written
+    between them and then refuses the text.
+    """
     noter.add_argument(
-        "action", nargs="?", choices=get_args(NoteAction), default="list", help="不給就是 list"
+        "action",
+        nargs="?",
+        choices=get_args(NoteAction),
+        default="list",
+        help="不給就是 list，兩個世界的都列",
     )
-    noter.add_argument("world", nargs="?", choices=get_args(World), help="哪個世界的交代")
     noter.add_argument("item", nargs="?", default="", help="add 是交代的內容，done 是第幾條")
+    _village_flags(noter, "add 跟 done 的是日世界的交代", "add 跟 done 的是夜世界的交代")
 
 
 def _press_flags(
@@ -314,13 +336,16 @@ def _parser() -> argparse.ArgumentParser:
         # below and argparse leaves a hidden action out of the usage line too.
         usage="%(prog)s [-h] <指令> ...",
         description=(
-            "在模擬器上自動玩部落衝突。每個指令只處理遊戲當下停著的那個村莊，換村莊用 world --go。"
+            "在模擬器上自動玩部落衝突。每個指令只處理遊戲當下停著的那個村莊，"
+            "換村莊用 world --day 或 world --night。"
         ),
     )
     # A metavar instead of the default brace list of every name, which an
-    # error naming this argument would print.
+    # error naming this argument would print. `prog` is named because a
+    # sub-command's own usage line otherwise starts with the whole of the
+    # usage written out above.
     sub = parser.add_subparsers(
-        dest="command", metavar="<指令>", required=True, help=argparse.SUPPRESS
+        dest="command", metavar="<指令>", required=True, help=argparse.SUPPRESS, prog="ai_coc"
     )
     # argparse lists every sub-command under the one action that parses them,
     # so that action is hidden and the line it makes for each sub-command is
@@ -331,7 +356,7 @@ def _parser() -> argparse.ArgumentParser:
             sub.add_parser(name, help=note)
             section._group_actions.append(sub._choices_actions.pop())  # noqa: SLF001 - argparse has no public way to group sub-commands
     # It plays whichever village the game is on and never sails there itself:
-    # crossing is `world --go`, which is the one command that moves the game.
+    # crossing is `world --day` or `--night`, the one command that moves the game.
     run = sub.choices["attack"]
     run.add_argument(
         "--plan",
@@ -364,10 +389,11 @@ def _parser() -> argparse.ArgumentParser:
         )
     # The game reopens on whichever village it was closed on, so no other
     # command can assume which one it is looking at. Reading is the default and
-    # crossing is what `--go` asks for.
-    where = sub.choices["world"]
-    where.add_argument(
-        "--go", choices=get_args(World), help="開船到這個世界，已經在那邊就什麼都不做"
+    # crossing is what naming a village asks for.
+    _village_flags(
+        sub.choices["world"],
+        "開船到日世界，已經在那邊就什麼都不做；兩個都不給就只看現在在哪邊",
+        "開船到夜世界",
     )
     _watch_flags(sub.choices["watch"], sub.choices["stop"])
     _note_flags(sub.choices["note"])
@@ -380,7 +406,7 @@ def _parser() -> argparse.ArgumentParser:
     )
     give = sub.choices["donate"]
     give.add_argument("--dry-run", action="store_true", help="走完流程但不真的捐，只回報能捐什麼")
-    give.add_argument("--rounds", type=int, default=0, help="最多捐幾次，0 代表捐到不能捐為止")
+    give.add_argument("--repeat", type=int, default=0, help="最多捐幾次，0 代表捐到不能捐為止")
     # Every other command assumes the game is up and gives up when it is not, so
     # this is the one that puts it there. The scopes exist because neither an
     # emulator nor a game that has stopped answering looks any different from a
@@ -431,51 +457,63 @@ def _parser() -> argparse.ArgumentParser:
     shot.add_argument("--gap", type=float, default=1.5, metavar="秒", help="每張間隔幾秒")
     sub.choices["read"].add_argument("png", type=Path, help="要判讀的截圖")
     for name, one in sub.choices.items():
-        if name not in NO_SCREEN:
-            one.add_argument(
-                "--debug",
-                action="store_true",
-                help="把這次讀到的每張畫面存進紀錄資料夾，log 也降到 DEBUG",
-            )
-            one.add_argument(
-                "--shot-every",
-                type=float,
-                default=0.0,
-                metavar="秒",
-                help="除了指令自己讀的畫面，每隔這麼多秒再存一張",
-            )
+        _shared_flags(name, one)
+    return parser
+
+
+def _shared_flags(name: str, command: argparse.ArgumentParser) -> None:
+    """The flags a sub-command shares with the others, under their own heading in its `--help`.
+
+    Each goes only where it does something: a flag a command ignores is one
+    more line to read past, and a `--yield` on a command that never claims
+    reads as if it could be lent.
+    """
+    shared = command.add_argument_group("共用的旗標")
     # Every sub-command, because why a session names a run — to find it again
     # afterwards — has nothing to do with which one it ran.
-    for one in sub.choices.values():
-        one.add_argument(
-            "--label",
-            default="",
-            metavar="名稱",
-            help="加在這次紀錄資料夾名字的後面，方便之後認出是哪一次",
-        )
-        # Who asked, for the same reason on every sub-command: `stop` and `read`
-        # included, since the log is where a stop somebody issued gets traced.
-        # Optional so a person can still type a command bare; the skills are
-        # what hold an agent to them.
-        one.add_argument(
-            "--agent",
-            default="",
-            metavar="名稱",
-            help="是誰叫的，例如 claude-code、antigravity、codex",
-        )
-        one.add_argument(
-            "--session", default="", metavar="ID", help="叫它的 agent 自己的 session id"
-        )
-        one.add_argument("--mission", default="", metavar="任務", help="這次在做什麼，一句話")
-        # Background work says so itself, since only its caller knows whether it
-        # will be started again: farming is, a live test is not.
-        one.add_argument(
+    shared.add_argument(
+        "--label",
+        default="",
+        metavar="名稱",
+        help="加在這次紀錄資料夾名字的後面，方便之後認出是哪一次",
+    )
+    # Who asked, for the same reason on every sub-command: `stop` and `read`
+    # included, since the log is where a stop somebody issued gets traced.
+    # Optional so a person can still type a command bare; the skills are
+    # what hold an agent to them.
+    shared.add_argument(
+        "--agent",
+        default="",
+        metavar="名稱",
+        help="是誰叫的，例如 claude-code、antigravity、codex",
+    )
+    shared.add_argument(
+        "--session", default="", metavar="ID", help="叫它的 agent 自己的 session id"
+    )
+    shared.add_argument("--mission", default="", metavar="任務", help="這次在做什麼，一句話")
+    # Background work says so itself, since only its caller knows whether it
+    # will be started again: farming is, a live test is not. Only a command
+    # that claims the emulator can be lent.
+    if name not in WITHOUT_CLAIM:
+        shared.add_argument(
             "--yield",
             dest="yields",
             action="store_true",
             help="背景工作：不停掉別人，等模擬器空出來才開始；別人要用時借出去，還回來再接著跑",
         )
-    return parser
+    if name not in NO_SCREEN:
+        shared.add_argument(
+            "--debug",
+            action="store_true",
+            help="把這次讀到的每張畫面存進紀錄資料夾，log 也降到 DEBUG",
+        )
+        shared.add_argument(
+            "--shot-every",
+            type=float,
+            default=0.0,
+            metavar="秒",
+            help="除了指令自己讀的畫面，每隔這麼多秒再存一張",
+        )
 
 
 def _caller(arguments: argparse.Namespace) -> Caller:
@@ -510,13 +548,21 @@ def _answer(arguments: argparse.Namespace, run: RunLog) -> BaseModel | str:
         "note": lambda: commands.note(a.action, a.world, a.item),
         "growth": lambda: commands.growth(a.start_date, a.end_date),
         "turnaround": lambda: commands.turnaround(a.since),
-        "search": lambda: commands.search(a.query, a.section, a.every_row),
+        "search": lambda: commands.search(
+            SearchOptions(
+                query=a.query,
+                section=a.section,
+                world=a.world,
+                skip_max_lvl=a.skip_max_lvl,
+                every_row=a.every_row,
+            )
+        ),
         "farmed": lambda: commands.farmed_runs(a.by, a.since),
         "tended": lambda: commands.tended(a.by, a.since),
         "collect": lambda: commands.collect(run.frames),
         "stock": lambda: commands.stock(run.frames),
         "status": lambda: commands.status(run.frames, a.last),
-        "world": lambda: commands.world(a.go, run.frames),
+        "world": lambda: commands.world(a.world, run.frames),
         "view": lambda: commands.view(run.frames, a.zoom, a.times),
         "tap": lambda: commands.tap((a.x, a.y), run.frames, a.wait),
         "swipe": lambda: commands.swipe((a.x1, a.y1), (a.x2, a.y2), run.frames, a.ms, a.wait),
@@ -524,7 +570,7 @@ def _answer(arguments: argparse.Namespace, run: RunLog) -> BaseModel | str:
         "boost": lambda: commands.boost(run.frames),
         "launch": lambda: commands.launch(a.restart, commands.stop_requested, run.frames),
         "donate": lambda: commands.donate(
-            DonateOptions(dry_run=a.dry_run, rounds=a.rounds), run.frames
+            DonateOptions(dry_run=a.dry_run, rounds=a.repeat), run.frames
         ),
         "probe": lambda: commands.probe(run.frames),
         "bounds": lambda: commands.bounds(run.frames),
@@ -659,7 +705,7 @@ def _claim_for(arguments: argparse.Namespace, run: RunLog) -> AbstractContextMan
     if (
         arguments.command in WITHOUT_CLAIM
         or getattr(arguments, "last", False)
-        or (arguments.command == "world" and arguments.go is None)
+        or (arguments.command == "world" and arguments.world is None)
     ):
         return nullcontext()
     return commands.claim(
@@ -682,6 +728,10 @@ def main() -> int:
         parser.error("search 要給名稱、data_id 或 --section")
     if arguments.command in ("farmed", "tended") and not (arguments.by or arguments.since):
         parser.error(f"{arguments.command} 要給 --by 或 --since")
+    # Refused rather than ignored: a list is always both villages, and one that
+    # took the flag and printed both would read as if it had narrowed them.
+    if arguments.command == "note" and arguments.action == "list" and arguments.world:
+        parser.error("note 列出來的是兩個世界的交代，--day 跟 --night 只給 add 跟 done")
     # Opened after parsing, so `--help` and a rejected flag leave no empty
     # directory behind, and so its name can say which command it holds.
     run = RunLog.open(

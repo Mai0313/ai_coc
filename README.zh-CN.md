@@ -104,7 +104,7 @@ ai_coc collect                        # 把有东西的采集器全部收掉
 ai_coc status                         # 两个世界的升级实际几点好（药水算进去），加上这个世界的仓库，每个世界印成一张表；--json 印字段
 ai_coc status --last                  # 不碰游戏，从存下的最新导出印同样的表；--within 24 把之后才好的并成一行
 ai_coc watch --next <时间> --about "..."   # 睡到那个时间才结束，期间在 state.json 记下是谁在盯升级；放到后台跑
-ai_coc note add day "..."            # 在 state.json 记下用户对一个世界的一条交代；`note` 列出来，`note done day 1` 删掉一条
+ai_coc note add "..." --day          # 在 state.json 记下用户对一个世界的一条交代；`note` 列出来，`note done 1 --day` 删掉一条
 ai_coc donate                         # 部落里有人要兵就捐
 ai_coc donate --dry-run               # 走完整个流程但停在真的捐出去之前
 ```
@@ -134,14 +134,15 @@ ai_coc turnaround                     # 从运行记录算每次升级从到点�
 ai_coc farmed --by <session> --since <时间>  # 从运行记录把一个 session 每一次打资源加起来, 每个世界一段; 不碰游戏
 ai_coc tended --by <session> --since <时间>  # 从运行记录列出一个 session 升了什么、各花多少, 开了几次钟塔, 被抢登几次; 不碰游戏
 ai_coc gamedata                       # 从模拟器上的游戏文件读出游戏自己的表(中英文名称、最高等级、每级的要求、标价和时间),每个游戏版本读一次,存在 ~/.ai_coc/game_data/<版本>/;--refresh 重新读
-ai_coc search "Electro Dragon"        # 按 data_id 或中英文名称的一段查那份表,村庄里有的再列出等级、升级中几点好和下一级的标价,没有的兵种和法术列出解锁要什么;--all 每一行分开列,--section helpers 列最后那份导出的一个分区;不碰游戏
+ai_coc search "Electro Dragon"        # 按 data_id 或中英文名称的一段查那份表,村庄里有的再列出等级、升级中几点好和下一级的标价,没有的兵种和法术列出解锁要什么;--rows 每一行分开列;不碰游戏
+ai_coc search --section builder --day --skip-max-lvl  # 按分类列村庄里有的 (builder、lab、pets、equipment、helpers, 或 all), 两个世界各一段; --day / --night 只留一个世界, --skip-max-lvl 不列满级的, 再给名称就在里面找
 ai_coc view --zoom out                # 把镜头拉回所有坐标当初测量的那个视野
 ai_coc world                          # 现在在日世界还是夜世界
-ai_coc world --go day                 # 坐船切过去,已经在那边就什么都不做
+ai_coc world --day                    # 坐船到日世界, 夜世界是 --night; 已经在那边就什么都不做
 ai_coc attack                         # 打游戏当下所在的那个村庄, 打完印这一趟的进账; --json 印每一轮
 ```
 
-游戏有两个村庄,日世界 (主村) 跟夜世界 (建筑大师基地),而它会开在上次离开的那一个,所以任何预设站在主村上的指令之前都值得先问一次 `world`。读它只花一张截图,不点任何东西也不动镜头。**没有指令会自己坐船**: 换村庄只有 `world --go` 一个,而在当下的村庄没事可做的指令 (例如在夜世界跑 `donate`) 会直接说明,游戏留在原地。
+游戏有两个村庄,日世界 (主村) 跟夜世界 (建筑大师基地),而它会开在上次离开的那一个,所以任何预设站在主村上的指令之前都值得先问一次 `world`。读它只花一张截图,不点任何东西也不动镜头。**没有指令会自己坐船**: 换村庄只有 `world --day` 跟 `world --night`,而在当下的村庄没事可做的指令 (例如在夜世界跑 `donate`) 会直接说明,游戏留在原地。
 
 `read` 是回答「是识别错了, 还是那一下没点到」最快的方法: 它把一张图丢给每个识别器, 打印出战利品面板、仓库、卡片行、工人计数各自读到什么。
 

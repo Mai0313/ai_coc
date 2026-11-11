@@ -14,9 +14,9 @@
 
 **門檻由你定**, 每一趟開跑前看 `status` 的倉庫 (只讀得到遊戲停著的那個世界, 另一個照設定檔或上一次讀到的): 缺得最兇的那一項給門檻 (例如黑水見底就 `--min-dark` 5000 到 1 萬), 其他沒滿的看情況放寬或照設定檔, 滿的不用管. 每輪跳過幾十個就往下調. 使用者交代過的照他的. 定好的旗標寫進交辦, subagent 不會自己加或改. `0` 跟不給是兩件事 (見 `LootOverrides` 的 docstring). `--stop-at` 是**測試**用的: 對著剛打滿的村莊打一場來驗東西時給 `0`; 打資源不要用, 滿倉搶回來的進不去.
 
-**碰模擬器之前先讀 `~/.ai_coc/state.json`** (`share-emulator` 的「開工先讀 `state.json`」). **別人已經在打資源就不開**: `emulator` 那一塊佔著的是別的 session 帶 `--yield` 的 run (`yields` 是 `true`), 或者那一塊有一筆還沒結束的借用 (`loan.ended` 是 null) 而出借的是別的 session, 或者 `watch` 那一塊是別的 session 用寫著「全天候託管」的 `--mission` 開的 (託管睡在兩趟打資源之間). 兩個帶 `--yield` 的迴圈會在指令之間輪流搶到模擬器, 各自的 `world --go` 把對方下一輪的 `attack` 帶到錯的村莊. 不派, 回報誰 (`caller`) 在跑哪一個 (`command`, `log`). 你自己的 session id 加 `-farm` 後綴的是你自己派的 subagent, 不是別人.
+**碰模擬器之前先讀 `~/.ai_coc/state.json`** (`share-emulator` 的「開工先讀 `state.json`」). **別人已經在打資源就不開**: `emulator` 那一塊佔著的是別的 session 帶 `--yield` 的 run (`yields` 是 `true`), 或者那一塊有一筆還沒結束的借用 (`loan.ended` 是 null) 而出借的是別的 session, 或者 `watch` 那一塊是別的 session 用寫著「全天候託管」的 `--mission` 開的 (託管睡在兩趟打資源之間). 兩個帶 `--yield` 的迴圈會在指令之間輪流搶到模擬器, 各自的 `world --day` / `--night` 把對方下一輪的 `attack` 帶到錯的村莊. 不派, 回報誰 (`caller`) 在跑哪一個 (`command`, `log`). 你自己的 session id 加 `-farm` 後綴的是你自己派的 subagent, 不是別人.
 
-**這個遊戲有兩個村莊, 而遊戲會開在上次離開的那一個**: 日世界 (主村) 跟夜世界 (建築大師基地), 靠一艘船來回. `ai_coc world` 答現在在哪個世界, 不點任何東西; `ai_coc world --go day|night` 坐船切過去. **沒有指令會自己換村莊, 每一個都做遊戲當下停著的那一個**, 所以 subagent 先 `world --go` 再開 `attack`. 遊戲沒畫面時 `world` 回 `no_display`, 先 `ai_coc launch` (`share-emulator` 的「遊戲卡住, 或者根本沒開」). 開跑後對一下 `run.log` 打的是哪一邊: 每一輪開頭 `Attack run starts` 是主村, `Builder base attack run starts` 是夜世界. 兩邊容量差十倍, 打錯世界「還差多少」就全錯.
+**這個遊戲有兩個村莊, 而遊戲會開在上次離開的那一個**: 日世界 (主村) 跟夜世界 (建築大師基地), 靠一艘船來回. `ai_coc world` 答現在在哪個世界, 不點任何東西; `ai_coc world --day|--night` 坐船切過去. **沒有指令會自己換村莊, 每一個都做遊戲當下停著的那一個**, 所以 subagent 先 `world --day` / `--night` 再開 `attack`. 遊戲沒畫面時 `world` 回 `no_display`, 先 `ai_coc launch` (`share-emulator` 的「遊戲卡住, 或者根本沒開」). 開跑後對一下 `run.log` 打的是哪一邊: 每一輪開頭 `Attack run starts` 是主村, `Builder base attack run starts` 是夜世界. 兩邊容量差十倍, 打錯世界「還差多少」就全錯.
 
 **沒特別交代就兩個世界都打完.** 不用先問哪邊有空間: 滿的世界第一輪就 `stock_full` (主村在付搜尋費前, 夜世界在進配對前), 代價只是幾秒. 他指定了一個才只打那一個. **順序: 他指定了照他的, 沒指定就先打當下所在的那個.** 「當下所在」是開跑前第一件事用 `ai_coc world` 問到的答案. 切畫面就是他指定順序的方式 (想先打夜世界他會自己切過去), 不要推翻.
 
@@ -32,7 +32,7 @@
 
 ## 派工
 
-**迴圈交給一個 farm subagent 跑**: 在背景跑, 取一個名字讓你傳得到訊息, **模型比你低一級, 不再更低**, thinking budget 用 runtime 給得出的最低那一級. 交辦裡告訴它它是 subagent, 照 `.agents/skills/takeover/references/runner.md` 跑; 那一份是每一趟都一樣的那一半, 這一趟才有的寫進交辦. **分工是判斷對上跑腿**: subagent 是為了讓指令的輸出不進主 thread, 它又快又便宜是因為它什麼都不判斷. 要判斷的 (門檻、花不花、畫面上是什麼、一個結果算不算 bug) 都留在你這裡; 它照交辦跑, 碰到交辦以外的第一件事就回報. 所以它不花任何東西 (買東西要看建造面板), 打到 `stock_full` 就回報. **最低那一級 budget 還在試行** (#548): subagent 沒回報就停了, 或回報的跟 `state.json`、`result.json`、`runs.jsonl` 對不上, 就到那張 issue 留一則; 第二則就把 budget 調高一級. 它每個指令都帶 `--yield`, 所以 live test 是借走它而不是停掉它, 它也從不把測試請下來. **使用者在模擬器上玩, 或說過不要控制遊戲, 就一個都不派**, 他說可以之前什麼都不開.
+**迴圈交給一個 farm subagent 跑**: 在背景跑, 取一個名字讓你傳得到訊息, **模型比你低一級, 不再更低**, thinking budget 用 runtime 給得出的最低那一級. 交辦裡告訴它它是 subagent, 照 `.agents/skills/takeover/references/runner.md` 跑; 那一份是每一趟都一樣的那一半, 這一趟才有的寫進交辦. **分工是判斷對上跑腿**: subagent 是為了讓指令的輸出不進主 thread, 它又快又便宜是因為它什麼都不判斷. 要判斷的 (門檻、花不花、畫面上是什麼、一個結果算不算 bug) 都留在你這裡; 它照交辦跑, 碰到交辦以外的第一件事就回報. 所以它不花任何東西 (買東西要看建造面板), 打到 `stock_full` 就回報. **最低那一級 budget 還在試行** (#548): subagent 沒回報就停了, 或回報的跟 `state.json`、`result.json`、`runs.jsonl` 對不上, 就到那張 issue 留一則; 第二則就把 budget 調高一級. 它佔模擬器的指令都帶 `--yield`, 所以 live test 是借走它而不是停掉它, 它也從不把測試請下來. **使用者在模擬器上玩, 或說過不要控制遊戲, 就一個都不派**, 他說可以之前什麼都不開.
 
 runtime 沒有 subagent 的話, 你自己照 `runner.md` 跑; 指令照 `share-emulator` 的「背景跑」送背景, 通知進來照 `runner.md` 的「讀結果」接下一步.
 
@@ -47,7 +47,7 @@ session: <你的 session id>-farm
 label 前綴: <這一趟的代號, 例如 t3>
 --debug / --shot-every: <不要 | 要, 為了什麼>
 終點: 兩個世界各打到 stock_full (或: 各打 N 輪)
-收尾 (只在正常收工時): <world --go day | 不要>; <每個世界 stock_full 後 ai_coc capture 一張 | 不要>
+收尾 (只在正常收工時): <world --day | 不要>; <每個世界 stock_full 後 ai_coc capture 一張 | 不要>
 暫存檔: <你的暫存資料夾路徑>
 ```
 

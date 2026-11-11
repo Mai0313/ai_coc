@@ -660,10 +660,10 @@ class ProbeRay(BaseModel):
 
 
 # How a survey ended. Both measure the home village's battlefield and nothing
-# here sails, so `builder_base` is the game standing on the other village and
+# here sails, so `on_night` is the game standing on the other village and
 # nothing measured at all — which an empty list of rays could not say apart
 # from a survey that ran and found nothing.
-SurveyOutcome = Literal["surveyed", "builder_base"]
+SurveyOutcome = Literal["surveyed", "on_night"]
 
 
 class BoundarySurvey(BaseModel):
@@ -1064,7 +1064,7 @@ class NightPlan(BaseModel):
 # the whole 45-minute wait and `server_flapping` is it loading and dropping
 # back. `emulator_silent` is ADB not answering, and `other_village` is the game
 # standing on the village this series does not play, which ends it: nothing here
-# sails, and `ai_coc world --go` is how the game gets moved. `session_taken` is
+# sails, and `ai_coc world --day` / `--night` is how the game gets moved. `session_taken` is
 # another device logging in to the account, between rounds or mid-battle, which
 # ends the series too: the player is on, and logging back in would log them out.
 AttackOutcome = Literal[
@@ -1295,7 +1295,7 @@ class ResourceBubble(BaseModel):
 # say, and duplicating its outcomes would be the same answer in two
 # vocabularies.
 CollectOutcome = Literal[
-    "collected", "nothing_to_collect", "no_village", "builder_base", "stock_unread", "cart"
+    "collected", "nothing_to_collect", "no_village", "on_night", "stock_unread", "cart"
 ]
 
 
@@ -1332,7 +1332,7 @@ class CollectReport(BaseModel):
 # `locked_empty` a cart with nothing in it, and `locked` a greyed button whose
 # line would not read, which says what the button looks like and not why.
 #
-# The rest are failures: `not_parked` never went looking, `wrong_world` was not
+# The rest are failures: `not_parked` never went looking, `not_night` was not
 # on the builder base at all, `not_found` tapped every candidate spot without
 # opening anything, and `unreadable` collected against a storage bar that would
 # not resolve on one side or the other.
@@ -1344,7 +1344,7 @@ CartOutcome = Literal[
     "locked_empty",
     "not_found",
     "not_parked",
-    "wrong_world",
+    "not_night",
     "unreadable",
 ]
 
@@ -1387,6 +1387,12 @@ class CartReport(BaseModel):
     elixir: int = 0
     held: int | None = None
     capacity: int | None = None
+
+    @field_validator("outcome", mode="before")
+    @classmethod
+    def _renamed(cls, value: object) -> object:
+        """A journal line from before the villages were day and night calls `not_night` `wrong_world`."""
+        return "not_night" if value == "wrong_world" else value
 
 
 class ShieldState(BaseModel):
@@ -1658,7 +1664,7 @@ class PressReport(BaseModel):
 
 
 BoostOutcome = Literal[
-    "boosted", "not_builder_base", "not_ready", "no_free_boost", "not_taken", "unexpected"
+    "boosted", "not_night", "not_ready", "no_free_boost", "not_taken", "unexpected"
 ]
 
 
@@ -2259,8 +2265,11 @@ RestartScope = Literal["none", "game", "emulator"]
 # The game's two villages. Supercell calls them the Home Village and the Builder
 # Base; this project calls them day and night because that is what the player
 # calls them, and because `builder` already means the workman here — the
-# builder counter says which of the five are free, and a `world --go builder`
-# standing next to it would be read as belonging to that.
+# builder counter says which of the five are free, and a `world --builder`
+# standing next to it would be read as belonging to that. So `builder` in a
+# flag, a choice or an outcome is always the workman's slot: a command is told
+# its village with `--day` or `--night`, and an outcome that names a village
+# says `night` (`on_night`, `not_night`).
 World = Literal["day", "night"]
 
 # `too_few` is fewer than two saved exports inside the dates asked for.
@@ -2457,11 +2466,15 @@ class GameDataReport(BaseModel):
         return len(self.tables.entities)
 
 
-# How `ai_coc search` ended. `no_tables` is no game tables kept to search, and
-# `no_export` no saved export for `--section` to list; `no_section` is a
-# section name the newest export does not hold, and `no_match` nothing named
-# or numbered like the query.
-SearchOutcome = Literal["found", "no_match", "no_tables", "no_export", "no_section"]
+# What `ai_coc search --section` lists, one per place a village's things are
+# upgraded: the build panel's four tabs and the Helper Hut. `builder` and `lab`
+# are the slots `UpgradeRole` names, with everything upgraded through them.
+SearchSection = Literal["builder", "lab", "pets", "equipment", "helpers"]
+
+# How `ai_coc search` ended. `no_tables` is no game tables kept for a name or
+# data_id to be searched in, `no_export` no saved export to list, and
+# `no_match` nothing left by the query and the filters.
+SearchOutcome = Literal["found", "no_match", "no_tables", "no_export"]
 
 
 class SearchUpgrade(BaseModel):
@@ -2475,14 +2488,6 @@ class SearchUpgrade(BaseModel):
     lvl: int | None
     done_at: str | None
     extra: bool = False
-
-
-class SearchRow(BaseModel):
-    """One row of the newest export, with the village and section it sits in."""
-
-    world: World
-    section: str
-    row: ExportRow
 
 
 class SearchNeed(BaseModel):
@@ -2503,9 +2508,12 @@ class SearchNeed(BaseModel):
 class SearchHit(BaseModel):
     """One data_id `ai_coc search` matched: what the game's tables say of it, and the player's rows of it.
 
-    The names, `world`, `table`, `max_lvl` and `levels` are the tables'; a
-    data_id they lack takes its names and `max_lvl` from its rows and has no
-    `table` or `levels`. `levels` is every level's `needs`, `cost` and `time`
+    The names, `table`, `max_lvl` and `levels` are the tables'; a data_id they
+    lack takes its names and `max_lvl` from its rows and has no `table` or
+    `levels`. `world` is the village its rows sit in, or the tables' for one
+    the village lacks, and `section` the `SearchSection` it is listed under,
+    or the export's own name for a section this code has not heard of.
+    `levels` is every level's `needs`, `cost` and `time`
     at list price. The rest is the newest export: `count` copies in all,
     `owned` how many stand at each level (a row with no level counts only in
     `count`), `upgrading` each copy being upgraded, soonest first, `next` each
@@ -2514,13 +2522,14 @@ class SearchHit(BaseModel):
     not hold, or every hit when no export is saved (`SearchReport.exported_at`
     None); `unlock` is what the first level of a troop, siege machine or
     spell it does not hold needs.
-    `rows` is every row as the export has it, only under `--all`.
+    `rows` is every row as the export has it, only under `--rows`.
     """
 
     data_id: int
     zh: str | None = None
     en: str | None = None
     world: World
+    section: str
     table: GameTable | None = None
     max_lvl: int | None = None
     levels: list[GameLevel] = Field(default_factory=list)
@@ -2531,24 +2540,44 @@ class SearchHit(BaseModel):
     upgrading: list[SearchUpgrade] = Field(default_factory=list)
     next: list[NextUpgrade] = Field(default_factory=list)
     ready_at: str | None = None
-    rows: list[SearchRow] | None = None
+    rows: list[ExportRow] | None = None
+
+
+class SearchOptions(BaseModel):
+    """What one `ai_coc search` was asked, each part narrowing the same list.
+
+    `query` is a data_id or a piece of a name, `section` a `SearchSection` or
+    `all` for every one, `world` is `--day` or `--night`, `skip_max_lvl`
+    leaves out what stands at its last level, and `every_row` lists each row
+    of the export where the default sums one data_id's rows up. An empty
+    query and a None narrow nothing.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    query: str = ""
+    section: SearchSection | Literal["all"] | None = None
+    world: World | None = None
+    skip_max_lvl: bool = False
+    every_row: bool = False
 
 
 class SearchReport(BaseModel):
-    """What `ai_coc search` answers: what it searched, in which tables and export, and what it found.
+    """What `ai_coc search` answers: what it was asked, in which tables and export it looked, and what it found.
 
-    `game_version` is the tables searched and `exported_at` the export the
-    player's rows come from, each None where none is kept. `sections` is the
-    newest export's section names, given only under `no_section`.
+    `query`, `section`, `world` and `skip_max_lvl` are `SearchOptions`' as
+    asked. `game_version` is the tables searched and `exported_at` the export
+    the player's rows come from, each None where none is kept.
     """
 
     query: str
-    section: str | None = None
+    section: SearchSection | Literal["all"] | None = None
+    world: World | None = None
+    skip_max_lvl: bool = False
     outcome: SearchOutcome
     game_version: str | None = None
     tag: str | None = None
     exported_at: str | None = None
-    sections: list[str] = Field(default_factory=list)
     hits: list[SearchHit] = Field(default_factory=list)
 
 
@@ -2690,13 +2719,7 @@ class LaunchReport(BaseModel):
 # almost nothing, which is what this loop is written to be: donating cannot be
 # done on demand, somebody else has to ask first.
 DonateOutcome = Literal[
-    "donated",
-    "dry_run",
-    "nobody_asking",
-    "nothing_given",
-    "panel_shut",
-    "no_village",
-    "builder_base",
+    "donated", "dry_run", "nobody_asking", "nothing_given", "panel_shut", "no_village", "on_night"
 ]
 
 
