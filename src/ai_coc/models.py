@@ -1474,6 +1474,10 @@ class UpgradeTimer(BaseModel):
     the export says is running, from the export's own moment, and `done_at` is
     the same instant on the clock. `role` is None for a section nobody has seen
     carry a timer yet, which is reported unboosted rather than dropped.
+    `max_lvl`, `limited_lvl` and `next` are the merged row's (`ExportRow`), so
+    whether the same thing can be upgraded again once this finishes is read
+    here rather than off the export; `next` is the level after the one being
+    bought.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -1489,6 +1493,9 @@ class UpgradeTimer(BaseModel):
     # English name, under `name`.
     en: str | None = Field(default=None, validation_alias=AliasChoices("en", "name"))
     level: int | None = None
+    max_lvl: int | None = None
+    limited_lvl: int | None = None
+    next: NextUpgrade | None = None
     timer: int
     # On the job an event's goblin builder or researcher is doing.
     extra: bool = False
