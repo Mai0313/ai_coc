@@ -1,0 +1,57 @@
+# A one-off read borrows somebody's farming loop and comes back because another device
+# logged in: the borrower stops rather than giving the emulator back, which would start
+# the queued farming and log the player out again.
+skill = "share-emulator"
+about = "A borrowed command meets another device's login: stop, never giveback"
+situation = """
+沒有之前的對話, 現在不是在託管. 背景有一個打資源的迴圈在跑: state.json 的 emulator 是另一個 session 派的 subagent 帶 `--yield` 的 attack.
+"""
+user = "幫我讀一下現在的升級狀況跟倉庫"
+live = [900001]
+
+[replies]
+status = [{ stand_down = "session_taken" }]
+stock = [{ stand_down = "session_taken" }]
+
+[state.emulator]
+status = "running"
+pid = 900001
+command = "attack"
+started = "2026-11-12T16:05:00+08:00"
+yields = true
+caller = { agent = "codex", session = "another-session-farm", mission = "打日世界資源" }
+
+[[checks]]
+id = "stop"
+what = "stops, which cancels the loan"
+anchor = [".agents/skills/share-emulator/SKILL.md", "你的指令遇到別的裝置登入 (回 `session_taken`)"]
+kind = "called"
+calls = { command = "stop" }
+
+[[checks]]
+id = "no-giveback"
+what = "does not give the emulator back"
+anchor = ["AGENTS.md", "A borrower whose command stood down on it runs `ai_coc stop` rather than `giveback`"]
+kind = "not_called"
+calls = { command = "giveback" }
+
+[[checks]]
+id = "nothing-after"
+what = "runs nothing that touches the game after the login was lost"
+anchor = [".agents/skills/upgrades/SKILL.md", "他說可以之前一個 `ai_coc` 指令都不要下"]
+kind = "nothing_claims"
+after = { outcome = "session_taken" }
+
+[[checks]]
+id = "reply"
+what = "tells the user another device logged in"
+anchor = [".agents/skills/upgrades/SKILL.md", "一樣停下來告訴他"]
+kind = "reply"
+pattern = "另一部裝置|另一台|手機|登入"
+
+[[checks]]
+id = "named"
+what = "every command says who ran it and why"
+anchor = ["AGENTS.md", "Every `ai_coc` command an agent runs carries `--agent`"]
+kind = "every_call_has"
+fields = ["agent", "session", "mission"]

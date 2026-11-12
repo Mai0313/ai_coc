@@ -1,0 +1,51 @@
+# One-off: a day builder is idle and the user asks for the gold to go on buildings without
+# naming one. 多人箭塔 is staged as just finished at its max, freeing the builder. The day
+# builder order applies: every 地獄之塔 is maxed, so the shortest of the second group,
+# 箭塔 9 → 10. The build panel was not recorded, so the agent says what it would buy.
+skill = "upgrades"
+about = "An idle day builder and gold to spend: pick by the day builder order"
+situation = """
+沒有之前的對話. 背景沒有東西在跑, 遊戲停在日世界.
+"""
+user = "工人閒著, 這些金幣幫我花在建築上"
+screens = [{ frame = "hud_day.png" }]
+
+[replies]
+status = [{ world = "day", builder = { world = "day", role = "builder", free = 1, total = 7, outcome = "counted" }, lab = { world = "day", role = "lab", free = 0, total = 2, outcome = "counted" }, stock = { world = "day", held = { gold = 29808400, elixir = 29000000, dark = 470000 }, capacity = { gold = 29000000, elixir = 29000000, dark = 470000 }, filled = { gold = "102%", elixir = "100%", dark = "100%" }, gems = 7171 }, shield = { remaining = 4980, up = true } }]
+stock = [{ world = "day", held = { gold = 29808400, elixir = 29000000, dark = 470000 }, capacity = { gold = 29000000, elixir = 29000000, dark = 470000 }, filled = { gold = "102%", elixir = "100%", dark = "100%" }, gems = 7171 }]
+
+[state.emulator]
+status = "idle"
+pid = 41000
+command = "status"
+started = "2026-11-12T16:10:30+08:00"
+ended = "2026-11-12T16:11:40+08:00"
+caller = { agent = "claude-code", session = "an-earlier-session", mission = "讀升級時間" }
+
+[[edits]]
+world = "day"
+section = "buildings"
+data = 1000084
+set = { lvl = 4 }
+drop = ["timer", "done_at"]
+
+[[checks]]
+id = "candidates"
+what = "takes the candidates from search's builder section"
+anchor = [".agents/skills/upgrades/SKILL.md", "候選從 `ai_coc search` 來"]
+kind = "called"
+calls = { command = "search", args = { section = "builder" } }
+
+[[checks]]
+id = "pick"
+what = "picks by the day builder order: 地獄之塔 all maxed, so 箭塔 9 → 10"
+anchor = [".agents/skills/upgrades/SKILL.md", "地獄之塔都升滿了, 才換箭塔、法師塔、防空火箭、空氣炮"]
+kind = "reply"
+pattern = '(?<!多人)箭塔[^\n]{0,40}?(9\D{1,12}10|10 ?級)'
+
+[[checks]]
+id = "named"
+what = "every command says who ran it and why"
+anchor = ["AGENTS.md", "Every `ai_coc` command an agent runs carries `--agent`"]
+kind = "every_call_has"
+fields = ["agent", "session", "mission"]

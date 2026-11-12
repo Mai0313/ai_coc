@@ -1,0 +1,389 @@
+{
+  "world": "night",
+  "builder": {
+    "world": "night",
+    "role": "builder",
+    "free": 0,
+    "total": 3,
+    "outcome": "counted"
+  },
+  "lab": {
+    "world": "night",
+    "role": "lab",
+    "free": 0,
+    "total": 1,
+    "outcome": "counted"
+  },
+  "stock": {
+    "world": "night",
+    "held": {
+      "gold": 13280000,
+      "elixir": 6500000,
+      "dark": 0
+    },
+    "capacity": {
+      "gold": 6500000,
+      "elixir": 6500000,
+      "dark": null
+    },
+    "filled": {
+      "gold": "204%",
+      "elixir": "100%"
+    },
+    "gems": 6069
+  },
+  "shield": null,
+  "export": "exported",
+  "exported_at": "2026-11-12T16:11:26+08:00",
+  "boosts": {
+    "builder_boost": 5259,
+    "lab_boost": 8862,
+    "clocktower_boost": 1771,
+    "clocktower_cooldown": 80971
+  },
+  "timers": [
+    {
+      "world": "day",
+      "role": "builder",
+      "section": "heroes",
+      "data_id": 28000001,
+      "zh": "弓箭女皇",
+      "en": "Archer Queen",
+      "level": 69,
+      "max_lvl": 110,
+      "limited_lvl": 110,
+      "next": {
+        "lvl": 71,
+        "cost": {
+          "dark": 130000
+        },
+        "time": 345600
+      },
+      "timer": 19650,
+      "extra": false,
+      "boost": "builder_boost",
+      "seconds": 1965,
+      "done_at": "2026-11-12T16:44:11+08:00"
+    },
+    {
+      "world": "day",
+      "role": "lab",
+      "section": "units",
+      "data_id": 4000010,
+      "zh": "亡靈",
+      "en": "Minion",
+      "level": 12,
+      "max_lvl": 14,
+      "limited_lvl": 14,
+      "next": {
+        "lvl": 14,
+        "cost": {
+          "dark": 335000
+        },
+        "time": 1209600
+      },
+      "timer": 47205,
+      "extra": true,
+      "boost": "lab_boost",
+      "seconds": 1967,
+      "done_at": "2026-11-12T16:44:13+08:00"
+    },
+    {
+      "world": "day",
+      "role": "lab",
+      "section": "units",
+      "data_id": 4000110,
+      "zh": "棘木騎士",
+      "en": "Root Rider",
+      "level": 3,
+      "max_lvl": 4,
+      "limited_lvl": 4,
+      "next": null,
+      "timer": 106183,
+      "extra": false,
+      "boost": "lab_boost",
+      "seconds": 4425,
+      "done_at": "2026-11-12T17:25:11+08:00"
+    },
+    {
+      "world": "day",
+      "role": "builder",
+      "section": "heroes",
+      "data_id": 28000000,
+      "zh": "野蠻人之王",
+      "en": "Barbarian King",
+      "level": 67,
+      "max_lvl": 110,
+      "limited_lvl": 110,
+      "next": {
+        "lvl": 69,
+        "cost": {
+          "dark": 123000
+        },
+        "time": 345600
+      },
+      "timer": 81334,
+      "extra": false,
+      "boost": "builder_boost",
+      "seconds": 34003,
+      "done_at": "2026-11-13T01:38:09+08:00"
+    },
+    {
+      "world": "day",
+      "role": "builder",
+      "section": "heroes",
+      "data_id": 28000006,
+      "zh": "亡靈王子",
+      "en": "Minion Prince",
+      "level": 81,
+      "max_lvl": 95,
+      "limited_lvl": 95,
+      "next": {
+        "lvl": 83,
+        "cost": {
+          "dark": 310000
+        },
+        "time": 691200
+      },
+      "timer": 120176,
+      "extra": false,
+      "boost": "builder_boost",
+      "seconds": 72845,
+      "done_at": "2026-11-13T12:25:31+08:00"
+    },
+    {
+      "world": "night",
+      "role": "builder",
+      "section": "heroes",
+      "data_id": 28000005,
+      "zh": "戰鬥直升機",
+      "en": "Battle Copter",
+      "level": 29,
+      "max_lvl": 35,
+      "limited_lvl": 35,
+      "next": {
+        "lvl": 31,
+        "cost": {
+          "elixir": 4100000
+        },
+        "time": 604800
+      },
+      "timer": 120667,
+      "extra": false,
+      "boost": "clocktower_boost",
+      "seconds": 104728,
+      "done_at": "2026-11-13T21:16:54+08:00"
+    },
+    {
+      "world": "day",
+      "role": "builder",
+      "section": "heroes",
+      "data_id": 28000004,
+      "zh": "神盾勇者",
+      "en": "Royal Champion",
+      "level": 45,
+      "max_lvl": 55,
+      "limited_lvl": 55,
+      "next": {
+        "lvl": 47,
+        "cost": {
+          "dark": 350000
+        },
+        "time": 691200
+      },
+      "timer": 158448,
+      "extra": false,
+      "boost": "builder_boost",
+      "seconds": 111117,
+      "done_at": "2026-11-13T23:03:23+08:00"
+    },
+    {
+      "world": "night",
+      "role": "lab",
+      "section": "units",
+      "data_id": 4000042,
+      "zh": "暗夜女巫",
+      "en": "Night Witch",
+      "level": 13,
+      "max_lvl": 20,
+      "limited_lvl": 20,
+      "next": {
+        "lvl": 15,
+        "cost": {
+          "elixir": 3500000
+        },
+        "time": 475200
+      },
+      "timer": 141903,
+      "extra": false,
+      "boost": "clocktower_boost",
+      "seconds": 125964,
+      "done_at": "2026-11-14T03:10:50+08:00"
+    },
+    {
+      "world": "day",
+      "role": "builder",
+      "section": "buildings",
+      "data_id": 1000085,
+      "zh": "彈跳加農炮",
+      "en": "Ricochet Cannon",
+      "level": 1,
+      "max_lvl": 4,
+      "limited_lvl": 4,
+      "next": {
+        "lvl": 3,
+        "cost": {
+          "gold": 17500000
+        },
+        "time": 777600
+      },
+      "timer": 187918,
+      "extra": false,
+      "boost": "builder_boost",
+      "seconds": 140587,
+      "done_at": "2026-11-14T07:14:33+08:00"
+    },
+    {
+      "world": "day",
+      "role": "builder",
+      "section": "buildings",
+      "data_id": 1000085,
+      "zh": "彈跳加農炮",
+      "en": "Ricochet Cannon",
+      "level": 1,
+      "max_lvl": 4,
+      "limited_lvl": 4,
+      "next": {
+        "lvl": 3,
+        "cost": {
+          "gold": 17500000
+        },
+        "time": 777600
+      },
+      "timer": 189232,
+      "extra": true,
+      "boost": "builder_boost",
+      "seconds": 141901,
+      "done_at": "2026-11-14T07:36:27+08:00"
+    },
+    {
+      "world": "day",
+      "role": "builder",
+      "section": "buildings",
+      "data_id": 1000084,
+      "zh": "多人箭塔",
+      "en": "Multi-Archer Tower",
+      "level": 3,
+      "max_lvl": 4,
+      "limited_lvl": 4,
+      "next": null,
+      "timer": 234926,
+      "extra": false,
+      "boost": "builder_boost",
+      "seconds": 187595,
+      "done_at": "2026-11-14T20:18:01+08:00"
+    },
+    {
+      "world": "night",
+      "role": "builder",
+      "section": "buildings",
+      "data_id": 1000040,
+      "zh": "建築大師訓練營",
+      "en": "Builder Barracks",
+      "level": 11,
+      "max_lvl": 12,
+      "limited_lvl": 12,
+      "next": null,
+      "timer": 248763,
+      "extra": false,
+      "boost": "clocktower_boost",
+      "seconds": 232824,
+      "done_at": "2026-11-15T08:51:50+08:00"
+    },
+    {
+      "world": "day",
+      "role": "pet",
+      "section": "pets",
+      "data_id": 73000016,
+      "zh": "阿啾",
+      "en": "Sneezy",
+      "level": 7,
+      "max_lvl": 10,
+      "limited_lvl": 10,
+      "next": {
+        "lvl": 9,
+        "cost": {
+          "dark": 340000
+        },
+        "time": 691200
+      },
+      "timer": 263078,
+      "extra": false,
+      "boost": null,
+      "seconds": 263078,
+      "done_at": "2026-11-15T17:16:04+08:00"
+    },
+    {
+      "world": "night",
+      "role": "builder",
+      "section": "heroes",
+      "data_id": 28000003,
+      "zh": "戰爭機器",
+      "en": "Battle Machine",
+      "level": 27,
+      "max_lvl": 35,
+      "limited_lvl": 35,
+      "next": {
+        "lvl": 29,
+        "cost": {
+          "elixir": 3900000
+        },
+        "time": 518400
+      },
+      "timer": 373494,
+      "extra": false,
+      "boost": "clocktower_boost",
+      "seconds": 357555,
+      "done_at": "2026-11-16T19:30:41+08:00"
+    }
+  ],
+  "clock_tower": {
+    "ready_in": 80971,
+    "ready_at": "2026-11-13T14:40:57+08:00",
+    "boosting": 1771
+  },
+  "helpers": [
+    {
+      "data_id": 93000000,
+      "zh": "建築工人學徒",
+      "en": "Builder's Apprentice",
+      "level": 8,
+      "ready_in": 0,
+      "ready_at": "2026-11-12T16:11:26+08:00"
+    },
+    {
+      "data_id": 93000001,
+      "zh": "實驗助手",
+      "en": "Lab Assistant",
+      "level": 12,
+      "ready_in": 0,
+      "ready_at": "2026-11-12T16:11:26+08:00"
+    },
+    {
+      "data_id": 93000002,
+      "zh": "鍊金術士",
+      "en": "Alchemist",
+      "level": 3,
+      "ready_in": 0,
+      "ready_at": "2026-11-12T16:11:26+08:00"
+    },
+    {
+      "data_id": 93000003,
+      "zh": "探礦者",
+      "en": "Prospector",
+      "level": 1,
+      "ready_in": 0,
+      "ready_at": "2026-11-12T16:11:26+08:00"
+    }
+  ]
+}

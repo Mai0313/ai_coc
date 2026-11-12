@@ -1,0 +1,69 @@
+# A takeover wakes on its three-hour look and finds the pet house idle: 阿啾 is staged at
+# its max, so nothing continues and the standing authorisation picks the pet with the
+# longest list time. 挖挖 (4 → 5) and 靈狐 (2 → 3) tie at four days, so either passes.
+skill = "takeover"
+about = "A takeover wake finds the pet house idle: pick the longest pet"
+situation = """
+你在託管中 (今天 12:00 開始, session 一直是你的). 打資源的 subagent 在背景打日世界. 你掛的 `ai_coc watch` 剛醒來, 這一回合是它叫醒你的, 它的輸出:
+
+```json
+{"caller": {"agent": "claude-code", "session": "eval-pick-pet-on-wake", "mission": "全天候託管到他叫停"}, "next_at": "2026-11-12T16:12:20+08:00", "about": "每三小時看一眼倉庫; 阿啾 11-15 17:16", "ended": "2026-11-12T16:12:21+08:00", "stop_by": null, "outcome": "due"}
+```
+"""
+live = [900001]
+
+[replies]
+status = [{ world = "day", builder = { world = "day", role = "builder", free = 0, total = 7, outcome = "counted" }, lab = { world = "day", role = "lab", free = 0, total = 2, outcome = "counted" }, stock = { world = "day", held = { gold = 29808400, elixir = 29000000, dark = 470000 }, capacity = { gold = 29000000, elixir = 29000000, dark = 470000 }, filled = { gold = "102%", elixir = "100%", dark = "100%" }, gems = 7171 }, shield = { remaining = 4980, up = true } }]
+
+[state.emulator]
+status = "running"
+pid = 900001
+command = "attack"
+started = "2026-11-12T16:05:00+08:00"
+yields = true
+caller = { agent = "claude-code", session = "eval-pick-pet-on-wake-farm", mission = "打日世界資源" }
+
+[state.watch]
+status = "idle"
+pid = 41500
+started = "2026-11-12T13:12:20+08:00"
+ended = "2026-11-12T16:12:21+08:00"
+next_at = "2026-11-12T16:12:20+08:00"
+about = "每三小時看一眼倉庫; 阿啾 11-15 17:16"
+farms = true
+caller = { agent = "claude-code", session = "eval-pick-pet-on-wake", mission = "全天候託管到他叫停" }
+
+[[edits]]
+world = "day"
+section = "pets"
+data = 73000016
+set = { lvl = 10 }
+drop = ["timer", "done_at", "next"]
+
+[[checks]]
+id = "status-reread"
+what = "reads status again on waking"
+anchor = [".agents/skills/takeover/SKILL.md", "再重跑 `status`"]
+kind = "called"
+calls = { command = "status", args = { last = false } }
+
+[[checks]]
+id = "candidates"
+what = "takes the candidates from search's pets section"
+anchor = [".agents/skills/upgrades/SKILL.md", "候選從 `ai_coc search` 來"]
+kind = "called"
+calls = { command = "search", args = { section = "pets" } }
+
+[[checks]]
+id = "pick"
+what = "picks the pet with the longest list time"
+anchor = [".agents/skills/upgrades/SKILL.md", "跟實驗室一樣, 牌價時間最長的"]
+kind = "reply"
+pattern = "挖挖|靈狐"
+
+[[checks]]
+id = "named"
+what = "every command says who ran it and why"
+anchor = ["AGENTS.md", "Every `ai_coc` command an agent runs carries `--agent`"]
+kind = "every_call_has"
+fields = ["agent", "session", "mission"]

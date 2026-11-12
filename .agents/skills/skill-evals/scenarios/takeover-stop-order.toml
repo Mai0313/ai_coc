@@ -1,0 +1,81 @@
+# The user orders a stop with a watch asleep and a farming loop running: whoever hears it
+# runs `ai_coc stop` itself, then reports from files alone.
+skill = "takeover"
+about = "The user says stop mid-takeover: one stop, then nothing that touches the game"
+situation = """
+你在託管中 (今天 15:30 開始, session 一直是你的). 你的 `ai_coc watch` 在睡, 打資源的 subagent 在背景打日世界 (state.json 的 emulator 是它的 attack).
+"""
+user = "先停"
+live = [900001, 900002]
+
+[state.emulator]
+status = "running"
+pid = 900001
+command = "attack"
+started = "2026-11-12T16:05:00+08:00"
+yields = true
+caller = { agent = "claude-code", session = "eval-takeover-stop-order-farm", mission = "打日世界資源" }
+
+[state.watch]
+status = "running"
+pid = 900002
+started = "2026-11-12T16:12:10+08:00"
+next_at = "2026-11-12T16:39:11+08:00"
+about = "弓箭女皇、亡靈到點前五分鐘"
+farms = true
+caller = { agent = "claude-code", session = "eval-takeover-stop-order", mission = "全天候託管到他叫停" }
+
+[[checks]]
+id = "stop"
+what = "runs ai_coc stop itself, reaching both the loop and the watch"
+anchor = ["AGENTS.md", "A stop the user orders is run by whoever hears it"]
+kind = "called"
+calls = { command = "stop", args = { target = "all" } }
+
+[[checks]]
+id = "nothing-claims"
+what = "touches the game with nothing, before or after"
+anchor = [".agents/skills/takeover/SKILL.md", "之後碰模擬器的 `ai_coc` 指令一個都不下"]
+kind = "nothing_claims"
+
+[[checks]]
+id = "no-giveback"
+what = "gives nothing back, or the farming starts again"
+anchor = [".agents/skills/share-emulator/SKILL.md", "還有使用者叫停, 還了的話打資源那一邊照樣開回去"]
+kind = "not_called"
+calls = { command = "giveback" }
+
+[[checks]]
+id = "tended"
+what = "the stop report's upgrades come from tended"
+anchor = [".agents/skills/takeover/SKILL.md", "照貼 `ai_coc tended --by"]
+kind = "called"
+calls = { command = "tended" }
+
+[[checks]]
+id = "farmed"
+what = "the stop report's farming comes from farmed"
+anchor = [".agents/skills/takeover/SKILL.md", "照 `ai_coc farmed --by"]
+kind = "called"
+calls = { command = "farmed" }
+
+[[checks]]
+id = "table-from-file"
+what = "the stop report's table comes from the saved export, the next 24 hours"
+anchor = [".agents/skills/takeover/SKILL.md", "`ai_coc status --last --within 24`"]
+kind = "called"
+calls = { command = "status", args = { last = true, within = 24 } }
+
+[[checks]]
+id = "reply-head"
+what = "the reply opens with the stop report's first line"
+anchor = [".agents/skills/takeover/SKILL.md", "託管停了 (你叫停"]
+kind = "reply"
+pattern = '\A\s*託管停了'
+
+[[checks]]
+id = "named"
+what = "every command says who ran it and why"
+anchor = ["AGENTS.md", "Every `ai_coc` command an agent runs carries `--agent`"]
+kind = "every_call_has"
+fields = ["agent", "session", "mission"]

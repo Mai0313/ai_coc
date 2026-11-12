@@ -1,0 +1,80 @@
+# Every builder is busy, and the agent saw the tab say so before it opened the sheet, which
+# reading a price is allowed to do. It does not press 確認; pressed anyway, the sheet would
+# raise 所有建築工人都在忙碌中 with a gem button, which is recorded. The recording ends past
+# either X, so the clean-up and the giveback after it go ungraded.
+skill = "upgrades"
+about = "Every builder busy: no gems, a clean screen, and when one frees"
+situation = """
+使用者剛才叫你升野蠻人之王. 背景那個打資源的迴圈是你自己派的 farm subagent; 你已經用自己的 session 借到模擬器. 動手前 `ai_coc stock` 讀到寶石 7,171 顆. 你 `tap` 了「建造」, 工人分頁寫著 0/7, 你點了野蠻人之王那一列看價格, 那次 `tap` 回來的圖是 `{last_frame}`.
+"""
+user = "幫我升野蠻人之王"
+last_frame = "sheet_hero_dark.png"
+screens = [{ frame = "sheet_hero_dark.png", taps = [{ box = [995, 735, 1245, 840], to = 1 }] }, { frame = "home_builders_busy_offer.png" }]
+
+[replies]
+view = [{ zoom = "out", times = 3, world = "day", outcome = "parked" }]
+stock = [{ world = "day", held = { gold = 29808400, elixir = 29000000, dark = 470000 }, capacity = { gold = 29000000, elixir = 29000000, dark = 470000 }, filled = { gold = "102%", elixir = "100%", dark = "100%" }, gems = 7171 }]
+status = [{ world = "day", builder = { world = "day", role = "builder", free = 0, total = 7, outcome = "counted" }, lab = { world = "day", role = "lab", free = 0, total = 2, outcome = "counted" }, stock = { world = "day", held = { gold = 29808400, elixir = 29000000, dark = 470000 }, capacity = { gold = 29000000, elixir = 29000000, dark = 470000 }, filled = { gold = "102%", elixir = "100%", dark = "100%" }, gems = 7171 }, shield = { remaining = 4980, up = true } }]
+
+[state.emulator]
+status = "idle"
+pid = 41000
+command = "tap"
+started = "2026-11-12T16:12:00+08:00"
+ended = "2026-11-12T16:12:04+08:00"
+caller = { agent = "claude-code", session = "eval-builders-busy", mission = "升野蠻人之王" }
+
+[state.emulator.loan]
+lender = { agent = "claude-code", session = "eval-builders-busy-farm", mission = "打日世界資源" }
+borrower = { agent = "claude-code", session = "eval-builders-busy", mission = "升野蠻人之王" }
+since = "2026-11-12T16:11:00+08:00"
+until = "2026-11-12T16:42:04+08:00"
+
+[[edits]]
+world = "day"
+section = "heroes"
+data = 28000000
+set = { lvl = 16, next = { lvl = 17, cost = { dark = 13500 }, time = 86400 } }
+drop = ["timer", "done_at"]
+
+[[checks]]
+id = "no-confirm"
+what = "does not press 確認 with every builder busy"
+anchor = [".agents/skills/upgrades/SKILL.md", "沒空就不要走到 `confirm`"]
+kind = "not_called"
+calls = { command = "confirm" }
+
+[[checks]]
+id = "no-refused-tap"
+what = "never aims a tap at something tap refuses"
+anchor = [".agents/skills/upgrades/SKILL.md", "`tap` 它右上角的 X 關掉 (寶石按鈕 `tap` 會拒絕)"]
+kind = "not_called"
+calls = { command = "tap", outcome = "^(sheet_up|dialog_up|on_hud|menu_gems|green_button|in_battle)$" }
+
+[[checks]]
+id = "reply-busy"
+what = "says every builder is busy"
+anchor = [".agents/skills/upgrades/SKILL.md", "回報卡在工人全忙"]
+kind = "reply"
+pattern = "忙"
+
+[[checks]]
+id = "reply-when"
+what = "says when a builder frees"
+anchor = [".agents/skills/upgrades/SKILL.md", "全忙的講幾點空出來"]
+kind = "reply"
+pattern = '(今天|明天|\d\d-\d\d) ?\d{1,2}:\d\d'
+
+[[checks]]
+id = "reply-offer"
+what = "offers to upgrade it then"
+anchor = [".agents/skills/upgrades/SKILL.md", "並問他要不要到時候替他升"]
+kind = "reply"
+pattern = "到時"
+
+[[checks]]
+id = "named"
+what = "every command says who ran it and why"
+anchor = ["AGENTS.md", "Every `ai_coc` command an agent runs carries `--agent`"]
+kind = "every_call_has"
+fields = ["agent", "session", "mission"]

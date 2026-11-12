@@ -12,7 +12,7 @@ A Windows-only command-line app that drives Clash of Clans inside MuMu Player 12
 
 ## Driving the game
 
-The skills under `.agents/skills/` own the judgement of driving the game, and they are the only copy of those rules; a rule written here as well would drift. They are `takeover`, `upgrades`, `watch-and-fix`, `share-emulator`, `repair-emulator`, `game-update` and `find-on-map`, and each one's description says when it applies; `harness-check` checks whether a runtime can do what they assume of it. By default farming ends at `stock_full` with a report, and the loot is spent only when the user asked for that.
+The skills under `.agents/skills/` own the judgement of driving the game, and they are the only copy of those rules; a rule written here as well would drift. They are `takeover`, `upgrades`, `watch-and-fix`, `share-emulator`, `repair-emulator`, `game-update` and `find-on-map`, and each one's description says when it applies; `harness-check` checks whether a runtime can do what they assume of it, and `skill-evals` whether an agent following them makes the decisions they prescribe. By default farming ends at `stock_full` with a report, and the loot is spent only when the user asked for that.
 
 `share-emulator` owns what every command on the one emulator shares: the lock, borrowing a loop and giving it back, how a stop works and when it is safe, which commands run in the background and how a wait ends. `.agents/skills/takeover/references/runner.md` is what the farm subagent follows.
 
