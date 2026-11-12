@@ -2,7 +2,7 @@
 
 給派打資源的那一邊: `takeover` 每一種要打資源的終點, 都照這一份派一趟. 迴圈交給一個 subagent, 它照同一個資料夾的 `runner.md` 跑; 這份是派它的 session 的: 開跑前的判斷、派工、回報進來怎麼判、一趟的報告. 打資源本身不花任何東西, 不改程式碼.
 
-旗標看 `ai_coc <指令> -h` (開頭一行說那個指令做什麼), 回報欄位看 `src/ai_coc/models.py` 的 `AttackReport` / `AttackSeries`, 不要憑記憶下參數. 下面的指令都省略了每個指令都要帶的 `--agent`、`--session`、`--mission` (`AGENTS.md` 的 Say who is driving).
+旗標看 `ai_coc <指令> -h` (開頭一行說那個指令做什麼), 回報欄位看 `src/ai_coc/models.py` 的 `AttackRun` (整個 series 怎麼收工的 `SeriesEnding` 加上每一輪) / `AttackReport`, 不要憑記憶下參數. 下面的指令都省略了每個指令都要帶的 `--agent`、`--session`、`--mission` (`AGENTS.md` 的 Say who is driving).
 
 ## 開跑之前
 
@@ -36,7 +36,7 @@
 
 runtime 沒有 subagent 的話, 你自己照 `runner.md` 跑; 指令照 `share-emulator` 的「背景跑」送背景, 通知進來照 `runner.md` 的「讀結果」接下一步.
 
-**交辦把每一步寫成完整的一行指令**, 照順序編號, 它照抄不加不改. 照這個骨架填 (先打日世界的那一種): 先打夜世界就把兩段對調, 只打一個世界就刪掉另一段, `--debug` / `--shot-every` 加在 `attack` 那一行, 不截圖或不回日世界就刪掉那一行. 不打滿而打 N 輪的, 把 `--repeat 0` 換成 `--repeat N`, 「stock_full 之後」換成「跑完之後」.
+**交辦把每一步寫成完整的一行指令**, 照順序編號, 它照抄不加不改. 照這個骨架填 (先打日世界的那一種): 先打夜世界就把兩段對調, 只打一個世界就刪掉另一段, `--debug` / `--shot-every` 加在 `attack` 那一行, 不截圖或不回日世界就刪掉那一行. 不打滿而打 N 輪的, 把 `--repeat 0` 換成 `--repeat N`, 「收工在 stock_full」換成「收工在 repeat_done」.
 
 ```text
 你是打資源的 subagent. 先用讀檔工具完整讀一遍 <主 checkout>/.agents/skills/takeover/references/runner.md, 照它跑, 不載入其他 skill. 你不判斷任何事, 只照下面的清單一步一步跑, 碰到 runner.md 說要停下來的狀況或清單以外的事, 就停下來回報.
@@ -48,10 +48,10 @@ runtime 沒有 subagent 的話, 你自己照 `runner.md` 跑; 指令照 `share-e
 
 1. uv run --no-sync ai_coc world --day --yield --label <代號>-d-w1 <身分>
 2. uv run --no-sync ai_coc attack --repeat 0 --plan flat <門檻旗標> --yield --label <代號>-d-a1 <身分>
-3. 日世界最後一輪 stock_full 是 true 之後: uv run --no-sync ai_coc capture --label <代號>-d-cap <身分> (capture 不帶 --yield)
+3. 日世界的 attack 收工在 stock_full (wait 回的 run_outcome) 之後: uv run --no-sync ai_coc capture --label <代號>-d-cap <身分> (capture 不帶 --yield)
 4. uv run --no-sync ai_coc world --night --yield --label <代號>-n-w1 <身分>
 5. uv run --no-sync ai_coc attack --repeat 0 --plan flat --yield --label <代號>-n-a1 <身分>
-6. 夜世界最後一輪 stock_full 是 true 之後: uv run --no-sync ai_coc capture --label <代號>-n-cap <身分>
+6. 夜世界的 attack 收工在 stock_full 之後: uv run --no-sync ai_coc capture --label <代號>-n-cap <身分>
 7. uv run --no-sync ai_coc world --day --yield --label <代號>-d-w2 <身分>
 然後回報.
 
@@ -71,7 +71,7 @@ runtime 沒有 subagent 的話, 你自己照 `runner.md` 跑; 指令照 `share-e
 
 **log 跟畫面都能用, 自己判斷**, log 講不清楚就截一張, 那很便宜. `run.log` 答「走到哪, 這輪結果是什麼」; 畫面答 log 答不了的: 畫面長什麼樣, 兵有沒有在打, 判讀器讀的跟眼睛看的一不一樣. 迴圈在跑的時候看 `--debug` 留下的 `frames/`: 存下的每一張, `run.log` 都有一行 `Saved frame <檔名>`, 它前後的 log 就是讀這張的那一步. 迴圈自己沒在拍才用 `ai_coc capture --count N` 或 `repair-emulator` 的 `scripts/look.py` 截 (兩個都只截圖, 不佔 `state.json`, 但存在別的地方, 時間也對不上這輪的 log). `ai_coc read <png>` 不碰模擬器, 隨時能跑, 看每個 parser 讀到什麼.
 
-**判斷看 `result.json` 每一輪的 `AttackReport.outcome`**, 不要比對 log 的句子. 每一種是什麼在 `models.py` 的 `AttackOutcome` 上面那段註解; subagent 照 `runner.md` 決定續或停, 這裡是你要判斷的那幾種:
+**判斷看 `result.json` 的 `ending` (整個 series 怎麼收工) 跟每一輪的 `AttackReport.outcome`**, 不要比對 log 的句子. 每一種是什麼在 `models.py` 的 `SeriesEnding` 跟 `AttackOutcome` 上面那段註解; subagent 照 `runner.md` 決定續或停, 這裡是你要判斷的那幾種:
 
 - `no_loot` (兵出去了而戰利品整場沒動) 是**戰術**的問題, `nothing_deployed` (一張卡都沒出去) 是**迴圈**的問題, 都歸 `watch-and-fix`, 查的地方完全不同
 - `army_short`: 軍隊不到兵營的一半, 整個 series 到此為止. 造兵是即時的, 這種軍隊不會自己變好, 要人進遊戲改配置. 抓一張軍隊畫面附在回報裡
@@ -87,7 +87,7 @@ runtime 沒有 subagent 的話, 你自己照 `runner.md` 跑; 指令照 `share-e
 
 **被搶登** (`session_taken`): 另一部裝置 (多半是他的手機, 另一台模擬器也算) 登入了這個帳號, 迴圈沒有把登入搶回來就收工. 託管裡照 `SKILL.md` 的「停」: 五分鐘後自己登入回去; 不是託管派的這一趟 (例如查問題時派的) 就停手通知他, 等他說可以. 兩種都一樣, 那之前一個 `ai_coc` 指令都不要下, `stock`、`status` 也算: 每個指令開跑時都會重新登入, 把他踢下線. 登入回去後同一個世界同一組旗標再派. 夜世界被擠掉之後有幾分鐘配不到對手, 開回去頭幾輪 `No opponent in 150s` 甚至 `no_opponent` 是這個, 不是卡住.
 
-**其他停手的理由**: 遊戲一直回不到村莊, 同一個錯誤連續三次以上, 一輪也沒打成過, 連續三輪 `emulator_silent` (先看模擬器還活著沒有), 連續五輪 `no_attack_menu` (原因看每一輪自己的 log: 蓋住遊戲的畫面, 一直掉線, 或有人在手機上玩, 先看畫面). 這些都停下來講, 不要一直重試: 失敗要吵.
+**其他停手的理由**: 遊戲一直回不到村莊, 同一個錯誤連續三次以上, 一輪也沒打成過, series 收工在 `emulator_silent` (連續三輪沒回應, 先看模擬器還活著沒有) 或 `no_attack_menu` (連續五輪打不開攻擊選單, 原因看每一輪自己的 log: 蓋住遊戲的畫面, 一直掉線, 或有人在手機上玩, 先看畫面). 這些都停下來講, 不要一直重試: 失敗要吵.
 
 **撞到 bug 或模擬器起不來**: subagent 停下來回報哪一輪、`run.log` 的哪幾行跟執行目錄, 什麼都不改也不修. 接不接進 `watch-and-fix`、`repair-emulator` 或 `game-update` 是你判斷 (`SKILL.md` 的「停」說託管時不等他), 打資源本身不改程式碼. 交給使用者的話寫三件事: 哪一輪, `run.log` 的哪幾行, 你看到的畫面.
 
@@ -104,7 +104,7 @@ runtime 沒有 subagent 的話, 你自己照 `runner.md` 跑; 指令照 `share-e
 ```markdown
 兩邊都打滿了, 花了 1 小時 31 分鐘.
 
-日世界: 18 場, 最後一輪: 倉庫都滿過設定的百分比,停止刷資源
+日世界: 18 場, 倉庫都滿過設定的百分比
 
 | 資源 | 進帳 | 現在 |
 | --- | --- | --- |
@@ -114,7 +114,7 @@ runtime 沒有 subagent 的話, 你自己照 `runner.md` 跑; 指令照 `share-e
 
 工人 0/7, 最快明天 06:29 好.
 
-夜世界: 21 場, 最後一輪: 倉庫都滿過設定的百分比,停止刷資源
+夜世界: 21 場, 倉庫都滿過設定的百分比
 
 | 資源 | 進帳 | 現在 |
 | --- | --- | --- |
@@ -128,7 +128,7 @@ runtime 沒有 subagent 的話, 你自己照 `runner.md` 跑; 指令照 `share-e
 ```
 
 - **第一行**: 打完沒, 總共花多久 (`farmed` 第一行的時長). 只打一個世界就講那一個
-- **每個打了的世界一段, 照貼 `farmed` 印的**: 一行場數跟最後一輪怎麼收工, 一張表 (現在附滿了幾成; 夜世界的聖水車那一列, 進帳是車上多存的, 倒進倉庫的已經算在倉庫裡); 「有 N 場…沒算進進帳」那幾行照留, 那是量不到的場數, 不准估. 沒打的世界它不列. 金幣讀到負的是倉庫滿著只付了搜尋費
+- **每個打了的世界一段, 照貼 `farmed` 印的**: 一行場數跟最後那一次怎麼收工 (還在打的沒有這一句), 一張表 (現在附滿了幾成; 夜世界的聖水車那一列, 進帳是車上多存的, 倒進倉庫的已經算在倉庫裡); 「有 N 場…沒算進進帳」那幾行照留, 那是量不到的場數, 不准估. 沒打的世界它不列. 金幣讀到負的是倉庫滿著只付了搜尋費
 - **工人那一行**: 那個世界的工人最快幾點好 (收工時跑的 `ai_coc status` 表上那個世界「目標」是工人的第一列, 哥布林的也算), 遊戲停著的那個世界再加閒幾個/總共幾個 (`status` 那個世界那一行的工人數; 另一個世界的讀不到, 不為它開船). 沒打的世界沒有那一段, 它的工人最快幾點好寫成最後一行
 - 這一趟有花東西的話, 那個世界的工人那一行下面多一行: 刷了幾片牆, 升了什麼, 各花多少 (花之前跟花之後兩次讀到的倉庫差額, 片數是每批「城牆(N級)xK」的 K 加起來)
 - **倉庫讀到超過 100% 是真的**: 儲值送的資源會超過上限, 不是讀錯, `stop_at` 照樣把它當滿

@@ -139,7 +139,7 @@ description: >-
 - 第 2 種而 `look.py` 截不到圖的時候
 - 一次乾淨的重開之後還是站不上村莊, 或者 `quit` 了一分鐘程序還在
 - 看不到的東西: 模擬器視窗上的對話框, 截桌面沒被授權
-- 指令回 `另一部裝置登入了這個帳號,沒有把登入搶回來` (exit code 不是 0, log 有 `Another device has logged in to this account`): 不是模擬器壞了, 他多半正在手機上玩. 重跑會把登入搶回來, 把他踢掉 (`AGENTS.md` 的 Driving the game), 告訴他, 他說可以才跑
+- 指令回 `outcome` 是 `session_taken` (exit code 1, log 有 `Another device has logged in to this account`): 不是模擬器壞了, 他多半正在手機上玩. 重跑會把登入搶回來, 把他踢掉 (`AGENTS.md` 的 Driving the game), 告訴他, 他說可以才跑
 
 請人的時候講清楚四件事: 看到什麼 (附圖), 試過什麼, 要他改哪裡、改成什麼, 他改完你怎麼確認. 他說改好了, 照下一節驗.
 

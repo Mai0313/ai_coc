@@ -1194,6 +1194,36 @@ class AttackSeries(RootModel[list[AttackReport]]):
     root: list[AttackReport] = Field(default_factory=list)
 
 
+# How a whole `attack` series ended, which its last round cannot say: a series
+# stopped between rounds, one whose `--repeat` ran out and one interrupted all
+# end on an ordinary round. `repeat_done` is the rounds asked for played out,
+# `stopped` the state file asking it to stand down (`ai_coc stop`, or another
+# command borrowing the emulator), `interrupted` a Ctrl-C. `emulator_silent`
+# and `no_attack_menu` are rounds failing back to back (`ADAPTER_FAILURES`,
+# `MENU_FAILURES`), and the rest are the round outcomes that end a series on
+# their own.
+SeriesEnding = Literal[
+    "repeat_done",
+    "stopped",
+    "interrupted",
+    "stock_full",
+    "builder_free",
+    "lab_free",
+    "army_short",
+    "other_village",
+    "session_taken",
+    "emulator_silent",
+    "no_attack_menu",
+]
+
+
+class AttackRun(BaseModel):
+    """What one `attack` command answers: how the series ended, and every round it played."""
+
+    ending: SeriesEnding
+    rounds: AttackSeries = Field(default_factory=AttackSeries)
+
+
 class FarmedVillage(BaseModel):
     """What one attack series brought home on the village it played.
 
@@ -1206,7 +1236,8 @@ class FarmedVillage(BaseModel):
     after the first, each None where a trip could not say, and `cart_capacity`
     its ceiling where a trip read one; `cart_unread` is the battles since the
     last trip, whose elixir is in the cart and in neither reading. `ending` is
-    how the last round ended.
+    how the series ended, None for one still going, killed, or recorded before
+    series named their endings with a last round that does not say.
     """
 
     world: World
@@ -1219,7 +1250,7 @@ class FarmedVillage(BaseModel):
     cart_now: int | None = None
     cart_capacity: int | None = None
     cart_unread: int = 0
-    ending: AttackOutcome
+    ending: SeriesEnding | None = None
 
 
 class Patch(BaseModel):
@@ -1785,6 +1816,82 @@ class WatchReport(BaseModel):
     outcome: WatchOutcome
 
 
+# What `ai_coc stop` did to each section: asked a run or a watch to stand down,
+# or found nothing; and, beside the emulator's, what became of a loan standing
+# on it. A borrower's command still running keeps its loan; a loan nobody is
+# driving on is cancelled.
+EmulatorStop = Literal["asked", "nothing_running"]
+LoanStop = Literal["kept", "cancelled"]
+WatchStop = Literal["asked", "nothing_watching"]
+
+
+class StopReport(BaseModel):
+    """What `ai_coc stop` changed in the state file.
+
+    A section `target` left alone is None. `command` and `pid` are the run
+    asked to stand down; `loan` is None where no loan stood, and `lender` whose
+    run it was lent from; `watcher` is the watch asked.
+    """
+
+    target: StopTarget
+    emulator: EmulatorStop | None = None
+    command: str = ""
+    pid: int | None = None
+    loan: LoanStop | None = None
+    lender: Caller | None = None
+    watch: WatchStop | None = None
+    watcher: Caller | None = None
+
+
+GivebackOutcome = Literal["returned", "no_loan"]
+
+
+class GivebackReport(BaseModel):
+    """Whether `ai_coc giveback` found a loan to hand back, and whose run it goes back to."""
+
+    outcome: GivebackOutcome
+    lender: Caller | None = None
+
+
+# Why a command stood down before doing anything: the loan its `--yield` claim
+# queued behind was cancelled by `ai_coc stop`, another device logged in to
+# the account, or `watch` or `note` found no state file to write into.
+StandDownOutcome = Literal["loan_cancelled", "session_taken", "no_state_file"]
+
+
+class StandDownReport(BaseModel):
+    """A command that stood down, written as its answer so it never reads as a killed process."""
+
+    outcome: StandDownOutcome
+
+
+# Where one run stands, read off the journal and its process: its `end` line
+# written (or, its process gone, its `result.json` with the line lost),
+# driving, waiting for the emulator, or gone with neither, which is a run
+# killed or crashed. `no_such_run` is no `start` line for that name.
+WaitOutcome = Literal["finished", "running", "queued", "gone", "no_such_run"]
+
+
+class WaitReport(BaseModel):
+    """Where one run stands, as `ai_coc wait` found it.
+
+    `quiet` is how long its `run.log` has gone unwritten, in seconds. `holder`
+    is, while it queues, the run directory of the live run holding the
+    emulator, None when only a loan nobody is driving on stands in its way.
+    `exit` and `run_outcome` are off its `end` line, the outcome being what the
+    run reported (an attack's ending).
+    """
+
+    log: Path
+    outcome: WaitOutcome
+    command: str = ""
+    pid: int | None = None
+    quiet: int | None = None
+    holder: Path | None = None
+    exit: int | None = None
+    run_outcome: str | None = None
+
+
 class RunnerState(BaseModel):
     """Who is driving the emulator, kept between runs rather than during one.
 
@@ -1889,7 +1996,7 @@ class StateFile(BaseModel):
         return data
 
 
-def _labelled(label: str) -> str:
+def labelled(label: str) -> str:
     """A label reduced to what can safely be one part of a directory name.
 
     Anything that is not a letter, a digit, an underscore or a hyphen becomes a
@@ -2041,7 +2148,7 @@ class RunLog(BaseModel):
         """
         culled = _cull_old_frames()
         stamp = datetime.now().astimezone().strftime("%Y-%m-%d-%H%M%S")
-        base = LOG_DIR / f"{stamp}-{command}{f'-{slug}' if (slug := _labelled(label)) else ''}"
+        base = LOG_DIR / f"{stamp}-{command}{f'-{slug}' if (slug := labelled(label)) else ''}"
         # Two runs of the same command inside one second would otherwise land in
         # one directory, one `result.json` overwriting the other and both logs
         # interleaved. A shell loop over `ai_coc read` is how that really
@@ -2081,6 +2188,9 @@ class RunStarted(BaseModel):
     args: list[str]
     caller: Caller
     pid: int
+    # When that process started, so a later process handed the same pid does
+    # not read as this run (`commands._alive`).
+    pid_created: float | None = None
     version: str
     # The checkout's commit, since a local install reports the same placeholder
     # version whatever it runs; None outside a git checkout.
@@ -2093,9 +2203,10 @@ class RunEnded(BaseModel):
     event: Literal["end"] = "end"
     exit: int
     seconds: float
+    # The report's own outcome; an attack's is how its series ended.
     outcome: str | None = None
-    # `result.json`, or None where it is too long to copy; an attack series
-    # keeps its last round, the others being on their own `round` lines.
+    # `result.json`, or None where it is too long to copy; an attack keeps its
+    # ending and its last round, the others being on their own `round` lines.
     result: JsonValue = None
 
 
@@ -2130,6 +2241,11 @@ class RoundEvent(BaseModel):
     cart: CartReport | None = None
 
 
+# What a run that stood down on another device's login answered before the
+# stand-downs became reports, kept to read those journal lines back.
+SESSION_TAKEN_SENTENCE = "另一部裝置登入了這個帳號,沒有把登入搶回來"
+
+
 class JournalLine(BaseModel):
     """One line of `runs.jsonl` as a reader takes it: which run, when, and what of it is read.
 
@@ -2145,10 +2261,28 @@ class JournalLine(BaseModel):
     log: Path | None = None
     # On a `start` line.
     caller: Caller = Field(default_factory=Caller)
+    pid: int = 0
+    pid_created: float | None = None
     # On a `lock` line.
     what: str = ""
+    # On an `end` line.
+    exit: int | None = None
     outcome: str | None = None
     result: JsonValue = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _bare_stand_down(cls, data: object) -> object:
+        # A command that stood down answered with a bare sentence and no
+        # outcome until the stand-downs became reports.
+        if (
+            isinstance(data, dict)
+            and data.get("event") == "end"
+            and data.get("outcome") is None
+            and data.get("result") == SESSION_TAKEN_SENTENCE
+        ):
+            return {**data, "outcome": "session_taken"}
+        return data
 
 
 class JournalRound(BaseModel):

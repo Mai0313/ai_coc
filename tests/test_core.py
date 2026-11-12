@@ -56,6 +56,7 @@ from ai_coc.models import (
     VillageExport,
     BoundarySurvey,
     GeminiSettings,
+    GivebackReport,
     LootThresholds,
     StorageCapacity,
     VillageDocument,
@@ -1096,7 +1097,7 @@ class WorldChoiceTests(unittest.TestCase):
             patch.object(commands, "_settle_game", return_value=None),
             patch.object(commands, "_planner", return_value=None),
             patch.object(commands.ConfigStore, "load", return_value=AppConfig()),
-            patch.object(commands, "_rest", return_value=False),
+            patch.object(commands, "_rest", return_value=None),
             patch.object(commands, "AttackRunner") as runner,
             patch.object(world_ui, "cross") as sailed,
         ):
@@ -6124,7 +6125,7 @@ class RunnerStateTests(unittest.TestCase):
             tempfile.TemporaryDirectory() as folder,
             patch.object(commands, "STATE_PATH", Path(folder) / "state.json"),
         ):
-            assert "沒有指令在跑" in commands.stop()
+            assert commands.stop().emulator == "nothing_running"
             assert not commands.stop_requested()
 
     FARMING = Caller(agent="codex", session="s1", mission="打日世界資源")
@@ -6449,13 +6450,19 @@ class RunnerStateTests(unittest.TestCase):
             RunnerState(status="running", pid=424242, caller=self.BORROWING, loan=loan)
         )
         with patch.object(commands, "_alive", return_value=True):
-            assert "借用還在" in commands.stop()
+            stopped = commands.stop()
+        assert (stopped.emulator, stopped.loan) == ("asked", "kept")
         after = commands.read_state()
         assert after is not None
         assert after.loan is not None
         assert (after.status, after.loan.ended) == ("stopping", None)
         self._lent()
-        assert "借用也取消了" in commands.stop()
+        stopped = commands.stop()
+        assert (stopped.emulator, stopped.loan, stopped.lender) == (
+            "nothing_running",
+            "cancelled",
+            self.FARMING,
+        )
 
     def test_a_borrower_is_never_queued_behind_the_loan(self) -> None:
         """The next command of a live test goes straight in, and so does anybody
@@ -6510,9 +6517,9 @@ class RunnerStateTests(unittest.TestCase):
 
     def test_giving_back_is_anyone_s_and_says_when_there_is_nothing(self) -> None:
         """A borrower whose agent died would otherwise keep the lender waiting."""
-        assert "沒有東西要還" in commands.giveback()
+        assert commands.giveback() == GivebackReport(outcome="no_loan")
         self._lent()
-        assert "會自己開回去" in commands.giveback()
+        assert commands.giveback() == GivebackReport(outcome="returned", lender=self.FARMING)
         after = commands.read_state()
         assert after is not None
         assert after.loan is not None
@@ -6583,7 +6590,7 @@ class StopAtOverrideTests(unittest.TestCase):
             patch.object(commands, "park_camera", side_effect=AssertionError("parked")),
             patch.object(commands, "_planner", return_value=None),
             patch.object(commands.ConfigStore, "load", return_value=AppConfig(stop_at=85)),
-            patch.object(commands, "_rest", return_value=False),
+            patch.object(commands, "_rest", return_value=None),
             patch.object(commands, "AttackRunner") as runner,
         ):
             runner.return_value.run.return_value = AttackReport(outcome="took_loot", phases=1)
