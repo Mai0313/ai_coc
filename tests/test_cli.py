@@ -662,6 +662,7 @@ class DispatchTests(unittest.TestCase):
             (commands.HeldError, "held"),
             (commands.NoHoldError, "no_hold"),
             (commands.HoldCancelledError, "hold_cancelled"),
+            (commands.StaleExportError, "stale_export"),
         ):
             with (
                 patch.object(commands, "claim", side_effect=error),
@@ -749,6 +750,24 @@ class DispatchTests(unittest.TestCase):
             _run_command(_args("watch", "--minutes", "5", "--hold"), self.run)
         assert given.call_args.args[0].session == "s1"
         assert watched.call_args.kwargs["hold"] is True
+
+    def test_a_watch_on_a_stale_export_stands_down_and_never_takes_the_section(self) -> None:
+        stale = commands.StaleExportError("2026-11-12T22:40:00+08:00", "2026-11-12-225312-confirm")
+        with (
+            patch.object(commands, "wake_at", side_effect=stale),
+            patch.object(commands, "watch") as watched,
+            patch("sys.stdout", new_callable=io.StringIO),
+        ):
+            assert _run_command(_args("watch", "--upgrades"), self.run) == 1
+        watched.assert_not_called()
+        written = (self.run.directory / "result.json").read_text(encoding="utf-8")
+        report = models.StandDownReport.model_validate_json(written)
+        assert (report.outcome, report.exported_at, report.confirm_run) == (
+            "stale_export",
+            "2026-11-12T22:40:00+08:00",
+            "2026-11-12-225312-confirm",
+        )
+        assert _journal()[-1]["outcome"] == "stale_export"
 
     def test_a_capture_keeps_its_frames_in_its_own_run_without_debug(self) -> None:
         """It writes its frames under names of its own, so there is nothing for a

@@ -2856,6 +2856,55 @@ class WatchTests(unittest.TestCase):
             assert commands.wake_at([], tower=True) is None
             assert commands.wake_at([], ["lab"], tower=True) is None
 
+    def _pressed(self, run: str, at: datetime, outcome: str = "confirmed") -> None:
+        """One `confirm` run in this test's journal, ending `outcome` at `at`."""
+        with logging_setup.JOURNAL_PATH.open("a", encoding="utf-8") as journal:
+            for line in (
+                {
+                    "run": run,
+                    "at": (at - timedelta(seconds=5)).isoformat(),
+                    "event": "start",
+                    "command": "confirm",
+                },
+                {"run": run, "at": at.isoformat(), "event": "end", "exit": 0, "outcome": outcome},
+            ):
+                journal.write(json.dumps(line) + "\n")
+
+    def test_a_watch_on_the_upgrades_refuses_an_export_older_than_the_last_press(self) -> None:
+        """That export still lists the job the press finished, due already: it woke at once three times on 2026-11-12."""
+        now = datetime.now().astimezone()
+        taken = now - timedelta(minutes=10)
+        village = VillageExport(
+            tag="#T",
+            exported_at=taken.isoformat(),
+            timestamp=int(taken.timestamp()),
+            day={},
+            night={},
+        )
+        self.enterContext(
+            patch.object(
+                commands,
+                "_last_export",
+                return_value=ExportReport(outcome="read_back", export=village),
+            )
+        )
+        self.enterContext(patch.object(commands, "upgrade_timers", return_value=[]))
+        self.enterContext(patch.object(commands, "clock_tower", return_value=None))
+        # A press before the export, and a later one that bought nothing, leave it standing.
+        self._pressed("old-confirm", taken - timedelta(minutes=1))
+        self._pressed("refused-confirm", now - timedelta(minutes=2), outcome="price_mismatch")
+        assert commands.wake_at([], ["builder"], minutes=30) is not None
+        self._pressed("new-confirm", now - timedelta(minutes=5))
+        with pytest.raises(commands.StaleExportError) as raised:
+            commands.wake_at([], ["builder"], minutes=30)
+        assert (raised.value.exported_at, raised.value.confirm_run) == (
+            taken.isoformat(),
+            "new-confirm",
+        )
+        # A press leaves the clock tower as it was, and `--minutes` reads no export.
+        assert commands.wake_at([], tower=True, minutes=30) is not None
+        assert commands.wake_at([], minutes=30) is not None
+
     def test_nothing_to_wait_for_answers_at_once_and_leaves_a_live_watch_alone(self) -> None:
         commands._write_watch(self._theirs())
         with patch.object(commands, "_alive", return_value=True):

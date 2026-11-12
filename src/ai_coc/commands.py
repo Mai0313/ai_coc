@@ -680,6 +680,19 @@ class HoldCancelledError(HoldError):
     """`ai_coc stop` cancelled the hold a claim was queued behind."""
 
 
+class StaleExportError(RuntimeError):
+    """`watch --upgrades` found the newest saved export taken before the newest confirmed press.
+
+    That export still lists the job the press finished, with a `done_at` gone
+    by, so the watch would wake at once: three times on 2026-11-12.
+    """
+
+    def __init__(self, exported_at: str | None = None, confirm_run: str = "") -> None:
+        super().__init__(exported_at, confirm_run)
+        self.exported_at = exported_at
+        self.confirm_run = confirm_run
+
+
 # The exceptions a command stands down with, which `cli` answers as a
 # `StandDownReport` rather than a crash, and the line `run.log` gets for each.
 STAND_DOWNS: dict[type[RuntimeError], StandDownOutcome] = {
@@ -689,6 +702,7 @@ STAND_DOWNS: dict[type[RuntimeError], StandDownOutcome] = {
     HeldError: "held",
     NoHoldError: "no_hold",
     HoldCancelledError: "hold_cancelled",
+    StaleExportError: "stale_export",
 }
 STAND_DOWN_LINES: dict[StandDownOutcome, str] = {
     "loan_cancelled": "借用被 ai_coc stop 取消了,這個指令沒有開跑",
@@ -697,15 +711,20 @@ STAND_DOWN_LINES: dict[StandDownOutcome, str] = {
     "held": "另一個 session 在兩個指令之間保留著模擬器,這個指令沒有開跑",
     "no_hold": "這個 session 的保留已經不在(過期、被 stop 取消,或別人寫過狀態檔),什麼都沒按",
     "hold_cancelled": "排在後面等的那個保留被 ai_coc stop 取消了,這個指令沒有開跑",
+    "stale_export": "最新那份村莊匯出比最後一次按成功的確認還舊,沒有睡;重讀 status 再掛",
 }
 
 
 def stand_down(error: RuntimeError) -> StandDownReport:
-    """The answer a command that stood down with `error` gives, whose hold it was included."""
+    """The answer a command that stood down with `error` gives, whose hold or which export included."""
     report = StandDownReport(outcome=STAND_DOWNS[type(error)])
     if isinstance(error, HoldError):
         return report.model_copy(
             update={"holder": error.holder, "command": error.command, "until": error.until}
+        )
+    if isinstance(error, StaleExportError):
+        return report.model_copy(
+            update={"exported_at": error.exported_at, "confirm_run": error.confirm_run}
         )
     return report
 
@@ -1679,6 +1698,11 @@ def wake_at(
     done wakes it now. `tower` adds the clock tower's `ready_at`, except a tower
     ready now, which the `status` before this read and which would otherwise
     wake the session at once on every watch when it will not boost.
+
+    **`upgrades` stands down on an export older than the newest confirmed
+    press** (`StaleExportError`), any session's: that export still lists the
+    job the press finished, due already, so the watch would wake at once. A
+    press leaves the clock tower's `ready_at` as it was, so `tower` alone does not.
     """
     now = datetime.now().astimezone()
     found = [(at if at.tzinfo else at.astimezone(), "--next") for at in nexts]
@@ -1688,6 +1712,13 @@ def wake_at(
     if read is not None and read.export is None:
         logger.warning("No saved export to read the upgrades from: %s", read.outcome)
     village = None if read is None else read.export
+    if (
+        village is not None
+        and upgrades is not None
+        and (pressed := _last_confirm()) is not None
+        and pressed.at.timestamp() > village.timestamp
+    ):
+        raise StaleExportError(village.exported_at, pressed.run)
     if village is not None:
         for timer in upgrade_timers(village):
             if upgrades is None or (upgrades and timer.role not in upgrades):
@@ -3910,6 +3941,12 @@ def _journal() -> list[JournalLine]:
             with suppress(ValueError):
                 lines.append(JournalLine.model_validate_json(text))
     return lines
+
+
+def _last_confirm() -> JournalLine | None:
+    """The `end` line of the newest run that ended `confirmed`, which only `confirm` does, any session's; None when there is none."""
+    bought = (line for line in _journal() if line.event == "end" and line.outcome == "confirmed")
+    return max(bought, key=lambda line: line.at, default=None)
 
 
 def _press_time(start: JournalLine) -> datetime | None:
