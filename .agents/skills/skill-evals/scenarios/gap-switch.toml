@@ -1,0 +1,63 @@
+# A short gap before 棘木騎士, which tops out (下一級 —) and will be switched: status prices
+# only continuations, so no shortfall line proves nothing and the gap is farmed as usual.
+skill = "takeover"
+about = "A short gap before a row that tops out: farm as usual"
+minutes_after_export = 1
+situation = """
+你在託管中 (今天 12:00 開始, session 一直是你的, 終點是他叫停, 要打資源). 打資源的 subagent 上一趟打完回報了, 現在沒有在跑. 你剛照「到點前五分鐘備好」按完野蠻人之王的續升, 照「收尾」收好畫面, 也 `giveback` 了, 模擬器上沒有東西在跑. 接著做第 5 步最後說的: 重讀 `status`, 決定這一次補不補打.
+"""
+
+[replies]
+status = [{ world = "day", builder = { world = "day", role = "builder", free = 0, total = 7, outcome = "counted" }, lab = { world = "day", role = "lab", free = 0, total = 2, outcome = "counted" }, stock = { world = "day", held = { gold = 29808400, elixir = 29000000, dark = 470000 }, capacity = { gold = 29000000, elixir = 29000000, dark = 470000 }, filled = { gold = "102%", elixir = "100%", dark = "100%" }, gems = 7171 }, shield = { remaining = 4980, up = true } }]
+
+[state.emulator]
+status = "idle"
+pid = 41700
+command = "giveback"
+started = "2026-11-12T16:11:50+08:00"
+ended = "2026-11-12T16:11:52+08:00"
+caller = { agent = "claude-code", session = "eval-gap-switch", mission = "全天候託管: 野蠻人之王續升" }
+
+[state.watch]
+status = "idle"
+pid = 41600
+started = "2026-11-12T16:05:00+08:00"
+ended = "2026-11-12T16:10:00+08:00"
+about = "野蠻人之王到點"
+farms = true
+caller = { agent = "claude-code", session = "eval-gap-switch", mission = "全天候託管到他叫停" }
+
+[[edits]]
+world = "day"
+section = "units"
+data = 4000110
+set = { timer = 12960 }
+
+[[checks]]
+id = "status-reread"
+what = "reads status again after the press"
+anchor = [".agents/skills/takeover/SKILL.md", "看剛重跑的 `status`"]
+kind = "called"
+calls = { command = "status", args = { last = false } }
+
+[[checks]]
+id = "farms"
+what = "the gap is farmed: a farm brief is written"
+anchor = [".agents/skills/takeover/SKILL.md", "少一件就照派"]
+kind = "exists"
+file = "*brief.md"
+
+[[checks]]
+id = "no-reason"
+what = "no sentence about holding the farm run back"
+anchor = [".agents/skills/takeover/SKILL.md", "因此暫時不打資源, 等它升完再打"]
+kind = "reply"
+pattern = "暫時不打資源"
+absent = true
+
+[[checks]]
+id = "named"
+what = "every command says who ran it and why"
+anchor = ["AGENTS.md", "Every `ai_coc` command an agent runs carries `--agent`"]
+kind = "every_call_has"
+fields = ["agent", "session", "mission"]

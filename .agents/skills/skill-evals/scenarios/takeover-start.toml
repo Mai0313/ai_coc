@@ -94,7 +94,7 @@ pattern = "開加速"
 [[checks]]
 id = "ask-maxed"
 what = "asks about the slots that top out with one push"
-anchor = [".agents/skills/takeover/SKILL.md", "照 `AGENTS.md` 的 Putting a decision to the user 問他那一格到時改升什麼"]
+anchor = [".agents/skills/takeover/SKILL.md", "照 `AGENTS.md` 的 Putting a decision to the user 一次問他每一格到時改升什麼"]
 kind = "exists"
 file = "push.md"
 

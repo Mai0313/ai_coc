@@ -1624,6 +1624,22 @@ class HelperCooldown(BaseModel):
     ready_at: str
 
 
+class PaidShare(BaseModel):
+    """What one purchase on a village paid against the tables' list price for that level.
+
+    `status` scales the next levels' list prices by it, since an event
+    discounts every upgrade of a village alike (2026-11-12: all 24 home village
+    purchases paid 0.4 of list, the builder base's one 0.8). `at` and `item`
+    say which purchase it was, so the estimate names its source.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    share: float
+    at: datetime
+    item: str
+
+
 class StatusReport(BaseModel):
     """Where both villages' upgrades stand, and what the village on screen holds.
 
@@ -1656,6 +1672,9 @@ class StatusReport(BaseModel):
     # None where the export has no clock tower, or one being upgraded.
     clock_tower: ClockTower | None = None
     helpers: list[HelperCooldown] = Field(default_factory=list)
+    # The newest purchase per village whose price resolves against the tables;
+    # a village with none has its next levels at list price.
+    paid: dict[World, PaidShare] = Field(default_factory=dict)
 
 
 # How one `view` command left the camera. `parked` is the whole job done;

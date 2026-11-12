@@ -17,6 +17,7 @@ import itertools
 import threading
 from contextlib import suppress, contextmanager
 import statistics
+from collections import Counter
 
 import psutil
 from filelock import Timeout, FileLock
@@ -42,6 +43,7 @@ from ai_coc.models import (
     LostLogin,
     MapSurvey,
     NightPlan,
+    PaidShare,
     PlateRole,
     SearchHit,
     StateFile,
@@ -181,6 +183,7 @@ from ai_coc.parsers.scout import (
 from ai_coc.parsers.world import current_world
 from ai_coc.adapters.config import ConfigStore, gemini_key
 from ai_coc.parsers.village import (
+    SPEED_UPS,
     merge,
     clock_tower,
     from_legacy,
@@ -3048,14 +3051,57 @@ def status(frames: FrameLog, last: bool = False) -> StatusReport:
 
 
 def _timed(report: StatusReport, village: VillageExport | None) -> StatusReport:
-    """The report with what the export says filled in: the timers, the clock tower and the helpers."""
+    """The report with what the export says filled in, and what the newest purchases paid against list."""
     if village is not None:
         report.exported_at = village.exported_at
         report.boosts = village.boosts
         report.timers = upgrade_timers(village)
         report.clock_tower = clock_tower(village)
         report.helpers = helper_cooldowns(village)
+        report.paid = _paid_shares(_kept_tables())
     return report
+
+
+# `confirm --item` as the `upgrades` skill writes it: the game's name, then the level bought.
+ITEM = re.compile(r"(.+?)\s+(\d+)(?:\s*級)?")
+
+
+def _paid_shares(tables: GameEntities | None) -> dict[World, PaidShare]:
+    """What the newest purchase on each village paid against the tables' list price, off the journal.
+
+    A `confirm` counts whatever it went on to do once the button asked exactly
+    the price the agent read off the row, since that is the price today; a
+    wall's is several walls and is left out. Its item has to name one level of
+    one village at one list price: 12 names are on both villages and 19 on
+    several entities of one.
+    """
+    if tables is None:
+        return {}
+    listed: dict[tuple[str, int, str], set[tuple[World, int]]] = {}
+    for entity in tables.entities:
+        for level in entity.levels:
+            for resource, amount in level.cost.items():
+                key = (entity.zh or "", level.lvl, resource)
+                listed.setdefault(key, set()).add((entity.world, amount))
+    lines = _journal()
+    confirms = {line.run for line in lines if line.event == "start" and line.command == "confirm"}
+    paid: dict[World, PaidShare] = {}
+    for end in reversed([line for line in lines if line.event == "end" and line.run in confirms]):
+        try:
+            report = ConfirmReport.model_validate(end.result)
+        except ValueError:
+            continue
+        named = ITEM.fullmatch(report.item or "")
+        offer = report.offer
+        if named is None or offer is None or report.wall is not None:
+            continue
+        found = listed.get((named[1], int(named[2]), offer.resource), set())
+        if offer.price != report.asked or len(found) != 1:
+            continue
+        [(world, amount)] = found
+        if world not in paid and 0 < offer.price <= amount:
+            paid[world] = PaidShare(share=offer.price / amount, at=end.at, item=named[0])
+    return paid
 
 
 # Rows of one kind, level and slot whose upgrades end this close together are one row
@@ -3072,6 +3118,26 @@ ROLE_NAMES: dict[UpgradeRole, str] = {"builder": "工人", "lab": "實驗室", "
 # the upgrades the report lists; the Alchemist and the Prospector do not, and an
 # unused one reads as ready on every export.
 UPGRADE_HELPERS = (93000000, 93000001)
+# How many hours ahead the shortfall lines sum the next levels: the takeover's
+# farm check interval (`watch --minutes 180`), the longest it goes without
+# reading again. Replayed over the 60 home village `status` runs of 2026-11-11
+# and 11-12 at the share each would have read, it fired on 6: the three dark
+# elixir runs of 18:19-18:47, before five dark purchases in a row, and three
+# of 11-11 before any purchase named its item, at list price. At list price
+# throughout it fired on 20.
+SHORT_WITHIN = 3
+# The resources each village's storages hold; the builder base's third bar is its gems.
+STORED: dict[World, tuple[str, ...]] = {
+    "day": ("gold", "elixir", "dark"),
+    "night": ("gold", "elixir"),
+}
+# The running speed-ups as the report names them.
+BOOST_NAMES = {
+    "builder_boost": "工人藥水",
+    "lab_boost": "實驗室藥水",
+    "pet_boost": "戰寵藥水",
+    "clocktower_boost": "鐘塔加速",
+}
 
 
 def status_text(
@@ -3082,12 +3148,19 @@ def status_text(
     **This, not the JSON, is what `status` prints**, because whoever reads its
     stdout is an agent about to write this report; the fields stay in
     `result.json` and behind `--json`. Each row is facts only: when, whose slot
-    (a goblin's marked) and the item with its levels. What follows a row
-    (continue it, switch, ask) is the agent's to decide and add. Times are
-    read against `now`, since `--last`
+    (a goblin's marked), the item with its levels, and what its next level
+    asks. What follows a row (continue it, switch, ask) is the agent's to
+    decide and add. Times are read against `now`, since `--last`
     prints an export taken a while ago. `within` keeps the rows finishing in
     that many hours and folds the rest into one line, as the report a stop
     hands over lists them.
+
+    The next level's price is the list price scaled by the village's newest
+    purchase (`paid`), and the head line names it, since a list price cries
+    wolf all through an event. Under the village whose storages were read come
+    a line per resource they do not cover if every row finishing within
+    `SHORT_WITHIN` hours continued, and nothing when they do; then the
+    speed-ups running and when each ends.
     """
     now = now or datetime.now().astimezone()
     if report.exported_at is None:
@@ -3096,6 +3169,7 @@ def status_text(
         head = f"村莊匯出: {_moment(report.exported_at, now)}"
         if report.stock is None:
             head += " (存下的那份, 倉庫跟計數這次沒讀)"
+        head += f"; {_paid_line(report.paid, now)}"
     shown = [head]
     for world in ("day", "night"):
         shown += ["", _world_line(report, world)]
@@ -3105,12 +3179,14 @@ def status_text(
         near = [row for row in rows if within is None or row[0] <= now + timedelta(hours=within)]
         if near:
             shown += ["", "| 時間 | 目標 | 項目 |", "| --- | --- | --- |"]
-            shown += [f"| {when} | {slot} | {item} |" for _, when, slot, item in near]
+            shown += [f"| {when} | {slot} | {item}{cost} |" for _, when, slot, item, cost in near]
         if later := rows[len(near) :]:
-            names = "、".join(item for _, _, _, item in later)
+            names = "、".join(item for _, _, _, item, _ in later)
             shown += ["", f"之後還有 {names}, 最晚 {later[-1][1]}"]
         if not rows:
             shown.append("沒有在升的")
+        for block in (_short_lines(report, world, now), _boost_lines(report, world, now)):
+            shown += ["", *block] if block else []
         helpers = [
             f"{helper.zh or helper.en or f'#{helper.data_id}'} "
             + (
@@ -3139,11 +3215,10 @@ def _world_line(report: StatusReport, world: World) -> str:
     if stock.held is None:
         held = "倉庫讀不到"
     else:
-        names = ("gold", "elixir", "dark") if world == "day" else ("gold", "elixir")
         held = "、".join(
             f"{_RESOURCE_NAMES[one]} {_wan(getattr(stock.held, one))}"
             + (f" ({stock.filled[one]})" if one in stock.filled else "")
-            for one in names
+            for one in STORED[world]
         )
         if stock.gems is not None:
             held += f"、寶石 {stock.gems:,}"
@@ -3165,13 +3240,15 @@ def _world_line(report: StatusReport, world: World) -> str:
 
 def _timer_rows(
     report: StatusReport, world: World, now: datetime
-) -> list[tuple[datetime, str, str, str]]:
+) -> list[tuple[datetime, str, str, str, str]]:
     """One village's rows of the table, soonest first, the clock tower among them.
 
-    Each is the instant it finishes, then its three cells. A helper working on
-    a row is named in its slot with the time its work there ends, and one an
-    old export could not count is said beside the time.
+    Each is the instant it finishes, its three cells, and what its next level
+    asks as the tail of the item cell. A helper working on a row is named in
+    its slot with the time its work there ends, and one an old export could
+    not count is said beside the time.
     """
+    share = report.paid[world].share if world in report.paid else 1.0
     merged: list[tuple[UpgradeTimer, int]] = []
     for timer in (one for one in report.timers if one.world == world):
         same = next(
@@ -3208,6 +3285,7 @@ def _timer_rows(
             (first.zh or first.en or f"#{first.data_id}")
             + (f" {TIMES}{count}" if count > 1 else "")
             + _levels(first),
+            _cost_text(_next_cost(first, share), count),
         )
         for first, count in merged
     ]
@@ -3215,8 +3293,85 @@ def _timer_rows(
     if world == "night" and tower is not None:
         ready = datetime.fromisoformat(tower.ready_at)
         when = "現在" if ready <= now else _moment(tower.ready_at, now)
-        rows.append((ready, when, "—", "鐘塔冷卻結束"))
+        rows.append((ready, when, "—", "鐘塔冷卻結束", ""))
     return sorted(rows, key=lambda row: row[0])
+
+
+def _next_cost(timer: UpgradeTimer, share: float) -> dict[str, int]:
+    """What continuing a row asks, its list price scaled by `share`; empty where it cannot continue.
+
+    It cannot past its last level (no `next`), on a level the hall does not
+    allow yet, or with no level at all.
+    """
+    upgrade = timer.next
+    if upgrade is None or (timer.limited_lvl is not None and upgrade.lvl > timer.limited_lvl):
+        return {}
+    return {resource: round(amount * share) for resource, amount in upgrade.cost.items()}
+
+
+def _cost_text(cost: dict[str, int], count: int) -> str:
+    """`, 下一級 黑水 5.6 萬`, `下一級各` on a merged row, `—` where it cannot continue."""
+    if not cost:
+        return ", 下一級 —"
+    each = "各" if count > 1 else ""
+    asks = "、".join(
+        f"{_RESOURCE_NAMES.get(name, name)} {amount / 10_000:g} 萬"
+        for name, amount in cost.items()
+    )
+    return f", 下一級{each} {asks}"
+
+
+def _paid_line(paid: dict[World, PaidShare], now: datetime) -> str:
+    """Where the next levels' prices come from: each village's newest purchase, or the list price."""
+    sources = [
+        f"{WORLD_NAMES[world]} {round(one.share * 10, 1):g} 折 ({_moment(one.at.isoformat(), now)})"
+        if (one := paid.get(world)) is not None and one.share < 1
+        else f"{WORLD_NAMES[world]}牌價"
+        for world in ("day", "night")
+    ]
+    if not any(one.share < 1 for one in paid.values()):
+        return "下一級是牌價"
+    return f"下一級照最近實付估: {'、'.join(sources)}"
+
+
+def _short_lines(report: StatusReport, world: World, now: datetime) -> list[str]:
+    """One line per resource the village's storages do not cover if every row due within `SHORT_WITHIN` hours continued.
+
+    Only for the village whose storages this run read. A row that cannot
+    continue adds nothing, and one the agent will switch adds its own next
+    level, since only the agent knows what goes there.
+    """
+    stock = report.stock
+    if stock is None or stock.held is None or stock.world != world:
+        return []
+    share = report.paid[world].share if world in report.paid else 1.0
+    horizon = now + timedelta(hours=SHORT_WITHIN)
+    need: Counter[str] = Counter()
+    for timer in report.timers:
+        if timer.world == world and datetime.fromisoformat(timer.done_at) <= horizon:
+            need.update(_next_cost(timer, share))
+    return [
+        f"資源不足 ({SHORT_WITHIN} 小時內到點的都續升): {_RESOURCE_NAMES[one]}"
+        f" 要 {need[one]:,} / 有 {held:,} (差 {need[one] - held:,})"
+        for one in STORED[world]
+        if need[one] > (held := getattr(stock.held, one))
+    ]
+
+
+def _boost_lines(report: StatusReport, world: World, now: datetime) -> list[str]:
+    """A line of the village's speed-ups still running at `now` and when each ends, or none."""
+    if report.exported_at is None:
+        return []
+    taken = datetime.fromisoformat(report.exported_at)
+    keys = dict.fromkeys(
+        key for (where, _role), (key, _rate) in SPEED_UPS.items() if where == world
+    )
+    running = [
+        f"{BOOST_NAMES.get(key, key)} 到{_moment(end.isoformat(), now)}"
+        for key in keys
+        if (left := getattr(report.boosts, key)) and (end := taken + timedelta(seconds=left)) > now
+    ]
+    return [f"加速: {'、'.join(running)}"] if running else []
 
 
 def _levels(timer: UpgradeTimer) -> str:

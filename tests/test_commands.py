@@ -30,6 +30,7 @@ from ai_coc.ui import world as world_ui
 from ai_coc.models import (
     SESSION_TAKEN_SENTENCE,
     Watch,
+    Boosts,
     Caller,
     MapEdge,
     FrameLog,
@@ -41,6 +42,7 @@ from ai_coc.models import (
     GameLevel,
     LootOffer,
     NightPlan,
+    PaidShare,
     WatchStop,
     AttackPlan,
     CartReport,
@@ -624,7 +626,7 @@ def _timer(
         "level": level,
         "max_lvl": 10,
         "limited_lvl": 10,
-        "next": NextUpgrade(lvl=(level or 0) + 2, cost={"gold": 1}),
+        "next": None if level is None else NextUpgrade(lvl=level + 2, cost={"gold": 10_000}),
         "timer": 1,
         "seconds": int((when - NOW).total_seconds()),
         "done_at": when.isoformat(),
@@ -652,7 +654,7 @@ class StatusTextTests(unittest.TestCase):
         self,
     ) -> None:
         shown = commands.status_text(self._report(), NOW).splitlines()
-        assert shown[0] == "村莊匯出: 今天 11:58"
+        assert shown[0] == "村莊匯出: 今天 11:58; 下一級是牌價"
         assert (
             "日世界: 金幣 4370 萬 (150%)、聖水 980 萬 (33%)、黑水 0.6 萬; 工人 0/7、實驗室 讀不到;"
             " 護盾讀不到" in shown
@@ -691,13 +693,13 @@ class StatusTextTests(unittest.TestCase):
         )
         assert "| 時間 | 目標 | 項目 |\n| --- | --- | --- |" in text
         for row in (
-            "| 今天 13:00 | 工人 | 建築1 (5/10) |",
-            "| 今天 14:00 | 工人 | 建築2 (10/10) |",
-            "| 今天 15:00 | 工人 | 建築3 (5/10, 上限 5) |",
-            "| 今天 16:00 | 實驗室 (哥布林) | 建築4 (5/10) |",
-            "| 今天 17:00 | 工人 | 建築5 (5/—) |",
-            "| 今天 18:00 (沒算加速) | — | 建築6 (5/10) |",
-            "| 今天 19:00 | 工人 | 建築7 |",
+            "| 今天 13:00 | 工人 | 建築1 (5/10), 下一級 金幣 1 萬 |",
+            "| 今天 14:00 | 工人 | 建築2 (10/10), 下一級 — |",
+            "| 今天 15:00 | 工人 | 建築3 (5/10, 上限 5), 下一級 — |",
+            "| 今天 16:00 | 實驗室 (哥布林) | 建築4 (5/10), 下一級 金幣 1 萬 |",
+            "| 今天 17:00 | 工人 | 建築5 (5/—), 下一級 金幣 1 萬 |",
+            "| 今天 18:00 (沒算加速) | — | 建築6 (5/10), 下一級 金幣 1 萬 |",
+            "| 今天 19:00 | 工人 | 建築7, 下一級 — |",
         ):
             assert row in text, row
 
@@ -711,10 +713,12 @@ class StatusTextTests(unittest.TestCase):
             ),
             NOW,
         )
-        assert f"| 今天 13:00 | 工人 | 建築1 {commands.TIMES}2 (5/10) |" in text
-        assert "| 今天 13:06 | 工人 | 建築1 (5/10) |" in text
+        assert (
+            f"| 今天 13:00 | 工人 | 建築1 {commands.TIMES}2 (5/10), 下一級各 金幣 1 萬 |" in text
+        )
+        assert "| 今天 13:06 | 工人 | 建築1 (5/10), 下一級 金幣 1 萬 |" in text
         # A goblin's slot is a row of its own, since it is paid for apart.
-        assert "| 今天 13:05 | 工人 (哥布林) | 建築1 (5/10) |" in text
+        assert "| 今天 13:05 | 工人 (哥布林) | 建築1 (5/10), 下一級 金幣 1 萬 |" in text
 
     def test_a_helper_on_a_row_is_named_in_its_slot_until_its_work_there_ends(self) -> None:
         until = datetime(2026, 11, 11, 12, 36).astimezone().isoformat()
@@ -728,10 +732,13 @@ class StatusTextTests(unittest.TestCase):
         )
         text = commands.status_text(report, NOW)
         # Not one row with the job beside it that the helper is not on.
-        assert "| 今天 13:00 | 工人 (建築工人學徒幫到今天 12:36) | 建築1 (5/10) |" in text
-        assert "| 今天 13:02 | 工人 | 建築1 (5/10) |" in text
+        assert (
+            "| 今天 13:00 | 工人 (建築工人學徒幫到今天 12:36) | 建築1 (5/10), 下一級 金幣 1 萬 |"
+            in text
+        )
+        assert "| 今天 13:02 | 工人 | 建築1 (5/10), 下一級 金幣 1 萬 |" in text
         # One an export saved without the helper's multiplier could not count.
-        assert "| 今天 14:00 (沒算助手) | 工人 | 建築2 (5/10) |" in text
+        assert "| 今天 14:00 (沒算助手) | 工人 | 建築2 (5/10), 下一級 金幣 1 萬 |" in text
 
     def test_the_clock_tower_is_a_builder_base_row_in_its_turn(self) -> None:
         later = self._report(
@@ -743,9 +750,9 @@ class StatusTextTests(unittest.TestCase):
         )
         night = commands.status_text(later, NOW).split("夜世界")[1].splitlines()
         assert night[-3:] == [
-            "| 明天 05:00 | 工人 | 建築1 (5/10) |",
+            "| 明天 05:00 | 工人 | 建築1 (5/10), 下一級 金幣 1 萬 |",
             "| 明天 12:00 | — | 鐘塔冷卻結束 |",
-            "| 11-14 01:00 | 工人 | 建築2 (5/10) |",
+            "| 11-14 01:00 | 工人 | 建築2 (5/10), 下一級 金幣 1 萬 |",
         ]
         ready = self._report(clock_tower=ClockTower(ready_in=0, ready_at=NOW.isoformat()))
         assert "| 現在 | — | 鐘塔冷卻結束 |" in commands.status_text(ready, NOW)
@@ -772,7 +779,7 @@ class StatusTextTests(unittest.TestCase):
             _timer(1, "13:00"), _timer(2, "2026-11-13T09:00"), _timer(3, "2026-11-14T10:19")
         )
         text = commands.status_text(report, NOW, within=24)
-        assert "| 今天 13:00 | 工人 | 建築1 (5/10) |" in text
+        assert "| 今天 13:00 | 工人 | 建築1 (5/10), 下一級 金幣 1 萬 |" in text
         assert "之後還有 建築2 (5/10)、建築3 (5/10), 最晚 11-14 10:19" in text
         assert "| 11-13" not in text
         alone = commands.status_text(self._report(_timer(2, "2026-11-13T09:00")), NOW, within=24)
@@ -790,7 +797,7 @@ class StatusTextTests(unittest.TestCase):
             ),
         )
         text = commands.status_text(report, NOW)
-        assert "| 今天 11:00 (已過) | 工人 | 建築1 (5/10) |" in text
+        assert "| 今天 11:00 (已過) | 工人 | 建築1 (5/10), 下一級 金幣 1 萬 |" in text
         assert "| 現在 | — | 鐘塔冷卻結束 |" in text
 
     def test_an_export_that_failed_says_so_and_prints_no_table(self) -> None:
@@ -804,15 +811,189 @@ class StatusTextTests(unittest.TestCase):
             _timer(1, "13:00"), world=None, builder=None, lab=None, stock=None, export="read_back"
         )
         shown = commands.status_text(report, NOW).splitlines()
-        assert shown[0] == "村莊匯出: 今天 11:58 (存下的那份, 倉庫跟計數這次沒讀)"
+        assert shown[0] == "村莊匯出: 今天 11:58 (存下的那份, 倉庫跟計數這次沒讀); 下一級是牌價"
         assert shown[2] == "日世界"
         assert "夜世界" in shown
+
+    def test_the_next_level_is_priced_off_the_villages_newest_purchase(self) -> None:
+        dear = NextUpgrade(lvl=6, cost={"dark": 123_000})
+        paid = PaidShare(share=0.4, at=datetime(2026, 11, 11, 11, 0).astimezone(), item="王 70")
+        report = self._report(
+            _timer(1, "13:00", next=dear),
+            _timer(2, "13:00", world="night", next=dear),
+            paid={"day": paid},
+        )
+        text = commands.status_text(report, NOW)
+        assert text.splitlines()[0].endswith(
+            "; 下一級照最近實付估: 日世界 4 折 (今天 11:00)、夜世界牌價"
+        )
+        assert "| 今天 13:00 | 工人 | 建築1 (5/10), 下一級 黑水 4.92 萬 |" in text
+        assert "| 今天 13:00 | 工人 | 建築2 (5/10), 下一級 黑水 12.3 萬 |" in text
+        # A purchase that paid the list price leaves nothing to scale by.
+        listed = self._report(paid={"day": paid.model_copy(update={"share": 1.0})})
+        assert commands.status_text(listed, NOW).splitlines()[0].endswith("; 下一級是牌價")
+        night = paid.model_copy(update={"share": 0.8})
+        both = self._report(paid={"day": listed.paid["day"], "night": night})
+        assert (
+            commands
+            .status_text(both, NOW)
+            .splitlines()[0]
+            .endswith("; 下一級照最近實付估: 日世界牌價、夜世界 8 折 (今天 11:00)")
+        )
+
+    def test_storages_short_of_continuing_whatever_comes_due_get_a_line_each(self) -> None:
+        def dark(amount: int, lvl: int = 6) -> NextUpgrade:
+            return NextUpgrade(lvl=lvl, cost={"dark": amount})
+
+        report = self._report(
+            _timer(1, "13:00", next=dark(8_000)),
+            _timer(1, "13:02", next=dark(8_000)),
+            _timer(2, "13:05", extra=True, next=dark(2_000)),
+            # Past its hall's cap, past the window, or on the other village: none of it counts.
+            _timer(3, "14:00", level=9, next=dark(1_000_000, lvl=11)),
+            _timer(4, "15:01", next=dark(1_000_000)),
+            _timer(5, "13:00", world="night", next=NextUpgrade(lvl=6, cost={"elixir": 10**9})),
+            paid={"day": PaidShare(share=0.5, at=NOW, item="王 70")},
+        )
+        text = commands.status_text(report, NOW)
+        shown = [line for line in text.splitlines() if line.startswith("資源不足")]
+        assert shown == ["資源不足 (3 小時內到點的都續升): 黑水 要 9,000 / 有 6,000 (差 3,000)"]
+        assert text.index("資源不足") < text.index("\n夜世界")
+
+    def test_storages_that_cover_it_or_were_not_read_add_nothing(self) -> None:
+        due = _timer(1, "13:00", next=NextUpgrade(lvl=6, cost={"dark": 1_000_000}))
+        covered = self._report(_timer(1, "13:00"))
+        held = VillageStock(gold=0, elixir=0, dark=0)
+        night = self._report(
+            _timer(1, "13:00", world="night", next=NextUpgrade(lvl=6, cost={"dark": 5})),
+            world="night",
+            stock=StockReport(world="night", held=held),
+        )
+        for report in (
+            covered,
+            night,
+            self._report(due, stock=StockReport(world="day")),
+            self._report(due, stock=None, export="read_back"),
+        ):
+            assert "資源不足" not in commands.status_text(report, NOW)
+
+    def test_the_speed_ups_still_running_say_when_each_ends(self) -> None:
+        report = self._report(
+            boosts=Boosts(builder_boost=3600, lab_boost=60, clocktower_boost=1800)
+        )
+        day, night = commands.status_text(report, NOW).split("夜世界")
+        assert "加速: 工人藥水 到今天 12:58" in day.splitlines()
+        assert "加速: 鐘塔加速 到今天 12:28" in night.splitlines()
+        assert "加速" not in commands.status_text(self._report(), NOW)
 
     def test_no_village_on_screen_is_said_for_both(self) -> None:
         report = self._report(
             world=None, stock=StockReport(), export="no_village", exported_at=None
         )
         assert commands.status_text(report, NOW).count("畫面不是村莊, 倉庫跟計數沒讀到") == 2
+
+
+class PaidSharesTests(unittest.TestCase):
+    """What the newest purchase on each village paid against list, off the journal (conftest's tmp copy)."""
+
+    TABLES = GameEntities(
+        game_version="1.2.3",
+        reading=1,
+        halls={},
+        entities=[
+            GameEntity(
+                data_id=28000000,
+                zh="野蠻人之王",
+                world="day",
+                table="heroes",
+                max_lvl=110,
+                levels=[GameLevel(lvl=70, cost={"dark": 125_000})],
+            ),
+            GameEntity(
+                data_id=28000003,
+                zh="戰爭機器",
+                world="night",
+                table="heroes",
+                max_lvl=35,
+                levels=[GameLevel(lvl=28, cost={"elixir": 3_800_000})],
+            ),
+            *(
+                GameEntity(
+                    data_id=data_id,
+                    zh="加農炮",
+                    world=world,
+                    table="buildings",
+                    max_lvl=9,
+                    levels=[GameLevel(lvl=5, cost={"gold": 1_000})],
+                )
+                for data_id, world in ((1000008, "day"), (1000044, "night"))
+            ),
+            *(
+                GameEntity(
+                    data_id=data_id,
+                    zh="弓箭女皇",
+                    world="day",
+                    table=table,
+                    max_lvl=110,
+                    levels=[GameLevel(lvl=10, cost={"dark": price})],
+                )
+                for data_id, table, price in (
+                    (28000001, "heroes", 100),
+                    (1000999, "buildings", 200),
+                )
+            ),
+        ],
+    )
+
+    def setUp(self) -> None:
+        self.lines: list[dict[str, object]] = []
+
+    def _confirm(self, at: str, outcome: str, item: str | None, **paid: object) -> None:
+        """One `confirm` run ending `outcome`, asked the offer's price unless told otherwise."""
+        offer = paid.get("offer")
+        asked = paid.pop("asked", offer["price"] if isinstance(offer, dict) else 1)
+        start = datetime.fromisoformat(f"2026-11-12T{at}:00+08:00")
+        run = f"{at}-confirm"
+        report = {"asked": asked, "outcome": outcome, "frame": "after.png", "item": item, **paid}
+        self.lines += [
+            {"run": run, "at": start.isoformat(), "event": "start", "command": "confirm"},
+            {"run": run, "at": start.isoformat(), "event": "end", "result": report},
+        ]
+
+    def _shares(self, tables: GameEntities | None = TABLES) -> dict[World, PaidShare]:
+        logging_setup.JOURNAL_PATH.write_text(
+            "".join(json.dumps(line, ensure_ascii=False) + "\n" for line in self.lines),
+            encoding="utf-8",
+        )
+        return commands._paid_shares(tables)
+
+    def test_the_newest_purchase_that_resolves_on_each_village_wins(self) -> None:
+        def offer(price: int, resource: str = "dark") -> dict[str, object]:
+            return {"price": price, "resource": resource, "point": [1121, 788]}
+
+        self._confirm("10:00", "unexpected", "戰爭機器 28", offer=offer(3_040_000, "elixir"))
+        self._confirm("11:00", "confirmed", "野蠻人之王 70 級", offer=offer(75_000))
+        self._confirm("11:10", "goblin_offered", "野蠻人之王 70", offer=offer(50_000))
+        # Each of these is newer and passed over.
+        self._confirm("11:20", "confirmed", "加農炮 5", offer=offer(500, "gold"))
+        self._confirm("11:21", "price_mismatch", "野蠻人之王 70", offer=offer(60_000), asked=1)
+        wall = {"price": 1_000, "resource": "gold", "point": [700, 800]}
+        self._confirm("11:22", "confirmed", "野蠻人之王 70", offer=offer(30_000), wall=wall)
+        self._confirm("11:23", "confirmed", "野蠻人之王 70", goblin={"gems": 9, "point": [1, 1]})
+        self._confirm("11:24", "confirmed", "野蠻人之王", offer=offer(30_000))
+        self._confirm("11:25", "confirmed", "弓箭女皇 10", offer=offer(50))
+        self._confirm("11:26", "confirmed", "野蠻人之王 70", offer=offer(200_000))
+        shares = self._shares()
+        assert shares["day"].share == pytest.approx(0.4)
+        assert (shares["day"].item, shares["day"].at.hour) == ("野蠻人之王 70", 11)
+        assert shares["day"].at.minute == 10
+        assert shares["night"].share == pytest.approx(0.8)
+
+    def test_no_tables_or_no_journal_scale_nothing(self) -> None:
+        assert self._shares() == {}
+        offer = {"price": 50_000, "resource": "dark", "point": [1121, 788]}
+        self._confirm("11:10", "confirmed", "野蠻人之王 70", offer=offer)
+        assert self._shares(None) == {}
 
 
 class CollectCommandTests(unittest.TestCase):
