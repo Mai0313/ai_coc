@@ -32,7 +32,7 @@ COLUMNS: dict[GameTable, str] = {
     "heroes": "Name,VisualLevel,TID,UpgradeTimeH,UpgradeResource,UpgradeCost,RequiredTownHallLevel,RequiredHeroTavernLevel",
     "pets": "Name,TroopLevel,TID,LaboratoryLevel,UpgradeTimeH,UpgradeTimeM,UpgradeResource,UpgradeCost",
     "character_items": "Name,Level,TID,RequiredBlacksmithLevel,UpgradeResources,UpgradeCosts",
-    "villager_apprentices": "Name,TID,RequiredTownHallLevel",
+    "villager_apprentices": "Name,TID,RequiredTownHallLevel,Type,BoostMultiplier",
     "guardians": "Name,Level,TID",
 }
 ZH = "TID,CNT\nstring,string\nTID_TH,大本營\nTID_HERO,神盾勇者\nTID_GONE,\n"
@@ -217,17 +217,29 @@ class BuildTests(unittest.TestCase):
             buildings=_table("buildings", TOWN_HALL),
             guardians=_table("guardians", "Logger,1,", ",,", ",,"),
             villager_apprentices=_table(
-                "villager_apprentices", "BuilderApprentice,,10", ",,10", ",,11"
+                "villager_apprentices",
+                "BuilderApprentice,,10,BUILDER,1",
+                ",,10,,2",
+                ",,11,,3",
+                "ResearchApprentice,,9,RESEARCHER,1",
+                "Alchemist,,11,ALCHEMIST,0",
             ),
         )
         logger = _entity(tables, 107000000)
         assert ([level.lvl for level in logger.levels], logger.max_lvl) == ([1, 2, 3], 3)
         helper = _entity(tables, 93000000)
-        assert [(level.lvl, level.needs) for level in helper.levels] == [
-            (1, {"town_hall": 10}),
-            (2, {"town_hall": 10}),
-            (3, {"town_hall": 11}),
+        assert [(level.lvl, level.needs, level.multiplier) for level in helper.levels] == [
+            (1, {"town_hall": 10}, 1),
+            (2, {"town_hall": 10}, 2),
+            (3, {"town_hall": 11}, 3),
         ]
+        # Each helper's slot is on its first row; the Alchemist's 0 speeds nothing.
+        assert [_entity(tables, i).speeds for i in (93000000, 93000001, 93000002)] == [
+            "builder",
+            "lab",
+            None,
+        ]
+        assert _entity(tables, 93000002).levels[0].multiplier is None
 
     def test_a_builder_base_entity_is_night_and_names_its_own_halls(self) -> None:
         tables = _build(

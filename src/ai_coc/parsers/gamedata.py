@@ -16,7 +16,7 @@ from ai_coc.models import GameLevel, GameEntity, GameEntities, GameTableSpec
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
-    from ai_coc.models import Hall, GameTable
+    from ai_coc.models import Hall, GameTable, UpgradeRole
 
 # A logic table opens with `Sig:` and a 64-byte signature ahead of its data;
 # the localization tables have neither.
@@ -115,9 +115,16 @@ TABLES = (
     ),
     # The helpers write no level, one row per level, and a gem `Cost` on every
     # row including the first, so which level that buys is not known and it is
-    # left out.
+    # left out. A helper adds its level's `BoostMultiplier` to whatever rate the
+    # job it works on runs at: measured 2026-11-12 over two exports 357 s apart,
+    # the Builder's Apprentice at 8 took a builder potion's 10 to 18 and the Lab
+    # Assistant at 12 a lab potion's 24 to 36.
     GameTableSpec(
-        table="villager_apprentices", prefix=93, needs={"RequiredTownHallLevel": "town_hall"}
+        table="villager_apprentices",
+        prefix=93,
+        needs={"RequiredTownHallLevel": "town_hall"},
+        boost="BoostMultiplier",
+        speeds="Type",
     ),
     # Some guardians write their level on the first row only.
     GameTableSpec(table="guardians", prefix=107, level="Level"),
@@ -176,11 +183,14 @@ RESOURCES = {
     "EpicOre": "starry_ore",
 }
 TIME_UNITS = (("D", 86_400), ("H", 3_600), ("M", 60), ("S", 1))
+# The slot each helper `Type` speeds up. The Alchemist and the Prospector
+# convert resources and speed nothing.
+SPEEDS: dict[str, UpgradeRole] = {"BUILDER": "builder", "RESEARCHER": "lab"}
 # Which reading of the tables `build` does. A kept `entities.json` written by
 # another is read again from the emulator rather than used, so raise this with
 # any change to what `build` writes from the same tables, a value as much as
 # the shape.
-READING = 2
+READING = 3
 # A table with no `GlobalID` numbers its entities from its class times this.
 CLASS_SIZE = 1_000_000
 
@@ -252,7 +262,11 @@ def _seconds(row: Row, prefix: str, header: list[str]) -> int | None:
 
 def _check_columns(spec: GameTableSpec, header: list[str]) -> None:
     wanted = ["Name", "TID", *spec.needs]
-    wanted += [column for column in (spec.level, spec.cost, spec.resource) if column]
+    wanted += [
+        column
+        for column in (spec.level, spec.cost, spec.resource, spec.boost, spec.speeds)
+        if column
+    ]
     if spec.unlock:
         wanted += [TRAINED_IN, spec.unlock, *spec.untrained]
     if spec.prefix is None:
@@ -274,10 +288,11 @@ def _levels(
     buys the next level, level L takes the price and time of the row at level
     L-1 and keeps its own requirements. A level written twice keeps its first
     row. In a table with an `unlock` column, the first row's requirement is
-    what unlocks it (`_unlock`) in place of its own.
+    what unlocks it (`_unlock`) in place of its own. A helper's multiplier
+    stays on its own row's level, being no price.
     """
     carried: Row = {}
-    read: dict[int, tuple[dict[Hall, int], dict[str, int], int | None]] = {}
+    read: dict[int, tuple[dict[Hall, int], dict[str, int], int | None, int | None]] = {}
     lvl = 0
     for row in rows:
         for column in (spec.resource, *spec.needs):
@@ -297,12 +312,14 @@ def _levels(
             else {}
         )
         time = _seconds(row, spec.time, header) if spec.time else None
-        read.setdefault(lvl, (needs, price, time))
+        # A multiplier of 0, the Alchemist's and the Prospector's, speeds nothing.
+        multiplier = (_number(row.get(spec.boost, "")) if spec.boost else None) or None
+        read.setdefault(lvl, (needs, price, time, multiplier))
     levels = []
-    for lvl, (needs, *_) in sorted(read.items()):
+    for lvl, (needs, _, _, multiplier) in sorted(read.items()):
         bought = read[lvl] if spec.buys_own_level else read.get(lvl - 1)
         cost, time = (bought[1], bought[2]) if bought else ({}, None)
-        levels.append(GameLevel(lvl=lvl, needs=needs, cost=cost, time=time))
+        levels.append(GameLevel(lvl=lvl, needs=needs, cost=cost, time=time, multiplier=multiplier))
     return levels
 
 
@@ -355,6 +372,7 @@ def _entities(
                 table=spec.table,
                 max_lvl=max(level.lvl for level in levels),
                 levels=levels,
+                speeds=SPEEDS.get(first.get(spec.speeds, "")) if spec.speeds else None,
             ),
         )
 

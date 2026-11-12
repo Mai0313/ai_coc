@@ -327,7 +327,7 @@ class CoreTests(unittest.TestCase):
         document = parse_village_text(
             json.dumps({
                 "tag": "#TEST",
-                "buildings": [{"data": 1000001, "lvl": 16, "helper_timer": 623}],
+                "buildings": [{"data": 1000001, "lvl": 16, "helper_recurrent": True}],
                 "helpers": [{"data": 93000000, "lvl": 1, "helper_cooldown": 36772}],
                 "obstacles": [{"data": 8000009, "cnt": 7}],
                 "a_section_added_next_release": [{"data": 99000001, "lvl": 2}],
@@ -343,7 +343,7 @@ class CoreTests(unittest.TestCase):
         # which is what makes "nothing is thrown away" true rather than a claim
         # about the sections alone.
         [building] = document.entries("buildings")
-        assert (building.model_extra or {})["helper_timer"] == 623
+        assert (building.model_extra or {})["helper_recurrent"] is True
         [helper] = document.entries("helpers")
         assert helper.helper_cooldown == 36772
 
@@ -450,6 +450,23 @@ def _gated(data_id: int, top: int = 4) -> GameEntity:
     )
 
 
+def _helpers() -> GameEntities:
+    """The Builder's Apprentice and the Lab Assistant, each level adding its own number."""
+    return _tables(
+        *(
+            GameEntity(
+                data_id=data_id,
+                world="day",
+                table="villager_apprentices",
+                max_lvl=top,
+                levels=[GameLevel(lvl=lvl, multiplier=lvl) for lvl in range(1, top + 1)],
+                speeds="builder" if data_id == 93000000 else "lab",
+            )
+            for data_id, top in ((93000000, 8), (93000001, 12))
+        )
+    )
+
+
 class UpgradeTimerTests(unittest.TestCase):
     """The export's normal-speed timers worked through whatever speed-up is running.
 
@@ -511,6 +528,76 @@ class UpgradeTimerTests(unittest.TestCase):
         assert finished == AT + 2920
         # The row in the file says the same instant.
         assert export.day["heroes"][0].done_at == timer.done_at
+
+    def test_a_working_helper_adds_its_multiplier_to_the_potion(self) -> None:
+        """Two exports 357 s apart on 2026-11-12: the apprentice at 8 ran a builder potion's 10 at 18, the assistant at 12 a lab potion's 24 at 36."""
+        document = _village(
+            {
+                "heroes": [{"data": 28000006, "lvl": 81, "timer": 54133, "helper_timer": 2697}],
+                "siege_machines": [
+                    {"data": 4000087, "lvl": 5, "timer": 471582, "helper_timer": 2723}
+                ],
+                "buildings": [{"data": 1000084, "lvl": 3, "timer": 176115}],
+                "helpers": [{"data": 93000000, "lvl": 8}, {"data": 93000001, "lvl": 12}],
+            },
+            builder_boost=2990,
+            lab_boost=2901,
+        )
+        export = merge(document, _helpers(), AT)
+        timers = {timer.section: timer for timer in upgrade_timers(export)}
+        # Both until the helper's work ends, then the potion alone, then normal speed.
+        assert timers["heroes"].seconds == 2990 + 54133 - 18 * 2697 - 10 * (2990 - 2697)
+        assert timers["siege_machines"].seconds == 2901 + 471582 - 36 * 2723 - 24 * (2901 - 2723)
+        assert timers["buildings"].seconds == 2990 + 176115 - 10 * 2990
+        assert [timers[one].helper for one in ("heroes", "siege_machines", "buildings")] == [
+            93000000,
+            93000001,
+            None,
+        ]
+        assert datetime.fromisoformat(timers["heroes"].helper_until or "").timestamp() == AT + 2697
+        # The file says the same instant, and a helper's row carries what times
+        # a job without the tables.
+        assert export.day["heroes"][0].done_at == timers["heroes"].done_at
+        assert [(row.speeds, row.multiplier) for row in export.day["helpers"]] == [
+            ("builder", 8),
+            ("lab", 12),
+        ]
+        # Saved and read back, as `status --last` and `watch` read it.
+        saved = VillageExport.model_validate_json(export.model_dump_json())
+        assert upgrade_timers(saved) == upgrade_timers(export)
+
+    def test_a_helper_alone_adds_its_multiplier_to_normal_speed_and_can_outlast_a_potion(
+        self,
+    ) -> None:
+        document = _village(
+            {
+                "heroes": [{"data": 28000006, "lvl": 81, "timer": 90000, "helper_timer": 3600}],
+                "units": [{"data": 4000010, "lvl": 13, "timer": 90000, "helper_timer": 3600}],
+                "helpers": [{"data": 93000000, "lvl": 8}, {"data": 93000001, "lvl": 12}],
+            },
+            lab_boost=600,
+        )
+        timers = {
+            timer.section: timer.seconds
+            for timer in upgrade_timers(merge(document, _helpers(), AT))
+        }
+        assert timers == {
+            "heroes": 3600 + 90000 - 9 * 3600,
+            "units": 3600 + 90000 - 36 * 600 - 13 * 3000,
+        }
+
+    def test_a_helper_an_export_cannot_time_is_left_out_but_still_on_the_row(self) -> None:
+        """A file saved before helper rows carried their multiplier, or with no tables."""
+        document = _village(
+            {
+                "heroes": [{"data": 28000006, "lvl": 81, "timer": 54133, "helper_timer": 2697}],
+                "helpers": [{"data": 93000000, "lvl": 8}],
+            },
+            builder_boost=2990,
+        )
+        [timer] = upgrade_timers(merge(document, None, AT))
+        assert (timer.seconds, timer.helper) == (2990 + 54133 - 10 * 2990, None)
+        assert timer.helper_until is not None
 
     def test_a_goblins_job_is_marked_on_its_timer(self) -> None:
         export = merge(
