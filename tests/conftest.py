@@ -17,9 +17,10 @@ real one and dropped the serial the farming loop was driving.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NoReturn
 
 import pytest
+import adbutils
 
 from ai_coc import commands, logging_setup
 from ai_coc.adapters import config, gamedata
@@ -49,3 +50,22 @@ def _state_file_in_tmp(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     exports = tmp_path / "account_json"
     exports.mkdir()
     monkeypatch.setattr(commands, "ACCOUNT_JSON_DIR", exports)
+
+
+@pytest.fixture(autouse=True)
+def _no_emulator(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Reach no emulator and no ADB server, whatever a test forgets to fake.
+
+    The emulator here is the one a farming loop or a takeover drives while the
+    suite runs beside it: a test that faked `claim` but not `status` ran the real
+    export walk on it in the middle of a takeover (2026-11-12). Finding the
+    emulators and connecting to the ADB server both raise; a test that drives
+    either patches it itself.
+    """
+
+    def unreachable(*_args: object, **_kwargs: object) -> NoReturn:
+        raise RuntimeError("a test reached for the emulator; fake what it drives")
+
+    monkeypatch.setattr(commands, "MuMuAdapter", unreachable)
+    monkeypatch.setattr(commands, "LDPlayerAdapter", unreachable)
+    monkeypatch.setattr(adbutils.AdbClient, "make_connection", unreachable)

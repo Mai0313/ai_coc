@@ -22,6 +22,7 @@ from unittest.mock import MagicMock, patch
 
 from PIL import Image
 import pytest
+import adbutils
 from pydantic import ValidationError
 
 from ai_coc import plans, commands, logging_setup
@@ -256,6 +257,13 @@ class EmulatorChoiceTests(unittest.TestCase):
             patch.object(commands, "LDPlayerAdapter", return_value=broken),
         ):
             assert list(commands.emulators()) == []
+
+    def test_no_test_reaches_an_emulator_or_the_adb_server(self) -> None:
+        """`conftest` makes both raise, so a test that forgets to fake one fails instead of driving the game."""
+        with pytest.raises(RuntimeError, match="reached for the emulator"):
+            next(commands.emulators())
+        with pytest.raises(RuntimeError, match="reached for the emulator"):
+            adbutils.adb.device("emulator-0").shell("true")
 
 
 class SessionTests(unittest.TestCase):
