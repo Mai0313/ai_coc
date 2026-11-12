@@ -11,7 +11,7 @@
 ## 把一張畫面丟給所有判讀器
 
 ```bash
-uv run ai_coc read <png>
+uv run --no-sync ai_coc read <png>
 ```
 
 回 `FrameReading` (欄位看 `models.py` 的 `FrameReading` 跟 `commands.read`), 是每個 parser 對這張圖的說法, 包括 `counts`: 每張卡的 `xN` 讀到幾, 決定點幾下, 查出兵節奏先看它.
@@ -23,7 +23,7 @@ uv run ai_coc read <png>
 ## 從活著的遊戲抓畫面
 
 ```bash
-uv run ai_coc capture --count 30 --gap 1.5 --label <這次在測什麼>
+uv run --no-sync ai_coc capture --count 30 --gap 1.5 --label <這次在測什麼>
 ```
 
 量判讀器還讀不懂的新畫面用這個, 連拍才抓得到瞬間的畫面. 存到那次執行的 `frames/`, 不能指定, 所以 `--label` 要寫. **畫面只留七天** (`FRAME_RETENTION_DAYS`): 過期的 `frames/` 由下一次開跑刪掉, `run.log` 跟 `result.json` 不動. 要跨好幾天對照就自己複製出去.
@@ -33,8 +33,8 @@ uv run ai_coc capture --count 30 --gap 1.5 --label <這次在測什麼>
 ## 花一場戰鬥去量
 
 ```bash
-uv run ai_coc probe --debug          # 實測出兵邊界, 對照判讀器的說法
-uv run ai_coc bounds --debug         # 實測地圖邊緣, 回推村莊範圍
+uv run --no-sync ai_coc probe --debug          # 實測出兵邊界, 對照判讀器的說法
+uv run --no-sync ai_coc bounds --debug         # 實測地圖邊緣, 回推村莊範圍
 ```
 
 各丟一場戰鬥換一組數字. 值得跑的時機: 遊戲更新後, 村莊換主題後, 或連續好幾場在同一處出兵失敗而畫面看不出原因. 細節在 `.agents/rules/attack.md` (`probe`) 跟 `parsers/boundary.py` 的註解 (`bounds`). 它們用 `LootThresholds()` 不用設定檔, 要的是任何一場戰鬥.

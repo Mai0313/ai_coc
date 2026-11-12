@@ -5423,10 +5423,11 @@ class AttackTests(unittest.TestCase):
         `_onto_army` took two frames a moment apart and found the busiest patch
         of what changed between them — three to four seconds of capturing and
         decoding, all of it after the moment the plan asked for the bottle, on a
-        spell that lasts eighteen. What replaces it is the property that made
-        the prediction possible in the first place: troops walk toward
-        defences, so the planner is asked for the heaviest defences on the side
-        it chose and the bottles go there.
+        spell that lasts eighteen: over four battles, plans asking for 12, 15, 12
+        and 12 seconds had the bottle land at 18, 22, 20 and 19. What replaces
+        it is the property that made the prediction possible in the first
+        place: troops walk toward defences, so the planner is asked for the
+        heaviest defences on the side it chose and the bottles go there.
         """
         runner = self._runner()
         targets = ((500, 300), (700, 420))
