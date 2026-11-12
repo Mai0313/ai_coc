@@ -49,9 +49,16 @@ kind = "nothing_claims"
 [[checks]]
 id = "watch-five"
 what = "sleeps five minutes on a watch with no upgrade or tower wake, still farming"
-anchor = [".agents/skills/takeover/SKILL.md", "重掛 `ai_coc watch --minutes 5`"]
+anchor = [".agents/skills/takeover/SKILL.md", "重掛 `ai_coc watch --minutes 5 --hold`"]
 kind = "called"
 calls = { command = "watch", args = { minutes = 5, farms = true }, unset = ["upgrades", "tower", "next"] }
+
+[[checks]]
+id = "watch-holds"
+what = "holds the emulator through those five minutes, so no other session logs the game in"
+anchor = [".agents/skills/takeover/SKILL.md", "重掛 `ai_coc watch --minutes 5 --hold`"]
+kind = "called"
+calls = { command = "watch", args = { minutes = 5, hold = true } }
 
 [[checks]]
 id = "watch-about"

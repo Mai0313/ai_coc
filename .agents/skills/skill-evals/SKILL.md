@@ -1,7 +1,7 @@
 ---
 name: skill-evals
 description: >-
-  Run the dry-run evals that check whether an agent following this project's skills (takeover, upgrades, share-emulator) makes the decisions they prescribe: which upgrade each slot picks, a goblin's gems against the cap and the agent's own reading, the takeover's watch and farm brief, a new instruction kept as a note, stopping on another device's login or the user's stop. Each scenario hands a fresh agent a brief inside a sandbox whose ai_coc replays recorded screens and reports, and a grader scores the commands it ran and the reply it wrote. Nothing reaches the emulator or the real ~/.ai_coc. Use it before and after a change to those skills, to compare models or runtimes, or when the user asks how well an agent follows the skills.
+  Run the dry-run evals that check whether an agent following this project's skills (takeover, upgrades, share-emulator) makes the decisions they prescribe: which upgrade each slot picks, a goblin's gems against the cap and the agent's own reading, the takeover's watch and farm brief, a new instruction kept as a note, stopping on another device's login or the user's stop, waiting out another session's hold or holding again after one was lost. Each scenario hands a fresh agent a brief inside a sandbox whose ai_coc replays recorded screens and reports, and a grader scores the commands it ran and the reply it wrote. Nothing reaches the emulator or the real ~/.ai_coc. Use it before and after a change to those skills, to compare models or runtimes, or when the user asks how well an agent follows the skills.
 ---
 
 # Skill evals
