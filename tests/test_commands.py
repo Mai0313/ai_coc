@@ -1062,7 +1062,7 @@ class UpkeepLineTests(unittest.TestCase):
                 "more_settings_shut": "那一頁沒有打開",
                 "row_not_found": "捲到底了",
                 "nothing_copied": "剪貼簿沒有東西",
-                "not_a_village": "不是村莊資料",
+                "not_an_export": "不是村莊資料",
             },
             get_args(ExportOutcome),
         )
@@ -2258,7 +2258,7 @@ class TurnaroundTests(unittest.TestCase):
             "result": paid,
         })
 
-    def _count(self, since: date | None = None) -> list[tuple[str, str | None, float]]:
+    def _count(self, since: datetime | None = None) -> list[tuple[str, str | None, float]]:
         journal = logging_setup.JOURNAL_PATH
         journal.write_text("".join(json.dumps(line) + "\n" for line in self.lines), "utf-8")
         report = commands.turnaround(since)
@@ -2291,7 +2291,7 @@ class TurnaroundTests(unittest.TestCase):
         self._confirm("2026-11-07T10:30:10+08:00", "10:30:20", wall={"price": 1})
         assert self._count() == []
 
-    def test_since_keeps_only_the_days_asked_for(self) -> None:
+    def test_since_keeps_only_the_presses_from_then_on(self) -> None:
         self._status(
             "2026-11-06T10:15:00+08:00",
             ("heroes", "builder", "Barbarian King", "2026-11-06T10:20:00+08:00"),
@@ -2302,8 +2302,16 @@ class TurnaroundTests(unittest.TestCase):
             ("heroes", "builder", "Archer Queen", "2026-11-07T10:20:00+08:00"),
         )
         self._confirm("2026-11-07T10:20:10+08:00", "10:20:30")
-        assert self._count(date(2026, 11, 7)) == [("hero", "Archer Queen", 30)]
-        assert len(self._count()) == 2
+        self._status(
+            "2026-11-07T11:15:00+08:00",
+            ("heroes", "builder", "Grand Warden", "2026-11-07T11:20:00+08:00"),
+        )
+        self._confirm("2026-11-07T11:20:10+08:00", "11:20:40")
+        assert len(self._count(datetime.fromisoformat("2026-11-07T00:00:00+08:00"))) == 2
+        assert self._count(datetime.fromisoformat("2026-11-07T11:00:00+08:00")) == [
+            ("hero", "Grand Warden", 40)
+        ]
+        assert len(self._count()) == 3
 
     def test_a_status_whose_export_failed_does_not_hide_the_one_before(self) -> None:
         self._status(
@@ -2355,6 +2363,17 @@ class NoteTests(unittest.TestCase):
         report = commands.note("done", "day", "1")
         assert report.outcome == "done"
         assert commands.note("list").notes.day == ["巨石投手滿級以後升空中戰車"]
+
+    def test_the_list_prints_the_number_done_takes(self) -> None:
+        commands.note("add", "day", "a")
+        commands.note("add", "day", "b")
+        assert (
+            commands.note_text(commands.note("list")) == "日世界\n1. a\n2. b\n\n夜世界\n沒有交代"
+        )
+        dropped = commands.note_text(commands.note("done", "day", "2"))
+        assert dropped.splitlines()[0] == commands.NOTE_LINES["done"]
+        assert "1. a" in dropped
+        assert "2. b" not in dropped
 
     def test_a_note_that_cannot_be_named_changes_nothing(self) -> None:
         commands.note("add", "day", "a")
@@ -3719,7 +3738,7 @@ class ExportTests(unittest.TestCase):
         would leave `result.json` unwritten.
         """
         report, _ = self._export(clip="just some text somebody copied")
-        assert report.outcome == "not_a_village"
+        assert report.outcome == "not_an_export"
         assert not list(self.saved.glob("*.json"))
 
     def test_the_settings_window_is_closed_even_when_the_export_failed(self) -> None:

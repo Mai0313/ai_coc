@@ -428,7 +428,7 @@ ExportOutcome = Literal[
     "more_settings_shut",
     "row_not_found",
     "nothing_copied",
-    "not_a_village",
+    "not_an_export",
 ]
 
 

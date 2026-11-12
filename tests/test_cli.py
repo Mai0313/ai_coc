@@ -15,6 +15,7 @@ from typing import Any, get_args
 import logging
 from pathlib import Path
 import argparse
+from datetime import datetime
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -196,6 +197,19 @@ class ParserTests(unittest.TestCase):
                 cli.main()
             assert stopped.value.code != 0, line
             opened.open.assert_not_called()
+
+    def test_each_sub_commands_own_help_says_what_it_does(self) -> None:
+        parser = _parser()
+        [group] = [a for a in parser._actions if isinstance(a, argparse._SubParsersAction)]
+        for _, commands_in in cli.COMMANDS:
+            for name, note in commands_in:
+                assert group.choices[name].description == note, name
+
+    def test_turnaround_takes_the_timestamp_tended_and_farmed_take(self) -> None:
+        stamp = "2026-11-12T09:30:00+08:00"
+        for name in ("turnaround", "tended", "farmed"):
+            assert _args(name, "--since", stamp).since == datetime.fromisoformat(stamp), name
+        assert _args("turnaround", "--since", "2026-11-07").since == datetime(2026, 11, 7)
 
     def test_stop_reaches_both_sections_unless_told_which(self) -> None:
         assert _args("stop").target == "all"
