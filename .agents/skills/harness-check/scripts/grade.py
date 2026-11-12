@@ -187,14 +187,14 @@ def report(args: argparse.Namespace) -> None:
     reply = args.report.read_text(encoding="utf-8") if args.report.exists() else ""
     said: dict[str, Said] = {}
     ended = None
-    for line in reply.splitlines():
+    # Markdown and a closing full stop are formatting, not a wrong report.
+    for line in reply.replace("`", "").replace("*", "").splitlines():
         if m := STEP_LINE.search(line):
             said[m[1]] = (int(m[2]), m[3], m[4])
         elif m := NOT_RUN.search(line):
             said[m[1]] = None
         if m := ENDED.search(line):
-            # Markdown or a full stop around the line is formatting, not a wrong report.
-            ended = m[1].strip(" .*`")
+            ended = m[1].strip(" .")
     ends = {e["label"]: e for e in events if e["event"] == "end"}
     print(f"check 8, {fate} brief, {args.runs.as_posix()}")
 
@@ -215,7 +215,11 @@ def report(args: argparse.Namespace) -> None:
         _row("reported each step as it ended", "fail", "no reply saved")
 
     at = next((i for i, e in enumerate(events) if e["event"] == "end" and e["label"] == fated), None)
-    past = [e["label"] for e in events[at + 1 :] if e["event"] == "start"] if at is not None else []
+    # A later step counts whenever it started, since one run alongside the fated step ran past it too.
+    later = steps[steps.index(fated) + 1 :]
+    past = []
+    if at is not None:
+        past = [e["label"] for i, e in enumerate(events) if e["event"] == "start" and (i > at or e["label"] in later)]
     ran_past = f"ran after {fated}: {', '.join(past)}" if past else f"nothing ran after {fated}"
     if fate == "error":
         if at is None:
@@ -252,6 +256,14 @@ def report(args: argparse.Namespace) -> None:
     order = list(dict.fromkeys(x for x in labels if x in steps))
     if order != sorted(order, key=steps.index):
         issues.append(f"out of order: {' '.join(order)}")
+    running: list[str] = []
+    for e in events:
+        if e["event"] == "start":
+            if running:
+                issues.append(f"{e['label']} started before {', '.join(running)} ended")
+            running.append(e["label"])
+        elif e["label"] in running:
+            running.remove(e["label"])
     gaps = [
         int((datetime.fromisoformat(b["at"]) - datetime.fromisoformat(a["at"])).total_seconds())
         for a, b in zip(events, events[1:])
