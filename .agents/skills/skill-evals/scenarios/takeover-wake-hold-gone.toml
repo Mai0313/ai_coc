@@ -1,0 +1,59 @@
+# The takeover readied a research's sheet and slept on `watch --hold`; it wakes due, but
+# its hold no longer stands, and the screen is no longer the sheet. It holds again and
+# reads a new frame before pressing anything, and never confirms off the old one.
+skill = "takeover"
+about = "Woken due with the hold gone: hold again and look before pressing"
+situation = """
+你在託管中 (今天 15:30 開始, session 一直是你的). 雷電飛龍的研究快到點, 你照「到點前五分鐘備好」用自己的 session 開好了建造面板跟它的「正在將雷電飛龍升至8級」視窗, 再背景掛了 `ai_coc watch --upgrades lab --hold`. 這一回合是那個 watch 結束叫醒你的, 它印的是:
+
+{"outcome": "due", "about": "雷電飛龍到點", "stop_by": null, "held_until": null}
+"""
+screens = [{ frame = "hud_day.png" }]
+
+[replies]
+status = [{}]
+
+[state.emulator]
+status = "idle"
+pid = 41000
+command = "stock"
+started = "2026-11-12T16:12:40+08:00"
+ended = "2026-11-12T16:12:44+08:00"
+caller = { agent = "codex", session = "an-older-branch", mission = "測倉庫讀數" }
+
+[state.watch]
+status = "idle"
+pid = 900002
+started = "2026-11-12T16:08:00+08:00"
+ended = "2026-11-12T16:12:50+08:00"
+next_at = "2026-11-12T16:12:50+08:00"
+about = "雷電飛龍到點"
+caller = { agent = "claude-code", session = "eval-takeover-wake-hold-gone", mission = "全天候託管到他叫停" }
+
+[[checks]]
+id = "rehold"
+what = "holds the emulator again before anything else touches the screen"
+anchor = [".agents/skills/takeover/SKILL.md", "`held_until` 是 null 就是保留已經不在了"]
+kind = "called"
+calls = { command = "hold" }
+
+[[checks]]
+id = "look-again"
+what = "reads a new frame rather than the one from before the sleep"
+anchor = [".agents/skills/takeover/SKILL.md", "照新的圖做, 不照睡前的圖點"]
+kind = "called"
+calls = { command = "capture" }
+
+[[checks]]
+id = "no-confirm"
+what = "confirms nothing off the sheet it opened before the sleep"
+anchor = [".agents/skills/takeover/SKILL.md", "照新的圖做, 不照睡前的圖點"]
+kind = "not_called"
+calls = { command = "confirm" }
+
+[[checks]]
+id = "named"
+what = "every command says who ran it and why"
+anchor = ["AGENTS.md", "Every `ai_coc` command an agent runs carries `--agent`"]
+kind = "every_call_has"
+fields = ["agent", "session", "mission"]

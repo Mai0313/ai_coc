@@ -1774,6 +1774,42 @@ class Loan(BaseModel):
     ended: LoanEnd | None = None
 
 
+class Hold(BaseModel):
+    """One session's hold on the emulator across its commands.
+
+    The lock is per command, so the gap between two commands of one session
+    read as a free emulator: on 2026-11-12 a test's `status` claimed between a
+    takeover's `view` and its `tap`, and the `tap` then pressed a point read
+    off a frame older than the test. `since` is when this session took it and
+    is kept across its renewals; `until` is None while the holder's own command
+    drives, and otherwise when the hold lapses. Every field has a default, as
+    on `Loan`, so a hold that fails to validate cannot fail the record.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    holder: Caller = Field(default_factory=Caller)
+    since: datetime | None = None
+    until: datetime | None = None
+    ended: LoanEnd | None = None
+
+
+class HoldReport(BaseModel):
+    """What `ai_coc hold` left: whose hold, since and until when, and who drove before it.
+
+    `last` and `last_command` are the record this claim replaced, so the agent
+    knows whose screen it starts on: its own last command, or somebody else's.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    holder: Caller
+    since: datetime | None
+    until: datetime
+    last: Caller | None = None
+    last_command: str = ""
+
+
 class Watch(BaseModel):
     """The `ai_coc watch` process an agent sleeps on until an upgrade comes due.
 
@@ -1826,14 +1862,18 @@ class WatchReport(BaseModel):
     ended: datetime
     stop_by: Caller | None = None
     outcome: WatchOutcome
+    # Until when `watch --hold` left this session's hold after waking; None
+    # without `--hold`, or when the hold no longer stood by then.
+    held_until: datetime | None = None
 
 
 # What `ai_coc stop` did to each section: asked a run or a watch to stand down,
-# or found nothing; and, beside the emulator's, what became of a loan standing
-# on it. A borrower's command still running keeps its loan; a loan nobody is
-# driving on is cancelled.
+# or found nothing; and, beside the emulator's, what became of a loan or a hold
+# standing on it. A borrower's or holder's command still running keeps its loan
+# or hold; one nobody is driving on is cancelled.
 EmulatorStop = Literal["asked", "nothing_running"]
 LoanStop = Literal["kept", "cancelled"]
+HoldStop = Literal["kept", "cancelled"]
 WatchStop = Literal["asked", "nothing_watching"]
 
 
@@ -1842,7 +1882,8 @@ class StopReport(BaseModel):
 
     A section `target` left alone is None. `command` and `pid` are the run
     asked to stand down; `loan` is None where no loan stood, and `lender` whose
-    run it was lent from; `watcher` is the watch asked.
+    run it was lent from; `hold` is None where no hold stood, and `holder` the
+    session it was; `watcher` is the watch asked.
     """
 
     target: StopTarget
@@ -1851,30 +1892,50 @@ class StopReport(BaseModel):
     pid: int | None = None
     loan: LoanStop | None = None
     lender: Caller | None = None
+    hold: HoldStop | None = None
+    holder: Caller | None = None
     watch: WatchStop | None = None
     watcher: Caller | None = None
 
 
-GivebackOutcome = Literal["returned", "no_loan"]
+# `returned` handed a loan back, and the caller's hold with it; `released`
+# ended the caller's hold with nothing lent; `no_loan` found nothing of the
+# caller's standing; `not_yours` found another session's hold and changed nothing.
+GivebackOutcome = Literal["returned", "released", "no_loan", "not_yours"]
 
 
 class GivebackReport(BaseModel):
-    """Whether `ai_coc giveback` found a loan to hand back, and whose run it goes back to."""
+    """What `ai_coc giveback` handed back: a loan, and whose run it goes back to, or a hold, and whose."""
 
     outcome: GivebackOutcome
     lender: Caller | None = None
+    holder: Caller | None = None
 
 
 # Why a command stood down before doing anything: the loan its `--yield` claim
 # queued behind was cancelled by `ai_coc stop`, another device logged in to
-# the account, or `watch` or `note` found no state file to write into.
-StandDownOutcome = Literal["loan_cancelled", "session_taken", "no_state_file"]
+# the account, `watch` or `note` found no state file to write into, another
+# session holds the emulator between its commands, this session's own hold no
+# longer stands under a `tap`, `swipe`, `confirm` or `watch --hold`, or the hold
+# it queued behind was cancelled by `ai_coc stop`.
+StandDownOutcome = Literal[
+    "loan_cancelled", "session_taken", "no_state_file", "held", "no_hold", "hold_cancelled"
+]
 
 
 class StandDownReport(BaseModel):
-    """A command that stood down, written as its answer so it never reads as a killed process."""
+    """A command that stood down, written as its answer so it never reads as a killed process.
+
+    For the three about a hold, `holder` is whose hold it was (for `no_hold`,
+    whoever holds now or drove last, so the agent sees whether that was
+    somebody else), `command` that session's command, and `until` when its
+    hold lapses, None while that command drives.
+    """
 
     outcome: StandDownOutcome
+    holder: Caller | None = None
+    command: str = ""
+    until: datetime | None = None
 
 
 # Where one run stands, read off the journal and its process: its `end` line
@@ -1948,6 +2009,9 @@ class RunnerState(BaseModel):
     # Carried from record to record until the lender runs again or another
     # loan replaces it, so a lender that looks late still finds out.
     loan: Loan | None = None
+    # The session between its commands, which no other session's claim cuts
+    # into; code from before it drops the field when it writes the record.
+    hold: Hold | None = None
 
 
 class Notes(BaseModel):

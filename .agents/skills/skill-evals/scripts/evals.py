@@ -354,7 +354,8 @@ def judge(check: Check, calls: list[dict[str, Any]], reply: str, out: Path) -> t
             if not found:
                 return False, "no call to start from"
             start = found[0] + 1
-        claimed = [call for call in calls[start:] if call.get("claims")]
+        # `hold` claims the emulator and opens nothing, so it logs nobody out.
+        claimed = [call for call in calls[start:] if call.get("claims") and call.get("args", {}).get("command") != "hold"]
         return not claimed, _shown(claimed[0]) if claimed else "none"
     if check.kind == "every_call_has":
         bare = [call for call in calls if call.get("args") and not all(call["args"].get(f) for f in check.fields)]

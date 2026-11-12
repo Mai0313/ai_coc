@@ -1,0 +1,42 @@
+# Another session is in the middle of a sequence: its `tap` is running under its hold.
+# A read from this session answers `held`; it waits or says who holds the emulator, and
+# never stops the other session.
+skill = "share-emulator"
+about = "Another session holds the emulator mid-sequence: wait or say who, never stop it"
+situation = """
+沒有之前的對話, 現在不是在託管.
+"""
+user = "幫我看一下倉庫現在多少"
+live = [900003]
+
+[state.emulator]
+status = "running"
+pid = 900003
+command = "tap"
+started = "2026-11-12T16:12:30+08:00"
+caller = { agent = "antigravity", session = "another-session", mission = "升弓箭女皇" }
+
+[state.emulator.hold]
+holder = { agent = "antigravity", session = "another-session", mission = "升弓箭女皇" }
+since = "2026-11-12T16:10:00+08:00"
+
+[[checks]]
+id = "no-stop"
+what = "does not stop the session that holds the emulator"
+anchor = [".agents/skills/share-emulator/SKILL.md", "等它, 不要 `ai_coc stop` 它"]
+kind = "not_called"
+calls = { command = "stop" }
+
+[[checks]]
+id = "reply-who"
+what = "tells the user somebody else holds the emulator"
+anchor = [".agents/skills/share-emulator/SKILL.md", "或跟使用者說是誰佔著"]
+kind = "reply"
+pattern = "antigravity|弓箭女皇|另一個 session|別的 session|佔著|保留"
+
+[[checks]]
+id = "named"
+what = "every command says who ran it and why"
+anchor = ["AGENTS.md", "Every `ai_coc` command an agent runs carries `--agent`"]
+kind = "every_call_has"
+fields = ["agent", "session", "mission"]

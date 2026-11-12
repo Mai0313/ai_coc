@@ -43,7 +43,7 @@ uv run --no-sync ai_coc wait <標籤> --for 150 --agent <名字> --session <派�
 
 - `finished`: 跑完了. `exit` 是 exit code, `run_outcome` 是它自己回報的結果 (`attack` 是整個 series 怎麼收工, `world` 是到了沒有), 照「讀結果」接下一步
 - `running`: 還在跑, 再等一段. `quiet` 是它的 `run.log` 幾秒沒寫新的一行: 超過 300 (一場戰鬥的時間; 夜世界配對最久量過五分半) 是卡死了, 只有一個例外: `run.log` 最後一行是 `waiting for the server rather than tapping` 的話, 迴圈在等伺服器, 最久 45 分鐘不寫 log, 照常等. 卡死就不要再等: 用 `uv run --no-sync python .agents/skills/repair-emulator/scripts/look.py <資料夾>` 截一張 (它不佔用模擬器), 不用打開, 回報 `pid`、log 最後一行跟那張圖的路徑. 卡死的樣子是這樣: 模擬器重開之後停在 `Launching com.supercell.clashofclans` 九分鐘以上就出過, 那次模擬器已經掛了而等待一直沒結束
-- `queued`: 帶 `--yield` 的指令還在排隊等模擬器, 照常等, 這時 log 不動是正常的. `holder` 是空的就是在等借走模擬器的那一邊還回來, 最久到它最後一個指令跑完 30 分鐘, 有人 `giveback` 就更早. `holder` 有值就是排在那個 run 後面, 而帶 `--yield` 的指令不會請任何人收工, 排在一個卡死的 run 後面會永遠等下去: 再下一次 `ai_coc wait <holder 的目錄>` (不給 `--for`), 照上一條看它的 `quiet`, 卡死了就停下來回報
+- `queued`: 帶 `--yield` 的指令還在排隊等模擬器, 照常等, 這時 log 不動是正常的. `holder` 是空的就是在等借走模擬器的那一邊還回來, 最久到它最後一個指令跑完 30 分鐘, 或在等別的 session 的保留 (`state.json` 的 `hold`) 放掉, 最久十分鐘; 有人 `giveback` 就更早. `holder` 有值就是排在那個 run 後面, 而帶 `--yield` 的指令不會請任何人收工, 排在一個卡死的 run 後面會永遠等下去: 再下一次 `ai_coc wait <holder 的目錄>` (不給 `--for`), 照上一條看它的 `quiet`, 卡死了就停下來回報
 - `gone`: 程序不在了, 也沒留下結果, 是被砍掉或崩掉: 停下來回報, 附 `run.log` 最後幾十行
 - `no_such_run`: 等滿了還找不到那個標籤開的 run, 是標籤寫錯, 或指令根本沒開跑 (旗標被拒絕是 exit code 2, 什麼都不寫): 停下來回報
 
@@ -55,7 +55,7 @@ uv run --no-sync ai_coc wait <標籤> --for 150 --agent <名字> --session <派�
 
 **每一步跑完, 先讀 `state.json` 看有沒有被叫停** (見「被叫停, 被借走」), 再讀它的結果.
 
-**結果看 `wait` 回 `finished` 時的 `run_outcome`**, 不用打開 `result.json`. `attack` 的是整個 series 怎麼收工 (`models.py` 的 `SeriesEnding`; `result.json` 是一個物件, 一樣寫在 `ending`, 每一輪在 `rounds`). 指令沒開跑就收手的, `run_outcome` 是 `loan_cancelled` (見「被叫停, 被借走」) 或 `session_taken` (照下表), exit code 都是 1. **迴圈自己跑完是接縫不是終點**: 照交辦接下去, 不要回頭問. 一個 run 結束而你什麼都沒接, 模擬器就閒著, 使用者卻以為還在打. `attack` 的 `run_outcome`:
+**結果看 `wait` 回 `finished` 時的 `run_outcome`**, 不用打開 `result.json`. `attack` 的是整個 series 怎麼收工 (`models.py` 的 `SeriesEnding`; `result.json` 是一個物件, 一樣寫在 `ending`, 每一輪在 `rounds`). 指令沒開跑就收手的, `run_outcome` 是 `loan_cancelled` 或 `hold_cancelled` (見「被叫停, 被借走」) 或 `session_taken` (照下表), exit code 都是 1. **迴圈自己跑完是接縫不是終點**: 照交辦接下去, 不要回頭問. 一個 run 結束而你什麼都沒接, 模擬器就閒著, 使用者卻以為還在打. `attack` 的 `run_outcome`:
 
 - **`stock_full`**: 這個世界打滿了. 交辦還有另一個世界, 就 `world --day` / `--night` 過去開它的 `attack` (帶它自己的 `--plan`); 兩個都滿了就照交辦收尾 (例如回日世界, 截圖), 然後回報. 收尾只在這樣正常收工時做: 下面停下來回報的那幾種、被叫停的, 都不開船也不截圖, 開船會把遊戲登入回來, 把手機上的使用者踢掉
 - **`repeat_done`**: 交辦的 `--repeat N` 跑完: 照交辦接下去或回報
@@ -75,7 +75,7 @@ uv run --no-sync ai_coc wait <標籤> --for 150 --agent <名字> --session <派�
 被收掉了, 先讀 `state.json` 的 `loan`: 帶 `--yield` 的 run 被別的指令要走時是借出去, 不是停掉, 那個指令叫它收工的同時寫下 `loan` (`lender` 是你, `borrower` 是誰借走、為了什麼), 你那輪的 `run.log` 最後也有一行 `Lent to …`.
 
 - `loan` 在, `lender` 是你, `ended` 不是 `cancelled`: **馬上開回去**, 同一個世界同一組旗標, 都帶 `--yield`, 換一個新的 `--label`, **分兩步**: 先 `world --day|--night --yield …` (借的那一邊可能把遊戲留在另一個村莊), 它會自己等 `giveback` 或借用逾時才真的開跑, 排隊可能超過一次前景呼叫的上限, 照常分段等; 它跑完讀一次 `state.json`, 沒被叫停才開 `attack … --yield …`. 不用等誰傳話, 最後的回報裡提一句被借走多久就好
-- 開回去的指令 `run_outcome` 是 `loan_cancelled` (exit code 1): 有人在借用期間下了 `ai_coc stop`, 照下一條處理, 不要再開
+- 開回去的指令 `run_outcome` 是 `loan_cancelled` 或 `hold_cancelled` (exit code 1): 有人在借用或保留期間下了 `ai_coc stop`, 照下一條處理, 不要再開
 - 沒有 `loan`, 或 `ended` 是 `cancelled`: 那是有人用 `ai_coc stop` 真的叫停. **不要自己開回去**, 馬上回報停在哪 (打的世界跟旗標, 執行目錄, 那次 `attack` 印的那一段). 之後一個 `ai_coc` 指令都不要下, 只讀倉庫的 `stock`、`status` 也算. 有人傳話叫你接回去, 才同一個世界同一組旗標開回去
 
 **使用者直接跟你說停**, 你自己下 `uv run --no-sync ai_coc stop` (`AGENTS.md` 的 A stop the user orders is run by whoever hears it), 等它停好, 照上一條回報. **`ai_coc stop` 是停止的唯一方式, 不要去砍背景程序**: 砍掉的話迴圈的 `KeyboardInterrupt` 出口執行不到, 軍隊留在場上, 遊戲停在回不了家的畫面, 沒有 `result.json`. 停不是立刻的, 最久要等當下那一場戰鬥打完; `state.json` 的 `status` 是 `stopping` 就是還在打完手上那一場, 等它變成 `idle`.

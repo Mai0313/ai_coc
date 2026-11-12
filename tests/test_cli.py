@@ -15,7 +15,7 @@ from typing import Any, get_args
 import logging
 from pathlib import Path
 import argparse
-from datetime import datetime
+from datetime import datetime, timedelta
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -56,6 +56,7 @@ MINIMAL: dict[str, list[str]] = {
     "attack": [],
     "stop": [],
     "giveback": [],
+    "hold": [],
     "watch": ["--next", "2026-10-12T23:10"],
     "note": [],
     "growth": [],
@@ -147,14 +148,19 @@ class ParserTests(unittest.TestCase):
                 # On its own: a heartbeat does not need `--debug`.
                 assert _args(name, *extra, "--shot-every", "4").shot_every == 4.0, name
 
-    def test_only_a_command_that_claims_the_emulator_can_yield_it(self) -> None:
+    def test_only_a_command_that_claims_the_emulator_can_yield_it_or_queue(self) -> None:
+        """`hold` claims and queues, but is never background work to lend."""
         for name, extra in MINIMAL.items():
             if name in WITHOUT_CLAIM:
-                with pytest.raises(SystemExit):
-                    _args(name, *extra, "--yield")
-            else:
-                assert _args(name, *extra, "--yield").yields, name
-                assert not _args(name, *extra).yields, name
+                for flag in (["--yield"], ["--queue", "5"]):
+                    with patch("sys.stderr", new_callable=io.StringIO), pytest.raises(SystemExit):
+                        _args(name, *extra, *flag)
+                continue
+            assert _args(name, *extra, "--queue", "5").queue == 5, name
+            if name == "hold":
+                continue
+            assert _args(name, *extra, "--yield").yields, name
+            assert not _args(name, *extra).yields, name
 
     def test_a_sub_commands_help_names_itself_and_lists_its_own_flags_first(self) -> None:
         [group] = [a for a in _parser()._actions if isinstance(a, argparse._SubParsersAction)]
@@ -653,6 +659,9 @@ class DispatchTests(unittest.TestCase):
             (commands.LoanCancelledError, "loan_cancelled"),
             (commands.SessionTakenError, "session_taken"),
             (commands.NoStateFileError, "no_state_file"),
+            (commands.HeldError, "held"),
+            (commands.NoHoldError, "no_hold"),
+            (commands.HoldCancelledError, "hold_cancelled"),
         ):
             with (
                 patch.object(commands, "claim", side_effect=error),
@@ -663,6 +672,83 @@ class DispatchTests(unittest.TestCase):
             assert models.StandDownReport.model_validate_json(written).outcome == outcome
             assert shown.getvalue() == f"{written}\n"
             assert _journal()[-1]["outcome"] == outcome
+
+    def test_a_command_held_out_answers_whose_hold_it_is_and_never_runs(self) -> None:
+        now = datetime.now().astimezone()
+        hold = models.Hold(
+            holder=Caller(agent="codex", session="t1", mission="升級"),
+            since=now,
+            until=now + timedelta(seconds=60),
+        )
+        commands._write_state(
+            models.RunnerState(status="idle", pid=434343, command="view", hold=hold)
+        )
+        with (
+            patch.object(commands, "status") as status,
+            patch("sys.stdout", new_callable=io.StringIO),
+        ):
+            assert _run_command(_args("status", "--session", "d1"), self.run) == 1
+        status.assert_not_called()
+        written = (self.run.directory / "result.json").read_text(encoding="utf-8")
+        report = models.StandDownReport.model_validate_json(written)
+        assert (report.outcome, report.holder, report.command, report.until) == (
+            "held",
+            hold.holder,
+            "view",
+            hold.until,
+        )
+        assert _journal()[-1]["outcome"] == "held"
+
+    def test_a_tap_with_no_hold_of_its_own_presses_nothing(self) -> None:
+        with (
+            patch.object(commands, "tap") as tapped,
+            patch("sys.stdout", new_callable=io.StringIO),
+        ):
+            assert _run_command(_args("tap", "800", "450", "--session", "d1"), self.run) == 1
+        tapped.assert_not_called()
+        written = (self.run.directory / "result.json").read_text(encoding="utf-8")
+        assert models.StandDownReport.model_validate_json(written).outcome == "no_hold"
+
+    def test_queue_and_yield_exclude_each_other_and_hold_waits_but_never_yields(self) -> None:
+        assert _args("status", "--queue", "150").queue == 150
+        for line in (("status", "--yield", "--queue", "5"), ("hold", "--yield")):
+            with patch("sys.stderr", new_callable=io.StringIO), pytest.raises(SystemExit):
+                _args(*line)
+        with (
+            patch.object(commands, "claim") as claimed,
+            patch.object(commands, "hold", return_value=""),
+            patch.object(commands, "status", return_value=StatusReport(export="read_back")),
+            patch("sys.stdout", new_callable=io.StringIO),
+        ):
+            _run_command(
+                _args("hold", "--for", "300", "--queue", "30", "--session", "s1"), self.run
+            )
+            _run_command(_args("status", "--session", "s1"), self.run)
+        held, status = (call.kwargs for call in claimed.call_args_list)
+        assert held == {"yields": False, "queue": 30.0, "linger": timedelta(seconds=300)}
+        assert status == {"yields": False, "queue": 0.0, "linger": commands.HOLD_TIME}
+
+    def test_a_hold_for_no_session_is_refused_before_a_run_opens(self) -> None:
+        with (
+            patch.object(sys, "argv", ["ai_coc", "hold"]),
+            patch.object(cli, "RunLog") as opened,
+            patch("sys.stderr", new_callable=io.StringIO),
+            pytest.raises(SystemExit) as stopped,
+        ):
+            cli.main()
+        assert stopped.value.code != 0
+        opened.open.assert_not_called()
+
+    def test_giveback_and_watch_carry_who_asks_and_the_hold(self) -> None:
+        with (
+            patch.object(commands, "giveback", return_value="") as given,
+            patch.object(commands, "watch", return_value="") as watched,
+            patch("sys.stdout", new_callable=io.StringIO),
+        ):
+            _run_command(_args("giveback", "--session", "s1"), self.run)
+            _run_command(_args("watch", "--minutes", "5", "--hold"), self.run)
+        assert given.call_args.args[0].session == "s1"
+        assert watched.call_args.kwargs["hold"] is True
 
     def test_a_capture_keeps_its_frames_in_its_own_run_without_debug(self) -> None:
         """It writes its frames under names of its own, so there is nothing for a

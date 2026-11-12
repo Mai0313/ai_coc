@@ -6553,11 +6553,12 @@ class RunnerStateTests(unittest.TestCase):
 
     def test_a_borrower_is_never_queued_behind_the_loan(self) -> None:
         """The next command of a live test goes straight in, and so does anybody
-        else's: only the lender's background work waits for the loan.
+        else's once the borrower's hold has lapsed: only the lender's background
+        work waits for the loan.
         """
         self._lent()
         with patch.object(commands.time, "sleep") as slept:
-            with commands.claim("stock", caller=self.BORROWING):
+            with commands.claim("stock", caller=self.BORROWING, linger=timedelta(0)):
                 driving = commands.read_state()
             with commands.claim("stock", caller=Caller(agent="codex", session="s3")):
                 other = commands.read_state()
@@ -6635,6 +6636,534 @@ class RunnerStateTests(unittest.TestCase):
             assert runner.call_args.kwargs["should_stop"] is commands.stop_requested
             # It taps no map coordinate before its battle, so it only zooms out.
             parked.assert_not_called()
+
+
+class HoldTests(unittest.TestCase):
+    """One session's commands held together, so no other session's command cuts between them.
+
+    The lock was per command, and the gap between two of one session's commands
+    read as a free emulator: on 2026-11-12 a test's `status` claimed between a
+    takeover's `view` and its `tap`, and the `tap` then pressed a point read
+    off a frame older than the test.
+    """
+
+    TAKEOVER = Caller(agent="claude-code", session="t1", mission="升級")
+    TESTER = Caller(agent="claude-code", session="d1", mission="測一個修正")
+    FARMING = Caller(agent="claude-code", session="t1-farm", mission="打資源")
+
+    def _between(
+        self, caller: Caller = TAKEOVER, seconds: float = 60, loan: Loan | None = None
+    ) -> models.Hold:
+        """`caller` between two of its commands, its hold standing `seconds` more."""
+        now = datetime.now().astimezone()
+        hold = models.Hold(
+            holder=caller,
+            since=now - timedelta(seconds=30),
+            until=now + timedelta(seconds=seconds),
+        )
+        commands._write_state(
+            RunnerState(
+                status="idle", pid=434343, command="view", caller=caller, hold=hold, loan=loan
+            )
+        )
+        return hold
+
+    def _driving(self, caller: Caller = TAKEOVER) -> models.Hold:
+        """`caller`'s own command running in another process, under its hold."""
+        hold = models.Hold(holder=caller, since=datetime.now().astimezone())
+        commands._write_state(
+            RunnerState(
+                status="running",
+                pid=424242,
+                pid_created=100.0,
+                command="tap",
+                caller=caller,
+                hold=hold,
+            )
+        )
+        self.enterContext(
+            patch.object(commands, "_alive", side_effect=lambda state: state.pid == 424242)
+        )
+        return hold
+
+    def test_a_session_holds_while_it_runs_and_for_a_while_after(self) -> None:
+        with commands.claim("status", caller=self.TAKEOVER):
+            running = commands.read_state()
+        after = commands.read_state()
+        assert running is not None
+        assert running.hold is not None
+        assert (running.hold.holder, running.hold.until) == (self.TAKEOVER, None)
+        assert after is not None
+        assert after.hold is not None
+        assert after.ended is not None
+        assert after.hold.until is not None
+        assert after.hold.since == running.hold.since
+        assert abs(after.hold.until - after.ended - commands.HOLD_TIME) < timedelta(seconds=1)
+
+    def test_no_session_and_background_work_never_hold(self) -> None:
+        """A blank session is nobody's, and background work is lent, not held."""
+        for caller, yields in ((Caller(agent="someone"), False), (self.FARMING, True)):
+            with commands.claim("attack", caller=caller, yields=yields):
+                assert (commands.read_state() or RunnerState()).hold is None
+            assert (commands.read_state() or RunnerState()).hold is None
+
+    def test_another_session_stands_down_held_and_changes_nothing(self) -> None:
+        """Nobody is asked to stand down and nothing is written, a blank session included."""
+        hold = self._between()
+        written = commands.STATE_PATH.read_text(encoding="utf-8")
+        for caller in (self.TESTER, Caller()):
+            with (
+                patch.object(commands, "take_over") as took,
+                patch.object(commands.time, "sleep") as slept,
+                pytest.raises(commands.HeldError) as raised,
+                commands.claim("status", caller=caller),
+            ):
+                pass
+            took.assert_not_called()
+            slept.assert_not_called()
+            assert (raised.value.holder, raised.value.command, raised.value.until) == (
+                self.TAKEOVER,
+                "view",
+                hold.until,
+            )
+        assert commands.STATE_PATH.read_text(encoding="utf-8") == written
+
+    def test_a_command_running_under_its_hold_shuts_other_sessions_out_too(self) -> None:
+        """Its `until` is None while it drives, so `held` says it lapses with that command."""
+        self._driving()
+        with (
+            patch.object(commands, "take_over") as took,
+            pytest.raises(commands.HeldError) as raised,
+            commands.claim("status", caller=self.TESTER),
+        ):
+            pass
+        took.assert_not_called()
+        assert (raised.value.command, raised.value.until) == ("tap", None)
+
+    def test_a_queue_waits_the_hold_out_or_stands_down_when_it_does_not_lapse(self) -> None:
+        hold = self._between()
+
+        def it_lapses(_seconds: float) -> None:
+            current = commands.read_state()
+            assert current is not None
+            gone = datetime.now().astimezone() - timedelta(seconds=1)
+            commands._write_state(
+                current.model_copy(update={"hold": hold.model_copy(update={"until": gone})})
+            )
+
+        with (
+            patch.object(commands.time, "sleep", side_effect=it_lapses),
+            self.assertLogs(commands.logger, "INFO") as logged,
+            commands.claim("status", caller=self.TESTER, queue=150),
+        ):
+            mine = commands.read_state()
+        assert mine is not None
+        assert mine.hold is not None
+        assert mine.hold.holder == self.TESTER
+        assert models.LockEvent(what="queued", other=self.TAKEOVER, other_command="view") in [
+            getattr(record, "journal", None) for record in logged.records
+        ]
+        self._between()
+        clock = [0.0]
+
+        def a_minute_passes(_seconds: float) -> None:
+            clock[0] += 60
+
+        with (
+            patch.object(commands.time, "monotonic", side_effect=lambda: clock[0]),
+            patch.object(commands.time, "sleep", side_effect=a_minute_passes),
+            pytest.raises(commands.HeldError),
+            commands.claim("status", caller=self.TESTER, queue=150),
+        ):
+            pass
+        assert clock[0] == 180
+
+    def test_the_holder_s_own_next_command_goes_straight_in_and_keeps_since(self) -> None:
+        hold = self._between()
+        with patch.object(commands.time, "sleep") as slept:
+            for command in ("status", "tap"):
+                with commands.claim(command, caller=self.TAKEOVER):
+                    mine = commands.read_state()
+                assert mine is not None
+                assert mine.hold == models.Hold(holder=self.TAKEOVER, since=hold.since), command
+        slept.assert_not_called()
+
+    def test_background_work_queues_behind_a_hold_until_it_is_given_back(self) -> None:
+        self._between()
+        with (
+            patch.object(
+                commands.time, "sleep", side_effect=lambda _s: commands.giveback(self.TAKEOVER)
+            ),
+            commands.claim("world", caller=self.FARMING, yields=True),
+        ):
+            mine = commands.read_state()
+        assert mine is not None
+        assert (mine.status, mine.yields, mine.hold) == ("running", True, None)
+
+    def test_a_hold_stands_while_its_command_drives_and_until_its_time(self) -> None:
+        now = datetime.now().astimezone()
+        driving = RunnerState(status="running", pid=424242, hold=models.Hold(since=now))
+        with patch.object(commands, "_alive", return_value=True):
+            assert commands._hold(driving) is not None
+            assert commands._hold(driving.model_copy(update={"status": "stopping"})) is None
+        with patch.object(commands, "_alive", return_value=False):
+            assert commands._hold(driving) is None
+        for until, ended, standing in (
+            (now + timedelta(minutes=1), None, True),
+            (now - timedelta(minutes=1), None, False),
+            (now + timedelta(minutes=1), "cancelled", False),
+        ):
+            hold = models.Hold(since=now, until=until, ended=ended)
+            record = RunnerState(status="idle", pid=424242, hold=hold)
+            assert (commands._hold(record) is not None) == standing
+
+    def test_of_two_claims_after_a_lapse_the_one_first_inside_the_turn_wins(self) -> None:
+        """Both read no hold outside the turn; the second finds the first's inside it."""
+        now = datetime.now().astimezone()
+        rival = models.Hold(holder=self.TAKEOVER, since=now, until=now + timedelta(seconds=60))
+
+        def the_rival_claims_and_releases(_caller: Caller) -> None:
+            commands._write_state(
+                RunnerState(status="idle", pid=434343, caller=self.TAKEOVER, hold=rival)
+            )
+
+        with (
+            patch.object(commands, "take_over", side_effect=the_rival_claims_and_releases),
+            pytest.raises(commands.HeldError) as raised,
+            commands.claim("status", caller=self.TESTER),
+        ):
+            pass
+        assert raised.value.holder == self.TAKEOVER
+
+    def test_a_hand_runs_only_inside_its_own_session_s_hold(self) -> None:
+        """A sequence that was cut into never goes on pressing off a frame read before."""
+        for command in commands.HANDS:
+            with pytest.raises(commands.NoHoldError), commands.claim(command, caller=self.TESTER):
+                pass
+        # Typed bare by a person, with no hold anywhere, it presses as it always did.
+        with commands.claim("tap", caller=Caller()):
+            pass
+        with commands.claim("status", caller=self.TESTER):
+            pass
+        for command in commands.HANDS:
+            with commands.claim(command, caller=self.TESTER):
+                assert (commands.read_state() or RunnerState()).command == command
+        self._between()
+        with (
+            pytest.raises(commands.NoHoldError) as raised,
+            commands.claim("tap", caller=self.TESTER),
+        ):
+            pass
+        assert raised.value.holder == self.TAKEOVER
+
+    def test_a_hand_with_no_hold_stands_no_farming_down_on_its_way_to_refusing(self) -> None:
+        commands._write_state(
+            RunnerState(
+                status="running",
+                pid=424242,
+                pid_created=100.0,
+                command="attack",
+                caller=self.FARMING,
+                yields=True,
+            )
+        )
+        with (
+            patch.object(commands, "_alive", return_value=True),
+            patch.object(commands, "take_over") as took,
+            pytest.raises(commands.NoHoldError),
+            commands.claim("tap", caller=self.TESTER),
+        ):
+            pass
+        took.assert_not_called()
+
+    def test_a_hold_that_ends_while_a_hand_waits_for_its_turn_refuses_it(self) -> None:
+        self._between(self.TESTER)
+        with (
+            patch.object(commands, "take_over", side_effect=lambda _caller: commands.stop()),
+            pytest.raises(commands.NoHoldError),
+            commands.claim("tap", caller=self.TESTER),
+        ):
+            pass
+
+    def test_a_record_written_without_the_hold_refuses_the_holder_s_next_hand(self) -> None:
+        """Code from before the hold drops the field when it writes, and names itself."""
+        with commands.claim("status", caller=self.TAKEOVER):
+            pass
+        old = Caller(agent="codex", session="old", mission="舊版")
+        written = json.loads(commands.STATE_PATH.read_text(encoding="utf-8"))
+        del written["emulator"]["hold"]
+        written["emulator"] |= {"pid": 434343, "command": "stock", "caller": old.model_dump()}
+        commands.STATE_PATH.write_text(json.dumps(written), encoding="utf-8")
+        with (
+            pytest.raises(commands.NoHoldError) as raised,
+            commands.claim("tap", caller=self.TAKEOVER),
+        ):
+            pass
+        assert (raised.value.holder, raised.value.command) == (old, "stock")
+
+    def test_hold_opens_renews_and_keeps_as_long_as_asked_up_to_its_ceiling(self) -> None:
+        assert commands.lingering(None) == commands.HOLD_TIME
+        assert commands.lingering(300) == timedelta(seconds=300)
+        assert commands.lingering(3600) == commands.HOLD_MAX
+        with commands.claim("status", caller=self.TESTER, linger=timedelta(0)):
+            pass
+        with commands.claim("hold", caller=self.TAKEOVER, linger=commands.lingering(300)):
+            opened = commands.hold(300)
+        after = commands.read_state()
+        assert (opened.holder, opened.last, opened.last_command) == (
+            self.TAKEOVER,
+            self.TESTER,
+            "status",
+        )
+        assert after is not None
+        assert after.hold is not None
+        assert after.hold.until is not None
+        assert after.ended is not None
+        assert opened.since == after.hold.since
+        assert abs(after.hold.until - after.ended - timedelta(seconds=300)) < timedelta(seconds=1)
+        with commands.claim("hold", caller=self.TAKEOVER):
+            renewed = commands.hold()
+        assert (renewed.since, renewed.last) == (opened.since, self.TAKEOVER)
+
+    def test_hold_borrows_from_background_work_like_any_claim(self) -> None:
+        commands._write_state(
+            RunnerState(
+                status="running",
+                pid=424242,
+                pid_created=100.0,
+                command="attack",
+                caller=self.FARMING,
+                yields=True,
+            )
+        )
+
+        def the_farm_stands_down(_seconds: float) -> None:
+            current = commands.read_state()
+            assert current is not None
+            commands._write_state(current.model_copy(update={"status": "idle"}))
+
+        with (
+            patch.object(commands, "_alive", return_value=True),
+            patch.object(commands.time, "sleep", side_effect=the_farm_stands_down),
+            commands.claim("hold", caller=self.TESTER),
+        ):
+            mine = commands.read_state()
+        assert mine is not None
+        assert mine.loan is not None
+        assert mine.hold is not None
+        assert (mine.loan.lender, mine.loan.borrower, mine.hold.holder) == (
+            self.FARMING,
+            self.TESTER,
+            self.TESTER,
+        )
+
+    def test_a_watch_keeps_the_hold_through_its_sleep_and_past_its_wake(self) -> None:
+        self._between()
+        wake = datetime.now().astimezone() + timedelta(seconds=0.3)
+        seen: list[datetime | None] = []
+        pause = time.sleep
+
+        def looked(seconds: float) -> None:
+            current = commands.read_state()
+            seen.append(current.hold.until if current and current.hold else None)
+            pause(min(seconds, 0.05))
+
+        with patch.object(commands.time, "sleep", side_effect=looked):
+            report = commands.watch(self.TAKEOVER, wake, "工人", hold=True)
+        assert seen[0] == wake + commands.HOLD_TIME
+        after = commands.read_state()
+        assert after is not None
+        assert after.hold is not None
+        assert report.held_until is not None
+        assert report.held_until == after.hold.until
+        assert abs(report.held_until - report.ended - commands.HOLD_TIME) < timedelta(seconds=1)
+
+    def test_a_watch_never_holds_past_the_ceiling(self) -> None:
+        self._between()
+        seen: list[datetime | None] = []
+
+        def looked_and_stopped(_seconds: float) -> None:
+            current = commands.read_state()
+            seen.append(current.hold.until if current and current.hold else None)
+            # Written by hand: `stop` takes this process's own watch for nobody's.
+            watching = commands.read_watch()
+            assert watching is not None
+            commands._write_watch(watching.model_copy(update={"status": "stopping"}))
+
+        later = datetime.now().astimezone() + timedelta(hours=1)
+        with patch.object(commands.time, "sleep", side_effect=looked_and_stopped):
+            commands.watch(self.TAKEOVER, later, "工人", hold=True)
+        ceiling = datetime.now().astimezone() + commands.HOLD_MAX
+        assert seen[0] is not None
+        assert ceiling - timedelta(seconds=5) < seen[0] <= ceiling
+
+    def test_a_watch_asked_to_hold_with_nothing_held_leaves_the_watch_alone(self) -> None:
+        self._between()
+        watching = commands.read_watch()
+        with pytest.raises(commands.NoHoldError) as raised:
+            commands.watch(
+                self.TESTER, datetime.now().astimezone() + timedelta(minutes=5), "工人", hold=True
+            )
+        assert raised.value.holder == self.TAKEOVER
+        assert commands.read_watch() == watching
+
+    def test_giveback_ends_only_the_caller_s_own_hold(self) -> None:
+        """A test's routine `giveback` used to return the takeover's loan under its open sheet."""
+        self._between()
+        written = commands.STATE_PATH.read_text(encoding="utf-8")
+        for caller in (self.TESTER, Caller()):
+            assert commands.giveback(caller) == GivebackReport(
+                outcome="not_yours", holder=self.TAKEOVER
+            )
+        assert commands.STATE_PATH.read_text(encoding="utf-8") == written
+        assert commands.giveback(self.TAKEOVER) == GivebackReport(
+            outcome="released", holder=self.TAKEOVER
+        )
+        after = commands.read_state()
+        assert after is not None
+        assert after.hold is not None
+        assert after.hold.ended == "returned"
+        assert commands.giveback(self.TAKEOVER) == GivebackReport(outcome="no_loan")
+
+    def test_giveback_returns_a_loan_with_the_hold_and_anyone_s_once_it_lapsed(self) -> None:
+        now = datetime.now().astimezone()
+        loan = Loan(
+            lender=self.FARMING,
+            borrower=self.TAKEOVER,
+            since=now,
+            until=now + timedelta(minutes=10),
+        )
+        self._between(loan=loan)
+        assert commands.giveback(self.TAKEOVER) == GivebackReport(
+            outcome="returned", lender=self.FARMING, holder=self.TAKEOVER
+        )
+        after = commands.read_state()
+        assert after is not None
+        assert after.loan is not None
+        assert after.hold is not None
+        assert (after.loan.ended, after.hold.ended) == ("returned", "returned")
+        self._between(seconds=-1, loan=loan)
+        assert commands.giveback(self.TESTER) == GivebackReport(
+            outcome="returned", lender=self.FARMING
+        )
+
+    def test_a_stop_cancels_a_hold_nobody_is_driving_on(self) -> None:
+        self._between()
+        report = commands.stop(self.TESTER, "emulator")
+        assert (report.emulator, report.hold, report.holder) == (
+            "nothing_running",
+            "cancelled",
+            self.TAKEOVER,
+        )
+        after = commands.read_state()
+        assert after is not None
+        assert after.hold is not None
+        assert after.hold.ended == "cancelled"
+
+    def test_a_stop_while_the_holder_drives_keeps_its_hold_until_a_second_stop(self) -> None:
+        """As a loan's, and meanwhile others wait on its command, which can still be ended."""
+        self._driving()
+        first = commands.stop(self.TESTER, "emulator")
+        assert (first.emulator, first.hold) == ("asked", "kept")
+
+        def it_releases(_caller: Caller) -> None:
+            current = commands.read_state()
+            assert current is not None
+            commands._write_state(current.model_copy(update={"status": "idle"}))
+
+        with (
+            patch.object(commands, "take_over", side_effect=it_releases) as took,
+            commands.claim("status", caller=self.TESTER, linger=timedelta(0)),
+        ):
+            pass
+        took.assert_called_once()
+        with (
+            patch.object(commands, "_alive", return_value=True),
+            commands.claim("status", caller=self.TAKEOVER),
+        ):
+            assert commands.stop(self.TESTER).hold == "kept"
+        second = commands.stop(self.TESTER)
+        assert (second.emulator, second.hold, second.holder) == (
+            "nothing_running",
+            "cancelled",
+            self.TAKEOVER,
+        )
+        with pytest.raises(commands.NoHoldError), commands.claim("tap", caller=self.TAKEOVER):
+            pass
+
+    def test_a_test_stopped_mid_command_and_given_back_lets_the_farming_start_again(self) -> None:
+        """The lender queued behind the test's hold and its loan starts once both come back."""
+        now = datetime.now().astimezone()
+        loan = Loan(lender=self.FARMING, borrower=self.TESTER, since=now)
+        hold = models.Hold(holder=self.TESTER, since=now)
+        commands._write_state(
+            RunnerState(
+                status="running",
+                pid=424242,
+                pid_created=100.0,
+                command="tap",
+                caller=self.TESTER,
+                loan=loan,
+                hold=hold,
+            )
+        )
+
+        def it_releases() -> None:
+            current = commands.read_state()
+            assert current is not None
+            later = datetime.now().astimezone()
+            commands._write_state(
+                current.model_copy(
+                    update={
+                        "status": "idle",
+                        "loan": loan.model_copy(update={"until": later + commands.LOAN_TIME}),
+                        "hold": hold.model_copy(update={"until": later + commands.HOLD_TIME}),
+                    }
+                )
+            )
+
+        steps = iter([
+            lambda: commands.stop(self.TESTER, "emulator"),
+            it_releases,
+            lambda: commands.giveback(self.TESTER),
+        ])
+        with (
+            patch.object(commands, "_alive", side_effect=lambda state: state.pid == 424242),
+            patch.object(commands.time, "sleep", side_effect=lambda _s: next(steps)()),
+            commands.claim("world", caller=self.FARMING, yields=True),
+        ):
+            mine = commands.read_state()
+        assert mine is not None
+        assert (mine.status, mine.caller, mine.yields) == ("running", self.FARMING, True)
+
+    def test_a_claim_queued_behind_one_hold_and_then_another_stops_with_the_second(self) -> None:
+        self._between()
+        now = datetime.now().astimezone()
+        second = models.Hold(holder=self.TESTER, since=now, until=now + timedelta(seconds=60))
+        steps = iter([
+            lambda: commands._write_state(
+                RunnerState(status="idle", pid=434343, caller=self.TESTER, hold=second)
+            ),
+            commands.stop,
+        ])
+        with (
+            patch.object(commands.time, "sleep", side_effect=lambda _s: next(steps)()),
+            pytest.raises(commands.HoldCancelledError) as raised,
+            commands.claim("world", caller=self.FARMING, yields=True),
+        ):
+            pass
+        assert raised.value.holder == self.TESTER
+
+    def test_what_queued_behind_a_hold_a_stop_cancelled_never_starts(self) -> None:
+        for caller, yields, queue in ((self.FARMING, True, 0.0), (self.TESTER, False, 150.0)):
+            self._between()
+            with (
+                patch.object(commands.time, "sleep", side_effect=lambda _s: commands.stop()),
+                pytest.raises(commands.HoldCancelledError) as raised,
+                commands.claim("world", caller=caller, yields=yields, queue=queue),
+            ):
+                pass
+            assert raised.value.holder == self.TAKEOVER, caller
 
 
 class PlanLogTests(unittest.TestCase):

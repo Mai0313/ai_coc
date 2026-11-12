@@ -99,6 +99,11 @@ def test_every_scenario_stages_and_its_checks_point_at_the_skills(
 def test_a_press_runs_the_real_confirm_on_the_recorded_screens(tmp_path: Path) -> None:
     """The goblin prompt reads 71 off its left button, the hire presses it, and a screen past the recording says so."""
     sandbox = _staged(tmp_path, "goblin-two-buttons")
+    # The scenario stages the hold its last tap left; once given back, a hand presses nothing.
+    _run(sandbox, "giveback")
+    code, out, call = _run(sandbox, "confirm", "--price", "10800")
+    assert (code, json.loads(out)["outcome"], call["inputs"]) == (1, "no_hold", [])
+    _run(sandbox, "hold")
     code, _, call = _run(sandbox, "confirm", "--price", "10800")
     assert (code, call["outcome"], call["claims"]) == (0, "goblin_offered", True)
     _, out, call = _run(sandbox, "confirm", "--goblin", "--price", "71")
@@ -240,6 +245,9 @@ def test_nothing_claims_counts_from_the_call_it_is_after(tmp_path: Path) -> None
     after = {"outcome": "session_taken"}
     assert evals.judge(_check(kind="nothing_claims", after=after), calls, "", tmp_path)[0]
     assert not evals.judge(_check(kind="nothing_claims"), calls, "", tmp_path)[0]
+    # `hold` claims and opens nothing, so it logs nobody out.
+    calls.append(_call("hold"))
+    assert evals.judge(_check(kind="nothing_claims", after=after), calls, "", tmp_path)[0]
     calls.append(_call("stock"))
     assert not evals.judge(_check(kind="nothing_claims", after=after), calls, "", tmp_path)[0]
 

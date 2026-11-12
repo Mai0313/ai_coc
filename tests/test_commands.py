@@ -22,6 +22,7 @@ from unittest.mock import MagicMock, patch
 
 from PIL import Image
 import pytest
+import adbutils
 from pydantic import ValidationError
 
 from ai_coc import plans, commands, logging_setup
@@ -32,6 +33,7 @@ from ai_coc.models import (
     Caller,
     MapEdge,
     FrameLog,
+    HoldStop,
     LoanStop,
     ProbeRay,
     AppConfig,
@@ -255,6 +257,13 @@ class EmulatorChoiceTests(unittest.TestCase):
             patch.object(commands, "LDPlayerAdapter", return_value=broken),
         ):
             assert list(commands.emulators()) == []
+
+    def test_no_test_reaches_an_emulator_or_the_adb_server(self) -> None:
+        """`conftest` makes both raise, so a test that forgets to fake one fails instead of driving the game."""
+        with pytest.raises(RuntimeError, match="reached for the emulator"):
+            next(commands.emulators())
+        with pytest.raises(RuntimeError, match="reached for the emulator"):
+            adbutils.adb.device("emulator-0").shell("true")
 
 
 class SessionTests(unittest.TestCase):
@@ -1163,6 +1172,7 @@ class AnswerLineTests(unittest.TestCase):
             (commands.ENDING_LINES, SeriesEnding),
             (commands.STOP_LINES, EmulatorStop),
             (commands.LOAN_LINES, LoanStop),
+            (commands.HOLD_LINES, HoldStop),
             (commands.WATCH_LINES, WatchStop),
             (commands.GIVEBACK_LINES, GivebackOutcome),
             (commands.STAND_DOWN_LINES, StandDownOutcome),
@@ -1181,12 +1191,15 @@ class AnswerLineTests(unittest.TestCase):
                 pid=42,
                 loan="kept",
                 lender=Caller(agent="codex"),
+                hold="cancelled",
+                holder=Caller(agent="antigravity"),
                 watch="nothing_watching",
             )
         )
         assert line.split(";") == [
             commands.STOP_LINES["asked"].format(command="attack", pid=42),
             commands.LOAN_LINES["kept"].format(lender="codex"),
+            commands.HOLD_LINES["cancelled"].format(holder="antigravity"),
             commands.WATCH_LINES["nothing_watching"],
         ]
         watch_only = commands.stop_line(StopReport(target="watch", watch="nothing_watching"))
@@ -2009,6 +2022,8 @@ class TendedTests(unittest.TestCase):
         # The session's own status stood down on the same loss, and its watch
         # and its stop claimed nothing.
         self._run("status", "12:23", None, SESSION_TAKEN_SENTENCE, exit_code=1)
+        # Its `hold` claimed and opened nothing, so it logged nobody back in.
+        self._run("hold", "12:24")
         self._run("watch", "12:24", "due", claimed=False)
         self._run("launch", "12:28")
         self._run("attack", "13:00", "session_taken", session="s1-farm")
