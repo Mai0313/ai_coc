@@ -1260,7 +1260,7 @@ def giveback() -> str:
     return f"還了,{loan.lender.agent or '借出模擬器的那一邊'}會自己開回去。"
 
 
-# One line per way `ai_coc note` can end, for `run.log`.
+# One line per way `ai_coc note` can end, for `run.log` and over what it prints.
 NOTE_LINES: dict[NoteOutcome, str] = {
     "listed": "列出交代",
     "added": "記下這一條交代",
@@ -1303,6 +1303,17 @@ def note(action: NoteAction, world: World | None = None, item: str = "") -> Note
         "%s；日世界 %d 條，夜世界 %d 條", NOTE_LINES[outcome], len(notes.day), len(notes.night)
     )
     return NoteReport(notes=notes, outcome=outcome)
+
+
+def note_text(report: NoteReport) -> str:
+    """Each village's notes numbered from 1, the number `note done` takes, under what this run changed."""
+    shown = [] if report.outcome == "listed" else [NOTE_LINES[report.outcome], ""]
+    for world in ("day", "night"):
+        held = getattr(report.notes, world)
+        shown += [WORLD_NAMES[world], *(f"{at}. {item}" for at, item in enumerate(held, 1))]
+        shown += [] if held else ["沒有交代"]
+        shown.append("")
+    return "\n".join(shown).rstrip()
 
 
 # How long a new watch gives the one it replaces to let go before ending it. A
@@ -3168,7 +3179,7 @@ EXPORT_LINES: dict[ExportOutcome, str] = {
         "點了複製,但剪貼簿沒有東西。"
         "可能是遊戲沒吃到那一下,也可能是模擬器沒把 Android 的剪貼簿同步過來"
     ),
-    "not_a_village": "剪貼簿裡的不是村莊資料,複製的當下可能被別的東西蓋過去了",
+    "not_an_export": "剪貼簿裡的不是村莊資料,複製的當下可能被別的東西蓋過去了",
 }
 
 
@@ -3222,7 +3233,7 @@ def _exported(adb: AdbController, display: DisplayTarget) -> ExportReport:
         document = parse_village_text(payload)
     except ValueError as exc:
         logger.warning("The clipboard payload was not a village: %s", exc)
-        return ExportReport(outcome="not_a_village")
+        return ExportReport(outcome="not_an_export")
     finally:
         # Whatever happened, the profile window is left covering the village,
         # and every other command starts by assuming one is on screen. Only
@@ -3400,7 +3411,7 @@ def _journal_upgrades() -> tuple[
     return sorted(statuses, key=lambda one: one[0]), sorted(confirms, key=lambda one: one[0])
 
 
-def turnaround(since: date | None = None) -> TurnaroundReport:
+def turnaround(since: datetime | None = None) -> TurnaroundReport:
     """How long each upgrade waited between its timer running out and the confirm for its next level.
 
     Off the journal alone: each successful confirm is paired with the latest
@@ -3410,6 +3421,7 @@ def turnaround(since: date | None = None) -> TurnaroundReport:
     goblin hire, which went on the goblin's slot.
     """
     statuses, confirms = _journal_upgrades()
+    since = since.astimezone() if since is not None else None
     goblins = [pressed for pressed, paid in confirms if paid.goblin is not None]
     taken: set[tuple[int, str]] = set()
     samples: list[TurnaroundSample] = []
@@ -3433,7 +3445,7 @@ def turnaround(since: date | None = None) -> TurnaroundReport:
             timedelta(0) <= g - pressed <= GOBLIN_GAP for g in goblins
         ):
             continue
-        if since is None or pressed.astimezone().date() >= since:
+        if since is None or pressed >= since:
             samples.append(
                 TurnaroundSample(
                     pressed=pressed,
@@ -3812,6 +3824,8 @@ def answer_text(answer: BaseModel, within: int | None = None) -> str | None:
             text = turnaround_text(answer)
         case SearchReport():
             text = search_text(answer)
+        case NoteReport():
+            text = note_text(answer)
         case _:
             text = None
     return text

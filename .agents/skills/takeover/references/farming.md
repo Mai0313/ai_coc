@@ -2,7 +2,7 @@
 
 給派打資源的那一邊: `takeover` 每一種要打資源的終點, 都照這一份派一趟. 迴圈交給一個 subagent, 它照同一個資料夾的 `runner.md` 跑; 這份是派它的 session 的: 開跑前的判斷、派工、回報進來怎麼判、一趟的報告. 打資源本身不花任何東西, 不改程式碼.
 
-旗標看 `src/ai_coc/cli.py` 的 `_parser()`, 回報欄位看 `src/ai_coc/models.py` 的 `AttackReport` / `AttackSeries`, 不要憑記憶下參數. 下面的指令都省略了每個指令都要帶的 `--agent`、`--session`、`--mission` (`AGENTS.md` 的 Say who is driving).
+旗標看 `ai_coc <指令> -h` (開頭一行說那個指令做什麼), 回報欄位看 `src/ai_coc/models.py` 的 `AttackReport` / `AttackSeries`, 不要憑記憶下參數. 下面的指令都省略了每個指令都要帶的 `--agent`、`--session`、`--mission` (`AGENTS.md` 的 Say who is driving).
 
 ## 開跑之前
 

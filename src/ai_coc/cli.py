@@ -107,7 +107,7 @@ WITHOUT_CLAIM = (*NO_SCREEN, "capture")
 # because whoever reads their stdout is an agent about to write that report, and
 # every reshaping it did by hand was a step a skill had to spell out; a program
 # reads `result.json`, which is the model whatever the terminal was shown.
-TEXT_ANSWERS = ("attack", "status", "growth", "turnaround", "search", "farmed", "tended")
+TEXT_ANSWERS = ("attack", "status", "growth", "turnaround", "search", "farmed", "tended", "note")
 
 
 # Every sub-command and the line `--help` gives it, under the heading the help
@@ -353,7 +353,7 @@ def _parser() -> argparse.ArgumentParser:
     for heading, group in COMMANDS:
         section = parser.add_argument_group(heading)
         for name, note in group:
-            sub.add_parser(name, help=note)
+            sub.add_parser(name, help=note, description=note)
             section._group_actions.append(sub._choices_actions.pop())  # noqa: SLF001 - argparse has no public way to group sub-commands
     # It plays whichever village the game is on and never sails there itself:
     # crossing is `world --day` or `--night`, the one command that moves the game.
@@ -402,7 +402,10 @@ def _parser() -> argparse.ArgumentParser:
     _farmed_flags(sub.choices["farmed"])
     _farmed_flags(sub.choices["tended"])
     sub.choices["turnaround"].add_argument(
-        "--since", type=date.fromisoformat, metavar="YYYY-MM-DD", help="只算這天起的；不給就是全部"
+        "--since",
+        type=datetime.fromisoformat,
+        metavar="時間",
+        help="只算這個時間起的，ISO 格式；不給就是全部",
     )
     give = sub.choices["donate"]
     give.add_argument("--dry-run", action="store_true", help="走完流程但不真的捐，只回報能捐什麼")
