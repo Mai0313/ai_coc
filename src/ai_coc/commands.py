@@ -3487,8 +3487,9 @@ def tended(by: str | None = None, since: datetime | None = None) -> TendedReport
 
     `by` takes the session's own runs and its farm subagent's (`<id>-farm`),
     as `farmed_runs` does. **A goblin hire is one upgrade with the press
-    before it**: the `confirm` that pressed the price ends `unexpected` on
-    the hire prompt, and the `confirm --goblin` after it pays the gems that
+    before it**: the `confirm` that pressed the price ends `goblin_offered` on
+    the hire prompt (`unexpected` on lines from before that outcome), and the
+    `confirm --goblin` after it pays the gems that
     start the upgrade, so a hire within `GOBLIN_GAP` of such a press takes its
     price and its item. **A lost login is counted once** however many runs
     stood down on it, since the farm subagent and the session both run into
@@ -3550,7 +3551,7 @@ def _bought(
 ) -> TendedUpgrade | None:
     """Add what one `confirm` bought, and hand back the press a goblin hire may follow, if this was one."""
     offer = paid.wall or paid.offer
-    if paid.goblin is None:
+    if paid.goblin is None or paid.outcome == "goblin_offered":
         bought = TendedUpgrade(
             at=at,
             item=item,
@@ -3559,7 +3560,7 @@ def _bought(
         )
         if paid.outcome == "confirmed":
             report.upgrades.append(bought)
-        return bought if paid.outcome == "unexpected" and offer else None
+        return bought if paid.outcome in ("unexpected", "goblin_offered") and offer else None
     if paid.outcome != "confirmed":
         return pressed
     if pressed is not None and at - pressed.at <= GOBLIN_GAP:
@@ -3991,14 +3992,18 @@ CONFIRM_LINES: dict[ConfirmOutcome, str] = {
     "sheet_disagrees": "按了城牆的升級鈕,跳出的確認視窗跟按鈕對不上,視窗留著沒按",
     "no_confirmation": "按了城牆的升級鈕,沒有跳出確認視窗或對話框;城牆到頂時會跳灰色確認鈕的視窗,看圖再按 X",
     "no_goblin": "畫面上沒有聘請哥布林工人的視窗,或讀不出它要幾顆寶石,什麼都沒按",
+    "goblin_offered": "按了確認,跳出聘請哥布林工人的視窗,沒有再按,視窗還留著",
 }
 
 
 def confirm_line(report: ConfirmReport) -> str:
     """What the sheet asked, what was expected, and what came of it."""
-    if report.goblin is not None or report.outcome == "no_goblin":
-        gems = "讀不到" if report.goblin is None else f"{report.goblin.gems:,} 寶石"
-        return f"哥布林工人 {gems},預期 {report.asked:,}:{CONFIRM_LINES[report.outcome]}"
+    gems = "讀不到" if report.goblin is None else f"{report.goblin.gems:,} 寶石"
+    said = CONFIRM_LINES[report.outcome]
+    if report.outcome == "goblin_offered":
+        said = f"{said},聘請鈕 {gems}"
+    elif report.goblin is not None or report.outcome == "no_goblin":
+        return f"哥布林工人 {gems},預期 {report.asked:,}:{said}"
     read = (
         "讀不到"
         if report.offer is None
@@ -4006,8 +4011,8 @@ def confirm_line(report: ConfirmReport) -> str:
     )
     if report.wall is not None:
         wall = f"{report.wall.price:,} {_RESOURCE_NAMES[report.wall.resource]}"
-        return f"城牆升級鈕 {wall},確認鈕 {read},預期 {report.asked:,}:{CONFIRM_LINES[report.outcome]}"
-    return f"確認鈕 {read},預期 {report.asked:,}:{CONFIRM_LINES[report.outcome]}"
+        return f"城牆升級鈕 {wall},確認鈕 {read},預期 {report.asked:,}:{said}"
+    return f"確認鈕 {read},預期 {report.asked:,}:{said}"
 
 
 def _after_confirm(adb: AdbController, display: DisplayTarget) -> tuple[ConfirmOutcome, bytes]:
@@ -4132,7 +4137,9 @@ def confirm(
     tap on the wrong row from buying the wrong thing. It presses once. Whatever
     the game raises after that — not enough of the resource, every builder
     busy, each of which it answers with a gem offer — gets 取消 or is left
-    alone, never a second press.
+    alone, never a second press. Of those, the prompt to hire an event's
+    goblin builder is named (`goblin_offered`) with the gems it asks, for the
+    agent to pay with `goblin` or close.
 
     **With `pay`, it starts a step earlier, on a wall's menu beside the build
     panel**: that resource's price button is pressed by this rather than by a
@@ -4178,6 +4185,8 @@ def confirm(
         else:
             adb.tap(*offer.point, display)
             outcome, after = _after_confirm(adb, display)
+            if outcome == "unexpected" and goblin_prompt(after):
+                outcome, hire = "goblin_offered", goblin_offer(after)
     # Named the way `tap` names its frame: `after` only when something was pressed.
     frame = frames.write("refused", before) if after is None else frames.write("after", after)
     report = ConfirmReport(

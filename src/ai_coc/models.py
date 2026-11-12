@@ -2810,6 +2810,7 @@ ConfirmOutcome = Literal[
     "sheet_disagrees",
     "no_confirmation",
     "no_goblin",
+    "goblin_offered",
 ]
 
 
@@ -2822,7 +2823,9 @@ class ConfirmReport(BaseModel):
     storages before it opened the sheet. `wall` is the wall menu's button a
     `--pay` run read and pressed first, and `offer` then the sheet that button
     raised, if it raised one rather than the batch's dialog. `goblin` is the
-    goblin builder's prompt a `--goblin` run read, `asked` then being gems.
+    goblin builder's prompt a `--goblin` run read, `asked` then being gems,
+    or the one a plain run's press raised (`goblin_offered`), None there when
+    its gems did not read.
     `item` is what the agent said it was buying (`--item`), kept for
     `ai_coc tended`, since nothing on the sheet but its price is read.
     """
