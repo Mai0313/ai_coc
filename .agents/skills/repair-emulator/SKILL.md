@@ -21,7 +21,7 @@ description: >-
 
 這是使用者明講的規矩. 那天一個 `launch` 失敗從 logcat 推了很久推不出來, 改成每秒截一張, 馬上看到遊戲啟動時會先跳回桌面一兩秒.
 
-- **Android 裡的畫面**用這個 skill 的 `scripts/look.py`. upgrades 那種走 `commands._controller()` 的截圖會先 `ensure_coc` 把模擬器跟遊戲開起來, 修的時候正好不能那樣; `ai_coc capture` 只看不開, 但模擬器沒開、還在開機 (port 0) 或遊戲不在任何 display 上, 它都只會報錯, 不看 Android 的畫面
+- **Android 裡的畫面**用這個 skill 的 `scripts/look.py`. `status`、`stock` 這種走 `commands._controller()` 的指令會先 `ensure_coc` 把模擬器跟遊戲開起來, 修的時候正好不能那樣; `ai_coc capture` 跟 upgrades 用的 `tap`、`swipe`、`confirm`、`boost` 走 `_attached`, 不開東西, 但模擬器沒開、還在開機 (port 0) 或遊戲不在任何 display 上, 它們都只會報錯, 不看 Android 的畫面
 
     ```bash
     uv run --no-sync python .agents/skills/repair-emulator/scripts/look.py <資料夾> 15 1
