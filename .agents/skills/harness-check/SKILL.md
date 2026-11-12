@@ -15,7 +15,7 @@ The result is `report.md` in the run's results directory, also shown in the repl
 - **Nothing here drives the game.** Run no `ai_coc` command for the whole run. The checks are about the runtime, and the commands they might borrow have side effects: a new `ai_coc watch` stands down whichever one is sleeping, and any command that touches the emulator stands down, or borrows from, a loop that is running.
 - **Evidence is what the script wrote**, not anyone's account of it. Times come from the script's logs, or from the clock read and written down at that moment.
 - **One results directory per run**, `.runs/harness-check/<runtime>-<YYYYMMDD-HHMM>/` under the checkout (git ignores `.runs/`), written `<dir>` below. Every file named below goes in it.
-- **The first thing on every turn of the run** is a line appended to `<dir>/turns.log` with `grade.py stamp` (below), which takes the time from the script's clock: `user` for a turn the user's message started, otherwise `turn` and what started it as the runtime presents it (a command's exit notice, a subagent's report, another session's report, a scheduled wake, something else). A notice that reaches you inside a turn, alongside a tool's result say, gets a `mid` line as soon as you see it. Each line carries the token of every task the notice was for, from the notice or, where it carries none, from that task's output or log; never a token of a task the notice was not for. Which of these starts a turn is half of what this skill measures.
+- **The first thing on every turn of the run** is a line appended to `<dir>/turns.log` with `grade.py stamp` (below), which takes the time from the script's clock: `user` for a turn the user's message started, otherwise `turn` and what started it as the runtime presents it (a command's exit notice, a subagent's report, another session's report, a scheduled wake, something else). A notice that reaches you inside a turn, alongside a tool's result say, gets a `mid` line as soon as you see it. Each line carries the token of every task the notice was for, from the notice or, where it carries none, from the `exit` line in that task's log; never a token of a task the notice was not for. Which of these starts a turn is half of what this skill measures.
 - **Before any wait that ends your turn**, tell the user the clock time you expect to be back by, with a few minutes' slack, and that they must not type until then: their message starts a turn too, and the wake could no longer be told apart from it. If you have not spoken by that time, they send any message, and that wait is recorded as not woken.
 
 ## The scripts
@@ -39,7 +39,7 @@ Rows:
 
 - **model chosen**: the model asked for against the one the runtime recorded for the subagent, read from the runtime's own record, never from the subagent's word. Known places:
 
-    - Claude Code keeps each subagent's transcript under `~/.claude/projects/<project>/<session>/subagents/`, with the `model` on the subagent's own replies (its first record can carry the parent's).
+    - Claude Code keeps each subagent's transcript under `~/.claude/projects/<project>/<session>/subagents/`, with the `model` and `effort` on the subagent's own replies (its first record can carry the parent's model).
     - Codex gives each subagent its own rollout under `~/.codex/sessions/`, marked `"thread_source":"subagent"`, with the model on its `turn_context` lines.
     - Antigravity keeps `~/.gemini/antigravity/conversations/<id>.db` (the `agy` CLI under `~/.gemini/antigravity-cli/`); a subagent's id is the row in `conversation_summaries.db` whose `parent_conversation_id` is the main session, and model names show up among the strings in its step payloads.
 
@@ -90,7 +90,7 @@ Send that same frame to the user through the runtime's way of sending files, the
 
 ## 7. Several ends at staggered times
 
-Check 2 has one command and one subagent; `takeover` is busier. While it sleeps on a background `ai_coc watch` the farm subagent runs for hours and side sessions report in, so ends come close together or while the session is busy with another. This check asks whether each end still wakes the session on its own, in the order they end, and whether waking for one swallows or delays another. Leave out a kind of end that check 2 showed wakes nothing, and skip the check if neither did. Run it with nothing else of yours in flight.
+Check 2 has one command and one subagent; `takeover` is busier. While it sleeps on a background `ai_coc watch` the farm subagent runs for hours and side sessions report in, so ends come close together or while the session is busy with another. This check asks whether each end still wakes the session on its own, in the order they end, and whether waking for one swallows or delays another. Leave out a kind of end that check 2 showed wakes nothing, and skip the check if neither did. Run it with nothing else of yours in flight, and start it on a turn the user's own message started: a runtime can refuse to start a session on a turn a notice started, as Claude Code's desktop app did on 2026-11-12.
 
 Each task runs `sleeper.py --seconds <sleeps> --log <dir>/t7-<task>.log`. Start them in this order, slowest to get going first, then end the turn without waiting, polling or scheduling anything:
 
