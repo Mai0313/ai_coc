@@ -15,9 +15,10 @@ things are swapped:
   the scenario's `tests/frames/` screens: a tap inside a box the current screen lists
   moves to the screen it names, and any other input ends the recording, since a
   screen recorded for one path is the wrong one for any other.
-- `ai_coc watch` writes its section and returns at once, since the dry run ends there,
-  and pids the scenario lists read as live processes, which stand down at once when a
-  claim asks them to.
+- `ai_coc watch` writes its section (and with `--hold` moves the session's hold on, as
+  the real one does) and returns at once, since the dry run ends there, and pids the
+  scenario lists read as live processes, which stand down at once when a claim asks
+  them to.
 
 Every call is appended to the scenario's `calls.jsonl`, which `evals.py grade` reads.
 """
@@ -243,13 +244,17 @@ def _install(sim: Simulator) -> None:  # noqa: C901 - one patch per seam, kept t
                 )
         sim.set_live(held.pid, alive=False)
 
-    def watch(caller: Caller | None, next_at: datetime | None, about: str, log: Path | None = None, farms: bool = False) -> object:
+    def watch(
+        caller: Caller | None, next_at: datetime | None, about: str, log: Path | None = None, *, farms: bool = False, hold: bool = False
+    ) -> object:
         if next_at is None:
-            return real_watch(caller, next_at, about, log, farms)
+            return real_watch(caller, next_at, about, log, farms=farms, hold=hold)
+        wake = next_at if next_at.tzinfo else next_at.astimezone()
+        if hold:
+            commands._keep_hold(caller or Caller(), wake + commands.HOLD_TIME)  # noqa: SLF001
         current = commands.read_watch()
         if current is not None:
             sim.set_live(current.pid, alive=False)
-        wake = next_at if next_at.tzinfo else next_at.astimezone()
         commands._take_watch(caller or Caller(), wake, about, log, farms)  # noqa: SLF001
         sim.set_live(os.getpid(), alive=True)
         sim.call["wake"] = wake.isoformat()

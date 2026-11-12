@@ -32,6 +32,7 @@ from ai_coc.models import (
     Caller,
     MapEdge,
     FrameLog,
+    HoldStop,
     LoanStop,
     ProbeRay,
     AppConfig,
@@ -1163,6 +1164,7 @@ class AnswerLineTests(unittest.TestCase):
             (commands.ENDING_LINES, SeriesEnding),
             (commands.STOP_LINES, EmulatorStop),
             (commands.LOAN_LINES, LoanStop),
+            (commands.HOLD_LINES, HoldStop),
             (commands.WATCH_LINES, WatchStop),
             (commands.GIVEBACK_LINES, GivebackOutcome),
             (commands.STAND_DOWN_LINES, StandDownOutcome),
@@ -1181,12 +1183,15 @@ class AnswerLineTests(unittest.TestCase):
                 pid=42,
                 loan="kept",
                 lender=Caller(agent="codex"),
+                hold="cancelled",
+                holder=Caller(agent="antigravity"),
                 watch="nothing_watching",
             )
         )
         assert line.split(";") == [
             commands.STOP_LINES["asked"].format(command="attack", pid=42),
             commands.LOAN_LINES["kept"].format(lender="codex"),
+            commands.HOLD_LINES["cancelled"].format(holder="antigravity"),
             commands.WATCH_LINES["nothing_watching"],
         ]
         watch_only = commands.stop_line(StopReport(target="watch", watch="nothing_watching"))
@@ -2009,6 +2014,8 @@ class TendedTests(unittest.TestCase):
         # The session's own status stood down on the same loss, and its watch
         # and its stop claimed nothing.
         self._run("status", "12:23", None, SESSION_TAKEN_SENTENCE, exit_code=1)
+        # Its `hold` claimed and opened nothing, so it logged nobody back in.
+        self._run("hold", "12:24")
         self._run("watch", "12:24", "due", claimed=False)
         self._run("launch", "12:28")
         self._run("attack", "13:00", "session_taken", session="s1-farm")

@@ -30,6 +30,13 @@ borrower = { agent = "claude-code", session = "eval-goblin-reading-disagrees", m
 since = "2026-11-12T16:11:00+08:00"
 until = "2026-11-12T16:42:04+08:00"
 
+# The hold its own `tap` left, set ahead (as `hold --for` would) so an agent started a
+# few minutes after setup still presses inside it.
+[state.emulator.hold]
+holder = { agent = "claude-code", session = "eval-goblin-reading-disagrees", mission = "升野蠻人之王" }
+since = "2026-11-12T16:11:00+08:00"
+until = "2026-11-12T16:22:04+08:00"
+
 [[edits]]
 world = "day"
 section = "heroes"

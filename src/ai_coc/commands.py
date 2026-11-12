@@ -24,6 +24,7 @@ from pydantic import BaseModel, PrivateAttr
 
 from ai_coc import plans, logging_setup
 from ai_coc.models import (
+    Hold,
     Loan,
     Notes,
     Watch,
@@ -31,6 +32,7 @@ from ai_coc.models import (
     Caller,
     MapEdge,
     FrameLog,
+    HoldStop,
     LoanStop,
     ProbeRay,
     AppConfig,
@@ -46,6 +48,7 @@ from ai_coc.models import (
     WatchStop,
     AttackPlan,
     CartReport,
+    HoldReport,
     NoteAction,
     NoteReport,
     PlateCount,
@@ -120,6 +123,7 @@ from ai_coc.models import (
     JournalConfirm,
     LootThresholds,
     GivebackOutcome,
+    StandDownReport,
     StorageCapacity,
     TurnaroundGroup,
     EmulatorInstance,
@@ -604,6 +608,20 @@ LOCK_WAIT = 10
 # half an hour of farming. Longer than `TAKEOVER_WAIT`, so a loan does not lapse
 # while its borrower is still waiting for the lender's battle to end.
 LOAN_TIME = timedelta(minutes=30)
+# How long a session's hold outlives its last command, which is the gap one
+# session leaves between two of its commands. Over 2026-10-25 to 11-12 the
+# journal held 494 gaps between one session's command and its next `tap`,
+# `swipe` or `confirm` with no watch slept in between: p50 9 s, p95 22 s, p99
+# 42 s, three over 60 s and two over 120 s.
+HOLD_TIME = timedelta(seconds=120)
+# The longest any hold is set ahead, by `hold --for` or `watch --hold`. The
+# takeover readies a sheet five minutes before it is due, and the game drops an
+# idle session somewhere between 5 min 20 s and 12 min 48 s, so a sheet held
+# open longer than this is not still open.
+HOLD_MAX = timedelta(minutes=10)
+# The commands that press where the agent read off an earlier frame, and so run
+# only inside their own session's standing hold.
+HANDS = ("tap", "swipe", "confirm")
 
 # How often a write tries again when Windows refuses to replace the file, and
 # how far apart. It refuses while any other process has the file open, and the
@@ -619,6 +637,8 @@ STATE_BACKUPS = 20
 # The loan this process wrote when it stood a run down. A borrower with no
 # session has nothing else to recognise its own loan by.
 _borrowed: datetime | None = None
+# The record this process's claim replaced, which `hold` reports as who drove last.
+_before: RunnerState | None = None
 # Numbers this process's state file copies, so two in one clock tick differ.
 _copies = itertools.count()
 
@@ -636,18 +656,58 @@ class NoStateFileError(RuntimeError):
     """
 
 
+class HoldError(RuntimeError):
+    """A command that stood down over a hold, carrying whose it was."""
+
+    def __init__(
+        self, holder: Caller | None = None, command: str = "", until: datetime | None = None
+    ) -> None:
+        super().__init__(holder, command, until)
+        self.holder = holder
+        self.command = command
+        self.until = until
+
+
+class HeldError(HoldError):
+    """Another session holds the emulator between its commands."""
+
+
+class NoHoldError(HoldError):
+    """A hand command, or `watch --hold`, whose own session's hold no longer stands."""
+
+
+class HoldCancelledError(HoldError):
+    """`ai_coc stop` cancelled the hold a claim was queued behind."""
+
+
 # The exceptions a command stands down with, which `cli` answers as a
 # `StandDownReport` rather than a crash, and the line `run.log` gets for each.
 STAND_DOWNS: dict[type[RuntimeError], StandDownOutcome] = {
     LoanCancelledError: "loan_cancelled",
     SessionTakenError: "session_taken",
     NoStateFileError: "no_state_file",
+    HeldError: "held",
+    NoHoldError: "no_hold",
+    HoldCancelledError: "hold_cancelled",
 }
 STAND_DOWN_LINES: dict[StandDownOutcome, str] = {
     "loan_cancelled": "借用被 ai_coc stop 取消了,這個指令沒有開跑",
     "session_taken": "另一部裝置登入了這個帳號,沒有把登入搶回來",
     "no_state_file": "狀態檔不在(手動刪掉是叫停),什麼都沒改",
+    "held": "另一個 session 在兩個指令之間保留著模擬器,這個指令沒有開跑",
+    "no_hold": "這個 session 的保留已經不在(過期、被 stop 取消,或別人寫過狀態檔),什麼都沒按",
+    "hold_cancelled": "排在後面等的那個保留被 ai_coc stop 取消了,這個指令沒有開跑",
 }
+
+
+def stand_down(error: RuntimeError) -> StandDownReport:
+    """The answer a command that stood down with `error` gives, whose hold it was included."""
+    report = StandDownReport(outcome=STAND_DOWNS[type(error)])
+    if isinstance(error, HoldError):
+        return report.model_copy(
+            update={"holder": error.holder, "command": error.command, "until": error.until}
+        )
+    return report
 
 
 @contextmanager
@@ -779,6 +839,71 @@ def _carried(state: RunnerState | None, caller: Caller, *, yields: bool) -> Loan
     if loan.ended is None and now < until and _borrows(caller, loan):
         return loan.model_copy(update={"until": None})
     return loan.model_copy(update={"until": until})
+
+
+def _hold(state: RunnerState | None) -> Hold | None:
+    """The hold on this record while it still stands.
+
+    One whose holder's command is driving stands while that command runs and
+    has not been asked to stop; one between commands until `until`.
+    """
+    hold = state.hold if state else None
+    if state is None or hold is None or hold.ended is not None:
+        return None
+    if hold.until is None:
+        return hold if state.status == "running" and _alive(state) else None
+    return hold if datetime.now().astimezone() < hold.until else None
+
+
+def _blocking(state: RunnerState | None, caller: Caller) -> Hold | None:
+    """The standing hold of a session other than `caller`, which a blank session never owns."""
+    hold = _hold(state)
+    return None if hold is None or _same(caller, hold.holder) else hold
+
+
+def _mine(state: RunnerState | None, caller: Caller) -> bool:
+    """Whether `caller`'s own session holds the emulator."""
+    hold = _hold(state)
+    return hold is not None and _same(caller, hold.holder)
+
+
+def _no_hold(state: RunnerState | None) -> NoHoldError:
+    """The refusal of a command whose hold is gone, naming whoever holds now or drove last."""
+    hold = _hold(state)
+    last = hold.holder if hold else state.caller if state else None
+    return NoHoldError(last, state.command if state else "", hold.until if hold else None)
+
+
+def _behind_hold(caller: Caller, deadline: float | None) -> Hold | None:
+    """Wait while another session holds the emulator, standing nobody down.
+
+    Answers the hold it waited behind, or None when there was none. Past
+    `deadline` (a `time.monotonic` instant) it stands down `held`; None waits
+    for as long as the hold stands, which is a yielding claim's way.
+    """
+    waited: Hold | None = None
+    while (hold := _blocking(state := read_state(), caller)) is not None:
+        left = None if deadline is None else deadline - time.monotonic()
+        if left is not None and left <= 0:
+            raise HeldError(hold.holder, state.command if state else "", hold.until)
+        # Another session's hold may take over from the one first waited behind.
+        if waited is None or waited.since != hold.since:
+            logger.info(
+                "%s (%s) holds the emulator between its commands until %s; waiting",
+                hold.holder.agent or "an agent with no name given",
+                hold.holder.mission or "no mission given",
+                "its command ends" if hold.until is None else f"{hold.until:%H:%M:%S}",
+                extra={
+                    "journal": LockEvent(
+                        what="queued",
+                        other=hold.holder,
+                        other_command=state.command if state else "",
+                    )
+                },
+            )
+            waited = hold
+        time.sleep(STOP_POLL if left is None else min(STOP_POLL, left))
+    return waited
 
 
 def take_over(caller: Caller) -> None:
@@ -1048,8 +1173,14 @@ def _write_file(state: StateFile) -> None:
 
 
 @contextmanager
-def claim(
-    command: str, log: Path | None = None, caller: Caller | None = None, *, yields: bool = False
+def claim(  # noqa: PLR0913 - keyword-only past `caller`, each one a flag of the claiming commands
+    command: str,
+    log: Path | None = None,
+    caller: Caller | None = None,
+    *,
+    yields: bool = False,
+    queue: float = 0.0,
+    linger: timedelta = HOLD_TIME,
 ) -> Generator[None]:
     """Say that this process is driving the emulator, and who asked, and hand it back after.
 
@@ -1078,12 +1209,30 @@ def claim(
     on sessions, a farming command claiming between two of a tester's commands
     would borrow from the tester, whose next command would then queue behind it
     for hours.
+
+    **A session holds the emulator across its commands** (`Hold`): a claim
+    without `--yield` that names a session holds it while it runs and for
+    `linger` after (`_release`), and its session's next claim renews it. While
+    another session's hold stands, a claim stands nobody down: a yielding one
+    queues, and any other waits up to `queue` seconds and then stands down
+    `held`. `tap`, `swipe` and `confirm` with a session run only inside their
+    own session's hold (`no_hold` otherwise), so a sequence that was cut into
+    never goes on pressing off a frame read before. A hold `ai_coc stop`
+    cancelled while this claim queued behind it ends it with
+    `HoldCancelledError`, as a cancelled loan does.
     """
-    global _held  # noqa: PLW0603 - process-wide by nature; see `_held`
+    global _held, _before
     who = caller or Caller()
+    holds = bool(who.session) and not yields
+    hands = command in HANDS and bool(who.session)
+    deadline = time.monotonic() + queue
     queued: datetime | None = None
+    behind: Hold | None = None
     while True:
+        if hands and not _mine(state := read_state(), who):
+            raise _no_hold(state)
         if yields:
+            behind = _behind_hold(who, None) or behind
             queued = _queue() or queued
             waited: tuple[int, datetime | None] | None = None
             while (current := holder()) is not None:
@@ -1101,26 +1250,40 @@ def claim(
                     waited = (current.pid, current.started)
                 time.sleep(STOP_POLL)
         else:
+            behind = _behind_hold(who, deadline) or behind
             take_over(who)
         with _turn():
             state = read_state()
             loan = state.loan if state else None
             if queued and loan and (loan.since, loan.ended) == (queued, "cancelled"):
                 raise LoanCancelledError
-            if holder() is None and not (yields and _standing(state)):
+            hold = state.hold if state else None
+            if behind and hold and (hold.since, hold.ended) == (behind.since, "cancelled"):
+                raise HoldCancelledError(hold.holder, state.command if state else "")
+            if hands and not _mine(state, who):
+                raise _no_hold(state)
+            if (
+                _blocking(state, who) is None
+                and holder() is None
+                and not (yields and _standing(state))
+            ):
+                now = datetime.now().astimezone()
+                # Past `_blocking`, a hold still standing is this session's own.
+                own = _hold(state)
                 mine = RunnerState(
                     status="running",
                     pid=os.getpid(),
                     pid_created=started_at(os.getpid()),
                     command=command,
-                    started=datetime.now().astimezone(),
+                    started=now,
                     log=log,
                     caller=who,
                     yields=yields,
                     loan=_carried(state, who, yields=yields),
+                    hold=Hold(holder=who, since=own.since if own else now) if holds else own,
                 )
                 _write_state(mine)
-                _held = mine
+                _held, _before = mine, state
                 # The moment the run really starts, which after a queue or a
                 # stand-down can be minutes past the moment it was started.
                 logger.info("Claimed the emulator", extra={"journal": LockEvent(what="claimed")})
@@ -1128,10 +1291,10 @@ def claim(
     try:
         yield
     finally:
-        _release(command, log)
+        _release(command, log, linger)
 
 
-def _release(command: str, log: Path | None) -> None:
+def _release(command: str, log: Path | None, linger: timedelta = HOLD_TIME) -> None:
     """Write down that this run has finished, unless somebody else has claimed.
 
     The pid check is what keeps a run that outlived its own record from wiping
@@ -1147,6 +1310,8 @@ def _release(command: str, log: Path | None) -> None:
     The loan is the file's, not this process's copy, so one handed back while
     this ran stays handed back. A borrower's own release starts its lapse
     clock, or, with no session to borrow again under, hands it straight back.
+    The hold is the file's too: one given back or cancelled while this ran
+    stays ended, and this run's own starts lapsing `linger` from now.
     """
     global _held, _borrowed  # noqa: PLW0603 - process-wide by nature; see `_held`
     with _turn():
@@ -1154,6 +1319,15 @@ def _release(command: str, log: Path | None) -> None:
         if held is not None and held.pid not in (0, os.getpid()):
             _held = _borrowed = None
             return
+        hold = held.hold if held else None
+        if (
+            hold is not None
+            and hold.ended is None
+            and _held is not None
+            and _held.hold is not None
+            and _same(hold.holder, _held.caller)
+        ):
+            hold = hold.model_copy(update={"until": datetime.now().astimezone() + linger})
         loan = held.loan if held else None
         if (
             loan is not None
@@ -1191,6 +1365,7 @@ def _release(command: str, log: Path | None) -> None:
                 caller=_held.caller if _held else Caller(),
                 stop_by=held.stop_by if held else None,
                 loan=loan,
+                hold=hold,
             )
         )
     _held = _borrowed = None
@@ -1204,6 +1379,10 @@ STOP_LINES: dict[EmulatorStop, str] = {
 LOAN_LINES: dict[LoanStop, str] = {
     "kept": "借用還在,{lender}之後會自己開回去",
     "cancelled": "借用取消了,{lender}不會自己開回去",
+}
+HOLD_LINES: dict[HoldStop, str] = {
+    "kept": "{holder}的保留還在,它的指令停了之後再 stop 一次才取消",
+    "cancelled": "{holder}的保留取消了,它之後的點擊和排在它後面的指令都不會開跑",
 }
 WATCH_LINES: dict[WatchStop, str] = {
     "asked": "已要求{watcher}的盯升級收工",
@@ -1219,6 +1398,9 @@ def stop_line(report: StopReport) -> str:
     if report.loan is not None:
         lender = (report.lender.agent if report.lender else "") or "借出模擬器的那一邊"
         said.append(LOAN_LINES[report.loan].format(lender=lender))
+    if report.hold is not None:
+        holder = (report.holder.agent if report.holder else "") or "保留著模擬器的那一邊"
+        said.append(HOLD_LINES[report.hold].format(holder=holder))
     if report.watch is not None:
         watcher = (report.watcher.agent if report.watcher else "") or "盯升級的那一邊"
         said.append(WATCH_LINES[report.watch].format(watcher=watcher))
@@ -1255,22 +1437,34 @@ def stop(caller: Caller | None = None, target: StopTarget = "all") -> StopReport
 
 
 def _stop_emulator(report: StopReport, state: RunnerState | None, who: Caller) -> StopReport:
-    """Mark the emulator's holder `stopping`, and settle its loan.
+    """Mark the emulator's holder `stopping`, and settle its loan and its hold.
 
     **A loan nobody is driving on is cancelled**, so the lender does not start
     again and nothing queued behind it starts either: a stop is a stop, not a
     turn of the emulator. A borrower's command still running is stopped like
     any other and its loan kept, so a test can be stopped without ending the
     farming it borrowed from; a second stop, with nothing running, cancels it.
+
+    **A hold is settled the same way.** One nobody is driving on is cancelled,
+    so that session's next `tap`, `swipe` or `confirm` stands down `no_hold`
+    and whatever queued behind it `hold_cancelled`. One whose command is still
+    running is kept with it: cancelled there, the lender queued behind both
+    would end `hold_cancelled` once the loan came back, and the test stopped
+    would have ended the farming after all.
     """
     loan = _standing(state)
-    if state is None or (state.status == "idle" and loan is None):
+    hold = _hold(state)
+    if state is None or (state.status == "idle" and loan is None and hold is None):
         return report.model_copy(update={"emulator": "nothing_running"})
     driven = loan is not None and loan.until is None
+    # `_hold` answers one with no `until` only while its command is running.
+    held = hold is not None and hold.until is None
     asked = state.status != "idle"
     update: dict[str, object] = {}
     if loan is not None and not driven:
         update["loan"] = loan.model_copy(update={"ended": "cancelled"})
+    if hold is not None and not held:
+        update["hold"] = hold.model_copy(update={"ended": "cancelled"})
     if asked:
         update |= {"status": "stopping", "stop_by": who}
     _write_state(state.model_copy(update=update))
@@ -1281,6 +1475,8 @@ def _stop_emulator(report: StopReport, state: RunnerState | None, who: Caller) -
             "pid": state.pid if asked else None,
             "loan": None if loan is None else "kept" if driven else "cancelled",
             "lender": None if loan is None else loan.lender,
+            "hold": None if hold is None else "kept" if held else "cancelled",
+            "holder": None if hold is None else hold.holder,
         }
     )
 
@@ -1296,29 +1492,46 @@ def _stop_watch(report: StopReport, watching: Watch | None, who: Caller) -> Stop
 # One line per way `ai_coc giveback` can end, for `run.log`.
 GIVEBACK_LINES: dict[GivebackOutcome, str] = {
     "returned": "還了,{lender}會自己開回去",
-    "no_loan": "現在沒有借出去的模擬器,沒有東西要還",
+    "released": "放掉了這個 session 的保留,沒有借來的模擬器要還",
+    "no_loan": "這個 session 沒有保留,也沒有借出去的模擬器,沒有東西要還",
+    "not_yours": "模擬器是{holder}保留著的,不是這個 session 的,什麼都沒改",
 }
 
 
-def giveback() -> GivebackReport:
-    """Hand a borrowed emulator back, so the run it was taken from starts again.
+def giveback(caller: Caller | None = None) -> GivebackReport:
+    """Hand back the caller's hold and a borrowed emulator, so the run it was taken from starts again.
 
-    Anyone may, not only the borrower: one whose agent has died would otherwise
-    keep the lender waiting out `LOAN_TIME`. A borrower still driving finishes
-    what it is doing first, and the lender waits for that like any other run.
+    **Another session's standing hold is left alone** (`not_yours`): a test
+    ending with the routine `giveback` used to return the takeover's loan
+    from under its open sheet. Once no hold stands, anyone may hand a loan
+    back, not only the borrower: one whose agent has died would otherwise keep
+    the lender waiting out `LOAN_TIME`. A borrower still driving finishes what
+    it is doing first, and the lender waits for that like any other run.
     """
+    who = caller or Caller()
     with _turn():
         state = read_state()
         loan = _standing(state)
-        if state is None or loan is None:
+        hold = _hold(state)
+        if state is None or (loan is None and hold is None):
             report = GivebackReport(outcome="no_loan")
+        elif hold is not None and not _same(who, hold.holder):
+            report = GivebackReport(outcome="not_yours", holder=hold.holder)
         else:
-            _write_state(
-                state.model_copy(update={"loan": loan.model_copy(update={"ended": "returned"})})
+            update: dict[str, object] = {}
+            if loan is not None:
+                update["loan"] = loan.model_copy(update={"ended": "returned"})
+            if hold is not None:
+                update["hold"] = hold.model_copy(update={"ended": "returned"})
+            _write_state(state.model_copy(update=update))
+            report = GivebackReport(
+                outcome="released" if loan is None else "returned",
+                lender=None if loan is None else loan.lender,
+                holder=None if hold is None else hold.holder,
             )
-            report = GivebackReport(outcome="returned", lender=loan.lender)
     lender = (report.lender.agent if report.lender else "") or "借出模擬器的那一邊"
-    logger.info("%s", GIVEBACK_LINES[report.outcome].format(lender=lender))
+    holder = (report.holder.agent if report.holder else "") or "另一個 session"
+    logger.info("%s", GIVEBACK_LINES[report.outcome].format(lender=lender, holder=holder))
     return report
 
 
@@ -1493,12 +1706,59 @@ def wake_at(
     return wake
 
 
-def watch(
+def lingering(seconds: float | None) -> timedelta:
+    """How long `hold --for` keeps the hold after it: `HOLD_TIME` by default, never past `HOLD_MAX`."""
+    return HOLD_TIME if seconds is None else min(timedelta(seconds=seconds), HOLD_MAX)
+
+
+def hold(seconds: float | None = None) -> HoldReport:
+    """Hold the emulator for this session and do nothing with it; the claim around it is the work.
+
+    It is how a sequence that starts with a `tap` opens, since a hand command
+    runs only inside its own session's hold, and how an agent that needs longer
+    than `HOLD_TIME` with a frame says so. `until` is when the release that
+    follows this answer sets it, give or take that moment.
+    """
+    mine = _held.hold if _held else None
+    report = HoldReport(
+        holder=_held.caller if _held else Caller(),
+        since=mine.since if mine else None,
+        until=datetime.now().astimezone() + lingering(seconds),
+        last=_before.caller if _before else None,
+        last_command=_before.command if _before else "",
+    )
+    logger.info(
+        "Holding the emulator until %s; the last to drive it was %s (%s)",
+        f"{report.until:%H:%M:%S}",
+        (report.last.agent if report.last else "") or "nobody named",
+        report.last_command or "no command",
+    )
+    return report
+
+
+def _keep_hold(who: Caller, until: datetime) -> datetime:
+    """Move `who`'s standing hold on to `until`, never past `HOLD_MAX` from now, and say where it went.
+
+    With no standing hold of its own, it stands down `no_hold` and writes nothing.
+    """
+    with _turn():
+        state = read_state()
+        hold = _hold(state)
+        if state is None or hold is None or not _same(who, hold.holder):
+            raise _no_hold(state)
+        until = min(until, datetime.now().astimezone() + HOLD_MAX)
+        _write_state(state.model_copy(update={"hold": hold.model_copy(update={"until": until})}))
+    return until
+
+
+def watch(  # noqa: PLR0913 - each is one flag of `ai_coc watch`
     caller: Caller | None,
     next_at: datetime | None,
     about: str,
     log: Path | None = None,
+    *,
     farms: bool = False,
+    hold: bool = False,
 ) -> WatchReport:
     """Sleep until `next_at` as the one process watching the upgrade timers.
 
@@ -1514,6 +1774,12 @@ def watch(
     own included, the user's call of 2026-10-12: the newest request comes from
     a session the user has just been talking to, and the one replaced wakes,
     reads who stopped it and why off its own answer, and stands down.
+
+    **`hold` keeps this session's hold through the sleep**, which is where a
+    sheet stands open waiting for its upgrade to come due: it is moved on to
+    the wake plus `HOLD_TIME` before the watch is taken (standing down
+    `no_hold`, the watch untouched, when the session holds nothing), and to
+    `HOLD_TIME` from the moment it wakes, never past `HOLD_MAX` either time.
     """
     who = caller or Caller()
     if next_at is None:
@@ -1521,6 +1787,10 @@ def watch(
         now = datetime.now().astimezone()
         return WatchReport(caller=who, next_at=None, about=about, ended=now, outcome="nothing_due")
     wake = next_at if next_at.tzinfo else next_at.astimezone()
+    if hold:
+        logger.info(
+            "Holding the emulator until %s", f"{_keep_hold(who, wake + HOLD_TIME):%H:%M:%S}"
+        )
     mine = _take_watch(who, wake, about, log, farms)
     logger.info("Watching the upgrade timers until %s: %s", f"{wake:%m-%d %H:%M}", about)
     try:
@@ -1531,7 +1801,16 @@ def watch(
             time.sleep(min(STOP_POLL, left))
     except KeyboardInterrupt:
         logger.info("Interrupted; letting the watch go")
-    return _let_watch_go(mine, wake)
+    report = _let_watch_go(mine, wake)
+    if not hold:
+        return report
+    try:
+        held = _keep_hold(who, datetime.now().astimezone() + HOLD_TIME)
+    except NoHoldError:
+        logger.info("The hold no longer stands; nothing held after the watch")
+        return report
+    logger.info("Holding the emulator until %s", f"{held:%H:%M:%S}")
+    return report.model_copy(update={"held_until": held})
 
 
 def _take_watch(
@@ -3789,7 +4068,8 @@ def tended(by: str | None = None, since: datetime | None = None) -> TendedReport
     pressed: TendedUpgrade | None = None
     for end in (line for line in lines if line.event == "end" and line.run in starts):
         start = starts[end.run]
-        if _lost_login(report, end, end.run in claimed):
+        # `hold` claims and opens nothing, so it logs nobody back in.
+        if _lost_login(report, end, end.run in claimed and start.command != "hold"):
             continue
         if start.command == "boost" and end.outcome == "boosted":
             report.boosts.append(end.at)

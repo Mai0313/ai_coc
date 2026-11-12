@@ -68,8 +68,9 @@ def _log_uncaught(kind: type[BaseException], value: BaseException, trace: Any) -
 # `growth` compares saved exports, `turnaround`, `farmed` and `tended` read the
 # journal, `wait` reads it and one run's process, and `search` reads the kept
 # tables and exports, none of them opening ADB;
-# `gamedata` opens it only to read the game's files. Every other one captures
-# the screen, so every other one takes `--debug` and `--shot-every`.
+# `gamedata` opens it only to read the game's files, and `hold` claims the
+# emulator and does nothing with it. Every other one captures the screen, so
+# every other one takes `--debug` and `--shot-every`.
 NO_SCREEN = (
     "read",
     "stop",
@@ -83,6 +84,7 @@ NO_SCREEN = (
     "tended",
     "wait",
     "gamedata",
+    "hold",
 )
 
 # The sub-commands that hold no claim on the emulator, listed the way round
@@ -104,8 +106,9 @@ NO_SCREEN = (
 #
 # `capture` only looks, and so does a plain `world`: both take screenshots and
 # nothing else, and the file is a lock now, so a claim there would stand a
-# farming loop down for one screenshot (#290).
-WITHOUT_CLAIM = (*NO_SCREEN, "capture")
+# farming loop down for one screenshot (#290). `hold` is the one command that
+# captures nothing and still claims, since the claim is all it does.
+WITHOUT_CLAIM = (*(name for name in NO_SCREEN if name != "hold"), "capture")
 
 # The sub-commands whose stdout is text shaped like the report a skill hands the
 # user, and which take `--json` for the model instead. Text is the default
@@ -184,7 +187,15 @@ COMMANDS = (
                 "stop",
                 "請正在用模擬器的指令做完手上這件事就收工，盯升級的也一起停；後面加 emulator 或 watch 只停一個",
             ),
-            ("giveback", "把借來的模擬器還回去，借出的那一邊會自己接著跑"),
+            (
+                "hold",
+                "替這個 session 保留模擬器，什麼都不做；別的 session 的指令在保留到期前不會開跑，"
+                "tap、swipe、confirm 要在自己的保留裡才會按；giveback 放掉",
+            ),
+            (
+                "giveback",
+                "放掉這個 session 的保留，把借來的模擬器還回去，借出的那一邊會自己接著跑",
+            ),
             (
                 "watch",
                 "睡到 --next、--upgrades、--tower、--minutes 裡最早的那個時間才結束，期間在狀態檔記下是誰在盯升級；丟到背景跑，結束時叫醒你",
@@ -262,6 +273,12 @@ def _watch_flags(
         "--farms",
         action="store_true",
         help="睡的這一邊在兩次醒來之間打資源；別的 session 讀到就不再派一趟打資源",
+    )
+    watcher.add_argument(
+        "--hold",
+        action="store_true",
+        help="睡的時候也保留著這個 session 的模擬器，到醒來後兩分鐘（最多從現在起十分鐘）；"
+        "這個 session 沒有保留就回 no_hold，不睡",
     )
     stopper.add_argument(
         "target",
@@ -506,6 +523,13 @@ def _parser() -> argparse.ArgumentParser:
     shot.add_argument("--count", type=int, default=1, help="存幾張")
     shot.add_argument("--gap", type=float, default=1.5, metavar="秒", help="每張間隔幾秒")
     sub.choices["read"].add_argument("png", type=Path, help="要判讀的截圖")
+    sub.choices["hold"].add_argument(
+        "--for",
+        dest="seconds",
+        type=float,
+        metavar="秒",
+        help="這次之後保留多久；不給是兩分鐘，最多十分鐘",
+    )
     for name, one in sub.choices.items():
         _shared_flags(name, one)
     return parser
@@ -543,13 +567,23 @@ def _shared_flags(name: str, command: argparse.ArgumentParser) -> None:
     shared.add_argument("--mission", default="", metavar="任務", help="這次在做什麼，一句話")
     # Background work says so itself, since only its caller knows whether it
     # will be started again: farming is, a live test is not. Only a command
-    # that claims the emulator can be lent.
+    # that claims the emulator can be lent, and only a claim can wait out
+    # another session's hold. `hold` is never background work.
     if name not in WITHOUT_CLAIM:
-        shared.add_argument(
-            "--yield",
-            dest="yields",
-            action="store_true",
-            help="背景工作：不停掉別人，等模擬器空出來才開始；別人要用時借出去，還回來再接著跑",
+        turn = shared.add_mutually_exclusive_group()
+        if name != "hold":
+            turn.add_argument(
+                "--yield",
+                dest="yields",
+                action="store_true",
+                help="背景工作：不停掉別人，等模擬器空出來才開始；別人要用時借出去，還回來再接著跑",
+            )
+        turn.add_argument(
+            "--queue",
+            type=float,
+            default=0.0,
+            metavar="秒",
+            help="別的 session 正保留著模擬器時，最多等這麼多秒；不給就馬上回 held，不開跑",
         )
     if name not in NO_SCREEN:
         shared.add_argument(
@@ -594,13 +628,15 @@ def _answer(arguments: argparse.Namespace, run: RunLog) -> BaseModel | str:
             run.frames,
         ),
         "stop": lambda: commands.stop(_caller(a), a.target),
-        "giveback": commands.giveback,
+        "hold": lambda: commands.hold(a.seconds),
+        "giveback": lambda: commands.giveback(_caller(a)),
         "watch": lambda: commands.watch(
             _caller(a),
             commands.wake_at(a.next, a.upgrades, a.lead, a.minutes, a.tower),
             a.about,
             run.directory,
             farms=a.farms,
+            hold=a.hold,
         ),
         "note": lambda: commands.note(a.action, a.world, a.item),
         "growth": lambda: commands.growth(a.start_date, a.end_date),
@@ -699,7 +735,7 @@ def _run_command(arguments: argparse.Namespace, run: RunLog) -> int:
     # because another device logged in, which can happen to any of them, and a
     # watch that found no state file to sit on.
     except tuple(commands.STAND_DOWNS) as error:
-        answer, cancelled = StandDownReport(outcome=commands.STAND_DOWNS[type(error)]), True
+        answer, cancelled = commands.stand_down(error), True
     # Outside the claim: writing the answer down and printing it touch no
     # emulator, and holding the screen across them would say this run is still
     # driving when it has finished.
@@ -772,7 +808,14 @@ def _claim_for(arguments: argparse.Namespace, run: RunLog) -> AbstractContextMan
     ):
         return nullcontext()
     return commands.claim(
-        arguments.command, run.directory, _caller(arguments), yields=arguments.yields
+        arguments.command,
+        run.directory,
+        _caller(arguments),
+        yields=getattr(arguments, "yields", False),
+        queue=arguments.queue,
+        linger=commands.lingering(arguments.seconds)
+        if arguments.command == "hold"
+        else commands.HOLD_TIME,
     )
 
 
@@ -798,6 +841,9 @@ def main() -> int:
         or arguments.tower
     ):
         parser.error("watch 要給 --next、--upgrades、--tower 或 --minutes")
+    # A hold is a session's, so one with no session would hold nothing.
+    if arguments.command == "hold" and not arguments.session:
+        parser.error("hold 要給 --session，保留是那個 session 的")
     # Refused rather than ignored: a list is always both villages, and one that
     # took the flag and printed both would read as if it had narrowed them.
     if arguments.command == "note" and arguments.action == "list" and arguments.world:
