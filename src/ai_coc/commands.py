@@ -1343,7 +1343,8 @@ def wait(run: Path, seconds: float = 0.0) -> WaitReport:
 
 def _where(run: Path) -> WaitReport:
     """Where the newest run named `run` stands now, this process's own run never among them."""
-    # A label reaches the directory name as `RunLog.open` cuts it down.
+    # A label reaches the directory name as `RunLog.open` cuts it down; a
+    # directory's own name is matched as it is.
     name = labelled(run.name)
     lines: list[JournalLine] = []
     with suppress(FileNotFoundError), logging_setup.JOURNAL_PATH.open(encoding="utf-8") as journal:
@@ -1358,7 +1359,7 @@ def _where(run: Path) -> WaitReport:
         for line in lines
         if line.event == "start"
         and line.pid != os.getpid()
-        and (line.run == name or line.run.endswith(f"-{name}"))
+        and (line.run in (run.name, name) or line.run.endswith(f"-{name}"))
     ]
     if not starts:
         return WaitReport(log=run, outcome="no_such_run")

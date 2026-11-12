@@ -1333,6 +1333,14 @@ class WaitTests(unittest.TestCase):
         assert self._wait("d-a1").log == newer
         assert self._wait("a1-x").outcome == "no_such_run"
 
+    def test_a_directory_named_past_a_labels_forty_characters_is_found_by_its_name(self) -> None:
+        """Only a label is cut down on its way into a directory name."""
+        long = "2026-11-12-100000-attack-day3-c2-attack-1"
+        log = self._start(long)
+        assert self._wait(str(log)).log == log
+        assert self._wait(long).log == log
+        assert self._wait("day3-c2-attack-1").log == log
+
     def test_a_wait_returns_once_the_run_finishes(self) -> None:
         self._start()
         ended = {"run": self.RUN, "at": "2026-11-12T10:02:00+08:00", "event": "end", "exit": 0}
