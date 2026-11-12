@@ -45,7 +45,7 @@ after = { outcome = "session_taken" }
 [[checks]]
 id = "reply"
 what = "tells the user another device logged in"
-anchor = [".agents/skills/upgrades/SKILL.md", "一樣停下來告訴他"]
+anchor = [".agents/skills/upgrades/SKILL.md", "這才停下來告訴他"]
 kind = "reply"
 pattern = "另一部裝置|另一台|手機|登入"
 
