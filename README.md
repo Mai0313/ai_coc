@@ -135,7 +135,7 @@ ai_coc farmed --by <session> --since <time>  # one session's farming summed over
 ai_coc tended --by <session> --since <time>  # one session's upgrades with what each cost, clock tower boosts and lost logins, off the run journal; touches nothing
 ai_coc gamedata                       # the game's own tables (zh and en names, max levels, each level's requirements, list price and time), read off the emulator once per game version into ~/.ai_coc/game_data/<version>/; --refresh reads them again
 ai_coc search "Electro Dragon"        # look a thing up by data_id or by a piece of its Chinese or English name in those tables, with the levels, running upgrades and next list price of the ones the village has and what unlocks the troops and spells it lacks; --rows lists each row; touches nothing
-ai_coc search --section builder --day --skip-max-lvl  # list what the village holds of one section (builder, lab, pets, equipment, helpers, or all), each village in its own block; --day / --night keep one village, --skip-max-lvl leaves out what is at its last level, and a name narrows it further
+ai_coc search --section builder --day --skip-max-lvl  # list what the village holds of one section (builder, lab, pets, equipment, helpers, or all), each village in its own block, what a copy can start now first, quickest upgrade first; --day / --night keep one village, --skip-max-lvl leaves out what is at its last level, and a name narrows it further
 ai_coc view --zoom out                # put the camera back where every coordinate was measured
 ai_coc world                          # which of the two villages the game is on
 ai_coc world --day                    # sail to the home village, --night to the builder base; already being there does nothing
