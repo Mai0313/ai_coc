@@ -138,6 +138,7 @@ from ai_coc.parsers.scout import (
     NIGHT_COUNT_WHITE_RATIO,
     _read_row,
     in_battle,
+    read_gems,
     _lit_floor,
     card_count,
     live_cards,
@@ -1004,6 +1005,25 @@ class StockTests(unittest.TestCase):
         night = (FRAMES / "hud_night.png").read_bytes()
         assert read_builder_stock(night) == VillageStock(gold=6000000, elixir=5600000, dark=0)
         assert read_stock(night) == VillageStock(gold=6000000, elixir=5600000, dark=5708)
+
+    def test_the_gems_bar_is_the_fourth_row_at_home_and_the_third_on_the_builder_base(
+        self,
+    ) -> None:
+        for name, world, gems in (
+            ("hud_day", "day", 5708),
+            ("hud_day_shield_up", "day", 4319),
+            ("hud_night", "night", 5708),
+            ("night_cart_full", "night", 2227),
+            ("view_wall_selected", "night", 3107),
+        ):
+            assert read_gems((FRAMES / f"{name}.png").read_bytes(), world) == gems, name
+
+    def test_a_tooltip_over_the_gems_row_reads_its_own_figure_and_the_storages_fail(self) -> None:
+        """Why the gems are read only off a frame whose storages read: 寶庫中 ： 0 over a dimmed 5 708."""
+        tip = (FRAMES / "hud_tip_day_elixir.png").read_bytes()
+        assert current_world(tip) == "day"
+        assert read_gems(tip, "day") == 0
+        assert read_stock(tip) is None
 
     def test_a_battle_draws_the_same_bars(self) -> None:
         """Which is why `_home` will not take a battle for the village off them."""

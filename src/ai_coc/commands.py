@@ -2398,7 +2398,7 @@ def stock_of(runner: ScreenRunner, adb: AdbController, display: DisplayTarget) -
     `status` asks three things of one village, and settling the game once for
     all three is the whole of what it saves over running the three commands.
     """
-    world, held = runner.read_storages()
+    world, held, gems = runner.read_storages()
     if world is None:
         # **A panel over the village is the ordinary way to arrive here**, and
         # nothing above this line clears one: `ScreenRunner` has no `_home`, and
@@ -2409,7 +2409,7 @@ def stock_of(runner: ScreenRunner, adb: AdbController, display: DisplayTarget) -
         # exactly that, and it refuses to press at a battle.
         world = uncovered(adb, display)
         if world is not None:
-            world, held = runner.read_storages()
+            world, held, gems = runner.read_storages()
     # The log line is built here rather than carried on the model, because a
     # person reading `run.log` wants a sentence and a caller reading the report
     # wants fields — and the sentence is derivable from the fields, which is
@@ -2427,12 +2427,13 @@ def stock_of(runner: ScreenRunner, adb: AdbController, display: DisplayTarget) -
         ("dark", capacity.dark, held.dark),
     )
     filled = {name: f"{now * 100 // ceiling}%" for name, ceiling, now in rows if ceiling}
-    report = StockReport(world=world, held=held, capacity=capacity, filled=filled)
+    report = StockReport(world=world, held=held, capacity=capacity, filled=filled, gems=gems)
     logger.info(
-        "Stock: %s holds %s of %s",
+        "Stock: %s holds %s of %s, gems %s",
         world,
         filled or "an unknown share",
         capacity.model_dump(exclude_none=True) or "ceilings that would not read",
+        gems,
     )
     return report
 
@@ -2560,13 +2561,18 @@ def status_text(
             shown += ["", f"之後還有 {names}, 最晚 {later[-1][1]}"]
         if not rows:
             shown.append("沒有在升的")
-        ready = [
-            helper.zh or helper.en or f"#{helper.data_id}"
+        helpers = [
+            f"{helper.zh or helper.en or f'#{helper.data_id}'} "
+            + (
+                "現在能派"
+                if datetime.fromisoformat(helper.ready_at) <= now
+                else f"{_moment(helper.ready_at, now)} 能派"
+            )
             for helper in report.helpers
-            if helper.data_id in UPGRADE_HELPERS and datetime.fromisoformat(helper.ready_at) <= now
+            if helper.data_id in UPGRADE_HELPERS
         ]
-        if world == "day" and ready:
-            shown += ["", f"助手: {'、'.join(ready)} 現在能派"]
+        if world == "day" and helpers:
+            shown += ["", f"助手: {'、'.join(helpers)}"]
     return "\n".join(shown)
 
 
@@ -2589,13 +2595,22 @@ def _world_line(report: StatusReport, world: World) -> str:
             + (f" ({stock.filled[one]})" if one in stock.filled else "")
             for one in names
         )
+        if stock.gems is not None:
+            held += f"、寶石 {stock.gems:,}"
     counts = "、".join(
         f"{COUNT_NAMES[count.role]} "
         + (f"{count.free}/{count.total}" if count.outcome == "counted" else "讀不到")
         for count in (report.builder, report.lab)
         if count is not None
     )
-    return f"{name}: {held}; {counts}"
+    if world == "night":
+        return f"{name}: {held}; {counts}"
+    shield = report.shield
+    if shield is None:
+        guard = "護盾讀不到"
+    else:
+        guard = "沒有護盾" if shield.remaining is None else f"護盾 {spell_out(shield.remaining)}"
+    return f"{name}: {held}; {counts}; {guard}"
 
 
 def _timer_rows(

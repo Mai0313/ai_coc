@@ -101,7 +101,7 @@ ai_coc confirm --price 10800 --item "加農炮 12 級"  # 一樣, 再把買的�
 
 ```bash
 ai_coc collect                        # 把有東西的採集器全部收掉
-ai_coc status                         # 兩個世界的升級實際幾點好（藥水算進去），加上這個世界的倉庫，每個世界印成一張表；--json 印欄位
+ai_coc status                         # 兩個世界的升級實際幾點好（藥水算進去），加上這個世界的倉庫、寶石跟護盾，每個世界印成一張表；--json 印欄位
 ai_coc status --last                  # 不碰遊戲，從存下的最新匯出印同樣的表；--within 24 把之後才好的併成一行
 ai_coc watch --next <時間> --about "..."   # 睡到那個時間才結束，期間在 state.json 記下是誰在盯升級；丟到背景跑
 ai_coc note add "..." --day          # 在 state.json 記下使用者對一個世界的一條交代；`note` 列出來，`note done 1 --day` 刪掉一條

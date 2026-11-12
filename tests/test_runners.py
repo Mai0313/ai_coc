@@ -138,38 +138,49 @@ class FrameTests(unittest.TestCase):
 class ReadStoragesTests(unittest.TestCase):
     """One capture, and which reader it goes to depends on which village it caught."""
 
-    def _read(self, seen: str | None) -> tuple[object, object, MagicMock, MagicMock]:
+    def _read(
+        self, seen: str | None, day: VillageStock | None = STOCK
+    ) -> tuple[object, object, object, MagicMock, MagicMock, MagicMock]:
         runner = ScreenRunner(adb=_adb(), display=DISPLAY)
         night = VillageStock(gold=2, elixir=2, dark=0)
         with (
             patch.object(ScreenRunner, "_frame", return_value=b""),
             patch.object(shared, "current_world", return_value=seen),
-            patch.object(shared, "read_stock", return_value=STOCK) as day_reader,
+            patch.object(shared, "read_stock", return_value=day) as day_reader,
             patch.object(shared, "read_builder_stock", return_value=night) as night_reader,
+            patch.object(shared, "read_gems", return_value=5708) as gem_reader,
         ):
-            world, held = runner.read_storages()
-        return world, held, day_reader, night_reader
+            world, held, gems = runner.read_storages()
+        return world, held, gems, day_reader, night_reader, gem_reader
 
     def test_the_builder_base_goes_to_its_own_reader(self) -> None:
         """`read_stock` reports that village's gems bar as dark elixir — 10 152 gems as 10 152."""
-        world, held, day_reader, night_reader = self._read("night")
-        assert world == "night"
-        assert held == VillageStock(gold=2, elixir=2, dark=0)
+        world, held, gems, day_reader, night_reader, gem_reader = self._read("night")
+        assert (world, held, gems) == ("night", VillageStock(gold=2, elixir=2, dark=0), 5708)
         day_reader.assert_not_called()
         night_reader.assert_called_once()
+        assert gem_reader.call_args.args[1] == "night"
 
     def test_the_home_village_goes_to_the_three_row_reader(self) -> None:
-        world, held, day_reader, night_reader = self._read("day")
-        assert (world, held) == ("day", STOCK)
+        world, held, gems, day_reader, night_reader, gem_reader = self._read("day")
+        assert (world, held, gems) == ("day", STOCK, 5708)
         night_reader.assert_not_called()
         day_reader.assert_called_once()
+        assert gem_reader.call_args.args[1] == "day"
+
+    def test_the_gems_are_read_only_where_the_storages_read(self) -> None:
+        """A storage tooltip draws its own figures over the gems row while the village still reads."""
+        world, held, gems, _, _, gem_reader = self._read("day", day=None)
+        assert (world, held, gems) == ("day", None, None)
+        gem_reader.assert_not_called()
 
     def test_a_frame_that_is_no_village_asks_neither_reader(self) -> None:
         """A different answer from a village whose bars this frame could not resolve."""
-        world, held, day_reader, night_reader = self._read(None)
-        assert (world, held) == (None, None)
+        world, held, gems, day_reader, night_reader, gem_reader = self._read(None)
+        assert (world, held, gems) == (None, None, None)
         day_reader.assert_not_called()
         night_reader.assert_not_called()
+        gem_reader.assert_not_called()
 
 
 class HomeCoverTests(unittest.TestCase):

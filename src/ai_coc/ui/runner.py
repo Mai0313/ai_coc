@@ -22,6 +22,7 @@ from ai_coc.adapters.adb import ZOOM_PINCHES, AdbController, AdbControlError
 from ai_coc.parsers.home import PANEL_CLOSE, STORAGE_BARS, reward_chest, build_panel_open
 from ai_coc.parsers.scout import (
     in_battle,
+    read_gems,
     read_stock,
     session_taken,
     loading_screen,
@@ -213,20 +214,22 @@ class ScreenRunner(BaseModel):
         """One capture of the game's display, recorded under `label` when the run is."""
         return self.adb.screenshot(self.display, label)
 
-    def read_storages(self) -> tuple[World | None, VillageStock | None]:
-        """Which village is on screen and what its storages hold, in one capture.
+    def read_storages(self) -> tuple[World | None, VillageStock | None, int | None]:
+        """Which village is on screen, what its storages hold and the gem count, in one capture.
 
-        Both halves in one place because the second depends on the first: the
-        two villages read through different readers, and `read_stock` on the
+        All in one place because the rest depends on the world: the two
+        villages read through different readers, and `read_stock` on the
         builder base reports its gems bar as dark elixir. None for the world is
         a frame that is not a village at all, which is a different answer from a
-        village whose bars this frame could not resolve.
+        village whose bars this frame could not resolve. The gems are read only
+        where the storages read (`GEMS_LEFT`).
         """
         png = self._frame("stock")
         world = current_world(png)
         if world is None:
-            return None, None
-        return world, (read_stock if world == "day" else read_builder_stock)(png)
+            return None, None, None
+        held = (read_stock if world == "day" else read_builder_stock)(png)
+        return world, held, None if held is None else read_gems(png, world)
 
     def read_ceilings(self, world: World) -> StorageCapacity | None:
         """What this village's storages hold when full, read off their own tooltips.
