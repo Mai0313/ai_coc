@@ -1916,10 +1916,17 @@ class GivebackReport(BaseModel):
 # queued behind was cancelled by `ai_coc stop`, another device logged in to
 # the account, `watch` or `note` found no state file to write into, another
 # session holds the emulator between its commands, this session's own hold no
-# longer stands under a `tap`, `swipe`, `confirm` or `watch --hold`, or the hold
-# it queued behind was cancelled by `ai_coc stop`.
+# longer stands under a `tap`, `swipe`, `confirm` or `watch --hold`, the hold
+# it queued behind was cancelled by `ai_coc stop`, or `watch --upgrades` found
+# the newest saved export taken before the newest confirmed press.
 StandDownOutcome = Literal[
-    "loan_cancelled", "session_taken", "no_state_file", "held", "no_hold", "hold_cancelled"
+    "loan_cancelled",
+    "session_taken",
+    "no_state_file",
+    "held",
+    "no_hold",
+    "hold_cancelled",
+    "stale_export",
 ]
 
 
@@ -1929,13 +1936,17 @@ class StandDownReport(BaseModel):
     For the three about a hold, `holder` is whose hold it was (for `no_hold`,
     whoever holds now or drove last, so the agent sees whether that was
     somebody else), `command` that session's command, and `until` when its
-    hold lapses, None while that command drives.
+    hold lapses, None while that command drives. For `stale_export`,
+    `exported_at` is when the game took the export and `confirm_run` the run
+    of the confirm it predates.
     """
 
     outcome: StandDownOutcome
     holder: Caller | None = None
     command: str = ""
     until: datetime | None = None
+    exported_at: str | None = None
+    confirm_run: str = ""
 
 
 # Where one run stands, read off the journal and its process: its `end` line
