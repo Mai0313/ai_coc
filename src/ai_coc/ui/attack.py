@@ -994,6 +994,8 @@ class AttackRunner(ScreenRunner):
     # exactly: the loop plays what it is given rather than asking for its own.
     # Each village plays only its own kind; `commands.attack` pairs them.
     plan: AttackPlan | NightPlan | None = None
+    # A plan by name (`--plan flat`), loaded into `plan` once the series reads its village.
+    plan_name: str | None = None
 
     _seen: LootOffer | None = PrivateAttr(default=None)
     # Whether the last frame `_scout` gave up on still had 下一個 on it, which
@@ -1355,6 +1357,8 @@ class AttackRunner(ScreenRunner):
         if self.world is None:
             logger.info("Playing the %s village, the one the game is on", here)
             self.world = here
+            if self.plan_name is not None:
+                self.plan = plans.named(self.plan_name, here)
         return here != self.world
 
     def _wait_out_loading(self, again: bool) -> bool:

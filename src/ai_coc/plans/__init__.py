@@ -13,12 +13,17 @@ from pathlib import Path
 
 from pydantic import Tag, TypeAdapter, Discriminator
 
-from ai_coc.models import NightPlan, AttackPlan
+from ai_coc.models import World, NightPlan, AttackPlan
 
 # Beside this module for the same reason as the prompts: PyInstaller lays the
 # bundle out as a directory tree, so a path relative to the module finds these
 # frozen or not, given the matching `--add-data`.
 PLAN_DIR = Path(__file__).parent
+# The plans here that `--plan` takes by name, each written once per village:
+# `flat` is `flat.json` at home and `night_flat.json` on the builder base.
+NAMES = tuple(
+    sorted(path.stem for path in PLAN_DIR.glob("*.json") if not path.stem.startswith("night_"))
+)
 
 
 def _kind(data: object) -> str:
@@ -43,6 +48,11 @@ def load(path: Path) -> AttackPlan:
 def load_any(path: Path) -> AttackPlan | NightPlan:
     """A written plan for whichever village it was written for, which is what `--plan` takes."""
     return _EITHER.validate_json(path.read_text(encoding="utf-8"))
+
+
+def named(name: str, world: World) -> AttackPlan | NightPlan:
+    """A plan of `NAMES`, in that village's own file."""
+    return load_any(PLAN_DIR / (f"{name}.json" if world == "day" else f"night_{name}.json"))
 
 
 def flat() -> AttackPlan:

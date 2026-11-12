@@ -291,6 +291,13 @@ class DispatchTests(unittest.TestCase):
                 _answer(_args("attack", *flags), self.run)
             assert attacked.call_args.args[0].until_idle == watched, flags
 
+    def test_a_plan_is_a_shipped_name_or_a_path(self) -> None:
+        for given, path, name in (("flat", None, "flat"), ("a.json", Path("a.json"), None)):
+            with patch.object(commands, "attack", return_value=AttackSeries()) as attacked:
+                _answer(_args("attack", "--plan", given), self.run)
+            options = attacked.call_args.args[0]
+            assert (options.plan, options.plan_name) == (path, name), given
+
     def test_an_omitted_flag_is_none_rather_than_zero(self) -> None:
         """None keeps the file's value and zero takes a threshold out; the parser must not merge them."""
         with patch.object(commands, "attack", return_value=AttackSeries()) as attacked:

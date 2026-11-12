@@ -635,6 +635,21 @@ class OpenAttackMenuTests(unittest.TestCase):
         night.assert_called_once_with(b"home")
         day.assert_not_called()
 
+    def test_a_plan_by_name_is_the_one_written_for_the_village_it_finds(self) -> None:
+        for here, plan in (("day", plans.flat()), ("night", plans.night_flat())):
+            runner = AttackRunner(
+                adb=_adb(),
+                display=DISPLAY,
+                world=None,
+                thresholds=LootThresholds(),
+                plan_name="flat",
+            )
+            assert not runner._elsewhere(here)
+            assert runner.plan == plan, here
+            # Read once: the series keeps its village, and a round on the other one ends it.
+            assert runner._elsewhere("night" if here == "day" else "day")
+            assert runner.plan == plan, here
+
     def test_a_round_that_never_read_a_village_says_neither(self) -> None:
         runner = AttackRunner(adb=_adb(), display=DISPLAY, world=None, thresholds=LootThresholds())
         with patch.object(runner, "_open_attack_menu", return_value=None):

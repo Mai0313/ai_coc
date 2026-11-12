@@ -1216,6 +1216,27 @@ class AttackSeriesStopTests(unittest.TestCase):
         assert built.call_args.kwargs["should_stop"] is button
         assert len(rounds) == 1
 
+    def test_a_plan_by_name_asks_no_model_and_leaves_the_village_to_the_round(self) -> None:
+        runner = MagicMock(name="AttackRunner")
+        runner.configure_mock(played=None, holding=None, capacity=None, cart=None)
+        runner.run.return_value = AttackReport(outcome="no_opponent")
+        with (
+            patch.object(commands, "_controller", return_value=_adb()),
+            patch.object(commands.ConfigStore, "load", return_value=AppConfig()),
+            patch.object(commands, "_planner") as planner,
+            patch.object(commands, "_settle_game", return_value=DISPLAY),
+            patch.object(commands, "AttackRunner", return_value=runner) as built,
+        ):
+            commands.attack(AttackOptions(plan_name="flat"), _frames(self), lambda: False)
+        planner.assert_not_called()
+        made = built.call_args.kwargs
+        assert (made["ai"], made["plan"], made["plan_name"], made["world"]) == (
+            None,
+            None,
+            "flat",
+            None,
+        )
+
 
 class AttackSeriesAdapterFailureTests(unittest.TestCase):
     """An emulator error ends the series rather than the process.
