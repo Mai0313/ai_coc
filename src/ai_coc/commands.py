@@ -1323,8 +1323,55 @@ def note_text(report: NoteReport) -> str:
 WATCH_TAKEOVER = 15 * STOP_POLL
 
 
+def wake_at(
+    nexts: list[datetime],
+    upgrades: list[UpgradeRole] | None = None,
+    lead: int = 0,
+    minutes: int | None = None,
+    tower: bool = False,
+) -> datetime | None:
+    """The earliest of the instants a watch was asked to wake at, or None when there is none.
+
+    `upgrades` adds every running upgrade of the newest saved export (what
+    `status --last` prints), or the named slots' alone, `lead` minutes ahead of
+    its `done_at`; one whose lead has run out wakes at its `done_at`, since the
+    session prepares for those before it sleeps (`takeover`), and one already
+    done wakes it now. `tower` adds the clock tower's `ready_at`, except a tower
+    ready now, which the `status` before this read and which would otherwise
+    wake the session at once on every watch when it will not boost.
+    """
+    now = datetime.now().astimezone()
+    found = [(at if at.tzinfo else at.astimezone(), "--next") for at in nexts]
+    if minutes is not None:
+        found.append((now + timedelta(minutes=minutes), f"{minutes} min from now"))
+    read = _last_export() if upgrades is not None or tower else None
+    if read is not None and read.export is None:
+        logger.warning("No saved export to read the upgrades from: %s", read.outcome)
+    village = None if read is None else read.export
+    if village is not None:
+        for timer in upgrade_timers(village):
+            if upgrades is None or (upgrades and timer.role not in upgrades):
+                continue
+            done = datetime.fromisoformat(timer.done_at)
+            early = done - timedelta(minutes=lead)
+            at = early if early > now else max(done, now)
+            found.append((at, f"{timer.zh or timer.en or timer.data_id}, {lead} min early"))
+        ready = clock_tower(village)
+        if tower and ready is not None and (at := datetime.fromisoformat(ready.ready_at)) > now:
+            found.append((at, "the clock tower"))
+    if not found:
+        return None
+    wake, why = min(found, key=lambda one: one[0])
+    logger.info("Waking at %s for %s", f"{wake:%m-%d %H:%M:%S}", why)
+    return wake
+
+
 def watch(
-    caller: Caller | None, next_at: datetime, about: str, log: Path | None = None
+    caller: Caller | None,
+    next_at: datetime | None,
+    about: str,
+    log: Path | None = None,
+    farms: bool = False,
 ) -> WatchReport:
     """Sleep until `next_at` as the one process watching the upgrade timers.
 
@@ -1333,7 +1380,8 @@ def watch(
     gone is nobody watching, read off its pid like the emulator's holder. It
     used to be a record and nothing else, and an agent wrote one with nothing
     scheduled to wake it while every other agent took the timers for watched.
-    Nothing here touches the game.
+    Nothing here touches the game. With no `next_at` (`wake_at` found nothing
+    to wait for) it answers at once and leaves a live watch alone.
 
     **A live watch already there is stopped and taken over**, this session's
     own included, the user's call of 2026-10-12: the newest request comes from
@@ -1341,8 +1389,12 @@ def watch(
     reads who stopped it and why off its own answer, and stands down.
     """
     who = caller or Caller()
+    if next_at is None:
+        logger.info("Nothing to wait for; not watching")
+        now = datetime.now().astimezone()
+        return WatchReport(caller=who, next_at=None, about=about, ended=now, outcome="nothing_due")
     wake = next_at if next_at.tzinfo else next_at.astimezone()
-    mine = _take_watch(who, wake, about, log)
+    mine = _take_watch(who, wake, about, log, farms)
     logger.info("Watching the upgrade timers until %s: %s", f"{wake:%m-%d %H:%M}", about)
     try:
         while (left := (wake - datetime.now().astimezone()).total_seconds()) > 0:
@@ -1355,7 +1407,9 @@ def watch(
     return _let_watch_go(mine, wake)
 
 
-def _take_watch(who: Caller, wake: datetime, about: str, log: Path | None) -> Watch:
+def _take_watch(
+    who: Caller, wake: datetime, about: str, log: Path | None, farms: bool = False
+) -> Watch:
     """Stand any live watch down, naming `who`, and put this process in its place.
 
     The decision is taken inside the turn, as a claim's is, so two newcomers
@@ -1381,6 +1435,7 @@ def _take_watch(who: Caller, wake: datetime, about: str, log: Path | None) -> Wa
                     caller=who,
                     next_at=wake,
                     about=about,
+                    farms=farms,
                 )
                 _write_watch(mine)
                 return mine

@@ -14,7 +14,7 @@
 
 **門檻由你定**, 每一趟開跑前看 `status` 的倉庫 (只讀得到遊戲停著的那個世界, 另一個照設定檔或上一次讀到的): 缺得最兇的那一項給門檻 (例如黑水見底就 `--min-dark` 5000 到 1 萬), 其他沒滿的看情況放寬或照設定檔, 滿的不用管. 每輪跳過幾十個就往下調. 使用者交代過的照他的. 定好的旗標寫進交辦, subagent 不會自己加或改. `0` 跟不給是兩件事 (見 `LootOverrides` 的 docstring). `--stop-at` 是**測試**用的: 對著剛打滿的村莊打一場來驗東西時給 `0`; 打資源不要用, 滿倉搶回來的進不去.
 
-**碰模擬器之前先讀 `~/.ai_coc/state.json`** (`share-emulator` 的「開工先讀 `state.json`」). **別人已經在打資源就不開**: `emulator` 那一塊佔著的是別的 session 帶 `--yield` 的 run (`yields` 是 `true`), 或者那一塊有一筆還沒結束的借用 (`loan.ended` 是 null) 而出借的是別的 session, 或者 `watch` 那一塊是別的 session 用寫著「全天候託管」的 `--mission` 開的 (託管睡在兩趟打資源之間). 兩個帶 `--yield` 的迴圈會在指令之間輪流搶到模擬器, 各自的 `world --day` / `--night` 把對方下一輪的 `attack` 帶到錯的村莊. 不派, 回報誰 (`caller`) 在跑哪一個 (`command`, `log`). 你自己的 session id 加 `-farm` 後綴的是你自己派的 subagent, 不是別人.
+**碰模擬器之前先讀 `~/.ai_coc/state.json`** (`share-emulator` 的「開工先讀 `state.json`」). **別人已經在打資源就不開**: `emulator` 那一塊佔著的是別的 session 帶 `--yield` 的 run (`yields` 是 `true`), 或者那一塊有一筆還沒結束的借用 (`loan.ended` 是 null) 而出借的是別的 session, 或者 `watch` 那一塊是別的 session 的、`status` 是 `running` 而 `farms` 是 `true` (託管睡在兩趟打資源之間, 開 watch 時帶了 `--farms`). 兩個帶 `--yield` 的迴圈會在指令之間輪流搶到模擬器, 各自的 `world --day` / `--night` 把對方下一輪的 `attack` 帶到錯的村莊. 不派, 回報誰 (`caller`) 在跑哪一個 (`command`, `log`). 你自己的 session id 加 `-farm` 後綴的是你自己派的 subagent, 不是別人.
 
 **這個遊戲有兩個村莊, 而遊戲會開在上次離開的那一個**: 日世界 (主村) 跟夜世界 (建築大師基地), 靠一艘船來回. `ai_coc world` 答現在在哪個世界, 不點任何東西; `ai_coc world --day|--night` 坐船切過去. **沒有指令會自己換村莊, 每一個都做遊戲當下停著的那一個**, 所以 subagent 先 `world --day` / `--night` 再開 `attack`. 遊戲沒畫面時 `world` 回 `no_display`, 先 `ai_coc launch` (`share-emulator` 的「遊戲卡住, 或者根本沒開」). 開跑後對一下 `run.log` 打的是哪一邊: 每一輪開頭 `Attack run starts` 是主村, `Builder base attack run starts` 是夜世界. 兩邊容量差十倍, 打錯世界「還差多少」就全錯.
 

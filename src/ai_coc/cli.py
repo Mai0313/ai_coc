@@ -26,6 +26,7 @@ from ai_coc.models import (
     NoteAction,
     RunStarted,
     StopTarget,
+    UpgradeRole,
     AttackSeries,
     ExportReport,
     RestartScope,
@@ -182,7 +183,7 @@ COMMANDS = (
             ("giveback", "把借來的模擬器還回去，借出的那一邊會自己接著跑"),
             (
                 "watch",
-                "睡到 --next 那個時間才結束，期間在狀態檔記下是誰在盯升級；丟到背景跑，結束時叫醒你",
+                "睡到 --next、--upgrades、--tower、--minutes 裡最早的那個時間才結束，期間在狀態檔記下是誰在盯升級；丟到背景跑，結束時叫醒你",
             ),
             (
                 "note",
@@ -212,11 +213,32 @@ def _watch_flags(watcher: argparse.ArgumentParser, stopper: argparse.ArgumentPar
     watcher.add_argument(
         "--next",
         type=datetime.fromisoformat,
-        required=True,
+        action="append",
+        default=[],
         metavar="時間",
-        help="睡到幾點醒來，ISO 格式",
+        help="睡到這個時間，ISO 格式；可以給好幾個，跟下面幾個一起比，睡到最早的那個",
     )
+    watcher.add_argument(
+        "--upgrades",
+        nargs="*",
+        choices=get_args(UpgradeRole),
+        metavar="builder|lab|pet",
+        help="也算進最新那份村莊匯出裡每件在升的好的時間，提早 --lead 分鐘（不到那麼多分鐘的就是好的那一刻，"
+        "已經好了的就是現在）；給了格子就只算那幾格的",
+    )
+    watcher.add_argument(
+        "--lead", type=int, default=0, metavar="分鐘", help="--upgrades 的每一件提早幾分鐘醒"
+    )
+    watcher.add_argument(
+        "--tower", action="store_true", help="也算進鐘塔能開的時間；現在就能開的不算"
+    )
+    watcher.add_argument("--minutes", type=int, metavar="分鐘", help="也算進現在起這麼多分鐘後")
     watcher.add_argument("--about", default="", metavar="說明", help="在等什麼，一句話")
+    watcher.add_argument(
+        "--farms",
+        action="store_true",
+        help="睡的這一邊在兩次醒來之間打資源；別的 session 讀到就不再派一趟打資源",
+    )
     stopper.add_argument(
         "target",
         nargs="?",
@@ -549,7 +571,13 @@ def _answer(arguments: argparse.Namespace, run: RunLog) -> BaseModel | str:
         ),
         "stop": lambda: commands.stop(_caller(a), a.target),
         "giveback": commands.giveback,
-        "watch": lambda: commands.watch(_caller(a), a.next, a.about, run.directory),
+        "watch": lambda: commands.watch(
+            _caller(a),
+            commands.wake_at(a.next, a.upgrades, a.lead, a.minutes, a.tower),
+            a.about,
+            run.directory,
+            farms=a.farms,
+        ),
         "note": lambda: commands.note(a.action, a.world, a.item),
         "growth": lambda: commands.growth(a.start_date, a.end_date),
         "turnaround": lambda: commands.turnaround(a.since),
@@ -733,6 +761,13 @@ def main() -> int:
         parser.error("search 要給名稱、data_id 或 --section")
     if arguments.command in ("farmed", "tended") and not (arguments.by or arguments.since):
         parser.error(f"{arguments.command} 要給 --by 或 --since")
+    if arguments.command == "watch" and not (
+        arguments.next
+        or arguments.upgrades is not None
+        or arguments.minutes is not None
+        or arguments.tower
+    ):
+        parser.error("watch 要給 --next、--upgrades、--tower 或 --minutes")
     # Refused rather than ignored: a list is always both villages, and one that
     # took the flag and printed both would read as if it had narrowed them.
     if arguments.command == "note" and arguments.action == "list" and arguments.world:

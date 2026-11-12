@@ -1755,15 +1755,20 @@ class Watch(BaseModel):
     stop_by: Caller | None = None
     next_at: datetime | None = None
     about: str = ""
+    # Whether the session sleeping here farms between wakes (`watch --farms`),
+    # which another session reads before sending a farm loop of its own.
+    farms: bool = False
 
 
-WatchOutcome = Literal["due", "stopped"]
+# `nothing_due` is a watch asked to wake on the saved export's upgrades with
+# none running and nothing else to wait for: it never slept.
+WatchOutcome = Literal["due", "stopped", "nothing_due"]
 # What `ai_coc stop` reaches: both sections of the state file, or one of them.
 StopTarget = Literal["all", "emulator", "watch"]
 
 
 class WatchReport(BaseModel):
-    """How one `ai_coc watch` ended: it reached `next_at`, or somebody stopped it.
+    """How one `ai_coc watch` ended: it reached `next_at`, somebody stopped it, or it had nothing to wait for.
 
     `stop_by` is the stopper's own `--mission` as well as its name, and it is
     carried here because the state file's watch section is overwritten the
@@ -1773,7 +1778,7 @@ class WatchReport(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     caller: Caller
-    next_at: datetime
+    next_at: datetime | None
     about: str
     ended: datetime
     stop_by: Caller | None = None
