@@ -101,7 +101,7 @@ Every upgrade goes through the build panel, walls included: `tap` and `swipe` pr
 
 ```bash
 ai_coc collect                        # empty every collector that has something waiting
-ai_coc status                         # when every upgrade on both villages really finishes, potions included, plus this village's storages, gems and shield, printed as one table per village; --json prints the fields
+ai_coc status                         # when every upgrade on both villages really finishes, potions included, plus this village's storages, gems and shield, printed as one table per village with what each next level asks (scaled by what the village's latest purchase paid against the list price), a line per resource the storages fall short of if everything due within three hours continues, and the potions still running; --json prints the fields
 ai_coc status --last                  # the same tables off the last saved export, without touching the game; --within 24 folds what finishes later into one line
 ai_coc watch --upgrades --lead 5 --tower --minutes 180   # sleep until the earliest of those (or a --next) as the one watching the upgrades, named on state.json; run it in the background
 ai_coc note add "..." --day          # keep one of the user's instructions for a village in state.json; `note` lists them, `note done 1 --day` drops one
