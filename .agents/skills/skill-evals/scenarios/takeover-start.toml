@@ -1,0 +1,190 @@
+# The first turn of an all-day takeover: the start report with every row's next step,
+# the one watch, and the farm brief. The fixture village as exported, the game on the
+# builder base; nothing running.
+skill = "takeover"
+about = "Starting an all-day takeover: the start report, the watch and the farm brief"
+situation = """
+沒有之前的對話. 模擬器上沒有東西在跑, 也沒有人在盯升級.
+"""
+user = "幫我全天候託管"
+screens = [{ frame = "hud_night.png" }]
+
+[replies]
+status = [{}]
+
+[state.emulator]
+status = "idle"
+pid = 41000
+command = "status"
+started = "2026-11-12T16:10:30+08:00"
+ended = "2026-11-12T16:11:40+08:00"
+caller = { agent = "claude-code", session = "an-earlier-session", mission = "讀升級時間" }
+
+[[checks]]
+id = "status-read"
+what = "reads status off the game before reporting"
+anchor = [".agents/skills/takeover/SKILL.md", "跑一次 `status` (`upgrades` 的「讀一次」)"]
+kind = "called"
+calls = { command = "status", args = { last = false } }
+
+[[checks]]
+id = "cell-hero"
+what = "a hero still short of its max continues to the next level"
+anchor = [".agents/skills/takeover/SKILL.md", "還沒到頂的寫「續升 (lv a → lv a+1)」"]
+kind = "table_cell"
+row = "弓箭女皇"
+pattern = '續升\D*70\D+71'
+
+[[checks]]
+id = "cell-goblin-lab"
+what = "the goblin lab slot hires the goblin again and continues"
+anchor = [".agents/skills/takeover/SKILL.md", "哥布林那格不管續升還是改升, 前面加「再聘哥布林」"]
+kind = "table_cell"
+row = '實驗室 \(哥布林\).*亡靈'
+pattern = '再聘哥布林.*13\D+14'
+
+[[checks]]
+id = "cell-goblin-lab-fallback"
+what = "the goblin lab slot's fallback over 350 gems is the shortest other research (野蠻人 4 → 5)"
+anchor = [".agents/skills/upgrades/SKILL.md", "備案是哥布林那一格能升的裡面, 跟要升的那一件不同、牌價時間最短的一件"]
+kind = "table_cell"
+row = '實驗室 \(哥布林\).*亡靈'
+pattern = '350.*野蠻人(?!之王)\D*4\D+5'
+
+[[checks]]
+id = "cell-lab-maxed"
+what = "the regular lab slot whose research tops out picks the longest list time (隕石戈侖)"
+anchor = [".agents/skills/upgrades/SKILL.md", "牌價時間最長的 (「研究的部分"]
+kind = "table_cell"
+row = '\| 實驗室 \|.*棘木騎士'
+pattern = "隕石戈侖"
+
+[[checks]]
+id = "cell-goblin-builder-fallback"
+what = "the goblin builder's fallback follows the day builder order: 地獄之塔 all maxed, so 箭塔 9 → 10"
+anchor = [".agents/skills/upgrades/SKILL.md", "日世界的工人照「沒人指名時挑哪一件」的順序"]
+kind = "table_cell"
+row = '工人 \(哥布林\).*彈跳加農炮'
+pattern = '再聘哥布林.*350.*(?<!多人)箭塔\D*9\D+10'
+
+[[checks]]
+id = "cell-builder-maxed"
+what = "the day builder whose building tops out picks by the order: 地獄之塔 all maxed, so the shortest of the second group, 箭塔 9 → 10"
+anchor = [".agents/skills/upgrades/SKILL.md", "地獄之塔都升滿了, 才換箭塔、法師塔、防空火箭、空氣炮"]
+kind = "table_cell"
+row = '\| 工人 \|.*多人箭塔'
+pattern = '(?<!多人)箭塔\D*9\D+10'
+
+[[checks]]
+id = "cell-pet"
+what = "the pet still short of its max continues"
+anchor = [".agents/skills/takeover/SKILL.md", "還沒到頂的寫「續升 (lv a → lv a+1)」"]
+kind = "table_cell"
+row = "阿啾"
+pattern = '續升\D*8\D+9'
+
+[[checks]]
+id = "cell-tower"
+what = "the clock tower row says to boost it"
+anchor = [".agents/skills/takeover/SKILL.md", "鐘塔那一列寫「開加速」"]
+kind = "table_cell"
+row = "鐘塔"
+pattern = "開加速"
+
+[[checks]]
+id = "ask-maxed"
+what = "asks about the slots that top out with one push"
+anchor = [".agents/skills/takeover/SKILL.md", "照 `AGENTS.md` 的 Putting a decision to the user 問他那一格到時改升什麼"]
+kind = "exists"
+file = "push.md"
+
+[[checks]]
+id = "ask-leave-it"
+what = "the numbered list of options ends with leaving it alone"
+anchor = ["AGENTS.md", "always one to leave it (先不要動)"]
+kind = "reply"
+pattern = "先不要動"
+
+[[checks]]
+id = "watch"
+what = "sleeps on one watch that works out the wake itself"
+anchor = [".agents/skills/takeover/SKILL.md", "ai_coc watch --upgrades --lead 5 --tower --minutes 180 --farms"]
+kind = "called"
+calls = { command = "watch", args = { upgrades = [], lead = 5, tower = true, minutes = 180, farms = true }, patterns = { about = '\S' } }
+
+[[checks]]
+id = "watch-mission"
+what = "the watch's mission names the endpoint"
+anchor = [".agents/skills/takeover/SKILL.md", "`--mission` 寫明這一趟的終點"]
+kind = "called"
+calls = { command = "watch", patterns = { mission = "託管|叫停" } }
+
+[[checks]]
+id = "brief-plan"
+what = "both attacks in the farm brief play the flat plan"
+anchor = [".agents/skills/takeover/references/farming.md", "兩個 `attack` 都帶 `--plan flat`"]
+kind = "lines"
+file = "*brief.md"
+select = 'uv run --no-sync ai_coc attack\b'
+must = '--plan flat\b'
+
+[[checks]]
+id = "brief-repeat"
+what = "both attacks farm until full"
+anchor = [".agents/skills/takeover/references/farming.md", "把 `--repeat 0` 換成 `--repeat N`"]
+kind = "lines"
+file = "*brief.md"
+select = 'uv run --no-sync ai_coc attack\b'
+must = '--repeat 0\b'
+
+[[checks]]
+id = "brief-yield"
+what = "every crossing and attack in the brief yields"
+anchor = [".agents/skills/takeover/references/runner.md", "會佔模擬器的指令都帶 `--yield`"]
+kind = "lines"
+file = "*brief.md"
+select = 'uv run --no-sync ai_coc (world|attack)\b'
+must = "--yield"
+
+[[checks]]
+id = "brief-capture"
+what = "captures in the brief do not yield"
+anchor = [".agents/skills/takeover/references/farming.md", "(capture 不帶 --yield)"]
+kind = "lines"
+file = "*brief.md"
+select = 'uv run --no-sync ai_coc capture\b'
+must_not = 'ai_coc capture[^(（]*--yield'
+
+[[checks]]
+id = "brief-first-village"
+what = "the brief starts on the village the game is on (the builder base)"
+anchor = [".agents/skills/takeover/references/farming.md", "沒指定就先打當下所在的那個"]
+kind = "first_line"
+file = "*brief.md"
+select = 'uv run --no-sync ai_coc world\b'
+must = "--night"
+
+[[checks]]
+id = "brief-ends-home"
+what = "the brief leaves the game on the home village: its last crossing is to it"
+anchor = [".agents/skills/takeover/SKILL.md", "最後 `world --day` 回日世界"]
+kind = "last_line"
+file = "*brief.md"
+select = 'uv run --no-sync ai_coc world\b'
+must = '--day\b'
+
+[[checks]]
+id = "brief-session"
+what = "the farm subagent runs under this session's id with -farm"
+anchor = [".agents/skills/takeover/references/farming.md", "--session <你的 session id>-farm"]
+kind = "lines"
+file = "*brief.md"
+select = "--session"
+must = "eval-takeover-start-farm"
+
+[[checks]]
+id = "named"
+what = "every command says who ran it and why"
+anchor = ["AGENTS.md", "Every `ai_coc` command an agent runs carries `--agent`"]
+kind = "every_call_has"
+fields = ["agent", "session", "mission"]

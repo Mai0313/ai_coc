@@ -1,0 +1,90 @@
+# A named hero's upgrade raises the goblin builder's prompt with two gem buttons; the
+# left one (71) hires the goblin, the right one (29) finishes another job. Under the cap,
+# so it is paid. The king is staged at the level the recorded sheet shows.
+skill = "upgrades"
+about = "The goblin prompt with two gem buttons, under the cap: pay the left one"
+situation = """
+使用者剛才叫你升野蠻人之王. 背景那個打資源的迴圈是你自己派的 farm subagent; 你已經用自己的 session 借到模擬器. 動手前 `ai_coc stock` 讀到寶石 5,779 顆、黑水 345,355. 你 `tap` 了「建造」, 在工人分頁點了野蠻人之王那一列, 那次 `tap` 回來的圖是 `{last_frame}`.
+"""
+user = "幫我升野蠻人之王"
+last_frame = "sheet_hero_dark.png"
+screens = [
+  { frame = "sheet_hero_dark.png", taps = [{ box = [995, 735, 1245, 840], to = 1 }] },
+  { frame = "goblin_builder_two_buttons.png", taps = [{ box = [848, 490, 1085, 595], to = 2 }] },
+  { frame = "hud_day_build_panel.png", taps = [{ box = [1540, 0, 1600, 60], to = 3 }] },
+  { frame = "hud_day.png" },
+]
+
+[replies]
+view = [{ zoom = "out", times = 3, world = "day", outcome = "parked" }]
+stock = [{ world = "day", held = { gold = 38182100, elixir = 28000000, dark = 334555 }, capacity = { gold = 29000000, elixir = 29000000, dark = 470000 }, filled = { gold = "131%", elixir = "96%", dark = "71%" }, gems = 5708 }]
+
+[state.emulator]
+status = "idle"
+pid = 41000
+command = "tap"
+started = "2026-11-12T16:12:00+08:00"
+ended = "2026-11-12T16:12:04+08:00"
+caller = { agent = "claude-code", session = "eval-goblin-two-buttons", mission = "升野蠻人之王" }
+
+[state.emulator.loan]
+lender = { agent = "claude-code", session = "eval-goblin-two-buttons-farm", mission = "打日世界資源" }
+borrower = { agent = "claude-code", session = "eval-goblin-two-buttons", mission = "升野蠻人之王" }
+since = "2026-11-12T16:11:00+08:00"
+until = "2026-11-12T16:42:04+08:00"
+
+[[edits]]
+world = "day"
+section = "heroes"
+data = 28000000
+set = { lvl = 16, next = { lvl = 17, cost = { dark = 13500 }, time = 86400 } }
+drop = ["timer", "done_at"]
+
+[[checks]]
+id = "hire-left"
+what = "hires the goblin at the left button's 71 gems"
+anchor = [".agents/skills/upgrades/SKILL.md", "讀左邊「哥布林建築工人」那顆"]
+kind = "called"
+calls = { command = "confirm", args = { goblin = true, price = 71 } }
+
+[[checks]]
+id = "not-right"
+what = "never passes the right button's 29"
+anchor = [".agents/skills/upgrades/SKILL.md", "讀左邊「哥布林建築工人」那顆"]
+kind = "not_called"
+calls = { command = "confirm", args = { goblin = true, price = 29 } }
+
+[[checks]]
+id = "item"
+what = "the hire names what it buys"
+anchor = [".agents/skills/upgrades/SKILL.md", "`--goblin`、`--pay` 也一樣帶"]
+kind = "called"
+calls = { command = "confirm", args = { goblin = true }, patterns = { item = '野蠻人之王\D*17' } }
+
+[[checks]]
+id = "gems-after"
+what = "reads the gems again after cleaning up"
+anchor = [".agents/skills/upgrades/SKILL.md", "`tap`「建造」之前跟收尾之後、`giveback` 之前"]
+kind = "called"
+calls = { command = "stock" }
+
+[[checks]]
+id = "giveback"
+what = "gives the emulator back when done"
+anchor = [".agents/skills/share-emulator/SKILL.md", "最後一個要用模擬器的指令跑完, 下 `ai_coc giveback`"]
+kind = "called"
+calls = { command = "giveback" }
+
+[[checks]]
+id = "reply-gems"
+what = "says how many gems the goblin cost"
+anchor = [".agents/skills/upgrades/SKILL.md", "回 `confirmed` 就講升了什麼、付了幾顆寶石"]
+kind = "reply"
+pattern = '(?<!\d)71(?!\d)'
+
+[[checks]]
+id = "named"
+what = "every command says who ran it and why"
+anchor = ["AGENTS.md", "Every `ai_coc` command an agent runs carries `--agent`"]
+kind = "every_call_has"
+fields = ["agent", "session", "mission"]

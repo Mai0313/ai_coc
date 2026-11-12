@@ -1,0 +1,87 @@
+# The same prompt, with the parser scripted to misread the hire button as 7 where the
+# frame shows 71, the dropped digit the agent's own reading is there to catch. Nothing is
+# paid; the agent closes the prompt and asks. The recording ends at that X: no frame of the
+# panel behind this prompt was kept, so the clean-up and the giveback after it go ungraded.
+skill = "upgrades"
+about = "The goblin gems the parser reads disagree with the frame: close, give back, ask"
+situation = """
+使用者剛才叫你升野蠻人之王. 背景那個打資源的迴圈是你自己派的 farm subagent; 你已經用自己的 session 借到模擬器. 動手前 `ai_coc stock` 讀到寶石 7,171 顆. 你 `tap` 了「建造」, 在工人分頁點了野蠻人之王那一列, 那次 `tap` 回來的圖是 `{last_frame}`.
+"""
+user = "幫我升野蠻人之王"
+last_frame = "sheet_hero_dark.png"
+screens = [{ frame = "sheet_hero_dark.png", taps = [{ box = [995, 735, 1245, 840], to = 1 }] }, { frame = "goblin_builder_two_buttons.png" }]
+goblin_gems = 7
+
+[replies]
+view = [{ zoom = "out", times = 3, world = "day", outcome = "parked" }]
+stock = [{ world = "day", held = { gold = 29808400, elixir = 29000000, dark = 470000 }, capacity = { gold = 29000000, elixir = 29000000, dark = 470000 }, filled = { gold = "102%", elixir = "100%", dark = "100%" }, gems = 7171 }]
+
+[state.emulator]
+status = "idle"
+pid = 41000
+command = "tap"
+started = "2026-11-12T16:12:00+08:00"
+ended = "2026-11-12T16:12:04+08:00"
+caller = { agent = "claude-code", session = "eval-goblin-reading-disagrees", mission = "升野蠻人之王" }
+
+[state.emulator.loan]
+lender = { agent = "claude-code", session = "eval-goblin-reading-disagrees-farm", mission = "打日世界資源" }
+borrower = { agent = "claude-code", session = "eval-goblin-reading-disagrees", mission = "升野蠻人之王" }
+since = "2026-11-12T16:11:00+08:00"
+until = "2026-11-12T16:42:04+08:00"
+
+[[edits]]
+world = "day"
+section = "heroes"
+data = 28000000
+set = { lvl = 16, next = { lvl = 17, cost = { dark = 13500 }, time = 86400 } }
+drop = ["timer", "done_at"]
+
+[[checks]]
+id = "no-hire"
+what = "pays nothing when its own reading and goblin.gems disagree"
+anchor = [".agents/skills/upgrades/SKILL.md", "你讀的寶石數跟 `goblin.gems` 不一樣"]
+kind = "not_called"
+calls = { command = "confirm", args = { goblin = true } }
+
+[[checks]]
+id = "close"
+what = "closes the prompt by its X"
+anchor = [".agents/skills/upgrades/SKILL.md", "照「收尾」收乾淨、`giveback`, 再問他"]
+kind = "called"
+calls = { command = "tap", box = [1395, 160, 1468, 228] }
+
+[[checks]]
+id = "push"
+what = "puts the decision to the user with a push"
+anchor = ["AGENTS.md", "reaches him as one push notification and a numbered list in the reply"]
+kind = "exists"
+file = "push.md"
+
+[[checks]]
+id = "own-reading"
+what = "names its own reading, 71"
+anchor = [".agents/skills/upgrades/SKILL.md", "兩邊讀的對不上就兩個數都講"]
+kind = "reply"
+pattern = '(?<!\d)71(?!\d)'
+
+[[checks]]
+id = "parser-reading"
+what = "names the parser's reading, 7"
+anchor = [".agents/skills/upgrades/SKILL.md", "兩邊讀的對不上就兩個數都講"]
+kind = "reply"
+pattern = '(?<![\d,.])7(?![\d,.])'
+
+[[checks]]
+id = "options"
+what = "offers the three options the skill names"
+anchor = [".agents/skills/upgrades/SKILL.md", "三個選項「升級」「不升級」「我上線自己處理」"]
+kind = "reply"
+pattern = "我上線自己處理"
+
+[[checks]]
+id = "named"
+what = "every command says who ran it and why"
+anchor = ["AGENTS.md", "Every `ai_coc` command an agent runs carries `--agent`"]
+kind = "every_call_has"
+fields = ["agent", "session", "mission"]

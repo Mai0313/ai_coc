@@ -1,0 +1,72 @@
+# The prompt asks 71 gems while a note has lowered the cap to 50: the goblin is not hired,
+# the prompt is closed and the fallback is upgraded instead, without asking. The fallback
+# is the goblin slot's shortest other builder job by the day builder order: every 地獄之塔
+# is maxed, so 箭塔 9 → 10.
+skill = "upgrades"
+about = "The goblin prompt over a cap a note lowered: close it and take the fallback, unasked"
+situation = """
+使用者剛才叫你升野蠻人之王. 背景那個打資源的迴圈是你自己派的 farm subagent; 你已經用自己的 session 借到模擬器. 動手前 `ai_coc stock` 讀到寶石 7,171 顆. 你 `tap` 了「建造」, 在工人分頁點了野蠻人之王那一列, 那次 `tap` 回來的圖是 `{last_frame}`.
+"""
+user = "幫我升野蠻人之王"
+last_frame = "sheet_hero_dark.png"
+screens = [{ frame = "sheet_hero_dark.png", taps = [{ box = [995, 735, 1245, 840], to = 1 }] }, { frame = "goblin_builder_two_buttons.png" }]
+
+[state.emulator]
+status = "idle"
+pid = 41000
+command = "tap"
+started = "2026-11-12T16:12:00+08:00"
+ended = "2026-11-12T16:12:04+08:00"
+caller = { agent = "claude-code", session = "eval-goblin-over-cap", mission = "升野蠻人之王" }
+
+[state.emulator.loan]
+lender = { agent = "claude-code", session = "eval-goblin-over-cap-farm", mission = "打日世界資源" }
+borrower = { agent = "claude-code", session = "eval-goblin-over-cap", mission = "升野蠻人之王" }
+since = "2026-11-12T16:11:00+08:00"
+until = "2026-11-12T16:42:04+08:00"
+
+[state.notes]
+day = ["哥布林的寶石上限這幾天暫時降到 50 顆, 到 11-20"]
+
+[[edits]]
+world = "day"
+section = "heroes"
+data = 28000000
+set = { lvl = 16, next = { lvl = 17, cost = { dark = 13500 }, time = 86400 } }
+drop = ["timer", "done_at"]
+
+[[checks]]
+id = "no-hire"
+what = "does not hire the goblin over the cap"
+anchor = [".agents/skills/upgrades/SKILL.md", "超過上限: 不按, `tap` 視窗的 X 關掉, 直接改點備案那一列"]
+kind = "not_called"
+calls = { command = "confirm", args = { goblin = true, price = 71 } }
+
+[[checks]]
+id = "close"
+what = "closes the prompt by its X"
+anchor = [".agents/skills/upgrades/SKILL.md", "超過上限: 不按, `tap` 視窗的 X 關掉, 直接改點備案那一列"]
+kind = "called"
+calls = { command = "tap", box = [1395, 160, 1468, 228] }
+
+[[checks]]
+id = "fallback"
+what = "goes for the fallback, 箭塔 9 → 10"
+anchor = [".agents/skills/upgrades/SKILL.md", "日世界的工人照「沒人指名時挑哪一件」的順序"]
+kind = "reply"
+pattern = '(?<!多人)箭塔[^\n]{0,40}?(9\D{1,12}10|10 ?級)'
+
+[[checks]]
+id = "no-ask"
+what = "asks nothing first"
+anchor = [".agents/skills/upgrades/SKILL.md", "不重挑也不先問"]
+kind = "exists"
+file = "push.md"
+absent = true
+
+[[checks]]
+id = "named"
+what = "every command says who ran it and why"
+anchor = ["AGENTS.md", "Every `ai_coc` command an agent runs carries `--agent`"]
+kind = "every_call_has"
+fields = ["agent", "session", "mission"]

@@ -1,0 +1,75 @@
+# The farm subagent reports another device logged in. The takeover logs back in by
+# itself five minutes later, and nothing may touch the game until then.
+skill = "takeover"
+about = "Another device logged in during a takeover: a five-minute watch and nothing else"
+situation = """
+你在託管中 (今天 15:30 開始, session 一直是你的). 你睡在 `ai_coc watch` 上 (等弓箭女皇跟亡靈到點前五分鐘), 打資源的 subagent 在背景打夜世界. 那個 watch 還在睡, 這一回合是 subagent 的回報叫醒你的:
+
+「夜世界那一次 attack (`--label tk-n-a1`) 收工在 session_taken. 照 runner.md 停下來, 之後沒有再下任何 ai_coc 指令.」
+"""
+live = [900002]
+
+[state.emulator]
+status = "idle"
+pid = 900001
+command = "attack"
+started = "2026-11-12T15:50:00+08:00"
+ended = "2026-11-12T16:12:00+08:00"
+caller = { agent = "claude-code", session = "eval-takeover-session-taken-farm", mission = "打夜世界資源" }
+
+[state.watch]
+status = "running"
+pid = 900002
+started = "2026-11-12T15:49:00+08:00"
+next_at = "2026-11-12T16:39:11+08:00"
+about = "弓箭女皇、亡靈到點前五分鐘"
+farms = true
+caller = { agent = "claude-code", session = "eval-takeover-session-taken", mission = "全天候託管到他叫停" }
+
+[[checks]]
+id = "no-stop"
+what = "does not stop: that would end the watch it is about to set"
+anchor = [".agents/skills/takeover/SKILL.md", "這時不下 `ai_coc stop` 也不 `giveback`"]
+kind = "not_called"
+calls = { command = "stop" }
+
+[[checks]]
+id = "no-giveback"
+what = "does not give the emulator back"
+anchor = [".agents/skills/takeover/SKILL.md", "這時不下 `ai_coc stop` 也不 `giveback`"]
+kind = "not_called"
+calls = { command = "giveback" }
+
+[[checks]]
+id = "nothing-claims"
+what = "runs nothing that logs the game back in"
+anchor = [".agents/skills/takeover/SKILL.md", "那五分鐘一個別的 `ai_coc` 指令都不要下"]
+kind = "nothing_claims"
+
+[[checks]]
+id = "watch-five"
+what = "sleeps five minutes on a watch with no upgrade or tower wake, still farming"
+anchor = [".agents/skills/takeover/SKILL.md", "重掛 `ai_coc watch --minutes 5`"]
+kind = "called"
+calls = { command = "watch", args = { minutes = 5, farms = true }, unset = ["upgrades", "tower", "next"] }
+
+[[checks]]
+id = "watch-about"
+what = "the watch says it waits out the other device"
+anchor = [".agents/skills/takeover/SKILL.md", "`--about` 寫明在等搶登的五分鐘"]
+kind = "called"
+calls = { command = "watch", patterns = { about = "搶登|登入|裝置|五分鐘|5 ?分鐘" } }
+
+[[checks]]
+id = "reply-five"
+what = "tells the user it logs back in five minutes on"
+anchor = [".agents/skills/takeover/SKILL.md", "跟他講五分鐘後會登入回去"]
+kind = "reply"
+pattern = "五分鐘|5 ?分鐘"
+
+[[checks]]
+id = "named"
+what = "every command says who ran it and why"
+anchor = ["AGENTS.md", "Every `ai_coc` command an agent runs carries `--agent`"]
+kind = "every_call_has"
+fields = ["agent", "session", "mission"]

@@ -1,0 +1,3550 @@
+{
+  "tag": "#EVAL00000",
+  "exported_at": "2026-11-12T16:11:26+08:00",
+  "timestamp": 1794471086,
+  "game_version": "18.647.5",
+  "halls": {
+    "town_hall": 18,
+    "laboratory": 16,
+    "hero_hall": 12,
+    "pet_house": 12,
+    "blacksmith": 10,
+    "builder_hall": 10,
+    "star_laboratory": 10,
+    "barracks": 19,
+    "dark_barracks": 13,
+    "siege_workshop": 9,
+    "spell_factory": 9,
+    "dark_spell_factory": 8,
+    "builder_barracks": 11
+  },
+  "boosts": {
+    "builder_boost": 5259,
+    "lab_boost": 8862,
+    "clocktower_boost": 1771,
+    "clocktower_cooldown": 80971
+  },
+  "clock_tower_ready_at": "2026-11-13T14:40:57+08:00",
+  "day": {
+    "helpers": [
+      {
+        "data": 93000000,
+        "lvl": 8,
+        "zh": "建築工人學徒",
+        "en": "Builder's Apprentice",
+        "max_lvl": 8,
+        "limited_lvl": 8
+      },
+      {
+        "data": 93000001,
+        "lvl": 12,
+        "zh": "實驗助手",
+        "en": "Lab Assistant",
+        "max_lvl": 12,
+        "limited_lvl": 12
+      },
+      {
+        "data": 93000002,
+        "lvl": 3,
+        "zh": "鍊金術士",
+        "en": "Alchemist",
+        "max_lvl": 7,
+        "limited_lvl": 7
+      },
+      {
+        "data": 93000003,
+        "lvl": 1,
+        "zh": "探礦者",
+        "en": "Prospector",
+        "max_lvl": 7,
+        "limited_lvl": 7
+      }
+    ],
+    "guardians": [
+      {
+        "data": 107000000,
+        "lvl": 1,
+        "zh": "遠襲者",
+        "en": "Longshot",
+        "max_lvl": 5
+      },
+      {
+        "data": 107000001,
+        "lvl": 1,
+        "zh": "粉碎者",
+        "en": "Smasher",
+        "max_lvl": 5
+      },
+      {
+        "data": 107000008,
+        "lvl": 5,
+        "zh": "滾木手",
+        "en": "Logger",
+        "max_lvl": 5
+      }
+    ],
+    "buildings": [
+      {
+        "data": 1000013,
+        "lvl": 13,
+        "zh": "迫擊炮",
+        "en": "Mortar",
+        "role": "builder",
+        "max_lvl": 18,
+        "limited_lvl": 18,
+        "next": {
+          "lvl": 14,
+          "cost": {
+            "gold": 4300000
+          },
+          "time": 216000
+        },
+        "gear_up": 1
+      },
+      {
+        "data": 1000097,
+        "zh": "精製台",
+        "en": "Crafting Station",
+        "role": "builder",
+        "max_lvl": 1,
+        "limited_lvl": 1,
+        "types": [
+          {
+            "data": 103000011,
+            "modules": [
+              {
+                "data": 102000033,
+                "lvl": 1
+              },
+              {
+                "data": 102000034,
+                "lvl": 1
+              },
+              {
+                "data": 102000035,
+                "lvl": 1
+              }
+            ]
+          },
+          {
+            "data": 103000012,
+            "modules": [
+              {
+                "data": 102000036,
+                "lvl": 1
+              },
+              {
+                "data": 102000037,
+                "lvl": 1
+              },
+              {
+                "data": 102000038,
+                "lvl": 1
+              }
+            ]
+          },
+          {
+            "data": 103000013,
+            "modules": [
+              {
+                "data": 102000039,
+                "lvl": 1
+              },
+              {
+                "data": 102000040,
+                "lvl": 1
+              },
+              {
+                "data": 102000041,
+                "lvl": 1
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "data": 1000085,
+        "lvl": 1,
+        "timer": 187918,
+        "zh": "彈跳加農炮",
+        "en": "Ricochet Cannon",
+        "role": "builder",
+        "max_lvl": 4,
+        "limited_lvl": 4,
+        "next": {
+          "lvl": 3,
+          "cost": {
+            "gold": 17500000
+          },
+          "time": 777600
+        },
+        "done_at": "2026-11-14T07:14:33+08:00"
+      },
+      {
+        "data": 1000085,
+        "lvl": 1,
+        "timer": 189232,
+        "extra": true,
+        "zh": "彈跳加農炮",
+        "en": "Ricochet Cannon",
+        "role": "builder",
+        "max_lvl": 4,
+        "limited_lvl": 4,
+        "next": {
+          "lvl": 3,
+          "cost": {
+            "gold": 17500000
+          },
+          "time": 777600
+        },
+        "done_at": "2026-11-14T07:36:27+08:00"
+      },
+      {
+        "data": 1000084,
+        "lvl": 3,
+        "timer": 234926,
+        "zh": "多人箭塔",
+        "en": "Multi-Archer Tower",
+        "role": "builder",
+        "max_lvl": 4,
+        "limited_lvl": 4,
+        "next": null,
+        "done_at": "2026-11-14T20:18:01+08:00"
+      },
+      {
+        "data": 1000000,
+        "lvl": 14,
+        "cnt": 4,
+        "zh": "兵營",
+        "en": "Army Camp",
+        "role": "builder",
+        "max_lvl": 14,
+        "limited_lvl": 14,
+        "next": null
+      },
+      {
+        "data": 1000001,
+        "lvl": 18,
+        "cnt": 1,
+        "zh": "大本營",
+        "en": "Town Hall",
+        "role": "builder",
+        "max_lvl": 18,
+        "limited_lvl": 18,
+        "next": null
+      },
+      {
+        "data": 1000002,
+        "lvl": 8,
+        "cnt": 5,
+        "zh": "聖水收集器",
+        "en": "Elixir Collector",
+        "role": "builder",
+        "max_lvl": 17,
+        "limited_lvl": 17,
+        "next": {
+          "lvl": 9,
+          "cost": {
+            "gold": 56000
+          },
+          "time": 5400
+        }
+      },
+      {
+        "data": 1000002,
+        "lvl": 9,
+        "cnt": 1,
+        "zh": "聖水收集器",
+        "en": "Elixir Collector",
+        "role": "builder",
+        "max_lvl": 17,
+        "limited_lvl": 17,
+        "next": {
+          "lvl": 10,
+          "cost": {
+            "gold": 75000
+          },
+          "time": 7200
+        }
+      },
+      {
+        "data": 1000002,
+        "lvl": 10,
+        "cnt": 1,
+        "zh": "聖水收集器",
+        "en": "Elixir Collector",
+        "role": "builder",
+        "max_lvl": 17,
+        "limited_lvl": 17,
+        "next": {
+          "lvl": 11,
+          "cost": {
+            "gold": 85000
+          },
+          "time": 10800
+        }
+      },
+      {
+        "data": 1000003,
+        "lvl": 18,
+        "cnt": 4,
+        "zh": "聖水瓶",
+        "en": "Elixir Storage",
+        "role": "builder",
+        "max_lvl": 19,
+        "limited_lvl": 19,
+        "next": {
+          "lvl": 19,
+          "cost": {
+            "gold": 18000000
+          },
+          "time": 1080000
+        }
+      },
+      {
+        "data": 1000004,
+        "lvl": 8,
+        "cnt": 3,
+        "zh": "金礦",
+        "en": "Gold Mine",
+        "role": "builder",
+        "max_lvl": 17,
+        "limited_lvl": 17,
+        "next": {
+          "lvl": 9,
+          "cost": {
+            "elixir": 56000
+          },
+          "time": 5400
+        }
+      },
+      {
+        "data": 1000004,
+        "lvl": 9,
+        "cnt": 3,
+        "zh": "金礦",
+        "en": "Gold Mine",
+        "role": "builder",
+        "max_lvl": 17,
+        "limited_lvl": 17,
+        "next": {
+          "lvl": 10,
+          "cost": {
+            "elixir": 75000
+          },
+          "time": 7200
+        }
+      },
+      {
+        "data": 1000004,
+        "lvl": 10,
+        "cnt": 1,
+        "zh": "金礦",
+        "en": "Gold Mine",
+        "role": "builder",
+        "max_lvl": 17,
+        "limited_lvl": 17,
+        "next": {
+          "lvl": 11,
+          "cost": {
+            "elixir": 85000
+          },
+          "time": 10800
+        }
+      },
+      {
+        "data": 1000005,
+        "lvl": 18,
+        "cnt": 4,
+        "zh": "儲金罐",
+        "en": "Gold Storage",
+        "role": "builder",
+        "max_lvl": 19,
+        "limited_lvl": 19,
+        "next": {
+          "lvl": 19,
+          "cost": {
+            "elixir": 18000000
+          },
+          "time": 1080000
+        }
+      },
+      {
+        "data": 1000006,
+        "lvl": 19,
+        "cnt": 1,
+        "zh": "訓練營",
+        "en": "Barracks",
+        "role": "builder",
+        "max_lvl": 19,
+        "limited_lvl": 19,
+        "next": null
+      },
+      {
+        "data": 1000007,
+        "lvl": 16,
+        "cnt": 1,
+        "zh": "實驗室",
+        "en": "Laboratory",
+        "role": "builder",
+        "max_lvl": 16,
+        "limited_lvl": 16,
+        "next": null
+      },
+      {
+        "data": 1000009,
+        "lvl": 9,
+        "cnt": 1,
+        "zh": "箭塔",
+        "en": "Archer Tower",
+        "role": "builder",
+        "max_lvl": 21,
+        "limited_lvl": 21,
+        "next": {
+          "lvl": 10,
+          "cost": {
+            "gold": 460000
+          },
+          "time": 21600
+        }
+      },
+      {
+        "data": 1000009,
+        "lvl": 16,
+        "cnt": 1,
+        "zh": "箭塔",
+        "en": "Archer Tower",
+        "role": "builder",
+        "max_lvl": 21,
+        "limited_lvl": 21,
+        "next": {
+          "lvl": 17,
+          "cost": {
+            "gold": 1800000
+          },
+          "time": 72000
+        }
+      },
+      {
+        "data": 1000010,
+        "lvl": 19,
+        "cnt": 325,
+        "zh": "城牆",
+        "en": "Wall",
+        "role": "builder",
+        "max_lvl": 19,
+        "limited_lvl": 19,
+        "next": null
+      },
+      {
+        "data": 1000011,
+        "lvl": 3,
+        "cnt": 2,
+        "zh": "法師塔",
+        "en": "Wizard Tower",
+        "role": "builder",
+        "max_lvl": 17,
+        "limited_lvl": 17,
+        "next": {
+          "lvl": 4,
+          "cost": {
+            "gold": 400000
+          },
+          "time": 28800
+        }
+      },
+      {
+        "data": 1000012,
+        "lvl": 6,
+        "cnt": 4,
+        "zh": "防空火箭",
+        "en": "Air Defense",
+        "role": "builder",
+        "max_lvl": 16,
+        "limited_lvl": 16,
+        "next": {
+          "lvl": 7,
+          "cost": {
+            "gold": 1750000
+          },
+          "time": 172800
+        }
+      },
+      {
+        "data": 1000013,
+        "lvl": 10,
+        "cnt": 2,
+        "zh": "迫擊炮",
+        "en": "Mortar",
+        "role": "builder",
+        "max_lvl": 18,
+        "limited_lvl": 18,
+        "next": {
+          "lvl": 11,
+          "cost": {
+            "gold": 2300000
+          },
+          "time": 108000
+        }
+      },
+      {
+        "data": 1000013,
+        "lvl": 12,
+        "cnt": 1,
+        "zh": "迫擊炮",
+        "en": "Mortar",
+        "role": "builder",
+        "max_lvl": 18,
+        "limited_lvl": 18,
+        "next": {
+          "lvl": 13,
+          "cost": {
+            "gold": 2800000
+          },
+          "time": 172800
+        }
+      },
+      {
+        "data": 1000014,
+        "lvl": 14,
+        "cnt": 1,
+        "zh": "部落城堡",
+        "en": "Clan Castle",
+        "role": "builder",
+        "max_lvl": 14,
+        "limited_lvl": 14,
+        "next": null
+      },
+      {
+        "data": 1000015,
+        "lvl": 1,
+        "cnt": 5,
+        "zh": "建築工人小屋",
+        "en": "Builder's Hut",
+        "role": "builder",
+        "max_lvl": 8,
+        "limited_lvl": 8,
+        "next": {
+          "lvl": 2,
+          "cost": {
+            "gold": 3000000
+          },
+          "time": 172800
+        }
+      },
+      {
+        "data": 1000019,
+        "lvl": 3,
+        "cnt": 3,
+        "zh": "特斯拉電磁塔",
+        "en": "Hidden Tesla",
+        "role": "builder",
+        "max_lvl": 17,
+        "limited_lvl": 17,
+        "next": {
+          "lvl": 4,
+          "cost": {
+            "gold": 600000
+          },
+          "time": 21600
+        }
+      },
+      {
+        "data": 1000019,
+        "lvl": 4,
+        "cnt": 2,
+        "zh": "特斯拉電磁塔",
+        "en": "Hidden Tesla",
+        "role": "builder",
+        "max_lvl": 17,
+        "limited_lvl": 17,
+        "next": {
+          "lvl": 5,
+          "cost": {
+            "gold": 800000
+          },
+          "time": 43200
+        }
+      },
+      {
+        "data": 1000020,
+        "lvl": 9,
+        "cnt": 1,
+        "zh": "法術工廠",
+        "en": "Spell Factory",
+        "role": "builder",
+        "max_lvl": 9,
+        "limited_lvl": 9,
+        "next": null
+      },
+      {
+        "data": 1000021,
+        "lvl": 1,
+        "cnt": 3,
+        "zh": "X連弩",
+        "en": "X-Bow",
+        "role": "builder",
+        "max_lvl": 13,
+        "limited_lvl": 13,
+        "next": {
+          "lvl": 2,
+          "cost": {
+            "gold": 1200000
+          },
+          "time": 86400
+        }
+      },
+      {
+        "data": 1000021,
+        "lvl": 3,
+        "cnt": 1,
+        "zh": "X連弩",
+        "en": "X-Bow",
+        "role": "builder",
+        "max_lvl": 13,
+        "limited_lvl": 13,
+        "next": {
+          "lvl": 4,
+          "cost": {
+            "gold": 2500000
+          },
+          "time": 216000
+        }
+      },
+      {
+        "data": 1000023,
+        "lvl": 1,
+        "cnt": 3,
+        "zh": "闇黑重油提煉井",
+        "en": "Dark Elixir Drill",
+        "role": "builder",
+        "max_lvl": 11,
+        "limited_lvl": 11,
+        "next": {
+          "lvl": 2,
+          "cost": {
+            "elixir": 270000
+          },
+          "time": 21600
+        }
+      },
+      {
+        "data": 1000024,
+        "lvl": 12,
+        "cnt": 1,
+        "zh": "闇黑重油罐",
+        "en": "Dark Elixir Storage",
+        "role": "builder",
+        "max_lvl": 13,
+        "limited_lvl": 13,
+        "next": {
+          "lvl": 13,
+          "cost": {
+            "elixir": 25000000
+          },
+          "time": 1123200
+        }
+      },
+      {
+        "data": 1000026,
+        "lvl": 13,
+        "cnt": 1,
+        "zh": "闇黑訓練營",
+        "en": "Dark Barracks",
+        "role": "builder",
+        "max_lvl": 13,
+        "limited_lvl": 13,
+        "next": null
+      },
+      {
+        "data": 1000027,
+        "lvl": 12,
+        "cnt": 3,
+        "zh": "地獄之塔",
+        "en": "Inferno Tower",
+        "role": "builder",
+        "max_lvl": 12,
+        "limited_lvl": 12,
+        "next": null
+      },
+      {
+        "data": 1000028,
+        "lvl": 2,
+        "cnt": 2,
+        "zh": "空氣炮",
+        "en": "Air Sweeper",
+        "role": "builder",
+        "max_lvl": 7,
+        "limited_lvl": 7,
+        "next": {
+          "lvl": 3,
+          "cost": {
+            "gold": 450000
+          },
+          "time": 28800
+        }
+      },
+      {
+        "data": 1000029,
+        "lvl": 8,
+        "cnt": 1,
+        "zh": "闇黑法術工廠",
+        "en": "Dark Spell Factory",
+        "role": "builder",
+        "max_lvl": 8,
+        "limited_lvl": 8,
+        "next": null
+      },
+      {
+        "data": 1000032,
+        "lvl": 2,
+        "cnt": 2,
+        "zh": "炸彈塔",
+        "en": "Bomb Tower",
+        "role": "builder",
+        "max_lvl": 13,
+        "limited_lvl": 13,
+        "next": {
+          "lvl": 3,
+          "cost": {
+            "gold": 1300000
+          },
+          "time": 86400
+        }
+      },
+      {
+        "data": 1000059,
+        "lvl": 9,
+        "cnt": 1,
+        "zh": "攻城機器工坊",
+        "en": "Workshop",
+        "role": "builder",
+        "max_lvl": 9,
+        "limited_lvl": 9,
+        "next": null
+      },
+      {
+        "data": 1000064,
+        "lvl": 1,
+        "cnt": 1,
+        "zh": "巴布小屋",
+        "en": "B.O.B's Hut",
+        "role": "builder",
+        "max_lvl": 1,
+        "limited_lvl": 1,
+        "next": null
+      },
+      {
+        "data": 1000067,
+        "lvl": 1,
+        "cnt": 2,
+        "zh": "投石機",
+        "en": "Scattershot",
+        "role": "builder",
+        "max_lvl": 7,
+        "limited_lvl": 7,
+        "next": {
+          "lvl": 2,
+          "cost": {
+            "gold": 9000000
+          },
+          "time": 604800
+        }
+      },
+      {
+        "data": 1000068,
+        "lvl": 12,
+        "cnt": 1,
+        "zh": "戰寵小屋",
+        "en": "Pet House",
+        "role": "builder",
+        "max_lvl": 12,
+        "limited_lvl": 12,
+        "next": null
+      },
+      {
+        "data": 1000070,
+        "lvl": 10,
+        "cnt": 1,
+        "zh": "鐵匠鋪",
+        "en": "Blacksmith",
+        "role": "builder",
+        "max_lvl": 10,
+        "limited_lvl": 10,
+        "next": null
+      },
+      {
+        "data": 1000071,
+        "lvl": 12,
+        "cnt": 1,
+        "zh": "英雄殿堂",
+        "en": "Hero Hall",
+        "role": "builder",
+        "max_lvl": 12,
+        "limited_lvl": 12,
+        "next": null
+      },
+      {
+        "data": 1000072,
+        "lvl": 1,
+        "cnt": 2,
+        "zh": "法術塔",
+        "en": "Spell Tower",
+        "role": "builder",
+        "max_lvl": 4,
+        "limited_lvl": 4,
+        "next": {
+          "lvl": 2,
+          "cost": {
+            "gold": 11000000
+          },
+          "time": 691200
+        }
+      },
+      {
+        "data": 1000077,
+        "lvl": 5,
+        "cnt": 1,
+        "zh": "巨石碑",
+        "en": "Monolith",
+        "role": "builder",
+        "max_lvl": 5,
+        "limited_lvl": 5,
+        "next": null
+      },
+      {
+        "data": 1000079,
+        "lvl": 3,
+        "cnt": 1,
+        "zh": "複合機械塔",
+        "en": "Multi-Gear Tower",
+        "role": "builder",
+        "max_lvl": 3,
+        "limited_lvl": 3,
+        "next": null
+      },
+      {
+        "data": 1000084,
+        "lvl": 4,
+        "cnt": 2,
+        "zh": "多人箭塔",
+        "en": "Multi-Archer Tower",
+        "role": "builder",
+        "max_lvl": 4,
+        "limited_lvl": 4,
+        "next": null
+      },
+      {
+        "data": 1000085,
+        "lvl": 1,
+        "cnt": 1,
+        "zh": "彈跳加農炮",
+        "en": "Ricochet Cannon",
+        "role": "builder",
+        "max_lvl": 4,
+        "limited_lvl": 4,
+        "next": {
+          "lvl": 2,
+          "cost": {
+            "gold": 13000000
+          },
+          "time": 691200
+        }
+      },
+      {
+        "data": 1000086,
+        "lvl": 2,
+        "cnt": 1,
+        "zh": "復仇之塔",
+        "en": "Revenge Tower",
+        "role": "builder",
+        "max_lvl": 2,
+        "limited_lvl": 2,
+        "next": null
+      },
+      {
+        "data": 1000089,
+        "lvl": 3,
+        "cnt": 2,
+        "zh": "火焰噴射器",
+        "en": "Firespitter",
+        "role": "builder",
+        "max_lvl": 3,
+        "limited_lvl": 3,
+        "next": null
+      },
+      {
+        "data": 1000093,
+        "lvl": 1,
+        "cnt": 1,
+        "zh": "幫手小屋",
+        "en": "Helper Hut",
+        "role": "builder",
+        "max_lvl": 1,
+        "limited_lvl": 1,
+        "next": null
+      },
+      {
+        "data": 1000102,
+        "lvl": 2,
+        "cnt": 2,
+        "zh": "超級法師塔",
+        "en": "Super Wizard Tower",
+        "role": "builder",
+        "max_lvl": 2,
+        "limited_lvl": 2,
+        "next": null
+      }
+    ],
+    "traps": [
+      {
+        "data": 12000000,
+        "lvl": 4,
+        "cnt": 8,
+        "zh": "隱形炸彈",
+        "en": "Bomb",
+        "role": "builder",
+        "max_lvl": 14,
+        "limited_lvl": 14,
+        "next": {
+          "lvl": 5,
+          "cost": {
+            "gold": 100000
+          },
+          "time": 3600
+        }
+      },
+      {
+        "data": 12000001,
+        "lvl": 1,
+        "cnt": 5,
+        "zh": "隱形彈簧",
+        "en": "Spring Trap",
+        "role": "builder",
+        "max_lvl": 13,
+        "limited_lvl": 13,
+        "next": {
+          "lvl": 2,
+          "cost": {
+            "gold": 130000
+          },
+          "time": 3600
+        }
+      },
+      {
+        "data": 12000001,
+        "lvl": 2,
+        "cnt": 4,
+        "zh": "隱形彈簧",
+        "en": "Spring Trap",
+        "role": "builder",
+        "max_lvl": 13,
+        "limited_lvl": 13,
+        "next": {
+          "lvl": 3,
+          "cost": {
+            "gold": 240000
+          },
+          "time": 7200
+        }
+      },
+      {
+        "data": 12000002,
+        "lvl": 1,
+        "cnt": 1,
+        "zh": "巨型炸彈",
+        "en": "Giant Bomb",
+        "role": "builder",
+        "max_lvl": 12,
+        "limited_lvl": 12,
+        "next": {
+          "lvl": 2,
+          "cost": {
+            "gold": 75000
+          },
+          "time": 3600
+        }
+      },
+      {
+        "data": 12000002,
+        "lvl": 2,
+        "cnt": 7,
+        "zh": "巨型炸彈",
+        "en": "Giant Bomb",
+        "role": "builder",
+        "max_lvl": 12,
+        "limited_lvl": 12,
+        "next": {
+          "lvl": 3,
+          "cost": {
+            "gold": 220000
+          },
+          "time": 10800
+        }
+      },
+      {
+        "data": 12000005,
+        "lvl": 2,
+        "cnt": 8,
+        "zh": "空中炸彈",
+        "en": "Air Bomb",
+        "role": "builder",
+        "max_lvl": 13,
+        "limited_lvl": 13,
+        "next": {
+          "lvl": 3,
+          "cost": {
+            "gold": 75000
+          },
+          "time": 3600
+        }
+      },
+      {
+        "data": 12000006,
+        "lvl": 1,
+        "cnt": 8,
+        "zh": "搜空地雷",
+        "en": "Seeking Air Mine",
+        "role": "builder",
+        "max_lvl": 8,
+        "limited_lvl": 8,
+        "next": {
+          "lvl": 2,
+          "cost": {
+            "gold": 600000
+          },
+          "time": 21600
+        }
+      },
+      {
+        "data": 12000006,
+        "lvl": 2,
+        "cnt": 1,
+        "zh": "搜空地雷",
+        "en": "Seeking Air Mine",
+        "role": "builder",
+        "max_lvl": 8,
+        "limited_lvl": 8,
+        "next": {
+          "lvl": 3,
+          "cost": {
+            "gold": 1200000
+          },
+          "time": 43200
+        }
+      },
+      {
+        "data": 12000008,
+        "lvl": 1,
+        "cnt": 4,
+        "zh": "骷髏陷阱",
+        "en": "Skeleton Trap",
+        "role": "builder",
+        "max_lvl": 5,
+        "limited_lvl": 5,
+        "next": {
+          "lvl": 2,
+          "cost": {
+            "gold": 250000
+          },
+          "time": 18000
+        }
+      },
+      {
+        "data": 12000016,
+        "lvl": 1,
+        "cnt": 1,
+        "zh": "旋風陷阱",
+        "en": "Tornado Trap",
+        "role": "builder",
+        "max_lvl": 3,
+        "limited_lvl": 3,
+        "next": {
+          "lvl": 2,
+          "cost": {
+            "gold": 2000000
+          },
+          "time": 86400
+        }
+      },
+      {
+        "data": 12000020,
+        "lvl": 1,
+        "cnt": 1,
+        "zh": "終極炸彈",
+        "en": "Giga Bomb",
+        "role": "builder",
+        "max_lvl": 4,
+        "limited_lvl": 4,
+        "next": {
+          "lvl": 2,
+          "cost": {
+            "gold": 8500000
+          },
+          "time": 345600
+        }
+      }
+    ],
+    "units": [
+      {
+        "data": 4000000,
+        "lvl": 4,
+        "zh": "野蠻人",
+        "en": "Barbarian",
+        "role": "lab",
+        "max_lvl": 13,
+        "limited_lvl": 13,
+        "next": {
+          "lvl": 5,
+          "cost": {
+            "elixir": 300000
+          },
+          "time": 14400
+        }
+      },
+      {
+        "data": 4000001,
+        "lvl": 4,
+        "zh": "弓箭手",
+        "en": "Archer",
+        "role": "lab",
+        "max_lvl": 14,
+        "limited_lvl": 14,
+        "next": {
+          "lvl": 5,
+          "cost": {
+            "elixir": 500000
+          },
+          "time": 28800
+        }
+      },
+      {
+        "data": 4000002,
+        "lvl": 3,
+        "zh": "哥布林",
+        "en": "Goblin",
+        "role": "lab",
+        "max_lvl": 10,
+        "limited_lvl": 10,
+        "next": {
+          "lvl": 4,
+          "cost": {
+            "elixir": 500000
+          },
+          "time": 21600
+        }
+      },
+      {
+        "data": 4000003,
+        "lvl": 3,
+        "zh": "巨人",
+        "en": "Giant",
+        "role": "lab",
+        "max_lvl": 14,
+        "limited_lvl": 14,
+        "next": {
+          "lvl": 4,
+          "cost": {
+            "elixir": 400000
+          },
+          "time": 21600
+        }
+      },
+      {
+        "data": 4000004,
+        "lvl": 4,
+        "zh": "炸彈人",
+        "en": "Wall Breaker",
+        "role": "lab",
+        "max_lvl": 14,
+        "limited_lvl": 14,
+        "next": {
+          "lvl": 5,
+          "cost": {
+            "elixir": 1000000
+          },
+          "time": 57600
+        }
+      },
+      {
+        "data": 4000005,
+        "lvl": 13,
+        "zh": "氣球兵",
+        "en": "Balloon",
+        "role": "lab",
+        "max_lvl": 13,
+        "limited_lvl": 13,
+        "next": null
+      },
+      {
+        "data": 4000006,
+        "lvl": 4,
+        "zh": "法師",
+        "en": "Wizard",
+        "role": "lab",
+        "max_lvl": 14,
+        "limited_lvl": 14,
+        "next": {
+          "lvl": 5,
+          "cost": {
+            "elixir": 1200000
+          },
+          "time": 64800
+        }
+      },
+      {
+        "data": 4000007,
+        "lvl": 2,
+        "zh": "天使",
+        "en": "Healer",
+        "role": "lab",
+        "max_lvl": 11,
+        "limited_lvl": 11,
+        "next": {
+          "lvl": 3,
+          "cost": {
+            "elixir": 900000
+          },
+          "time": 86400
+        }
+      },
+      {
+        "data": 4000008,
+        "lvl": 13,
+        "zh": "飛龍",
+        "en": "Dragon",
+        "role": "lab",
+        "max_lvl": 13,
+        "limited_lvl": 13,
+        "next": null
+      },
+      {
+        "data": 4000009,
+        "lvl": 1,
+        "zh": "皮卡超人",
+        "en": "P.E.K.K.A",
+        "role": "lab",
+        "max_lvl": 13,
+        "limited_lvl": 13,
+        "next": {
+          "lvl": 2,
+          "cost": {
+            "elixir": 600000
+          },
+          "time": 43200
+        }
+      },
+      {
+        "data": 4000010,
+        "lvl": 12,
+        "timer": 47205,
+        "extra": true,
+        "zh": "亡靈",
+        "en": "Minion",
+        "role": "lab",
+        "max_lvl": 14,
+        "limited_lvl": 14,
+        "next": {
+          "lvl": 14,
+          "cost": {
+            "dark": 335000
+          },
+          "time": 1209600
+        },
+        "done_at": "2026-11-12T16:44:13+08:00"
+      },
+      {
+        "data": 4000011,
+        "lvl": 1,
+        "zh": "野豬騎士",
+        "en": "Hog Rider",
+        "role": "lab",
+        "max_lvl": 15,
+        "limited_lvl": 15,
+        "next": {
+          "lvl": 2,
+          "cost": {
+            "dark": 2000
+          },
+          "time": 36000
+        }
+      },
+      {
+        "data": 4000012,
+        "lvl": 1,
+        "zh": "瓦基麗武神",
+        "en": "Valkyrie",
+        "role": "lab",
+        "max_lvl": 12,
+        "limited_lvl": 12,
+        "next": {
+          "lvl": 2,
+          "cost": {
+            "dark": 3000
+          },
+          "time": 28800
+        }
+      },
+      {
+        "data": 4000013,
+        "lvl": 1,
+        "zh": "戈侖石人",
+        "en": "Golem",
+        "role": "lab",
+        "max_lvl": 15,
+        "limited_lvl": 15,
+        "next": {
+          "lvl": 2,
+          "cost": {
+            "dark": 4000
+          },
+          "time": 57600
+        }
+      },
+      {
+        "data": 4000015,
+        "lvl": 1,
+        "zh": "女巫",
+        "en": "Witch",
+        "role": "lab",
+        "max_lvl": 8,
+        "limited_lvl": 8,
+        "next": {
+          "lvl": 2,
+          "cost": {
+            "dark": 20000
+          },
+          "time": 172800
+        }
+      },
+      {
+        "data": 4000017,
+        "lvl": 8,
+        "zh": "熔岩獵犬",
+        "en": "Lava Hound",
+        "role": "lab",
+        "max_lvl": 8,
+        "limited_lvl": 8,
+        "next": null
+      },
+      {
+        "data": 4000022,
+        "lvl": 10,
+        "zh": "巨石投手",
+        "en": "Bowler",
+        "role": "lab",
+        "max_lvl": 10,
+        "limited_lvl": 10,
+        "next": null
+      },
+      {
+        "data": 4000023,
+        "lvl": 12,
+        "zh": "飛龍寶寶",
+        "en": "Baby Dragon",
+        "role": "lab",
+        "max_lvl": 12,
+        "limited_lvl": 12,
+        "next": null
+      },
+      {
+        "data": 4000024,
+        "lvl": 1,
+        "zh": "掘地礦工",
+        "en": "Miner",
+        "role": "lab",
+        "max_lvl": 12,
+        "limited_lvl": 12,
+        "next": {
+          "lvl": 2,
+          "cost": {
+            "elixir": 1500000
+          },
+          "time": 86400
+        }
+      },
+      {
+        "data": 4000053,
+        "lvl": 8,
+        "zh": "雪怪",
+        "en": "Yeti",
+        "role": "lab",
+        "max_lvl": 8,
+        "limited_lvl": 8,
+        "next": null
+      },
+      {
+        "data": 4000058,
+        "lvl": 9,
+        "zh": "戈侖冰人",
+        "en": "Ice Golem",
+        "role": "lab",
+        "max_lvl": 9,
+        "limited_lvl": 9,
+        "next": null
+      },
+      {
+        "data": 4000059,
+        "lvl": 9,
+        "zh": "雷電飛龍",
+        "en": "Electro Dragon",
+        "role": "lab",
+        "max_lvl": 9,
+        "limited_lvl": 9,
+        "next": null
+      },
+      {
+        "data": 4000065,
+        "lvl": 6,
+        "zh": "龍騎士",
+        "en": "Dragon Rider",
+        "role": "lab",
+        "max_lvl": 6,
+        "limited_lvl": 6,
+        "next": null
+      },
+      {
+        "data": 4000082,
+        "lvl": 1,
+        "zh": "頭號殺手",
+        "en": "Headhunter",
+        "role": "lab",
+        "max_lvl": 4,
+        "limited_lvl": 4,
+        "next": {
+          "lvl": 2,
+          "cost": {
+            "dark": 57500
+          },
+          "time": 432000
+        }
+      },
+      {
+        "data": 4000095,
+        "lvl": 5,
+        "zh": "雷電泰坦",
+        "en": "Electro Titan",
+        "role": "lab",
+        "max_lvl": 5,
+        "limited_lvl": 5,
+        "next": null
+      },
+      {
+        "data": 4000097,
+        "lvl": 4,
+        "zh": "守護者學徒",
+        "en": "Apprentice Warden",
+        "role": "lab",
+        "max_lvl": 4,
+        "limited_lvl": 4,
+        "next": null
+      },
+      {
+        "data": 4000109,
+        "lvl": 3,
+        "zh": "廢墟女巫",
+        "en": "Ruin Witch",
+        "role": "lab",
+        "max_lvl": 4,
+        "limited_lvl": 4,
+        "next": {
+          "lvl": 4,
+          "cost": {
+            "dark": 380000
+          },
+          "time": 1339200
+        }
+      },
+      {
+        "data": 4000110,
+        "lvl": 3,
+        "timer": 106183,
+        "zh": "棘木騎士",
+        "en": "Root Rider",
+        "role": "lab",
+        "max_lvl": 4,
+        "limited_lvl": 4,
+        "next": null,
+        "done_at": "2026-11-12T17:25:11+08:00"
+      },
+      {
+        "data": 4000123,
+        "lvl": 6,
+        "zh": "德魯伊",
+        "en": "Druid",
+        "role": "lab",
+        "max_lvl": 6,
+        "limited_lvl": 6,
+        "next": null
+      },
+      {
+        "data": 4000132,
+        "lvl": 4,
+        "zh": "巨矛投手",
+        "en": "Thrower",
+        "role": "lab",
+        "max_lvl": 4,
+        "limited_lvl": 4,
+        "next": null
+      },
+      {
+        "data": 4000150,
+        "lvl": 2,
+        "zh": "烈焰熔爐",
+        "en": "Furnace",
+        "role": "lab",
+        "max_lvl": 4,
+        "limited_lvl": 4,
+        "next": {
+          "lvl": 3,
+          "cost": {
+            "dark": 260000
+          },
+          "time": 950400
+        }
+      },
+      {
+        "data": 4000177,
+        "lvl": 2,
+        "zh": "隕石戈侖",
+        "en": "Meteor Golem",
+        "role": "lab",
+        "max_lvl": 3,
+        "limited_lvl": 3,
+        "next": {
+          "lvl": 3,
+          "cost": {
+            "elixir": 30000000
+          },
+          "time": 1382400
+        }
+      }
+    ],
+    "siege_machines": [
+      {
+        "data": 4000051,
+        "lvl": 1,
+        "zh": "攻城戰車",
+        "en": "Wall Wrecker",
+        "role": "lab",
+        "max_lvl": 6,
+        "limited_lvl": 6,
+        "next": {
+          "lvl": 2,
+          "cost": {
+            "elixir": 2500000
+          },
+          "time": 172800
+        }
+      },
+      {
+        "data": 4000052,
+        "lvl": 1,
+        "zh": "攻城飛艇",
+        "en": "Battle Blimp",
+        "role": "lab",
+        "max_lvl": 6,
+        "limited_lvl": 6,
+        "next": {
+          "lvl": 2,
+          "cost": {
+            "elixir": 2500000
+          },
+          "time": 172800
+        }
+      },
+      {
+        "data": 4000062,
+        "lvl": 1,
+        "zh": "攻城氣球",
+        "en": "Stone Slammer",
+        "role": "lab",
+        "max_lvl": 6,
+        "limited_lvl": 6,
+        "next": {
+          "lvl": 2,
+          "cost": {
+            "elixir": 2500000
+          },
+          "time": 172800
+        }
+      },
+      {
+        "data": 4000075,
+        "lvl": 1,
+        "zh": "攻城訓練營",
+        "en": "Siege Barracks",
+        "role": "lab",
+        "max_lvl": 6,
+        "limited_lvl": 6,
+        "next": {
+          "lvl": 2,
+          "cost": {
+            "elixir": 3500000
+          },
+          "time": 259200
+        }
+      },
+      {
+        "data": 4000087,
+        "lvl": 5,
+        "zh": "攻城滾木車",
+        "en": "Log Launcher",
+        "role": "lab",
+        "max_lvl": 6,
+        "limited_lvl": 6,
+        "next": {
+          "lvl": 6,
+          "cost": {
+            "elixir": 27000000
+          },
+          "time": 1296000
+        }
+      },
+      {
+        "data": 4000091,
+        "lvl": 1,
+        "zh": "攻城烈焰車",
+        "en": "Flame Flinger",
+        "role": "lab",
+        "max_lvl": 5,
+        "limited_lvl": 5,
+        "next": {
+          "lvl": 2,
+          "cost": {
+            "elixir": 5500000
+          },
+          "time": 259200
+        }
+      },
+      {
+        "data": 4000092,
+        "lvl": 1,
+        "zh": "攻城鑽地機",
+        "en": "Battle Drill",
+        "role": "lab",
+        "max_lvl": 6,
+        "limited_lvl": 6,
+        "next": {
+          "lvl": 2,
+          "cost": {
+            "elixir": 6000000
+          },
+          "time": 345600
+        }
+      },
+      {
+        "data": 4000135,
+        "lvl": 4,
+        "zh": "部隊發射器",
+        "en": "Troop Launcher",
+        "role": "lab",
+        "max_lvl": 4,
+        "limited_lvl": 4,
+        "next": null
+      },
+      {
+        "data": 4000188,
+        "lvl": 4,
+        "zh": "空中戰車",
+        "en": "Sky Wagon",
+        "role": "lab",
+        "max_lvl": 4,
+        "limited_lvl": 4,
+        "next": null
+      }
+    ],
+    "heroes": [
+      {
+        "data": 28000000,
+        "lvl": 67,
+        "timer": 81334,
+        "zh": "野蠻人之王",
+        "en": "Barbarian King",
+        "role": "builder",
+        "max_lvl": 110,
+        "limited_lvl": 110,
+        "next": {
+          "lvl": 69,
+          "cost": {
+            "dark": 123000
+          },
+          "time": 345600
+        },
+        "done_at": "2026-11-13T01:38:09+08:00"
+      },
+      {
+        "data": 28000001,
+        "lvl": 69,
+        "timer": 19650,
+        "zh": "弓箭女皇",
+        "en": "Archer Queen",
+        "role": "builder",
+        "max_lvl": 110,
+        "limited_lvl": 110,
+        "next": {
+          "lvl": 71,
+          "cost": {
+            "dark": 130000
+          },
+          "time": 345600
+        },
+        "done_at": "2026-11-12T16:44:11+08:00"
+      },
+      {
+        "data": 28000002,
+        "lvl": 85,
+        "zh": "大守護者",
+        "en": "Grand Warden",
+        "role": "builder",
+        "max_lvl": 85,
+        "limited_lvl": 85,
+        "next": null
+      },
+      {
+        "data": 28000004,
+        "lvl": 45,
+        "timer": 158448,
+        "zh": "神盾勇者",
+        "en": "Royal Champion",
+        "role": "builder",
+        "max_lvl": 55,
+        "limited_lvl": 55,
+        "next": {
+          "lvl": 47,
+          "cost": {
+            "dark": 350000
+          },
+          "time": 691200
+        },
+        "done_at": "2026-11-13T23:03:23+08:00"
+      },
+      {
+        "data": 28000006,
+        "lvl": 81,
+        "timer": 120176,
+        "zh": "亡靈王子",
+        "en": "Minion Prince",
+        "role": "builder",
+        "max_lvl": 95,
+        "limited_lvl": 95,
+        "next": {
+          "lvl": 83,
+          "cost": {
+            "dark": 310000
+          },
+          "time": 691200
+        },
+        "done_at": "2026-11-13T12:25:31+08:00"
+      },
+      {
+        "data": 28000007,
+        "lvl": 25,
+        "zh": "飛龍公爵",
+        "en": "Dragon Duke",
+        "role": "builder",
+        "max_lvl": 25,
+        "limited_lvl": 25,
+        "next": null
+      }
+    ],
+    "spells": [
+      {
+        "data": 26000000,
+        "lvl": 5,
+        "zh": "雷電法術",
+        "en": "Lightning Spell",
+        "role": "lab",
+        "max_lvl": 13,
+        "limited_lvl": 13,
+        "next": {
+          "lvl": 6,
+          "cost": {
+            "elixir": 1500000
+          },
+          "time": 129600
+        }
+      },
+      {
+        "data": 26000001,
+        "lvl": 12,
+        "zh": "療傷法術",
+        "en": "Healing Spell",
+        "role": "lab",
+        "max_lvl": 12,
+        "limited_lvl": 12,
+        "next": null
+      },
+      {
+        "data": 26000002,
+        "lvl": 7,
+        "zh": "狂暴法術",
+        "en": "Rage Spell",
+        "role": "lab",
+        "max_lvl": 7,
+        "limited_lvl": 7,
+        "next": null
+      },
+      {
+        "data": 26000003,
+        "lvl": 1,
+        "zh": "彈跳法術",
+        "en": "Jump Spell",
+        "role": "lab",
+        "max_lvl": 5,
+        "limited_lvl": 5,
+        "next": {
+          "lvl": 2,
+          "cost": {
+            "elixir": 1000000
+          },
+          "time": 86400
+        }
+      },
+      {
+        "data": 26000005,
+        "lvl": 8,
+        "zh": "冰凍法術",
+        "en": "Freeze Spell",
+        "role": "lab",
+        "max_lvl": 8,
+        "limited_lvl": 8,
+        "next": null
+      },
+      {
+        "data": 26000009,
+        "lvl": 12,
+        "zh": "施毒法術",
+        "en": "Poison Spell",
+        "role": "lab",
+        "max_lvl": 12,
+        "limited_lvl": 12,
+        "next": null
+      },
+      {
+        "data": 26000010,
+        "lvl": 8,
+        "zh": "地震法術",
+        "en": "Earthquake Spell",
+        "role": "lab",
+        "max_lvl": 8,
+        "limited_lvl": 8,
+        "next": null
+      },
+      {
+        "data": 26000011,
+        "lvl": 7,
+        "zh": "加速法術",
+        "en": "Haste Spell",
+        "role": "lab",
+        "max_lvl": 7,
+        "limited_lvl": 7,
+        "next": null
+      },
+      {
+        "data": 26000016,
+        "lvl": 1,
+        "zh": "鏡像法術",
+        "en": "Clone Spell",
+        "role": "lab",
+        "max_lvl": 9,
+        "limited_lvl": 9,
+        "next": {
+          "lvl": 2,
+          "cost": {
+            "elixir": 1500000
+          },
+          "time": 86400
+        }
+      },
+      {
+        "data": 26000017,
+        "lvl": 2,
+        "zh": "骷髏法術",
+        "en": "Skeleton Spell",
+        "role": "lab",
+        "max_lvl": 8,
+        "limited_lvl": 8,
+        "next": {
+          "lvl": 3,
+          "cost": {
+            "dark": 17000
+          },
+          "time": 86400
+        }
+      },
+      {
+        "data": 26000028,
+        "lvl": 1,
+        "zh": "蝙蝠法術",
+        "en": "Bat Spell",
+        "role": "lab",
+        "max_lvl": 8,
+        "limited_lvl": 8,
+        "next": {
+          "lvl": 2,
+          "cost": {
+            "dark": 13000
+          },
+          "time": 64800
+        }
+      },
+      {
+        "data": 26000035,
+        "lvl": 4,
+        "zh": "隱形法術",
+        "en": "Invisibility Spell",
+        "role": "lab",
+        "max_lvl": 4,
+        "limited_lvl": 4,
+        "next": null
+      },
+      {
+        "data": 26000053,
+        "lvl": 1,
+        "zh": "召回法術",
+        "en": "Recall Spell",
+        "role": "lab",
+        "max_lvl": 7,
+        "limited_lvl": 7,
+        "next": {
+          "lvl": 2,
+          "cost": {
+            "elixir": 7500000
+          },
+          "time": 604800
+        }
+      },
+      {
+        "data": 26000070,
+        "lvl": 5,
+        "zh": "蔓生法術",
+        "en": "Overgrowth Spell",
+        "role": "lab",
+        "max_lvl": 5,
+        "limited_lvl": 5,
+        "next": null
+      },
+      {
+        "data": 26000098,
+        "lvl": 5,
+        "zh": "復活法術",
+        "en": "Revive Spell",
+        "role": "lab",
+        "max_lvl": 5,
+        "limited_lvl": 5,
+        "next": null
+      },
+      {
+        "data": 26000109,
+        "lvl": 6,
+        "zh": "冰障法術",
+        "en": "Ice Block Spell",
+        "role": "lab",
+        "max_lvl": 6,
+        "limited_lvl": 6,
+        "next": null
+      },
+      {
+        "data": 26000120,
+        "lvl": 4,
+        "zh": "圖騰法術",
+        "en": "Totem Spell",
+        "role": "lab",
+        "max_lvl": 4,
+        "limited_lvl": 4,
+        "next": null
+      },
+      {
+        "data": 26000123,
+        "lvl": 1,
+        "zh": "憤怒法術",
+        "en": "Angry Spell",
+        "role": "lab",
+        "max_lvl": 4,
+        "limited_lvl": 4,
+        "next": {
+          "lvl": 2,
+          "cost": {
+            "dark": 150000
+          },
+          "time": 806400
+        }
+      }
+    ],
+    "pets": [
+      {
+        "data": 73000000,
+        "lvl": 3,
+        "zh": "萊希",
+        "en": "L.A.S.S.I",
+        "role": "pet",
+        "max_lvl": 15,
+        "limited_lvl": 15,
+        "next": {
+          "lvl": 4,
+          "cost": {
+            "dark": 40000
+          },
+          "time": 172800
+        }
+      },
+      {
+        "data": 73000001,
+        "lvl": 3,
+        "zh": "犛犛",
+        "en": "Mighty Yak",
+        "role": "pet",
+        "max_lvl": 15,
+        "limited_lvl": 15,
+        "next": {
+          "lvl": 4,
+          "cost": {
+            "dark": 60000
+          },
+          "time": 172800
+        }
+      },
+      {
+        "data": 73000002,
+        "lvl": 2,
+        "zh": "閃電梟",
+        "en": "Electro Owl",
+        "role": "pet",
+        "max_lvl": 15,
+        "limited_lvl": 15,
+        "next": {
+          "lvl": 3,
+          "cost": {
+            "dark": 45000
+          },
+          "time": 172800
+        }
+      },
+      {
+        "data": 73000003,
+        "lvl": 2,
+        "zh": "獨角",
+        "en": "Unicorn",
+        "role": "pet",
+        "max_lvl": 15,
+        "limited_lvl": 15,
+        "next": {
+          "lvl": 3,
+          "cost": {
+            "dark": 65000
+          },
+          "time": 172800
+        }
+      },
+      {
+        "data": 73000004,
+        "lvl": 10,
+        "zh": "鳳凰",
+        "en": "Phoenix",
+        "role": "pet",
+        "max_lvl": 10,
+        "limited_lvl": 10,
+        "next": null
+      },
+      {
+        "data": 73000007,
+        "lvl": 4,
+        "zh": "猛毒蜥",
+        "en": "Poison Lizard",
+        "role": "pet",
+        "max_lvl": 15,
+        "limited_lvl": 15,
+        "next": {
+          "lvl": 5,
+          "cost": {
+            "dark": 100000
+          },
+          "time": 216000
+        }
+      },
+      {
+        "data": 73000008,
+        "lvl": 4,
+        "zh": "挖挖",
+        "en": "Diggy",
+        "role": "pet",
+        "max_lvl": 15,
+        "limited_lvl": 15,
+        "next": {
+          "lvl": 5,
+          "cost": {
+            "dark": 130000
+          },
+          "time": 345600
+        }
+      },
+      {
+        "data": 73000009,
+        "lvl": 2,
+        "zh": "霜牙",
+        "en": "Frosty",
+        "role": "pet",
+        "max_lvl": 15,
+        "limited_lvl": 15,
+        "next": {
+          "lvl": 3,
+          "cost": {
+            "dark": 85000
+          },
+          "time": 172800
+        }
+      },
+      {
+        "data": 73000010,
+        "lvl": 2,
+        "zh": "靈狐",
+        "en": "Spirit Fox",
+        "role": "pet",
+        "max_lvl": 10,
+        "limited_lvl": 10,
+        "next": {
+          "lvl": 3,
+          "cost": {
+            "dark": 160000
+          },
+          "time": 345600
+        }
+      },
+      {
+        "data": 73000011,
+        "lvl": 10,
+        "zh": "憤怒水母",
+        "en": "Angry Jelly",
+        "role": "pet",
+        "max_lvl": 10,
+        "limited_lvl": 10,
+        "next": null
+      },
+      {
+        "data": 73000016,
+        "lvl": 7,
+        "timer": 263078,
+        "zh": "阿啾",
+        "en": "Sneezy",
+        "role": "pet",
+        "max_lvl": 10,
+        "limited_lvl": 10,
+        "next": {
+          "lvl": 9,
+          "cost": {
+            "dark": 340000
+          },
+          "time": 691200
+        },
+        "done_at": "2026-11-15T17:16:04+08:00"
+      },
+      {
+        "data": 73000017,
+        "lvl": 10,
+        "zh": "貪婪渡鴉",
+        "en": "Greedy Raven",
+        "role": "pet",
+        "max_lvl": 10,
+        "limited_lvl": 10,
+        "next": null
+      }
+    ],
+    "equipment": [
+      {
+        "data": 90000000,
+        "lvl": 1,
+        "zh": "野蠻人玩偶",
+        "en": "Barbarian Puppet",
+        "max_lvl": 18,
+        "limited_lvl": 18,
+        "next": {
+          "lvl": 2,
+          "cost": {
+            "shiny_ore": 120
+          },
+          "time": null
+        }
+      },
+      {
+        "data": 90000001,
+        "lvl": 1,
+        "zh": "狂暴藥水瓶",
+        "en": "Rage Vial",
+        "max_lvl": 18,
+        "limited_lvl": 18,
+        "next": {
+          "lvl": 2,
+          "cost": {
+            "shiny_ore": 120
+          },
+          "time": null
+        }
+      },
+      {
+        "data": 90000002,
+        "lvl": 1,
+        "zh": "弓箭手玩偶",
+        "en": "Archer Puppet",
+        "max_lvl": 18,
+        "limited_lvl": 18,
+        "next": {
+          "lvl": 2,
+          "cost": {
+            "shiny_ore": 120
+          },
+          "time": null
+        }
+      },
+      {
+        "data": 90000003,
+        "lvl": 1,
+        "zh": "隱形藥水瓶",
+        "en": "Invisibility Vial",
+        "max_lvl": 18,
+        "limited_lvl": 18,
+        "next": {
+          "lvl": 2,
+          "cost": {
+            "shiny_ore": 120
+          },
+          "time": null
+        }
+      },
+      {
+        "data": 90000004,
+        "lvl": 18,
+        "zh": "永恆書卷",
+        "en": "Eternal Tome",
+        "max_lvl": 18,
+        "limited_lvl": 18,
+        "next": null
+      },
+      {
+        "data": 90000005,
+        "lvl": 18,
+        "zh": "生命寶石",
+        "en": "Life Gem",
+        "max_lvl": 18,
+        "limited_lvl": 18,
+        "next": null
+      },
+      {
+        "data": 90000006,
+        "lvl": 9,
+        "zh": "追蹤神盾",
+        "en": "Seeking Shield",
+        "max_lvl": 18,
+        "limited_lvl": 18,
+        "next": {
+          "lvl": 10,
+          "cost": {
+            "shiny_ore": 1900
+          },
+          "time": null
+        }
+      },
+      {
+        "data": 90000007,
+        "lvl": 1,
+        "zh": "皇家寶石",
+        "en": "Royal Gem",
+        "max_lvl": 18,
+        "limited_lvl": 18,
+        "next": {
+          "lvl": 2,
+          "cost": {
+            "shiny_ore": 120
+          },
+          "time": null
+        }
+      },
+      {
+        "data": 90000008,
+        "lvl": 8,
+        "zh": "震地金靴",
+        "en": "Earthquake Boots",
+        "max_lvl": 18,
+        "limited_lvl": 18,
+        "next": {
+          "lvl": 9,
+          "cost": {
+            "shiny_ore": 1800,
+            "glowy_ore": 200
+          },
+          "time": null
+        }
+      },
+      {
+        "data": 90000009,
+        "lvl": 1,
+        "zh": "野豬騎士玩偶",
+        "en": "Hog Rider Puppet",
+        "max_lvl": 18,
+        "limited_lvl": 18,
+        "next": {
+          "lvl": 2,
+          "cost": {
+            "shiny_ore": 120
+          },
+          "time": null
+        }
+      },
+      {
+        "data": 90000010,
+        "lvl": 1,
+        "zh": "巨型手套",
+        "en": "Giant Gauntlet",
+        "max_lvl": 27,
+        "limited_lvl": 27,
+        "next": {
+          "lvl": 2,
+          "cost": {
+            "shiny_ore": 120
+          },
+          "time": null
+        }
+      },
+      {
+        "data": 90000011,
+        "lvl": 1,
+        "zh": "嗜血鬍鬚",
+        "en": "Vampstache",
+        "max_lvl": 18,
+        "limited_lvl": 18,
+        "next": {
+          "lvl": 2,
+          "cost": {
+            "shiny_ore": 120
+          },
+          "time": null
+        }
+      },
+      {
+        "data": 90000012,
+        "lvl": 1,
+        "zh": "加速藥水瓶",
+        "en": "Haste Vial",
+        "max_lvl": 18,
+        "limited_lvl": 18,
+        "next": {
+          "lvl": 2,
+          "cost": {
+            "shiny_ore": 120
+          },
+          "time": null
+        }
+      },
+      {
+        "data": 90000013,
+        "lvl": 24,
+        "zh": "火箭長矛",
+        "en": "Rocket Spear",
+        "max_lvl": 27,
+        "limited_lvl": 27,
+        "next": {
+          "lvl": 25,
+          "cost": {
+            "shiny_ore": 3400
+          },
+          "time": null
+        }
+      },
+      {
+        "data": 90000014,
+        "lvl": 12,
+        "zh": "尖刺足球",
+        "en": "Spiky Ball",
+        "max_lvl": 27,
+        "limited_lvl": 27,
+        "next": {
+          "lvl": 13,
+          "cost": {
+            "shiny_ore": 2200
+          },
+          "time": null
+        }
+      },
+      {
+        "data": 90000015,
+        "lvl": 6,
+        "zh": "冰封箭矢",
+        "en": "Frozen Arrow",
+        "max_lvl": 27,
+        "limited_lvl": 27,
+        "next": {
+          "lvl": 7,
+          "cost": {
+            "shiny_ore": 1120
+          },
+          "time": null
+        }
+      },
+      {
+        "data": 90000016,
+        "lvl": 1,
+        "zh": "巨石箭矢",
+        "en": "Monolith Arrow",
+        "max_lvl": 27,
+        "limited_lvl": 27,
+        "next": {
+          "lvl": 2,
+          "cost": {
+            "shiny_ore": 120
+          },
+          "time": null
+        }
+      },
+      {
+        "data": 90000017,
+        "lvl": 18,
+        "zh": "巨型箭矢",
+        "en": "Giant Arrow",
+        "max_lvl": 18,
+        "limited_lvl": 18,
+        "next": null
+      },
+      {
+        "data": 90000019,
+        "lvl": 27,
+        "zh": "英雄火炬",
+        "en": "Heroic Torch",
+        "max_lvl": 27,
+        "limited_lvl": 27,
+        "next": null
+      },
+      {
+        "data": 90000020,
+        "lvl": 1,
+        "zh": "天使玩偶",
+        "en": "Healer Puppet",
+        "max_lvl": 18,
+        "limited_lvl": 18,
+        "next": {
+          "lvl": 2,
+          "cost": {
+            "shiny_ore": 120
+          },
+          "time": null
+        }
+      },
+      {
+        "data": 90000022,
+        "lvl": 27,
+        "zh": "巨大火球",
+        "en": "Fireball",
+        "max_lvl": 27,
+        "limited_lvl": 27,
+        "next": null
+      },
+      {
+        "data": 90000024,
+        "lvl": 18,
+        "zh": "狂暴寶石",
+        "en": "Rage Gem",
+        "max_lvl": 18,
+        "limited_lvl": 18,
+        "next": null
+      },
+      {
+        "data": 90000032,
+        "lvl": 1,
+        "zh": "靈蛇手鐲",
+        "en": "Snake Bracelet",
+        "max_lvl": 27,
+        "limited_lvl": 27,
+        "next": {
+          "lvl": 2,
+          "cost": {
+            "shiny_ore": 120
+          },
+          "time": null
+        }
+      },
+      {
+        "data": 90000034,
+        "lvl": 18,
+        "zh": "治療書卷",
+        "en": "Healing Tome",
+        "max_lvl": 18,
+        "limited_lvl": 18,
+        "next": null
+      },
+      {
+        "data": 90000035,
+        "lvl": 27,
+        "zh": "暗黑皇冠",
+        "en": "Dark Crown",
+        "max_lvl": 27,
+        "limited_lvl": 27,
+        "next": null
+      },
+      {
+        "data": 90000039,
+        "lvl": 10,
+        "zh": "複製魔鏡",
+        "en": "Magic Mirror",
+        "max_lvl": 27,
+        "limited_lvl": 27,
+        "next": {
+          "lvl": 11,
+          "cost": {
+            "shiny_ore": 2000
+          },
+          "time": null
+        }
+      },
+      {
+        "data": 90000040,
+        "lvl": 1,
+        "zh": "雷電戰靴",
+        "en": "Electro Boots",
+        "max_lvl": 27,
+        "limited_lvl": 27,
+        "next": {
+          "lvl": 2,
+          "cost": {
+            "shiny_ore": 120
+          },
+          "time": null
+        }
+      },
+      {
+        "data": 90000041,
+        "lvl": 1,
+        "zh": "熔岩氣球兵玩偶",
+        "en": "Lavaloon Puppet",
+        "max_lvl": 27,
+        "limited_lvl": 27,
+        "next": {
+          "lvl": 2,
+          "cost": {
+            "shiny_ore": 120
+          },
+          "time": null
+        }
+      },
+      {
+        "data": 90000042,
+        "lvl": 1,
+        "zh": "護衛玩偶",
+        "en": "Henchmen Puppet",
+        "max_lvl": 18,
+        "limited_lvl": 18,
+        "next": {
+          "lvl": 2,
+          "cost": {
+            "shiny_ore": 120
+          },
+          "time": null
+        }
+      },
+      {
+        "data": 90000043,
+        "lvl": 18,
+        "zh": "暗黑魔球",
+        "en": "Dark Orb",
+        "max_lvl": 18,
+        "limited_lvl": 18,
+        "next": null
+      },
+      {
+        "data": 90000044,
+        "lvl": 1,
+        "zh": "鐵甲短褲",
+        "en": "Metal Pants",
+        "max_lvl": 18,
+        "limited_lvl": 18,
+        "next": {
+          "lvl": 2,
+          "cost": {
+            "shiny_ore": 120
+          },
+          "time": null
+        }
+      },
+      {
+        "data": 90000047,
+        "lvl": 1,
+        "zh": "貴族啞鈴",
+        "en": "Noble Iron",
+        "max_lvl": 18,
+        "limited_lvl": 18,
+        "next": {
+          "lvl": 2,
+          "cost": {
+            "shiny_ore": 120
+          },
+          "time": null
+        }
+      },
+      {
+        "data": 90000048,
+        "lvl": 27,
+        "zh": "動作人偶",
+        "en": "Action Figure",
+        "max_lvl": 27,
+        "limited_lvl": 27,
+        "next": null
+      },
+      {
+        "data": 90000049,
+        "lvl": 10,
+        "zh": "隕石法杖",
+        "en": "Meteor Staff",
+        "max_lvl": 27,
+        "limited_lvl": 27,
+        "next": {
+          "lvl": 11,
+          "cost": {
+            "shiny_ore": 2000
+          },
+          "time": null
+        }
+      },
+      {
+        "data": 90000050,
+        "lvl": 1,
+        "zh": "冷冽冰晶",
+        "en": "Frost Flake",
+        "max_lvl": 27,
+        "limited_lvl": 27,
+        "next": {
+          "lvl": 2,
+          "cost": {
+            "shiny_ore": 120
+          },
+          "time": null
+        }
+      },
+      {
+        "data": 90000051,
+        "lvl": 1,
+        "zh": "木棍馬駒",
+        "en": "Stick Horse",
+        "max_lvl": 27,
+        "limited_lvl": 27,
+        "next": {
+          "lvl": 2,
+          "cost": {
+            "shiny_ore": 120
+          },
+          "time": null
+        }
+      },
+      {
+        "data": 90000052,
+        "lvl": 18,
+        "zh": "烈焰之心",
+        "en": "Fire Heart",
+        "max_lvl": 18,
+        "limited_lvl": 18,
+        "next": null
+      },
+      {
+        "data": 90000053,
+        "lvl": 1,
+        "zh": "火箭背包",
+        "en": "Rocket Backpack",
+        "max_lvl": 27,
+        "limited_lvl": 27,
+        "next": {
+          "lvl": 2,
+          "cost": {
+            "shiny_ore": 120
+          },
+          "time": null
+        }
+      },
+      {
+        "data": 90000056,
+        "lvl": 1,
+        "zh": "爆震器",
+        "en": "Stun Blaster",
+        "max_lvl": 18,
+        "limited_lvl": 18,
+        "next": {
+          "lvl": 2,
+          "cost": {
+            "shiny_ore": 120
+          },
+          "time": null
+        }
+      },
+      {
+        "data": 90000057,
+        "lvl": 4,
+        "zh": "助燃器",
+        "en": "Flame Blower",
+        "max_lvl": 18,
+        "limited_lvl": 18,
+        "next": {
+          "lvl": 5,
+          "cost": {
+            "shiny_ore": 600
+          },
+          "time": null
+        }
+      },
+      {
+        "data": 90000059,
+        "lvl": 1,
+        "zh": "雷電獠牙",
+        "en": "Electro Fangs",
+        "max_lvl": 18,
+        "limited_lvl": 18,
+        "next": {
+          "lvl": 2,
+          "cost": {
+            "shiny_ore": 120
+          },
+          "time": null
+        }
+      },
+      {
+        "data": 90000060,
+        "lvl": 27,
+        "zh": "復仇牌組",
+        "en": "Revenge Deck",
+        "max_lvl": 27,
+        "limited_lvl": 27,
+        "next": null
+      },
+      {
+        "data": 90000061,
+        "lvl": 21,
+        "zh": "傳送吊飾",
+        "en": "Portal Pendant",
+        "max_lvl": 27,
+        "limited_lvl": 27,
+        "next": {
+          "lvl": 22,
+          "cost": {
+            "shiny_ore": 3100
+          },
+          "time": null
+        }
+      }
+    ]
+  },
+  "night": {
+    "buildings": [
+      {
+        "data": 1000040,
+        "lvl": 11,
+        "timer": 248763,
+        "zh": "建築大師訓練營",
+        "en": "Builder Barracks",
+        "role": "builder",
+        "max_lvl": 12,
+        "limited_lvl": 12,
+        "next": null,
+        "done_at": "2026-11-15T08:51:50+08:00"
+      },
+      {
+        "data": 1000033,
+        "lvl": 10,
+        "cnt": 180,
+        "zh": "城牆",
+        "en": "Wall",
+        "role": "builder",
+        "max_lvl": 10,
+        "limited_lvl": 10,
+        "next": null
+      },
+      {
+        "data": 1000034,
+        "lvl": 10,
+        "cnt": 1,
+        "zh": "建築大師大本營",
+        "en": "Builder Hall",
+        "role": "builder",
+        "max_lvl": 10,
+        "next": null
+      },
+      {
+        "data": 1000035,
+        "lvl": 1,
+        "cnt": 3,
+        "zh": "聖水收集器",
+        "en": "Elixir Collector",
+        "role": "builder",
+        "max_lvl": 10,
+        "limited_lvl": 10,
+        "next": {
+          "lvl": 2,
+          "cost": {
+            "gold": 5000
+          },
+          "time": 1200
+        }
+      },
+      {
+        "data": 1000036,
+        "lvl": 10,
+        "cnt": 2,
+        "zh": "聖水瓶",
+        "en": "Elixir Storage",
+        "role": "builder",
+        "max_lvl": 10,
+        "limited_lvl": 10,
+        "next": null
+      },
+      {
+        "data": 1000037,
+        "lvl": 1,
+        "cnt": 3,
+        "zh": "金礦",
+        "en": "Gold Mine",
+        "role": "builder",
+        "max_lvl": 10,
+        "limited_lvl": 10,
+        "next": {
+          "lvl": 2,
+          "cost": {
+            "elixir": 5000
+          },
+          "time": 1200
+        }
+      },
+      {
+        "data": 1000038,
+        "lvl": 10,
+        "cnt": 2,
+        "zh": "儲金罐",
+        "en": "Gold Storage",
+        "role": "builder",
+        "max_lvl": 10,
+        "limited_lvl": 10,
+        "next": null
+      },
+      {
+        "data": 1000039,
+        "lvl": 9,
+        "cnt": 1,
+        "zh": "時光鐘樓",
+        "en": "Clock Tower",
+        "role": "builder",
+        "max_lvl": 10,
+        "limited_lvl": 10,
+        "next": {
+          "lvl": 10,
+          "cost": {
+            "gold": 3700000
+          },
+          "time": 432000
+        }
+      },
+      {
+        "data": 1000041,
+        "lvl": 1,
+        "cnt": 1,
+        "zh": "雙管加農炮",
+        "en": "Double Cannon",
+        "role": "builder",
+        "max_lvl": 10,
+        "limited_lvl": 10,
+        "next": {
+          "lvl": 2,
+          "cost": {
+            "gold": 50000
+          },
+          "time": 3600
+        }
+      },
+      {
+        "data": 1000041,
+        "lvl": 2,
+        "cnt": 1,
+        "zh": "雙管加農炮",
+        "en": "Double Cannon",
+        "role": "builder",
+        "max_lvl": 10,
+        "limited_lvl": 10,
+        "next": {
+          "lvl": 3,
+          "cost": {
+            "gold": 80000
+          },
+          "time": 10800
+        }
+      },
+      {
+        "data": 1000041,
+        "lvl": 8,
+        "cnt": 1,
+        "zh": "雙管加農炮",
+        "en": "Double Cannon",
+        "role": "builder",
+        "max_lvl": 10,
+        "limited_lvl": 10,
+        "next": {
+          "lvl": 9,
+          "cost": {
+            "gold": 4200000
+          },
+          "time": 691200
+        }
+      },
+      {
+        "data": 1000042,
+        "lvl": 1,
+        "cnt": 6,
+        "zh": "兵營",
+        "en": "Army Camp",
+        "role": "builder",
+        "max_lvl": 1,
+        "limited_lvl": 1,
+        "next": null
+      },
+      {
+        "data": 1000043,
+        "lvl": 2,
+        "cnt": 3,
+        "zh": "特斯拉電磁塔",
+        "en": "Hidden Tesla",
+        "role": "builder",
+        "max_lvl": 10,
+        "limited_lvl": 10,
+        "next": {
+          "lvl": 3,
+          "cost": {
+            "gold": 150000
+          },
+          "time": 18000
+        }
+      },
+      {
+        "data": 1000044,
+        "lvl": 3,
+        "cnt": 3,
+        "zh": "加農炮",
+        "en": "Cannon",
+        "role": "builder",
+        "max_lvl": 10,
+        "limited_lvl": 10,
+        "next": {
+          "lvl": 4,
+          "cost": {
+            "gold": 200000
+          },
+          "time": 28800
+        }
+      },
+      {
+        "data": 1000045,
+        "lvl": 8,
+        "cnt": 1,
+        "zh": "多管迫擊炮",
+        "en": "Multi Mortar",
+        "role": "builder",
+        "max_lvl": 10,
+        "limited_lvl": 10,
+        "next": {
+          "lvl": 9,
+          "cost": {
+            "gold": 4500000
+          },
+          "time": 950400
+        }
+      },
+      {
+        "data": 1000046,
+        "lvl": 10,
+        "cnt": 1,
+        "zh": "星空實驗室",
+        "en": "Star Laboratory",
+        "role": "builder",
+        "max_lvl": 10,
+        "limited_lvl": 10,
+        "next": null
+      },
+      {
+        "data": 1000047,
+        "lvl": 1,
+        "cnt": 1,
+        "zh": "博托棚屋",
+        "en": "B.O.T.O’s Shack",
+        "role": "builder",
+        "max_lvl": 1,
+        "limited_lvl": 1,
+        "next": null
+      },
+      {
+        "data": 1000048,
+        "lvl": 2,
+        "cnt": 2,
+        "zh": "箭塔",
+        "en": "Archer Tower",
+        "role": "builder",
+        "max_lvl": 10,
+        "limited_lvl": 10,
+        "next": {
+          "lvl": 3,
+          "cost": {
+            "gold": 60000
+          },
+          "time": 7200
+        }
+      },
+      {
+        "data": 1000048,
+        "lvl": 9,
+        "cnt": 1,
+        "zh": "箭塔",
+        "en": "Archer Tower",
+        "role": "builder",
+        "max_lvl": 10,
+        "limited_lvl": 10,
+        "next": {
+          "lvl": 10,
+          "cost": {
+            "gold": 4600000
+          },
+          "time": 777600
+        }
+      },
+      {
+        "data": 1000049,
+        "lvl": 1,
+        "cnt": 2,
+        "zh": "預備營",
+        "en": "Reinforcement Camp",
+        "role": "builder",
+        "max_lvl": 1,
+        "limited_lvl": 1,
+        "next": null
+      },
+      {
+        "data": 1000050,
+        "lvl": 1,
+        "cnt": 4,
+        "zh": "防空火炮",
+        "en": "Firecrackers",
+        "role": "builder",
+        "max_lvl": 10,
+        "limited_lvl": 10,
+        "next": {
+          "lvl": 2,
+          "cost": {
+            "gold": 80000
+          },
+          "time": 7200
+        }
+      },
+      {
+        "data": 1000050,
+        "lvl": 4,
+        "cnt": 1,
+        "zh": "防空火炮",
+        "en": "Firecrackers",
+        "role": "builder",
+        "max_lvl": 10,
+        "limited_lvl": 10,
+        "next": {
+          "lvl": 5,
+          "cost": {
+            "gold": 800000
+          },
+          "time": 86400
+        }
+      },
+      {
+        "data": 1000051,
+        "lvl": 1,
+        "cnt": 1,
+        "zh": "守衛崗哨",
+        "en": "Guard Post",
+        "role": "builder",
+        "max_lvl": 10,
+        "limited_lvl": 10,
+        "next": {
+          "lvl": 2,
+          "cost": {
+            "gold": 240000
+          },
+          "time": 28800
+        }
+      },
+      {
+        "data": 1000052,
+        "lvl": 3,
+        "cnt": 1,
+        "zh": "超級特斯拉電磁塔",
+        "en": "Mega Tesla",
+        "role": "builder",
+        "max_lvl": 10,
+        "limited_lvl": 10,
+        "next": {
+          "lvl": 4,
+          "cost": {
+            "gold": 3300000
+          },
+          "time": 432000
+        }
+      },
+      {
+        "data": 1000053,
+        "lvl": 1,
+        "cnt": 1,
+        "zh": "戰爭機器",
+        "en": "Battle Machine",
+        "role": "builder",
+        "max_lvl": 1,
+        "limited_lvl": 1,
+        "next": null
+      },
+      {
+        "data": 1000054,
+        "lvl": 4,
+        "cnt": 1,
+        "zh": "空中炸彈發射器",
+        "en": "Air Bombs",
+        "role": "builder",
+        "max_lvl": 10,
+        "limited_lvl": 10,
+        "next": {
+          "lvl": 5,
+          "cost": {
+            "gold": 1200000
+          },
+          "time": 259200
+        }
+      },
+      {
+        "data": 1000055,
+        "lvl": 2,
+        "cnt": 2,
+        "zh": "撼地巨石",
+        "en": "Crusher",
+        "role": "builder",
+        "max_lvl": 10,
+        "limited_lvl": 10,
+        "next": {
+          "lvl": 3,
+          "cost": {
+            "gold": 220000
+          },
+          "time": 43200
+        }
+      },
+      {
+        "data": 1000056,
+        "lvl": 1,
+        "cnt": 1,
+        "zh": "熔岩火炮",
+        "en": "Roaster",
+        "role": "builder",
+        "max_lvl": 10,
+        "limited_lvl": 10,
+        "next": {
+          "lvl": 2,
+          "cost": {
+            "gold": 1200000
+          },
+          "time": 172800
+        }
+      },
+      {
+        "data": 1000057,
+        "lvl": 1,
+        "cnt": 1,
+        "zh": "巨型加農炮",
+        "en": "Giant Cannon",
+        "role": "builder",
+        "max_lvl": 10,
+        "limited_lvl": 10,
+        "next": {
+          "lvl": 2,
+          "cost": {
+            "gold": 2100000
+          },
+          "time": 172800
+        }
+      },
+      {
+        "data": 1000058,
+        "lvl": 2,
+        "cnt": 1,
+        "zh": "寶石礦井",
+        "en": "Gem Mine",
+        "role": "builder",
+        "max_lvl": 10,
+        "limited_lvl": 10,
+        "next": {
+          "lvl": 3,
+          "cost": {
+            "elixir": 240000
+          },
+          "time": 21600
+        }
+      },
+      {
+        "data": 1000063,
+        "lvl": 1,
+        "cnt": 1,
+        "zh": "熔岩發射器",
+        "en": "Lava Launcher",
+        "role": "builder",
+        "max_lvl": 10,
+        "limited_lvl": 10,
+        "next": {
+          "lvl": 2,
+          "cost": {
+            "gold": 3100000
+          },
+          "time": 259200
+        }
+      },
+      {
+        "data": 1000065,
+        "lvl": 5,
+        "cnt": 1,
+        "zh": "巴布控制台",
+        "en": "B.O.B Control",
+        "role": "builder",
+        "max_lvl": 5,
+        "limited_lvl": 5,
+        "next": null
+      },
+      {
+        "data": 1000078,
+        "lvl": 6,
+        "cnt": 1,
+        "zh": "奧托哨所",
+        "en": "O.T.T.O's Outpost",
+        "role": "builder",
+        "max_lvl": 10,
+        "limited_lvl": 10,
+        "next": {
+          "lvl": 7,
+          "cost": {
+            "gold": 3000000
+          },
+          "time": 604800
+        }
+      },
+      {
+        "data": 1000080,
+        "lvl": 1,
+        "cnt": 1,
+        "zh": "戰鬥直升機",
+        "en": "Battle Copter",
+        "role": "builder",
+        "max_lvl": 1,
+        "limited_lvl": 1,
+        "next": null
+      },
+      {
+        "data": 1000081,
+        "lvl": 1,
+        "cnt": 1,
+        "zh": "X連弩",
+        "en": "X-Bow",
+        "role": "builder",
+        "max_lvl": 5,
+        "limited_lvl": 5,
+        "next": {
+          "lvl": 2,
+          "cost": {
+            "gold": 4800000
+          },
+          "time": 691200
+        }
+      },
+      {
+        "data": 1000082,
+        "lvl": 1,
+        "cnt": 1,
+        "zh": "治療小屋",
+        "en": "Healing Hut",
+        "role": "builder",
+        "max_lvl": 6,
+        "limited_lvl": 6,
+        "next": {
+          "lvl": 2,
+          "cost": {
+            "elixir": 2000000
+          },
+          "time": 172800
+        }
+      }
+    ],
+    "traps": [
+      {
+        "data": 12000010,
+        "lvl": 1,
+        "cnt": 6,
+        "zh": "隱形彈簧",
+        "en": "Spring Trap",
+        "role": "builder",
+        "max_lvl": 5,
+        "limited_lvl": 5,
+        "next": {
+          "lvl": 2,
+          "cost": {
+            "gold": 30000
+          },
+          "time": 3600
+        }
+      },
+      {
+        "data": 12000011,
+        "lvl": 1,
+        "cnt": 5,
+        "zh": "彈射陷阱",
+        "en": "Push Trap",
+        "role": "builder",
+        "max_lvl": 10,
+        "limited_lvl": 10,
+        "next": {
+          "lvl": 2,
+          "cost": {
+            "gold": 3000
+          },
+          "time": 300
+        }
+      },
+      {
+        "data": 12000013,
+        "lvl": 3,
+        "cnt": 6,
+        "zh": "地雷",
+        "en": "Mine",
+        "role": "builder",
+        "max_lvl": 10,
+        "limited_lvl": 10,
+        "next": {
+          "lvl": 4,
+          "cost": {
+            "gold": 25000
+          },
+          "time": 7200
+        }
+      },
+      {
+        "data": 12000014,
+        "lvl": 1,
+        "cnt": 4,
+        "zh": "巨型地雷",
+        "en": "Mega Mine",
+        "role": "builder",
+        "max_lvl": 10,
+        "limited_lvl": 10,
+        "next": {
+          "lvl": 2,
+          "cost": {
+            "gold": 40000
+          },
+          "time": 3600
+        }
+      }
+    ],
+    "units": [
+      {
+        "data": 4000031,
+        "lvl": 5,
+        "zh": "狂暴野蠻人",
+        "en": "Raged Barbarian",
+        "role": "lab",
+        "max_lvl": 20,
+        "limited_lvl": 20,
+        "next": {
+          "lvl": 6,
+          "cost": {
+            "elixir": 180000
+          },
+          "time": 36000
+        }
+      },
+      {
+        "data": 4000032,
+        "lvl": 9,
+        "zh": "隱密弓箭手",
+        "en": "Sneaky Archer",
+        "role": "lab",
+        "max_lvl": 20,
+        "limited_lvl": 20,
+        "next": {
+          "lvl": 10,
+          "cost": {
+            "elixir": 1000000
+          },
+          "time": 129600
+        }
+      },
+      {
+        "data": 4000033,
+        "lvl": 20,
+        "zh": "變異亡靈",
+        "en": "Beta Minion",
+        "role": "lab",
+        "max_lvl": 20,
+        "limited_lvl": 20,
+        "next": null
+      },
+      {
+        "data": 4000034,
+        "lvl": 4,
+        "zh": "巨人拳擊手",
+        "en": "Boxer Giant",
+        "role": "lab",
+        "max_lvl": 20,
+        "limited_lvl": 20,
+        "next": {
+          "lvl": 5,
+          "cost": {
+            "elixir": 120000
+          },
+          "time": 36000
+        }
+      },
+      {
+        "data": 4000035,
+        "lvl": 5,
+        "zh": "炸彈兵",
+        "en": "Bomber",
+        "role": "lab",
+        "max_lvl": 20,
+        "limited_lvl": 20,
+        "next": {
+          "lvl": 6,
+          "cost": {
+            "elixir": 320000
+          },
+          "time": 57600
+        }
+      },
+      {
+        "data": 4000036,
+        "lvl": 13,
+        "zh": "威能皮卡",
+        "en": "Power P.E.K.K.A",
+        "role": "lab",
+        "max_lvl": 20,
+        "limited_lvl": 20,
+        "next": {
+          "lvl": 14,
+          "cost": {
+            "elixir": 3600000
+          },
+          "time": 388800
+        }
+      },
+      {
+        "data": 4000037,
+        "lvl": 8,
+        "zh": "加農炮戰車",
+        "en": "Cannon Cart",
+        "role": "lab",
+        "max_lvl": 20,
+        "limited_lvl": 20,
+        "next": {
+          "lvl": 9,
+          "cost": {
+            "elixir": 1100000
+          },
+          "time": 129600
+        }
+      },
+      {
+        "data": 4000038,
+        "lvl": 20,
+        "zh": "骷髏氣球",
+        "en": "Drop Ship",
+        "role": "lab",
+        "max_lvl": 20,
+        "limited_lvl": 20,
+        "next": null
+      },
+      {
+        "data": 4000041,
+        "lvl": 9,
+        "zh": "飛龍寶寶",
+        "en": "Baby Dragon",
+        "role": "lab",
+        "max_lvl": 20,
+        "limited_lvl": 20,
+        "next": {
+          "lvl": 10,
+          "cost": {
+            "elixir": 1200000
+          },
+          "time": 172800
+        }
+      },
+      {
+        "data": 4000042,
+        "lvl": 13,
+        "timer": 141903,
+        "zh": "暗夜女巫",
+        "en": "Night Witch",
+        "role": "lab",
+        "max_lvl": 20,
+        "limited_lvl": 20,
+        "next": {
+          "lvl": 15,
+          "cost": {
+            "elixir": 3500000
+          },
+          "time": 475200
+        },
+        "done_at": "2026-11-14T03:10:50+08:00"
+      },
+      {
+        "data": 4000070,
+        "lvl": 15,
+        "zh": "飛豬騎士",
+        "en": "Hog Glider",
+        "role": "lab",
+        "max_lvl": 20,
+        "limited_lvl": 20,
+        "next": {
+          "lvl": 16,
+          "cost": {
+            "elixir": 4000000
+          },
+          "time": 475200
+        }
+      }
+    ],
+    "heroes": [
+      {
+        "data": 28000003,
+        "lvl": 27,
+        "timer": 373494,
+        "zh": "戰爭機器",
+        "en": "Battle Machine",
+        "role": "builder",
+        "max_lvl": 35,
+        "limited_lvl": 35,
+        "next": {
+          "lvl": 29,
+          "cost": {
+            "elixir": 3900000
+          },
+          "time": 518400
+        },
+        "done_at": "2026-11-16T19:30:41+08:00"
+      },
+      {
+        "data": 28000005,
+        "lvl": 29,
+        "timer": 120667,
+        "zh": "戰鬥直升機",
+        "en": "Battle Copter",
+        "role": "builder",
+        "max_lvl": 35,
+        "limited_lvl": 35,
+        "next": {
+          "lvl": 31,
+          "cost": {
+            "elixir": 4100000
+          },
+          "time": 604800
+        },
+        "done_at": "2026-11-13T21:16:54+08:00"
+      }
+    ]
+  }
+}
