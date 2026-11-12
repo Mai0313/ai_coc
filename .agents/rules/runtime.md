@@ -50,6 +50,8 @@ paths:
 
 `~/.ai_coc\` holds `account_json/` (one `VillageExport` per account per day, the day's last, which `ai_coc growth` compares), `config.json` (the API key included, in plain text), `state.json`, `game_data/<version>/` (below), `logs/`, and `runs.jsonl` (every run's milestones, one append per line under its own file lock; `AGENTS.md`'s Commands and their runs). Writing the journal never fails a run: a line it cannot write is said on stderr and dropped. There is no database; an old `controller.sqlite3` is left where it is and nothing creates a new one. Nothing reads an old `gemini.key.dpapi` either; its key has to be entered again.
 
+**`turnaround`, `tended` and `farmed` read back what other commands wrote**, so what they read is an interface: the `Tap` line `adapters/adb.py` logs, which `commands.TAP_LINE` matches in `run.log` as `LOG_FORMAT` and `TIME_FORMAT` lay it out; the outcomes they test (`confirm`'s `confirmed`, `goblin_offered` and `unexpected`, `boost`'s `boosted`, `session_taken`) and `SESSION_TAKEN`'s text as a run's result; the farm subagent's `-farm` session suffix, which `takeover`'s `runner.md` sets; and the journal lines and fields they read (`JournalLine`, `JournalRound`, `JournalTimers`, `JournalConfirm`, and the `ConfirmReport` an `end` carries). Changing one breaks those reports silently, so the same PR changes the reader, and keeps old lines reading, since the journal is never migrated (`_slot`'s `heroes2`, `tended`'s `unexpected`).
+
 **One settings file** (`AppConfig`, `adapters/config.py`).
 
 - Its defaults are the ones to farm with, not the field defaults underneath (`LootThresholds()` means take anything). A file that will not parse raises.
