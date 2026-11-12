@@ -1017,6 +1017,7 @@ class UpkeepLineTests(unittest.TestCase):
                 "sheet_disagrees": "跟按鈕對不上",
                 "no_confirmation": "沒有跳出確認視窗或對話框",
                 "no_goblin": "沒有聘請哥布林工人的視窗",
+                "goblin_offered": "跳出聘請哥布林工人的視窗",
             },
             get_args(ConfirmOutcome),
         )
@@ -1661,6 +1662,20 @@ class TendedTests(unittest.TestCase):
         text = commands.tended_text(self._tended(by="s1"))
         assert text.splitlines()[0] == "- 升級: 4 件"
         assert "雷電飛龍 8 級 (8,000,000 聖水, 哥布林 160 寶石)" in text
+
+    def test_a_press_that_named_the_hire_prompt_is_the_hires_upgrade(self) -> None:
+        """The press carries the prompt's gems too, and is still no hire of its own."""
+        elixir = {"price": 8_000_000, "resource": "elixir", "point": [1121, 788]}
+        hire = {"gems": 160, "point": [965, 542]}
+        self._confirm("17:20", "goblin_offered", offer=elixir, goblin=hire, item="雷電飛龍 8 級")
+        self._confirm("17:22", "confirmed", goblin=hire)
+        (only,) = self._tended(by="s1").upgrades
+        assert (only.item, only.price, only.resource, only.gems) == (
+            "雷電飛龍 8 級",
+            8_000_000,
+            "elixir",
+            160,
+        )
 
     def test_only_the_session_and_its_farmer_since_the_time_asked(self) -> None:
         self._run("boost", "09:00", "boosted")
@@ -3177,6 +3192,34 @@ class PressAndConfirmTests(unittest.TestCase):
             adb, report = self._run([frame], lambda d, n=gems: commands.confirm(n, d, goblin=True))
             adb.tap.assert_not_called()
             assert report.outcome == "no_goblin", frame
+
+    def test_a_press_that_raises_the_goblin_prompt_names_it_with_its_gems(self) -> None:
+        """Every builder busy but an event's goblin: the hire is the agent's call, so nothing more is pressed."""
+        for frame, gems in (
+            ("goblin_builder_offer.png", 15),
+            ("goblin_builder_two_buttons.png", 71),
+        ):
+            adb, report = self._run(
+                ["sheet_hero_dark.png", frame], lambda d: commands.confirm(10800, d)
+            )
+            adb.tap.assert_called_once()
+            assert report.outcome == "goblin_offered", frame
+            assert report.goblin is not None
+            assert report.goblin.gems == gems
+            assert report.offer.price == 10800
+            line = commands.confirm_line(report)
+            assert line.startswith("確認鈕 10,800 黑水,預期 10,800:"), line
+            assert line.endswith(f"聘請鈕 {gems} 寶石"), line
+
+    def test_the_busy_builders_gem_offer_after_a_press_stays_unexpected(self) -> None:
+        """It finishes another job for gems, and nothing reads it apart from any other screen."""
+        adb, report = self._run(
+            ["sheet_hero_dark.png", "home_builders_busy_offer.png"],
+            lambda d: commands.confirm(10800, d),
+        )
+        adb.tap.assert_called_once()
+        assert report.outcome == "unexpected"
+        assert report.goblin is None
 
     def test_a_sheet_still_up_after_the_press_is_not_pressed_again(self) -> None:
         adb, report = self._run(["sheet_hero_dark.png"], lambda d: commands.confirm(10800, d))
