@@ -220,8 +220,25 @@ class ParserTests(unittest.TestCase):
 
     def test_a_watch_says_when_it_wakes(self) -> None:
         """It is the timer now, so one with no wake time has nothing to sleep until."""
+        with (
+            patch.object(sys, "argv", ["ai_coc", "watch", "--lead", "5"]),
+            patch.object(cli, "RunLog") as opened,
+            patch("sys.stderr", new_callable=io.StringIO),
+            pytest.raises(SystemExit) as stopped,
+        ):
+            cli.main()
+        assert stopped.value.code != 0
+        opened.open.assert_not_called()
+        asked = _args(
+            "watch",
+            *("--next", "2026-10-12T23:10", "--next", "2026-10-12T22:00"),
+            *("--upgrades", "lab", "--lead", "5", "--minutes", "180", "--farms"),
+        )
+        assert [one.hour for one in asked.next] == [23, 22]
+        assert (asked.upgrades, asked.lead, asked.minutes, asked.farms) == (["lab"], 5, 180, True)
+        assert _args("watch", "--upgrades").upgrades == []
         with pytest.raises(SystemExit):
-            _args("watch")
+            _args("watch", "--upgrades", "night")
 
     def test_confirm_pays_a_wall_only_in_gold_or_elixir(self) -> None:
         assert _args("confirm", "--price", "800000").pay is None

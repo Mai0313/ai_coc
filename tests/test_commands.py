@@ -2505,6 +2505,74 @@ class WatchTests(unittest.TestCase):
             about="鐘塔",
         )
 
+    def test_it_wakes_at_the_earliest_of_everything_asked_for(self) -> None:
+        now = datetime.now().astimezone()
+
+        def at(minutes: float) -> str:
+            return (now + timedelta(minutes=minutes)).isoformat()
+
+        timers = [
+            _timer(1, at(120)),
+            _timer(2, at(60), role="lab"),
+            _timer(3, at(-1)),
+            _timer(4, at(3), role="pet"),
+        ]
+        with (
+            patch.object(commands, "_last_export") as saved,
+            patch.object(commands, "upgrade_timers", return_value=timers),
+            patch.object(
+                commands, "clock_tower", return_value=ClockTower(ready_in=1, ready_at=at(50))
+            ),
+        ):
+
+            def minutes(*args: object, **kwargs: object) -> float:
+                wake = commands.wake_at(*args, **kwargs)
+                assert wake is not None
+                return round((wake - now).total_seconds() / 60)
+
+            # The pet's lead has run out, so it wakes the session now.
+            assert minutes([], [], lead=5) == 0
+            assert minutes([], ["lab", "builder"], lead=5) == 55
+            # Naming slots leaves the tower out, and the finished builder row too.
+            assert minutes([], ["builder"], lead=5) == 115
+            assert minutes([], ["builder"], lead=5, minutes=30) == 30
+            assert minutes([now + timedelta(minutes=10)], ["builder"]) == 10
+            assert commands.wake_at([], ["pet"], lead=0) is not None
+            saved.reset_mock()
+            assert minutes([], minutes=180) == 180
+            saved.assert_not_called()
+        with (
+            patch.object(commands, "_last_export"),
+            patch.object(commands, "upgrade_timers", return_value=[_timer(3, at(-1))]),
+            patch.object(
+                commands, "clock_tower", return_value=ClockTower(ready_in=0, ready_at=at(-5))
+            ),
+        ):
+            # A tower that is ready now and a finished upgrade leave nothing to wait for.
+            assert commands.wake_at([], []) is None
+
+    def test_nothing_to_wait_for_answers_at_once_and_leaves_a_live_watch_alone(self) -> None:
+        commands._write_watch(self._theirs())
+        with patch.object(commands, "_alive", return_value=True):
+            report = commands.watch(self.MINE, None, "工人")
+        assert (report.outcome, report.next_at) == ("nothing_due", None)
+        after = commands.read_watch()
+        assert after is not None
+        assert (after.status, after.pid, after.caller) == ("running", self.OTHER_PID, self.THEIRS)
+
+    def test_a_watch_that_farms_says_so_on_its_record(self) -> None:
+        seen: list[Watch | None] = []
+        with patch.object(
+            commands.time, "sleep", side_effect=lambda _s: seen.append(commands.read_watch())
+        ):
+            commands.watch(self.MINE, self._soon(0.2), "工人", farms=True)
+        assert seen[0] is not None
+        assert seen[0].farms
+        commands.watch(self.MINE, self._soon(-1), "工人")
+        after = commands.read_watch()
+        assert after is not None
+        assert not after.farms
+
     def test_it_sleeps_until_its_time_and_says_it_came_due(self) -> None:
         wake = self._soon()
         report = commands.watch(self.MINE, wake, "日世界 Archer Queen")
