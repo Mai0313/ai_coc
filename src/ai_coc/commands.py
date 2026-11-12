@@ -1328,34 +1328,36 @@ def wake_at(
     upgrades: list[UpgradeRole] | None = None,
     lead: int = 0,
     minutes: int | None = None,
+    tower: bool = False,
 ) -> datetime | None:
     """The earliest of the instants a watch was asked to wake at, or None when there is none.
 
     `upgrades` adds every running upgrade of the newest saved export (what
-    `status --last` prints), `lead` minutes ahead of its `done_at`, and the clock
-    tower's `ready_at`; naming slots keeps only theirs and leaves the tower out.
-    An upgrade already done and a tower already ready are left out, since the
-    `status` before this read them as due, and a tower that would not boost
-    would otherwise wake the session at once on every watch; one whose lead
-    has run out wakes it now.
+    `status --last` prints), or the named slots' alone, `lead` minutes ahead of
+    its `done_at`; one whose lead has run out wakes at its `done_at`, since the
+    session prepares for those before it sleeps (`takeover`), and one already
+    done wakes it now. `tower` adds the clock tower's `ready_at`, except a tower
+    ready now, which the `status` before this read and which would otherwise
+    wake the session at once on every watch when it will not boost.
     """
     now = datetime.now().astimezone()
     found = [(at if at.tzinfo else at.astimezone(), "--next") for at in nexts]
     if minutes is not None:
         found.append((now + timedelta(minutes=minutes), f"{minutes} min from now"))
-    village = None if upgrades is None else _last_export().export
+    read = _last_export() if upgrades is not None or tower else None
+    if read is not None and read.export is None:
+        logger.warning("No saved export to read the upgrades from: %s", read.outcome)
+    village = None if read is None else read.export
     if village is not None:
         for timer in upgrade_timers(village):
+            if upgrades is None or (upgrades and timer.role not in upgrades):
+                continue
             done = datetime.fromisoformat(timer.done_at)
-            if done > now and (not upgrades or timer.role in upgrades):
-                early = max(now, done - timedelta(minutes=lead))
-                found.append((early, f"{timer.zh or timer.en or timer.data_id}, {lead} min early"))
-        tower = clock_tower(village)
-        if (
-            not upgrades
-            and tower is not None
-            and (at := datetime.fromisoformat(tower.ready_at)) > now
-        ):
+            early = done - timedelta(minutes=lead)
+            at = early if early > now else max(done, now)
+            found.append((at, f"{timer.zh or timer.en or timer.data_id}, {lead} min early"))
+        ready = clock_tower(village)
+        if tower and ready is not None and (at := datetime.fromisoformat(ready.ready_at)) > now:
             found.append((at, "the clock tower"))
     if not found:
         return None

@@ -2511,45 +2511,42 @@ class WatchTests(unittest.TestCase):
         def at(minutes: float) -> str:
             return (now + timedelta(minutes=minutes)).isoformat()
 
-        timers = [
-            _timer(1, at(120)),
-            _timer(2, at(60), role="lab"),
-            _timer(3, at(-1)),
-            _timer(4, at(3), role="pet"),
-        ]
+        timers = [_timer(1, at(120)), _timer(2, at(60), role="lab"), _timer(4, at(3), role="pet")]
+        tower = ClockTower(ready_in=1, ready_at=at(50))
+
+        def minutes(*args: object, **kwargs: object) -> float:
+            wake = commands.wake_at(*args, **kwargs)
+            assert wake is not None
+            return round((wake - now).total_seconds() / 60)
+
         with (
             patch.object(commands, "_last_export") as saved,
             patch.object(commands, "upgrade_timers", return_value=timers),
-            patch.object(
-                commands, "clock_tower", return_value=ClockTower(ready_in=1, ready_at=at(50))
-            ),
+            patch.object(commands, "clock_tower", return_value=tower),
         ):
-
-            def minutes(*args: object, **kwargs: object) -> float:
-                wake = commands.wake_at(*args, **kwargs)
-                assert wake is not None
-                return round((wake - now).total_seconds() / 60)
-
-            # The pet's lead has run out, so it wakes the session now.
-            assert minutes([], [], lead=5) == 0
+            # The pet's lead has run out, so it wakes at its own time.
+            assert minutes([], [], lead=5) == 3
             assert minutes([], ["lab", "builder"], lead=5) == 55
-            # Naming slots leaves the tower out, and the finished builder row too.
+            assert minutes([], ["lab", "builder"], lead=5, tower=True) == 50
             assert minutes([], ["builder"], lead=5) == 115
             assert minutes([], ["builder"], lead=5, minutes=30) == 30
             assert minutes([now + timedelta(minutes=10)], ["builder"]) == 10
-            assert commands.wake_at([], ["pet"], lead=0) is not None
+            assert commands.wake_at([], ["pet", "lab"], lead=0) is not None
             saved.reset_mock()
             assert minutes([], minutes=180) == 180
             saved.assert_not_called()
+        done = [_timer(3, at(-1))]
         with (
             patch.object(commands, "_last_export"),
-            patch.object(commands, "upgrade_timers", return_value=[_timer(3, at(-1))]),
+            patch.object(commands, "upgrade_timers", return_value=done),
             patch.object(
                 commands, "clock_tower", return_value=ClockTower(ready_in=0, ready_at=at(-5))
             ),
         ):
-            # A tower that is ready now and a finished upgrade leave nothing to wait for.
-            assert commands.wake_at([], []) is None
+            # One already done wakes the session now; a tower ready now is left out.
+            assert minutes([], ["builder"]) == 0
+            assert commands.wake_at([], tower=True) is None
+            assert commands.wake_at([], ["lab"], tower=True) is None
 
     def test_nothing_to_wait_for_answers_at_once_and_leaves_a_live_watch_alone(self) -> None:
         commands._write_watch(self._theirs())

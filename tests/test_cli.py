@@ -232,10 +232,16 @@ class ParserTests(unittest.TestCase):
         asked = _args(
             "watch",
             *("--next", "2026-10-12T23:10", "--next", "2026-10-12T22:00"),
-            *("--upgrades", "lab", "--lead", "5", "--minutes", "180", "--farms"),
+            *("--upgrades", "lab", "--lead", "5", "--minutes", "180", "--farms", "--tower"),
         )
         assert [one.hour for one in asked.next] == [23, 22]
-        assert (asked.upgrades, asked.lead, asked.minutes, asked.farms) == (["lab"], 5, 180, True)
+        assert (asked.upgrades, asked.lead, asked.minutes, asked.farms, asked.tower) == (
+            ["lab"],
+            5,
+            180,
+            True,
+            True,
+        )
         assert _args("watch", "--upgrades").upgrades == []
         with pytest.raises(SystemExit):
             _args("watch", "--upgrades", "night")
