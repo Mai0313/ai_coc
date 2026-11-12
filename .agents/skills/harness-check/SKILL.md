@@ -1,12 +1,12 @@
 ---
 name: harness-check
 description: >-
-  Check whether the harness running this session (Claude Code, Codex, Antigravity or any other) can do what this project's skills assume of it: dispatch a subagent on a weaker model and lowest effort it picks, let that subagent wait out a long command and take a second message, wait out a long foreground call on the main thread and take the user's message meanwhile, wake the session when a background command or a subagent finishes while the other is still running, fall back to its own scheduler, put an image in front of the model, and reach the user's phone with a file and a question. It runs a scratch script only and never touches the game. Use it when the user asks to check, test or compare what a runtime or harness can do here, for example 「測一下這個 harness 能不能託管」 or "run the capability check".
+  Check whether the harness running this session (Claude Code, Codex, Antigravity or any other) can do what this project's skills assume of it: dispatch a subagent on a weaker model and lowest effort it picks, let that subagent wait out a long command, take a second message, follow a numbered brief and report each step's real outcome, wait out a long foreground call on the main thread and take the user's message meanwhile, wake the session when a background command, a subagent or another session finishes while others still run, once for each of several staggered ends and in order, fall back to its own scheduler, put an image in front of the model, and reach the user's phone with a file and a question. It runs scratch scripts only and never touches the game. Use it when the user asks to check, test or compare what a runtime or harness can do here, such as whether it can run a takeover.
 ---
 
 # Checking what this runtime can do
 
-The skills under `.agents/skills/` were written against what Claude Code does: `takeover` hands the farming loop to a subagent on a cheaper model that blocks on `attack` for hours, sleeps on `ai_coc watch` and relies on its exit to wake the session while that subagent keeps going, wakes five minutes before an upgrade is due and waits out the rest so it can confirm seconds after the timer runs out, `upgrades` and `find-on-map` tap at coordinates read off a frame, and every trip sends the user pictures and questions on their phone. This skill finds out which of those the runtime running it can do.
+The skills under `.agents/skills/` were written against what Claude Code does: `takeover` hands the farming loop to a subagent on a cheaper model that blocks on `attack` for hours, takes that subagent's report of each step at its word, sleeps on `ai_coc watch` and relies on its exit to wake the session while that subagent keeps going and side sessions report in, wakes five minutes before an upgrade is due and waits out the rest so it can confirm seconds after the timer runs out, `upgrades` and `find-on-map` tap at coordinates read off a frame, and every trip sends the user pictures and questions on their phone. This skill finds out which of those the runtime running it can do.
 
 The result is `report.md` in the run's results directory, also shown in the reply: one row per check below, each with pass, fail, not offered (the runtime has no way to do it) or not run, the evidence file behind it, and what was seen. A header names the runtime and its version, the main thread's model, and the date.
 
@@ -15,18 +15,19 @@ The result is `report.md` in the run's results directory, also shown in the repl
 - **Nothing here drives the game.** Run no `ai_coc` command for the whole run. The checks are about the runtime, and the commands they might borrow have side effects: a new `ai_coc watch` stands down whichever one is sleeping, and any command that touches the emulator stands down, or borrows from, a loop that is running.
 - **Evidence is what the script wrote**, not anyone's account of it. Times come from the script's logs, or from the clock read and written down at that moment.
 - **One results directory per run**, `.runs/harness-check/<runtime>-<YYYYMMDD-HHMM>/` under the checkout (git ignores `.runs/`), written `<dir>` below. Every file named below goes in it.
-- **The first thing on every turn of the run** is a line appended to `<dir>/turns.log`: the time, and what started the turn as the runtime presents it (a user message, a command's exit notice, a subagent's report, a scheduled wake, something else). Which of these starts a turn is half of what this skill measures.
+- **The first thing on every turn of the run** is a line appended to `<dir>/turns.log` with `grade.py stamp` (below), which takes the time from the script's clock: `user` for a turn the user's message started, otherwise `turn` and what started it as the runtime presents it (a command's exit notice, a subagent's report, another session's report, a scheduled wake, something else). A notice that reaches you inside a turn, alongside a tool's result say, gets a `mid` line as soon as you see it. Each line carries the token of every task the notice was for, from the notice or, where it carries none, from that task's output or log; never a token of a task the notice was not for. Which of these starts a turn is half of what this skill measures.
 - **Before any wait that ends your turn**, tell the user the clock time you expect to be back by, with a few minutes' slack, and that they must not type until then: their message starts a turn too, and the wake could no longer be told apart from it. If you have not spoken by that time, they send any message, and that wait is recorded as not woken.
 
-## The script
+## The scripts
 
-It runs the same way in every shell, from the checkout root:
+They run the same way in every shell, from the checkout root:
 
 ```bash
 uv run --no-sync python .agents/skills/harness-check/scripts/sleeper.py --seconds <N> --log <file>
+uv run --no-sync python .agents/skills/harness-check/scripts/grade.py stamp --dir <dir> <turn|mid|user> "<what started it, with its tokens>"
 ```
 
-`sleeper.py` writes a `start` line with its pid, an `alive` line every minute, and an `exit` line with a random token that it also prints; a report that quotes the token was written after the script ended, so the agent under test cannot make the answer up.
+`sleeper.py` writes a `start` line with its pid, an `alive` line every minute, and an `exit` line with a random token that it also prints; a report that quotes the token was written after the script ended, so the agent under test cannot make the answer up. `grade.py` also decides the rows of checks 7 and 8 from the files the scripts wrote, so those rows never rest on anyone's account; `job.py` stands in for an `ai_coc` command in check 8. `grade.py <command> -h` lists each command's arguments.
 
 ## 1. A subagent on a chosen model
 
@@ -87,10 +88,83 @@ Send that same frame to the user through the runtime's way of sending files, the
 
 `AGENTS.md` has whoever hears a stop order run `ai_coc stop` themselves, so what matters is when a message the user sends during a long foreground call reaches you. After check 5's call has returned, start a second one the same way (`sleeper.py --seconds 240 --log <dir>/t6-fg.log`), and before it ask the user to send one short message about a minute after you say it has started, with the clock time they sent it written in it. It gets a call of its own because a runtime where the message cuts the call short would otherwise leave check 5 unanswered. Write to `<dir>/t6-message.txt` the time it reached you and how it arrived (alongside the call's result, interrupting the call, as a turn of its own after yours ended, something else). Row: **message during a foreground call** (the delay against the time written in it, and how it arrived).
 
+## 7. Several ends at staggered times
+
+Check 2 has one command and one subagent; `takeover` is busier. While it sleeps on a background `ai_coc watch` the farm subagent runs for hours and side sessions report in, so ends come close together or while the session is busy with another. This check asks whether each end still wakes the session on its own, in the order they end, and whether waking for one swallows or delays another. Leave out a kind of end that check 2 showed wakes nothing, and skip the check if neither did. Run it with nothing else of yours in flight.
+
+Each task runs `sleeper.py --seconds <sleeps> --log <dir>/t7-<task>.log`. Start them in this order, slowest to get going first, then end the turn without waiting, polling or scheduling anything:
+
+| task | what                                                                                                                                                                                                                   | sleeps |
+| ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------ |
+| g    | another session, where the runtime can start one that reports back to this one, told only to run the script to its end and report the token; give it the log as an absolute path, since it may start in another folder | 660 s  |
+| f    | a subagent on the lowest model and effort, waiting on the script the way check 1's does and replying with the token                                                                                                    | 540 s  |
+| c    | the same                                                                                                                                                                                                               | 240 s  |
+| d    | a background command                                                                                                                                                                                                   | 360 s  |
+| e    | a background command                                                                                                                                                                                                   | 405 s  |
+| b    | a background command                                                                                                                                                                                                   | 140 s  |
+| a    | a background command                                                                                                                                                                                                   | 120 s  |
+
+`b` ends 20 seconds behind `a`, an end right behind another. As soon as `d`'s end reaches you, after its stamp, run `sleeper.py --seconds 90 --log <dir>/t7-hold.log` as one foreground call, so `e` ends while the turn is busy; on every other wake, stamp and end the turn. The user stays off the keyboard until the last task should have reported, about thirteen minutes on and longer when a session is slow to start: every wake before then is one of these.
+
+Then `grade.py wakes --dir <dir> --tasks <the tasks started, comma-separated>` prints the rows from the `exit` lines and the stamps:
+
+- **every end woke the session**, with each task's lateness (its first stamp minus its `exit` line) and the worst. A subagent's or a session's lateness includes the time it took to report.
+- **woken in the order they ended**.
+- **an end right behind another**: whether it got a turn of its own, shared one or arrived inside one.
+- **an end during a busy turn**: whether it arrived inside the held turn or started the next, and how long after the hold returned.
+- **another session's report wakes**; not offered where the runtime cannot start a session that reports back.
+
+Hold the lateness against `takeover`'s five-minute prep as check 2 does.
+
+## 8. A subagent follows a numbered brief and reports what happened
+
+`takeover` briefs its farm subagent the way `.agents/skills/takeover/references/farming.md` does: the lowest model and effort, a numbered list of complete commands, and a subagent that decides nothing, runs one step per call and stops at the first error. The loop is only as good as the report that comes back: a failure called a success, a step run after a stop, or a step merged, skipped or changed is how a cheap subagent breaks it. A stopped `attack` is the hard case, since it exits 0 with an ordinary outcome and only `state.json`'s `stop_by` shows the stop (`.agents/skills/takeover/references/runner.md`, 被叫停, 被借走).
+
+Make two briefs:
+
+```bash
+uv run --no-sync python .agents/skills/harness-check/scripts/grade.py plan --runs <dir>/t8-error --fate error
+uv run --no-sync python .agents/skills/harness-check/scripts/grade.py plan --runs <dir>/t8-stop --fate stop
+```
+
+Each prints four numbered `job.py` commands of 20 seconds. One of the middle steps, picked at random and not shown in the commands, fails in the first brief: it exits 1 and its `result.json` says `error`. In the second it is stopped partway: it exits 0, its `result.json` says `done`, and only `state.json` in its runs directory shows the stop, which the next step's start clears, as a real command's claim does.
+
+Dispatch two subagents side by side, each on the lowest model and effort the runtime offers, each given this text with its own runs directory and commands filled in:
+
+```text
+Run the numbered commands below from <checkout root>, in order, one command per call. You decide nothing: do not change, merge, skip, repeat or add a command.
+After each command, read <runs>/<label>/result.json and <runs>/state.json.
+Stop and run nothing more when a command exits non-zero, when its outcome in result.json is not done, or when stop_by in state.json is set after it: a stopped run exits 0 and says done, and only stop_by shows the stop.
+<the numbered commands>
+End your reply with one line per step, either
+sN exit=<exit code> outcome=<outcome> token=<token>
+or
+sN not run
+and then one line:
+ended: finished | error at sN | stopped at sN by <stop_by>
+```
+
+Wait for both replies however the runtime allows; if that means ending your turn, the wait rule applies, for a few minutes. Save each reply verbatim as `<dir>/t8-error-reply.txt` and `<dir>/t8-stop-reply.txt`, then:
+
+```bash
+uv run --no-sync python .agents/skills/harness-check/scripts/grade.py report --runs <dir>/t8-error --report <dir>/t8-error-reply.txt
+uv run --no-sync python .agents/skills/harness-check/scripts/grade.py report --runs <dir>/t8-stop --report <dir>/t8-stop-reply.txt
+```
+
+Rows, each with what `grade.py` printed:
+
+- **reported each step as it ended** (both briefs): every step's line and the ended line match what `job.py` recorded. No reply is a fail.
+- **failure reported as a failure** (error brief). Read the reply's prose as well: a sentence that calls the failed step a success fails the row whatever its lines say.
+- **stopped at the first error** (error brief).
+- **noticed a stop its exit code hides** (stop brief).
+- **ran the brief as written** (both): nothing skipped, repeated, changed or added. Two steps run in one call do not show in the files, so read the subagent's calls from the runtime's record (the places check 1 lists) and fail the row if one call ran two commands; write not recorded where the record does not show them. `grade.py` prints the gaps between steps beside it.
+
+Each row also names the model and effort the runtime recorded for that subagent, since a pass holds only for that tier, and says it is one sample.
+
 ## Order, and the end
 
-Run 3 and 4 first, then 5, then 6, then 1, then 2.
+Run 3 and 4 first, then 5, then 6, then 1, then 8, then 2, then 7: check 8 builds on the dispatch check 1 proved, and check 7 leaves out what check 2 found cannot wake the session.
 
 At the end ask the user which commands or tools stopped to ask their permission, and add a row **approvals** listing them: an unattended `takeover` halts on the first one.
 
-Leave nothing running: no `sleeper.py` process (the pids are in the logs), no subagent still waiting, no scheduled wake. Name anything you leave on purpose. The results directory stays for the user. A failed row is a finding to report, not something to fix here: changing a skill to suit a runtime is a separate piece of work.
+Leave nothing running: no `sleeper.py` or `job.py` process (the pids are in the logs and journals), no subagent still waiting, no scheduled wake, and no session check 7 started still open (archive it where the runtime can). Name anything you leave on purpose. The results directory stays for the user. A failed row is a finding to report, not something to fix here: changing a skill to suit a runtime is a separate piece of work.
