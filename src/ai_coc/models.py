@@ -2505,23 +2505,37 @@ class SearchNeed(BaseModel):
     village: int
 
 
+class SearchNext(NextUpgrade):
+    """One next upgrade a data_id's rows lead to, at list price, and how many copies it is open to.
+
+    `ready` is how many can start it now: one level below it, nothing running
+    on them. `waiting` is how many get there once the upgrade running on them
+    is done. Both are 0 where the village's halls do not allow it yet.
+    """
+
+    ready: int = 0
+    waiting: int = 0
+
+
 class SearchHit(BaseModel):
     """One data_id `ai_coc search` matched: what the game's tables say of it, and the player's rows of it.
 
     The names, `table`, `max_lvl` and `levels` are the tables'; a data_id they
     lack takes its names and `max_lvl` from its rows and has no `table` or
     `levels`. `world` is the village its rows sit in, or the tables' for one
-    the village lacks, and `section` the `SearchSection` it is listed under,
-    or the export's own name for a section this code has not heard of.
+    the village lacks, `kind` the export's section it sits in (`heroes`,
+    `units`, `siege_machines` …), or would for one the village lacks, and
+    `section` the `SearchSection` it is listed under, or `kind` for a section
+    this code has not heard of.
     `levels` is every level's `needs`, `cost` and `time`
     at list price. The rest is the newest export: `count` copies in all,
     `owned` how many stand at each level (a row with no level counts only in
     `count`), `upgrading` each copy being upgraded, soonest first, `next` each
-    different next upgrade the rows can start, at list price, and `ready_at`
-    when a helper can next be sent. `count` 0 is one the newest export does
-    not hold, or every hit when no export is saved (`SearchReport.exported_at`
-    None); `unlock` is what the first level of a troop, siege machine or
-    spell it does not hold needs.
+    different next upgrade the rows lead to, lowest level first, and
+    `ready_at` when a helper can next be sent. `count` 0 is one the newest
+    export does not hold, or every hit when no export is saved
+    (`SearchReport.exported_at` None); `unlock` is what the first level of a
+    troop, siege machine or spell it does not hold needs.
     `rows` is every row as the export has it, only under `--rows`.
     """
 
@@ -2529,6 +2543,7 @@ class SearchHit(BaseModel):
     zh: str | None = None
     en: str | None = None
     world: World
+    kind: str
     section: str
     table: GameTable | None = None
     max_lvl: int | None = None
@@ -2538,7 +2553,7 @@ class SearchHit(BaseModel):
     unlock: list[SearchNeed] = Field(default_factory=list)
     limited_lvl: int | None = None
     upgrading: list[SearchUpgrade] = Field(default_factory=list)
-    next: list[NextUpgrade] = Field(default_factory=list)
+    next: list[SearchNext] = Field(default_factory=list)
     ready_at: str | None = None
     rows: list[ExportRow] | None = None
 

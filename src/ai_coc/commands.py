@@ -47,6 +47,7 @@ from ai_coc.models import (
     NoteReport,
     PlateCount,
     RoundEvent,
+    SearchNext,
     SheetOffer,
     StopTarget,
     ViewReport,
@@ -3680,6 +3681,19 @@ SECTION_NAMES: dict[SearchSection, str] = {
     "equipment": "英雄裝備",
     "helpers": "助手",
 }
+# Each export section as a hit names its kind, in the words `--section`'s help uses.
+KIND_NAMES: dict[str, str] = {
+    "heroes": "英雄",
+    "buildings": "建築",
+    "traps": "陷阱",
+    "guardians": "守護者",
+    "units": "兵種",
+    "spells": "法術",
+    "siege_machines": "攻城機器",
+    "pets": "戰寵",
+    "equipment": "英雄裝備",
+    "helpers": "助手",
+}
 
 
 def _search_head(report: SearchReport) -> str:
@@ -3736,7 +3750,7 @@ def _hit_lines(hit: SearchHit, exported: bool) -> list[str]:
     """One hit's lines; with no export read, nothing is said about whether the village has it."""
     names = " / ".join(name for name in (hit.zh, hit.en) if name) or "(遊戲的表沒有名字)"
     top = "—" if hit.max_lvl is None else hit.max_lvl
-    lines = [f"{names}  #{hit.data_id}  {hit.table or '—'}  滿級 {top}"]
+    lines = [f"{names}  #{hit.data_id}  {KIND_NAMES.get(hit.kind, hit.kind)}  滿級 {top}"]
     if not hit.count:
         return [*lines, f"  村莊裡沒有{_unlock_text(hit)}"] if exported else lines
     if hit.rows is not None:
@@ -3744,12 +3758,27 @@ def _hit_lines(hit: SearchHit, exported: bool) -> list[str]:
     held = ", ".join(f"{lvl} 級 {n} 個" for lvl, n in hit.owned.items()) or "沒有等級"
     lines.append(f"  有 {hit.count} 個: {held}")
     lines += [
-        f"  {_level(one.lvl)} 級在升級, {_when(one.done_at)} 好{' (哥布林那格)' if one.extra else ''}"
+        f"  {_buying(one.lvl)}, {_when(one.done_at)} 好{' (哥布林那格)' if one.extra else ''}"
         for one in hit.upgrading
     ]
     if hit.ready_at:
         lines.append(f"  {_local(hit.ready_at)} 能再派")
-    return lines + [f"  下一次 {_upgrade_text(one, hit.limited_lvl)}" for one in hit.next]
+    return lines + [
+        f"  下一次 {_upgrade_text(one, hit.limited_lvl)}{_open_to(one)}" for one in hit.next
+    ]
+
+
+def _buying(lvl: int | None) -> str:
+    """An upgrading copy by the level it is buying, as `status` and the build panel name it."""
+    return "在升級" if lvl is None else f"在升到 {lvl + 1} 級"
+
+
+def _open_to(upgrade: SearchNext) -> str:
+    """How many copies can start a next upgrade now, and how many once their running one is done."""
+    parts = [f"現在能升 {upgrade.ready} 個"] if upgrade.ready else []
+    if upgrade.waiting:
+        parts.append(f"{upgrade.waiting} 個要等手上的升級做完")
+    return "".join(f", {part}" for part in parts)
 
 
 def _unlock_text(hit: SearchHit) -> str:
@@ -3765,7 +3794,9 @@ def _unlock_text(hit: SearchHit) -> str:
 def _row_text(row: ExportRow) -> str:
     parts = [f"{_level(row.lvl)} 級 {row.cnt or 1} 個"]
     if row.timer is not None:
-        parts.append(f"在升級, {_when(row.done_at)} 好{' (哥布林那格)' if row.extra else ''}")
+        parts.append(
+            f"{_buying(row.lvl)}, {_when(row.done_at)} 好{' (哥布林那格)' if row.extra else ''}"
+        )
     if row.ready_at:
         parts.append(f"{_local(row.ready_at)} 能再派")
     if row.next is not None:

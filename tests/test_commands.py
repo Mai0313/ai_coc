@@ -94,7 +94,7 @@ from ai_coc.constants import COC_PACKAGE
 from ai_coc.ui.runner import SESSION_TAKEN, ScreenRunner
 from ai_coc.adapters.adb import PNG_MAGIC, AdbController, AdbControlError
 from ai_coc.parsers.home import PANEL_CLOSE, CLOCK_TOWER_BELOW
-from ai_coc.parsers.village import merge
+from ai_coc.parsers.village import SECTIONS, merge
 from ai_coc.parsers.gamedata import READING, GameDataError
 
 if TYPE_CHECKING:
@@ -3903,11 +3903,12 @@ class SearchTests(unittest.TestCase):
             (2, False),
             (3, True),
         ]
-        # The idle level 2 buys 3, the two upgrading level 2s both buy 4, listed
-        # once, and the level 3 is already buying the last level.
-        assert [(one.lvl, one.cost) for one in owned.next] == [
-            (3, {"gold": 300}),
-            (4, {"gold": 400}),
+        # The two idle level 2s can buy 3 now. The two upgrading level 2s lead
+        # to 4, listed once, which a town hall 3 does not allow; the level 3 is
+        # already buying the last level.
+        assert [(one.lvl, one.cost, one.ready, one.waiting) for one in owned.next] == [
+            (3, {"gold": 300}, 2, 0),
+            (4, {"gold": 400}, 0, 0),
         ]
         assert len(owned.levels) == 4
         unowned = _search("1000009").hits[0]
@@ -3937,10 +3938,10 @@ class SearchTests(unittest.TestCase):
         # The town hall, which the tables lack, is placed by where its row sits.
         built = _search("", section="builder")
         assert [(hit.data_id, hit.world) for hit in built.hits] == [
-            (1000001, "day"),
-            (1000040, "night"),
             (1000048, "night"),
             (1000084, "day"),
+            (1000001, "day"),
+            (1000040, "night"),
         ]
         assert [hit.data_id for hit in _search("", section="lab").hits] == [4000059]
         everything = _search("", section="all").hits
@@ -3956,10 +3957,13 @@ class SearchTests(unittest.TestCase):
         assert [hit.data_id for hit in night.hits] == [1000048]
         assert _search("箭塔", section="lab").outcome == "no_match"
         listed = _search("", section="all", world="night")
-        assert [hit.data_id for hit in listed.hits] == [1000040, 1000048]
-        # One the village lacks is placed by its game table.
+        assert [hit.data_id for hit in listed.hits] == [1000048, 1000040]
+        # One the village lacks is placed by its game table, a siege machine by
+        # the workshop unlocking it.
         [wrecker] = _search("4000051").hits
-        assert (wrecker.world, wrecker.section) == ("day", "lab")
+        assert (wrecker.world, wrecker.kind, wrecker.section) == ("day", "siege_machines", "lab")
+        [glider] = _search("4000070").hits
+        assert (glider.kind, glider.section) == ("units", "lab")
         asked = _search("", section="pets", world="day", skip_max_lvl=True)
         assert (asked.outcome, asked.section, asked.world, asked.skip_max_lvl) == (
             "no_match",
@@ -3990,6 +3994,30 @@ class SearchTests(unittest.TestCase):
         assert [row.lvl for row in tower.rows] == [4]
         # One the village lacks has no level to stand at.
         assert _search("多人箭塔", skip_max_lvl=True).hits[0].count == 0
+
+    def test_each_section_lists_the_quickest_upgrade_a_copy_can_start_first(self) -> None:
+        document = VillageDocument.model_validate({
+            "tag": "#TEST",
+            "buildings": [
+                {"data": 1000009, "lvl": 2},
+                {"data": 1000009, "lvl": 1, "timer": 60},
+                {"data": 1000084, "lvl": 1},
+                {"data": 1000084, "lvl": 2, "timer": 60},
+                # Idle, but its next level needs a town hall 4.
+                {"data": 1000059, "lvl": 3},
+                {"data": 1000001, "lvl": 3},
+            ],
+        })
+        self._keep(document=document)
+        report = _search("", section="builder")
+        # 2 minutes, then 3; then what no copy can start now, by data_id.
+        assert [hit.data_id for hit in report.hits] == [1000084, 1000009, 1000001, 1000059]
+        tower, workshop = report.hits[1], report.hits[-1]
+        # One idle level 2 and one level 1 buying 2 both lead to 3.
+        assert [(one.lvl, one.ready, one.waiting) for one in tower.next] == [(3, 1, 1)]
+        assert [(one.lvl, one.ready, one.waiting) for one in workshop.next] == [(4, 0, 0)]
+        text = commands.search_text(report)
+        assert "  下一次 3 級 300 金幣, 3 分鐘, 現在能升 1 個, 1 個要等手上的升級做完\n" in text
 
     def test_one_held_under_its_last_level_by_a_hall_is_not_skipped(self) -> None:
         self._keep()
@@ -4056,20 +4084,26 @@ class SearchTests(unittest.TestCase):
     def test_the_text_says_what_is_owned_and_that_prices_are_list_prices(self) -> None:
         self._keep()
         text = commands.search_text(_search("箭塔"))
-        assert "多人箭塔 / Multi-Archer Tower  #1000084  buildings  滿級 4" in text
+        assert "多人箭塔 / Multi-Archer Tower  #1000084  建築  滿級 4" in text
         assert "  有 5 個: 2 級 4 個, 3 級 1 個" in text
-        assert "  3 級在升級, " in text
+        # Each upgrading copy by the level it is buying.
+        assert text.count("  在升到 3 級, ") == 2
+        assert "  在升到 4 級, " in text
         assert "(哥布林那格)" in text
         # Level 4 needs a town hall 4 and this village's is 3.
-        assert "  下一次 4 級 400 金幣, 4 分鐘 (上限 3 級)" in text
-        assert "  下一次 3 級 300 金幣, 3 分鐘\n" in text
+        assert "  下一次 4 級 400 金幣, 4 分鐘 (上限 3 級)\n" in text
+        assert "  下一次 3 級 300 金幣, 3 分鐘, 現在能升 2 個\n" in text
         # A building's first level is not said to unlock it.
-        assert "箭塔 / Archer Tower  #1000009  buildings  滿級 5\n  村莊裡沒有\n" in text
+        assert "箭塔 / Archer Tower  #1000009  建築  滿級 5\n  村莊裡沒有\n" in text
         assert text.endswith(commands.LIST_PRICE)
         every = commands.search_text(_search("多人箭塔", every_row=True))
-        assert "\n  3 級 1 個  在升級, " in every
+        assert "\n  3 級 1 個  在升到 4 級, " in every
         assert "\n  2 級 2 個  下一次 3 級 300 金幣, 3 分鐘" in every
         assert " 能再派" in commands.search_text(_search("", section="helpers"))
+
+    def test_every_section_the_code_groups_has_a_kind_of_its_own(self) -> None:
+        assert set(commands.KIND_NAMES) == set(SECTIONS)
+        assert len(set(commands.KIND_NAMES.values())) == len(commands.KIND_NAMES)
 
     def test_the_text_gives_each_village_a_block_of_its_own_split_by_section(self) -> None:
         self._keep()
@@ -4106,11 +4140,14 @@ class SearchTests(unittest.TestCase):
         assert _search("多人箭塔").hits[0].unlock == []
         text = commands.search_text(_search("騎士"))
         assert (
-            "飛豬騎士 / Hog Glider  #4000070  characters  滿級 16\n"
+            "飛豬騎士 / Hog Glider  #4000070  兵種  滿級 16\n"
             "  村莊裡沒有, 解鎖要 建築大師訓練營 11 級 (村莊裡 10 級)\n"
         ) in text
         text = commands.search_text(_search("4000051"))
-        assert "  村莊裡沒有, 解鎖要 攻城機器工坊 1 級 (村莊裡還沒有)\n" in text
+        assert (
+            "攻城戰車 / Wall Wrecker  #4000051  攻城機器  滿級 1\n"
+            "  村莊裡沒有, 解鎖要 攻城機器工坊 1 級 (村莊裡還沒有)\n"
+        ) in text
         # Nothing in the tables unlocks it, so nothing is said.
         text = commands.search_text(_search("地獄飛龍"))
         assert "  村莊裡沒有\n" in text

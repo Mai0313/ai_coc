@@ -135,7 +135,7 @@ ai_coc farmed --by <session> --since <时间>  # 从运行记录把一个 sessio
 ai_coc tended --by <session> --since <时间>  # 从运行记录列出一个 session 升了什么、各花多少, 开了几次钟塔, 被抢登几次; 不碰游戏
 ai_coc gamedata                       # 从模拟器上的游戏文件读出游戏自己的表(中英文名称、最高等级、每级的要求、标价和时间),每个游戏版本读一次,存在 ~/.ai_coc/game_data/<版本>/;--refresh 重新读
 ai_coc search "Electro Dragon"        # 按 data_id 或中英文名称的一段查那份表,村庄里有的再列出等级、升级中几点好和下一级的标价,没有的兵种和法术列出解锁要什么;--rows 每一行分开列;不碰游戏
-ai_coc search --section builder --day --skip-max-lvl  # 按分类列村庄里有的 (builder、lab、pets、equipment、helpers, 或 all), 两个世界各一段; --day / --night 只留一个世界, --skip-max-lvl 不列满级的, 再给名称就在里面找
+ai_coc search --section builder --day --skip-max-lvl  # 按分类列村庄里有的 (builder、lab、pets、equipment、helpers, 或 all), 两个世界各一段, 现在能升的按标价时间由短到长排前面; --day / --night 只留一个世界, --skip-max-lvl 不列满级的, 再给名称就在里面找
 ai_coc view --zoom out                # 把镜头拉回所有坐标当初测量的那个视野
 ai_coc world                          # 现在在日世界还是夜世界
 ai_coc world --day                    # 坐船到日世界, 夜世界是 --night; 已经在那边就什么都不做

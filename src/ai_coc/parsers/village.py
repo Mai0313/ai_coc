@@ -10,6 +10,7 @@ from ai_coc.models import (
     SearchHit,
     ClockTower,
     SearchNeed,
+    SearchNext,
     LevelChange,
     NextUpgrade,
     UpgradeTimer,
@@ -71,15 +72,16 @@ SECTIONS: dict[str, SearchSection] = {
     "equipment": "equipment",
     "helpers": "helpers",
 }
-# The same for one the village lacks, which has only its game table to go by;
-# a siege machine is a `characters` row.
-TABLE_SECTIONS: dict[GameTable, SearchSection] = {
-    "heroes": "builder",
-    "buildings": "builder",
-    "traps": "builder",
-    "guardians": "builder",
-    "characters": "lab",
-    "spells": "lab",
+# The export section one the village lacks would sit in, by its game table.
+# A siege machine is a `characters` row too, told from a troop by the workshop
+# unlocking it (`_kind`).
+TABLE_KINDS: dict[GameTable, str] = {
+    "heroes": "heroes",
+    "buildings": "buildings",
+    "traps": "traps",
+    "guardians": "guardians",
+    "characters": "units",
+    "spells": "spells",
     "pets": "pets",
     "character_items": "equipment",
     "villager_apprentices": "helpers",
@@ -383,7 +385,10 @@ def growth(start: VillageExport, end: VillageExport) -> list[LevelChange]:
 def search(
     tables: GameEntities | None, export: VillageExport | None, asked: SearchOptions
 ) -> list[SearchHit]:
-    """Every data_id the query and the filters leave, with the player's rows of it, the owned ones first.
+    """Every data_id the query and the filters leave, with the player's rows of it, quickest to upgrade first.
+
+    The order is by the list time of the quickest next upgrade a copy can
+    start now; the rest follow, the owned ones first.
 
     An all-digit query is one exact data_id; anything else is a piece of the
     Chinese name or, ignoring case, of the English one. A query searches every
@@ -428,7 +433,15 @@ def search(
             and _named(hit, asked.query)
         ):
             found.append(hit)
-    return sorted(found, key=lambda hit: (hit.count == 0, hit.data_id))
+    return sorted(found, key=_order)
+
+
+def _order(hit: SearchHit) -> tuple[bool, int, bool, int]:
+    """Where a hit is listed: by the list time of the quickest next upgrade a copy can start now, then the rest."""
+    quickest = min(
+        (one.time for one in hit.next if one.ready and one.time is not None), default=None
+    )
+    return (quickest is None, quickest or 0, hit.count == 0, hit.data_id)
 
 
 def _maxed(row: ExportRow, entity: GameEntity | None) -> bool:
@@ -477,30 +490,35 @@ def _hit(
     named: GameEntity | ExportRow = entity if entity is not None else rows[0][2]
     # Where its rows sit; the tables place only one the village lacks.
     if entity is not None and not rows:
-        world, section = entity.world, TABLE_SECTIONS[entity.table]
+        world, kind = entity.world, _kind(entity)
     else:
-        world, section = rows[0][0], SECTIONS.get(rows[0][1], rows[0][1])
+        world, kind = rows[0][0], rows[0][1]
     levels: Counter[int] = Counter()
-    nexts: list[NextUpgrade] = []
+    # Each next level's price, and how many copies stand idle or upgrading below it.
+    nexts: dict[int, NextUpgrade] = {}
+    idle: Counter[int] = Counter()
+    waiting: Counter[int] = Counter()
+    limited = next((row.limited_lvl for _, _, row in rows), None)
     for _, _, row in rows:
         if row.lvl is not None:
             levels[row.lvl] += row.cnt or 1
-        # By equality: a frozen model holding a dict cannot be hashed.
-        if row.next is not None and row.next not in nexts:
-            nexts.append(row.next)
+        if row.next is not None:
+            nexts[row.next.lvl] = row.next
+            (idle if row.timer is None else waiting)[row.next.lvl] += row.cnt or 1
     return SearchHit(
         data_id=data_id,
         zh=named.zh,
         en=named.en,
         world=world,
-        section=section,
+        kind=kind,
+        section=SECTIONS.get(kind, kind),
         table=entity.table if entity is not None else None,
         max_lvl=named.max_lvl,
         levels=entity.levels if entity is not None else [],
         count=sum(row.cnt or 1 for _, _, row in rows),
         owned=dict(sorted(levels.items())),
         unlock=unlock,
-        limited_lvl=next((row.limited_lvl for _, _, row in rows), None),
+        limited_lvl=limited,
         upgrading=sorted(
             (
                 SearchUpgrade(lvl=row.lvl, done_at=row.done_at, extra=bool(row.extra))
@@ -509,10 +527,35 @@ def _hit(
             ),
             key=lambda one: one.done_at or "",
         ),
-        next=sorted(nexts, key=lambda one: one.lvl),
+        next=[
+            SearchNext(
+                lvl=lvl,
+                cost=one.cost,
+                time=one.time,
+                ready=idle[lvl] if allowed else 0,
+                waiting=waiting[lvl] if allowed else 0,
+            )
+            for lvl, one in sorted(nexts.items())
+            for allowed in [limited is None or lvl <= limited]
+        ],
         ready_at=min((row.ready_at for _, _, row in rows if row.ready_at), default=None),
         rows=shown,
     )
+
+
+def _kind(entity: GameEntity) -> str:
+    """The export section one the village lacks would sit in.
+
+    Tables an older `READING` built give a siege machine's first level the
+    laboratory, so there it reads as a troop.
+    """
+    if (
+        entity.table == "characters"
+        and entity.levels
+        and "siege_workshop" in entity.levels[0].needs
+    ):
+        return "siege_machines"
+    return TABLE_KINDS[entity.table]
 
 
 def _levels(
