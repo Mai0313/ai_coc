@@ -384,6 +384,13 @@ class AdbController(BaseModel):
         **The line names every point**, because nothing else records where a
         burst landed: the journal holds where the plan aimed, and each drop is
         pushed out, clamped and fitted to the boundary on its way here.
+
+        Measured against this emulator, a shell round trip is 47 ms and five taps
+        chained in one with no sleep at all take 109 ms, against 0.6-0.8 s for a
+        `screencap -p`. A recorded run before #45 reworked the deployment
+        (spells and their clocks taken out of it, sleeps and captures cut to
+        measured values) landed the siege machine 7 seconds in, the last troop
+        at 44 and the heroes at 67; one after it, at 4, 8 and 12.
         """
         spots = [(int(x), int(y)) for x, y in points]
         logger.info(

@@ -297,11 +297,13 @@ def fitted_line(
         moved.append((round(reach[0] + dx * margin), round(reach[1] + dy * margin)))
     # The boundary does not fold in on itself across one flank, so three anchors
     # at wildly different distances mean a ray matched a wall inside the village
-    # rather than the stroke. `ai_coc probe` measured that happening on four of
-    # twelve rays, and an anchor placed inside is the expensive direction to be
-    # wrong in: the line cuts through the village and every probe on it is
-    # refused. Falling back here costs only the preset flank the caller already
-    # had, which is what this ran before it could read anything at all.
+    # rather than the stroke. `ai_coc probe`, which tests `boundary_reach` on
+    # twelve rays, found it agreeing with the game on 7 in its first run and
+    # reading inside the real boundary on four of the five misses, and an anchor
+    # placed inside is the expensive direction to be wrong in: the line cuts
+    # through the village and every probe on it is refused. Falling back here
+    # costs only the preset flank the caller already had, which is what this ran
+    # before it could read anything at all.
     if min(radii) < max(radii) * OUTLIER_RATIO:
         logger.info("Boundary radii %s disagree across the flank; keeping the preset", radii)
         return None
