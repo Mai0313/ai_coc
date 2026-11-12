@@ -32,7 +32,7 @@ class Journal(logging.Handler):
     so its line in `run.log` and its line here are one call; anything at
     WARNING or above is copied whatever it carries. The start and the end are
     written directly (`write`), the end because a last line in `run.log` after
-    the run's own would hide the `Stop requested` the skills read off its tail.
+    the run's own would bury the lines saying how it ended.
 
     **Writing here never fails the run.** Each line is one append under a file
     lock, since a farming loop, a sleeping watch and an agent's `tap` all write
