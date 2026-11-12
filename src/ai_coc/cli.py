@@ -18,7 +18,7 @@ from rich.console import Console
 
 # PyInstaller runs this file as `__main__`, which has no package context, so these
 # stay absolute even for same-layer modules.
-from ai_coc import commands, __version__
+from ai_coc import plans, commands, __version__
 from ai_coc.models import (
     Caller,
     RunLog,
@@ -360,8 +360,9 @@ def _parser() -> argparse.ArgumentParser:
     run = sub.choices["attack"]
     run.add_argument(
         "--plan",
-        type=Path,
-        help="照這份戰術 JSON 打，完全不問 AI；戰術寫明是哪個村莊的，遊戲停在另一邊就不打",
+        metavar="名稱或路徑",
+        help=f"照這份戰術打，完全不問 AI；給名稱（{'、'.join(plans.NAMES)}）就用遊戲停著那個村莊的那一份，"
+        "給 JSON 路徑就照那一份，它寫明是哪個村莊的，遊戲停在另一邊就不打；不給就每場問 AI",
     )
     run.add_argument("--plan-out", type=Path, help="把實際用的戰術寫成 JSON")
     run.add_argument("--repeat", type=int, default=1, help="打幾輪，0 代表打到叫停為止")
@@ -534,7 +535,8 @@ def _answer(arguments: argparse.Namespace, run: RunLog) -> BaseModel | str:
     handlers: dict[str, Callable[[], BaseModel | str]] = {
         "attack": lambda: commands.attack(
             AttackOptions(
-                plan=a.plan,
+                plan=None if a.plan is None or a.plan in plans.NAMES else Path(a.plan),
+                plan_name=a.plan if a.plan in plans.NAMES else None,
                 plan_out=a.plan_out,
                 minimums=LootOverrides(
                     min_gold=a.min_gold, min_elixir=a.min_elixir, min_dark=a.min_dark

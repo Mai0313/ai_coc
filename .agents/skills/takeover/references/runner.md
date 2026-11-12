@@ -28,7 +28,7 @@
 
 ```bash
 uv run --no-sync ai_coc world --day --yield --label <標籤> --agent <名字> --session <派工的 session id>-farm --mission "打日世界資源"
-uv run --no-sync ai_coc attack --repeat 0 --plan src/ai_coc/plans/flat.json --yield --label <標籤> --agent <名字> --session <派工的 session id>-farm --mission "打日世界資源"
+uv run --no-sync ai_coc attack --repeat 0 --plan flat --yield --label <標籤> --agent <名字> --session <派工的 session id>-farm --mission "打日世界資源"
 ```
 
 `world --day` / `--night` 回的不是那個村莊 (`crossing_failed`) 就不要開 `attack`, 停下來回報.

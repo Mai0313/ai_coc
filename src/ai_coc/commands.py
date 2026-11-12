@@ -2081,7 +2081,8 @@ def attack(
     nothing — and `plan_out` writes down whichever plan actually ran, so a battle
     worth repeating can be repeated and one worth arguing with can be edited.
     A plan is written for one village, so the series plays that one and ends
-    at once on the other. Without a plan it plays whichever the game is on, and
+    at once on the other; `plan_name` is a plan shipped for both, loaded for
+    whichever village the series plays. Without a plan it plays whichever the game is on, and
     in neither case does it sail: crossing is `ai_coc world --day` / `--night`.
 
     `rounds` of 0 keeps going until it is stopped, which is what watching the
@@ -2124,8 +2125,9 @@ def attack(
         # The flag overrides it for one run, like the loot thresholds above.
         stop_at=config.stop_at if options.stop_at is None else options.stop_at,
         until_idle=options.until_idle,
-        ai=None if plan else _planner(config),
+        ai=None if plan or options.plan_name else _planner(config),
         plan=plan,
+        plan_name=options.plan_name,
         should_stop=should_stop,
     )
     series = AttackSeries()

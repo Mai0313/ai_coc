@@ -1163,6 +1163,9 @@ class AttackOptions(BaseModel):
     # A written plan for either village, played instead of asking the AI. It
     # names its own village, and a game on the other one ends the series.
     plan: Path | None = None
+    # A plan shipped with the code, by name (`plans.NAMES`), loaded for the
+    # village the series turns out to play.
+    plan_name: str | None = None
     plan_out: Path | None = None
     minimums: LootOverrides = LootOverrides()
     # 0 keeps going until it is interrupted, which is what watching the loop play

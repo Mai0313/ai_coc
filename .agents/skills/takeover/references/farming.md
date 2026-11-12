@@ -20,7 +20,7 @@
 
 **沒特別交代就兩個世界都打完.** 不用先問哪邊有空間: 滿的世界第一輪就 `stock_full` (主村在付搜尋費前, 夜世界在進配對前), 代價只是幾秒. 他指定了一個才只打那一個. **順序: 他指定了照他的, 沒指定就先打當下所在的那個.** 「當下所在」是開跑前第一件事用 `ai_coc world` 問到的答案. 切畫面就是他指定順序的方式 (想先打夜世界他會自己切過去), 不要推翻.
 
-**兩個世界都用平鋪, 不叫 AI**: 日世界帶 `--plan src/ai_coc/plans/flat.json`, 夜世界帶 `--plan src/ai_coc/plans/night_flat.json`. **AI 規劃留在程式裡, 不要拿掉**, 兩個世界的邏輯要一樣; 他明講要 AI 規劃的那一趟才不帶 `--plan`. 夜世界用平鋪是因為贏輸都有進帳, 挑哪一邊打差別不大, AI 規劃卻每個 stage 要 10 到 15 秒 (慢的時候 40 秒以上).
+**兩個世界都用平鋪, 不叫 AI**: 兩個 `attack` 都帶 `--plan flat`, 它照遊戲停著的那個村莊用那一份 (日世界 `flat.json`, 夜世界 `night_flat.json`). **AI 規劃留在程式裡, 不要拿掉**, 兩個世界的邏輯要一樣; 他明講要 AI 規劃的那一趟才不帶 `--plan`. 夜世界用平鋪是因為贏輸都有進帳, 挑哪一邊打差別不大, AI 規劃卻每個 stage 要 10 到 15 秒 (慢的時候 40 秒以上).
 
 **開跑後先估時間.** 一輪抓四到五分鐘. 打完頭幾場跑一次 `ai_coc farmed` (見「報告」): 「現在」那一欄的百分比離 `stop_at`% 還差多少, 除以一場的平均進帳, 就是大概要跑多久. 好幾個小時就先跟使用者講一聲. 量過的速率 (TH15 / 建築大師基地 10 級左右): 主村一場約 +1.1M 金幣、+1.1M 聖水; 夜世界一場約 +100k 到 130k 金幣, 聖水進推車, 平均一場 12 萬左右, 聖水是瓶頸.
 
@@ -47,10 +47,10 @@ runtime 沒有 subagent 的話, 你自己照 `runner.md` 跑; 指令照 `share-e
 每一個 world 都等它跑完、讀完它的結果, 確認到了該到的世界才下一步, 不跟下一步放在同一次執行裡.
 
 1. uv run --no-sync ai_coc world --day --yield --label <代號>-d-w1 <身分>
-2. uv run --no-sync ai_coc attack --repeat 0 --plan src/ai_coc/plans/flat.json <門檻旗標> --yield --label <代號>-d-a1 <身分>
+2. uv run --no-sync ai_coc attack --repeat 0 --plan flat <門檻旗標> --yield --label <代號>-d-a1 <身分>
 3. 日世界最後一輪 stock_full 是 true 之後: uv run --no-sync ai_coc capture --label <代號>-d-cap <身分> (capture 不帶 --yield)
 4. uv run --no-sync ai_coc world --night --yield --label <代號>-n-w1 <身分>
-5. uv run --no-sync ai_coc attack --repeat 0 --plan src/ai_coc/plans/night_flat.json --yield --label <代號>-n-a1 <身分>
+5. uv run --no-sync ai_coc attack --repeat 0 --plan flat --yield --label <代號>-n-a1 <身分>
 6. 夜世界最後一輪 stock_full 是 true 之後: uv run --no-sync ai_coc capture --label <代號>-n-cap <身分>
 7. uv run --no-sync ai_coc world --day --yield --label <代號>-d-w2 <身分>
 然後回報.
@@ -59,7 +59,7 @@ runtime 沒有 subagent 的話, 你自己照 `runner.md` 跑; 指令照 `share-e
 回報照 runner.md「回報」, 用中文寫, 每一個執行目錄都列, 各附那次 attack 印的那一段照貼. 被借走過的寫借了幾次、每次多久接回去.
 ```
 
-兩個 `--plan` 都要寫: 交辦沒寫的 `--plan` 它不會自己補, 日世界那個漏寫了, 每場就去問 AI (託管曾經漏了兩天).
+兩個 `attack` 都要寫 `--plan flat`: 交辦沒寫的它不會自己補, 漏寫了每場就去問 AI (託管曾經漏了兩天).
 
 **交給 subagent 的每一趟都要有終點, 不要叫它「跑到叫停為止」**: 一個被交代跑到早上的 subagent 打了 3 圈 (約 2 小時 20 分), 在一次刷牆跑完時結束了回合, 沒有回報, 之後傳給它的訊息也叫不醒, 模擬器閒了 40 分鐘才被發現; 改成每個只跑 3 圈之後, 接手的每一個都跑完回報了. 步驟之間不結束回合、每一步各自一次呼叫、跑完讀 `state.json`、被叫停就回報, 都在 `runner.md` 裡. **那一趟會跑好幾個小時的, 留一個心跳**: 背景等大約一小時 (runtime 管的那種, 等完會叫醒你), 醒來讀 `state.json` 跟最新的執行目錄. 跟上次看比沒有往前走, 又沒收到回報, 就是它默默停了: 結束掉它, 派下一個. 默默結束回合的 subagent 什麼都不會送出來, 只有心跳抓得到; 每次醒來就再開一個, 直到那一趟收工.
 
