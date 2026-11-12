@@ -22,7 +22,7 @@ SESSION_TASK = "g"
 JOB = ".agents/skills/harness-check/scripts/job.py"
 STEP_LINE = re.compile(r"\b(s\d+) exit=(-?\d+) outcome=(\w+) token=(\w+)")
 NOT_RUN = re.compile(r"\b(s\d+) not run\b")
-ENDED = re.compile(r"\bended: ([^`]+)")
+ENDED = re.compile(r"\bended:\W*(.+)")
 
 Stamp = tuple[datetime, str, str]
 Said = tuple[int, str, str] | None
@@ -58,8 +58,9 @@ def _stamps(folder: Path) -> list[Stamp]:
 def stamp(args: argparse.Namespace) -> None:
     args.dir.mkdir(parents=True, exist_ok=True)
     now = datetime.now().astimezone().isoformat(timespec="seconds")
+    text = " ".join([args.text, *(f"{log.name} token={_sleep_log(log)[2]}" for log in args.log)])
     with (args.dir / "turns.log").open("a", encoding="utf-8") as fh:
-        fh.write(f"{now} {args.kind} {args.text}\n")
+        fh.write(f"{now} {args.kind} {text}\n")
     print(now)
 
 
@@ -69,8 +70,9 @@ def wakes(args: argparse.Namespace) -> None:
     ends = {name: (end, token) for name, (_, end, token) in logs.items() if end and token}
     begun = min((start for start, _, _ in logs.values() if start), default=None)
     stamps = _stamps(args.dir)
-    # The user's message starts a turn too; nothing after it can be told apart from a wake.
-    cutoff = next((t for t, kind, _ in stamps if kind == "user" and begun and t >= begun), None)
+    # The user's message starts a turn too; nothing after it can be told apart from a wake. The
+    # user turn that starts the check can share a second with the first start, so it is not one.
+    cutoff = next((t for t, kind, _ in stamps if kind == "user" and begun and t > begun), None)
     first: dict[str, Stamp] = {}
     for name, (end, token) in ends.items():
         for s in stamps:
@@ -191,7 +193,8 @@ def report(args: argparse.Namespace) -> None:
         elif m := NOT_RUN.search(line):
             said[m[1]] = None
         if m := ENDED.search(line):
-            ended = m[1].strip()
+            # Markdown or a full stop around the line is formatting, not a wrong report.
+            ended = m[1].strip(" .*`")
     ends = {e["label"]: e for e in events if e["event"] == "end"}
     print(f"check 8, {fate} brief, {args.runs.as_posix()}")
 
@@ -267,6 +270,7 @@ def main() -> None:
     p.add_argument("--dir", type=Path, required=True)
     p.add_argument("kind", choices=KINDS)
     p.add_argument("text")
+    p.add_argument("--log", type=Path, action="append", default=[], help="a sleeper.py log whose exit token to add")
     p.set_defaults(run=stamp)
     p = sub.add_parser("wakes", help="decide check 7's rows")
     p.add_argument("--dir", type=Path, required=True)

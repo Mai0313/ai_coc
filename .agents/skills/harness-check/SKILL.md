@@ -15,7 +15,7 @@ The result is `report.md` in the run's results directory, also shown in the repl
 - **Nothing here drives the game.** Run no `ai_coc` command for the whole run. The checks are about the runtime, and the commands they might borrow have side effects: a new `ai_coc watch` stands down whichever one is sleeping, and any command that touches the emulator stands down, or borrows from, a loop that is running.
 - **Evidence is what the script wrote**, not anyone's account of it. Times come from the script's logs, or from the clock read and written down at that moment.
 - **One results directory per run**, `.runs/harness-check/<runtime>-<YYYYMMDD-HHMM>/` under the checkout (git ignores `.runs/`), written `<dir>` below. Every file named below goes in it.
-- **The first thing on every turn of the run** is a line appended to `<dir>/turns.log` with `grade.py stamp` (below), which takes the time from the script's clock: `user` for a turn the user's message started, otherwise `turn` and what started it as the runtime presents it (a command's exit notice, a subagent's report, another session's report, a scheduled wake, something else). A notice that reaches you inside a turn, alongside a tool's result say, gets a `mid` line as soon as you see it. Each line carries the token of every task the notice was for, from the notice or, where it carries none, from the `exit` line in that task's log; never a token of a task the notice was not for. Which of these starts a turn is half of what this skill measures.
+- **The first thing on every turn of the run** is a line appended to `<dir>/turns.log` with `grade.py stamp` (below), which takes the time from the script's clock: `user` for a turn the user's message started, otherwise `turn` and what started it as the runtime presents it (a command's exit notice, a subagent's report, another session's report, a scheduled wake, something else). A notice that reaches you inside a turn, alongside a tool's result say, gets a `mid` line as soon as you see it. Where the notice was for tasks with a `sleeper.py` log, pass each of those logs with `--log` and the line gets the token from its `exit` line; never the log of a task the notice was not for. Which of these starts a turn is half of what this skill measures.
 - **Before any wait that ends your turn**, tell the user the clock time you expect to be back by, with a few minutes' slack, and that they must not type until then: their message starts a turn too, and the wake could no longer be told apart from it. If you have not spoken by that time, they send any message, and that wait is recorded as not woken.
 
 ## The scripts
@@ -24,7 +24,7 @@ They run the same way in every shell, from the checkout root:
 
 ```bash
 uv run --no-sync python .agents/skills/harness-check/scripts/sleeper.py --seconds <N> --log <file>
-uv run --no-sync python .agents/skills/harness-check/scripts/grade.py stamp --dir <dir> <turn|mid|user> "<what started it, with its tokens>"
+uv run --no-sync python .agents/skills/harness-check/scripts/grade.py stamp --dir <dir> <turn|mid|user> "<what started it>" [--log <file>]...
 ```
 
 `sleeper.py` writes a `start` line with its pid, an `alive` line every minute, and an `exit` line with a random token that it also prints; a report that quotes the token was written after the script ended, so the agent under test cannot make the answer up. `grade.py` also decides the rows of checks 7 and 8 from the files the scripts wrote, so those rows never rest on anyone's account; `job.py` stands in for an `ai_coc` command in check 8. `grade.py <command> -h` lists each command's arguments.
@@ -90,19 +90,19 @@ Send that same frame to the user through the runtime's way of sending files, the
 
 ## 7. Several ends at staggered times
 
-Check 2 has one command and one subagent; `takeover` is busier. While it sleeps on a background `ai_coc watch` the farm subagent runs for hours and side sessions report in, so ends come close together or while the session is busy with another. This check asks whether each end still wakes the session on its own, in the order they end, and whether waking for one swallows or delays another. Leave out a kind of end that check 2 showed wakes nothing, and skip the check if neither did. Run it with nothing else of yours in flight, and start it on a turn the user's own message started: a runtime can refuse to start a session on a turn a notice started, as Claude Code's desktop app did on 2026-11-12.
+Check 2 has one command and one subagent; `takeover` is busier. While it sleeps on a background `ai_coc watch` the farm subagent runs for hours and side sessions report in, so ends come close together or while the session is busy with another. This check asks whether each end still wakes the session on its own, in the order they end, and whether waking for one swallows or delays another. Leave out a kind of end that check 2 showed wakes nothing, and skip the check if neither did. Run it with nothing else of yours in flight, and start it on a turn the user's own message started, asking them for one when the check before has ended on a notice: a runtime can refuse to start a session on a turn a notice started, as Claude Code's desktop app did on 2026-11-12.
 
 Each task runs `sleeper.py --seconds <sleeps> --log <dir>/t7-<task>.log`. Start them in this order, slowest to get going first, then end the turn without waiting, polling or scheduling anything:
 
-| task | what                                                                                                                                                                                                                   | sleeps |
-| ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------ |
-| g    | another session, where the runtime can start one that reports back to this one, told only to run the script to its end and report the token; give it the log as an absolute path, since it may start in another folder | 660 s  |
-| f    | a subagent on the lowest model and effort, waiting on the script the way check 1's does and replying with the token                                                                                                    | 540 s  |
-| c    | the same                                                                                                                                                                                                               | 240 s  |
-| d    | a background command                                                                                                                                                                                                   | 360 s  |
-| e    | a background command                                                                                                                                                                                                   | 405 s  |
-| b    | a background command                                                                                                                                                                                                   | 140 s  |
-| a    | a background command                                                                                                                                                                                                   | 120 s  |
+| task | what                                                                                                                                                                                                                                                                                       | sleeps |
+| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------ |
+| g    | another session, where the runtime can start one that reports back to this one, told only to run the script to its end, waiting on it the way check 1's subagent does, and report the token; give it the checkout root and the log as absolute paths, since it may start in another folder | 660 s  |
+| f    | a subagent on the lowest model and effort, waiting on the script the way check 1's does and replying with the token                                                                                                                                                                        | 540 s  |
+| c    | the same                                                                                                                                                                                                                                                                                   | 240 s  |
+| d    | a background command                                                                                                                                                                                                                                                                       | 360 s  |
+| e    | a background command                                                                                                                                                                                                                                                                       | 405 s  |
+| b    | a background command                                                                                                                                                                                                                                                                       | 140 s  |
+| a    | a background command                                                                                                                                                                                                                                                                       | 120 s  |
 
 `b` ends 20 seconds behind `a`, an end right behind another. As soon as `d`'s end reaches you, after its stamp, run `sleeper.py --seconds 90 --log <dir>/t7-hold.log` as one foreground call, so `e` ends while the turn is busy; on every other wake, stamp and end the turn. The user stays off the keyboard until the last task should have reported, about thirteen minutes on and longer when a session is slow to start: every wake before then is one of these.
 
@@ -112,7 +112,7 @@ Then `grade.py wakes --dir <dir> --tasks <the tasks started, comma-separated>` p
 - **woken in the order they ended**.
 - **an end right behind another**: whether it got a turn of its own, shared one or arrived inside one.
 - **an end during a busy turn**: whether it arrived inside the held turn or started the next, and how long after the hold returned.
-- **another session's report wakes**; not offered where the runtime cannot start a session that reports back.
+- **another session's report wakes**. Without `g` the script prints not run; write not offered where the runtime cannot start a session that reports back.
 
 Hold the lateness against `takeover`'s five-minute prep as check 2 does.
 
@@ -153,11 +153,11 @@ uv run --no-sync python .agents/skills/harness-check/scripts/grade.py report --r
 
 Rows, each with what `grade.py` printed:
 
-- **reported each step as it ended** (both briefs): every step's line and the ended line match what `job.py` recorded. No reply is a fail.
+- **reported each step as it ended** (a row for each brief): every step's line and the ended line match what `job.py` recorded. No reply is a fail.
 - **failure reported as a failure** (error brief). Read the reply's prose as well: a sentence that calls the failed step a success fails the row whatever its lines say.
 - **stopped at the first error** (error brief).
 - **noticed a stop its exit code hides** (stop brief).
-- **ran the brief as written** (both): nothing skipped, repeated, changed or added. Two steps run in one call do not show in the files, so read the subagent's calls from the runtime's record (the places check 1 lists) and fail the row if one call ran two commands; write not recorded where the record does not show them. `grade.py` prints the gaps between steps beside it.
+- **ran the brief as written** (a row for each brief): nothing skipped, repeated, changed or added. Two steps run in one call do not show in the files, so read the subagent's calls from the runtime's record (the places check 1 lists) and fail the row if one call ran two commands; write not recorded where the record does not show them. `grade.py` prints the gaps between steps beside it.
 
 Each row also names the model and effort the runtime recorded for that subagent, since a pass holds only for that tier, and says it is one sample.
 
