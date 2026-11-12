@@ -308,7 +308,10 @@ class ExportRow(BaseModel):
     helpers). `role` is whose slot upgrading the row takes
     (`parsers.village.ROLES`), `limited_lvl` the highest level the village's
     halls allow, and `done_at` and `ready_at` the instants its `timer` and
-    `helper_cooldown` run out, speed-ups included.
+    `helper_cooldown` run out, speed-ups and a working helper included. A
+    helper's row carries the slot it speeds (`speeds`) and the extra seconds
+    of work per second its level adds there (`multiplier`), so a saved export
+    times a job without the tables.
     """
 
     model_config = TOLERANT
@@ -323,9 +326,13 @@ class ExportRow(BaseModel):
     extra: bool | None = None
     # Seconds until a helper can be sent again, written only while it cools down.
     helper_cooldown: int | None = None
+    # Seconds a helper still works on this job, written only while one does.
+    helper_timer: int | None = None
     zh: str | None = None
     en: str | None = None
     role: UpgradeRole | None = None
+    speeds: UpgradeRole | None = None
+    multiplier: int | None = None
     max_lvl: int | None = None
     limited_lvl: int | None = None
     next: NextUpgrade | None = None
@@ -1558,7 +1565,10 @@ class UpgradeTimer(BaseModel):
     `max_lvl`, `limited_lvl` and `next` are the merged row's (`ExportRow`), so
     whether the same thing can be upgraded again once this finishes is read
     here rather than off the export; `next` is the level after the one being
-    bought.
+    bought. `helper` is the data_id of the helper working on it, counted in
+    `seconds`, and `helper_until` the instant its work there ends; a row an
+    export saved before helper rows carried their `multiplier` has the second
+    without the first, and its helper is not counted.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -1581,6 +1591,8 @@ class UpgradeTimer(BaseModel):
     # On the job an event's goblin builder or researcher is doing.
     extra: bool = False
     boost: str | None = None
+    helper: int | None = None
+    helper_until: str | None = None
     seconds: int
     done_at: str
 
@@ -2518,6 +2530,10 @@ class GameTableSpec(BaseModel):
     # columns that, any of them TRUE, mark a row that building does not unlock.
     unlock: str | None = None
     untrained: tuple[str, ...] = ()
+    # For the helpers: the column holding each level's speed-up multiplier, and
+    # the one naming the slot it speeds, written on an entity's first row.
+    boost: str | None = None
+    speeds: str | None = None
 
 
 class GameLevel(BaseModel):
@@ -2531,7 +2547,8 @@ class GameLevel(BaseModel):
     empty `cost` and no `time`. Resources are `gold`, `elixir` and `dark` (a
     builder base entity's `gold` and `elixir` are its own), `gems`, and the ores
     `shiny_ore`, `glowy_ore` and `starry_ore`; one the game adds later keeps the
-    game's own name.
+    game's own name. `multiplier`, on a helper that speeds a slot, is the
+    extra seconds of work per second this level adds to the job it works on.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -2540,6 +2557,7 @@ class GameLevel(BaseModel):
     needs: dict[Hall, int] = Field(default_factory=dict)
     cost: dict[str, int] = Field(default_factory=dict)
     time: int | None = None
+    multiplier: int | None = Field(default=None, exclude_if=_absent)
 
 
 class GameEntity(BaseModel):
@@ -2549,7 +2567,8 @@ class GameEntity(BaseModel):
     are the game's own Traditional Chinese and English names, None where the
     game has no text for it (unused and event variants). `max_lvl` is the
     highest level the table has, not how many it has: some builder base troops
-    start above 1.
+    start above 1. `speeds` is the slot a helper speeds up, None for every
+    other entity.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -2561,6 +2580,7 @@ class GameEntity(BaseModel):
     table: GameTable
     max_lvl: int
     levels: list[GameLevel]
+    speeds: UpgradeRole | None = Field(default=None, exclude_if=_absent)
 
 
 class GameEntities(BaseModel):

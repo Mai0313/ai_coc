@@ -707,6 +707,23 @@ class StatusTextTests(unittest.TestCase):
         # A goblin's slot is a row of its own, since it is paid for apart.
         assert "| 今天 13:05 | 工人 (哥布林) | 建築1 (5/10) |" in text
 
+    def test_a_helper_on_a_row_is_named_in_its_slot_until_its_work_there_ends(self) -> None:
+        until = datetime(2026, 11, 11, 12, 36).astimezone().isoformat()
+        report = self._report(
+            _timer(1, "13:00", helper=93000000, helper_until=until),
+            _timer(1, "13:02"),
+            _timer(2, "14:00", helper_until=until),
+            helpers=[
+                HelperCooldown(data_id=93000000, zh="建築工人學徒", ready_in=0, ready_at=until)
+            ],
+        )
+        text = commands.status_text(report, NOW)
+        # Not one row with the job beside it that the helper is not on.
+        assert "| 今天 13:00 | 工人 (建築工人學徒幫到今天 12:36) | 建築1 (5/10) |" in text
+        assert "| 今天 13:02 | 工人 | 建築1 (5/10) |" in text
+        # One an export saved without the helper's multiplier could not count.
+        assert "| 今天 14:00 (沒算助手) | 工人 | 建築2 (5/10) |" in text
+
     def test_the_clock_tower_is_a_builder_base_row_in_its_turn(self) -> None:
         later = self._report(
             _timer(1, "2026-11-12T05:00", world="night"),

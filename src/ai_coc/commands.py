@@ -2858,7 +2858,9 @@ def _timer_rows(
 ) -> list[tuple[datetime, str, str, str]]:
     """One village's rows of the table, soonest first, the clock tower among them.
 
-    Each is the instant it finishes, then its three cells.
+    Each is the instant it finishes, then its three cells. A helper working on
+    a row is named in its slot with the time its work there ends, and one an
+    old export could not count is said beside the time.
     """
     merged: list[tuple[UpgradeTimer, int]] = []
     for timer in (one for one in report.timers if one.world == world):
@@ -2866,8 +2868,8 @@ def _timer_rows(
             (
                 index
                 for index, (first, _) in enumerate(merged)
-                if (first.data_id, first.level, first.extra)
-                == (timer.data_id, timer.level, timer.extra)
+                if (first.data_id, first.level, first.extra, first.helper_until)
+                == (timer.data_id, timer.level, timer.extra, timer.helper_until)
                 and timer.seconds - first.seconds <= MERGE_WITHIN
             ),
             None,
@@ -2877,13 +2879,22 @@ def _timer_rows(
         else:
             first, count = merged[same]
             merged[same] = (first, count + 1)
+    helpers = {helper.data_id: helper.zh or helper.en for helper in report.helpers}
     rows = [
         (
             done := datetime.fromisoformat(first.done_at),
             _moment(first.done_at, now)
             + ("" if first.role else " (沒算加速)")
+            + (" (沒算助手)" if first.helper_until and first.helper is None else "")
             + (" (已過)" if done <= now else ""),
-            (ROLE_NAMES[first.role] if first.role else "—") + (" (哥布林)" if first.extra else ""),
+            (ROLE_NAMES[first.role] if first.role else "—")
+            + (" (哥布林)" if first.extra else "")
+            + (
+                f" ({helpers.get(first.helper) or f'#{first.helper}'}幫到"
+                f"{_moment(first.helper_until, now)})"
+                if first.helper is not None and first.helper_until
+                else ""
+            ),
             (first.zh or first.en or f"#{first.data_id}")
             + (f" {TIMES}{count}" if count > 1 else "")
             + _levels(first),

@@ -139,7 +139,7 @@ def merge(document: VillageDocument, tables: GameEntities | None, at: int) -> Vi
     """The game's export with the game's own tables merged into every row, taken at `at`.
 
     Without `tables` the rows keep what the game wrote plus what needs no
-    table: `role`, `done_at` and `ready_at`.
+    table: `role`, `done_at` and `ready_at`, a working helper left uncounted.
     """
     known = {entity.data_id: entity for entity in tables.entities} if tables else {}
     sections = {section: document.entries(section) for section in document.sections()}
@@ -152,11 +152,18 @@ def merge(document: VillageDocument, tables: GameEntities | None, at: int) -> Vi
             continue
         villages[world][name] = [
             row.model_copy(
-                update=_tabled(row, name, known.get(row.data), halls)
-                | _clocked(row, world, name, document.boosts, at)
+                update=_tabled(row, name, known.get(row.data), halls) | _clocked(row, name, at)
             )
             for row in rows
         ]
+    # Timed once every row is tabled, since a job's finish needs its helper's level.
+    helping = _helping(villages["day"].get("helpers", []))
+    for world, named in villages.items():
+        for name, rows in named.items():
+            named[name] = [
+                row.model_copy(update=_done(row, world, document.boosts, helping, at))
+                for row in rows
+            ]
     tower = _tower(villages["night"].get("buildings", []), document.boosts, at)
     return VillageExport(
         tag=document.tag,
@@ -188,10 +195,17 @@ def _hall_levels(rows: list[ExportRow], tables: GameEntities | None) -> dict[Hal
 def _tabled(
     row: ExportRow, section: str, entity: GameEntity | None, halls: dict[Hall, int]
 ) -> dict[str, object]:
-    """What the game's tables add to one row: its names, its level caps and its next upgrade."""
+    """What the game's tables add to one row: its names, its level caps and its next upgrade.
+
+    A helper's row also gets the slot it speeds and its level's multiplier.
+    """
     if entity is None:
         return {}
     added: dict[str, object] = {"zh": entity.zh, "en": entity.en, "max_lvl": entity.max_lvl}
+    if entity.speeds is not None:
+        level = next((level for level in entity.levels if level.lvl == row.lvl), None)
+        if level is not None and level.multiplier:
+            added |= {"speeds": entity.speeds, "multiplier": level.multiplier}
     if any(level.needs for level in entity.levels):
         allowed = [
             level.lvl
@@ -221,24 +235,29 @@ def _tabled(
     return added
 
 
-def _clocked(
-    row: ExportRow, world: World, section: str, boosts: Boosts, at: int
-) -> dict[str, object]:
-    """Whose slot upgrading one row takes, and when its timer and its helper cooldown run out."""
+def _clocked(row: ExportRow, section: str, at: int) -> dict[str, object]:
+    """Whose slot upgrading one row takes, and when its helper cooldown runs out."""
     added: dict[str, object] = {}
     role = ROLES.get(section)
     if role is not None:
         added["role"] = role
-    if row.timer is not None:
-        if role is None:
-            logger.warning(
-                "Section %s carries a timer and has no known slot; reported unboosted", section
-            )
-        _, seconds = _finish(world, role, row.timer, boosts)
-        added["done_at"] = _clock(at + seconds)
+    elif row.timer is not None:
+        logger.warning(
+            "Section %s carries a timer and has no known slot; reported unboosted", section
+        )
     if row.helper_cooldown is not None:
         added["ready_at"] = _clock(at + row.helper_cooldown)
     return added
+
+
+def _done(
+    row: ExportRow, world: World, boosts: Boosts, helping: dict[UpgradeRole, ExportRow], at: int
+) -> dict[str, object]:
+    """When a running row's timer runs out, speed-ups and a working helper included."""
+    if row.timer is None:
+        return {}
+    _, _, seconds = _finish(world, row, boosts, helping)
+    return {"done_at": _clock(at + seconds)}
 
 
 def from_legacy(old: LegacyExport, tables: GameEntities) -> VillageExport:
@@ -270,16 +289,18 @@ def from_legacy(old: LegacyExport, tables: GameEntities) -> VillageExport:
 def upgrade_timers(export: VillageExport) -> list[UpgradeTimer]:
     """Every upgrade still running on either village, soonest first, speed-ups included.
 
-    The Builder's Apprentice and the Lab Assistant are not counted: one comes
-    back to the job it is assigned to whenever its cooldown ends, so a row with
-    `helper_recurrent` finishes earlier than this says. Left that way on
-    purpose for now.
+    A Builder's Apprentice or Lab Assistant is counted for what it has left of
+    its work on the job (`helper_timer`), and nothing past that: one comes back
+    to a job with `helper_recurrent` some time after its cooldown ends (30 to
+    70 minutes later on 2026-11-10 and 11-11), which cannot be timed, so such
+    a row can still finish earlier than this says.
     """
+    helping = _helping(export.day.get("helpers", []))
     timers: list[UpgradeTimer] = []
     for world, section, row in export.rows():
         if row.timer is None:
             continue
-        boost, seconds = _finish(world, row.role, row.timer, export.boosts)
+        boost, helper, seconds = _finish(world, row, export.boosts, helping)
         timers.append(
             UpgradeTimer(
                 world=world,
@@ -295,6 +316,10 @@ def upgrade_timers(export: VillageExport) -> list[UpgradeTimer]:
                 timer=row.timer,
                 extra=bool(row.extra),
                 boost=boost,
+                helper=helper.data if helper else None,
+                helper_until=_clock(export.timestamp + row.helper_timer)
+                if row.helper_timer
+                else None,
                 seconds=seconds,
                 done_at=_clock(export.timestamp + seconds),
             )
@@ -577,22 +602,35 @@ def _levels(
     return levels, kinds
 
 
+def _helping(helpers: list[ExportRow]) -> dict[UpgradeRole, ExportRow]:
+    """Each helper row that speeds a slot, by that slot; a row saved without its multiplier is none."""
+    return {row.speeds: row for row in helpers if row.speeds and row.multiplier}
+
+
 def _finish(
-    world: World, role: UpgradeRole | None, timer: int, boosts: Boosts
-) -> tuple[str | None, int]:
-    """The speed-up a timer is running under, if any, and the real seconds it has left."""
+    world: World, row: ExportRow, boosts: Boosts, helping: dict[UpgradeRole, ExportRow]
+) -> tuple[str | None, ExportRow | None, int]:
+    """The speed-up and the helper a running row is under, if any, and the real seconds it has left."""
+    role = row.role
     boost, rate = SPEED_UPS.get((world, role), (None, 1)) if role else (None, 1)
     left = getattr(boosts, boost) if boost else None
-    return (boost if left else None), _real_seconds(timer, left, rate)
+    helper = helping.get(role) if role and row.helper_timer else None
+    windows = [(left, rate - 1)] if left else []
+    if helper is not None and row.helper_timer and helper.multiplier:
+        windows.append((row.helper_timer, helper.multiplier))
+    return (boost if left else None), helper, _real_seconds(row.timer or 0, windows)
 
 
-def _real_seconds(timer: int, left: int | None, rate: int) -> int:
-    """How long a job really has, at `rate` times speed for `left` more seconds."""
-    if not left:
-        return timer
-    if timer <= rate * left:
-        return -(-timer // rate)
-    return left + timer - rate * left
+def _real_seconds(timer: int, windows: list[tuple[int, int]]) -> int:
+    """How long a job really has, each (seconds, extra) window adding that much work per second."""
+    done = 0
+    for end in sorted({seconds for seconds, _ in windows}):
+        rate = 1 + sum(extra for seconds, extra in windows if seconds >= end)
+        if timer <= rate * (end - done):
+            return done + -(-timer // rate)
+        timer -= rate * (end - done)
+        done = end
+    return done + timer
 
 
 def _clock(epoch: int) -> str:
