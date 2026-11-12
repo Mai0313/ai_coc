@@ -23,6 +23,7 @@ from ai_coc.models import (
     Caller,
     RunLog,
     RunEnded,
+    AttackRun,
     NoteAction,
     RunStarted,
     StopTarget,
@@ -35,6 +36,7 @@ from ai_coc.models import (
     LootOverrides,
     SearchOptions,
     SearchSection,
+    StandDownReport,
 )
 from ai_coc.constants import FRAME_RETENTION_DAYS
 from ai_coc.logging_setup import Journal, configure_logging
@@ -64,7 +66,8 @@ def _log_uncaught(kind: type[BaseException], value: BaseException, trace: Any) -
 # disk, `stop` and `giveback` each change one field of the state file, `watch`
 # sleeps on its own section of it, `note` keeps the notes section, and
 # `growth` compares saved exports, `turnaround`, `farmed` and `tended` read the
-# journal, and `search` reads the kept tables and exports, none of them opening ADB;
+# journal, `wait` reads it and one run's process, and `search` reads the kept
+# tables and exports, none of them opening ADB;
 # `gamedata` opens it only to read the game's files. Every other one captures
 # the screen, so every other one takes `--debug` and `--shot-every`.
 NO_SCREEN = (
@@ -78,6 +81,7 @@ NO_SCREEN = (
     "search",
     "farmed",
     "tended",
+    "wait",
     "gamedata",
 )
 
@@ -186,6 +190,10 @@ COMMANDS = (
                 "睡到 --next、--upgrades、--tower、--minutes 裡最早的那個時間才結束，期間在狀態檔記下是誰在盯升級；丟到背景跑，結束時叫醒你",
             ),
             (
+                "wait",
+                "不碰遊戲，說一次執行跑完了沒、還在跑、在排隊等模擬器，還是程序已經不在；加 --for 就等它跑完，最多等那麼多秒",
+            ),
+            (
                 "note",
                 "使用者的交代，記在狀態檔裡；不給參數就列出來，add 加一條，done 刪掉做完的第幾條，"
                 "哪個世界的用 --day 或 --night",
@@ -203,13 +211,29 @@ COMMANDS = (
 )
 
 
-def _watch_flags(watcher: argparse.ArgumentParser, stopper: argparse.ArgumentParser) -> None:
+def _watch_flags(
+    watcher: argparse.ArgumentParser,
+    stopper: argparse.ArgumentParser,
+    waiter: argparse.ArgumentParser,
+) -> None:
     """`watch` never claims and never opens ADB: it sleeps on its own section of
     the state file, where a second agent sees somebody is watching and `stop`
-    reaches it. `stop` reaches both sections unless told which.
+    reaches it. `stop` reaches both sections unless told which. `wait` reads
+    the journal and one run's process.
 
     Its own function only because `_parser` is at Ruff's statement limit.
     """
+    waiter.add_argument(
+        "run", type=Path, help="執行目錄、它的名字，或開它時給的 --label（同一個標籤取最新的那次）"
+    )
+    waiter.add_argument(
+        "--for",
+        dest="seconds",
+        type=float,
+        default=0.0,
+        metavar="秒",
+        help="等它跑完或程序不在，最多等這麼多秒；不給就照現在的樣子回答",
+    )
     watcher.add_argument(
         "--next",
         type=datetime.fromisoformat,
@@ -418,7 +442,7 @@ def _parser() -> argparse.ArgumentParser:
         "開船到日世界，已經在那邊就什麼都不做；兩個都不給就只看現在在哪邊",
         "開船到夜世界",
     )
-    _watch_flags(sub.choices["watch"], sub.choices["stop"])
+    _watch_flags(sub.choices["watch"], sub.choices["stop"], sub.choices["wait"])
     _note_flags(sub.choices["note"])
     _growth_flags(sub.choices["growth"])
     _search_flags(sub.choices["search"])
@@ -592,6 +616,7 @@ def _answer(arguments: argparse.Namespace, run: RunLog) -> BaseModel | str:
         ),
         "farmed": lambda: commands.farmed_runs(a.by, a.since),
         "tended": lambda: commands.tended(a.by, a.since),
+        "wait": lambda: commands.wait(a.run, a.seconds),
         "collect": lambda: commands.collect(run.frames),
         "stock": lambda: commands.stock(run.frames),
         "status": lambda: commands.status(run.frames, a.last),
@@ -673,12 +698,8 @@ def _run_command(arguments: argparse.Namespace, run: RunLog) -> int:
     # exit below still says it did not run. So is a command that stood down
     # because another device logged in, which can happen to any of them, and a
     # watch that found no state file to sit on.
-    except (
-        commands.LoanCancelledError,
-        commands.SessionTakenError,
-        commands.NoStateFileError,
-    ) as error:
-        answer, cancelled = str(error), True
+    except tuple(commands.STAND_DOWNS) as error:
+        answer, cancelled = StandDownReport(outcome=commands.STAND_DOWNS[type(error)]), True
     # Outside the claim: writing the answer down and printing it touch no
     # emulator, and holding the screen across them would say this run is still
     # driving when it has finished.
@@ -695,17 +716,26 @@ def _run_command(arguments: argparse.Namespace, run: RunLog) -> int:
             else commands.answer_text(answer, getattr(arguments, "within", None))
         )
         sys.stdout.write(f"{result if text is None else text}\n")
+    if isinstance(answer, StandDownReport):
+        logger.info("%s", commands.STAND_DOWN_LINES[answer.outcome])
     # Still not zero, though: the stop meant nothing lined up behind the loan
     # runs, and a command chained after this one with `&&` would otherwise
     # start with no loan left to be cancelled.
     code = 1 if cancelled else 0
-    last = answer.root[-1] if isinstance(answer, AttackSeries) and answer.root else answer
+    # An attack keeps its last round alone, the others having `round` lines.
+    last = (
+        answer.model_copy(update={"rounds": AttackSeries(answer.rounds.root[-1:])})
+        if isinstance(answer, AttackRun)
+        else answer
+    )
     kept: JsonValue = last if isinstance(last, str) else last.model_dump(mode="json")
     Journal(run).write(
         RunEnded(
             exit=code,
             seconds=round(time.monotonic() - started, 1),
-            outcome=getattr(last, "outcome", None),
+            outcome=answer.ending
+            if isinstance(answer, AttackRun)
+            else getattr(answer, "outcome", None),
             result=kept if len(json.dumps(kept)) <= JOURNAL_RESULT_LIMIT else None,
         )
     )
@@ -795,6 +825,7 @@ def main() -> int:
             args=sys.argv[1:],
             caller=caller,
             pid=os.getpid(),
+            pid_created=commands.started_at(os.getpid()),
             version=__version__,
             commit=_commit(),
         )

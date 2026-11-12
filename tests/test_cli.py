@@ -29,6 +29,7 @@ from ai_coc.models import (
     RunLog,
     RunEnded,
     AppConfig,
+    AttackRun,
     ViewReport,
     WorldReport,
     AttackReport,
@@ -62,6 +63,7 @@ MINIMAL: dict[str, list[str]] = {
     "search": ["4000059"],
     "farmed": ["--by", "s1"],
     "tended": ["--by", "s1"],
+    "wait": ["day3-c2-attack-1"],
     "collect": [],
     "stock": [],
     "status": [],
@@ -274,7 +276,9 @@ class DispatchTests(unittest.TestCase):
         self.recorded.directory.mkdir()
 
     def test_every_attack_flag_reaches_its_option(self) -> None:
-        with patch.object(commands, "attack", return_value=AttackSeries()) as attacked:
+        with patch.object(
+            commands, "attack", return_value=AttackRun(ending="repeat_done")
+        ) as attacked:
             _answer(
                 _args(
                     "attack",
@@ -310,20 +314,26 @@ class DispatchTests(unittest.TestCase):
             (("--until-idle", "builder"), ["builder"]),
             (("--until-idle", "lab"), ["lab"]),
         ):
-            with patch.object(commands, "attack", return_value=AttackSeries()) as attacked:
+            with patch.object(
+                commands, "attack", return_value=AttackRun(ending="repeat_done")
+            ) as attacked:
                 _answer(_args("attack", *flags), self.run)
             assert attacked.call_args.args[0].until_idle == watched, flags
 
     def test_a_plan_is_a_shipped_name_or_a_path(self) -> None:
         for given, path, name in (("flat", None, "flat"), ("a.json", Path("a.json"), None)):
-            with patch.object(commands, "attack", return_value=AttackSeries()) as attacked:
+            with patch.object(
+                commands, "attack", return_value=AttackRun(ending="repeat_done")
+            ) as attacked:
                 _answer(_args("attack", "--plan", given), self.run)
             options = attacked.call_args.args[0]
             assert (options.plan, options.plan_name) == (path, name), given
 
     def test_an_omitted_flag_is_none_rather_than_zero(self) -> None:
         """None keeps the file's value and zero takes a threshold out; the parser must not merge them."""
-        with patch.object(commands, "attack", return_value=AttackSeries()) as attacked:
+        with patch.object(
+            commands, "attack", return_value=AttackRun(ending="repeat_done")
+        ) as attacked:
             _answer(_args("attack"), self.run)
         options = attacked.call_args.args[0]
         assert options == AttackOptions()
@@ -545,10 +555,12 @@ class DispatchTests(unittest.TestCase):
         assert out.getvalue() == "表\n"
 
     def test_an_attack_prints_what_it_brought_home_unless_asked_for_json(self) -> None:
-        """`result.json` stays the rounds, which `runner.md` reads the last of."""
-        series = AttackSeries([AttackReport(outcome="stock_full")])
+        """`result.json` stays the ending and every round."""
+        series = AttackRun(
+            ending="stock_full", rounds=AttackSeries([AttackReport(outcome="stock_full")])
+        )
         for line, shown in (
-            (("attack",), commands.farmed_text(commands.farmed(series))),
+            (("attack",), commands.attack_text(series)),
             (("attack", "--json"), series.model_dump_json(indent=2)),
         ):
             with (
@@ -634,16 +646,23 @@ class DispatchTests(unittest.TestCase):
 
     def test_a_queue_a_stop_ended_answers_rather_than_crashes(self) -> None:
         """`takeover` reads a run with no `result.json` as a killed process, so the
-        line is written; and a command chained after it with `&&` must not start,
+        report is written; and a command chained after it with `&&` must not start,
         so the exit is not zero.
         """
-        with (
-            patch.object(commands, "claim", side_effect=commands.LoanCancelledError("取消了")),
-            patch("sys.stdout", new_callable=io.StringIO) as shown,
+        for error, outcome in (
+            (commands.LoanCancelledError, "loan_cancelled"),
+            (commands.SessionTakenError, "session_taken"),
+            (commands.NoStateFileError, "no_state_file"),
         ):
-            assert _run_command(_args("attack"), self.run) != 0
-        assert "取消了" in shown.getvalue()
-        assert "取消了" in (self.run.directory / "result.json").read_text(encoding="utf-8")
+            with (
+                patch.object(commands, "claim", side_effect=error),
+                patch("sys.stdout", new_callable=io.StringIO) as shown,
+            ):
+                assert _run_command(_args("attack"), self.run) != 0
+            written = (self.run.directory / "result.json").read_text(encoding="utf-8")
+            assert models.StandDownReport.model_validate_json(written).outcome == outcome
+            assert shown.getvalue() == f"{written}\n"
+            assert _journal()[-1]["outcome"] == outcome
 
     def test_a_capture_keeps_its_frames_in_its_own_run_without_debug(self) -> None:
         """It writes its frames under names of its own, so there is nothing for a
@@ -842,11 +861,17 @@ class JournalTests(unittest.TestCase):
         assert (end["event"], end["run"], end["exit"]) == ("end", directory.name, 0)
         assert end["result"] is not None
 
-    def test_an_attack_ends_on_its_last_round_the_others_having_lines_of_their_own(self) -> None:
-        series = AttackSeries([
-            AttackReport(outcome="took_loot"),
-            AttackReport(outcome="stock_full"),
-        ])
+    def test_an_attack_ends_on_its_ending_and_last_round_the_others_having_lines_of_their_own(
+        self,
+    ) -> None:
+        """The ending is the series', which its last round does not say."""
+        series = AttackRun(
+            ending="stopped",
+            rounds=AttackSeries([
+                AttackReport(outcome="took_loot"),
+                AttackReport(outcome="no_loot"),
+            ]),
+        )
         with (
             patch.object(commands, "attack", return_value=series),
             patch.object(commands, "claim"),
@@ -854,7 +879,9 @@ class JournalTests(unittest.TestCase):
         ):
             _run_command(_args("attack"), self.run)
         (end,) = _journal()
-        assert (end["outcome"], end["result"]["outcome"]) == ("stock_full", "stock_full")
+        kept = AttackRun.model_validate(end["result"])
+        assert (end["outcome"], kept.ending) == ("stopped", "stopped")
+        assert [one.outcome for one in kept.rounds.root] == ["no_loot"]
 
     def test_every_round_of_a_series_gets_a_line_with_the_storages_before_it(self) -> None:
         """What `takeover` works a run's income out of once its directory is gone."""
@@ -869,7 +896,7 @@ class JournalTests(unittest.TestCase):
                 patch.object(commands, "current_world", return_value="day"),
                 patch.object(commands, "_planner", return_value=None),
                 patch.object(commands.ConfigStore, "load", return_value=AppConfig()),
-                patch.object(commands, "_rest", return_value=False),
+                patch.object(commands, "_rest", return_value=None),
                 patch.object(commands, "AttackRunner") as runner,
             ):
                 runner.return_value.run.side_effect = [

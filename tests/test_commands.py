@@ -27,15 +27,19 @@ from pydantic import ValidationError
 from ai_coc import plans, commands, logging_setup
 from ai_coc.ui import world as world_ui
 from ai_coc.models import (
+    SESSION_TAKEN_SENTENCE,
     Watch,
     Caller,
     MapEdge,
     FrameLog,
+    LoanStop,
     ProbeRay,
     AppConfig,
+    AttackRun,
     GameLevel,
     LootOffer,
     NightPlan,
+    WatchStop,
     AttackPlan,
     CartReport,
     ClockTower,
@@ -44,6 +48,8 @@ from ai_coc.models import (
     PlateCount,
     SearchNeed,
     SheetOffer,
+    StopReport,
+    WaitReport,
     AdbEndpoint,
     CartOutcome,
     NextUpgrade,
@@ -56,12 +62,14 @@ from ai_coc.models import (
     AttackSeries,
     BoostOutcome,
     DonateReport,
+    EmulatorStop,
     ExportReport,
     FarmedReport,
     GameEntities,
     LaunchReport,
     PressOutcome,
     RestartScope,
+    SeriesEnding,
     StatusReport,
     TendedReport,
     UpgradeTimer,
@@ -84,14 +92,16 @@ from ai_coc.models import (
     ConfirmOutcome,
     HelperCooldown,
     LootThresholds,
+    GivebackOutcome,
     StorageCapacity,
     VillageDocument,
+    StandDownOutcome,
     PlateCountOutcome,
     TurnaroundOutcome,
 )
 from ai_coc.adapters import gamedata
 from ai_coc.constants import COC_PACKAGE
-from ai_coc.ui.runner import SESSION_TAKEN, ScreenRunner
+from ai_coc.ui.runner import ScreenRunner
 from ai_coc.adapters.adb import PNG_MAGIC, AdbController, AdbControlError
 from ai_coc.parsers.home import PANEL_CLOSE, CLOCK_TOWER_BELOW
 from ai_coc.parsers.village import SECTIONS, merge
@@ -1128,6 +1138,215 @@ class UpkeepLineTests(unittest.TestCase):
         assert "村莊沒有出現" not in line("none", outcome="stopped")
 
 
+class AnswerLineTests(unittest.TestCase):
+    """Each named outcome's line says something no other line in its table does."""
+
+    def test_every_table_covers_its_outcomes_with_lines_of_their_own(self) -> None:
+        for table, kind in (
+            (commands.ENDING_LINES, SeriesEnding),
+            (commands.STOP_LINES, EmulatorStop),
+            (commands.LOAN_LINES, LoanStop),
+            (commands.WATCH_LINES, WatchStop),
+            (commands.GIVEBACK_LINES, GivebackOutcome),
+            (commands.STAND_DOWN_LINES, StandDownOutcome),
+        ):
+            assert set(table) == set(get_args(kind)), kind
+            for outcome, line in table.items():
+                assert not any(line in other for key, other in table.items() if key != outcome)
+        assert set(commands.STAND_DOWNS.values()) == set(get_args(StandDownOutcome))
+
+    def test_a_stop_line_names_each_section_it_reached(self) -> None:
+        line = commands.stop_line(
+            StopReport(
+                target="all",
+                emulator="asked",
+                command="attack",
+                pid=42,
+                loan="kept",
+                lender=Caller(agent="codex"),
+                watch="nothing_watching",
+            )
+        )
+        assert line.split(";") == [
+            commands.STOP_LINES["asked"].format(command="attack", pid=42),
+            commands.LOAN_LINES["kept"].format(lender="codex"),
+            commands.WATCH_LINES["nothing_watching"],
+        ]
+        watch_only = commands.stop_line(StopReport(target="watch", watch="nothing_watching"))
+        assert watch_only == commands.WATCH_LINES["nothing_watching"]
+
+
+class AttackSeriesEndingTests(unittest.TestCase):
+    """A series answers how it ended, which its last round cannot say."""
+
+    FOUGHT = LootOffer(gold=1, elixir=1, dark=1)
+
+    def _ending(
+        self,
+        played: list[object] | Callable[[], AttackReport],
+        rounds: int = 0,
+        should_stop: Callable[[], bool] | None = None,
+        rest: SeriesEnding | None = None,
+    ) -> AttackRun:
+        runner = MagicMock(name="AttackRunner")
+        runner.configure_mock(played=None, holding=None, capacity=None, cart=None, since_cart=None)
+        runner.run.side_effect = played
+        runner.lost = 0
+        runner.world = "day"
+        with (
+            patch.object(commands, "_controller", return_value=_adb()),
+            patch.object(commands.ConfigStore, "load", return_value=AppConfig()),
+            patch.object(commands, "_planner", return_value=None),
+            patch.object(commands, "_settle_game", return_value=DISPLAY),
+            patch.object(commands, "AttackRunner", return_value=runner),
+            patch.object(commands, "_rest", return_value=rest),
+        ):
+            return commands.attack(
+                AttackOptions(rounds=rounds),
+                _frames(self),
+                should_stop or MagicMock(return_value=False),
+            )
+
+    def _stopped_after_one(self, rounds: int) -> AttackRun:
+        """A stop that lands during the first round, which itself ends as an ordinary battle."""
+        ran: list[AttackReport] = []
+
+        def fight() -> AttackReport:
+            ran.append(AttackReport(outcome="took_loot", attacked=self.FOUGHT))
+            return ran[-1]
+
+        return self._ending(fight, rounds=rounds, should_stop=lambda: bool(ran))
+
+    def test_the_rounds_asked_for_played_out(self) -> None:
+        fought = [AttackReport(outcome="took_loot", attacked=self.FOUGHT)] * 2
+        run = self._ending(fought, rounds=2)
+        assert (run.ending, len(run.rounds.root)) == ("repeat_done", 2)
+
+    def test_a_stop_before_a_round_between_rounds_or_during_the_last(self) -> None:
+        """Each ends on an ordinary round or none, whose own outcome says nothing of the stop."""
+        before = self._ending([], should_stop=MagicMock(return_value=True))
+        assert (before.ending, before.rounds.root) == ("stopped", [])
+        for rounds in (0, 1):
+            run = self._stopped_after_one(rounds)
+            assert (run.ending, len(run.rounds.root)) == ("stopped", 1), rounds
+            assert run.rounds.root[-1].outcome == "took_loot"
+
+    def test_a_ctrl_c_in_a_round_or_in_the_rest(self) -> None:
+        assert self._ending([KeyboardInterrupt()]).ending == "interrupted"
+        run = self._ending([AttackReport(outcome="no_opponent")], rest="interrupted")
+        assert (run.ending, run.rounds.root[-1].outcome) == ("interrupted", "no_opponent")
+
+    def test_rounds_failing_back_to_back(self) -> None:
+        silent = self._ending([AdbControlError("adb read timeout")] * commands.ADAPTER_FAILURES)
+        assert (silent.ending, len(silent.rounds.root)) == (
+            "emulator_silent",
+            commands.ADAPTER_FAILURES,
+        )
+        stuck = self._ending([AttackReport(outcome="no_attack_menu")] * commands.MENU_FAILURES)
+        assert (stuck.ending, len(stuck.rounds.root)) == ("no_attack_menu", commands.MENU_FAILURES)
+
+    def test_a_round_that_ends_the_series_names_it(self) -> None:
+        for outcome, ending in commands.ROUND_ENDINGS.items():
+            run = self._ending([AttackReport(outcome=outcome)])
+            assert (run.ending, run.rounds.root[-1].outcome) == (ending, outcome)
+
+
+class WaitTests(unittest.TestCase):
+    """Where one run stands, off the journal (conftest's tmp copy) and its process."""
+
+    RUN = "2026-11-12-100000-attack-d-a1"
+
+    def setUp(self) -> None:
+        self.lines: list[dict[str, object]] = []
+        self.logs = Path(self.enterContext(tempfile.TemporaryDirectory()))
+
+    def _start(self, run: str = RUN, command: str = "attack", pid: int = 424242) -> Path:
+        log = self.logs / run
+        log.mkdir()
+        (log / "run.log").write_text("line\n", encoding="utf-8")
+        self.lines.append({
+            "run": run,
+            "at": "2026-11-12T10:00:00+08:00",
+            "event": "start",
+            "command": command,
+            "log": str(log),
+            "pid": pid,
+            "pid_created": 100.0,
+        })
+        return log
+
+    def _line(self, event: str, run: str = RUN, **fields: object) -> None:
+        self.lines.append({
+            "run": run,
+            "at": "2026-11-12T10:01:00+08:00",
+            "event": event,
+            **fields,
+        })
+
+    def _wait(self, run: str, *, alive: bool = True, seconds: float = 0.0) -> WaitReport:
+        logging_setup.JOURNAL_PATH.write_text(
+            "".join(json.dumps(line, ensure_ascii=False) + "\n" for line in self.lines),
+            encoding="utf-8",
+        )
+        with patch.object(commands, "_alive", return_value=alive):
+            return commands.wait(Path(run), seconds)
+
+    def test_a_finished_run_answers_its_exit_and_outcome(self) -> None:
+        log = self._start()
+        self._line("end", exit=0, outcome="stock_full")
+        report = self._wait(str(log))
+        assert (report.outcome, report.exit, report.run_outcome, report.command) == (
+            "finished",
+            0,
+            "stock_full",
+            "attack",
+        )
+
+    def test_a_live_run_drives_or_queues_and_says_behind_whom(self) -> None:
+        self._start()
+        self._line("lock", what="queued")
+        holder = RunnerState(status="running", pid=1, log=Path("theirs"))
+        with patch.object(commands, "holder", return_value=holder):
+            queued = self._wait("d-a1")
+        assert (queued.outcome, queued.holder) == ("queued", Path("theirs"))
+        with patch.object(commands, "holder", return_value=None):
+            behind_a_loan = self._wait("d-a1")
+        assert (behind_a_loan.outcome, behind_a_loan.holder) == ("queued", None)
+        self._line("lock", what="claimed")
+        running = self._wait("d-a1")
+        assert (running.outcome, running.pid) == ("running", 424242)
+        assert running.quiet is not None
+
+    def test_a_dead_run_is_gone_unless_it_answered(self) -> None:
+        """Its `end` line is the one write that can be dropped."""
+        log = self._start()
+        assert self._wait("d-a1", alive=False).outcome == "gone"
+        (log / "result.json").write_text("{}", encoding="utf-8")
+        assert self._wait("d-a1", alive=False).outcome == "finished"
+
+    def test_a_label_takes_the_newest_run_carrying_it_and_never_its_own(self) -> None:
+        older = "2026-11-12-090000-attack-d-a1"
+        self._start(older)
+        self._line("end", run=older, exit=0, outcome="repeat_done")
+        newer = self._start()
+        self._start("2026-11-12-100100-wait-d-a1", command="wait", pid=os.getpid())
+        assert self._wait("d-a1").log == newer
+        assert self._wait("a1-x").outcome == "no_such_run"
+
+    def test_a_wait_returns_once_the_run_finishes(self) -> None:
+        self._start()
+        ended = {"run": self.RUN, "at": "2026-11-12T10:02:00+08:00", "event": "end", "exit": 0}
+
+        def finish(_seconds: float) -> None:
+            with logging_setup.JOURNAL_PATH.open("a", encoding="utf-8") as journal:
+                journal.write(json.dumps(ended) + "\n")
+
+        with patch.object(commands.time, "sleep", side_effect=finish) as slept:
+            report = self._wait("d-a1", seconds=600)
+        assert report.outcome == "finished"
+        slept.assert_called_once()
+
+
 class RoundLineTests(unittest.TestCase):
     """One log line per attack outcome, plus the counts that are orthogonal to it.
 
@@ -1196,7 +1415,7 @@ class AttackSeriesStopTests(unittest.TestCase):
             patch.object(commands, "AttackRunner", return_value=runner) as built,
         ):
             series = commands.attack(AttackOptions(rounds=1), _frames(self), should_stop)
-        return built, series.root
+        return built, series.rounds.root
 
     def test_a_caller_that_is_already_stopping_plays_nothing(self) -> None:
         built, rounds = self._series(MagicMock(return_value=True))
@@ -1260,12 +1479,12 @@ class AttackSeriesAdapterFailureTests(unittest.TestCase):
             patch.object(commands, "_planner", return_value=None),
             patch.object(commands, "_settle_game", return_value=DISPLAY),
             patch.object(commands, "AttackRunner", return_value=runner),
-            patch.object(commands, "_rest", return_value=False),
+            patch.object(commands, "_rest", return_value=None),
         ):
             series = commands.attack(
                 AttackOptions(rounds=rounds), _frames(self), MagicMock(return_value=False)
             )
-        return series.root
+        return series.rounds.root
 
     def test_a_round_lost_to_the_emulator_is_recorded_and_the_series_carries_on(self) -> None:
         """One timeout is a blip, and an overnight run should survive it."""
@@ -1359,12 +1578,12 @@ class AttackSummaryTests(unittest.TestCase):
             patch.object(commands, "_planner", return_value=None),
             patch.object(commands, "_settle_game", return_value=DISPLAY),
             patch.object(commands, "AttackRunner", return_value=runner),
-            patch.object(commands, "_rest", return_value=False),
+            patch.object(commands, "_rest", return_value=None),
         ):
             series = commands.attack(
                 AttackOptions(rounds=2), _frames(self), MagicMock(return_value=False)
             )
-        for report in series.root:
+        for report in series.rounds.root:
             assert (report.holding, report.capacity, report.cart) == (
                 held,
                 StorageCapacity(gold=9),
@@ -1388,7 +1607,7 @@ class AttackSummaryTests(unittest.TestCase):
             series = commands.attack(
                 AttackOptions(rounds=0), _frames(self), MagicMock(return_value=False)
             )
-        [report] = series.root
+        [report] = series.rounds.root
         assert (report.outcome, report.holding) == ("session_taken", held)
 
     def test_the_loot_is_the_last_reading_less_the_first(self) -> None:
@@ -1398,7 +1617,8 @@ class AttackSummaryTests(unittest.TestCase):
                 ("took_loot", (1_000_000, 1_000_000, 10_000)),
                 ("took_loot", (2_000_000, 1_500_000, 13_000)),
                 ("stock_full", (3_000_000, 2_000_000, 16_000)),
-            )
+            ),
+            "stock_full",
         )
         assert village is not None
         assert (village.battles, village.uncounted, village.ending) == (2, 0, "stock_full")
@@ -1407,12 +1627,15 @@ class AttackSummaryTests(unittest.TestCase):
 
     def test_battles_no_two_readings_bracket_are_counted_apart(self) -> None:
         village = commands.farmed(
-            _played("day", ("took_loot", None), ("took_loot", (1, 1, 1)), ("took_loot", None))
+            _played("day", ("took_loot", None), ("took_loot", (1, 1, 1)), ("took_loot", None)),
+            "repeat_done",
         )
         assert village is not None
         assert (village.battles, village.uncounted) == (3, 3)
         assert village.gained == VillageStock(gold=0, elixir=0, dark=0)
-        village = commands.farmed(_played("day", ("took_loot", None), ("no_attack_menu", None)))
+        village = commands.farmed(
+            _played("day", ("took_loot", None), ("no_attack_menu", None)), "no_attack_menu"
+        )
         assert village is not None
         assert (village.battles, village.uncounted, village.gained) == (1, 1, None)
         assert village.ending == "no_attack_menu"
@@ -1425,7 +1648,7 @@ class AttackSummaryTests(unittest.TestCase):
         series = _played("night", ("deployed", (1, 1, 0)), cart=emptied)
         series.root += _played("night", ("deployed", (2, 2, 0)), cart=banking).root
         series.root[-1].since_cart = 3
-        village = commands.farmed(series)
+        village = commands.farmed(series, "stock_full")
         assert village is not None
         assert (village.cart_gained, village.cart_now, village.cart_capacity) == (
             1_550_000,
@@ -1434,7 +1657,8 @@ class AttackSummaryTests(unittest.TestCase):
         )
         assert village.cart_unread == 3
         lost = commands.farmed(
-            _played("night", ("deployed", (1, 1, 0)), cart=CartReport(outcome="not_found"))
+            _played("night", ("deployed", (1, 1, 0)), cart=CartReport(outcome="not_found")),
+            "repeat_done",
         )
         assert lost is not None
         assert (lost.cart_gained, lost.cart_now) == (None, None)
@@ -1444,10 +1668,11 @@ class AttackSummaryTests(unittest.TestCase):
             AttackReport(world=None, outcome="no_attack_menu"),
             *_played("night", ("deployed", (1, 1, 0))).root,
         ])
-        village = commands.farmed(series)
+        village = commands.farmed(series, "repeat_done")
         assert village is not None
         assert (village.world, village.battles) == ("night", 1)
-        assert commands.farmed(AttackSeries([AttackReport(world=None, outcome="stopped")])) is None
+        nowhere = AttackSeries([AttackReport(world=None, outcome="stopped")])
+        assert commands.farmed(nowhere, "stopped") is None
 
     def test_the_text_is_the_farming_reports_table(self) -> None:
         day = _played(
@@ -1455,9 +1680,10 @@ class AttackSummaryTests(unittest.TestCase):
             ("took_loot", (1_000_000, 2_000_000, 6_000)),
             ("stock_full", (10_000_000, 2_760_000, 12_000)),
         )
-        text = commands.farmed_text(commands.farmed(day))
-        assert text.splitlines() == [
-            f"日世界: 1 場, 最後一輪: {commands.ROUND_LINES['stock_full']}",
+        village = commands.farmed(day, "stock_full")
+        assert village is not None
+        assert commands.farmed_text(village).splitlines() == [
+            f"日世界: 1 場, {commands.ENDING_LINES['stock_full']}",
             "",
             "| 資源 | 進帳 | 現在 |",
             "| --- | --- | --- |",
@@ -1473,9 +1699,11 @@ class AttackSummaryTests(unittest.TestCase):
             cart=CartReport(outcome="locked_holding", held=1_600_000, capacity=1_600_000),
         )
         night.root[-1].since_cart = 2
-        text = commands.farmed_text(commands.farmed(night))
+        village = commands.farmed(night, "stopped")
+        assert village is not None
+        text = commands.farmed_text(village)
         for row in (
-            f"夜世界: 3 場, 最後一輪: {commands.ROUND_LINES['deployed']}",
+            f"夜世界: 3 場, {commands.ENDING_LINES['stopped']}",
             "| 金幣 | +568 萬 | 578 萬 (57%) |",
             "| 聖水車 | +0 萬 | 160 萬 / 160 萬 |",
             "有 2 場打完之後沒讀到倉庫, 沒算進進帳",
@@ -1483,7 +1711,14 @@ class AttackSummaryTests(unittest.TestCase):
         ):
             assert row in text, row
         assert "| 黑水" not in text
-        assert commands.farmed_text(None) == "一輪都沒有讀到是哪個村莊, 一場也沒打"
+        # A run still going, or one written before series named their endings.
+        unknown = village.model_copy(update={"ending": None})
+        assert commands.farmed_text(unknown).splitlines()[0] == "夜世界: 3 場"
+
+    def test_an_attack_that_read_no_village_still_says_how_it_ended(self) -> None:
+        """Stopped before its first round, it used to print only that nothing was fought."""
+        text = commands.attack_text(AttackRun(ending="stopped"))
+        assert text == f"一輪都沒有讀到是哪個村莊, 一場也沒打; {commands.ENDING_LINES['stopped']}"
 
 
 class FarmedRunsTests(unittest.TestCase):
@@ -1502,6 +1737,7 @@ class FarmedRunsTests(unittest.TestCase):
         ended: bool = True,
         cart: dict[str, object] | None = None,
         old: bool = False,
+        ending: str | None = None,
     ) -> None:
         """One attack run's start, its rounds a minute apart, and its end; `old` writes the storages beside the report only."""
         start = datetime.fromisoformat(f"2026-11-11T{at}:00+08:00")
@@ -1530,7 +1766,9 @@ class FarmedRunsTests(unittest.TestCase):
                 "run": run,
                 "at": (start + timedelta(minutes=len(rounds) + 1)).isoformat(),
                 "event": "end",
-                "outcome": None,
+                "outcome": ending,
+                # A run from before series named their endings kept its last round alone.
+                "result": None if ending is None else {"ending": ending, "rounds": []},
             })
 
     def _farmed(self, **asked: object) -> FarmedReport:
@@ -1568,6 +1806,19 @@ class FarmedRunsTests(unittest.TestCase):
         self._run("r1", "10:00", [("took_loot", (1, 1, 1)), ("stock_full", (3, 3, 3))], old=True)
         [day] = self._farmed(by="s1").villages
         assert day.gained == VillageStock(gold=2, elixir=2, dark=2)
+
+    def test_each_village_ends_as_its_last_run_did(self) -> None:
+        """Off the `end` line; an old one only where its last round ends a series, none still going."""
+        self._run(
+            "r1", "10:00", [("took_loot", (1, 1, 1)), ("took_loot", (2, 2, 2))], ending="stopped"
+        )
+        self._run("n1", "10:10", [("deployed", (1, 1, 0))], world="night")
+        [day, night] = self._farmed(by="s1").villages
+        assert (day.ending, night.ending) == ("stopped", None)
+        self._run("r2", "10:20", [("took_loot", (3, 3, 3)), ("stock_full", (4, 4, 4))])
+        self._run("n2", "10:30", [("deployed", (2, 2, 0))], world="night", ended=False)
+        [day, night] = self._farmed(by="s1").villages
+        assert (day.ending, night.ending) == ("stock_full", None)
 
     def test_a_round_line_carrying_the_carts_old_outcome_still_counts(self) -> None:
         """`not_night` was written `wrong_world`, and a line that no longer parses is left out of the sum."""
@@ -1732,7 +1983,7 @@ class TendedTests(unittest.TestCase):
         self._run("attack", "12:22", "session_taken", session="s1-farm")
         # The session's own status stood down on the same loss, and its watch
         # and its stop claimed nothing.
-        self._run("status", "12:23", None, SESSION_TAKEN, exit_code=1)
+        self._run("status", "12:23", None, SESSION_TAKEN_SENTENCE, exit_code=1)
         self._run("watch", "12:24", "due", claimed=False)
         self._run("launch", "12:28")
         self._run("attack", "13:00", "session_taken", session="s1-farm")
@@ -1747,6 +1998,20 @@ class TendedTests(unittest.TestCase):
             .tended_text(self._tended(by="s1"))
             .splitlines()[-1]
             .endswith(f"{second.taken.astimezone():%H:%M} 被搶, 還沒接回)")
+        )
+
+    def test_a_stand_down_reads_by_its_outcome_and_the_old_bare_sentence_still_counts(
+        self,
+    ) -> None:
+        """Runs from before the stand-downs became reports answered with a sentence and no outcome."""
+        self._run("status", "12:23", None, SESSION_TAKEN_SENTENCE, exit_code=1)
+        self._run("launch", "12:28")
+        self._run("status", "13:00", "session_taken", {"outcome": "session_taken"}, exit_code=1)
+        first, second = self._tended(by="s1").lost
+        assert first.back == datetime.fromisoformat("2026-11-11T12:28:10+08:00")
+        assert (second.taken, second.back) == (
+            datetime.fromisoformat("2026-11-11T13:00:10+08:00"),
+            None,
         )
 
     def test_nothing_done_says_so_line_by_line(self) -> None:
@@ -1779,14 +2044,14 @@ class AttackSeriesMenuTests(unittest.TestCase):
             patch.object(commands, "_planner", return_value=None),
             patch.object(commands, "_settle_game", return_value=DISPLAY),
             patch.object(commands, "AttackRunner", return_value=runner),
-            patch.object(commands, "_rest", return_value=False),
+            patch.object(commands, "_rest", return_value=None),
         ):
             series = commands.attack(
                 AttackOptions(rounds=0),
                 _frames(self),
                 should_stop or MagicMock(return_value=False),
             )
-        return series.root
+        return series.rounds.root
 
     def test_a_run_of_them_ends_the_series(self) -> None:
         stuck = AttackReport(outcome="no_attack_menu")
@@ -1857,12 +2122,12 @@ class AttackSeriesArmyShortTests(unittest.TestCase):
             patch.object(commands, "_planner", return_value=None),
             patch.object(commands, "_settle_game", return_value=DISPLAY),
             patch.object(commands, "AttackRunner", return_value=runner),
-            patch.object(commands, "_rest", return_value=False) as rest,
+            patch.object(commands, "_rest", return_value=None) as rest,
         ):
             series = commands.attack(
                 AttackOptions(rounds=0), _frames(self), MagicMock(return_value=False)
             )
-        return series.root, rest
+        return series.rounds.root, rest
 
     def test_an_army_short_round_ends_the_series_holding_what_it_played(self) -> None:
         fought = LootOffer(gold=1, elixir=1, dark=1)
@@ -2231,9 +2496,12 @@ class RunPlumbingTests(unittest.TestCase):
         used to be a file that looked the same however it got there.
         """
         with commands.claim("attack"):
-            message = commands.stop()
-            assert "attack" in message
-            assert str(commands.STATE_PATH) in message
+            stopped = commands.stop()
+            assert (stopped.emulator, stopped.command, stopped.pid) == (
+                "asked",
+                "attack",
+                os.getpid(),
+            )
             assert commands.stop_requested()
 
     def test_a_stop_ends_with_the_run_it_was_asked_of(self) -> None:
@@ -2672,9 +2940,12 @@ class WatchTests(unittest.TestCase):
             assert (state.status, watching.status) == (emulator, watch), target
 
     def test_a_stop_with_nothing_running_says_so_for_both(self) -> None:
-        line = commands.stop()
-        assert "沒有東西要停" in line
-        assert "沒有人在盯升級" in line
+        stopped = commands.stop()
+        assert (stopped.emulator, stopped.loan, stopped.watch) == (
+            "nothing_running",
+            None,
+            "nothing_watching",
+        )
 
     def test_a_file_written_before_the_split_reads_as_the_emulator_s_record(self) -> None:
         """So a run of the old code still holding the emulator is not read as idle.

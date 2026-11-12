@@ -31,8 +31,10 @@ from ai_coc.models import (
     Caller,
     MapEdge,
     FrameLog,
+    LoanStop,
     ProbeRay,
     AppConfig,
+    AttackRun,
     ExportRow,
     LockEvent,
     LostLogin,
@@ -41,6 +43,7 @@ from ai_coc.models import (
     PlateRole,
     SearchHit,
     StateFile,
+    WatchStop,
     AttackPlan,
     CartReport,
     NoteAction,
@@ -49,8 +52,10 @@ from ai_coc.models import (
     RoundEvent,
     SearchNext,
     SheetOffer,
+    StopReport,
     StopTarget,
     ViewReport,
+    WaitReport,
     AdbEndpoint,
     BoostReport,
     CartOutcome,
@@ -71,6 +76,7 @@ from ai_coc.models import (
     AttackSeries,
     BoostOutcome,
     DonateReport,
+    EmulatorStop,
     ExportReport,
     FarmedReport,
     FrameReading,
@@ -82,6 +88,7 @@ from ai_coc.models import (
     PressOutcome,
     RestartScope,
     SearchReport,
+    SeriesEnding,
     StatusReport,
     TendedReport,
     UpgradeTimer,
@@ -109,15 +116,19 @@ from ai_coc.models import (
     CollectOutcome,
     ConfirmOutcome,
     GameDataReport,
+    GivebackReport,
     JournalConfirm,
     LootThresholds,
+    GivebackOutcome,
     StorageCapacity,
     TurnaroundGroup,
     EmulatorInstance,
+    StandDownOutcome,
     TurnaroundReport,
     TurnaroundSample,
     PlateCountOutcome,
     TurnaroundOutcome,
+    labelled,
 )
 from ai_coc.constants import STATE_PATH, COC_PACKAGE, ACCOUNT_JSON_DIR
 from ai_coc.adapters.ai import GeminiClient
@@ -209,7 +220,6 @@ from .ui.plates import PlateRunner
 from .ui.runner import (
     BUY_SETTLE,
     BACK_SETTLE,
-    SESSION_TAKEN,
     ScreenRunner,
     SessionTakenError,
     on_hud,
@@ -626,6 +636,20 @@ class NoStateFileError(RuntimeError):
     """
 
 
+# The exceptions a command stands down with, which `cli` answers as a
+# `StandDownReport` rather than a crash, and the line `run.log` gets for each.
+STAND_DOWNS: dict[type[RuntimeError], StandDownOutcome] = {
+    LoanCancelledError: "loan_cancelled",
+    SessionTakenError: "session_taken",
+    NoStateFileError: "no_state_file",
+}
+STAND_DOWN_LINES: dict[StandDownOutcome, str] = {
+    "loan_cancelled": "借用被 ai_coc stop 取消了,這個指令沒有開跑",
+    "session_taken": "另一部裝置登入了這個帳號,沒有把登入搶回來",
+    "no_state_file": "狀態檔不在(手動刪掉是叫停),什麼都沒改",
+}
+
+
 @contextmanager
 def _turn() -> Generator[None]:
     """One process at a time through a read and a write of the state file.
@@ -648,7 +672,7 @@ def _turn() -> Generator[None]:
         lock.release()
 
 
-def _started_at(pid: int) -> float | None:
+def started_at(pid: int) -> float | None:
     """When process `pid` started, or None where that cannot be told."""
     try:
         return psutil.Process(pid).create_time()
@@ -656,7 +680,7 @@ def _started_at(pid: int) -> float | None:
         return None
 
 
-def _alive(state: RunnerState | Watch) -> bool:
+def _alive(state: RunnerState | Watch | JournalLine) -> bool:
     """Whether the process a record names is still the one that wrote it.
 
     Never `os.kill(pid, 0)`: on Windows signal 0 is `CTRL_C_EVENT`, so it sends
@@ -1082,12 +1106,12 @@ def claim(
             state = read_state()
             loan = state.loan if state else None
             if queued and loan and (loan.since, loan.ended) == (queued, "cancelled"):
-                raise LoanCancelledError("借用被 ai_coc stop 取消了,這個指令沒有開跑")
+                raise LoanCancelledError
             if holder() is None and not (yields and _standing(state)):
                 mine = RunnerState(
                     status="running",
                     pid=os.getpid(),
-                    pid_created=_started_at(os.getpid()),
+                    pid_created=started_at(os.getpid()),
                     command=command,
                     started=datetime.now().astimezone(),
                     log=log,
@@ -1172,7 +1196,36 @@ def _release(command: str, log: Path | None) -> None:
     _held = _borrowed = None
 
 
-def stop(caller: Caller | None = None, target: StopTarget = "all") -> str:
+# One line per way `ai_coc stop` can leave each section, for `run.log`.
+STOP_LINES: dict[EmulatorStop, str] = {
+    "asked": "已要求 {command}(pid {pid})收工,它會做完手上這一件事才停",
+    "nothing_running": "現在沒有指令在跑",
+}
+LOAN_LINES: dict[LoanStop, str] = {
+    "kept": "借用還在,{lender}之後會自己開回去",
+    "cancelled": "借用取消了,{lender}不會自己開回去",
+}
+WATCH_LINES: dict[WatchStop, str] = {
+    "asked": "已要求{watcher}的盯升級收工",
+    "nothing_watching": "沒有人在盯升級",
+}
+
+
+def stop_line(report: StopReport) -> str:
+    """What one stop did, each section it reached in turn."""
+    said: list[str] = []
+    if report.emulator is not None:
+        said.append(STOP_LINES[report.emulator].format(command=report.command, pid=report.pid))
+    if report.loan is not None:
+        lender = (report.lender.agent if report.lender else "") or "借出模擬器的那一邊"
+        said.append(LOAN_LINES[report.loan].format(lender=lender))
+    if report.watch is not None:
+        watcher = (report.watcher.agent if report.watcher else "") or "盯升級的那一邊"
+        said.append(WATCH_LINES[report.watch].format(watcher=watcher))
+    return ";".join(said)
+
+
+def stop(caller: Caller | None = None, target: StopTarget = "all") -> StopReport:
     """Ask the command driving the emulator, and the upgrade watch, to stand down.
 
     Nothing here touches the game or looks for a process: this changes fields
@@ -1191,16 +1244,17 @@ def stop(caller: Caller | None = None, target: StopTarget = "all") -> str:
     ending the watch.
     """
     who = caller or Caller()
-    said: list[str] = []
+    report = StopReport(target=target)
     with _turn():
         if target != "watch":
-            said.append(_stop_emulator(read_state(), who))
+            report = _stop_emulator(report, read_state(), who)
         if target != "emulator":
-            said.append(_stop_watch(read_watch(), who))
-    return "".join(said)
+            report = _stop_watch(report, read_watch(), who)
+    logger.info("%s", stop_line(report))
+    return report
 
 
-def _stop_emulator(state: RunnerState | None, who: Caller) -> str:
+def _stop_emulator(report: StopReport, state: RunnerState | None, who: Caller) -> StopReport:
     """Mark the emulator's holder `stopping`, and settle its loan.
 
     **A loan nobody is driving on is cancelled**, so the lender does not start
@@ -1211,39 +1265,42 @@ def _stop_emulator(state: RunnerState | None, who: Caller) -> str:
     """
     loan = _standing(state)
     if state is None or (state.status == "idle" and loan is None):
-        return "現在沒有指令在跑,沒有東西要停。"
+        return report.model_copy(update={"emulator": "nothing_running"})
     driven = loan is not None and loan.until is None
+    asked = state.status != "idle"
     update: dict[str, object] = {}
     if loan is not None and not driven:
         update["loan"] = loan.model_copy(update={"ended": "cancelled"})
-    if state.status != "idle":
+    if asked:
         update |= {"status": "stopping", "stop_by": who}
     _write_state(state.model_copy(update=update))
-    after = ""
-    if loan is not None:
-        lender = loan.lender.agent or "借出模擬器的那一邊"
-        after = (
-            f"借用還在,{lender}之後會自己開回去;要連它一起停,等這個指令停了再下一次 ai_coc stop。"
-            if driven
-            else f"借用也取消了,{lender}不會自己開回去。"
-        )
-    if state.status == "idle":
-        return f"現在沒有指令在跑;{after}"
-    return (
-        f"已要求 {state.command}(pid {state.pid})收工,狀態寫在 {STATE_PATH}。"
-        f"它會做完手上這一件事才停。{after}"
+    return report.model_copy(
+        update={
+            "emulator": "asked" if asked else "nothing_running",
+            "command": state.command if asked else "",
+            "pid": state.pid if asked else None,
+            "loan": None if loan is None else "kept" if driven else "cancelled",
+            "lender": None if loan is None else loan.lender,
+        }
     )
 
 
-def _stop_watch(watching: Watch | None, who: Caller) -> str:
+def _stop_watch(report: StopReport, watching: Watch | None, who: Caller) -> StopReport:
     """Mark a live upgrade watch `stopping`; it wakes within a `STOP_POLL`."""
     if watching is None or watching.status == "idle" or not _alive(watching):
-        return "沒有人在盯升級。"
+        return report.model_copy(update={"watch": "nothing_watching"})
     _write_watch(watching.model_copy(update={"status": "stopping", "stop_by": who}))
-    return f"已要求{watching.caller.agent or '盯升級的那一邊'}的盯升級收工。"
+    return report.model_copy(update={"watch": "asked", "watcher": watching.caller})
 
 
-def giveback() -> str:
+# One line per way `ai_coc giveback` can end, for `run.log`.
+GIVEBACK_LINES: dict[GivebackOutcome, str] = {
+    "returned": "還了,{lender}會自己開回去",
+    "no_loan": "現在沒有借出去的模擬器,沒有東西要還",
+}
+
+
+def giveback() -> GivebackReport:
     """Hand a borrowed emulator back, so the run it was taken from starts again.
 
     Anyone may, not only the borrower: one whose agent has died would otherwise
@@ -1254,11 +1311,83 @@ def giveback() -> str:
         state = read_state()
         loan = _standing(state)
         if state is None or loan is None:
-            return "現在沒有借出去的模擬器,沒有東西要還。"
-        _write_state(
-            state.model_copy(update={"loan": loan.model_copy(update={"ended": "returned"})})
+            report = GivebackReport(outcome="no_loan")
+        else:
+            _write_state(
+                state.model_copy(update={"loan": loan.model_copy(update={"ended": "returned"})})
+            )
+            report = GivebackReport(outcome="returned", lender=loan.lender)
+    lender = (report.lender.agent if report.lender else "") or "借出模擬器的那一邊"
+    logger.info("%s", GIVEBACK_LINES[report.outcome].format(lender=lender))
+    return report
+
+
+def wait(run: Path, seconds: float = 0.0) -> WaitReport:
+    """Where one run stands, waiting up to `seconds` for it to finish or die.
+
+    `run` is its directory, the directory's name, or the `--label` it was
+    started with, the newest run carrying it. Read off the journal, that run's
+    process and its log alone, so it claims nothing and starts nothing: an
+    agent waiting on a background run makes one call that ends by itself in any
+    runtime or shell, where a run killed outright writes nothing and only its
+    process being gone says so.
+    """
+    deadline = time.monotonic() + seconds
+    while (report := _where(run)).outcome not in ("finished", "gone") and (
+        left := deadline - time.monotonic()
+    ) > 0:
+        time.sleep(min(STOP_POLL, left))
+    logger.info("%s is %s", report.log.name, report.outcome)
+    return report
+
+
+def _where(run: Path) -> WaitReport:
+    """Where the newest run named `run` stands now, this process's own run never among them."""
+    # A label reaches the directory name as `RunLog.open` cuts it down.
+    name = labelled(run.name)
+    lines: list[JournalLine] = []
+    with suppress(FileNotFoundError), logging_setup.JOURNAL_PATH.open(encoding="utf-8") as journal:
+        for text in journal:
+            # Most lines are not this run's, and parsing every one of a journal
+            # that runs to megabytes on every poll is the cost worth skipping.
+            if name in text:
+                with suppress(ValueError):
+                    lines.append(JournalLine.model_validate_json(text))
+    starts = [
+        line
+        for line in lines
+        if line.event == "start"
+        and line.pid != os.getpid()
+        and (line.run == name or line.run.endswith(f"-{name}"))
+    ]
+    if not starts:
+        return WaitReport(log=run, outcome="no_such_run")
+    start = starts[-1]
+    log = start.log or run
+    mine = [line for line in lines if line.run == start.run]
+    try:
+        quiet: int | None = int(time.time() - (log / "run.log").stat().st_mtime)
+    except OSError:
+        quiet = None
+    report = WaitReport(
+        log=log, outcome="running", command=start.command, pid=start.pid, quiet=quiet
+    )
+    if end := next((line for line in mine if line.event == "end"), None):
+        return report.model_copy(
+            update={"outcome": "finished", "exit": end.exit, "run_outcome": end.outcome}
         )
-    return f"還了,{loan.lender.agent or '借出模擬器的那一邊'}會自己開回去。"
+    if _alive(start):
+        locks = {line.what for line in mine if line.event == "lock"}
+        if "claimed" not in locks and locks & {"queued", "asked_to_stand_down"}:
+            held = holder()
+            return report.model_copy(
+                update={"outcome": "queued", "holder": held.log if held else None}
+            )
+        return report
+    # Its `end` line is the one write that can be dropped (`Journal`).
+    return report.model_copy(
+        update={"outcome": "finished" if (log / "result.json").exists() else "gone"}
+    )
 
 
 # One line per way `ai_coc note` can end, for `run.log` and over what it prints.
@@ -1285,10 +1414,7 @@ def note(action: NoteAction, world: World | None = None, item: str = "") -> Note
             outcome = "incomplete"
         elif action != "list" and world is not None:
             if _read_file() is None:
-                raise NoStateFileError(
-                    f"{STATE_PATH} 不在(手動刪掉是叫停),這次沒有改交代;"
-                    "先跑一個會操作模擬器的指令(例如 ai_coc status)再改"
-                )
+                raise NoStateFileError
             held = getattr(notes, world)
             index = int(text) if text.isdigit() else 0
             if action == "add":
@@ -1421,15 +1547,12 @@ def _take_watch(
         with _turn():
             current = read_watch()
             if current is None:
-                raise NoStateFileError(
-                    f"{STATE_PATH} 不在(手動刪掉是叫停),這次沒有開始盯升級;"
-                    "先跑一個會操作模擬器的指令(例如 ai_coc status)再開"
-                )
+                raise NoStateFileError
             if current.status == "idle" or not _alive(current):
                 mine = Watch(
                     status="running",
                     pid=os.getpid(),
-                    pid_created=_started_at(os.getpid()),
+                    pid_created=started_at(os.getpid()),
                     started=datetime.now().astimezone(),
                     log=log,
                     caller=who,
@@ -1509,8 +1632,8 @@ def stop_requested() -> bool:
     return state.status == "stopping"
 
 
-def _rest(seconds: float, should_stop: Callable[[], bool] = stop_requested) -> bool:
-    """Wait between rounds, answering whether the wait was cut short.
+def _rest(seconds: float, should_stop: Callable[[], bool] = stop_requested) -> SeriesEnding | None:
+    """Wait between rounds, answering how the series ends if the wait was cut short.
 
     A stop that lands here is said out loud, because the state file goes back to
     `idle` on the way out and this line is then its only trace in `run.log`.
@@ -1519,11 +1642,11 @@ def _rest(seconds: float, should_stop: Callable[[], bool] = stop_requested) -> b
         for _ in range(int(seconds / STOP_POLL)):
             if should_stop():
                 logger.info("Stop requested between rounds; ending the series")
-                return True
+                return "stopped"
             time.sleep(STOP_POLL)
     except KeyboardInterrupt:
-        return True
-    return False
+        return "interrupted"
+    return None
 
 
 # How long `launch` gives a started emulator before deciding it is not coming.
@@ -1736,6 +1859,31 @@ ROUND_LINES: dict[AttackOutcome, str] = {
     "session_taken": "另一部裝置登入了這個帳號,沒有把登入搶回來,停止刷資源",
 }
 
+# The round outcomes that end a series on their own, and the ending each gives it.
+ROUND_ENDINGS: dict[AttackOutcome, SeriesEnding] = {
+    "stock_full": "stock_full",
+    "builder_free": "builder_free",
+    "lab_free": "lab_free",
+    "other_village": "other_village",
+    "session_taken": "session_taken",
+    "army_short": "army_short",
+}
+
+# How a series ended, as `attack` and `farmed` print it after its battles.
+ENDING_LINES: dict[SeriesEnding, str] = {
+    "repeat_done": "打完交代的輪數",
+    "stopped": "被叫停",
+    "interrupted": "被 Ctrl-C 中斷",
+    "stock_full": "倉庫都滿過設定的百分比",
+    "builder_free": "這個村莊有工人閒著",
+    "lab_free": "這個村莊的實驗室有空檔",
+    "army_short": "兵力不到兵營的一半",
+    "other_village": "遊戲停在這一批沒在打的另一個村莊",
+    "session_taken": "另一部裝置登入了這個帳號",
+    "emulator_silent": f"模擬器連續 {ADAPTER_FAILURES} 輪沒有回應",
+    "no_attack_menu": f"攻擊選單連續 {MENU_FAILURES} 輪打不開",
+}
+
 
 def round_line(report: AttackReport) -> str:
     """One round as a line for a person, built from the report's own fields.
@@ -1756,8 +1904,8 @@ def round_line(report: AttackReport) -> str:
     return line
 
 
-def farmed(series: AttackSeries) -> FarmedVillage | None:
-    """What a series brought home on the village it played; None for one that never read which."""
+def farmed(series: AttackSeries, ending: SeriesEnding | None) -> FarmedVillage | None:
+    """What a series that ended `ending` brought home on the village it played; None for one that never read which."""
     played = [one for one in series.root if one.world is not None]
     world = played[0].world if played else None
     if world is None:
@@ -1776,7 +1924,7 @@ def farmed(series: AttackSeries) -> FarmedVillage | None:
         cart_now=now,
         cart_capacity=next((cart.capacity for cart in reversed(carts) if cart.capacity), None),
         cart_unread=played[-1].since_cart or 0,
-        ending=series.root[-1].outcome,
+        ending=ending,
     )
     if read:
         (first, before), (last, after) = read[0], read[-1]
@@ -1797,10 +1945,16 @@ def _cart_level(cart: CartReport) -> int | None:
     return cart.held if cart.outcome == "locked_holding" else None
 
 
-def farmed_text(village: FarmedVillage | None) -> str:
-    """A series as the farming report writes it: battles and how it ended, then the loot table."""
+def attack_text(run: AttackRun) -> str:
+    """What `attack` prints: its series as the farming report writes it, or how it ended without a village."""
+    village = farmed(run.rounds, run.ending)
     if village is None:
-        return "一輪都沒有讀到是哪個村莊, 一場也沒打"
+        return f"一輪都沒有讀到是哪個村莊, 一場也沒打; {ENDING_LINES[run.ending]}"
+    return farmed_text(village)
+
+
+def farmed_text(village: FarmedVillage) -> str:
+    """A series as the farming report writes it: battles and how it ended, then the loot table."""
     names = ("gold", "elixir", "dark") if village.world == "day" else ("gold", "elixir")
     rows = [
         (
@@ -1820,8 +1974,9 @@ def farmed_text(village: FarmedVillage | None) -> str:
             held += f" / {_wan(village.cart_capacity)}"
         gain = "讀不到" if village.cart_gained is None else _signed(village.cart_gained)
         rows.append(("聖水車", gain, held))
+    ended = "" if village.ending is None else f", {ENDING_LINES[village.ending]}"
     shown = [
-        f"{WORLD_NAMES[village.world]}: {village.battles} 場, 最後一輪: {ROUND_LINES[village.ending]}",
+        f"{WORLD_NAMES[village.world]}: {village.battles} 場{ended}",
         "",
         "| 資源 | 進帳 | 現在 |",
         "| --- | --- | --- |",
@@ -1862,7 +2017,7 @@ def farmed_runs(by: str | None = None, since: datetime | None = None) -> FarmedR
         and (by is None or line.caller.session in (by, f"{by}-farm"))
         and (since is None or line.at >= since)
     }
-    ends = {line.run: line.at for line in lines if line.event == "end" and line.run in starts}
+    ends = {line.run: line for line in lines if line.event == "end" and line.run in starts}
     played: dict[str, list[JournalRound]] = {}
     for one in rounds:
         if one.run in starts:
@@ -1872,14 +2027,21 @@ def farmed_runs(by: str | None = None, since: datetime | None = None) -> FarmedR
     villages = [
         village
         for run in runs
-        if (village := farmed(AttackSeries([_with_storages(one) for one in played[run]])))
+        if (
+            village := farmed(
+                AttackSeries([_with_storages(one) for one in played[run]]),
+                _series_ending(ends.get(run), played[run][-1]),
+            )
+        )
     ]
     for world in ("day", "night"):
         if mine := [village for village in villages if village.world == world]:
             report.villages.append(_summed(mine))
     if runs:
         report.started = starts[runs[0]].at
-        report.ended = max(ends.get(run, played[run][-1].at) for run in runs)
+        report.ended = max(
+            end.at if (end := ends.get(run)) else played[run][-1].at for run in runs
+        )
     # Any run of the session holding the emulator, one still before its first
     # round included: the loop starts again after every loan.
     held = read_state()
@@ -1891,6 +2053,19 @@ def farmed_runs(by: str | None = None, since: datetime | None = None) -> FarmedR
     )
     logger.info("Farmed: %d run(s) of %d round(s)", len(runs), sum(map(len, played.values())))
     return report
+
+
+def _series_ending(end: JournalLine | None, last: JournalRound) -> SeriesEnding | None:
+    """How an attack run's series ended, off its `end` line; None for one with no `end`.
+
+    An `end` written before series named their endings carries its last round
+    instead, which says how the series ended only where that round ends one.
+    """
+    if end is None:
+        return None
+    with suppress(ValueError):
+        return AttackRun.model_validate(end.result).ending
+    return ROUND_ENDINGS.get(last.report.outcome)
 
 
 def _with_storages(line: JournalRound) -> AttackReport:
@@ -1954,8 +2129,8 @@ def _signed(amount: int) -> str:
     return f"+{_wan(amount)}" if amount >= 0 else f"-{_wan(-amount)}"
 
 
-def _round(runner: AttackRunner, series: AttackSeries) -> AttackReport | None:
-    """One round, with the ways it can end badly folded in. None ends the series.
+def _round(runner: AttackRunner, series: AttackSeries) -> AttackReport | SeriesEnding:
+    """One round, with the ways it can end badly folded in. An ending ends the series.
 
     The two are not the same kind of thing and they are here together because
     the caller does the same thing with either: a `KeyboardInterrupt` is a
@@ -1968,7 +2143,7 @@ def _round(runner: AttackRunner, series: AttackSeries) -> AttackReport | None:
         report = runner.run()
     except KeyboardInterrupt:
         logger.info("Interrupted; stopping after %d round(s)", len(series.root))
-        return None
+        return "interrupted"
     except AdbControlError as exc:
         return _lost_round(runner, series, exc)
     # Read before the battle; one read during it the runner reports itself, so
@@ -1993,8 +2168,8 @@ def _seen(report: AttackReport, runner: AttackRunner) -> AttackReport:
 
 def _lost_round(
     runner: AttackRunner, series: AttackSeries, exc: AdbControlError
-) -> AttackReport | None:
-    """Record a round that died on the emulator, or None once the series should end.
+) -> AttackReport | SeriesEnding:
+    """Record a round that died on the emulator, or `emulator_silent` once the series should end.
 
     **An adapter error used to end the process rather than the series, and
     losing the record was the expensive half.** Nothing above `main()` catches
@@ -2026,13 +2201,12 @@ def _lost_round(
         # It is still a round that happened, and leaving it out would take one
         # round off the count this whole function exists to preserve.
         series.root.append(report)
-        # The caller breaks before its own `Attack finished:` line, and
-        # the `takeover` skill tells a session there is one of those per
-        # round — so without this the last round is in `result.json` and
-        # missing from the log, an undercount of exactly what this preserves.
+        # The caller breaks before its own `Attack finished:` line, so without
+        # this the last round is in `result.json` and missing from the log and
+        # the journal, an undercount of exactly what this preserves.
         logger.info("Attack finished: %s", round_line(report), extra=_round_event(runner, series))
         logger.error("The emulator has not answered for %d rounds; ending the series", runner.lost)
-        return None
+        return "emulator_silent"
     # Handed back as an ordinary round that fought nothing, which is what it
     # was. The caller then records it, rests between rounds, and comes round
     # again — and that rest is worth more here than anywhere else, since an
@@ -2055,10 +2229,10 @@ def _round_event(runner: AttackRunner, series: AttackSeries) -> dict[str, RoundE
     }
 
 
-def _series_over(report: AttackReport, played: int) -> bool:
-    """Whether this round's outcome stands the whole series down, and says why.
+def _series_over(report: AttackReport, played: int) -> SeriesEnding | None:
+    """How this round's outcome ends the whole series, saying why; None where it does not.
 
-    Six outcomes do. A full storage is the goal being met, and `takeover` owns where
+    Six outcomes do (`ROUND_ENDINGS`). A full storage is the goal being met, and `takeover` owns where
     that leads; there is nothing left for the round loop to farm for either
     way. An idle builder or research slot on a run asked to watch them is the
     other goal. The game
@@ -2080,17 +2254,13 @@ def _series_over(report: AttackReport, played: int) -> bool:
     """
     if report.stock_full:
         logger.info("The storages are full; there is nothing left to farm for")
-        return True
-    if report.outcome in ("builder_free", "lab_free", "other_village", "session_taken"):
-        return True
     if report.outcome == "army_short":
         logger.error(
             "The army is under half the camp and training is instant, so this will not clear "
             "on its own; ending the series after %d round(s)",
             played,
         )
-        return True
-    return False
+    return ROUND_ENDINGS.get(report.outcome)
 
 
 def _menu_out_of_reach(series: AttackSeries) -> bool:
@@ -2122,8 +2292,8 @@ def _handed_plan(options: AttackOptions) -> tuple[AttackPlan | NightPlan | None,
 
 def attack(
     options: AttackOptions, frames: FrameLog, should_stop: Callable[[], bool] = stop_requested
-) -> AttackSeries:
-    """The attack loop, for as many rounds as asked.
+) -> AttackRun:
+    """The attack loop, for as many rounds as asked, answering every round and how the series ended.
 
     Thresholds, storage limits and the model to plan with all come from the
     settings file — the storage limits included, which means a full village
@@ -2187,16 +2357,20 @@ def attack(
     )
     series = AttackSeries()
     rounds = options.rounds
+    # What the loop ends on when nothing below breaks out of it first.
+    ending: SeriesEnding = "repeat_done"
     while rounds <= 0 or len(series.root) < rounds:
         # Between rounds, which is the cheapest place to stop: the village is
         # on screen, nothing is deployed, and the rounds already played are
         # in the series either way.
         if should_stop():
             logger.info("Stop requested; ending the series after %d round(s)", len(series.root))
+            ending = "stopped"
             break
         logger.info("Round %d of %s", len(series.root) + 1, rounds or "no limit")
         report = _round(runner, series)
-        if report is None:
+        if isinstance(report, str):
+            ending = report
             break
         series.root.append(report)
         # A builder base round reports no `attacked` — there is no scout
@@ -2206,11 +2380,13 @@ def attack(
         fighting = report.attacked is not None or report.phases > 0
         logger.info("Attack finished: %s", round_line(report), extra=_round_event(runner, series))
         _write_plan(options.plan_out, runner.played)
-        # A stop is let through first, so the series ends on its own line
-        # and a loan reads as one rather than as a run that gave up.
-        if _series_over(report, len(series.root)) or (
-            not should_stop() and _menu_out_of_reach(series)
-        ):
+        if (over := _series_over(report, len(series.root))) is not None:
+            ending = over
+            break
+        # A stop is let through first, so the series ends `stopped` and a loan
+        # reads as one rather than as a run that gave up.
+        if not should_stop() and _menu_out_of_reach(series):
+            ending = "no_attack_menu"
             break
         # A stop that arrived mid-search comes back here having attacked
         # nothing, and a run about to walk away has no reason to wait
@@ -2219,9 +2395,15 @@ def attack(
         # leaves to read while it is still going.
         if not fighting and not should_stop() and (rounds <= 0 or len(series.root) < rounds):
             logger.info("Nothing was attacked; waiting %ds before the next round", IDLE_REST)
-            if _rest(IDLE_REST, should_stop):
+            if (cut := _rest(IDLE_REST, should_stop)) is not None:
+                ending = cut
                 break
-    return series
+    # A last round cut short by a stop ends the rounds asked for too, and the
+    # stop is what the caller has to act on.
+    if ending == "repeat_done" and should_stop():
+        logger.info("Stop requested; ending the series after %d round(s)", len(series.root))
+        ending = "stopped"
+    return AttackRun(ending=ending, rounds=series)
 
 
 # Only ever used to build the line a person reads; `outcome` is what a caller
@@ -2309,7 +2491,7 @@ def _survey_battle(runner: AttackRunner) -> None:
     a borrower nothing that says to run `ai_coc stop` rather than give back.
     """
     if runner.run().outcome == "session_taken":
-        raise SessionTakenError(SESSION_TAKEN)
+        raise SessionTakenError
 
 
 def probe(frames: FrameLog) -> BoundarySurvey:
@@ -3618,7 +3800,7 @@ def _lost_login(report: TendedReport, end: JournalLine, claimed: bool) -> bool:
     A run that claimed the emulator and came through closes the open one.
     """
     lost = report.lost[-1] if report.lost else None
-    if end.outcome == "session_taken" or end.result == SESSION_TAKEN:
+    if end.outcome == "session_taken":
         if lost is None or lost.back is not None:
             report.lost.append(LostLogin(taken=end.at))
         return True
@@ -3915,8 +4097,8 @@ def answer_text(answer: BaseModel, within: int | None = None) -> str | None:
     match answer:
         case StatusReport():
             text = status_text(answer, within=within)
-        case AttackSeries():
-            text = farmed_text(farmed(answer))
+        case AttackRun():
+            text = attack_text(answer)
         case FarmedReport():
             text = farmed_report_text(answer)
         case TendedReport():
