@@ -40,6 +40,8 @@ from ai_coc.parsers.glyphs import (
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+    from ai_coc.models import World
+
 logger = logging.getLogger(__name__)
 
 # The loot panel sits under the opponent's name, one row per resource. It is
@@ -603,6 +605,18 @@ STOCK_BAR_SATURATION = 14
 # 240 to 250 and a reach of one or two pixels read the same: eight frames that
 # read None read their numbers, checked by eye, and nothing else changed.
 STOCK_BAR_CORE = 245
+# **The gems bar**, the home village's fourth and the builder base's third (where
+# `read_stock` takes it for dark elixir), is drawn like the storages: digits
+# right-aligned against the gem, the village showing through on the left. The left
+# edge clears the green + that buys gems (1325 to 1369). Swept on 2026-11-12 over
+# every committed and recorded frame: the 16 whose storages read all read their
+# gems right (2 227 to 5 708, checked by eye), and every left edge from 1362 to 1410
+# read the same. A storage tooltip left open draws its own white figures across this
+# row (寶庫中 ： 0 read as 0 over a dimmed 5 708 on `hud_tip_day_elixir.png`) while
+# `current_world` still names the village, so it is read only off a frame whose
+# storages read, which the tooltip prevents (`ScreenRunner.read_storages`).
+GEMS_LEFT = 1372
+GEMS_ROWS: dict[World, tuple[int, int]] = {"day": (213, 252), "night": STOCK_ROW_BOUNDS[2]}
 
 # 最大儲存量 on the tooltip a tapped storage bar drops open, which is the one
 # place the game writes down how much that storage holds. The panel hangs under
@@ -1809,6 +1823,13 @@ def read_builder_stock(png: bytes) -> VillageStock | None:
         return None
     logger.info("Builder base holds gold=%d elixir=%d", gold, elixir)
     return VillageStock(gold=gold, elixir=elixir, dark=0)
+
+
+def read_gems(png: bytes, world: World) -> int | None:
+    """The gem count on this village's gems bar, or None where it does not read."""
+    top, bottom = GEMS_ROWS[world]
+    box = (GEMS_LEFT, top, STOCK_RIGHT, bottom)
+    return _read_row(open_frame(png), box, STOCK_DIGIT_TOLERANCE)
 
 
 def _white_share(image: Image.Image, y: int) -> float:

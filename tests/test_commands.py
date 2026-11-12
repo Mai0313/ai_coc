@@ -355,13 +355,14 @@ class StockCommandTests(unittest.TestCase):
         held: VillageStock | None = None,
         ceilings: StorageCapacity | None = None,
         under: str | None = None,
+        gems: int | None = None,
     ) -> tuple[MagicMock, MagicMock, object]:
         """A real controller, because `ScreenRunner` validates the one it is given.
 
         `under` is what `uncovered` finds once it has pressed a panel away, which
         is only reached when the first look found no village at all.
         """
-        reads = [(seen, held), (under, held)]
+        reads = [(seen, held, gems), (under, held, gems)]
         with (
             patch.object(commands, "_controller", return_value=_controller()),
             patch.object(commands, "_settle_game", return_value=DISPLAY) as self.settle_game,
@@ -381,6 +382,10 @@ class StockCommandTests(unittest.TestCase):
         )
         assert report.world == "day"
         assert report.filled == {"gold": "50%", "elixir": "25%", "dark": "100%"}
+
+    def test_the_gems_off_the_same_frame_are_reported(self) -> None:
+        _, _, report = self._stock("night", VillageStock(gold=1, elixir=1, dark=0), gems=5708)
+        assert report.gems == 5708
 
     def test_a_resource_with_no_ceiling_is_left_out_rather_than_guessed(self) -> None:
         """The builder base has no dark elixir bar, so it has no share to report."""
@@ -630,11 +635,26 @@ class StatusTextTests(unittest.TestCase):
         shown = commands.status_text(self._report(), NOW).splitlines()
         assert shown[0] == "村莊匯出: 今天 11:58"
         assert (
-            "日世界: 金幣 4370 萬 (150%)、聖水 980 萬 (33%)、黑水 0.6 萬; 工人 0/7、實驗室 讀不到"
-            in shown
+            "日世界: 金幣 4370 萬 (150%)、聖水 980 萬 (33%)、黑水 0.6 萬; 工人 0/7、實驗室 讀不到;"
+            " 護盾讀不到" in shown
         )
         assert "夜世界: 遊戲停在日世界, 倉庫跟計數這次沒讀" in shown
         assert shown.count("沒有在升的") == 2
+
+    def test_the_village_line_carries_the_gems_and_the_home_villages_shield(self) -> None:
+        held = VillageStock(gold=10_000, elixir=0, dark=0)
+        for shield, said in (
+            (ShieldState(), "沒有護盾"),
+            (ShieldState(remaining=5400), "護盾 1 小時 30 分鐘"),
+        ):
+            stock = StockReport(world="day", held=held, gems=5708)
+            line = commands.status_text(self._report(stock=stock, shield=shield), NOW)
+            assert "黑水 0 萬、寶石 5,708; 工人 0/7、實驗室 讀不到; " + said in line, said
+        night = self._report(
+            world="night", stock=StockReport(world="night", held=held, gems=5708), shield=None
+        )
+        shown = commands.status_text(night, NOW).splitlines()
+        assert "夜世界: 金幣 1 萬、聖水 0 萬、寶石 5,708; 工人 0/7、實驗室 讀不到" in shown
 
     def test_each_row_is_the_slot_and_the_levels_with_no_verdict(self) -> None:
         """What follows a row is the agent's call, so the table prints only what it rests on."""
@@ -694,7 +714,7 @@ class StatusTextTests(unittest.TestCase):
         ready = self._report(clock_tower=ClockTower(ready_in=0, ready_at=NOW.isoformat()))
         assert "| 現在 | — | 鐘塔冷卻結束 |" in commands.status_text(ready, NOW)
 
-    def test_only_the_helpers_that_speed_upgrades_are_said_to_be_ready(self) -> None:
+    def test_each_helper_that_speeds_upgrades_says_when_it_can_be_sent(self) -> None:
         def helper(data_id: int, ready_in: int) -> HelperCooldown:
             ready_at = (NOW + timedelta(seconds=ready_in)).isoformat()
             return HelperCooldown(
@@ -704,7 +724,9 @@ class StatusTextTests(unittest.TestCase):
         report = self._report(
             helpers=[helper(93000000, 0), helper(93000001, 600), helper(93000002, 0)]
         )
-        assert "助手: 助手93000000 現在能派" in commands.status_text(report, NOW)
+        assert "助手: 助手93000000 現在能派、助手93000001 今天 12:10 能派" in (
+            commands.status_text(report, NOW)
+        )
         report = self._report(helpers=[helper(93000002, 0)])
         assert "助手" not in commands.status_text(report, NOW)
 

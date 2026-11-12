@@ -1484,6 +1484,9 @@ class StockReport(BaseModel):
     # read it. A resource whose ceiling would not read is absent rather than
     # zero: nothing is known about how full it is, and a 0 there reads as empty.
     filled: dict[str, str] = Field(default_factory=dict)
+    # The account's gems off the same frame, the one number the skills guard
+    # real money with; None where they did not read.
+    gems: int | None = None
 
 
 # How one counter came back, read off the village frame without opening
