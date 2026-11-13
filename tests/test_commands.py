@@ -5188,7 +5188,8 @@ class SearchToCapTests(unittest.TestCase):
 
     def test_the_newest_purchases_shares_price_each_level_as_the_game_charges_it(self) -> None:
         self._hog()
-        at = datetime.fromisoformat("2026-11-13T10:00:00+08:00")
+        # Local, since the text reads a purchase's moment on this machine's clock.
+        at = datetime(2026, 11, 13, 10, 0).astimezone()
         paid = PaidShare(share=0.4, at=at, item="野豬騎士 2")
         report = _search("野豬騎士").model_copy(
             update={"paid": {"day": paid}, "timed": {"day": paid}}
