@@ -64,6 +64,7 @@ MINIMAL: dict[str, list[str]] = {
     "search": ["4000059"],
     "farmed": ["--by", "s1"],
     "tended": ["--by", "s1"],
+    "listprice": ["--day"],
     "wait": ["day3-c2-attack-1"],
     "collect": [],
     "stock": [],
@@ -96,6 +97,12 @@ class ParserTests(unittest.TestCase):
         assert set(group.choices) == set(MINIMAL)
         for name, extra in MINIMAL.items():
             assert parser.parse_args([name, *extra]).command == name
+
+    def test_listprice_names_one_village(self) -> None:
+        assert _args("listprice", "--night").world == "night"
+        for missing in ([], ["--day", "--night"]):
+            with pytest.raises(SystemExit):
+                _args("listprice", *missing)
 
     def test_a_sub_command_is_required(self) -> None:
         with pytest.raises(SystemExit) as stopped:

@@ -66,8 +66,8 @@ def _log_uncaught(kind: type[BaseException], value: BaseException, trace: Any) -
 # disk, `stop` and `giveback` each change one field of the state file, `watch`
 # sleeps on its own section of it, `note` keeps the notes section, and
 # `growth` compares saved exports, `turnaround`, `farmed` and `tended` read the
-# journal, `wait` reads it and one run's process, and `search` reads the kept
-# tables and exports, none of them opening ADB;
+# journal, `listprice` writes a line into it, `wait` reads it and one run's
+# process, and `search` reads the kept tables and exports, none of them opening ADB;
 # `gamedata` opens it only to read the game's files, and `hold` claims the
 # emulator and does nothing with it. Every other one captures the screen, so
 # every other one takes `--debug` and `--shot-every`.
@@ -82,6 +82,7 @@ NO_SCREEN = (
     "search",
     "farmed",
     "tended",
+    "listprice",
     "wait",
     "gamedata",
     "hold",
@@ -139,7 +140,7 @@ COMMANDS = (
         (
             (
                 "status",
-                "兩個世界每件升級實際幾點好（藥水和鐘塔已算進去）跟下一級的估價，加上這個村莊的閒置人數、倉庫、寶石和護盾",
+                "兩個世界每件升級實際幾點好（藥水和鐘塔已算進去）跟下一級的估價和時間，加上這個村莊的閒置人數、倉庫、寶石和護盾",
             ),
             ("stock", "這個村莊的倉庫存量和容量，還有寶石數"),
             ("export", "從遊戲匯出整個村莊的資料，對上名稱後存起來"),
@@ -175,6 +176,11 @@ COMMANDS = (
                 "加 --goblin 是付寶石聘請哥布林工人",
             ),
             ("boost", "夜世界鐘塔能開時（上面有時鐘標記）按下它的免費加速；要寶石的不按"),
+            (
+                "listprice",
+                "不碰遊戲，記一筆這個世界的建造面板現在是牌價（價格旁沒有劃掉的原價）；"
+                "status 從這一刻起不再照之前的折扣估下一級",
+            ),
         ),
     ),
     (
@@ -298,9 +304,11 @@ def _growth_flags(grower: argparse.ArgumentParser) -> None:
         grower.add_argument(flag, type=date.fromisoformat, metavar="YYYY-MM-DD", help=note)
 
 
-def _village_flags(command: argparse.ArgumentParser, day: str, night: str) -> None:
+def _village_flags(
+    command: argparse.ArgumentParser, day: str, night: str, required: bool = False
+) -> None:
     """`--day` and `--night`, the one way a command is told which village; never both."""
-    which = command.add_mutually_exclusive_group()
+    which = command.add_mutually_exclusive_group(required=required)
     which.add_argument("--day", dest="world", action="store_const", const="day", help=day)
     which.add_argument("--night", dest="world", action="store_const", const="night", help=night)
 
@@ -465,6 +473,7 @@ def _parser() -> argparse.ArgumentParser:
     _search_flags(sub.choices["search"])
     _farmed_flags(sub.choices["farmed"])
     _farmed_flags(sub.choices["tended"])
+    _village_flags(sub.choices["listprice"], "日世界現在是牌價", "夜世界現在是牌價", required=True)
     sub.choices["turnaround"].add_argument(
         "--since",
         type=datetime.fromisoformat,
@@ -652,6 +661,7 @@ def _answer(arguments: argparse.Namespace, run: RunLog) -> BaseModel | str:
         ),
         "farmed": lambda: commands.farmed_runs(a.by, a.since),
         "tended": lambda: commands.tended(a.by, a.since),
+        "listprice": lambda: commands.listprice(a.world),
         "wait": lambda: commands.wait(a.run, a.seconds),
         "collect": lambda: commands.collect(run.frames),
         "stock": lambda: commands.stock(run.frames),

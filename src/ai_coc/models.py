@@ -1625,12 +1625,12 @@ class HelperCooldown(BaseModel):
 
 
 class PaidShare(BaseModel):
-    """What one purchase on a village paid against the tables' list price for that level.
+    """What one purchase on a village paid against the tables' list price or list time for that level.
 
-    `status` scales the next levels' list prices by it, since an event
-    discounts every upgrade of a village alike (2026-11-12: all 24 home village
-    purchases paid 0.4 of list, the builder base's one 0.8). `at` and `item`
-    say which purchase it was, so the estimate names its source.
+    `status` scales the next levels' list prices and times by it, since an
+    event discounts every upgrade of a village alike (2026-11-12: all 24 home
+    village purchases paid 0.4 of list, the builder base's one 0.8). `at` and
+    `item` say which purchase it was, so the estimate names its source.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -1672,9 +1672,11 @@ class StatusReport(BaseModel):
     # None where the export has no clock tower, or one being upgraded.
     clock_tower: ClockTower | None = None
     helpers: list[HelperCooldown] = Field(default_factory=list)
-    # The newest purchase per village whose price resolves against the tables;
-    # a village with none has its next levels at list price.
+    # The newest purchase per village within `DISCOUNT_FRESH` whose price
+    # resolves against the tables, and the newest whose charged time does; a
+    # village with none has its next levels at list price and list time.
     paid: dict[World, PaidShare] = Field(default_factory=dict)
+    timed: dict[World, PaidShare] = Field(default_factory=dict)
 
 
 # How one `view` command left the camera. `parked` is the whole job done;
@@ -2476,16 +2478,21 @@ class JournalTimers(BaseModel):
     model_config = TOLERANT
 
     export: str = ""
+    exported_at: datetime | None = None
     timers: list[UpgradeTimer] = Field(default_factory=list)
 
 
 class JournalConfirm(BaseModel):
-    """Whether a `confirm` run paid a goblin or a wall, read back off the journal."""
+    """Whether a `confirm` run paid a goblin or a wall, and when it pressed, read back off the journal.
+
+    `pressed` is None on a line from before `confirm` recorded it.
+    """
 
     model_config = TOLERANT
 
     goblin: JsonValue = None
     wall: JsonValue = None
+    pressed: datetime | None = None
 
 
 class Warned(BaseModel):
@@ -3103,6 +3110,8 @@ class ConfirmReport(BaseModel):
     its gems did not read.
     `item` is what the agent said it was buying (`--item`), kept for
     `ai_coc tended`, since nothing on the sheet but its price is read.
+    `pressed` is when its first tap went, None where it pressed nothing;
+    `turnaround` and `status` read it off the journal, which outlives `logs/`.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -3114,6 +3123,17 @@ class ConfirmReport(BaseModel):
     outcome: ConfirmOutcome
     frame: Path
     item: str | None = None
+    pressed: datetime | None = None
+
+
+class ListPriceReport(BaseModel):
+    """What `ai_coc listprice` recorded: that the village's build panel asks list price from now on.
+
+    Its journal line ends every discount `status` scales the next levels by
+    on that village, as a purchase at list price would.
+    """
+
+    world: World
 
 
 class DonateOptions(BaseModel):

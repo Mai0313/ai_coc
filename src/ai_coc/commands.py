@@ -125,6 +125,7 @@ from ai_coc.models import (
     JournalConfirm,
     LootThresholds,
     GivebackOutcome,
+    ListPriceReport,
     StandDownReport,
     StorageCapacity,
     TurnaroundGroup,
@@ -3059,50 +3060,181 @@ def _timed(report: StatusReport, village: VillageExport | None) -> StatusReport:
         report.timers = upgrade_timers(village)
         report.clock_tower = clock_tower(village)
         report.helpers = helper_cooldowns(village)
-        report.paid = _paid_shares(_kept_tables())
+        # Its own timers too: the `status` after a purchase is the first to list it,
+        # and its line is not on the journal yet.
+        own = (datetime.fromisoformat(village.exported_at), report.timers)
+        report.paid, report.timed = _paid_shares(_kept_tables(), datetime.now().astimezone(), own)
     return report
 
 
 # `confirm --item` as the `upgrades` skill writes it: the game's name, then the level bought.
 ITEM = re.compile(r"(.+?)\s+(\d+)(?:\s*級)?")
+# How old a purchase can be and still say what the village's upgrades cost
+# today. An event or a gold pass season can end at any hour and nothing on the
+# export or in the tables says when (checked 2026-11-13), and a price guessed
+# too low has the takeover skip farming while the upgrade waits. A day is the
+# user's call of 2026-11-13, not a measurement: a takeover confirms most days
+# often enough to renew it (23 purchases on 11-12), and on a quiet one (1 on
+# 11-09) the estimate falls back to list.
+DISCOUNT_FRESH = timedelta(hours=24)
+# Seconds either side of a recorded charge that a list time, discounted or
+# not, still explains it. The press is on this machine's clock and the
+# export's moment on the game's, a few seconds apart, and under a speed-up
+# that gap counts at its rate: 烈焰熔爐 3, bought at 0.4 under a lab potion on
+# 2026-11-12, fell outside a slack that did not. Replayed over the 41
+# purchases of 11-12 and 11-13 that resolve, 39 time at their price's share
+# and 2, with a status minutes later under a potion, at the low end.
+CHARGE_SLACK = 60
 
 
-def _paid_shares(tables: GameEntities | None) -> dict[World, PaidShare]:
-    """What the newest purchase on each village paid against the tables' list price, off the journal.
+def _paid_shares(
+    tables: GameEntities | None,
+    now: datetime,
+    own: tuple[datetime, list[UpgradeTimer]] | None = None,
+) -> tuple[dict[World, PaidShare], dict[World, PaidShare]]:
+    """What the newest purchases on each village paid against list, in price and in time, off the journal.
 
     A `confirm` counts whatever it went on to do once the button asked exactly
     the price the agent read off the row, since that is the price today; a
     wall's is several walls and is left out. Its item has to name one level of
     one village at one list price: 12 names are on both villages and 19 on
-    several entities of one.
+    several entities of one. Only purchases within `DISCOUNT_FRESH` of `now`
+    count, and a `listprice` line ends every older one on its village, as a
+    purchase at list price would. The time share is the newest such purchase
+    whose job a later `status` timed (`_time_share`), `own` being the timers
+    of the `status` asking, not yet on the journal.
     """
     if tables is None:
-        return {}
-    listed: dict[tuple[str, int, str], set[tuple[World, int]]] = {}
+        return {}, {}
+    listed = _listed(tables)
+    lines = _journal()
+    starts = {line.run: line for line in lines if line.event == "start"}
+    statuses = sorted(
+        [*_status_timers(lines, starts), *([own] if own else [])], key=lambda one: one[0]
+    )
+    paid: dict[World, PaidShare] = {}
+    timed: dict[World, PaidShare] = {}
+    ended: set[World] = set()
+    for end in reversed(lines):
+        start = starts.get(end.run)
+        if end.event != "end" or start is None or end.at < now - DISCOUNT_FRESH:
+            continue
+        if start.command == "listprice":
+            with suppress(ValueError):
+                ended.add(ListPriceReport.model_validate(end.result).world)
+            continue
+        bought = _purchase(end, listed) if start.command == "confirm" else None
+        if bought is None or bought[0] in ended:
+            continue
+        world, share, item, level, report, found = bought
+        paid.setdefault(world, PaidShare(share=share, at=end.at, item=item))
+        # The run's end, after the press, only shortens the work counted since.
+        pressed = _press_time(start, report.pressed) or end.at
+        times = {data_id: time for _, _, data_id, time in found if time}
+        if world not in timed:
+            spent = _time_share(times, level, pressed, statuses, share)
+            if spent is not None:
+                timed[world] = PaidShare(share=spent, at=end.at, item=item)
+    return paid, timed
+
+
+# Each priced level by the game's name, the level and its resource, with the
+# village, list price, data_id and list time of every entity that matches.
+Listed = dict[tuple[str, int, str], list[tuple[World, int, int, int | None]]]
+
+
+def _listed(tables: GameEntities) -> Listed:
+    """The tables' levels keyed the way `confirm --item` names one."""
+    listed: Listed = {}
     for entity in tables.entities:
         for level in entity.levels:
             for resource, amount in level.cost.items():
                 key = (entity.zh or "", level.lvl, resource)
-                listed.setdefault(key, set()).add((entity.world, amount))
-    lines = _journal()
-    confirms = {line.run for line in lines if line.event == "start" and line.command == "confirm"}
-    paid: dict[World, PaidShare] = {}
-    for end in reversed([line for line in lines if line.event == "end" and line.run in confirms]):
-        try:
-            report = ConfirmReport.model_validate(end.result)
-        except ValueError:
+                listed.setdefault(key, []).append((
+                    entity.world,
+                    amount,
+                    entity.data_id,
+                    level.time,
+                ))
+    return listed
+
+
+def _purchase(
+    end: JournalLine, listed: Listed
+) -> tuple[World, float, str, int, ConfirmReport, list[tuple[World, int, int, int | None]]] | None:
+    """A `confirm`'s village, the share of list it paid, its item and level, its report and the table rows the item names; None where it says nothing of today's price."""
+    try:
+        report = ConfirmReport.model_validate(end.result)
+    except ValueError:
+        return None
+    named = ITEM.fullmatch(report.item or "")
+    offer = report.offer
+    if named is None or offer is None or report.wall is not None:
+        return None
+    found = listed.get((named[1], int(named[2]), offer.resource), [])
+    priced = {(world, amount) for world, amount, _, _ in found}
+    if offer.price != report.asked or len(priced) != 1:
+        return None
+    [(world, amount)] = priced
+    if not 0 < offer.price <= amount:
+        return None
+    return world, offer.price / amount, named[0], int(named[2]), report, found
+
+
+def _status_timers(
+    lines: list[JournalLine], starts: dict[str, JournalLine]
+) -> list[tuple[datetime, list[UpgradeTimer]]]:
+    """Every `status` run's timers with the moment its export was taken."""
+    statuses: list[tuple[datetime, list[UpgradeTimer]]] = []
+    for end in lines:
+        if end.event == "end" and (start := starts.get(end.run)) and start.command == "status":
+            with suppress(ValueError):
+                read = JournalTimers.model_validate(end.result)
+                if read.exported_at is not None:
+                    statuses.append((read.exported_at, read.timers))
+    return statuses
+
+
+def _time_share(
+    times: dict[int, int],
+    level: int,
+    pressed: datetime,
+    statuses: list[tuple[datetime, list[UpgradeTimer]]],
+    price: float,
+) -> float | None:
+    """What a purchase's job was charged against its list time, off the first `status` after it that lists the job.
+
+    The charge is the work done between the press and that export plus the
+    work it still had (`timer`). The work done lies between the seconds gone
+    and those seconds at the speed-up running at the export, since a potion
+    may have started after the press, and a helper's is not counted. The game
+    floors a discounted time (`_panel_floor`), so where the price's share
+    floored lands inside that range, widened by `CHARGE_SLACK`, it is the
+    time's share too, and where the list time does the time was not
+    discounted; otherwise the lower end, which errs short. None where no
+    `status` listed the job.
+    """
+    for at, timers in statuses:
+        jobs = [one for one in timers if one.data_id in times and one.level == level - 1]
+        if at < pressed or not jobs:
             continue
-        named = ITEM.fullmatch(report.item or "")
-        offer = report.offer
-        if named is None or offer is None or report.wall is not None:
-            continue
-        found = listed.get((named[1], int(named[2]), offer.resource), set())
-        if offer.price != report.asked or len(found) != 1:
-            continue
-        [(world, amount)] = found
-        if world not in paid and 0 < offer.price <= amount:
-            paid[world] = PaidShare(share=offer.price / amount, at=end.at, item=named[0])
-    return paid
+        job = max(jobs, key=lambda one: one.timer)
+        listed = times[job.data_id]
+        gone = (at - pressed).total_seconds()
+        rate = SPEED_UPS.get((job.world, job.role), ("", 1))[1] if job.boost and job.role else 1
+        low = job.timer + gone - CHARGE_SLACK
+        high = job.timer + (gone + CHARGE_SLACK) * rate
+        for share in (price, 1.0):
+            if low <= _panel_floor(listed * share) <= high:
+                return share
+        return min((job.timer + gone) / listed, 1.0)
+    return None
+
+
+def listprice(world: World) -> ListPriceReport:
+    """Record that the village's build panel asks list price now, which ends the discount `status` estimates with."""
+    logger.info("List price on %s from now on", world)
+    return ListPriceReport(world=world)
 
 
 # Rows of one kind, level and slot whose upgrades end this close together are one row
@@ -3156,12 +3288,12 @@ def status_text(
     that many hours and folds the rest into one line, as the report a stop
     hands over lists them.
 
-    The next level's price is the list price scaled by the village's newest
-    purchase (`paid`), and the head line names it, since a list price cries
-    wolf all through an event. Under the village whose storages were read come
-    a line per resource they do not cover if every row finishing within
-    `SHORT_WITHIN` hours continued, and nothing when they do; then the
-    speed-ups running and when each ends.
+    The next level's price and time are the list's scaled by the village's
+    newest purchases (`paid`, `timed`), and the head line names them, since a
+    list price cries wolf all through an event. Under the village whose
+    storages were read come a line per resource they do not cover if every
+    row finishing within `SHORT_WITHIN` hours continued, and nothing when they
+    do; then the speed-ups running and when each ends.
     """
     now = now or datetime.now().astimezone()
     if report.exported_at is None:
@@ -3170,7 +3302,7 @@ def status_text(
         head = f"村莊匯出: {_moment(report.exported_at, now)}"
         if report.stock is None:
             head += " (存下的那份, 倉庫跟計數這次沒讀)"
-        head += f"; {_paid_line(report.paid, now)}"
+        head += f"; {_paid_line(report.paid, report.timed, now)}"
     shown = [head]
     for world in ("day", "night"):
         shown += ["", _world_line(report, world)]
@@ -3250,6 +3382,7 @@ def _timer_rows(
     not count is said beside the time.
     """
     share = report.paid[world].share if world in report.paid else 1.0
+    spent = report.timed[world].share if world in report.timed else 1.0
     merged: list[tuple[UpgradeTimer, int]] = []
     for timer in (one for one in report.timers if one.world == world):
         same = next(
@@ -3286,7 +3419,7 @@ def _timer_rows(
             (first.zh or first.en or f"#{first.data_id}")
             + (f" {TIMES}{count}" if count > 1 else "")
             + _levels(first),
-            _cost_text(_next_cost(first, share), count),
+            _next_text(_next_cost(first, share), _next_time(first, spent), count),
         )
         for first, count in merged
     ]
@@ -3310,29 +3443,85 @@ def _next_cost(timer: UpgradeTimer, share: float) -> dict[str, int]:
     return {resource: round(amount * share) for resource, amount in upgrade.cost.items()}
 
 
-def _cost_text(cost: dict[str, int], count: int) -> str:
-    """`, 下一級 黑水 5.6 萬`, `下一級各` on a merged row, `—` where it cannot continue."""
+def _next_time(timer: UpgradeTimer, share: float) -> int | None:
+    """How long continuing a row takes, its list time scaled by `share` and floored as the game does; None where it cannot continue or the table has no time."""
+    upgrade = timer.next
+    if (
+        upgrade is None
+        or upgrade.time is None
+        or (timer.limited_lvl is not None and upgrade.lvl > timer.limited_lvl)
+    ):
+        return None
+    return upgrade.time if share >= 1 else _panel_floor(upgrade.time * share)
+
+
+def _panel_floor(seconds: float) -> int:
+    """A discounted duration as the game charges it: down to the hour past a day, to ten minutes past an hour, else to the minute.
+
+    The steps are what the export's timers and the panel showed for seven
+    purchases at 0.4 on 2026-11-13: 4天 charged 1天14小時 (38.4 h), 12天
+    4天19小時 (115.2 h), 1天 9小時30分 (9 h 36 min), 2天 19小時10分 (19 h 12 min),
+    8小時 3小時10分 (3 h 12 min). Under an hour none was seen; the minute is the
+    smallest step the panel draws.
+    """
+    step = 3600 if seconds >= 86400 else 600 if seconds >= 3600 else 60
+    return int(seconds // step * step)
+
+
+def _span(seconds: int) -> str:
+    """A duration as the build panel writes it, its two largest units: `2天19小時`, `6天`, `19小時10分`, `45分`."""
+    days, rest = divmod(seconds, 86400)
+    hours, rest = divmod(rest, 3600)
+    minutes = rest // 60
+    if days:
+        return f"{days}天" + (f"{hours}小時" if hours else "")
+    if hours:
+        return f"{hours}小時" + (f"{minutes}分" if minutes else "")
+    return f"{minutes}分"
+
+
+def _next_text(cost: dict[str, int], time: int | None, count: int) -> str:
+    """`, 下一級: 黑水 5.6 萬; 2天19小時`, `下一級各` on a merged row, `—` where it cannot continue."""
     if not cost:
-        return ", 下一級 —"
+        return ", 下一級: —"
     each = "各" if count > 1 else ""
     asks = "、".join(
         f"{_RESOURCE_NAMES.get(name, name)} {amount / 10_000:g} 萬"
         for name, amount in cost.items()
     )
-    return f", 下一級{each} {asks}"
+    takes = "" if time is None else f"; {_span(time)}"
+    return f", 下一級{each}: {asks}{takes}"
 
 
-def _paid_line(paid: dict[World, PaidShare], now: datetime) -> str:
-    """Where the next levels' prices come from: each village's newest purchase, or the list price."""
-    sources = [
-        f"{WORLD_NAMES[world]} {round(one.share * 10, 1):g} 折 ({_moment(one.at.isoformat(), now)})"
-        if (one := paid.get(world)) is not None and one.share < 1
-        else f"{WORLD_NAMES[world]}牌價"
-        for world in ("day", "night")
-    ]
-    if not any(one.share < 1 for one in paid.values()):
+def _paid_line(paid: dict[World, PaidShare], timed: dict[World, PaidShare], now: datetime) -> str:
+    """Where the next levels' prices and times come from: each village's newest purchases, or the list."""
+
+    def part(label: str, one: PaidShare | None, named: bool) -> str:
+        if one is None:
+            return f"{label}牌價"
+        said = f"{label} {round(one.share * 10, 2):g} 折"
+        return f"{said} ({one.item}, {_moment(one.at.isoformat(), now)})" if named else said
+
+    sources = []
+    for world in ("day", "night"):
+        price, time = (
+            one if (one := shares.get(world)) is not None and one.share < 1 else None
+            for shares in (paid, timed)
+        )
+        if price is None and time is None:
+            sources.append(f"{WORLD_NAMES[world]}牌價")
+            continue
+        same = (
+            price is not None
+            and time is not None
+            and (price.item, price.at) == (time.item, time.at)
+        )
+        sources.append(
+            f"{WORLD_NAMES[world]}{part('價格', price, not same)}、{part('時間', time, True)}"
+        )
+    if not any(one.share < 1 for one in (*paid.values(), *timed.values())):
         return "下一級是牌價"
-    return f"下一級照最近實付估: {'、'.join(sources)}"
+    return f"下一級照最近實付估: {'; '.join(sources)}"
 
 
 def _short_lines(report: StatusReport, world: World, now: datetime) -> list[str]:
@@ -4105,8 +4294,13 @@ def _last_confirm() -> JournalLine | None:
     return max(bought, key=lambda line: line.at, default=None)
 
 
-def _press_time(start: JournalLine) -> datetime | None:
-    """When a `confirm` run's first tap landed, off its `run.log`; None where the log is gone."""
+def _press_time(start: JournalLine, pressed: datetime | None) -> datetime | None:
+    """When a `confirm` run's first tap landed: what its report recorded, else off its `run.log`; None where neither has it.
+
+    The report has carried it since 2026-11-13; older lines have only the log.
+    """
+    if pressed is not None:
+        return pressed
     if start.log is None:
         return None
     with suppress(OSError), (start.log / "run.log").open(encoding="utf-8") as log:
@@ -4145,7 +4339,7 @@ def _journal_upgrades() -> tuple[
                     statuses.append((end.at, read.timers))
             elif start.command == "confirm" and end.outcome == "confirmed":
                 paid = JournalConfirm.model_validate(end.result)
-                if (pressed := _press_time(start)) is not None:
+                if (pressed := _press_time(start, paid.pressed)) is not None:
                     confirms.append((pressed, paid))
     return sorted(statuses, key=lambda one: one[0]), sorted(confirms, key=lambda one: one[0])
 
@@ -4948,6 +5142,8 @@ def confirm(
     adb = _attached(frames)
     display = adb.display_for(COC_PACKAGE)
     before = adb.screenshot(display, "before-confirm")
+    # The first tap follows this frame by no more than the reading of it.
+    looked = datetime.now().astimezone().replace(microsecond=0)
     after: bytes | None = None
     wall: SheetOffer | None = None
     hire: GoblinOffer | None = None
@@ -4981,7 +5177,14 @@ def confirm(
     # Named the way `tap` names its frame: `after` only when something was pressed.
     frame = frames.write("refused", before) if after is None else frames.write("after", after)
     report = ConfirmReport(
-        asked=price, offer=offer, wall=wall, goblin=hire, outcome=outcome, frame=frame, item=item
+        asked=price,
+        offer=offer,
+        wall=wall,
+        goblin=hire,
+        outcome=outcome,
+        frame=frame,
+        item=item,
+        pressed=None if after is None else looked,
     )
     logger.info("Confirm: %s", confirm_line(report))
     return report
