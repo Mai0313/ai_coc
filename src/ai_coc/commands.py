@@ -3006,7 +3006,7 @@ def status(frames: FrameLog, last: bool = False) -> StatusReport:
     """
     if last:
         read = _last_export()
-        return _timed(StatusReport(export=read.outcome), read.export)
+        return _timed(StatusReport(export=read.outcome, notes=_kept().notes), read.export)
     adb = _controller(frames)
     # Not parked: everything below taps fixed HUD places, and the park cost
     # about 14 of a status run's 50 seconds (the user's call of 2026-11-07).
@@ -3039,6 +3039,7 @@ def status(frames: FrameLog, last: bool = False) -> StatusReport:
             stock=stock,
             shield=shield,
             export=exported.outcome,
+            notes=_kept().notes,
         ),
         exported.export,
     )
@@ -3293,7 +3294,9 @@ def status_text(
     list price cries wolf all through an event. Under the village whose
     storages were read come a line per resource they do not cover if every
     row finishing within `SHORT_WITHIN` hours continued, and nothing when they
-    do; then the speed-ups running and when each ends.
+    do; then the speed-ups running and when each ends. Each village's block
+    ends with the user's notes for it, as written and numbered as `note`
+    numbers them, so `note done` takes the number printed here.
     """
     now = now or datetime.now().astimezone()
     if report.exported_at is None:
@@ -3306,7 +3309,12 @@ def status_text(
     shown = [head]
     for world in ("day", "night"):
         shown += ["", _world_line(report, world)]
+        held = getattr(report.notes, world)
+        noted = (
+            ["", "交代:", *(f"{at}. {item}" for at, item in enumerate(held, 1))] if held else []
+        )
         if report.exported_at is None:
+            shown += noted
             continue
         rows = _timer_rows(report, world, now)
         near = [row for row in rows if within is None or row[0] <= now + timedelta(hours=within)]
@@ -3332,6 +3340,7 @@ def status_text(
         ]
         if world == "day" and helpers:
             shown += ["", f"助手: {'、'.join(helpers)}"]
+        shown += noted
     return "\n".join(shown)
 
 
