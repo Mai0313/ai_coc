@@ -5007,6 +5007,8 @@ class SearchTests(unittest.TestCase):
         assert "  下一次 3 級 300 金幣, 3 分鐘, 現在能升 2 個\n" in text
         # A building's first level is not said to unlock it.
         assert "箭塔 / Archer Tower  #1000009  建築  滿級 5\n  村莊裡沒有\n" in text
+        # One the village lacks adds up from its first level to what its town hall 3 allows.
+        assert "  村莊裡沒有\n  升到上限: 第 1 到 3 級共 600 金幣, 6分 (牌價," in text
         assert text.endswith(commands.LIST_PRICE)
         every = commands.search_text(_search("多人箭塔", every_row=True))
         assert "\n  3 級 1 個  在升到 4 級, " in every
@@ -5068,6 +5070,144 @@ class SearchTests(unittest.TestCase):
         kept = gamedata.GAME_DATA_DIR / "1.2.3" / "entities.json"
         kept.write_text(older.model_dump_json(), encoding="utf-8")
         assert _search("飛豬騎士").hits[0].unlock == []
+
+
+class SearchToCapTests(unittest.TestCase):
+    """What `search` says the levels up to an item's cap ask in all, off the Hog Rider's 18.647.5 levels."""
+
+    # Level, dark elixir, hours, laboratory level.
+    HOG = (
+        (2, 2_000, 10, 5),
+        (3, 3_500, 18, 6),
+        (4, 5_000, 24, 6),
+        (5, 10_000, 48, 7),
+        (6, 18_500, 54, 8),
+        (7, 35_000, 60, 9),
+        (8, 47_500, 72, 10),
+        (9, 50_000, 84, 10),
+        (10, 85_000, 96, 11),
+        (11, 107_500, 120, 12),
+        (12, 125_000, 132, 13),
+        (13, 175_000, 156, 14),
+        (14, 240_000, 240, 15),
+        (15, 340_000, 348, 16),
+    )
+    TABLES = GameEntities(
+        game_version="1.2.3",
+        reading=READING,
+        halls={"laboratory": 1000007, "dark_barracks": 1000026},
+        entities=[
+            _tower(1000007, "實驗室", "Laboratory", "day", 16),
+            # Unlocked by a dark barracks the village lacks, researched by the laboratory after.
+            GameEntity(
+                data_id=4000012,
+                zh="戈侖",
+                en="Golem",
+                world="day",
+                table="characters",
+                max_lvl=3,
+                levels=[
+                    GameLevel(lvl=1, needs={"dark_barracks": 4}),
+                    GameLevel(lvl=2, needs={"laboratory": 1}, cost={"elixir": 7}, time=60),
+                    GameLevel(lvl=3, needs={"laboratory": 1}, cost={"elixir": 8}, time=60),
+                ],
+            ),
+            GameEntity(
+                data_id=4000011,
+                zh="野豬騎士",
+                en="Hog Rider",
+                world="day",
+                table="characters",
+                max_lvl=15,
+                levels=[
+                    GameLevel(lvl=1),
+                    *(
+                        GameLevel(
+                            lvl=lvl,
+                            needs={"laboratory": lab},
+                            cost={"dark": dark},
+                            time=hours * 3600,
+                        )
+                        for lvl, dark, hours, lab in HOG
+                    ),
+                ],
+            ),
+        ],
+    )
+
+    def _hog(self, hog: int = 1, lab: int = 16) -> list[str]:
+        """The text `search 野豬騎士` prints for a village with the Hog Rider at `hog` and the laboratory at `lab`."""
+        folder = gamedata.GAME_DATA_DIR / "1.2.3"
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / "entities.json").write_text(self.TABLES.model_dump_json(), encoding="utf-8")
+        document = VillageDocument.model_validate({
+            "tag": "#TEST",
+            "buildings": [{"data": 1000007, "lvl": lab}],
+            "units": [{"data": 4000011, "lvl": hog}],
+        })
+        path = commands.ACCOUNT_JSON_DIR / "#TEST_2026-11-01.json"
+        path.write_text(
+            merge(document, self.TABLES, 1793534400).model_dump_json(), encoding="utf-8"
+        )
+        return commands.search_text(_search("野豬騎士")).splitlines()
+
+    @staticmethod
+    def _after(lines: list[str], start: str) -> str:
+        """The line under the one starting `start`."""
+        return lines[next(at for at, line in enumerate(lines) if line.startswith(start)) + 1]
+
+    def test_the_levels_from_the_next_to_the_max_are_added_up_at_list_price(self) -> None:
+        lines = self._hog()
+        assert self._after(lines, "  下一次 2 級") == (
+            "  升到滿級: 第 2 到 15 級共 1,244,000 黑水, 60天22小時 (牌價, 一格接著升, 沒算藥水跟助手)"
+        )
+        [total] = _search("野豬騎士").hits[0].to_cap
+        assert (total.start, total.cap, total.held, total.cost, total.time) == (
+            2,
+            15,
+            False,
+            {"dark": 1_244_000},
+            1462 * 3600,
+        )
+        assert lines[-1] == commands.LIST_PRICE
+
+    def test_a_hall_that_holds_the_levels_short_ends_the_total_there(self) -> None:
+        # A laboratory 10 allows up to level 9.
+        assert self._after(self._hog(lab=10), "  下一次 2 級") == (
+            "  升到上限: 第 2 到 9 級共 171,500 黑水, 15天10小時 (牌價, 一格接著升, 沒算藥水跟助手)"
+        )
+        # Its next level already past what the laboratory allows, there is nothing to add up.
+        assert not any("升到" in line for line in self._hog(hog=9, lab=10))
+        # Nor for one the village cannot unlock, whatever the laboratory allows after.
+        assert _search("戈侖").hits[0].to_cap == []
+
+    def test_one_at_its_max_gets_no_total(self) -> None:
+        lines = self._hog(hog=15)
+        assert not any("升到" in line for line in lines)
+        assert _search("野豬騎士").hits[0].to_cap == []
+
+    def test_the_newest_purchases_shares_price_each_level_as_the_game_charges_it(self) -> None:
+        self._hog()
+        at = datetime.fromisoformat("2026-11-13T10:00:00+08:00")
+        paid = PaidShare(share=0.4, at=at, item="野豬騎士 2")
+        report = _search("野豬騎士").model_copy(
+            update={"paid": {"day": paid}, "timed": {"day": paid}}
+        )
+        lines = commands.search_text(report, now=at).splitlines()
+        # 18 h at 0.4 is charged 7小時10分 and 54 h 21小時30分, not 7.2 h and 21.6 h.
+        assert self._after(lines, "  下一次 2 級").endswith(
+            "(牌價, 一格接著升, 沒算藥水跟助手); 照最近實付估 497,600 黑水, 24天5小時"
+        )
+        assert lines[-2:] == [
+            commands.LIST_PRICE,
+            "升到滿級或上限的總數照最近實付估: 日世界價格 4 折、時間 4 折 (野豬騎士 2, 今天 10:00); 夜世界牌價",
+        ]
+        # With no total estimated on the page, nothing says the shares were used.
+        self._hog(hog=15)
+        maxed = _search("野豬騎士").model_copy(
+            update={"paid": {"day": paid}, "timed": {"day": paid}}
+        )
+        assert commands.search_text(maxed, now=at).splitlines()[-1] == commands.LIST_PRICE
 
 
 class StorageCeilingTests(unittest.TestCase):

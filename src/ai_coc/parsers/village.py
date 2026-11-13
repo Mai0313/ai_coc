@@ -13,6 +13,7 @@ from ai_coc.models import (
     SearchNeed,
     SearchNext,
     LevelChange,
+    LevelsTotal,
     NextUpgrade,
     UpgradeTimer,
     SearchUpgrade,
@@ -498,6 +499,7 @@ def _candidates(
             if current and export is not None and not rows
             else [],
         )
+        hit.to_cap = _to_cap(hit, village if export is not None else None)
         if asked.section in (None, "all", hit.section) and asked.world in (None, hit.world):
             yield hit
 
@@ -607,6 +609,52 @@ def _hit(
         ready_at=min((row.ready_at for _, _, row in rows if row.ready_at), default=None),
         rows=shown,
     )
+
+
+def _to_cap(hit: SearchHit, halls: dict[Hall, int] | None) -> list[LevelsTotal]:
+    """What the levels from each next upgrade to the cap ask in all, at list price.
+
+    One the village holds counts from each of its `next`, so a kind whose
+    copies stand at different levels gets one total per level they lead to;
+    one it lacks counts from its first level, up to the first level `halls`
+    do not allow, or to the last where no export gave any; a troop whose
+    unlock they do not allow gets none, whatever the laboratory allows after.
+    """
+    if hit.max_lvl is None or not hit.levels:
+        return []
+    if hit.count:
+        starts, limited = [one.lvl for one in hit.next], hit.limited_lvl
+    else:
+        starts, limited = [hit.levels[0].lvl], None
+        if halls is not None:
+            limited = 0
+            for level in hit.levels:
+                if not all(halls.get(hall, 0) >= need for hall, need in level.needs.items()):
+                    break
+                limited = level.lvl
+    cap = hit.max_lvl if limited is None else min(limited, hit.max_lvl)
+    totals = []
+    for start in starts:
+        if start > cap:
+            continue
+        counted = [level for level in hit.levels if start <= level.lvl <= cap]
+        cost: Counter[str] = Counter()
+        for level in counted:
+            cost.update(level.cost)
+        # A troop whose only level left is the one that unlocks it has nothing to buy.
+        if not cost:
+            continue
+        untimed = any(level.time is None for level in counted if level.cost)
+        totals.append(
+            LevelsTotal(
+                start=start,
+                cap=cap,
+                held=cap < hit.max_lvl,
+                cost=dict(cost),
+                time=None if untimed else sum(level.time or 0 for level in counted),
+            )
+        )
+    return totals
 
 
 def _kind(entity: GameEntity) -> str:
