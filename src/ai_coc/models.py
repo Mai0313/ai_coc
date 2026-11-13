@@ -2731,9 +2731,10 @@ class GameDataReport(BaseModel):
 SearchSection = Literal["builder", "lab", "pets", "equipment", "helpers"]
 
 # How `ai_coc search` ended. `no_tables` is no game tables kept for a name or
-# data_id to be searched in, `no_export` no saved export to list, and
-# `no_match` nothing left by the query and the filters.
-SearchOutcome = Literal["found", "no_match", "no_tables", "no_export"]
+# data_id to be searched in, `no_export` no saved export to list, `close` no
+# name containing the query, so the hits are the names nearest it, and
+# `no_match` nothing left by the query and the filters, near names included.
+SearchOutcome = Literal["found", "close", "no_match", "no_tables", "no_export"]
 
 
 class SearchUpgrade(BaseModel):

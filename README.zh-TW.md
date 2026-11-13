@@ -134,7 +134,7 @@ ai_coc turnaround                     # 從打資源紀錄算每次升級從到�
 ai_coc farmed --by <session> --since <時間>  # 從執行紀錄把一個 session 每一次打資源加起來, 每個世界一段; 不碰遊戲
 ai_coc tended --by <session> --since <時間>  # 從執行紀錄列出一個 session 升了什麼、各花多少, 開了幾次鐘塔, 被搶登幾次; 不碰遊戲
 ai_coc gamedata                       # 從模擬器上的遊戲檔讀出遊戲自己的表(中英文名稱、最高等級、每級的要求、牌價和時間),每個遊戲版本讀一次,存在 ~/.ai_coc/game_data/<版本>/;--refresh 重新讀
-ai_coc search "Electro Dragon"        # 照 data_id 或中英文名稱的一段查那份表,村莊裡有的再列出等級、升級中幾點好跟下一級的牌價,沒有的兵種跟法術列出解鎖要什麼;--rows 每一列分開列;不碰遊戲
+ai_coc search "Electro Dragon"        # 照 data_id 或中英文名稱的一段查那份表 (沒有名字含這一段的就列名字最接近的幾種, 並標明不是符合的),村莊裡有的再列出等級、升級中幾點好跟下一級的牌價,沒有的兵種跟法術列出解鎖要什麼;--rows 每一列分開列;不碰遊戲
 ai_coc search --section builder --day --skip-max-lvl  # 照分類列村莊裡有的 (builder、lab、pets、equipment、helpers, 或 all), 兩個世界各一段, 現在能升的照牌價時間由短到長排前面; --day / --night 只留一個世界, --skip-max-lvl 不列滿級的, 再給名稱就在裡面找
 ai_coc view --zoom out                # 把鏡頭拉回所有座標當初量測的那個視野
 ai_coc world                          # 現在在日世界還是夜世界

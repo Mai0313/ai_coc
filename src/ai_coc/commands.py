@@ -193,6 +193,7 @@ from ai_coc.parsers.village import (
 )
 from ai_coc.parsers.village import growth as village_growth
 from ai_coc.parsers.village import search as village_search
+from ai_coc.parsers.village import closest as closest_names
 from ai_coc.parsers.boundary import PLAYFIELD, VILLAGE_CENTRE, village_box, boundary_reach
 from ai_coc.parsers.building import (
     GOBLIN_X_BOX,
@@ -4398,12 +4399,18 @@ def search(asked: SearchOptions) -> SearchReport:
     else:
         outcome = "found"
     hits = village_search(tables, export, asked) if outcome == "found" else []
+    if outcome == "found" and not hits:
+        outcome = "no_match"
+        # Near names answer a name nothing holds, not one the filters emptied.
+        if not village_search(tables, export, SearchOptions(query=asked.query)):
+            hits = closest_names(tables, export, asked)
+            outcome = "close" if hits else "no_match"
     report = SearchReport(
         query=asked.query,
         section=asked.section,
         world=asked.world,
         skip_max_lvl=asked.skip_max_lvl,
-        outcome="no_match" if outcome == "found" and not hits else outcome,
+        outcome=outcome,
         game_version=tables.game_version if tables else None,
         tag=export.tag if export else None,
         exported_at=export.exported_at if export else None,
@@ -4415,6 +4422,7 @@ def search(asked: SearchOptions) -> SearchReport:
 
 SEARCH_LINES: dict[SearchOutcome, str] = {
     "found": "找到 {count} 種",
+    "close": "沒有名字含這一段的, 下面 {count} 種是名字最接近的, 不是符合的",
     "no_match": "沒有符合的",
     "no_tables": "還沒有存下遊戲的表可以查, 先跑一次 ai_coc gamedata",
     "no_export": "還沒有存下村莊匯出可以列, 跑一次 ai_coc status 或 export 就有",
@@ -4467,7 +4475,7 @@ def search_text(report: SearchReport) -> str:
     in it says so.
     """
     shown = [_search_head(report)]
-    if report.outcome != "found":
+    if report.outcome not in ("found", "close"):
         return shown[0]
     shown.append(
         f"遊戲的表 {report.game_version or '沒有'}, "
