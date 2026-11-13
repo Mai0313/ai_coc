@@ -93,6 +93,7 @@ ai_coc attack --plan used.json     # play that one again, edits included
 ai_coc confirm --price 10800                 # press the sheet's 確認 only if it asks exactly this
 ai_coc confirm --price 1600000 --pay gold    # pay in gold for the wall picked from the panel
 ai_coc confirm --price 10800 --item "Cannon 12"  # the same, recording what was bought for tended
+ai_coc listprice --day                      # the panel shows no struck-through list price any more: status stops scaling by the old discount
 ```
 
 Every upgrade goes through the build panel, walls included: `tap` and `swipe` press and scroll and keep the frame they left, and `confirm` is the one press that spends, made only when the sheet asks exactly the price given, in gold, elixir or dark elixir. With `--pay` it starts on the menu of a wall picked from the panel: it presses that wall's price button only when it asks the price given and the village can pay, then the sheet or the batch's dialog that button raises.
@@ -101,7 +102,7 @@ Every upgrade goes through the build panel, walls included: `tap` and `swipe` pr
 
 ```bash
 ai_coc collect                        # empty every collector that has something waiting
-ai_coc status                         # when every upgrade on both villages really finishes, potions included, plus this village's storages, gems and shield, printed as one table per village with what each next level asks (scaled by what the village's latest purchase paid against the list price), a line per resource the storages fall short of if everything due within three hours continues, and the potions still running; --json prints the fields
+ai_coc status                         # when every upgrade on both villages really finishes, potions included, plus this village's storages, gems and shield, printed as one table per village with what each next level asks and takes (the list price and time scaled by what the village's purchases within the last day paid against them), a line per resource the storages fall short of if everything due within three hours continues, and the potions still running; --json prints the fields
 ai_coc status --last                  # the same tables off the last saved export, without touching the game; --within 24 folds what finishes later into one line
 ai_coc watch --upgrades --lead 5 --tower --minutes 180   # sleep until the earliest of those (or a --next) as the one watching the upgrades, named on state.json; run it in the background
 ai_coc note add "..." --day          # keep one of the user's instructions for a village in state.json; `note` lists them, `note done 1 --day` drops one
@@ -157,7 +158,7 @@ Every run gets a directory of its own:
 └── frames/        # every frame it read with --debug; without it, only the ones a command keeps
 ```
 
-The first line of every run says which directory it is, and the name is `<when>-<what>` so a listing reads as a history. `--label` adds a third part on any command (`2026-08-29-011423-attack-baseline`) for a run you want to find again. `~/.ai_coc/runs.jsonl` keeps one line per milestone of every run (its start and end, each attack round with the tactic it played, the emulator changing hands, every warning), outside `logs/`, so it survives that directory being cleared; `grep -r ~/.ai_coc/logs/*/run.log` searches the full logs across runs and tells you which one each hit came from.
+The first line of every run says which directory it is, and the name is `<when>-<what>` so a listing reads as a history. `--label` adds a third part on any command (`2026-08-29-011423-attack-baseline`) for a run you want to find again. `~/.ai_coc/runs.jsonl` keeps one line per milestone of every run (its start and end, each attack round with the tactic it played, the emulator changing hands, every warning), outside `logs/`, so it survives that directory being cleared, and every report (`turnaround`, `farmed`, `tended`, `status`) reads it rather than the logs; clearing `logs/` loses the frames and the full log lines, and `turnaround` the purchases made before 2026-11-13; `grep -r ~/.ai_coc/logs/*/run.log` searches the full logs across runs and tells you which one each hit came from.
 
 **Frames are kept for a week; the logs are kept forever.** A run's `frames/` is deleted once it is older than that, and nothing else in the directory ever is. The split is worth stating because it is lopsided: on this machine 11 456 recorded PNGs came to 27.2 GB while everything else in those directories came to 4.6 MB. Copy anything you want to keep longer out of there.
 

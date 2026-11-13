@@ -693,13 +693,13 @@ class StatusTextTests(unittest.TestCase):
         )
         assert "| 時間 | 目標 | 項目 |\n| --- | --- | --- |" in text
         for row in (
-            "| 今天 13:00 | 工人 | 建築1 (5/10), 下一級 金幣 1 萬 |",
-            "| 今天 14:00 | 工人 | 建築2 (10/10), 下一級 — |",
-            "| 今天 15:00 | 工人 | 建築3 (5/10, 上限 5), 下一級 — |",
-            "| 今天 16:00 | 實驗室 (哥布林) | 建築4 (5/10), 下一級 金幣 1 萬 |",
-            "| 今天 17:00 | 工人 | 建築5 (5/—), 下一級 金幣 1 萬 |",
-            "| 今天 18:00 (沒算加速) | — | 建築6 (5/10), 下一級 金幣 1 萬 |",
-            "| 今天 19:00 | 工人 | 建築7, 下一級 — |",
+            "| 今天 13:00 | 工人 | 建築1 (5/10), 下一級: 金幣 1 萬 |",
+            "| 今天 14:00 | 工人 | 建築2 (10/10), 下一級: — |",
+            "| 今天 15:00 | 工人 | 建築3 (5/10, 上限 5), 下一級: — |",
+            "| 今天 16:00 | 實驗室 (哥布林) | 建築4 (5/10), 下一級: 金幣 1 萬 |",
+            "| 今天 17:00 | 工人 | 建築5 (5/—), 下一級: 金幣 1 萬 |",
+            "| 今天 18:00 (沒算加速) | — | 建築6 (5/10), 下一級: 金幣 1 萬 |",
+            "| 今天 19:00 | 工人 | 建築7, 下一級: — |",
         ):
             assert row in text, row
 
@@ -714,11 +714,11 @@ class StatusTextTests(unittest.TestCase):
             NOW,
         )
         assert (
-            f"| 今天 13:00 | 工人 | 建築1 {commands.TIMES}2 (5/10), 下一級各 金幣 1 萬 |" in text
+            f"| 今天 13:00 | 工人 | 建築1 {commands.TIMES}2 (5/10), 下一級各: 金幣 1 萬 |" in text
         )
-        assert "| 今天 13:06 | 工人 | 建築1 (5/10), 下一級 金幣 1 萬 |" in text
+        assert "| 今天 13:06 | 工人 | 建築1 (5/10), 下一級: 金幣 1 萬 |" in text
         # A goblin's slot is a row of its own, since it is paid for apart.
-        assert "| 今天 13:05 | 工人 (哥布林) | 建築1 (5/10), 下一級 金幣 1 萬 |" in text
+        assert "| 今天 13:05 | 工人 (哥布林) | 建築1 (5/10), 下一級: 金幣 1 萬 |" in text
 
     def test_a_helper_on_a_row_is_named_in_its_slot_until_its_work_there_ends(self) -> None:
         until = datetime(2026, 11, 11, 12, 36).astimezone().isoformat()
@@ -733,12 +733,12 @@ class StatusTextTests(unittest.TestCase):
         text = commands.status_text(report, NOW)
         # Not one row with the job beside it that the helper is not on.
         assert (
-            "| 今天 13:00 | 工人 (建築工人學徒幫到今天 12:36) | 建築1 (5/10), 下一級 金幣 1 萬 |"
+            "| 今天 13:00 | 工人 (建築工人學徒幫到今天 12:36) | 建築1 (5/10), 下一級: 金幣 1 萬 |"
             in text
         )
-        assert "| 今天 13:02 | 工人 | 建築1 (5/10), 下一級 金幣 1 萬 |" in text
+        assert "| 今天 13:02 | 工人 | 建築1 (5/10), 下一級: 金幣 1 萬 |" in text
         # One an export saved without the helper's multiplier could not count.
-        assert "| 今天 14:00 (沒算助手) | 工人 | 建築2 (5/10), 下一級 金幣 1 萬 |" in text
+        assert "| 今天 14:00 (沒算助手) | 工人 | 建築2 (5/10), 下一級: 金幣 1 萬 |" in text
 
     def test_the_clock_tower_is_a_builder_base_row_in_its_turn(self) -> None:
         later = self._report(
@@ -750,9 +750,9 @@ class StatusTextTests(unittest.TestCase):
         )
         night = commands.status_text(later, NOW).split("夜世界")[1].splitlines()
         assert night[-3:] == [
-            "| 明天 05:00 | 工人 | 建築1 (5/10), 下一級 金幣 1 萬 |",
+            "| 明天 05:00 | 工人 | 建築1 (5/10), 下一級: 金幣 1 萬 |",
             "| 明天 12:00 | — | 鐘塔冷卻結束 |",
-            "| 11-14 01:00 | 工人 | 建築2 (5/10), 下一級 金幣 1 萬 |",
+            "| 11-14 01:00 | 工人 | 建築2 (5/10), 下一級: 金幣 1 萬 |",
         ]
         ready = self._report(clock_tower=ClockTower(ready_in=0, ready_at=NOW.isoformat()))
         assert "| 現在 | — | 鐘塔冷卻結束 |" in commands.status_text(ready, NOW)
@@ -779,7 +779,7 @@ class StatusTextTests(unittest.TestCase):
             _timer(1, "13:00"), _timer(2, "2026-11-13T09:00"), _timer(3, "2026-11-14T10:19")
         )
         text = commands.status_text(report, NOW, within=24)
-        assert "| 今天 13:00 | 工人 | 建築1 (5/10), 下一級 金幣 1 萬 |" in text
+        assert "| 今天 13:00 | 工人 | 建築1 (5/10), 下一級: 金幣 1 萬 |" in text
         assert "之後還有 建築2 (5/10)、建築3 (5/10), 最晚 11-14 10:19" in text
         assert "| 11-13" not in text
         alone = commands.status_text(self._report(_timer(2, "2026-11-13T09:00")), NOW, within=24)
@@ -797,7 +797,7 @@ class StatusTextTests(unittest.TestCase):
             ),
         )
         text = commands.status_text(report, NOW)
-        assert "| 今天 11:00 (已過) | 工人 | 建築1 (5/10), 下一級 金幣 1 萬 |" in text
+        assert "| 今天 11:00 (已過) | 工人 | 建築1 (5/10), 下一級: 金幣 1 萬 |" in text
         assert "| 現在 | — | 鐘塔冷卻結束 |" in text
 
     def test_an_export_that_failed_says_so_and_prints_no_table(self) -> None:
@@ -825,10 +825,10 @@ class StatusTextTests(unittest.TestCase):
         )
         text = commands.status_text(report, NOW)
         assert text.splitlines()[0].endswith(
-            "; 下一級照最近實付估: 日世界 4 折 (今天 11:00)、夜世界牌價"
+            "; 下一級照最近實付估: 日世界價格 4 折 (王 70, 今天 11:00)、時間牌價; 夜世界牌價"
         )
-        assert "| 今天 13:00 | 工人 | 建築1 (5/10), 下一級 黑水 4.92 萬 |" in text
-        assert "| 今天 13:00 | 工人 | 建築2 (5/10), 下一級 黑水 12.3 萬 |" in text
+        assert "| 今天 13:00 | 工人 | 建築1 (5/10), 下一級: 黑水 4.92 萬 |" in text
+        assert "| 今天 13:00 | 工人 | 建築2 (5/10), 下一級: 黑水 12.3 萬 |" in text
         # A purchase that paid the list price leaves nothing to scale by.
         listed = self._report(paid={"day": paid.model_copy(update={"share": 1.0})})
         assert commands.status_text(listed, NOW).splitlines()[0].endswith("; 下一級是牌價")
@@ -838,8 +838,58 @@ class StatusTextTests(unittest.TestCase):
             commands
             .status_text(both, NOW)
             .splitlines()[0]
-            .endswith("; 下一級照最近實付估: 日世界牌價、夜世界 8 折 (今天 11:00)")
+            .endswith(
+                "; 下一級照最近實付估: 日世界牌價; 夜世界價格 8 折 (王 70, 今天 11:00)、時間牌價"
+            )
         )
+
+    def test_the_next_levels_time_is_scaled_and_floored_as_the_panel_writes_it(self) -> None:
+        """The seven purchases at 0.4 the panel showed on 2026-11-13, list time against charged."""
+        day, hour = 86400, 3600
+        readings = (
+            (4 * day, "1天14小時"),
+            (12 * day, "4天19小時"),
+            (5 * day, "2天"),
+            (7 * day, "2天19小時"),
+            (2 * day, "19小時10分"),
+            (8 * hour, "3小時10分"),
+            (day, "9小時30分"),
+        )
+        bought = PaidShare(share=0.4, at=datetime(2026, 11, 11, 11, 0).astimezone(), item="王 70")
+        report = self._report(
+            *(
+                _timer(index, "13:00", next=NextUpgrade(lvl=6, cost={"dark": 10_000}, time=listed))
+                for index, (listed, _) in enumerate(readings)
+            ),
+            paid={"day": bought},
+            timed={"day": bought},
+        )
+        text = commands.status_text(report, NOW)
+        for index, (_, charged) in enumerate(readings):
+            assert f"建築{index} (5/10), 下一級: 黑水 0.4 萬; {charged} |" in text, charged
+        assert text.splitlines()[0].endswith(
+            "; 下一級照最近實付估: 日世界價格 4 折、時間 4 折 (王 70, 今天 11:00); 夜世界牌價"
+        )
+        assert commands._span(45 * 60) == "45分"
+        assert commands._span(6 * day) == "6天"
+
+    def test_a_village_with_no_time_share_prints_the_list_time_and_says_so(self) -> None:
+        upgrade = NextUpgrade(lvl=6, cost={"dark": 10_000}, time=2 * 86400 + 3600)
+        price = PaidShare(share=0.4, at=datetime(2026, 11, 11, 11, 0).astimezone(), item="王 70")
+        time = PaidShare(share=0.5, at=datetime(2026, 11, 11, 9, 0).astimezone(), item="后 9")
+        alone = self._report(_timer(1, "13:00", next=upgrade), paid={"day": price})
+        text = commands.status_text(alone, NOW)
+        assert "建築1 (5/10), 下一級: 黑水 0.4 萬; 2天1小時 |" in text
+        assert "日世界價格 4 折 (王 70, 今天 11:00)、時間牌價" in text
+        # Two purchases: each share names its own.
+        apart = self._report(paid={"day": price}, timed={"day": time})
+        assert (
+            "日世界價格 4 折 (王 70, 今天 11:00)、時間 5 折 (后 9, 今天 09:00)"
+            in commands.status_text(apart, NOW)
+        )
+        # A table that times nothing prints the price alone.
+        bare = self._report(_timer(1, "13:00", next=upgrade.model_copy(update={"time": None})))
+        assert "建築1 (5/10), 下一級: 黑水 1 萬 |" in commands.status_text(bare, NOW)
 
     def test_storages_short_of_continuing_whatever_comes_due_get_a_line_each(self) -> None:
         def dark(amount: int, lvl: int = 6) -> NextUpgrade:
@@ -907,7 +957,7 @@ class PaidSharesTests(unittest.TestCase):
                 world="day",
                 table="heroes",
                 max_lvl=110,
-                levels=[GameLevel(lvl=70, cost={"dark": 125_000})],
+                levels=[GameLevel(lvl=70, cost={"dark": 125_000}, time=4 * 86400)],
             ),
             GameEntity(
                 data_id=28000003,
@@ -953,19 +1003,126 @@ class PaidSharesTests(unittest.TestCase):
         offer = paid.get("offer")
         asked = paid.pop("asked", offer["price"] if isinstance(offer, dict) else 1)
         start = datetime.fromisoformat(f"2026-11-12T{at}:00+08:00")
-        run = f"{at}-confirm"
         report = {"asked": asked, "outcome": outcome, "frame": "after.png", "item": item, **paid}
+        self._run(f"{at}-confirm", start, "confirm", report)
+
+    def _run(self, run: str, at: datetime, command: str, result: dict[str, object]) -> None:
         self.lines += [
-            {"run": run, "at": start.isoformat(), "event": "start", "command": "confirm"},
-            {"run": run, "at": start.isoformat(), "event": "end", "result": report},
+            {"run": run, "at": at.isoformat(), "event": "start", "command": command},
+            {"run": run, "at": at.isoformat(), "event": "end", "result": result},
         ]
 
-    def _shares(self, tables: GameEntities | None = TABLES) -> dict[World, PaidShare]:
+    def _status(self, at: str, timer: int, boost: str | None = None, level: int = 69) -> None:
+        """A `status` whose export, taken at `at`, has the king's level `level + 1` running with `timer` left."""
+        taken = datetime.fromisoformat(f"2026-11-12T{at}+08:00")
+        job = {
+            "world": "day",
+            "role": "builder",
+            "section": "heroes",
+            "data_id": 28000000,
+            "zh": "野蠻人之王",
+            "level": level,
+            "timer": timer,
+            "boost": boost,
+            "seconds": timer,
+            "done_at": taken.isoformat(),
+        }
+        result = {"export": "exported", "exported_at": taken.isoformat(), "timers": [job]}
+        self._run(f"{at}-status", taken, "status", result)
+
+    def _both(
+        self,
+        tables: GameEntities | None = TABLES,
+        now: str = "2026-11-12T12:00:00+08:00",
+        own: tuple[datetime, list[UpgradeTimer]] | None = None,
+    ) -> tuple[dict[World, PaidShare], dict[World, PaidShare]]:
         logging_setup.JOURNAL_PATH.write_text(
             "".join(json.dumps(line, ensure_ascii=False) + "\n" for line in self.lines),
             encoding="utf-8",
         )
-        return commands._paid_shares(tables)
+        return commands._paid_shares(tables, datetime.fromisoformat(now), own)
+
+    def _shares(self, tables: GameEntities | None = TABLES) -> dict[World, PaidShare]:
+        return self._both(tables)[0]
+
+    @staticmethod
+    def _offer(price: int, resource: str = "dark") -> dict[str, object]:
+        return {"price": price, "resource": resource, "point": [1121, 788]}
+
+    def test_the_time_share_is_the_price_share_where_that_explains_the_charge(self) -> None:
+        """4天 at 0.4 is charged 1天14小時, and the export a minute later shows what is left of it."""
+        self._confirm("11:00", "confirmed", "野蠻人之王 70", offer=self._offer(50_000))
+        # 62 s after the press, unboosted: 38 h less those 62 s.
+        self._status("11:01:02", 38 * 3600 - 62)
+        timed = self._both()[1]
+        assert timed["day"].share == pytest.approx(0.4)
+        assert (timed["day"].item, timed["day"].at.minute) == ("野蠻人之王 70", 0)
+
+    def test_a_potion_running_at_the_export_widens_what_the_charge_can_be(self) -> None:
+        self._confirm("11:00", "confirmed", "野蠻人之王 70", offer=self._offer(50_000))
+        # 100 s under a builder potion did 1000 s of work.
+        self._status("11:01:40", 38 * 3600 - 1000, boost="builder_boost")
+        assert self._both()[1]["day"].share == pytest.approx(0.4)
+        # Unboosted, the same timer leaves the charge short of 38 h: the low end, which errs short.
+        self.lines = self.lines[:2]
+        self._status("11:01:40", 38 * 3600 - 1000)
+        assert self._both()[1]["day"].share == pytest.approx((38 * 3600 - 900) / (4 * 86400))
+
+    def test_a_charge_the_price_share_does_not_explain_is_its_own_share(self) -> None:
+        """An event that discounts the price alone leaves the time at list."""
+        self._confirm("11:00", "confirmed", "野蠻人之王 70", offer=self._offer(50_000))
+        self._status("11:01", 4 * 86400 - 60)
+        assert self._both()[1]["day"].share == pytest.approx(1.0)
+
+    def test_a_time_at_list_is_a_whole_share_whatever_the_two_clocks_say(self) -> None:
+        """A potion since the press and a second between the clocks leave the charge just short of list."""
+        self._confirm("11:00", "confirmed", "野蠻人之王 70", offer=self._offer(50_000))
+        self._status("11:01:40", 4 * 86400 - 1001, boost="builder_boost")
+        assert self._both()[1]["day"].share == 1.0
+
+    def test_the_clocks_gap_counts_at_the_potions_rate(self) -> None:
+        """The export stamped 10 s early under a builder potion: 1100 s of work in what reads as 100."""
+        self._confirm("11:00", "confirmed", "野蠻人之王 70", offer=self._offer(50_000))
+        self._status("11:01:40", 38 * 3600 - 1100, boost="builder_boost")
+        assert self._both()[1]["day"].share == pytest.approx(0.4)
+
+    def test_the_status_asking_times_the_purchase_before_it(self) -> None:
+        """Its own export is the first to list the job, and its line is not on the journal yet."""
+        self._confirm("11:00", "confirmed", "野蠻人之王 70", offer=self._offer(50_000))
+        self._status("11:01", 38 * 3600 - 60)
+        own = self.lines[-1]["result"]
+        self.lines = self.lines[:2]
+        assert self._both()[1] == {}
+        timers = [UpgradeTimer.model_validate(one) for one in own["timers"]]
+        taken = datetime.fromisoformat(own["exported_at"])
+        assert self._both(own=(taken, timers))[1]["day"].share == pytest.approx(0.4)
+
+    def test_the_first_status_after_the_press_that_lists_the_job_times_it(self) -> None:
+        self._confirm("11:00", "confirmed", "野蠻人之王 70", offer=self._offer(50_000))
+        self._status("10:59", 1)
+        self._status("11:00:30", 5, level=60)
+        assert self._both()[1] == {}
+        self._status("11:01", 38 * 3600 - 60)
+        self._status("11:02", 1)
+        assert self._both()[1]["day"].share == pytest.approx(0.4)
+
+    def test_a_purchase_older_than_a_day_says_nothing_about_today(self) -> None:
+        self._confirm("11:00", "confirmed", "野蠻人之王 70", offer=self._offer(50_000))
+        self._status("11:01", 38 * 3600 - 60)
+        assert self._both(now="2026-11-13T10:59:00+08:00")[0]
+        assert self._both(now="2026-11-13T11:01:00+08:00") == ({}, {})
+
+    def test_a_list_price_record_ends_the_discount_on_its_village_alone(self) -> None:
+        self._confirm("10:00", "unexpected", "戰爭機器 28", offer=self._offer(3_040_000, "elixir"))
+        self._confirm("11:00", "confirmed", "野蠻人之王 70", offer=self._offer(50_000))
+        self._status("11:01", 38 * 3600 - 60)
+        at = datetime.fromisoformat("2026-11-12T11:30:00+08:00")
+        self._run("11:30-listprice", at, "listprice", {"world": "day"})
+        paid, timed = self._both()
+        assert (set(paid), set(timed)) == ({"night"}, set())
+        # A purchase after the record is a discount again.
+        self._confirm("11:40", "confirmed", "野蠻人之王 70", offer=self._offer(75_000))
+        assert self._both()[0]["day"].share == pytest.approx(0.6)
 
     def test_the_newest_purchase_that_resolves_on_each_village_wins(self) -> None:
         def offer(price: int, resource: str = "dark") -> dict[str, object]:
@@ -990,10 +1147,11 @@ class PaidSharesTests(unittest.TestCase):
         assert shares["night"].share == pytest.approx(0.8)
 
     def test_no_tables_or_no_journal_scale_nothing(self) -> None:
-        assert self._shares() == {}
+        assert self._both() == ({}, {})
         offer = {"price": 50_000, "resource": "dark", "point": [1121, 788]}
         self._confirm("11:10", "confirmed", "野蠻人之王 70", offer=offer)
-        assert self._shares(None) == {}
+        self._status("11:11", 38 * 3600 - 60)
+        assert self._both(None) == ({}, {})
 
 
 class CollectCommandTests(unittest.TestCase):
@@ -2877,6 +3035,19 @@ class TurnaroundTests(unittest.TestCase):
         self._confirm("2026-11-07T10:22:30+08:00", "10:22:40", goblin={"price": 31})
         assert self._count() == []
 
+    def test_the_press_the_report_recorded_outlives_the_run_log(self) -> None:
+        self._status(
+            "2026-11-07T10:15:00+08:00",
+            ("heroes", "builder", "Archer Queen", "2026-11-07T10:20:00+08:00"),
+            ("units", "lab", "Druid", "2026-11-07T10:30:00+08:00"),
+        )
+        self._confirm("2026-11-07T10:20:40+08:00", "10:20:25", pressed="2026-11-07T10:20:31+08:00")
+        self._confirm("2026-11-07T10:30:40+08:00", "10:30:16")
+        for log in self.logs.glob("*/run.log"):
+            log.unlink()
+        # The one from before the report recorded its press is gone with its log.
+        assert self._count() == [("hero", "Archer Queen", 31)]
+
 
 class NoteTests(unittest.TestCase):
     """The user's notes, kept in the state file beside the emulator and the watch.
@@ -3745,6 +3916,7 @@ class PressAndConfirmTests(unittest.TestCase):
             assert report.outcome == "sheet_up", frame
 
     def test_confirm_presses_the_resource_button_once_when_the_price_agrees(self) -> None:
+        before = datetime.now().astimezone().replace(microsecond=0)
         adb, report = self._run(
             ["sheet_hero_dark.png", "hud_day_build_panel.png"],
             lambda d: commands.confirm(10800, d),
@@ -3754,11 +3926,14 @@ class PressAndConfirmTests(unittest.TestCase):
         assert report.outcome == "confirmed"
         assert report.offer.resource == "dark"
         assert report.frame.name == "after.png"
+        assert report.pressed is not None
+        assert before <= report.pressed <= datetime.now().astimezone()
 
     def test_confirm_presses_nothing_on_a_price_it_was_not_given(self) -> None:
         adb, report = self._run(["sheet_hero_dark.png"], lambda d: commands.confirm(13500, d))
         adb.tap.assert_not_called()
         assert report.outcome == "price_mismatch"
+        assert report.pressed is None
 
     def test_confirm_presses_nothing_on_a_gem_button(self) -> None:
         adb, report = self._run(["sheet_running_gems.png"], lambda d: commands.confirm(500, d))
