@@ -1311,6 +1311,7 @@ class UpkeepLineTests(unittest.TestCase):
             commands.SEARCH_LINES,
             {
                 "found": "找到",
+                "close": "名字最接近的",
                 "no_match": "沒有符合的",
                 "no_tables": "ai_coc gamedata",
                 "no_export": "還沒有存下村莊匯出",
@@ -4502,6 +4503,24 @@ class SearchTests(unittest.TestCase):
                 levels=[GameLevel(lvl=1), GameLevel(lvl=2, cost={"elixir": 6}, time=345600)],
             ),
             GameEntity(
+                data_id=4000009,
+                zh="皮卡超人",
+                en="P.E.K.K.A",
+                world="day",
+                table="characters",
+                max_lvl=13,
+                levels=[GameLevel(lvl=1)],
+            ),
+            GameEntity(
+                data_id=4000024,
+                zh="掘地礦工",
+                en="Miner",
+                world="day",
+                table="characters",
+                max_lvl=12,
+                levels=[GameLevel(lvl=1)],
+            ),
+            GameEntity(
                 data_id=93000000,
                 zh="建築工人學徒",
                 en="Builder's Apprentice",
@@ -4738,6 +4757,27 @@ class SearchTests(unittest.TestCase):
         self._keep()
         nothing = _search("不存在的東西")
         assert (nothing.outcome, nothing.hits) == ("no_match", [])
+
+    def test_a_name_nothing_contains_gets_the_nearest_names_instead(self) -> None:
+        self._keep()
+        exact = _search("皮卡超人")
+        assert (exact.outcome, [hit.data_id for hit in exact.hits]) == ("found", [4000009])
+        # A typo, two characters of a name that are not side by side, and an English typo.
+        for query, meant in (("皮卡朝人", 4000009), ("掘礦", 4000024), ("hog glidr", 4000070)):
+            near = _search(query)
+            assert (near.outcome, [hit.data_id for hit in near.hits]) == ("close", [meant]), query
+        assert (_search("qwerty").outcome, _search("qwerty").hits) == ("no_match", [])
+        # Nearest first, then in the order matches are listed.
+        assert [hit.data_id for hit in _search("人箭塔塔").hits] == [1000084, 1000048, 1000009]
+        # The filters narrow the near names as they do the matches.
+        assert _search("皮卡朝人", world="night").outcome == "no_match"
+        assert _search("掘礦", section="builder").outcome == "no_match"
+        # A name the filters emptied is no match, not a cue for near names.
+        emptied = _search("多人箭塔", world="night")
+        assert (emptied.outcome, emptied.hits) == ("no_match", [])
+        text = commands.search_text(_search("掘礦"))
+        assert "名字最接近的, 不是符合的" in text
+        assert "掘地礦工 / Miner  #4000024" in text
 
     def test_without_an_export_the_tables_are_still_searched(self) -> None:
         self._keep(export=False)

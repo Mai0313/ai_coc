@@ -312,7 +312,7 @@ def _search_flags(searcher: argparse.ArgumentParser) -> None:
         nargs="?",
         default="",
         help="全是數字就是 data_id，不然是中文或英文名稱的一段（英文不分大小寫）；"
-        "村莊還沒有的也查得到，不給就只列村莊裡有的",
+        "沒有名字含這一段的就列名字最接近的幾種；村莊還沒有的也查得到，不給就只列村莊裡有的",
     )
     searcher.add_argument(
         "--section",

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
+from difflib import SequenceMatcher
 import logging
 from pathlib import Path
 from datetime import UTC, datetime
@@ -23,6 +24,8 @@ from ai_coc.models import (
 from .gamedata import TABLES, READING
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
+
     from ai_coc.models import (
         Hall,
         World,
@@ -416,8 +419,9 @@ def search(
     start now; the rest follow, the owned ones first.
 
     An all-digit query is one exact data_id; anything else is a piece of the
-    Chinese name or, ignoring case, of the English one. A query searches every
-    entity of the tables, plus any data_id the export holds that they lack;
+    Chinese name or, ignoring case, of the English one (`closest` answers a name
+    nothing contains). A query searches every entity of the tables, plus any
+    data_id the export holds that they lack;
     without one only what the export holds is listed. Each filter narrows
     either the same way: `section` keeps one `SearchSection` (`all` and None
     keep every one), `world` one village, and `skip_max_lvl` drops a data_id
@@ -429,6 +433,49 @@ def search(
     none: they give a troop's first level the laboratory rather than what
     unlocks it.
     """
+    return sorted(
+        (hit for hit in _candidates(tables, export, asked) if _named(hit, asked.query)), key=_order
+    )
+
+
+# A typo of one character in four scores 0.75 (皮卡朝人 against 皮卡超人) and
+# two characters of 掘地礦工 0.67, while the best name for queries meaning
+# nothing scored at most 0.5 over the 18.647.5 tables (qwerty, 大炮, xqzv).
+CLOSE_RATIO = 0.6
+CLOSE_LIMIT = 5
+
+
+def closest(
+    tables: GameEntities | None, export: VillageExport | None, asked: SearchOptions
+) -> list[SearchHit]:
+    """The data_ids whose name is nearest a query no name contains, nearest first, under the same filters as `search`.
+
+    Nearness is `difflib`'s ratio against the Chinese name or, ignoring case,
+    the English one, whichever is higher. A data_id query has no near ones.
+    """
+    if not asked.query or asked.query.isdigit():
+        return []
+    scored = [
+        (score, hit)
+        for hit in _candidates(tables, export, asked)
+        if (score := _nearness(hit, asked.query)) >= CLOSE_RATIO
+    ]
+    scored.sort(key=lambda pair: (-pair[0], _order(pair[1])))
+    return [hit for _, hit in scored[:CLOSE_LIMIT]]
+
+
+def _nearness(hit: SearchHit, query: str) -> float:
+    folded = query.casefold()
+    return max(
+        SequenceMatcher(None, query, hit.zh).ratio() if hit.zh else 0.0,
+        SequenceMatcher(None, folded, hit.en.casefold()).ratio() if hit.en else 0.0,
+    )
+
+
+def _candidates(
+    tables: GameEntities | None, export: VillageExport | None, asked: SearchOptions
+) -> Iterator[SearchHit]:
+    """Every data_id the filters leave, whatever its name, unordered."""
     known = {entity.data_id: entity for entity in tables.entities} if tables else {}
     owned: dict[int, list[tuple[World, str, ExportRow]]] = {}
     for where, name, row in export.rows() if export else ():
@@ -437,7 +484,6 @@ def search(
     current = tables is not None and tables.reading == READING
     halls = tables.halls if tables else {}
     village = _hall_levels([row for _, _, row in export.rows()], tables) if export else {}
-    found = []
     for i in ids:
         entity, rows = known.get(i), owned.get(i, [])
         shown = [row for _, _, row in rows if not (asked.skip_max_lvl and _maxed(row, entity))]
@@ -452,13 +498,8 @@ def search(
             if current and export is not None and not rows
             else [],
         )
-        if (
-            asked.section in (None, "all", hit.section)
-            and asked.world in (None, hit.world)
-            and _named(hit, asked.query)
-        ):
-            found.append(hit)
-    return sorted(found, key=_order)
+        if asked.section in (None, "all", hit.section) and asked.world in (None, hit.world):
+            yield hit
 
 
 def _order(hit: SearchHit) -> tuple[bool, int, bool, int]:
