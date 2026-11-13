@@ -29,6 +29,7 @@ from ai_coc import plans, commands, logging_setup
 from ai_coc.ui import world as world_ui
 from ai_coc.models import (
     SESSION_TAKEN_SENTENCE,
+    Notes,
     Watch,
     Boosts,
     Caller,
@@ -606,6 +607,17 @@ class StatusCommandTests(unittest.TestCase):
         assert (report.export, report.builder, report.stock) == ("read_back", None, None)
         assert [timer.zh for timer in report.timers] == ["野蠻人之王"]
 
+    def test_both_readings_carry_the_users_notes(self) -> None:
+        """Off the state file in this test's tmp directory (conftest), which `--last` reads too."""
+        commands._write_state(RunnerState())
+        commands.note("add", "day", "烈焰熔爐停在 3 級")
+        with patch.object(
+            commands, "_last_export", return_value=ExportReport(outcome="read_back")
+        ):
+            saved = commands.status(_frames(self), last=True)
+        *_, live = self._status([self._counts("day")])
+        assert saved.notes == live.notes == Notes(day=["烈焰熔爐停在 3 級"])
+
 
 # The moment every `status_text` case reads from, on this machine's clock like
 # the report itself, so the wall-clock times below hold in any time zone.
@@ -799,6 +811,23 @@ class StatusTextTests(unittest.TestCase):
         text = commands.status_text(report, NOW)
         assert "| 今天 11:00 (已過) | 工人 | 建築1 (5/10), 下一級: 金幣 1 萬 |" in text
         assert "| 現在 | — | 鐘塔冷卻結束 |" in text
+
+    def test_each_village_ends_with_its_notes_numbered_as_note_done_takes_them(self) -> None:
+        notes = Notes(day=["烈焰熔爐停在 3 級", "憤怒法術 4 級等買了藥水再升"])
+        report = self._report(_timer(1, "13:00"), _timer(2, "14:00", world="night"), notes=notes)
+        day, night = commands.status_text(report, NOW).split("夜世界")
+        assert day.endswith(
+            "| 今天 13:00 | 工人 | 建築1 (5/10), 下一級: 金幣 1 萬 |\n\n"
+            "交代:\n1. 烈焰熔爐停在 3 級\n2. 憤怒法術 4 級等買了藥水再升\n\n"
+        )
+        assert "交代" not in night
+        failed = self._report(export="settings_shut", exported_at=None, notes=notes)
+        assert (
+            commands
+            .status_text(failed, NOW)
+            .split("夜世界")[0]
+            .endswith("交代:\n1. 烈焰熔爐停在 3 級\n2. 憤怒法術 4 級等買了藥水再升\n\n")
+        )
 
     def test_an_export_that_failed_says_so_and_prints_no_table(self) -> None:
         text = commands.status_text(self._report(export="settings_shut", exported_at=None), NOW)

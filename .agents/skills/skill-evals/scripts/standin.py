@@ -178,6 +178,7 @@ def _scripted(sim: Simulator, arguments: argparse.Namespace) -> Any:  # noqa: AN
         return models[arguments.command].model_validate(entry)
     base = json.loads((sim.dir / "status.json").read_text(encoding="utf-8"))
     report = StatusReport.model_validate(_merged(base, entry))
+    report.notes = commands._kept().notes  # noqa: SLF001 - the sandbox's state file, as the real walk reads it
     return commands._timed(report, commands._last_export().export)  # noqa: SLF001 - the walk's own last step
 
 

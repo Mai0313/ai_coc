@@ -35,7 +35,7 @@ description: >-
 
 ## 動手之前
 
-- **你是 subagent 就不要修.** 這份 skill 要跟使用者講話、請他改設定, subagent 做不到. 停手, 把 `state.json`、`list2` 那一行跟截圖交回給主 session, 由它照這份處理
+- **你是 subagent 就不要修.** 這份 skill 要跟使用者講話、請他改設定, subagent 做不到. 停手, 把 `state.json`、`list2` 那一行跟截圖交回給主 session, 由它照這份處理. 交回的話用繁體中文寫, 標點用半形, 路徑跟指令照原樣: 英文的回報會讓主 session 回使用者的話也跟著變成英文
 - 照 `AGENTS.md` 的 Look before driving 讀 `~/.ai_coc/state.json`. farm subagent 還在跑就照 `share-emulator` 的「借, 用完還」先把模擬器拿回來, 模擬器只有一台; 它的迴圈多半已經跟著模擬器掛掉了, 那就等它的回報
 - **「乾淨的重開」不用先問, 你自己判斷, 做完跟他講** (使用者 2026-11-06: 「下次這種重開不用問我 你就自己判斷就好」). **強制結束程序 (`Stop-Process`、工作管理員) 之前照樣先問, 他說好才做**: 那天兩次強制結束有一次把設定洗掉了 (第 3 種). `ai_coc launch --restart emulator` 不算乾淨的重開, 照樣先問: 它不等 `dnplayer.exe` 跟 `Ld9BoxHeadless.exe` 收掉就開 (`adapters/ldplayer.py` 的 `restart_instance`), 碰上第 2 種會開在舊的程序上面 (雷電上就是 `quit` 再 `launch`, 見 `adapters/ldplayer.py` 的 `restart_instance`). 不帶 `--restart` 的 `ai_coc launch` 跑之前講一聲就好: 遊戲開不起來的時候 `ensure_coc` 會自己重開一次實例
 - 使用者可能正在模擬器或手機上玩 (`AGENTS.md` 的 Driving the game), 有疑慮就問

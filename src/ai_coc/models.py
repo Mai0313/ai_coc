@@ -1640,6 +1640,19 @@ class PaidShare(BaseModel):
     item: str
 
 
+class Notes(BaseModel):
+    """The user's standing instructions for each village, one per item, kept by `ai_coc note`.
+
+    Things he asked for that outlive any one watch, such as what to upgrade once
+    a running upgrade finishes; an item is dropped once it is done.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    day: list[str] = Field(default_factory=list)
+    night: list[str] = Field(default_factory=list)
+
+
 class StatusReport(BaseModel):
     """Where both villages' upgrades stand, and what the village on screen holds.
 
@@ -1677,6 +1690,9 @@ class StatusReport(BaseModel):
     # village with none has its next levels at list price and list time.
     paid: dict[World, PaidShare] = Field(default_factory=dict)
     timed: dict[World, PaidShare] = Field(default_factory=dict)
+    # The state file's, so whoever reads the report reads the user's
+    # instructions with it; never applied to a row.
+    notes: Notes = Field(default_factory=Notes)
 
 
 # How one `view` command left the camera. `parked` is the whole job done;
@@ -2044,19 +2060,6 @@ class RunnerState(BaseModel):
     # The session between its commands, which no other session's claim cuts
     # into; code from before it drops the field when it writes the record.
     hold: Hold | None = None
-
-
-class Notes(BaseModel):
-    """The user's standing instructions for each village, one per item, kept by `ai_coc note`.
-
-    Things he asked for that outlive any one watch, such as what to upgrade once
-    a running upgrade finishes; an item is dropped once it is done.
-    """
-
-    model_config = ConfigDict(frozen=True)
-
-    day: list[str] = Field(default_factory=list)
-    night: list[str] = Field(default_factory=list)
 
 
 NoteAction = Literal["list", "add", "done"]
