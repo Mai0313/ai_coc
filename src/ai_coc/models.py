@@ -2787,6 +2787,23 @@ class SearchNext(NextUpgrade):
     waiting: int = 0
 
 
+class LevelsTotal(BaseModel):
+    """Every level from `start` to `cap` bought one after another on one copy, at list price.
+
+    `cap` is the hall's `limited_lvl` where `held`, else `max_lvl`. `time` is
+    the levels' times added up, serial time on one slot with no speed-up, and
+    None where a priced level has none (hero equipment).
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    start: int
+    cap: int
+    held: bool
+    cost: dict[str, int]
+    time: int | None
+
+
 class SearchHit(BaseModel):
     """One data_id `ai_coc search` matched: what the game's tables say of it, and the player's rows of it.
 
@@ -2806,6 +2823,9 @@ class SearchHit(BaseModel):
     export does not hold, or every hit when no export is saved
     (`SearchReport.exported_at` None); `unlock` is what the first level of a
     troop, siege machine or spell it does not hold needs.
+    `to_cap` is what the levels from each of `next` to the cap ask in all, or
+    for one the village lacks from its first level to the cap its halls allow,
+    the whole way where no export was read; none for one already at its cap.
     `rows` is every row as the export has it, only under `--rows`.
     """
 
@@ -2824,6 +2844,7 @@ class SearchHit(BaseModel):
     limited_lvl: int | None = None
     upgrading: list[SearchUpgrade] = Field(default_factory=list)
     next: list[SearchNext] = Field(default_factory=list)
+    to_cap: list[LevelsTotal] = Field(default_factory=list)
     ready_at: str | None = None
     rows: list[ExportRow] | None = None
 
@@ -2852,7 +2873,8 @@ class SearchReport(BaseModel):
 
     `query`, `section`, `world` and `skip_max_lvl` are `SearchOptions`' as
     asked. `game_version` is the tables searched and `exported_at` the export
-    the player's rows come from, each None where none is kept.
+    the player's rows come from, each None where none is kept. `paid` and
+    `timed` are `StatusReport`'s, what the newest purchases paid against list.
     """
 
     query: str
@@ -2864,6 +2886,8 @@ class SearchReport(BaseModel):
     tag: str | None = None
     exported_at: str | None = None
     hits: list[SearchHit] = Field(default_factory=list)
+    paid: dict[World, PaidShare] = Field(default_factory=dict)
+    timed: dict[World, PaidShare] = Field(default_factory=dict)
 
 
 # Whose slot an upgrade used, as `ai_coc turnaround` counts it, in the user's

@@ -67,6 +67,7 @@ from ai_coc.models import (
     GoblinOffer,
     JournalLine,
     LevelChange,
+    LevelsTotal,
     NextUpgrade,
     NoteOutcome,
     PressReport,
@@ -184,6 +185,7 @@ from ai_coc.parsers.scout import (
 from ai_coc.parsers.world import current_world
 from ai_coc.adapters.config import ConfigStore, gemini_key
 from ai_coc.parsers.village import (
+    ROLES,
     SPEED_UPS,
     merge,
     clock_tower,
@@ -3502,8 +3504,13 @@ def _next_text(cost: dict[str, int], time: int | None, count: int) -> str:
     return f", 下一級{each}: {asks}{takes}"
 
 
-def _paid_line(paid: dict[World, PaidShare], timed: dict[World, PaidShare], now: datetime) -> str:
-    """Where the next levels' prices and times come from: each village's newest purchases, or the list."""
+def _paid_line(
+    paid: dict[World, PaidShare],
+    timed: dict[World, PaidShare],
+    now: datetime,
+    subject: str = "下一級",
+) -> str:
+    """Where the `subject`'s prices and times come from: each village's newest purchases, or the list."""
 
     def part(label: str, one: PaidShare | None, named: bool) -> str:
         if one is None:
@@ -3528,9 +3535,13 @@ def _paid_line(paid: dict[World, PaidShare], timed: dict[World, PaidShare], now:
         sources.append(
             f"{WORLD_NAMES[world]}{part('價格', price, not same)}、{part('時間', time, True)}"
         )
-    if not any(one.share < 1 for one in (*paid.values(), *timed.values())):
-        return "下一級是牌價"
-    return f"下一級照最近實付估: {'; '.join(sources)}"
+    if not _discounted(paid, timed):
+        return f"{subject}是牌價"
+    return f"{subject}照最近實付估: {'; '.join(sources)}"
+
+
+def _discounted(paid: dict[World, PaidShare], timed: dict[World, PaidShare]) -> bool:
+    return any(one.share < 1 for one in (*paid.values(), *timed.values()))
 
 
 def _short_lines(report: StatusReport, world: World, now: datetime) -> list[str]:
@@ -4608,6 +4619,7 @@ def search(asked: SearchOptions) -> SearchReport:
         if not village_search(tables, export, SearchOptions(query=asked.query)):
             hits = closest_names(tables, export, asked)
             outcome = "close" if hits else "no_match"
+    paid, timed = _paid_shares(tables, datetime.now().astimezone())
     report = SearchReport(
         query=asked.query,
         section=asked.section,
@@ -4618,6 +4630,8 @@ def search(asked: SearchOptions) -> SearchReport:
         tag=export.tag if export else None,
         exported_at=export.exported_at if export else None,
         hits=hits,
+        paid=paid,
+        timed=timed,
     )
     logger.info("%s", _search_head(report))
     return report
@@ -4671,12 +4685,16 @@ def _search_head(report: SearchReport) -> str:
     return f"找 {asked}: {SEARCH_LINES[report.outcome].format(count=len(report.hits))}"
 
 
-def search_text(report: SearchReport) -> str:
+def search_text(report: SearchReport, now: datetime | None = None) -> str:
     """The report as a person reads it: where it looked, each village's hits by section, and that the prices are list prices.
 
     Both villages get a block unless one was asked for, and one with nothing
-    in it says so.
+    in it says so. Where the newest purchases paid under list (`paid`,
+    `timed`), each total to the cap also gets the estimate at those shares,
+    and the last line names them, as `status_text`'s head line does; `now`
+    reads their moments.
     """
+    now = now or datetime.now().astimezone()
     shown = [_search_head(report)]
     if report.outcome not in ("found", "close"):
         return shown[0]
@@ -4689,6 +4707,7 @@ def search_text(report: SearchReport) -> str:
         )
     )
     exported = report.exported_at is not None
+    estimated = False
     worlds: tuple[World, ...] = (report.world,) if report.world else ("day", "night")
     for world in worlds:
         shown += ["", f"== {WORLD_NAMES[world]} =="]
@@ -4703,19 +4722,33 @@ def search_text(report: SearchReport) -> str:
             name = SECTION_NAMES.get(section)
             shown += ["", f"-- {name} ({section}) --" if name else f"-- {section} --"]
             for hit in listed:
-                shown += ["", *_hit_lines(hit, exported)]
-    return "\n".join([*shown, "", LIST_PRICE])
+                # The shares come from builder, laboratory and pet purchases, so
+                # they say nothing of what hero equipment costs.
+                slotted = hit.kind in ROLES
+                share = report.paid[world].share if slotted and world in report.paid else 1.0
+                spent = report.timed[world].share if slotted and world in report.timed else 1.0
+                estimated |= bool(hit.to_cap) and min(share, spent) < 1
+                shown += ["", *_hit_lines(hit, exported, share, spent)]
+    shown += ["", LIST_PRICE]
+    if estimated:
+        shown.append(_paid_line(report.paid, report.timed, now, "升到滿級或上限的總數"))
+    return "\n".join(shown)
 
 
-def _hit_lines(hit: SearchHit, exported: bool) -> list[str]:
-    """One hit's lines; with no export read, nothing is said about whether the village has it."""
+def _hit_lines(hit: SearchHit, exported: bool, share: float, spent: float) -> list[str]:
+    """One hit's lines; with no export read, nothing is said about whether the village has it.
+
+    Each total to the cap follows the next upgrade it starts from.
+    """
     names = " / ".join(name for name in (hit.zh, hit.en) if name) or "(遊戲的表沒有名字)"
     top = "—" if hit.max_lvl is None else hit.max_lvl
     lines = [f"{names}  #{hit.data_id}  {KIND_NAMES.get(hit.kind, hit.kind)}  滿級 {top}"]
+    totals = {one.start: _total_text(hit, one, share, spent) for one in hit.to_cap}
     if not hit.count:
-        return [*lines, f"  村莊裡沒有{_unlock_text(hit)}"] if exported else lines
+        missing = [f"  村莊裡沒有{_unlock_text(hit)}"] if exported else []
+        return [*lines, *missing, *totals.values()]
     if hit.rows is not None:
-        return lines + [f"  {_row_text(row)}" for row in hit.rows]
+        return lines + [f"  {_row_text(row)}" for row in hit.rows] + list(totals.values())
     held = ", ".join(f"{lvl} 級 {n} 個" for lvl, n in hit.owned.items()) or "沒有等級"
     lines.append(f"  有 {hit.count} 個: {held}")
     lines += [
@@ -4724,9 +4757,48 @@ def _hit_lines(hit: SearchHit, exported: bool) -> list[str]:
     ]
     if hit.ready_at:
         lines.append(f"  {_local(hit.ready_at)} 能再派")
-    return lines + [
-        f"  下一次 {_upgrade_text(one, hit.limited_lvl)}{_open_to(one)}" for one in hit.next
-    ]
+    for one in hit.next:
+        lines.append(f"  下一次 {_upgrade_text(one, hit.limited_lvl)}{_open_to(one)}")
+        if one.lvl in totals:
+            lines.append(totals[one.lvl])
+    return lines
+
+
+def _total_text(hit: SearchHit, total: LevelsTotal, share: float, spent: float) -> str:
+    """`  升到滿級: 第 2 到 15 級共 1,244,000 黑水, 60天22小時 (牌價, …)`, then the estimate where a share is under list.
+
+    The estimate prices each level as `_next_cost` and `_next_time` do, the
+    time floored as the game charges it, before adding them up.
+    """
+    each = "每個" if hit.count > 1 else ""
+    line = (
+        f"  升到{'上限' if total.held else '滿級'}: {each}第 {total.start} 到 {total.cap} 級共 "
+        f"{_sum_text(total.cost, total.time)} (牌價, 一格接著升, 沒算藥水跟助手)"
+    )
+    if share >= 1 and spent >= 1:
+        return line
+    counted = [level for level in hit.levels if total.start <= level.lvl <= total.cap]
+    cost: Counter[str] = Counter()
+    for level in counted:
+        cost.update({name: round(amount * share) for name, amount in level.cost.items()})
+    time = (
+        None
+        if total.time is None
+        else sum(
+            level.time if spent >= 1 else _panel_floor(level.time * spent)
+            for level in counted
+            if level.time
+        )
+    )
+    return f"{line}; 照最近實付估 {_sum_text(dict(cost), time)}"
+
+
+def _sum_text(cost: dict[str, int], time: int | None) -> str:
+    """`1,244,000 黑水, 60天22小時`, the time left out where the tables have none."""
+    asks = ", ".join(
+        f"{amount:,} {_RESOURCE_NAMES.get(name, name)}" for name, amount in cost.items()
+    )
+    return asks + ("" if time is None else f", {_span(time)}")
 
 
 def _buying(lvl: int | None) -> str:
