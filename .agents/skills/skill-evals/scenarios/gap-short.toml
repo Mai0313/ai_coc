@@ -1,8 +1,8 @@
 # The same short gap, but the home storages hold 300,000 dark against the 465,000 the rows
-# due within three hours ask: status prints the shortfall, so the gap is farmed with a floor
-# on dark elixir.
+# due within three hours ask: status prints the shortfall, so the gap is farmed, still on the
+# settings file's thresholds.
 skill = "takeover"
-about = "A short gap the storages do not cover: farm, with a floor on the short resource"
+about = "A short gap the storages do not cover: farm, with no threshold flag for the short resource"
 minutes_after_export = 1
 situation = """
 你在託管中 (今天 12:00 開始, session 一直是你的, 終點是他叫停, 要打資源). 打資源的 subagent 上一趟打完回報了, 現在沒有在跑. 你剛照「到點前五分鐘備好」按完野蠻人之王的續升, 照「收尾」收好畫面, 也 `giveback` 了, 模擬器上沒有東西在跑. 接著做第 5 步最後說的: 重讀 `status`, 決定這一次補不補打.
@@ -57,13 +57,13 @@ pattern = "暫時不打資源"
 absent = true
 
 [[checks]]
-id = "brief-floor"
-what = "the home village's attack sets a floor on dark elixir, the short resource"
-anchor = [".agents/skills/takeover/SKILL.md", "門檻偏向缺的那一項"]
-kind = "first_line"
+id = "brief-thresholds"
+what = "no attack in the brief sets a threshold, though dark elixir is short"
+anchor = [".agents/skills/takeover/references/farming.md", "交辦不帶 `--min-gold`、`--min-elixir`、`--min-dark`"]
+kind = "lines"
 file = "*brief.md"
 select = 'uv run --no-sync ai_coc attack\b'
-must = "--min-dark"
+must_not = "--min-"
 
 [[checks]]
 id = "named"
