@@ -8,11 +8,9 @@
 
 **讀 `~/.ai_coc/config.json`** (裡面的 Gemini key 讀到也沒關係, 不用先遮掉):
 
-- `thresholds`: 打誰的門檻, 三項都要過. 太高會一直跳過. 已經滿過 `stop_at` 的倉庫, 迴圈每一輪自己把它的門檻當 `0`, 跟收工一樣把它當成滿了
-- `stop_at`: 停手的倉庫水位百分比, **主村跟夜世界共用**, 容量迴圈自己去遊戲讀. **每一項都滿過這個百分比才停**, 不是任何一項到頂就停. `0` 是永遠不收工; 讀不到容量的那一項不列入計算
+- `thresholds`: 打誰的門檻, 三項都要過. 太高會一直跳過. 已經滿過 `stop_at` 的倉庫, 迴圈每一輪自己把它的門檻當 `0`, 跟收工一樣把它當成滿了. **打資源一律照這裡, 交辦不帶 `--min-gold`、`--min-elixir`、`--min-dark`, 調高調低都不行** (使用者 2026-11-14 定的: 造兵不花錢, 多打幾場不輸少打幾場肥的; 門檻高時間都花在搜尋, 黑水 2 萬時 36 分鐘只打 4 場, 1 萬時 35 分鐘 19 場; 肥的村莊也守得比較硬)
+- `stop_at`: 停手的倉庫水位百分比, **主村跟夜世界共用**, 容量迴圈自己去遊戲讀. **每一項都滿過這個百分比才停**, 不是任何一項到頂就停. `0` 是永遠不收工; 讀不到容量的那一項不列入計算. `--stop-at` 是**測試**用的: 對著剛打滿的村莊打一場來驗東西時給 `0`; 打資源不要用, 滿倉搶回來的進不去
 - `adb_serial`: 打的是哪一台模擬器 (MuMu 或雷電), 寫 `adb devices` 列出來的名字. 空的話第一次執行會自己挑一台寫進來. **兩台登的是同一個帳號**, 一台開遊戲就把另一台踢下線, 所以只打設定的那一台, 要換台先改這一格, 不要兩台輪流開
-
-**門檻由你定**, 每一趟開跑前看 `status` 的倉庫 (只讀得到遊戲停著的那個世界, 另一個照設定檔或上一次讀到的): 缺得最兇的那一項給門檻 (例如黑水見底就 `--min-dark` 5000 到 1 萬; `status` 印了「資源不足」的那一項就是), 其他沒滿的看情況放寬或照設定檔, 滿的不用管. 每輪跳過幾十個就往下調. 使用者交代過的照他的. 定好的旗標寫進交辦, subagent 不會自己加或改. `0` 跟不給是兩件事 (見 `LootOverrides` 的 docstring). `--stop-at` 是**測試**用的: 對著剛打滿的村莊打一場來驗東西時給 `0`; 打資源不要用, 滿倉搶回來的進不去.
 
 **碰模擬器之前先讀 `~/.ai_coc/state.json`** (`share-emulator` 的「開工先讀 `state.json`」). **別人已經在打資源就不開**: `emulator` 那一塊佔著的是別的 session 帶 `--yield` 的 run (`yields` 是 `true`), 或者那一塊有一筆還沒結束的借用 (`loan.ended` 是 null) 而出借的是別的 session, 或者 `watch` 那一塊是別的 session 的、`status` 是 `running` 而 `farms` 是 `true` (託管睡在兩趟打資源之間, 開 watch 時帶了 `--farms`). 兩個帶 `--yield` 的迴圈會在指令之間輪流搶到模擬器, 各自的 `world --day` / `--night` 把對方下一輪的 `attack` 帶到錯的村莊. 不派, 回報誰 (`caller`) 在跑哪一個 (`command`, `log`). 別的 session 的保留 (`hold`) 不算有人在打資源: 那是一串前景的指令, 派下去的 `--yield` 指令會排在它後面. 你自己的 session id 加 `-farm` 後綴的是你自己派的 subagent, 不是別人.
 
@@ -32,7 +30,7 @@
 
 ## 派工
 
-**迴圈交給一個 farm subagent 跑**: 在背景跑, 取一個名字讓你傳得到訊息, **模型跟 thinking budget 都從 runtime 給得出的最低那一級開始**. 交辦裡告訴它它是 subagent, 照 `.agents/skills/takeover/references/runner.md` 跑; 那一份是每一趟都一樣的那一半, 這一趟才有的寫進交辦. **分工是判斷對上跑腿**: subagent 是為了讓指令的輸出不進主 thread, 它又快又便宜是因為它什麼都不判斷. 要判斷的 (門檻、花不花、畫面上是什麼、一個結果算不算 bug) 都留在你這裡; 它照交辦跑, 碰到交辦以外的第一件事就回報. 所以它不花任何東西 (買東西要看建造面板), 打到 `stock_full` 就回報. **它沒照交辦跑才往上調, 一次一格**: 沒回報就停了, 回報的跟 `state.json`、`result.json`、`runs.jsonl` 對不上, 或者改了、併了、跳了交辦裡的步驟, 下一個就把 budget 調高一級, budget 到頂了再換高一級的模型, 調上去的那一級用到這個 session 結束. 每一次都到 #548 留一則 (哪個 session, 模型跟 budget, 它說的跟檔案上的); 第二則就把這裡的起點調高一格, 照 #548 記下現在在哪一格. 最低那一級跑得穩, 靠的是交辦把每一步寫成完整的指令 (下面的「交辦」). 它佔模擬器的指令都帶 `--yield`, 所以 live test 是借走它而不是停掉它, 它也從不把測試請下來. **使用者在模擬器上玩, 或說過不要控制遊戲, 就一個都不派**, 他說可以之前什麼都不開.
+**迴圈交給一個 farm subagent 跑**: 在背景跑, 取一個名字讓你傳得到訊息, **模型跟 thinking budget 都從 runtime 給得出的最低那一級開始**. 交辦裡告訴它它是 subagent, 照 `.agents/skills/takeover/references/runner.md` 跑; 那一份是每一趟都一樣的那一半, 這一趟才有的寫進交辦. **分工是判斷對上跑腿**: subagent 是為了讓指令的輸出不進主 thread, 它又快又便宜是因為它什麼都不判斷. 要判斷的 (花不花、畫面上是什麼、一個結果算不算 bug) 都留在你這裡; 它照交辦跑, 碰到交辦以外的第一件事就回報. 所以它不花任何東西 (買東西要看建造面板), 打到 `stock_full` 就回報. **它沒照交辦跑才往上調, 一次一格**: 沒回報就停了, 回報的跟 `state.json`、`result.json`、`runs.jsonl` 對不上, 或者改了、併了、跳了交辦裡的步驟, 下一個就把 budget 調高一級, budget 到頂了再換高一級的模型, 調上去的那一級用到這個 session 結束. 每一次都到 #548 留一則 (哪個 session, 模型跟 budget, 它說的跟檔案上的); 第二則就把這裡的起點調高一格, 照 #548 記下現在在哪一格. 最低那一級跑得穩, 靠的是交辦把每一步寫成完整的指令 (下面的「交辦」). 它佔模擬器的指令都帶 `--yield`, 所以 live test 是借走它而不是停掉它, 它也從不把測試請下來. **使用者在模擬器上玩, 或說過不要控制遊戲, 就一個都不派**, 他說可以之前什麼都不開.
 
 runtime 沒有 subagent 的話, 你自己照 `runner.md` 跑; 指令照 `share-emulator` 的「背景跑」送背景, 通知進來照 `runner.md` 的「讀結果」接下一步.
 
@@ -47,7 +45,7 @@ runtime 沒有 subagent 的話, 你自己照 `runner.md` 跑; 指令照 `share-e
 每一個 world 都等它跑完、讀完它的結果, 確認到了該到的世界才下一步, 不跟下一步放在同一次執行裡.
 
 1. uv run --no-sync ai_coc world --day --yield --label <代號>-d-w1 <身分>
-2. uv run --no-sync ai_coc attack --repeat 0 --plan flat <門檻旗標> --yield --label <代號>-d-a1 <身分>
+2. uv run --no-sync ai_coc attack --repeat 0 --plan flat --yield --label <代號>-d-a1 <身分>
 3. 日世界的 attack 收工在 stock_full (wait 回的 run_outcome) 之後: uv run --no-sync ai_coc capture --label <代號>-d-cap <身分> (capture 不帶 --yield)
 4. uv run --no-sync ai_coc world --night --yield --label <代號>-n-w1 <身分>
 5. uv run --no-sync ai_coc attack --repeat 0 --plan flat --yield --label <代號>-n-a1 <身分>
@@ -79,7 +77,7 @@ runtime 沒有 subagent 的話, 你自己照 `runner.md` 跑; 指令照 `share-e
 
 **值得警覺的樣態**, 連續幾輪才算:
 
-- 每輪 `skipped` 都是幾十: 門檻對現在的獎盃區間太高, 調低再派
+- 每輪 `skipped` 都是幾十: 門檻對現在的獎盃區間太高, 跟使用者講, 改不改 `config.json` 由他決定
 - **入庫的進帳遠小於 `attacked`**: 進攻打不動人家, 是 `watch-and-fix` 的題目, 這裡只報告. 看落差而不是 `attacked` 大不大 (它只說對手**擺出**多少)
 - `The session was dropped`: 迴圈自己會點對話框的按鈕重新登入, 點了沒用才重開遊戲 (log 有 `did not clear it; restarting the game` 就是重開了). 一直重複才要查
 - `waiting for the server rather than tapping`: 卡在載入畫面, 伺服器的事. 迴圈每次載入最多等 45 分鐘; 等不到的那輪是 `server_loading` 或 `server_flapping`. **不要**重開遊戲或模擬器, 量過兩次都是自己回來的. 連續兩輪都是這兩種再停下來講

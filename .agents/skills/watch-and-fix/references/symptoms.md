@@ -54,7 +54,7 @@
 
 ## 一直跳過對手
 
-`skipped` 每輪幾十, 多半是 `~/.ai_coc/config.json` 的 `thresholds` 對現在的獎盃區間太高. 那是設定不是 bug, 跟使用者講一聲再調.
+`skipped` 每輪幾十, 多半是 `~/.ai_coc/config.json` 的 `thresholds` 對現在的獎盃區間太高. 那是設定不是 bug, 跟使用者講, 改不改由他決定.
 
 **先確認真的是跳過**: `skipped` 包含 `_swapped`, 也就是連續 `UNREADABLE_SKIPS` 格讀不到之後迴圈自己按的 `下一個`. `run.log` 有那幾格的紀錄, 調門檻就沒用.
 
