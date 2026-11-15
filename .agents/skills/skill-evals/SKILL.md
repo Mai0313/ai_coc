@@ -49,4 +49,4 @@ uv run --no-sync python .agents/skills/skill-evals/scripts/evals.py grade <resul
 - **A check is deterministic**: a command run or not, its arguments, nothing claiming after a call, a cell of the upgrade table the skill prescribes, a pattern in the reply or in a file the brief has the agent write (`out/`). Each carries an anchor, the skill file and a phrase of the rule it pins, so a rule that moves shows up as stale rather than as a silent pass or fail.
 - `tests/test_skill_evals.py` stages every scenario, checks its anchors and replies, and runs the stand-in and the grader.
 
-Left out of the first set: buying through the build panel end to end and the five-minute prep, which need one coherent recorded frame sequence from a live upgrade; the night builder's pick, where the skill does not say whether a trap counts as a building; and the other skills.
+Left out of the first set: buying through the build panel end to end and the five-minute prep, which need one coherent recorded frame sequence from a live upgrade; the night builder's pick; and the other skills.

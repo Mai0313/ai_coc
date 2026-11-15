@@ -61,19 +61,19 @@ pattern = "隕石戈侖"
 
 [[checks]]
 id = "cell-goblin-builder-fallback"
-what = "the goblin builder's fallback follows the day builder order: 地獄之塔 all maxed, so 箭塔 9 → 10"
-anchor = [".agents/skills/upgrades/SKILL.md", "日世界的工人照「沒人指名時挑哪一件」的順序"]
+what = "the goblin builder's fallback is the shortest other builder job: 隱形炸彈 4 → 5"
+anchor = [".agents/skills/upgrades/SKILL.md", "備案是哥布林那一格能升的裡面, 跟要升的那一件不同、牌價時間最短的一件"]
 kind = "table_cell"
 row = '工人 \(哥布林\).*彈跳加農炮'
-pattern = '再聘哥布林.*350.*(?<!多人)箭塔\D*9\D+10'
+pattern = '再聘哥布林.*350.*隱形炸彈\D*4\D+5'
 
 [[checks]]
 id = "cell-builder-maxed"
-what = "the day builder whose building tops out picks by the order: 地獄之塔 all maxed, so the shortest of the second group, 箭塔 9 → 10"
-anchor = [".agents/skills/upgrades/SKILL.md", "地獄之塔都升滿了, 才換箭塔、法師塔、防空火箭、空氣炮"]
+what = "the day builder whose building tops out, every hero already upgrading, picks the shortest other builder job: 隱形炸彈 4 → 5"
+anchor = [".agents/skills/upgrades/SKILL.md", "沒有英雄能升才挑工人那一類其他的 (建築、陷阱、守護者), 一樣挑時間最短的"]
 kind = "table_cell"
 row = '\| 工人 \|.*多人箭塔'
-pattern = '(?<!多人)箭塔\D*9\D+10'
+pattern = '隱形炸彈\D*4\D+5'
 
 [[checks]]
 id = "cell-pet"

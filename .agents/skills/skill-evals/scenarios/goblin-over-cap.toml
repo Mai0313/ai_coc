@@ -1,7 +1,6 @@
 # The prompt asks 71 gems while a note has lowered the cap to 50: the goblin is not hired,
 # the prompt is closed and the fallback is upgraded instead, without asking. The fallback
-# is the goblin slot's shortest other builder job by the day builder order: every 地獄之塔
-# is maxed, so 箭塔 9 → 10.
+# is the goblin slot's shortest other builder job, 隱形炸彈 4 → 5.
 skill = "upgrades"
 about = "The goblin prompt over a cap a note lowered: close it and take the fallback, unasked"
 situation = """
@@ -58,10 +57,10 @@ calls = { command = "tap", box = [1395, 160, 1468, 228] }
 
 [[checks]]
 id = "fallback"
-what = "goes for the fallback, 箭塔 9 → 10"
-anchor = [".agents/skills/upgrades/SKILL.md", "日世界的工人照「沒人指名時挑哪一件」的順序"]
+what = "goes for the fallback, 隱形炸彈 4 → 5"
+anchor = [".agents/skills/upgrades/SKILL.md", "備案是哥布林那一格能升的裡面, 跟要升的那一件不同、牌價時間最短的一件"]
 kind = "reply"
-pattern = '(?<!多人)箭塔[^\n]{0,40}?(9\D{1,12}10|10 ?級)'
+pattern = '隱形炸彈[^\n]{0,40}?(4\D{1,12}5|5 ?級)'
 
 [[checks]]
 id = "no-ask"
