@@ -402,6 +402,12 @@ def upgrade_sheet(png: bytes) -> tuple[int, int] | None:
 # and moved 1 px right and 4 px down with the Battle Machine's 2 400 000 button
 # they read 2 400 080 or came back 30 off. The last entry is that right edge,
 # None where one layout is the only one in its span.
+#
+# **The middle layout's price box starts at the button's own left edge** (x
+# 658). From x 668 it cut the leading 1 of the Gem Mine's 1 200 000
+# (2026-11-15, its ink from x 666), whose stub matched 0 at 28 and read
+# 200 000. Every left edge from 654 to 661 reads all five of its sheets right;
+# 662 loses the wall's 800 000, the shrunk digits again.
 SHEET_LAYOUTS: dict[
     World,
     tuple[
@@ -418,7 +424,7 @@ SHEET_LAYOUTS: dict[
     "night": (
         ((1050, 700, 1400, 880), (1110, 760, 1290, 810), (1288, 752, 1350, 825), 1354),
         ((1050, 700, 1400, 880), (1074, 749, 1254, 799), (1252, 741, 1314, 814), 1318),
-        ((600, 700, 1010, 880), (668, 760, 872, 810), (876, 752, 948, 822), None),
+        ((600, 700, 1010, 880), (658, 760, 872, 810), (876, 752, 948, 822), None),
     ),
 }
 # How far a button's right edge may land from its layout's and still be that layout.

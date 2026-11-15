@@ -8196,6 +8196,8 @@ class UpgradeSheetOfferTests(unittest.TestCase):
             ("night_sheet_elixir.png", 4000, "elixir"),
             ("night_sheet_red.png", 2560000, "elixir"),
             ("night_sheet_wall.png", 800000, "elixir"),
+            # Its leading 1 drawn 2 px left of where the price box began.
+            ("night_sheet_1200000.png", 1200000, "elixir"),
             # A builder base hero's, its button bottom right.
             ("night_sheet_hero.png", 2240000, "elixir"),
             # Its digits two further off their templates than 26 allows.
@@ -8215,6 +8217,7 @@ class UpgradeSheetOfferTests(unittest.TestCase):
                 (1121, 783),
                 (1121, 788),
                 (805, 789),
+                (805, 790),
                 (1228, 794),
                 (1229, 797),
                 (1196, 782),
@@ -8246,6 +8249,7 @@ class UpgradeSheetOfferTests(unittest.TestCase):
             "night_sheet_elixir.png",
             "night_sheet_red.png",
             "night_sheet_wall.png",
+            "night_sheet_1200000.png",
             "night_sheet_hero.png",
             "night_sheet_hero_2400000.png",
             "night_sheet_lab.png",
