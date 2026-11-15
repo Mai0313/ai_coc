@@ -8200,11 +8200,13 @@ class UpgradeSheetOfferTests(unittest.TestCase):
             ("night_sheet_1200000.png", 1200000, "elixir"),
             # A builder base hero's, its button bottom right.
             ("night_sheet_hero.png", 2240000, "elixir"),
-            # Its digits two further off their templates than 26 allows.
+            # Shrunk before it was read, its digits came 28 off their templates.
             ("night_sheet_hero_2400000.png", 2400000, "elixir"),
+            # Shrunk, its sixth digit came nearer 8 than 0 and it read 3 120 080.
+            ("night_sheet_hero_3120000.png", 3120000, "elixir"),
             # A builder base research's, its button further left and up than a hero's.
             ("night_sheet_lab.png", 3440000, "elixir"),
-            # The same sheet a pixel off, its digits 30 from their templates.
+            # The same sheet a pixel off, its digits 30 from their templates when shrunk.
             ("night_sheet_lab_2.png", 3440000, "elixir"),
             # A research sheet drawn 4 px lower, its X's highlight over the old box.
             ("night_sheet_lab_low.png", 1360000, "elixir"),
@@ -8218,6 +8220,7 @@ class UpgradeSheetOfferTests(unittest.TestCase):
                 (1121, 788),
                 (805, 789),
                 (805, 790),
+                (1226, 794),
                 (1228, 794),
                 (1229, 797),
                 (1196, 782),
@@ -8252,6 +8255,7 @@ class UpgradeSheetOfferTests(unittest.TestCase):
             "night_sheet_1200000.png",
             "night_sheet_hero.png",
             "night_sheet_hero_2400000.png",
+            "night_sheet_hero_3120000.png",
             "night_sheet_lab.png",
             "night_sheet_lab_2.png",
             "night_sheet_lab_low.png",

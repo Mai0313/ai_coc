@@ -31,7 +31,7 @@ from ai_coc.models import World, GameDialog, SheetOffer, GoblinOffer, PanelWallM
 from ai_coc.parsers.home import build_panel_open
 from ai_coc.parsers.frame import open_frame
 from ai_coc.parsers.scout import read_stock
-from ai_coc.parsers.glyphs import digits_from
+from ai_coc.parsers.glyphs import MAX_GLYPH_WIDTH, MIN_GLYPH_WIDTH, digits_from
 from ai_coc.parsers.regions import mask, patches
 
 if TYPE_CHECKING:
@@ -397,17 +397,15 @@ def upgrade_sheet(png: bytes) -> tuple[int, int] | None:
 # so the hero's boxes cut the leading 3 off (440 000 read, 28 off) and held
 # 0.09 of the drop. It is a layout of its own, the hero's boxes moved by that
 # much, told from the hero's by where the button's right edge lands (1318
-# against 1354 and 1355 on the two hero sheets). The boxes stay fixed rather
-# than following the button: the shrunk digits read differently a pixel apart,
-# and moved 1 px right and 4 px down with the Battle Machine's 2 400 000 button
-# they read 2 400 080 or came back 30 off. The last entry is that right edge,
-# None where one layout is the only one in its span.
+# against 1354 and 1355 on the two hero sheets). The boxes are fixed, not
+# carried by the button; each of the eleven sheets reads the same with its box
+# moved up to 3 px any way. The last entry is that right edge, None where one
+# layout is the only one in its span.
 #
 # **The middle layout's price box starts at the button's own left edge** (x
 # 658). From x 668 it cut the leading 1 of the Gem Mine's 1 200 000
 # (2026-11-15, its ink from x 666), whose stub matched 0 at 28 and read
-# 200 000. Every left edge from 654 to 661 reads all five of its sheets right;
-# 662 loses the wall's 800 000, the shrunk digits again.
+# 200 000. Every left edge from 640 to 667 reads all five of its sheets right.
 SHEET_LAYOUTS: dict[
     World,
     tuple[
@@ -430,10 +428,21 @@ SHEET_LAYOUTS: dict[
 # How far a button's right edge may land from its layout's and still be that layout.
 SHEET_EDGE_SLACK = 8
 SHEET_ICON_FLOORS: dict[SheetResource, float] = {"gold": 0.12, "elixir": 0.1, "dark": 0.17}
-# The builder base draws its price too large for the digit templates' widths:
-# shrunk to this, its four sheets read 2 560 000, 2 000 000, 192 000 and 4 000
-# with no digit worse than 23.
-SHEET_PRICE_SCALE: dict[World, float] = {"day": 1.0, "night": 0.7}
+# The narrowest and widest a digit of the price is drawn. The builder base
+# draws its price larger than the home sheet's, and larger the fewer digits it
+# has: on its eleven sheets a 1 is 8 or 9 px across and the widest digit 27 (the
+# wall's 800 000). **The price is read at the size it is drawn, never shrunk
+# first.** Until 2026-11-16 the box was shrunk to 0.7 before its ink was picked
+# out, which drew a stroke a pixel thicker or thinner by where it fell on the
+# smaller grid: the Battle Machine's 3 120 000 read 3 120 080, its sixth digit
+# 24 from 8 and 25 from 0, and of twelve frames read with the box begun 0 to
+# 3 px earlier each way, 9 of the 192 readings came back a wrong number.
+# Unshrunk, every digit on them lands within 21 of its own template and at
+# least 13 nearer it than any other, wherever the box begins.
+SHEET_DIGIT_WIDTHS: dict[World, tuple[int, int]] = {
+    "day": (MIN_GLYPH_WIDTH, MAX_GLYPH_WIDTH),
+    "night": (8, 28),
+}
 # The price is drawn white (every builder base sheet), red, like a menu's, when
 # the village cannot pay, and in an event's own colour while the event
 # discounts it, with the old price struck through below the box: yellow on
@@ -450,17 +459,14 @@ SHEET_PRICE_SCALE: dict[World, float] = {"day": 1.0, "night": 0.7}
 SHEET_INK_WHITE = 225
 SHEET_INK_BRIGHT = 200
 SHEET_INK_APART = 120
-# **The builder base's shrunk digits land further from their templates, and
-# the distance does not tell a right reading from a wrong one there.** At its
-# 0.7 scale the builder base sheets read right with digits up to 30 off (two
-# frames of the Drop Ship's 3 440 000 on 2026-10-19 came 27 and 30, a pixel
-# apart); swept over scales 0.6 to 0.85 the right readings ran up to 35 and the
-# wrong ones (2 400 800, 2 240 080, 2 240 008) came 30 to 32. So the tolerance
-# only keeps out a glyph that is no digit at all, and what keeps a misread from
-# spending is `confirm` pressing only on exactly the price the agent passed.
-# The home sheet's yellow digits drift too: the Royal Champion's discounted
-# 100 000 on 2026-10-31 drew its 1 28 from its template, the rest 13 at most.
-SHEET_DIGIT_TOLERANCE: dict[World, int] = {"day": 30, "night": 35}
+# **The tolerance only keeps out a glyph that is no digit at all**; what keeps
+# a misread from spending is `confirm` pressing only on exactly the price the
+# agent passed. The home sheet's yellow digits drift: the Royal Champion's
+# discounted 100 000 on 2026-10-31 drew its 1 28 from its template, the rest 13
+# at most. The builder base's land within 21 (`SHEET_DIGIT_WIDTHS`); it took 35
+# while its price was shrunk first, when right readings ran that far and wrong
+# ones came 30 to 32.
+SHEET_DIGIT_TOLERANCE = 30
 # The sheet's red X, the one part of it a plain `tap` may press: on the home
 # sheets it spans about x 1383-1445 and y 40-100, centred on (1413, 70), and on
 # the builder base's x 1301-1377 and y 23-92.
@@ -742,11 +748,6 @@ def sheet_offer(png: bytes) -> SheetOffer | None:
     if len(resources) != 1:
         return None
     band = image.crop(price_box)
-    scale = SHEET_PRICE_SCALE[world]
-    if scale != 1.0:
-        band = band.resize(
-            (round(band.width * scale), round(band.height * scale)), Image.Resampling.BILINEAR
-        )
     width, height = band.size
     pixels = band.tobytes()
     shades = _button_shades(pixels) if world == "day" else []
@@ -757,7 +758,9 @@ def sheet_offer(png: bytes) -> SheetOffer | None:
         ]
         for y in range(height)
     ]
-    price = digits_from(ink, SHEET_DIGIT_TOLERANCE[world], floor=PRICE_ROWS)
+    price = digits_from(
+        ink, SHEET_DIGIT_TOLERANCE, floor=PRICE_ROWS, widths=SHEET_DIGIT_WIDTHS[world]
+    )
     if price is None or price < MIN_PRICE:
         return None
     reds = sum(
@@ -875,7 +878,7 @@ def goblin_offer(png: bytes) -> GoblinOffer | None:
         ]
         for y in range(height)
     ]
-    gems = digits_from(ink, SHEET_DIGIT_TOLERANCE["day"])
+    gems = digits_from(ink, SHEET_DIGIT_TOLERANCE)
     if not gems:
         return None
     left, top, right, bottom = button

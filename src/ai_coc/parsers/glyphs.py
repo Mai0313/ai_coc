@@ -232,7 +232,13 @@ def _match(mask: list[list[bool]], left: int, right: int, floor: int) -> tuple[s
     return None if pattern is None else nearest(pattern)
 
 
-def _split(mask: list[list[bool]], left: int, right: int, floor: int) -> list[tuple[str, int]]:
+def _split(
+    mask: list[list[bool]],
+    left: int,
+    right: int,
+    floor: int,
+    widths: tuple[int, int] = (MIN_GLYPH_WIDTH, MAX_GLYPH_WIDTH),
+) -> list[tuple[str, int]]:
     """Two digits the mask never separated, cut where both halves read best.
 
     Nothing guarantees a gap between two digits: measured on a live panel, the
@@ -260,8 +266,9 @@ def _split(mask: list[list[bool]], left: int, right: int, floor: int) -> list[tu
     clears `SPLIT_TOLERANCE`, leaving the span to be judged whole as it was.
     """
     best: tuple[int, list[tuple[str, int]]] | None = None
-    first = max(left + MIN_GLYPH_WIDTH, right - MAX_GLYPH_WIDTH)
-    last = min(right - MIN_GLYPH_WIDTH, left + MAX_GLYPH_WIDTH)
+    narrowest, widest = widths
+    first = max(left + narrowest, right - widest)
+    last = min(right - narrowest, left + widest)
     for cut in range(first, last + 1):
         halves = [_match(mask, left, cut, floor), _match(mask, cut, right, floor)]
         if None in halves:
@@ -273,7 +280,11 @@ def _split(mask: list[list[bool]], left: int, right: int, floor: int) -> list[tu
     return best[1] if best else []
 
 
-def row_glyphs(mask: list[list[bool]], floor: int = MIN_GLYPH_ROWS) -> Iterator[tuple[str, int]]:
+def row_glyphs(
+    mask: list[list[bool]],
+    floor: int = MIN_GLYPH_ROWS,
+    widths: tuple[int, int] = (MIN_GLYPH_WIDTH, MAX_GLYPH_WIDTH),
+) -> Iterator[tuple[str, int]]:
     """Each glyph on a row as the digit it matches best and how far off that was.
 
     The distance is what the two callers disagree about, so it comes back with
@@ -287,18 +298,24 @@ def row_glyphs(mask: list[list[bool]], floor: int = MIN_GLYPH_ROWS) -> Iterator[
     1 at 33, under it, which turned a correct 505 into 5 051. The reading is
     still reported, because both callers already know what to do with a glyph
     that matches badly, but the distance says what the width does.
+
+    `widths` is the narrowest and widest a digit is drawn, for a caller whose
+    digits are drawn at another size than the loot panel's.
     """
     for left, right in glyph_columns(mask):
-        if right - left > MAX_GLYPH_WIDTH and (halves := _split(mask, left, right, floor)):
+        if right - left > widths[1] and (halves := _split(mask, left, right, floor, widths)):
             yield from halves
             continue
         match = _match(mask, left, right, floor)
         if match is not None:
-            yield (match[0], NOT_A_GLYPH) if right - left > MAX_GLYPH_WIDTH else match
+            yield (match[0], NOT_A_GLYPH) if right - left > widths[1] else match
 
 
 def digits_from(
-    mask: list[list[bool]], tolerance: int | None = None, floor: int = MIN_GLYPH_ROWS
+    mask: list[list[bool]],
+    tolerance: int | None = None,
+    floor: int = MIN_GLYPH_ROWS,
+    widths: tuple[int, int] = (MIN_GLYPH_WIDTH, MAX_GLYPH_WIDTH),
 ) -> int | None:
     """The number a mask of ink spells, or None where it does not read as one.
 
@@ -319,7 +336,7 @@ def digits_from(
     plate, which `parsers.building` has to separate by colour instead.
     """
     digits = ""
-    for digit, distance in row_glyphs(mask, floor):
+    for digit, distance in row_glyphs(mask, floor, widths):
         if tolerance is not None and distance > tolerance:
             return None
         digits += digit
