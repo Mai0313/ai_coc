@@ -333,8 +333,8 @@ DEPLOY_ATTEMPTS = 5
 # already on the map's edge came back within two pixels of each other.
 SPOT_APART = 20
 # How near the spot a one-off card was just refused at a retry may sit before it
-# is the same refused ground. On a flat plan the heroes and the machine aim at the
-# middle of the troops' line, so the retry ladder's first rung, that middle, sat
+# is the same refused ground. On a flat plan the heroes aim at the middle of the
+# troops' line, as the machine did too, so the retry ladder's first rung, that middle, sat
 # 20 px from the refused spot on three recorded rounds: refused again twice, and
 # each cost a retry of about three seconds before a push out landed. The one rung
 # further away, 52 px out, took all five cards the first time.
@@ -1514,8 +1514,8 @@ class AttackRunner(ScreenRunner):
         """The plan for this opponent: the one handed in, the AI's, or the flat default.
 
         Falling back to a written-out plan rather than to constants is what makes
-        the default readable and editable, and it is the same tactic the loop
-        used to hold in `DEPLOY_LINES` and a fixed grid of rage points.
+        the default readable and editable; it began as the tactic the loop used
+        to hold in `DEPLOY_LINES` and a fixed grid of rage points.
         """
         if isinstance(self.plan, AttackPlan):
             logger.info("Playing the plan handed in: %s", self.plan.reason or "no reason given")

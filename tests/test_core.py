@@ -3494,9 +3494,30 @@ class PlanTests(unittest.TestCase):
         assert waits
         assert all(seconds > 0 for seconds in waits)
 
-    def test_the_flat_plan_draws_the_line_the_loop_used_to_hold_in_constants(self) -> None:
-        """It has to reproduce the old fallback, or the default quietly changed."""
-        assert planned_line(plans.flat()) == DEPLOY_LINES["top_left"]
+    def test_the_flat_plan_packs_the_army_at_the_left_corner_end_of_its_flank(self) -> None:
+        """The user's drawing: a shorter line by the corner, so the army walks in together."""
+        plan = plans.flat()
+        line = planned_line(plan)
+        assert line is not None
+        top, corner = DEPLOY_LINES["top_left"]
+        assert line[1] == corner
+        assert math.dist(*line) < math.dist(top, corner) * 0.7
+        # Still the same flank: the near end sits on the preset line, not beside it.
+        assert attack._gap(line[0], top, corner) < 2
+        poured = deploy_line(LINE_POINTS, *line)
+        # Every hero lands in the middle of the troops.
+        middle = ((line[0][0] + line[1][0]) // 2, (line[0][1] + line[1][1]) // 2)
+        heroes = plan.acts("hero")
+        assert len(heroes) == 2
+        for step in heroes:
+            spot = attack.onto_line(step.at[0].pixels(), poured, attack.SCREEN_CENTRE)
+            assert math.dist(spot, middle) < 2
+        # The machine lands outside the corner, past the line's end, where
+        # `onto_line` leaves it rather than pulling it back onto the troops.
+        aimed = plan.acts("siege")[0].at[0].pixels()
+        assert attack.onto_line(aimed, poured, attack.SCREEN_CENTRE) == aimed
+        assert aimed[0] < corner[0]
+        assert attack._share(aimed, *line) > 1
 
     def test_a_plan_survives_being_written_out_and_read_back(self) -> None:
         with tempfile.TemporaryDirectory() as td:

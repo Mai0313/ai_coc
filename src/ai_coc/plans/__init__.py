@@ -2,8 +2,8 @@
 
 `flat.json` is the one the loop falls back to with no AI and nothing passed in,
 and the home tactic farming plays on purpose. It runs against any village and
-gives a baseline to compare a real plan against. Its step order and spell timing
-are the user's own, so a change to it is asked for first.
+gives a baseline to compare a real plan against. Its step order, spell timing
+and drop spots are the user's own, so a change to it is asked for first.
 """
 
 from __future__ import annotations
@@ -56,7 +56,7 @@ def named(name: str, world: World) -> AttackPlan | NightPlan:
 
 
 def flat() -> AttackPlan:
-    """The everything-spread-evenly plan, used when nothing better was supplied."""
+    """The default plan, used when nothing better was supplied."""
     return load(PLAN_DIR / "flat.json")
 
 
