@@ -155,6 +155,7 @@ from ai_coc.parsers.scout import (
     battle_speed,
     card_drained,
     freeze_cards,
+    open_tooltip,
     shield_sheet,
     skip_offered,
     welcome_back,
@@ -1040,6 +1041,8 @@ class WorldTests(unittest.TestCase):
             "hud_day_shield_split.png": "day",
             "hud_tip_day_gold.png": "day",
             "hud_tip_day_elixir.png": "day",
+            "hud_tip_day_gold_pale.png": "day",
+            "hud_tip_day_elixir_pale.png": "day",
             "hud_night.png": "night",
             "home_markers_lit_orange.png": "day",
             "hero_hall_menu_maxed.png": "day",
@@ -3274,15 +3277,14 @@ class CeilingReadTests(unittest.TestCase):
             patch.object(AttackRunner, "_tap", lambda _, point: taps.append(point)),
             patch.object(AttackRunner, "_frame", return_value=b""),
             patch.object(shared, "storage_capacity", side_effect=answers),
-            patch.object(shared, "current_world", return_value=self.after),
+            patch.object(shared, "open_tooltip", return_value=self.after),
             patch.object(shared.time, "sleep"),
         ):
             runner._settle_ceilings(runner.world or "day")
         return taps
 
-    # What `current_world` reads once a read has failed: the village, unless a
-    # tooltip the failure left open hides its + buttons.
-    after: str | None = "day"
+    # The row whose tooltip is still open once a read has failed, if any.
+    after: int | None = None
 
     def test_a_village_that_reads_every_row_is_asked_once_for_the_whole_run(self) -> None:
         runner = self._runner()
@@ -3304,17 +3306,21 @@ class CeilingReadTests(unittest.TestCase):
         assert runner._capacity is None
         assert runner._ceiling.full(VillageStock(gold=0, elixir=0, dark=370_000), 90) is None
 
-    def test_a_tooltip_a_failed_read_left_over_the_buttons_is_tapped_shut(self) -> None:
-        """It hides the + buttons, so the next village test would read nothing.
+    def test_a_tooltip_a_failed_read_left_open_is_shut(self) -> None:
+        """It can hide the + buttons, so the next village test would read nothing.
 
-        Only then: with the village still reading, the taps already left the
-        tooltips as they were found.
+        Only then: with none open, the taps already left the village clear. The
+        home village's is shut by a tap on its panel, the builder base's by one
+        on its own bar.
         """
         failed = [None, None, None, None, None, None]
         assert len(self._read(self._runner(), failed)) == 6
-        self.after = None
+        self.after = 1
         taps = self._read(self._runner(), failed)
-        assert taps[6:] == [(shared.STOCK_BAR_X, shared.STOCK_BAR_Y[2])]
+        assert taps[6:] == [(shared.STOCK_BAR_X, shared.STOCK_BAR_Y[1] + shared.TOOLTIP_DROP)]
+        self.after = 0
+        taps = self._read(self._runner(world="night"), failed[:4])
+        assert taps[4:] == [(shared.STOCK_BAR_X, shared.STOCK_BAR_Y[0])]
 
     def test_a_run_that_can_never_stand_down_does_not_tap_the_bars(self) -> None:
         """`probe` and `bounds` take the default 0, and so does `--stop-at 0`."""
@@ -3330,7 +3336,14 @@ class CeilingReadTests(unittest.TestCase):
     def test_a_row_that_reads_is_tapped_shut_behind_itself(self) -> None:
         """An open tooltip covers the rows under it, so it does not outlive the read."""
         taps = self._read(self._runner(), [24_000_000, 24_000_000, 370_000])
-        assert taps == [(shared.STOCK_BAR_X, y) for y in shared.STOCK_BAR_Y for _ in range(2)]
+        assert taps == [
+            (shared.STOCK_BAR_X, y + drop)
+            for y in shared.STOCK_BAR_Y
+            for drop in (0, shared.TOOLTIP_DROP)
+        ]
+        # The builder base's is a toggle, shut by its own bar.
+        taps = self._read(self._runner(world="night"), [2_050_000, 2_550_000])
+        assert taps == [(shared.STOCK_BAR_X, y) for y in shared.STOCK_BAR_Y[:2] for _ in range(2)]
 
 
 def _legacy_capacity(png: bytes, row: int) -> int | None:
@@ -3374,6 +3387,22 @@ class StorageTipTests(unittest.TestCase):
                 ("night_elixir", 1),
             )
         ] == [28_000_000, 28_000_000, 470_000, 6_000_000, 5_600_000]
+
+    def test_the_home_villages_pale_tooltip_reads_on_its_own_row_alone(self) -> None:
+        """19.32.4's opaque panel: its lines cover the rows below, which are not theirs to read."""
+        for name, row, ceiling in (
+            ("gold", 0, 29_000_000),
+            ("elixir", 1, 29_000_000),
+            ("dark", 2, 470_000),
+        ):
+            png = (FRAMES / f"hud_tip_day_{name}_pale.png").read_bytes()
+            read = [storage_capacity(png, other) for other in range(3)]
+            assert read == [ceiling if other == row else None for other in range(3)], name
+            assert open_tooltip(png) == row, name
+
+    def test_which_tooltip_is_open_is_read_off_either_look(self) -> None:
+        for name, row in (("hud_tip_day_elixir", 1), ("hud_tip_night_gold", 0), ("hud_day", None)):
+            assert open_tooltip((FRAMES / f"{name}.png").read_bytes()) == row, name
 
     def test_a_tooltip_is_read_only_on_its_own_row(self) -> None:
         """Every other row's box holds the next bar's number, which is no ceiling."""
@@ -7879,6 +7908,9 @@ class HomeHudTests(unittest.TestCase):
             "wall_menu_elixir_only.png",
             "hud_day_lab_panel.png",
             "hud_day_shield_split.png",
+            "hud_tip_day_gold_pale.png",
+            "hud_tip_day_elixir_pale.png",
+            "hud_tip_day_dark_pale.png",
             "world_day_boat_marker.png",
             "world_day_occluded.png",
             "world_day_shield_only.png",

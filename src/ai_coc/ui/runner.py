@@ -24,6 +24,7 @@ from ai_coc.parsers.scout import (
     in_battle,
     read_gems,
     read_stock,
+    open_tooltip,
     session_taken,
     loading_screen,
     storage_capacity,
@@ -103,12 +104,19 @@ RELOGIN_WAIT = 8.0
 # these rows that a stray tap must not reach. The y is each bar's own middle,
 # the same rows `read_stock` reads its digits from.
 #
-# The tooltip takes a moment to animate in and is a toggle rather than a popup,
-# so a capture taken too early reads the frame before it opened and costs the
-# whole row: `CAPACITY_TRIES` is what pays for that, and for a tooltip somebody
-# left open before the run started.
+# The tooltip takes a moment to animate in, and a tap can close one already
+# open instead of opening its own, so a capture taken too early or after such
+# a tap costs the whole row: `CAPACITY_TRIES` is what pays for that.
 STOCK_BAR_X = 1400
 STOCK_BAR_Y = (46, 108, 170)
+# The home village's tooltip is no toggle since game version 19.32.4: a tap on
+# its own bar leaves it open, and a tap on the panel puts it away without
+# opening anything, the bars it covers included (measured 2026-11-16: with
+# gold's open, a tap on the elixir or the dark bar only closed it, while a tap
+# on a bar above an open tooltip opened that bar's at once). So it is shut by a
+# tap this far under its bar, inside the panel's first line. The builder base's
+# is still the toggle.
+TOOLTIP_DROP = 62
 TOOLTIP_SETTLE = 1.0
 CAPACITY_TRIES = 2
 
@@ -246,21 +254,17 @@ class ScreenRunner(BaseModel):
         resource with no ceiling is left out of every comparison, which is
         exactly right for one that does not exist.
 
-        The tooltip is a toggle, so a row that reads nothing is left alone rather
-        than tapped shut: the one way to read nothing on a village that has the
-        bar is to have closed a tooltip that was already open, and the next
+        A row that reads nothing is left alone rather than tapped shut: the one
+        way to read nothing on a village that has the bar is a tap that closed
+        a tooltip already open (the builder base's own, a toggle, or on the
+        home village the one above, whose panel covers this bar), and the next
         attempt then opens it.
 
-        **A row that fails both tries can leave its own tooltip up**, and only
-        the last row read has nothing after it to close it, since the next
-        row's first tap closes whatever is open. The panel hangs *under* the bar
-        that opened it, and since the 2026-10 overhaul that covers the green +
-        buttons `current_world` reads the village off — the home village's dark
-        tooltip both of its own, the builder base's either of its one. So a
-        failed read ends by asking `current_world` and taps the last row once
-        more when it no longer names the village. Closing on every failure
-        instead would be worse: with the tooltip starting closed, which is the
-        ordinary case, a row that fails twice ends on an opening tap.
+        **A row that fails both tries can leave a tooltip up**, its own or the
+        one above, and the panel hangs over the green + buttons `current_world`
+        reads the village off (the home village's dark tooltip both of its own,
+        the builder base's either of its one). So a failed read ends by asking
+        the frame which tooltip is open (`open_tooltip`) and shutting that one.
         """
         rows = ("gold", "elixir", "dark") if world == "day" else ("gold", "elixir")
         found: dict[str, int] = {}
@@ -272,20 +276,25 @@ class ScreenRunner(BaseModel):
                 if held is None:
                     continue
                 found[name] = held
-                self._tap((STOCK_BAR_X, STOCK_BAR_Y[row]))
-                time.sleep(TOOLTIP_SETTLE)
+                self._shut_tooltip(world, row)
                 break
         if len(found) < len(rows):
             logger.warning(
                 "Only %d of %d storage ceilings read (%s)", len(found), len(rows), found or "none"
             )
-            if current_world(self._frame("capacity-after")) != world:
-                logger.info("A tooltip is left over the village; tapping its bar shut")
-                self._tap((STOCK_BAR_X, STOCK_BAR_Y[len(rows) - 1]))
-                time.sleep(TOOLTIP_SETTLE)
+            left = open_tooltip(self._frame("capacity-after"))
+            if left is not None:
+                logger.info("Row %d's tooltip is left over the village; shutting it", left)
+                self._shut_tooltip(world, left)
             return None
         logger.info("Storage ceilings read as %s", found)
         return StorageCapacity(**found)
+
+    def _shut_tooltip(self, world: World, row: int) -> None:
+        """Put away the tooltip open under this row's bar (`TOOLTIP_DROP`)."""
+        drop = TOOLTIP_DROP if world == "day" else 0
+        self._tap((STOCK_BAR_X, STOCK_BAR_Y[row] + drop))
+        time.sleep(TOOLTIP_SETTLE)
 
 
 class GameRunner(ScreenRunner):

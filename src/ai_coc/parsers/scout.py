@@ -654,6 +654,29 @@ CAPACITY_EDGE_WHITE = 0.65
 CAPACITY_EDGE_REACH = 2
 CAPACITY_UNDER = 4
 CAPACITY_UNDER_WHITE = 0.3
+# The home village's tooltip since game version 19.32.4 (2026-11-16); the
+# builder base still draws the one above. It is an opaque pale panel of three
+# lines, 最大儲存量 first, in white digits with a dark outline, so the ink is
+# what is brighter than the panel and nothing shows through. Measured on one
+# tooltip per row: the panel's top is at `PALE_TOPS`, its first line reads whole
+# from any box top 4 px above that to 13 below (`PALE_ROWS` sits midway), and
+# the dark row's panel hangs 58 px further right than the other two
+# (x 1145 to 1572 against 1087 to 1513), which `PALE_X` follows.
+#
+# It is confirmed by its top edge as the other is: the panel's flat colour
+# across `PALE_SPAN` just under the edge and not just over it, which is what
+# keeps the second line of the tooltip above from reading as this row's own
+# (`PALE_SHARES` has the measurements).
+PALE_ROWS = ((76, 105), (137, 166), (199, 228))
+PALE_X = ((1250, 1510), (1250, 1510), (1310, 1568))
+PALE_TOPS = (71, 132, 194)
+PALE_SPAN = (1160, 1500)
+PALE_PANEL = (208, 204, 192)
+PALE_REACH = 10
+PALE_INSIDE = 4
+PALE_OUTSIDE = 5
+PALE_SHARES = (0.9, 0.3)
+PALE_INK_BRIGHTNESS = 232
 
 # The 回營 button on the battle result screen. It is the one screen a farming
 # loop reliably ends on and the one it could not get off: the button only comes
@@ -1852,13 +1875,47 @@ def _tooltip_edge(image: Image.Image, y: int) -> bool:
     )
 
 
+def _pale_share(image: Image.Image, y: int) -> float:
+    """How much of the pale tooltip's width is its panel colour along one row."""
+    data = image.crop((PALE_SPAN[0], y, PALE_SPAN[1], y + 1)).tobytes()
+    flat = sum(
+        1
+        for at in range(0, len(data), 3)
+        if all(abs(data[at + k] - PALE_PANEL[k]) <= PALE_REACH for k in range(3))
+    )
+    return flat / (len(data) // 3)
+
+
+def _pale_edge(image: Image.Image, row: int) -> bool:
+    """Whether the home village's pale tooltip starts at this row's top."""
+    top = PALE_TOPS[row]
+    inside, outside = PALE_SHARES
+    return (
+        _pale_share(image, top + PALE_INSIDE) >= inside
+        and _pale_share(image, top - PALE_OUTSIDE) <= outside
+    )
+
+
+def open_tooltip(png: bytes) -> int | None:
+    """The row whose storage tooltip is open on this frame, or None with none open."""
+    image = open_frame(png)
+    return next(
+        (
+            row
+            for row, edge in enumerate(CAPACITY_EDGES)
+            if _pale_edge(image, row) or _tooltip_edge(image, edge)
+        ),
+        None,
+    )
+
+
 def storage_capacity(png: bytes, row: int) -> int | None:
     """What this row's tooltip says the storage holds, or None where none is open.
 
     `row` is the storage bar's own index down the corner, the same 0/1/2 the
-    stock rows are read at. Tapping a bar drops the tooltip open under it and
-    tapping again puts it away, so the caller owns that toggle; this only reads
-    whatever is on the frame it is handed.
+    stock rows are read at. Tapping a bar drops the tooltip open under it, and
+    opening and shutting it is the caller's; this only reads whatever is on the
+    frame it is handed, in either village's look.
 
     None is the answer for a frame with no tooltip on it, which the caller wants
     rather than a guess: the village showing through where the panel would be is
@@ -1866,12 +1923,21 @@ def storage_capacity(png: bytes, row: int) -> int | None:
     comparison.
     """
     image = open_frame(png)
-    if not _tooltip_edge(image, CAPACITY_EDGES[row]):
+    if _pale_edge(image, row):
+        (top, bottom), (left, right) = PALE_ROWS[row], PALE_X[row]
+        mask = ink_mask(
+            image.crop((left, top, right, bottom)),
+            brightness=PALE_INK_BRIGHTNESS,
+            saturation=STOCK_INK_SATURATION,
+        )
+    elif _tooltip_edge(image, CAPACITY_EDGES[row]):
+        top, bottom = CAPACITY_ROWS[row]
+        mask = ink_mask(
+            image.crop((CAPACITY_X[0], top, CAPACITY_X[1], bottom)),
+            saturation=STOCK_INK_SATURATION,
+        )
+    else:
         return None
-    top, bottom = CAPACITY_ROWS[row]
-    mask = ink_mask(
-        image.crop((CAPACITY_X[0], top, CAPACITY_X[1], bottom)), saturation=STOCK_INK_SATURATION
-    )
     # The last number on the line, because everything before it is the label:
     # 最大儲存量 and its colon are cut away by the tolerance, and anything they
     # leave behind lands to the left of the capacity itself.
