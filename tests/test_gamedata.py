@@ -350,6 +350,19 @@ class BuildTests(unittest.TestCase):
         for flagged in (4000093, 4000189, 4000030, 26000006, 26000007):
             assert _entity(tables, flagged).levels[0].needs == {}, flagged
 
+    def test_a_squad_is_unlocked_by_the_squad_barracks(self) -> None:
+        # 19.32.4's rows: a squad names a building of its own.
+        tables = _build(
+            buildings=_table(
+                "buildings", TOWN_HALL, "Squad Barracks,1000106,1,,,,,,Elixir,1700000,8"
+            ),
+            characters=_table(
+                "characters", "Miner Squad,4000202,1,,1,,,Elixir,21000000,Squad Barracks,8"
+            ),
+        )
+        assert _entity(tables, 4000202).levels[0].needs == {"squad_barracks": 8}
+        assert tables.halls["squad_barracks"] == 1000106
+
     def test_a_troop_trained_in_a_building_with_no_hall_is_refused(self) -> None:
         with pytest.raises(GameDataError, match="Hut"):
             _build(

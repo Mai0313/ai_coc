@@ -2570,7 +2570,7 @@ class GrowthReport(BaseModel):
 # `GameLevel.needs` gives each. A builder base entity's town hall is the builder
 # hall and its laboratory the star laboratory; the pet house and the blacksmith
 # are what the pet and equipment tables call their own `LaboratoryLevel` and
-# `RequiredBlacksmithLevel`. The last six train the troops, siege machines and
+# `RequiredBlacksmithLevel`. The last seven train the troops, siege machines and
 # spells, whose first level is unlocked by the one that trains each.
 Hall = Literal[
     "town_hall",
@@ -2586,6 +2586,7 @@ Hall = Literal[
     "spell_factory",
     "dark_spell_factory",
     "builder_barracks",
+    "squad_barracks",
 ]
 # The game's logic tables `ai_coc gamedata` reads, by file name. `character_items`
 # is the hero equipment and `villager_apprentices` the helpers.

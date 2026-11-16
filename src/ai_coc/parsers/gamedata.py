@@ -154,6 +154,8 @@ HALL_NAMES: dict[Hall, str] = {
     "spell_factory": "Spell Factory",
     "dark_spell_factory": "Dark Spell Factory",
     "builder_barracks": "BB Barracks",
+    # 19.32.4's, which trains the squads.
+    "squad_barracks": "Squad Barracks",
 }
 # The column naming the building that trains a troop, siege machine or spell,
 # by the internal name `HALL_NAMES` gives. Its level in the table's `unlock`
