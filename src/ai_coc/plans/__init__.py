@@ -2,8 +2,8 @@
 
 `flat.json` is the one the loop falls back to with no AI and nothing passed in,
 and the home tactic farming plays on purpose. It runs against any village and
-gives a baseline to compare a real plan against. Its step order, spell timing
-and drop spots are the user's own, so a change to it is asked for first.
+gives a baseline to compare a real plan against. Its step order, spell timing,
+drop spots and rage spots are the user's own, so a change to it is asked for first.
 """
 
 from __future__ import annotations

@@ -5718,8 +5718,22 @@ class AttackTests(unittest.TestCase):
         """The fallback tactic's bottles must not crowd each other, or it loses half its cargo."""
         grid = [point.pixels() for step in plans.flat().acts("rage") for point in step.at]
         assert spaced(grid) == grid
-        # The second cast starts one bottle further in from the first.
-        assert grid[2][0] - grid[0][0] == RAGE_SPAN[0]
+        # The first cast is a row along the flank the army walks in from, and
+        # the second opens with that same row moved one bottle further in, so
+        # an army carrying four bottles lays one block in front of its drop.
+        inward = (grid[2][0] - grid[0][0], grid[2][1] - grid[0][1])
+        assert (grid[3][0] - grid[1][0], grid[3][1] - grid[1][1]) == inward
+        assert inward[0] > 0
+        assert inward[1] > 0
+        # One bottle and no more: a step a few pixels shorter would overlap.
+        nearer = (grid[0][0] + inward[0] - 4, grid[0][1] + inward[1] - 4)
+        assert self._overlapping([grid[0], nearer])
+        # An upper flank has the village dragged down by about 100 px, and a
+        # point that deep in the grid would be clamped onto its neighbours and
+        # dropped, so every bottle still has its own ground after the drag.
+        for drag in range(0, 141, 20):
+            dragged = [attack.clear_of_controls((x, y + drag)) for x, y in grid]
+            assert spaced(dragged) == dragged, drag
 
     def _casts(self, alive: list[list[int]], fighting: bool = True) -> int:
         """How many passes `_cast` makes, given what the row reads after each one."""
