@@ -613,13 +613,13 @@ def _sheet_button(
     tuple[tuple[int, int], tuple[int, int, int, int] | None, tuple[int, int, int, int] | None]
     | None
 ):
-    """The middle of the biggest green patch where one of that village's sheets keeps its
-    button, with that sheet's price box and icon box.
+    """The middle of the green patch one of that village's sheets has its price on, with
+    that sheet's price box and icon box.
 
-    A button whose right edge matches no layout in its span still counts, with
-    no boxes: it is a sheet nobody recorded, which `sheet_open` must still see
-    so a plain `tap` stays off its button, and which `sheet_offer` reads no
-    price off.
+    A span whose green lies off the price, or whose button's right edge matches
+    no layout, still counts, by its biggest patch and with no boxes: it is a
+    sheet nobody recorded, which `sheet_open` must still see so a plain `tap`
+    stays off its button, and which `sheet_offer` reads no price off.
     """
     unmatched: tuple[int, int] | None = None
     for (left, top, right, bottom), price_box, icon_box, edge in SHEET_LAYOUTS[world]:
@@ -632,11 +632,13 @@ def _sheet_button(
             )
             if patch.count >= SHEET_BUTTON
         ]
-        # **The button is the green patch its price lies on, where one does**, and
-        # only otherwise the biggest. A squad's research sheet (小隊, met on the
-        # Dragon Squad's 2026-11-17) draws a green banner above the button, wider
-        # than it and inside this span: taken for the button, it put `confirm`'s
-        # press on the banner at y 670, 115 px above 確認, and nothing was bought.
+        # **The button is the green patch its price lies on**, not the biggest. A
+        # squad's research sheet (小隊, met on the Dragon Squad's 2026-11-17)
+        # draws a green banner above the button, wider than it and inside this
+        # span: taken for the button, it put `confirm`'s press on the banner at
+        # (1124, 670), 113 px above 確認's middle, and nothing was bought. Every
+        # recorded sheet has such a patch, so green that lies only off the price
+        # is no button this can price.
         across, down = (price_box[0] + price_box[2]) // 2, (price_box[1] + price_box[3]) // 2
         priced = [
             patch
@@ -648,7 +650,7 @@ def _sheet_button(
         if biggest is None:
             continue
         point = (biggest.middle[0] + left, biggest.middle[1] + top)
-        if edge is None or abs(biggest.right + left - edge) <= SHEET_EDGE_SLACK:
+        if priced and (edge is None or abs(biggest.right + left - edge) <= SHEET_EDGE_SLACK):
             return point, price_box, icon_box
         unmatched = unmatched or point
     return None if unmatched is None else (unmatched, None, None)

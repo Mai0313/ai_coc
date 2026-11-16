@@ -8348,8 +8348,23 @@ class UpgradeSheetOfferTests(unittest.TestCase):
         """A squad's sheet draws a green banner above 確認, wider than the button."""
         offer = sheet_offer((FRAMES / "sheet_squad_elixir.png").read_bytes())
         assert offer is not None
-        # The button spans y 733 to 838; the banner ends by y 715.
-        assert 733 < offer.point[1] < 838
+        # The button's green spans y 734 to 833; the banner's ends at y 719.
+        assert 734 <= offer.point[1] <= 833
+
+    def test_green_that_lies_only_off_the_price_is_a_sheet_with_no_offer(self) -> None:
+        """Its button greyed, a squad's sheet still shows its banner: a sheet, with nothing priced."""
+        image = Image.open(FRAMES / "sheet_squad_elixir.png").convert("RGB")
+        box = (990, 728, 1252, 842)
+        button = image.crop(box)
+        button.putdata([
+            (150, 150, 150) if r <= 210 and g >= 150 and b <= 140 else (r, g, b)
+            for r, g, b in button.getdata()
+        ])
+        image.paste(button, box)
+        out = io.BytesIO()
+        image.save(out, format="PNG")
+        assert sheet_open(out.getvalue()) == "day"
+        assert sheet_offer(out.getvalue()) is None
 
     def test_only_a_running_upgrades_sheet_reads_as_one(self) -> None:
         """Told by the gem on its button, never by a price failing to read (#527)."""
