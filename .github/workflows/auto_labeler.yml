@@ -1,16 +1,16 @@
 name: Pull Request Labeler
 
-# pull_request_target because a fork's pull_request run gets a read-only token;
-# never check out the PR's own code under it.
+# pull_request, not pull_request_target: GitHub's default policy blocks pull_request_target in public repositories (enforced from 2026-12-02). A fork's run gets a read-only token, so the job skips it and its pull request is labeled by hand.
 
 on:
-  pull_request_target:
+  pull_request:
 
 permissions: write-all
 
 jobs:
   labeler:
     name: Labeler
+    if: github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
 
     steps:
