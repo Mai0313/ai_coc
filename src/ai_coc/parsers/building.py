@@ -623,19 +623,28 @@ def _sheet_button(
     """
     unmatched: tuple[int, int] | None = None
     for (left, top, right, bottom), price_box, icon_box, edge in SHEET_LAYOUTS[world]:
-        biggest = max(
-            (
-                patch
-                for patch in patches(
-                    mask(image.crop((left, top, right, bottom)), SHEET_GREEN),
-                    right - left,
-                    bottom - top,
-                )
-                if patch.count >= SHEET_BUTTON
-            ),
-            key=lambda patch: patch.count,
-            default=None,
-        )
+        found = [
+            patch
+            for patch in patches(
+                mask(image.crop((left, top, right, bottom)), SHEET_GREEN),
+                right - left,
+                bottom - top,
+            )
+            if patch.count >= SHEET_BUTTON
+        ]
+        # **The button is the green patch its price lies on, where one does**, and
+        # only otherwise the biggest. A squad's research sheet (小隊, met on the
+        # Dragon Squad's 2026-11-17) draws a green banner above the button, wider
+        # than it and inside this span: taken for the button, it put `confirm`'s
+        # press on the banner at y 670, 115 px above 確認, and nothing was bought.
+        across, down = (price_box[0] + price_box[2]) // 2, (price_box[1] + price_box[3]) // 2
+        priced = [
+            patch
+            for patch in found
+            if patch.left + left <= across <= patch.right + left
+            and patch.top + top <= down <= patch.bottom + top
+        ]
+        biggest = max(priced or found, key=lambda patch: patch.count, default=None)
         if biggest is None:
             continue
         point = (biggest.middle[0] + left, biggest.middle[1] + top)
