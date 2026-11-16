@@ -28,7 +28,7 @@ paths:
 
 **Reading the loot panel.**
 
-- **`read_scout`'s None is overloaded**, and searching and unreadable are opposite instructions. The end of a battle is `_battle_ended`, which reads the green 回營 button, never a None.
+- **`read_scout`'s None is overloaded**, and searching and unreadable are opposite instructions. A search is sat out for `SEARCH_PATIENCE`, never left early: the game goes on searching alone and its countdown then starts a battle with nothing deployed. The end of a battle is `_battle_ended`, which reads the green 回營 button, never a None.
 - A new opponent fades in, and a frame caught mid-fade reads half-drawn digits and an absent 下一個 — which means "forced" and commits the army. `_scout` refuses a frame whose panel peak (`panel_peak`) is under `PANEL_DRAWN_BRIGHTNESS`. The check lives in `_scout` rather than `read_scout`, because the battle poll must still read popup-dimmed panels.
 - The storage bars (`read_stock`) are the home village test of every `GameRunner` loop (`_home`), so a failure there takes `collect` and `donate` down; the attack loop tests the village with `current_world`.
 

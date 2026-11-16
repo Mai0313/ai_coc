@@ -107,6 +107,12 @@ SEARCH_CANCEL = (798, 786)
 # a fresh one gets a fresh pass over whoever is queueing now — and the state is
 # read throughout, because a stop that takes minutes to show reads as one that
 # did nothing.
+#
+# **The home village's search waits as long, and is sat out rather than
+# cancelled** (`run`): walking away from 正在搜尋對手 leaves the game to find an
+# opponent alone and run its countdown into a battle nothing is deployed in. At
+# the 30 s it used to get, that happened twice in 30 minutes on 2026-11-16, the
+# day town hall 19 opened, with searches of 38 s and more.
 SEARCH_PATIENCE = 150
 SEARCH_ATTEMPTS = 4
 SEARCH_POLL = 3.0
@@ -3274,7 +3280,7 @@ class AttackRunner(ScreenRunner):
         skipped = 0
         leaving: LootOffer | None = None
         while True:
-            scouted = self._scout(leaving=leaving)
+            scouted = self._scout(SEARCH_PATIENCE, leaving=leaving)
             if scouted is None:
                 # An opponent still offering 下一個 has a countdown of its own
                 # running, and leaving it to expire is what starts a battle the

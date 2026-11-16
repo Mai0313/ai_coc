@@ -1243,6 +1243,21 @@ class DayRoundTests(unittest.TestCase):
         assert report.outcome == "no_opponent"
         assert END_BATTLE not in taps
 
+    def test_a_search_is_waited_out_as_long_as_the_builder_bases(self) -> None:
+        """Walking away at 30 s left the game to find an opponent and start the battle alone."""
+        runner = AttackRunner(adb=_adb(), display=DISPLAY, thresholds=THRESHOLDS)
+        with (
+            patch.object(attack.time, "sleep"),
+            patch.object(runner, "_open_attack_menu", return_value=b"home"),
+            patch.object(runner, "_stood_down", return_value=None),
+            patch.object(runner, "_tap"),
+            patch.object(runner, "_frame", return_value=b""),
+            patch.object(attack, "army_strength", return_value=(305, 305)),
+            patch.object(runner, "_scout", return_value=None) as scout,
+        ):
+            assert runner.run().outcome == "no_opponent"
+        scout.assert_called_once_with(attack.SEARCH_PATIENCE, leaving=None)
+
 
 class BattleWaitTests(unittest.TestCase):
     def _runner(self, **fields: object) -> AttackRunner:
