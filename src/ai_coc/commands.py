@@ -4902,6 +4902,12 @@ PANEL_HUD_BOX = (810, 0, 1170, 330)
 CONFIRM_LOOKS = 4
 CONFIRM_GAP = 0.8
 CONFIRM_SETTLED = 2
+# How many times `confirm --pay` looks for the wall's menu before it says there
+# is none. Its plates are translucent, and on the home village whatever moves
+# behind them shifts a price's pixels: of four frames of one batch menu taken
+# seconds apart on 2026-11-17, one read no gold price (29 byte values moved in
+# its box) and a single look answered `no_wall_menu` with the menu plainly up.
+WALL_MENU_LOOKS = 4
 
 PRESS_LINES: dict[PressOutcome, str] = {
     "pressed": "已經按下去",
@@ -5173,8 +5179,20 @@ def _pay_wall(
     A sheet or a dialog already standing means no wall menu, whatever is drawn
     under it: the dialog `_raised` presses has to be one this raised. The frame
     it ends on is None when it pressed nothing.
+
+    An open panel with no menu read beside it is looked at again
+    (`WALL_MENU_LOOKS`). Every look has to read both buttons priced alike, so
+    looking again presses nothing a single look would not.
     """
-    menu = None if sheet_open(before) or game_dialog(before) else panel_wall_menu(before)
+    menu = None
+    for look in range(WALL_MENU_LOOKS):
+        if look:
+            time.sleep(CONFIRM_GAP)
+            before = adb.screenshot(display, "wall-menu")
+        if sheet_open(before) or game_dialog(before) or not build_panel_open(before):
+            break
+        if (menu := panel_wall_menu(before)) is not None:
+            break
     wall = None if menu is None else menu.gold if pay == "gold" else menu.elixir
     if wall is None:
         return "no_wall_menu", None, None, None

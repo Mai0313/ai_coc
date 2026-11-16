@@ -8060,6 +8060,8 @@ class HomeHudTests(unittest.TestCase):
             "night_wall_menu_one_row.png",
             "night_wall_batch_one_row.png",
             "night_wall_row.png",
+            "home_wall_batch.png",
+            "home_wall_batch_unread.png",
         }
         for path in sorted(FRAMES.glob("*.png")):
             try:
@@ -8395,6 +8397,8 @@ class PanelWallMenuTests(unittest.TestCase):
             ("night_wall_batch.png", 1600000, False, ((497, 790), (671, 790))),
             ("night_wall_menu_one_row.png", 800000, True, ((759, 710), (933, 710))),
             ("night_wall_batch_one_row.png", 800000, True, ((672, 710), (846, 710))),
+            # The home village's, a batch of eleven.
+            ("home_wall_batch.png", 26400000, True, ((497, 790), (671, 790))),
         ):
             menu = panel_wall_menu((FRAMES / name).read_bytes())
             assert menu is not None, name
@@ -8411,6 +8415,9 @@ class PanelWallMenuTests(unittest.TestCase):
             "night_wall_batch.png",
             "night_wall_menu_one_row.png",
             "night_wall_batch_one_row.png",
+            # `home_wall_batch_unread.png` is the same menu eleven seconds later and
+            # reads as none: its gold price does not read (`WALL_MENU_LOOKS`).
+            "home_wall_batch.png",
         }
         for path in sorted(FRAMES.glob("*.png")):
             try:
