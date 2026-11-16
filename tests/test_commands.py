@@ -4139,6 +4139,26 @@ class PressAndConfirmTests(unittest.TestCase):
         assert report.wall is not None
         assert (report.wall.price, report.wall.resource) == (26400000, "gold")
 
+    def test_a_dialog_that_comes_up_between_two_looks_takes_the_wall_menu_away(self) -> None:
+        """Every look is held to the standing-dialog test, not only the first."""
+        standing = GameDialog(confirm=(973, 560), cancel=(623, 572))
+        with patch.object(commands, "game_dialog", side_effect=[None, standing]):
+            adb, report = self._run(
+                ["home_wall_batch_unread.png", "home_wall_batch.png"],
+                lambda d: commands.confirm(26400000, d, "gold"),
+            )
+        adb.tap.assert_not_called()
+        assert report.outcome == "no_wall_menu"
+
+    def test_the_frame_kept_is_the_one_the_wall_menu_was_read_off(self) -> None:
+        adb, report = self._run(
+            ["home_wall_batch_unread.png", "home_wall_batch.png"],
+            lambda d: commands.confirm(26400001, d, "gold"),
+        )
+        adb.tap.assert_not_called()
+        assert report.outcome == "price_mismatch"
+        assert report.frame.read_bytes() == (FRAMES / "home_wall_batch.png").read_bytes()
+
     def test_a_panel_with_no_wall_menu_is_looked_at_a_few_times_and_no_more(self) -> None:
         adb, report = self._run(
             ["hud_night_build_panel.png"], lambda d: commands.confirm(1600000, d, "elixir")

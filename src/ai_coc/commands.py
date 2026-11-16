@@ -112,6 +112,7 @@ from ai_coc.models import (
     GrowthOutcome,
     JournalTimers,
     LaunchOutcome,
+    PanelWallMenu,
     SearchOptions,
     SearchOutcome,
     SearchSection,
@@ -4905,8 +4906,9 @@ CONFIRM_SETTLED = 2
 # How many times `confirm --pay` looks for the wall's menu before it says there
 # is none. Its plates are translucent, and on the home village whatever moves
 # behind them shifts a price's pixels: of four frames of one batch menu taken
-# seconds apart on 2026-11-17, one read no gold price (29 byte values moved in
-# its box) and a single look answered `no_wall_menu` with the menu plainly up.
+# seconds apart on 2026-11-17, one read no gold price (against the frame before
+# it, 29 of its price box's 10 608 byte values had moved by more than 12) and a
+# single look answered `no_wall_menu` with the menu plainly up.
 WALL_MENU_LOOKS = 4
 
 PRESS_LINES: dict[PressOutcome, str] = {
@@ -5167,32 +5169,43 @@ def _raised(
     return ("sheet_disagrees" if sheet else "no_confirmation"), seen, after
 
 
-def _pay_wall(
-    adb: AdbController,
-    display: DisplayTarget,
-    before: bytes,
-    price: int,
-    pay: Literal["gold", "elixir"],
-) -> tuple[ConfirmOutcome, SheetOffer | None, SheetOffer | None, bytes | None]:
-    """Read the wall's price button for `pay`, press it if it agrees, and pay what it raised.
+def _wall_menu(
+    adb: AdbController, display: DisplayTarget, before: bytes
+) -> tuple[PanelWallMenu | None, bytes]:
+    """The wall menu beside the open panel and the frame it was read off, looking again if need be.
 
     A sheet or a dialog already standing means no wall menu, whatever is drawn
-    under it: the dialog `_raised` presses has to be one this raised. The frame
-    it ends on is None when it pressed nothing.
-
-    An open panel with no menu read beside it is looked at again
-    (`WALL_MENU_LOOKS`). Every look has to read both buttons priced alike, so
-    looking again presses nothing a single look would not.
+    under it: the dialog `_raised` presses has to be one this raised. An open
+    panel with no menu read beside it is looked at again (`WALL_MENU_LOOKS`),
+    and every look is held to all of that afresh, so looking again presses
+    nothing a single look would not. The frame handed back is the last one
+    looked at, which is the one the answer was read off.
     """
-    menu = None
     for look in range(WALL_MENU_LOOKS):
         if look:
             time.sleep(CONFIRM_GAP)
             before = adb.screenshot(display, "wall-menu")
         if sheet_open(before) or game_dialog(before) or not build_panel_open(before):
-            break
+            return None, before
         if (menu := panel_wall_menu(before)) is not None:
-            break
+            if look:
+                logger.info("The wall menu read on look %d of %d", look + 1, WALL_MENU_LOOKS)
+            return menu, before
+    logger.info("No wall menu read beside the open panel in %d looks", WALL_MENU_LOOKS)
+    return None, before
+
+
+def _pay_wall(
+    adb: AdbController,
+    display: DisplayTarget,
+    menu: PanelWallMenu | None,
+    price: int,
+    pay: Literal["gold", "elixir"],
+) -> tuple[ConfirmOutcome, SheetOffer | None, SheetOffer | None, bytes | None]:
+    """Press the wall's price button for `pay` if it agrees, and pay what it raised.
+
+    The frame it ends on is None when it pressed nothing.
+    """
     wall = None if menu is None else menu.gold if pay == "gold" else menu.elixir
     if wall is None:
         return "no_wall_menu", None, None, None
@@ -5257,7 +5270,9 @@ def confirm(
             adb.tap(*hire.point, display)
             outcome, after = _after_confirm(adb, display)
     elif pay is not None:
-        outcome, offer, wall, after = _pay_wall(adb, display, before, price, pay)
+        menu, before = _wall_menu(adb, display, before)
+        looked = datetime.now().astimezone().replace(microsecond=0)
+        outcome, offer, wall, after = _pay_wall(adb, display, menu, price, pay)
     else:
         offer = sheet_offer(before)
         if not sheet_open(before):
