@@ -45,7 +45,7 @@ from ai_coc.parsers.home import (
     reward_chest,
     build_panel_open,
 )
-from ai_coc.parsers.field import view_shift, pinch_zoomed
+from ai_coc.parsers.field import view_shift, pinch_zoomed, screen_changed
 from ai_coc.parsers.scout import (
     in_battle,
     battle_over,
@@ -410,16 +410,17 @@ SAIL_GAP = 1.5
 UNCOVER_TRIES = 3
 UNCOVER_SETTLE = 1.5
 
-# A reward chest (`reward_chest`) is tapped open on the chest itself, one hammer
+# A reward chest (`reward_chest`) is tapped open on the chest itself, one tool
 # a tap, and what it holds then comes up one reward at a time over the same room,
-# each with a 繼續 in this box (x 701-924, y 780-847 on a 時光鐘樓藥水). Measured
-# 2026-10-16: the fourth tap flashed the screen white and the reward stood
-# about a second later.
+# each with a 繼續 in this box (x 701-924, y 780-847 on a 時光鐘樓藥水, and
+# x 655-913, y 730-810 on the event chest of 2026-11-17). Measured 2026-10-16:
+# the fourth tap flashed the screen white and the reward stood about a second
+# later.
 CHEST_SPOT = (790, 480)
 CHEST_TAP_GAP = 0.8
 CHEST_TAPS = 10
 CHEST_OPENING = 2.5
-CHEST_CONTINUE_BOX = (680, 760, 950, 870)
+CHEST_CONTINUE_BOX = (640, 715, 950, 870)
 # Looks, a reward pressed or a frame waited on each, before the village has to read.
 CHEST_REWARD_LOOKS = 10
 
@@ -626,30 +627,43 @@ def open_chest(adb: AdbController, display: DisplayTarget) -> None:
     chest itself: a big green button is what 立即完成 and the gem offers wear,
     which is why `tap` refuses every one, so a green button is only ever pressed
     by whoever raised it.
+
+    **Tapped until the screen changes, not until the tools run out**: the tools
+    on the strip are whatever the event draws, and a tap that only spends one
+    leaves the screen as it was (`screen_changed`). The chest is still on screen
+    for a moment after its last tool, so one more tap can land on it opening;
+    none lands on a reward, whose 繼續 ends the taps.
     """
+    before = adb.screenshot(display, "chest")
     for _ in range(CHEST_TAPS):
+        if _reward_button(before) is not None:
+            break
         adb.tap(*CHEST_SPOT, display)
         time.sleep(CHEST_TAP_GAP)
-        if not reward_chest(adb.screenshot(display, "chest")):
+        after = adb.screenshot(display, "chest")
+        if screen_changed(before, after):
             break
+        before = after
     time.sleep(CHEST_OPENING)
-    left, top, right, bottom = CHEST_CONTINUE_BOX
     # **Done only once the village reads**, since a frame with no 繼續 can also
     # be a reward still sliding in, and nothing else presses one that is missed.
     for _ in range(CHEST_REWARD_LOOKS):
         png = adb.screenshot(display, "chest-reward")
-        buttons = [
-            (x0, y0, x1, y1)
-            for x0, y0, x1, y1 in green_buttons(png)
-            if left <= x0 and top <= y0 and x1 <= right and y1 <= bottom
-        ]
-        if buttons:
-            x0, y0, x1, y1 = buttons[0]
+        if (button := _reward_button(png)) is not None:
             logger.info("Pressing 繼續 on the chest's reward")
-            adb.tap((x0 + x1) // 2, (y0 + y1) // 2, display)
+            adb.tap(*button, display)
         elif current_world(png) is not None:
             return
         time.sleep(UNCOVER_SETTLE)
+
+
+def _reward_button(png: bytes) -> tuple[int, int] | None:
+    """The middle of the 繼續 under a chest's reward, or None where none stands."""
+    left, top, right, bottom = CHEST_CONTINUE_BOX
+    for x0, y0, x1, y1 in green_buttons(png):
+        if left <= x0 and top <= y0 and x1 <= right and y1 <= bottom:
+            return (x0 + x1) // 2, (y0 + y1) // 2
+    return None
 
 
 def uncovered(adb: AdbController, display: DisplayTarget) -> World | None:

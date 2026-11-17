@@ -226,6 +226,24 @@ CHEST_HANDLE_FILL = 0.12
 # How far a handle may sit from straight under its head, either way: measured 3
 # left and 2 up into the head's bottom row on every hammer.
 CHEST_HANDLE_REACH = 8
+# **The tools on the strip are the event's, not the game's**: on 2026-11-17 a
+# chest came with four gold rolling pins, of which the hammers' white and orange
+# read nothing, and an attack series ended `no_attack_menu` under it. What every
+# chest carries until its first tap is 跳過 in the bottom right corner, the same
+# pixels on the hammer chest of 2026-10-16 and on that one: 249 white pixels
+# spanning x 1472-1510, y 806-823, on a plate whose other pixels are dark at
+# 0.965. Swept over 233 frames, the committed ones and those the run logs held,
+# the only other white in the box is the clan chat's, 714 to 774 pixels against
+# its left edge. The first tap takes 跳過 away, so a chest somebody began on is
+# read by its hammers alone; a reward brings it back a moment after it stands,
+# over its 繼續.
+CHEST_SKIP_BOX = (1455, 795, 1530, 838)
+CHEST_SKIP_TEXT = (1472, 806, 1511, 824)
+CHEST_SKIP_SLACK = 3
+CHEST_SKIP_WHITE = ((200, 255), (200, 255), (200, 255))
+CHEST_SKIP_COUNT = (200, 300)
+CHEST_SKIP_PLATE = ((0, 109), (0, 109), (0, 109))
+CHEST_SKIP_DARK = 0.9
 
 # The two counters in the bottom right, idle over total: the builders' and the
 # laboratory's. The 2026-10 overhaul moved them off the plate row along the top
@@ -470,8 +488,35 @@ def clock_tower_marker(png: bytes) -> tuple[int, int] | None:
     return None
 
 
+def chest_skip(png: bytes) -> bool:
+    """Whether 跳過 stands in the bottom right corner, as over an untapped reward chest or one of its rewards."""
+    box = open_frame(png).crop(CHEST_SKIP_BOX)
+    white = mask(box, CHEST_SKIP_WHITE)
+    count = white.count(255)
+    text = Image.frombytes("L", box.size, white).getbbox()
+    if text is None or not CHEST_SKIP_COUNT[0] <= count <= CHEST_SKIP_COUNT[1]:
+        return False
+    left, top = CHEST_SKIP_BOX[:2]
+    spans = (text[0] + left, text[1] + top, text[2] + left, text[3] + top)
+    if any(
+        abs(found - known) > CHEST_SKIP_SLACK
+        for found, known in zip(spans, CHEST_SKIP_TEXT, strict=False)
+    ):
+        return False
+    dark = mask(box, CHEST_SKIP_PLATE).count(255)
+    return dark >= CHEST_SKIP_DARK * (box.width * box.height - count)
+
+
 def reward_chest(png: bytes) -> int:
-    """How many unused hammers a reward chest has left; 0 where no chest is up."""
+    """How many taps a reward chest still wants; 0 where no chest is up.
+
+    The unused hammers where the strip holds hammers, and 1 for an untouched
+    chest holding some other tool or a reward of one (`chest_skip`).
+    """
+    return _hammers(png) or int(chest_skip(png))
+
+
+def _hammers(png: bytes) -> int:
     strip = open_frame(png).crop(CHEST_STRIP)
     heads = [
         patch

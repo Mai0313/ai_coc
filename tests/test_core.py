@@ -115,6 +115,7 @@ from ai_coc.adapters.adb import (
 )
 from ai_coc.parsers.clan import panel_top, donatable_cards, reinforce_button
 from ai_coc.parsers.home import (
+    chest_skip,
     boat_marker,
     cart_marker,
     plate_count,
@@ -125,7 +126,7 @@ from ai_coc.parsers.home import (
     build_panel_open,
     clock_tower_marker,
 )
-from ai_coc.parsers.field import view_shift, pinch_zoomed
+from ai_coc.parsers.field import view_shift, pinch_zoomed, screen_changed
 from ai_coc.parsers.frame import open_frame
 from ai_coc.parsers.scout import (
     SPEED_BOX,
@@ -2319,6 +2320,7 @@ class CrossingTests(unittest.TestCase):
             (FRAMES / name).read_bytes()
             for name in (
                 "reward_chest_four.png",
+                "reward_chest_four.png",
                 "reward_chest_one.png",
                 "reward_chest_prize.png",
                 "reward_chest_prize.png",
@@ -2333,12 +2335,55 @@ class CrossingTests(unittest.TestCase):
         taps = [c.args[:2] for c in adb.tap.call_args_list]
         assert taps == [world_ui.CHEST_SPOT, world_ui.CHEST_SPOT, (812, 813)]
 
+    def test_a_chest_of_another_tool_is_tapped_until_the_screen_changes(self) -> None:
+        """An event's chest holds rolling pins, which no hammer reader counts."""
+        adb = MagicMock()
+        adb.screenshot.side_effect = [
+            (FRAMES / name).read_bytes()
+            for name in (
+                "reward_chest_pins.png",
+                "reward_chest_pins.png",
+                "reward_chest_pins_tapped.png",
+                "reward_chest_pins_tapped.png",
+                "reward_chest_pins_tapped.png",
+                "reward_chest_pins_prize.png",
+                "reward_chest_pins_prize.png",
+                "hud_day.png",
+                "hud_day.png",
+            )
+        ]
+        with patch.object(world_ui.time, "sleep"):
+            here = world_ui.uncovered(adb, DisplayTarget(logical_id="1", physical_id="2"))
+        assert here == "day"
+        taps = [c.args[:2] for c in adb.tap.call_args_list]
+        assert taps == [*[world_ui.CHEST_SPOT] * 4, (784, 770)]
+
+    def test_a_reward_already_standing_is_continued_and_not_tapped(self) -> None:
+        """A reward carries 跳過 too, and the chest's spot is the reward itself by then."""
+        adb = MagicMock()
+        adb.screenshot.side_effect = [
+            (FRAMES / name).read_bytes()
+            for name in (
+                "reward_chest_pins_prize_skip.png",
+                "reward_chest_pins_prize_skip.png",
+                "hud_day.png",
+            )
+        ]
+        with patch.object(world_ui.time, "sleep"):
+            world_ui.open_chest(adb, DisplayTarget(logical_id="1", physical_id="2"))
+        assert [c.args[:2] for c in adb.tap.call_args_list] == [(784, 770)]
+
     def test_a_green_button_off_the_rewards_place_is_not_pressed(self) -> None:
         """立即完成 and the gem offers are green too."""
         adb = MagicMock()
         adb.screenshot.side_effect = [
             (FRAMES / name).read_bytes()
-            for name in ("reward_chest_prize.png", "sheet_running_gems.png", "hud_day.png")
+            for name in (
+                "reward_chest_one.png",
+                "reward_chest_prize.png",
+                "sheet_running_gems.png",
+                "hud_day.png",
+            )
         ]
         with patch.object(world_ui.time, "sleep"):
             world_ui.open_chest(adb, DisplayTarget(logical_id="1", physical_id="2"))
@@ -2350,6 +2395,7 @@ class CrossingTests(unittest.TestCase):
         adb.screenshot.side_effect = [
             (FRAMES / name).read_bytes()
             for name in (
+                "reward_chest_one.png",
                 "reward_chest_prize.png",
                 "loading_screen.png",
                 "reward_chest_prize.png",
@@ -8590,7 +8636,7 @@ class PanelWallMenuTests(unittest.TestCase):
 
 
 class RewardChestTests(unittest.TestCase):
-    """The chest the game raises after some battles, read by the hammers left on it."""
+    """The chest the game raises after some battles, read by its hammers or its untouched 跳過."""
 
     def test_the_unused_hammers_are_counted(self) -> None:
         for name, left in (
@@ -8600,9 +8646,41 @@ class RewardChestTests(unittest.TestCase):
         ):
             assert reward_chest((FRAMES / name).read_bytes()) == left, name
 
+    def test_an_untouched_chest_of_another_tool_is_read_by_its_skip_button(self) -> None:
+        """The first tap takes 跳過 away, a reward brings it back, and the rolling pins are no hammers."""
+        for name, left in (
+            ("reward_chest_pins.png", 1),
+            ("reward_chest_pins_tapped.png", 0),
+            ("reward_chest_pins_prize.png", 0),
+            ("reward_chest_pins_prize_skip.png", 1),
+        ):
+            assert reward_chest((FRAMES / name).read_bytes()) == left, name
+
+    def test_white_elsewhere_in_the_corner_is_no_skip_button(self) -> None:
+        image = Image.open(FRAMES / "reward_chest_pins.png").convert("RGB")
+        image.paste((255, 255, 255), (1460, 800, 1470, 830))
+        out = io.BytesIO()
+        image.save(out, format="PNG")
+        assert not chest_skip(out.getvalue())
+
+    def test_the_screen_changes_when_the_chest_opens_and_not_at_a_tap(self) -> None:
+        for before, after, changed in (
+            ("reward_chest_four.png", "reward_chest_one.png", False),
+            ("reward_chest_one.png", "reward_chest_prize.png", True),
+            ("reward_chest_pins.png", "reward_chest_pins_tapped.png", False),
+            ("reward_chest_pins_tapped.png", "reward_chest_pins_prize.png", True),
+        ):
+            found = screen_changed((FRAMES / before).read_bytes(), (FRAMES / after).read_bytes())
+            assert found == changed, (before, after)
+
     def test_no_other_frame_reads_as_one(self) -> None:
         """The 4x speed button and the loading screen's badge carry white there, with no handle."""
-        chests = {"reward_chest_four.png", "reward_chest_one.png"}
+        chests = {
+            "reward_chest_four.png",
+            "reward_chest_one.png",
+            "reward_chest_pins.png",
+            "reward_chest_pins_prize_skip.png",
+        }
         for path in sorted(FRAMES.glob("*.png")):
             try:
                 found = reward_chest(path.read_bytes())

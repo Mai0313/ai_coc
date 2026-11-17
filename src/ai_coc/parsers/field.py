@@ -53,6 +53,12 @@ ZOOM_CHANGE = 5
 # and along the map's edge, at most 0.32, and zooms of 1.3 to 2.5 about the
 # pinch's centre at least 0.59.
 ZOOM_RATIO = 0.4
+# How much a whole frame, reduced, may differ between two captures of one
+# screen. A reward chest a tap apart differs by 0.1 to 0.5 (2026-11-17) and two
+# committed frames of one by 3.4; the chest against its opening flash by 192, and
+# against its first reward by 31 to 32.
+SCREEN_REDUCE = 10
+SCREEN_CHANGE = 12
 
 
 def view_shift(before: bytes, after: bytes, drift: tuple[int, int]) -> tuple[int, int] | None:
@@ -123,6 +129,12 @@ def view_shift(before: bytes, after: bytes, drift: tuple[int, int]) -> tuple[int
         logger.warning("Nothing in the align box to compare; how far the camera went is unread")
         return None
     return best
+
+
+def screen_changed(before: bytes, after: bytes) -> bool:
+    """Whether two captures show different screens, rather than one screen a moment apart."""
+    first, second = (open_frame(png).convert("L").reduce(SCREEN_REDUCE) for png in (before, after))
+    return ImageStat.Stat(ImageChops.difference(first, second)).mean[0] > SCREEN_CHANGE
 
 
 def pinch_zoomed(before: bytes, after: bytes) -> bool:
