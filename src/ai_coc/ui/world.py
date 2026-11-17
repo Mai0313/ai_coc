@@ -45,7 +45,7 @@ from ai_coc.parsers.home import (
     reward_chest,
     build_panel_open,
 )
-from ai_coc.parsers.field import view_shift
+from ai_coc.parsers.field import view_shift, pinch_zoomed
 from ai_coc.parsers.scout import (
     in_battle,
     battle_over,
@@ -237,11 +237,16 @@ def park_camera(
     (see `CART_SPOTS`). **Five unchecked swipes were the old answer
     and bought neither end.**
 
+    **A pinch the game read as a drag leaves the walk at the wrong scale**, where
+    it clamps all the same and reads as parked (#667), so `_zoom_out` proves
+    the zoom and a park it could not prove answers False.
+
     A cover over the village is the caller's to clear: the build panel shifts
     the corner column `current_world` reads, so no caller gets here with one up.
     """
-    adb.zoom("out", ZOOM_PINCHES, COC_PACKAGE, display)
-    if (after := _walk(adb, display, world)) is None:
+    if (pinched := _zoom_out(adb, display)) is None:
+        return False
+    if (after := _walk(adb, display, world, pinched)) is None:
         return False
     if world == "day" and boat_marker(after) is not None:
         if not corner:
@@ -253,9 +258,36 @@ def park_camera(
     if world == "day" and not _free_scale(adb, display):
         # The pinch did not bring the marker back, so this was no bought
         # scenery's far zoom: the far park is what everything was measured on.
-        adb.zoom("out", ZOOM_PINCHES, COC_PACKAGE, display)
-        return _walk(adb, display, world) is not None
+        pinched = _zoom_out(adb, display)
+        return pinched is not None and _walk(adb, display, world, pinched) is not None
     return True
+
+
+# How many times a park pinches out and tests the pinch before it gives up. The
+# game reads every pinch as one finger from right after some builder base
+# battles until the next one (#667): 15 pinches over 90 s slid on 2026-11-17,
+# while one round earlier a park's first pinch slid and its second zoomed.
+PINCH_TRIES = 3
+
+
+def _zoom_out(adb: AdbController, display: DisplayTarget) -> bytes | None:
+    """Pinch out to the far zoom, proved by one pinch in that zooms; the frame there, or None.
+
+    **A pinch out cannot prove itself**: at the far limit it changes nothing,
+    and so does a pinch read as one finger dragging the camera into a corner of
+    the map. A pinch in from there always changes the scale, so it is the test,
+    and the pinches out after it put back what it took.
+    """
+    for _ in range(PINCH_TRIES):
+        adb.zoom("out", ZOOM_PINCHES, COC_PACKAGE, display)
+        before = adb.screenshot(display, "pinch")
+        adb.zoom("in", 1, COC_PACKAGE, display)
+        if pinch_zoomed(before, adb.screenshot(display, "pinch-in")):
+            adb.zoom("out", ZOOM_PINCHES, COC_PACKAGE, display)
+            return adb.screenshot(display, "pinch")
+        logger.warning("The game read the pinch as a drag rather than a zoom; pinching again")
+    logger.warning("The game kept reading the pinch as a drag; the camera is at no known scale")
+    return None
 
 
 def _centre(adb: AdbController, display: DisplayTarget, world: World) -> None:
@@ -286,13 +318,12 @@ def _to_middle(
     time.sleep(SWIPE_SETTLE)
 
 
-def _walk(adb: AdbController, display: DisplayTarget, world: World) -> bytes | None:
-    """Swipe into this village's corner until the picture stops; the frame it stopped on, or None."""
+def _walk(adb: AdbController, display: DisplayTarget, world: World, before: bytes) -> bytes | None:
+    """Swipe from `before` into this village's corner until the picture stops; the frame it stopped on, or None."""
     # Keyed by the village being sailed to, so the push away from the village
     # being stood on is the other one's.
     crossing = CROSSINGS["night" if world == "day" else "day"]
     landing = (crossing.start[0] + crossing.drift[0], crossing.start[1] + crossing.drift[1])
-    before = adb.screenshot(display, "park")
     still = 0
     for swipe in range(1, PARK_SWIPES + 1):
         adb.swipe(crossing.start, landing, SWIPE_MS, display)

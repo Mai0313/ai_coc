@@ -1700,8 +1700,9 @@ class StatusReport(BaseModel):
 # whatever is drawn under it, and is answered with `times` 0 when it was found
 # before the pinch rather than after; `zoomed_in` is `--zoom in`, where
 # the park would undo the request and could not settle anyway; and
-# `never_settled` is a camera that would not stop moving, which leaves every
-# remembered coordinate off by however far it was short; and `selected` is a
+# `never_settled` is a park that failed, a camera that would not stop moving or
+# a pinch the game kept reading as a drag (#667), which leaves every remembered
+# coordinate off; and `selected` is a
 # village with a building or a wall left selected, whose button row the park's
 # drag would start on instead of moving the camera (#429).
 ViewOutcome = Literal["parked", "not_a_village", "zoomed_in", "never_settled", "selected"]

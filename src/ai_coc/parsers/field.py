@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import logging
 
-from PIL import ImageChops
+from PIL import ImageStat, ImageChops
 
 from ai_coc.parsers.frame import open_frame
 
@@ -27,6 +27,32 @@ logger = logging.getLogger(__name__)
 ALIGN_BOX = (450, 250, 1150, 620)
 ALIGN_STEPS = 15
 ALIGN_LIMIT = 1.4
+
+# Where `pinch_zoomed` compares the frames either side of a pinch: the playfield
+# between the HUD's bars and button columns, so nothing fixed on screen pulls the
+# match back to no shift, at an eighth of the resolution, which shifts of
+# hundreds of pixels do not need.
+ZOOM_BAND = (150, 150, 1400, 750)
+ZOOM_REDUCE = 8
+# The shifts a pinch read as one finger can leave, in screen pixels. That finger
+# travels 350 px sideways at `FULL_PINCH` and flings past it (412 to 416 px per
+# pinch on 2026-11-17, #667), and against the map's edge the camera then runs
+# along it: (264, 192) and (368, 64) on the same day, or only a few pixels into
+# a corner. Searched as far as 1000 px, zooms of 2.5 matched better than their
+# own picture at the far end, where only a fifth of the band still overlaps.
+ZOOM_SHIFT_X, ZOOM_SHIFT_Y = 600, 240
+# How much the picture has to change to have zoomed at all: a still builder base
+# differs by 0.4 to 1.3, a pinch read as a drag into the map's corner by 0.4, and
+# the smallest zoom swept below by 11.9, a pinch in recorded live by 21.9.
+ZOOM_CHANGE = 5
+# How much better than no shift the best shift may match before the change reads
+# as a drag rather than a zoom. Recorded live on 2026-11-17: 32 pinches in the game
+# read as one finger 0.08 to 0.22, and 9 pinches in from the far zoom 0.76 to
+# 0.87. Over the 333 frames of both villages that read as one (`tests/frames`
+# and the run frames kept that day): synthetic drags of 24 to 416 px, sideways
+# and along the map's edge, at most 0.32, and zooms of 1.3 to 2.5 about the
+# pinch's centre at least 0.59.
+ZOOM_RATIO = 0.4
 
 
 def view_shift(before: bytes, after: bytes, drift: tuple[int, int]) -> tuple[int, int] | None:
@@ -97,3 +123,41 @@ def view_shift(before: bytes, after: bytes, drift: tuple[int, int]) -> tuple[int
         logger.warning("Nothing in the align box to compare; how far the camera went is unread")
         return None
     return best
+
+
+def pinch_zoomed(before: bytes, after: bytes) -> bool:
+    """Whether a pinch changed the scale, rather than nothing or only where the camera stands.
+
+    The game sometimes reads every pinch as its first finger alone (#667),
+    from right after a builder base battle until the next one, and pans the
+    camera the way that finger drags: sideways, or along the map's edge once
+    it meets it, or not at all against a corner. A zoom about the middle
+    changes the picture in a way no one shift lines up, so a change some shift
+    matches far better than none is that drag. Unlike `view_shift`, this weighs
+    the best shift against no shift at all, searches the plane, and compares
+    only the overlap, since a slide of 800 px leaves `ALIGN_BOX` nothing in
+    common.
+    """
+    first = open_frame(before).convert("L").crop(ZOOM_BAND).reduce(ZOOM_REDUCE)
+    second = open_frame(after).convert("L").crop(ZOOM_BAND).reduce(ZOOM_REDUCE)
+    width, height = first.size
+
+    def apart(dx: int, dy: int) -> float:
+        left, right = max(0, -dx), width - max(0, dx)
+        top, bottom = max(0, -dy), height - max(0, dy)
+        window = second.crop((left + dx, top + dy, right + dx, bottom + dy))
+        return ImageStat.Stat(
+            ImageChops.difference(first.crop((left, top, right, bottom)), window)
+        ).mean[0]
+
+    still = apart(0, 0)
+    if still < ZOOM_CHANGE:
+        return False
+    reach_x, reach_y = ZOOM_SHIFT_X // ZOOM_REDUCE, ZOOM_SHIFT_Y // ZOOM_REDUCE
+    shifted = min(
+        apart(dx, dy)
+        for dx in range(-reach_x, reach_x + 1)
+        for dy in range(-reach_y, reach_y + 1)
+        if (dx, dy) != (0, 0)
+    )
+    return shifted >= ZOOM_RATIO * still

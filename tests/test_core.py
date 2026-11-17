@@ -125,7 +125,7 @@ from ai_coc.parsers.home import (
     build_panel_open,
     clock_tower_marker,
 )
-from ai_coc.parsers.field import view_shift
+from ai_coc.parsers.field import view_shift, pinch_zoomed
 from ai_coc.parsers.frame import open_frame
 from ai_coc.parsers.scout import (
     SPEED_BOX,
@@ -1057,6 +1057,12 @@ class WorldTests(unittest.TestCase):
             "hud_day_shield_up.png": "day",
             "view_wall_selected.png": "night",
             "view_wall_batch_selected.png": "night",
+            "night_pinch_in_before.png": "night",
+            "night_pinch_in_after.png": "night",
+            "night_pinch_edge_before.png": "night",
+            "night_pinch_edge_after.png": "night",
+            "night_pinch_corner_before.png": "night",
+            "night_pinch_corner_after.png": "night",
         }
         for path in sorted(FRAMES.glob("*.png")):
             try:
@@ -1919,11 +1925,13 @@ class ParkCameraTests(unittest.TestCase):
         world: str = "day",
         markers: tuple[tuple[int, int] | None, ...] = ((442, 542),),
         corner: bool = False,
+        zooms: list[bool] | None = None,
     ) -> tuple[MagicMock, bool]:
         adb = MagicMock()
         with (
             patch.object(world_ui.time, "sleep"),
             patch.object(world_ui, "view_shift", side_effect=shifts),
+            patch.object(world_ui, "pinch_zoomed", side_effect=zooms, return_value=True),
             patch.object(world_ui, "boat_marker", side_effect=markers) as self.looked,
         ):
             parked = world_ui.park_camera(
@@ -1932,6 +1940,8 @@ class ParkCameraTests(unittest.TestCase):
         return adb, parked
 
     looked: MagicMock
+    # A park pinches out, proves it with a pinch in, and pinches out again.
+    OUT = ("out", "in", "out")
 
     def test_a_bought_scenery_is_dragged_to_the_middle_before_its_pinch(self) -> None:
         """A pinch about the middle can change the village's size and not where it sits.
@@ -1956,14 +1966,14 @@ class ParkCameraTests(unittest.TestCase):
         assert adb.mock_calls.index(drag) < adb.mock_calls.index(pinch)
         # No marker at the far corner is what says the scenery was bought, and
         # the park settles once: no pinch at the corner to confirm it first.
-        assert [c.args[0] for c in adb.zoom.call_args_list] == ["out", "in"]
+        assert [c.args[0] for c in adb.zoom.call_args_list] == [*self.OUT, "in"]
         assert adb.swipe.call_count == world_ui.PARK_STILL + 1
 
     def test_the_builder_base_is_dragged_to_the_middle_and_not_pinched(self) -> None:
         """It has no scenery to buy, so its far zoom is the scale everything was measured at."""
         adb, _ = self._park([(0, 0), (0, 0)], world="night", markers=())
         assert adb.swipe.call_args_list[-1].args[:2] == world_ui.CENTRE_DRAGS["night"]
-        assert [c.args[0] for c in adb.zoom.call_args_list] == ["out"]
+        assert [c.args[0] for c in adb.zoom.call_args_list] == [*self.OUT]
 
     def test_a_bought_scenery_is_brought_back_to_where_a_free_one_parks(self) -> None:
         """Its far zoom draws no markers at all, so nothing measured on a free one holds there.
@@ -1989,20 +1999,20 @@ class ParkCameraTests(unittest.TestCase):
         """
         adb, parked = self._park([(0, 0)] * 4, markers=(None, None), corner=True)
         assert parked is True
-        assert [c.args[0] for c in adb.zoom.call_args_list] == ["out", "in", "out"]
+        assert [c.args[0] for c in adb.zoom.call_args_list] == [*self.OUT, "in", *self.OUT]
         assert adb.swipe.call_count == 2 * world_ui.PARK_STILL
 
     def test_a_free_scenery_is_left_at_its_far_zoom(self) -> None:
         """Its park has the boat's marker on screen, which is what tells the two apart."""
         adb, _ = self._park([(0, 0), (0, 0)])
-        assert [c.args[0] for c in adb.zoom.call_args_list] == ["out"]
+        assert [c.args[0] for c in adb.zoom.call_args_list] == [*self.OUT]
         assert adb.swipe.call_args_list[-1].args[:2] == world_ui.CENTRE_DRAGS["free"]
 
     def test_the_builder_base_has_no_scenery_to_tell_apart(self) -> None:
         """Its boat's marker sits under the button column at every park."""
         adb, _ = self._park([(0, 0), (0, 0)], world="night", markers=())
         self.looked.assert_not_called()
-        assert [c.args[0] for c in adb.zoom.call_args_list] == ["out"]
+        assert [c.args[0] for c in adb.zoom.call_args_list] == [*self.OUT]
 
     def test_the_swipes_stop_when_the_picture_does(self) -> None:
         """A fixed count was the bug: five was half what this account needed.
@@ -2041,12 +2051,32 @@ class ParkCameraTests(unittest.TestCase):
         # range rather than all of it, and a gesture with no display named goes
         # to every touch node, where MuMu's launcher takes two fingers as a
         # switch away from the game.
-        assert adb.mock_calls[0] == call.zoom(
-            "out",
-            world_ui.ZOOM_PINCHES,
-            world_ui.COC_PACKAGE,
-            DisplayTarget(logical_id="1", physical_id="2"),
-        )
+        display = DisplayTarget(logical_id="1", physical_id="2")
+        first_swipe = next(i for i, c in enumerate(adb.mock_calls) if c[0] == "swipe")
+        assert [c for c in adb.mock_calls[:first_swipe] if c[0] == "zoom"] == [
+            call.zoom("out", world_ui.ZOOM_PINCHES, world_ui.COC_PACKAGE, display),
+            call.zoom("in", 1, world_ui.COC_PACKAGE, display),
+            call.zoom("out", world_ui.ZOOM_PINCHES, world_ui.COC_PACKAGE, display),
+        ]
+
+    def test_a_pinch_the_game_read_as_a_drag_is_sent_again(self) -> None:
+        """It moves the camera at the scale it was, and the walk then clamps there all the same.
+
+        Measured 2026-11-17 (#667): both pinches two seconds after a battle slid
+        the builder base 828 px right, the park reported parked zoomed in, and
+        the cart's first spot sailed the boat to the home village.
+        """
+        adb, parked = self._park([(0, 0), (0, 0)], world="night", markers=(), zooms=[False, True])
+        assert parked is True
+        assert [c.args[0] for c in adb.zoom.call_args_list] == ["out", "in", *self.OUT]
+
+    def test_a_park_whose_pinches_keep_sliding_is_not_parked(self) -> None:
+        """Every coordinate after it would be tapped at a scale nobody read."""
+        tries = world_ui.PINCH_TRIES
+        adb, parked = self._park([], world="night", markers=(), zooms=[False] * tries)
+        assert parked is False
+        assert [c.args[0] for c in adb.zoom.call_args_list] == ["out", "in"] * tries
+        adb.swipe.assert_not_called()
 
     def test_a_walk_full_of_spoilt_readings_still_has_room_to_finish(self) -> None:
         """What `PARK_SWIPES`' slack is for, and nothing else was pinning it.
@@ -2108,6 +2138,7 @@ class CrossingTests(unittest.TestCase):
             # keeps moving is the other half of that, and the boat is not where
             # it is remembered then.
             patch.object(world_ui, "view_shift", return_value=(0, 0) if parked else (65, -33)),
+            patch.object(world_ui, "pinch_zoomed", return_value=True),
             patch.object(world_ui, "build_panel_open", return_value=False),
             patch.object(world_ui, "reward_chest", return_value=0),
             patch.object(world_ui, "boat_marker", side_effect=self.markers) as self.looked,
@@ -2152,7 +2183,8 @@ class CrossingTests(unittest.TestCase):
     def test_no_marker_at_all_taps_the_measured_spots_from_the_far_park(self) -> None:
         """They mean something only on the clamp, so the park's undone pinch is what makes them worth tapping."""
         adb = self._leaving_home(None, None, None, None, None)
-        assert [c.args[0] for c in adb.zoom.call_args_list] == ["out", "in", "out", "in", "out"]
+        out = ParkCameraTests.OUT
+        assert [c.args[0] for c in adb.zoom.call_args_list] == [*out, "in", *out, "in", *out]
         assert adb.swipe.call_count == 3 * world_ui.PARK_STILL + 1
         adb.tap.assert_called_once_with(*world_ui.CROSSINGS["night"].spots[0], ANY)
 
@@ -2353,7 +2385,7 @@ class CrossingTests(unittest.TestCase):
         # The park's own, and the only scale this trip gets: a pinch used to sit
         # in a `finally` after every tap, which is far too late to help the
         # coordinates those taps were aimed at.
-        assert adb.zoom.call_count == 1
+        assert adb.zoom.call_count == len(ParkCameraTests.OUT)
 
     def _cart(
         self,
@@ -2369,6 +2401,7 @@ class CrossingTests(unittest.TestCase):
             patch.object(world_ui.time, "sleep"),
             patch.object(world_ui, "current_world", return_value="night"),
             patch.object(world_ui, "view_shift", return_value=(0, 0) if parked else (65, -33)),
+            patch.object(world_ui, "pinch_zoomed", return_value=True),
             patch.object(world_ui, "build_panel_open", return_value=False),
             patch.object(world_ui, "loot_cart_open", return_value=opens),
             patch.object(world_ui, "loot_cart_ready", return_value=ready),
@@ -2515,6 +2548,7 @@ class CrossingTests(unittest.TestCase):
             patch.object(world_ui.time, "sleep"),
             patch.object(world_ui, "current_world", return_value="night"),
             patch.object(world_ui, "view_shift", return_value=(0, 0)),
+            patch.object(world_ui, "pinch_zoomed", return_value=True),
             patch.object(world_ui, "build_panel_open", return_value=False),
             patch.object(world_ui, "loot_cart_open", return_value=False),
             patch.object(world_ui, "read_builder_stock", return_value=None),
@@ -2638,7 +2672,7 @@ class CrossingTests(unittest.TestCase):
         assert adb.back.call_count == 0
 
     def test_the_crossing_pinches_once_and_it_is_the_parks_own(self) -> None:
-        """One pinch, for the village being sailed *from*, and none on landing.
+        """The park's pinches, for the village being sailed *from*, and none on landing.
 
         A second used to sit in a `finally` for the village the boat arrives on.
         Nothing needs it: every caller that goes on to tap the map pinches again
@@ -2650,7 +2684,7 @@ class CrossingTests(unittest.TestCase):
         # polls plus the read that checks it opened nothing, then the final one.
         for seen in (["night", "day"], ["night"] * (world_ui.SAIL_POLLS * 3 + 5)):
             adb, _ = self._cross(seen)
-            assert adb.zoom.call_count == 1
+            assert adb.zoom.call_count == len(ParkCameraTests.OUT)
 
 
 class ScoutTests(unittest.TestCase):
@@ -3891,6 +3925,45 @@ class FieldTests(unittest.TestCase):
 
     def test_a_drag_the_game_never_took_reads_as_none_of_it(self) -> None:
         assert view_shift(self._village(0), self._village(0), (0, 98)) == (0, 0)
+
+    def test_a_pinch_read_as_one_finger_is_no_zoom(self) -> None:
+        """Recorded 2026-11-17 (#667), each a few seconds after a builder base battle.
+
+        The first a pinch whose drag ran along the map's edge, (264, 192); the
+        second a pinch in whose drag met a corner after 56 px, which a floor of
+        100 px on the shifts searched once took for a zoom; and the last a pinch
+        that changed nothing at all.
+        """
+        for before, after in (
+            ("night_pinch_edge_before.png", "night_pinch_edge_after.png"),
+            ("night_pinch_corner_before.png", "night_pinch_corner_after.png"),
+            ("night_pinch_edge_after.png", "night_pinch_edge_after.png"),
+        ):
+            pair = ((FRAMES / before).read_bytes(), (FRAMES / after).read_bytes())
+            assert not pinch_zoomed(*pair), (before, after)
+
+    def test_a_pinch_in_from_the_far_zoom_reads_as_a_zoom(self) -> None:
+        """The test `_zoom_out` makes, recorded live, and zooms cut about the pinch's centre."""
+        pair = (
+            (FRAMES / "night_pinch_in_before.png").read_bytes(),
+            (FRAMES / "night_pinch_in_after.png").read_bytes(),
+        )
+        assert pinch_zoomed(*pair)
+        for name in ("night_pinch_in_before.png", "hud_day.png", "hud_night.png"):
+            png = (FRAMES / name).read_bytes()
+            image = open_frame(png)
+            for scale in (1.3, 1.6, 2.0, 2.5):
+                width, height = 1600 / scale, 900 / scale
+                closer = image.crop((
+                    800 - width / 2,
+                    450 - height / 2,
+                    800 + width / 2,
+                    450 + height / 2,
+                )).resize((1600, 900))
+                buffer = io.BytesIO()
+                closer.save(buffer, format="PNG")
+                assert pinch_zoomed(png, buffer.getvalue()), (name, scale)
+        assert not pinch_zoomed(self._flat(0), self._flat(0))
 
     def _flat(self, shade: int) -> bytes:
         """A frame with nothing in the comparison box to line up."""

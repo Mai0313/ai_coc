@@ -1469,7 +1469,7 @@ class UpkeepLineTests(unittest.TestCase):
                 "parked": "並把鏡頭停回定位",
                 "not_a_village": "畫面不是村莊",
                 "zoomed_in": "拉近的鏡頭停不住",
-                "never_settled": "鏡頭一直沒有停下來",
+                "never_settled": "鏡頭沒有停好",
                 "selected": "還選著",
             },
             get_args(ViewOutcome),
@@ -3549,6 +3549,7 @@ class CaptureAndViewTests(unittest.TestCase):
             # The park reads its own frames now; a still one is what says it
             # arrived, and `PARK_STILL` of them is what it swipes for.
             patch.object(world_ui, "view_shift", return_value=(0, 0)),
+            patch.object(world_ui, "pinch_zoomed", return_value=True),
             # These fakes hand back a MagicMock rather than a frame, and the
             # boat's marker reads pixels; `ParkCameraTests` is where it is tested.
             patch.object(world_ui, "boat_marker", return_value=(442, 542)),

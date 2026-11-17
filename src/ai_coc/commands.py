@@ -3850,7 +3850,7 @@ VIEW_LINES: dict[ViewOutcome, str] = {
     "parked": "並把鏡頭停回定位",
     "not_a_village": "畫面不是村莊,沒有把鏡頭停回定位",
     "zoomed_in": "拉近的鏡頭停不住,沒有把鏡頭停回定位",
-    "never_settled": "但鏡頭一直沒有停下來,定位失敗",
+    "never_settled": "但鏡頭沒有停好 (拉遠沒生效, 或一直沒停下來),定位失敗",
     "selected": "但有建築或城牆還選著,拖曳可能拖到它,沒有停鏡頭;先點一塊空地取消選取再來",
 }
 
@@ -3935,8 +3935,8 @@ def view(frames: FrameLog, zoom: str = "out", times: int = 3) -> ViewReport:
         outcome = "parked"
     else:
         # The one answer that used to be a claim rather than a reading. A park
-        # that never arrived leaves every remembered coordinate off by however
-        # far it was short, and this is the command somebody runs precisely to
+        # that never arrived, or never zoomed, leaves every remembered
+        # coordinate off, and this is the command somebody runs precisely to
         # put those back.
         outcome = "never_settled"
     report = ViewReport(zoom=asked, times=times, world=world, outcome=outcome)
