@@ -54,9 +54,10 @@ ZOOM_CHANGE = 5
 # pinch's centre at least 0.59.
 ZOOM_RATIO = 0.4
 # How much a whole frame, reduced, may differ between two captures of one
-# screen. A reward chest a tap apart differs by 0.1 to 0.5 (2026-11-17) and two
-# committed frames of one by 3.4; the chest against its opening flash by 192, and
-# against its first reward by 31 to 32.
+# screen. A reward chest a tap apart differs by 0.1 to 0.5 (2026-11-17), two
+# committed frames of one by 3.4, and the chest glowing open after its last tool
+# by 7.0 to 7.3, which is why one more tap lands on it; the chest against its
+# opening flash by 192, and against its first reward by 31 to 32.
 SCREEN_REDUCE = 10
 SCREEN_CHANGE = 12
 

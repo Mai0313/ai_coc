@@ -8656,9 +8656,22 @@ class RewardChestTests(unittest.TestCase):
         ):
             assert reward_chest((FRAMES / name).read_bytes()) == left, name
 
-    def test_white_elsewhere_in_the_corner_is_no_skip_button(self) -> None:
+    def test_the_same_text_off_its_place_is_no_skip_button(self) -> None:
         image = Image.open(FRAMES / "reward_chest_pins.png").convert("RGB")
-        image.paste((255, 255, 255), (1460, 800, 1470, 830))
+        text = image.crop((1468, 802, 1514, 828))
+        image.paste(image.crop((1420, 802, 1466, 828)), (1468, 802))
+        image.paste(text, (1478, 802))
+        out = io.BytesIO()
+        image.save(out, format="PNG")
+        assert not chest_skip(out.getvalue())
+
+    def test_the_same_text_on_a_bright_ground_is_no_skip_button(self) -> None:
+        image = Image.open(FRAMES / "reward_chest_pins.png").convert("RGB")
+        pixels = image.load()
+        for x in range(1455, 1530):
+            for y in range(795, 838):
+                if min(pixels[x, y]) < 200:
+                    pixels[x, y] = (150, 120, 60)
         out = io.BytesIO()
         image.save(out, format="PNG")
         assert not chest_skip(out.getvalue())

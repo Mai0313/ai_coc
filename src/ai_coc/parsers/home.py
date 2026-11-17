@@ -232,11 +232,12 @@ CHEST_HANDLE_REACH = 8
 # chest carries until its first tap is 跳過 in the bottom right corner, the same
 # pixels on the hammer chest of 2026-10-16 and on that one: 249 white pixels
 # spanning x 1472-1510, y 806-823, on a plate whose other pixels are dark at
-# 0.965. Swept over 233 frames, the committed ones and those the run logs held,
-# the only other white in the box is the clan chat's, 714 to 774 pixels against
-# its left edge. The first tap takes 跳過 away, so a chest somebody began on is
-# read by its hammers alone; a reward brings it back a moment after it stands,
-# over its 繼續.
+# 0.965. Swept over the committed frames and those the run logs held, the other
+# white in the box is the clan chat's, 714 to 774 pixels against its left edge,
+# and under the count's floor the army screen's 93, a card row's 60 and the
+# builder base panel's 24 to 41. The first tap takes 跳過 away, so a chest
+# somebody began on is read by its hammers alone; a reward brings it back a
+# moment after it stands, over its 繼續.
 CHEST_SKIP_BOX = (1455, 795, 1530, 838)
 CHEST_SKIP_TEXT = (1472, 806, 1511, 824)
 CHEST_SKIP_SLACK = 3

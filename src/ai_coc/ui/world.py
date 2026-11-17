@@ -415,7 +415,10 @@ UNCOVER_SETTLE = 1.5
 # each with a 繼續 in this box (x 701-924, y 780-847 on a 時光鐘樓藥水, and
 # x 655-913, y 730-810 on the event chest of 2026-11-17). Measured 2026-10-16:
 # the fourth tap flashed the screen white and the reward stood about a second
-# later.
+# later. 立即完成 and the home village's 確認 lie right of the box. Inside it lie
+# the builder base sheet's 確認, the star bonus's and the shield sheet's buttons
+# and 回營, which the looks after a chest do not meet, bar a star bonus raised
+# straight after one.
 CHEST_SPOT = (790, 480)
 CHEST_TAP_GAP = 0.8
 CHEST_TAPS = 10
@@ -623,10 +626,11 @@ def collect_cart(adb: AdbController, display: DisplayTarget) -> CartReport:
 def open_chest(adb: AdbController, display: DisplayTarget) -> None:
     """Tap a reward chest open, then press 繼續 on each reward it shows.
 
-    **繼續 is pressed here and nowhere else**, straight after this opened the
-    chest itself: a big green button is what 立即完成 and the gem offers wear,
-    which is why `tap` refuses every one, so a green button is only ever pressed
-    by whoever raised it.
+    **繼續 is pressed here and nowhere else**, after this opened the chest
+    itself or was called on a reward already standing: a big green button is
+    what 立即完成 and the gem offers wear, which is why `tap` refuses every one.
+    What keeps this one off them is that a chest was read before the call, and
+    `CHEST_CONTINUE_BOX`.
 
     **Tapped until the screen changes, not until the tools run out**: the tools
     on the strip are whatever the event draws, and a tap that only spends one
