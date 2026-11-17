@@ -34,7 +34,7 @@ from ai_coc.parsers.scout import (
 from ai_coc.parsers.world import current_world
 from ai_coc.parsers.building import game_dialog
 
-from .world import open_chest, park_camera
+from .world import open_chest, park_camera, continue_chest, chest_reward_button
 
 logger = logging.getLogger(__name__)
 
@@ -427,7 +427,7 @@ class GameRunner(ScreenRunner):
             self._settled = True
 
     def _cleared(self, png: bytes) -> bool:
-        """Answer a dialog with 取消, shut the build panel, or tap a reward chest open.
+        """Answer a dialog, shut the build panel, or clear a reward chest screen.
 
         Both are pressed rather than backed out of: 取消 is the harmless answer
         to every dialog the game raises, and `back` leaves the build panel up,
@@ -443,6 +443,9 @@ class GameRunner(ScreenRunner):
         elif reward_chest(png):
             logger.info("A reward chest is over the village; tapping it open")
             open_chest(self.adb, self.display)
+        elif chest_reward_button(png) is not None:
+            logger.info("A chest reward is already open; pressing 繼續")
+            continue_chest(self.adb, self.display, png)
         else:
             return False
         time.sleep(BACK_SETTLE)

@@ -2301,6 +2301,38 @@ class CrossingTests(unittest.TestCase):
         taps = [c.args[:2] for c in adb.tap.call_args_list]
         assert taps == [world_ui.CHEST_SPOT, world_ui.CHEST_SPOT, (812, 813)]
 
+    def test_an_already_open_reward_is_recognized_and_continued(self) -> None:
+        reward = (FRAMES / "reward_chest_prize_dark_elixir.png").read_bytes()
+        assert world_ui.chest_reward_button(reward) == (812, 790)
+        assert world_ui.chest_reward_button((FRAMES / "reward_chest_prize.png").read_bytes()) == (
+            812,
+            813,
+        )
+        assert world_ui.chest_reward_button((FRAMES / "hud_settings.png").read_bytes()) is None
+
+        adb = MagicMock()
+        adb.screenshot.side_effect = [
+            reward,
+            (FRAMES / "hud_day.png").read_bytes(),
+            (FRAMES / "hud_day.png").read_bytes(),
+        ]
+        with patch.object(world_ui.time, "sleep"):
+            here = world_ui.uncovered(adb, DisplayTarget(logical_id="1", physical_id="2"))
+        assert here == "day"
+        adb.back.assert_not_called()
+        assert [c.args[:2] for c in adb.tap.call_args_list] == [(812, 790)]
+
+    def test_a_game_runner_continues_an_already_open_reward(self) -> None:
+        reward = (FRAMES / "reward_chest_prize_dark_elixir.png").read_bytes()
+        adb = MagicMock()
+        adb.screenshot.return_value = (FRAMES / "hud_day.png").read_bytes()
+        runner = shared.GameRunner.model_construct(
+            adb=adb, display=DisplayTarget(logical_id="1", physical_id="2")
+        )
+        with patch.object(shared.time, "sleep"):
+            assert runner._cleared(reward)
+        assert [c.args[:2] for c in adb.tap.call_args_list] == [(812, 790)]
+
     def test_a_green_button_off_the_rewards_place_is_not_pressed(self) -> None:
         """立即完成 and the gem offers are green too."""
         adb = MagicMock()
