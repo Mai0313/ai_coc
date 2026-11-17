@@ -11,7 +11,7 @@ user-invocable: false
 
 ## 開工先讀 `state.json`
 
-**`~/.ai_coc/state.json` 分三塊**: `emulator` 是佔著模擬器的那個指令, `watch` 是睡著等升級的 `ai_coc watch` (新開的會把還活著的那個請下來, 自己記成 `stop_by`), `notes` 是使用者對每個村莊的常設交代 (用 `ai_coc note` 記). 這份跟其他 skill 講到 `status`、`pid`、`log`、`command`、`caller`、`stop_by`、`yields`、`loan`、`hold` 而沒說是哪一塊的, 都是 `emulator` 那一塊.
+**`~/.ai_coc/state.json` 分三塊**: `emulator` 是佔著模擬器的那個指令, `watch` 是睡著等升級的 `ai_coc watch` (新開的會把還活著的那個請下來, 自己記成 `stop_by`), `notes` 是使用者對每個村莊裡指名的東西的交代 (用 `ai_coc note` 記). 這份跟其他 skill 講到 `status`、`pid`、`log`、`command`、`caller`、`stop_by`、`yields`、`loan`、`hold` 而沒說是哪一塊的, 都是 `emulator` 那一塊.
 
 `attack`, `collect`, `donate`, `confirm` 全都在驅動同一個模擬器的同一個 display. 兩個一起跑, 一邊點開選單, 另一邊截到那張圖判讀成完全不同的東西, 而且沒有任何機制會發現. 開下一個之前先確定上一個真的結束了.
 
