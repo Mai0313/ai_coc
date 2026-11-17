@@ -1190,6 +1190,13 @@ class AttackRunner(ScreenRunner):
         keep full storages farming for ever. Inside the one visit rather than
         across rounds, because a series is started again around every loan and
         a count kept here would start from nothing each time.
+
+        **A payout that filled the storages is looked at again too**, since the
+        storages took only what they had room for and the rest is still in the
+        cart, behind a 收集 the game has now greyed. On 2026-11-17 storages
+        30 941 short of full took that much out of a full cart, the trip read
+        as a cart with room, and five battles were played for nothing before
+        the next trip read 1 600 000 of 1 600 000.
         """
         if self.world != "night":
             return home
@@ -1201,8 +1208,14 @@ class AttackRunner(ScreenRunner):
             # through here, and the next round has to go again rather than
             # decide a full village's stop on a cart nobody read.
             self._since_cart = 0
-            if self._cart.capacity or self._cart.outcome == "collected":
+            if self._cart.capacity:
                 break
+            if self._cart.outcome == "collected":
+                stock = read_builder_stock(self._frame("cart-paid"))
+                if stock is None or not self._ceiling.full(stock, self.stop_at):
+                    break
+                logger.info("The payout filled the storages; looking at what the cart kept")
+                continue
             logger.warning(
                 "Look %d at the cart did not say how full it is (%s)", look, self._cart.outcome
             )
@@ -1212,8 +1225,9 @@ class AttackRunner(ScreenRunner):
         """Whether the builder base's cart can still bank what a battle wins, by its last trip.
 
         Short of `stop_at` of its own ceiling it can, which is the share every
-        storage is judged on. A trip that collected has room by definition: the
-        storages took elixir out of it. A cart that would not say after every
+        storage is judged on. A trip that collected and left the storages short
+        of full emptied it; one that filled them was looked at again by
+        `_visit_cart`. A cart that would not say after every
         look `_visit_cart` gave it is left out, which is what a ceiling nobody
         can read has always meant here: the storages decide alone.
         """

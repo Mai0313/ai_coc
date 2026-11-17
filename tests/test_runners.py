@@ -976,11 +976,16 @@ class NightCartTests(unittest.TestCase):
     EMPTY = CartReport(outcome="locked_empty", held=0, capacity=1_600_000)
 
     def _visits(
-        self, runner: AttackRunner, battles: int, trips: list[CartReport] | None = None
+        self,
+        runner: AttackRunner,
+        battles: int,
+        trips: list[CartReport] | None = None,
+        stock: VillageStock | None = None,
     ) -> MagicMock:
         """Open the attack menu for this many rounds, each one a battle, counting trips."""
         with (
             patch.object(attack, "collect_cart", side_effect=trips or [self.EMPTY] * 10) as trip,
+            patch.object(attack, "read_builder_stock", return_value=stock),
             patch.object(runner, "_frame", return_value=b"home"),
         ):
             for _ in range(battles):
@@ -1027,12 +1032,34 @@ class NightCartTests(unittest.TestCase):
         assert trip.call_count == attack.CART_LOOKS
         assert self._stood_down(runner, runner._cart)
 
+    def test_a_payout_that_filled_the_storages_is_looked_at_again(self) -> None:
+        """The storages took what they had room for, and the rest is still in the cart.
+
+        Measured on 2026-11-17: storages 30 941 short of full, a full cart, and
+        five battles played before the next trip read it.
+        """
+        runner = self._runner()
+        paid = CartReport(outcome="collected", elixir=30_941)
+        kept = CartReport(outcome="locked_holding", held=1_569_059, capacity=1_600_000)
+        trip = self._visits(runner, 1, [paid, kept], self.FULL)
+        assert trip.call_count == 2
+        assert runner._cart == kept
+        assert self._stood_down(runner, runner._cart)
+
+    def test_a_payout_the_storages_had_room_for_is_the_whole_cart(self) -> None:
+        runner = self._runner()
+        paid = CartReport(outcome="collected", elixir=427_000)
+        trip = self._visits(runner, 1, [paid], VillageStock(gold=95, elixir=50, dark=0))
+        assert trip.call_count == 1
+        assert runner._cart == paid
+
     def test_a_trip_hands_back_the_village_as_the_payout_left_it(self) -> None:
         """Measured on #341: the frame from before the trip read 610 566 elixir after a 427 000 payout."""
         runner = self._runner()
         paid = CartReport(outcome="collected", elixir=427_000)
         with (
             patch.object(attack, "collect_cart", return_value=paid),
+            patch.object(attack, "read_builder_stock", return_value=None),
             patch.object(runner, "_frame", return_value=b"after"),
         ):
             assert runner._visit_cart(b"before") == b"after"
