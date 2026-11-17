@@ -83,7 +83,7 @@ The same runner plays both villages. An attack series takes its village from the
 **The loot cart** (`collect_cart`, `loot_cart_open`, `loot_cart_ready`, `loot_cart_load`, `CartReport`). Gold lands in the storages; battle elixir goes into a 聖水車 beside the boat, and tapping it opens a sheet.
 
 - The sheet is closed on every path.
-- The cart is the builder base's third storage: defence rewards keep paying into it after the storages are full, so full storages end a run only when the cart is also past `stop_at` of its own ceiling (`_visit_cart`, `_cart_has_room`). A look that cannot say how full the cart is goes again at once, and after three the storages decide alone; so does a payout that filled the storages, since what they had no room for is still in the cart. One schedule, the first round and every `CART_EVERY` battles, empties the cart while the storages have room and reads it once they do not.
+- The cart is the builder base's third storage: defence rewards keep paying into it after the storages are full, so full storages end a run only when the cart is also past `stop_at` of its own ceiling (`_visit_cart`, `_cart_has_room`). A look that cannot say how full the cart is goes again at once, and after three the storages decide alone; so does a payout that filled the elixir storage to its ceiling, since what it had no room for is still in the cart. One schedule, the first round and every `CART_EVERY` battles, empties the cart while the storages have room and reads it once they do not.
 - Judged on `read_builder_stock`, never `read_stock`.
 
 ## Storage limits

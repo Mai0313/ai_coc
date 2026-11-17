@@ -1046,12 +1046,21 @@ class NightCartTests(unittest.TestCase):
         assert runner._cart == kept
         assert self._stood_down(runner, runner._cart)
 
-    def test_a_payout_the_storages_had_room_for_is_the_whole_cart(self) -> None:
+    def test_a_payout_the_storage_had_room_for_is_the_whole_cart(self) -> None:
+        """Past `stop_at` and short of the ceiling, the storage still took all of it."""
         runner = self._runner()
         paid = CartReport(outcome="collected", elixir=427_000)
-        trip = self._visits(runner, 1, [paid], VillageStock(gold=95, elixir=50, dark=0))
+        trip = self._visits(runner, 1, [paid], VillageStock(gold=95, elixir=92, dark=0))
         assert trip.call_count == 1
         assert runner._cart == paid
+
+    def test_a_filled_elixir_storage_is_enough_whatever_the_gold(self) -> None:
+        runner = self._runner()
+        paid = CartReport(outcome="collected", elixir=30_941)
+        kept = CartReport(outcome="locked_holding", held=1_500_000, capacity=1_600_000)
+        trip = self._visits(runner, 1, [paid, kept], VillageStock(gold=10, elixir=100, dark=0))
+        assert trip.call_count == 2
+        assert runner._cart == kept
 
     def test_a_trip_hands_back_the_village_as_the_payout_left_it(self) -> None:
         """Measured on #341: the frame from before the trip read 610 566 elixir after a 427 000 payout."""

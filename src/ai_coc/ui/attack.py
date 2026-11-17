@@ -1191,12 +1191,13 @@ class AttackRunner(ScreenRunner):
         across rounds, because a series is started again around every loan and
         a count kept here would start from nothing each time.
 
-        **A payout that filled the storages is looked at again too**, since the
-        storages took only what they had room for and the rest is still in the
-        cart, behind a 收集 the game has now greyed. On 2026-11-17 storages
-        30 941 short of full took that much out of a full cart, the trip read
-        as a cart with room, and five battles were played for nothing before
-        the next trip read 1 600 000 of 1 600 000.
+        **A payout that filled the 聖水 storage is looked at again too**, since
+        the storage took only what it had room for and the rest is still in the
+        cart, behind a 收集 the game has now greyed. On 2026-11-17 a storage
+        30 941 short of its ceiling took that much out of a full cart, the trip
+        read as a cart with room, and five battles were played for nothing
+        before the next trip read 1 600 000 of 1 600 000. The ceiling and not
+        `stop_at`, because short of the ceiling the payout took the whole cart.
         """
         if self.world != "night":
             return home
@@ -1212,9 +1213,10 @@ class AttackRunner(ScreenRunner):
                 break
             if self._cart.outcome == "collected":
                 stock = read_builder_stock(self._frame("cart-paid"))
-                if stock is None or not self._ceiling.full(stock, self.stop_at):
+                ceiling = self._ceiling.elixir
+                if stock is None or not ceiling or stock.elixir < ceiling:
                     break
-                logger.info("The payout filled the storages; looking at what the cart kept")
+                logger.info("The payout filled the 聖水 storage; looking at what the cart kept")
                 continue
             logger.warning(
                 "Look %d at the cart did not say how full it is (%s)", look, self._cart.outcome
@@ -1225,9 +1227,9 @@ class AttackRunner(ScreenRunner):
         """Whether the builder base's cart can still bank what a battle wins, by its last trip.
 
         Short of `stop_at` of its own ceiling it can, which is the share every
-        storage is judged on. A trip that collected and left the storages short
-        of full emptied it; one that filled them was looked at again by
-        `_visit_cart`. A cart that would not say after every
+        storage is judged on. A trip that collected and left the 聖水 storage
+        short of its ceiling emptied it; one that filled it was looked at again
+        by `_visit_cart`. A cart that would not say after every
         look `_visit_cart` gave it is left out, which is what a ceiling nobody
         can read has always meant here: the storages decide alone.
         """
