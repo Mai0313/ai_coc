@@ -4908,7 +4908,9 @@ CONFIRM_SETTLED = 2
 # behind them shifts a price's pixels: of four frames of one batch menu taken
 # seconds apart on 2026-11-17, one read no gold price (against the frame before
 # it, 29 of its price box's 10 608 byte values had moved by more than 12) and a
-# single look answered `no_wall_menu` with the menu plainly up.
+# single look answered `no_wall_menu` with the menu plainly up. That frame reads
+# since the white ink's edge was widened (`INK_WHITE_SPREAD`); the looks stay for
+# a frame caught while something still moves behind the plates.
 WALL_MENU_LOOKS = 4
 
 PRESS_LINES: dict[PressOutcome, str] = {

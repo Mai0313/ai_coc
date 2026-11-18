@@ -8180,7 +8180,8 @@ class HomeHudTests(unittest.TestCase):
             "night_wall_batch_one_row.png",
             "night_wall_row.png",
             "home_wall_batch.png",
-            "home_wall_batch_unread.png",
+            "home_wall_batch_warm_edges.png",
+            "home_wall_batch_gold_only.png",
         }
         for path in sorted(FRAMES.glob("*.png")):
             try:
@@ -8544,8 +8545,10 @@ class PanelWallMenuTests(unittest.TestCase):
             ("night_wall_batch.png", 1600000, False, ((497, 790), (671, 790))),
             ("night_wall_menu_one_row.png", 800000, True, ((759, 710), (933, 710))),
             ("night_wall_batch_one_row.png", 800000, True, ((672, 710), (846, 710))),
-            # The home village's, a batch of eleven.
+            # The home village's, a batch of eleven, and the same menu eleven seconds
+            # later, whose white digits read too thin before their warm edges counted.
             ("home_wall_batch.png", 26400000, True, ((497, 790), (671, 790))),
+            ("home_wall_batch_warm_edges.png", 26400000, True, ((497, 790), (671, 790))),
         ):
             menu = panel_wall_menu((FRAMES / name).read_bytes())
             assert menu is not None, name
@@ -8555,6 +8558,14 @@ class PanelWallMenuTests(unittest.TestCase):
             assert menu.gold.affordable == gold_affordable, name
             assert menu.elixir.affordable, name
 
+    def test_a_price_as_wide_as_its_button_is_read_from_its_first_digit(self) -> None:
+        """16 000 000 begins at the button's edge, and only the gold can pay it: the elixir is red."""
+        menu = panel_wall_menu((FRAMES / "home_wall_batch_gold_only.png").read_bytes())
+        assert menu is not None
+        assert (menu.gold.price, menu.elixir.price) == (16000000, 16000000)
+        assert (menu.gold.affordable, menu.elixir.affordable) == (True, False)
+        assert (menu.gold.point, menu.elixir.point) == ((497, 790), (671, 790))
+
     def test_no_other_frame_reads_as_one(self) -> None:
         """The row-move mode 整排選取 opens, the batch's dialog and the wall's sheet included."""
         menus = {
@@ -8562,9 +8573,9 @@ class PanelWallMenuTests(unittest.TestCase):
             "night_wall_batch.png",
             "night_wall_menu_one_row.png",
             "night_wall_batch_one_row.png",
-            # `home_wall_batch_unread.png` is the same menu eleven seconds later and
-            # reads as none: its gold price does not read (`WALL_MENU_LOOKS`).
             "home_wall_batch.png",
+            "home_wall_batch_warm_edges.png",
+            "home_wall_batch_gold_only.png",
         }
         for path in sorted(FRAMES.glob("*.png")):
             try:

@@ -80,8 +80,26 @@ ICON_TOLERANCE = 8
 # glyph any reading keeps drops from 27 bits to 23; a floor of 150 lets a hero
 # hall glyph reach 30, 210 lets a 15 300 000 reach 28, and a spread of 6 lets an
 # unaffordable wall price reach 28.
+#
+# **The spread is the edge's, and the wall menu beside the build panel draws a
+# warmer edge.** A pixel over `INK_WHITE_CORE` is within 10 of itself whatever
+# this says, so under the core rule below it decides only which pixels beside a
+# core join it. It was 10, set above when any such grey was ink and the plate's
+# 14 to 19 had to stay out; that is the core rule's to keep out now, and 10 only
+# fitted the edge of the row under a selected building (up to 11 on the five
+# frames of it committed). On the panel's wall menu the edge runs to 20 on the
+# builder base's four frames, to 16 on a home 26 400 000 and to 24 on a home
+# 16 000 000, so at 10 each white digit lost a pixel off its sides: the home
+# village's white prices read 25 to 32 bits from their templates against a
+# tolerance of 30, and a 16 000 000 whose 1 kept a stem two pixels wide read
+# 32, so `confirm --pay` found no wall menu with the menu standing there
+# (2026-11-18). At 25 every digit on the ten frames of that menu is within 23,
+# red and white alike, and at 20 within 24. **Nothing recorded bounds it from
+# above**: swept over the 200 committed frames and the 32 run frames then on
+# disk, `panel_wall_menu` reads five more at 25 than at 10, each the price its
+# image shows, `free_boost` changes on none, and 40 and 255 answer as 25 does.
 INK_WHITE = 180
-INK_WHITE_SPREAD = 10
+INK_WHITE_SPREAD = 25
 # **A grey only counts as ink beside a pure white one.** The button's plate
 # carries a neutral sheen, measured at 210 to 239 with a spread of 5 to 9 under
 # the digits, which passes the two lines above, and on a batch of 24 000 000 it
@@ -906,7 +924,20 @@ def goblin_offer(png: bytes) -> GoblinOffer | None:
 # middled at x 497 and 671, 174 apart around 585.
 PANEL_WALL_ICON_BAND = (728, 750)
 PANEL_WALL_ICON_OFFSET = 55
-PANEL_WALL_PRICE_BOX = (-58, 722, 46, 756)
+# **The price ends at the icon and grows leftward, so its box starts at the
+# button's edge.** It started at -58, where a 26 400 000 began 2 to 3 px inside
+# it. A 16 000 000 is drawn a size larger (its zeros 11 px wide against 10),
+# its 1 beginning at -59 to -61: the box cut that 1 to two or three columns,
+# neither price read and `confirm --pay` answered `no_wall_menu` with the menu
+# on screen (2026-11-18, home village, a batch of five). **A cut digit is the
+# box's to prevent, not the tolerance's**: with the white edge as wide as it is
+# now (`INK_WHITE_SPREAD`), the stump of that 1 passes for a 0 and the gold
+# button reads 6 000 000. How wide a price the game fits before it shrinks the
+# digits is not known, so the box takes all the plate there is, up to the
+# button's dark edge at -71 to -73. The plate's bright top rim (y 722 to 725)
+# passes the white test in those columns and is no ink only because it stands
+# clear of every core.
+PANEL_WALL_PRICE_BOX = (-68, 722, 46, 756)
 PANEL_WALL_MIDDLE = 585
 PANEL_WALL_PITCH = 174
 PANEL_WALL_ROW_Y = 790

@@ -113,6 +113,7 @@ from ai_coc.parsers.village import SECTIONS, merge
 from ai_coc.parsers.gamedata import READING, GameDataError
 
 if TYPE_CHECKING:
+    from contextlib import AbstractContextManager
     from collections.abc import Callable
 
     from ai_coc.models import World, SearchReport, SearchSection
@@ -4107,6 +4108,17 @@ class PressAndConfirmTests(unittest.TestCase):
         adb.tap.assert_called_once()
         assert report.outcome == "unexpected"
 
+    @staticmethod
+    def _first_look_unread() -> AbstractContextManager[object]:
+        """`confirm --pay`'s first look at the wall menu reading nothing, the later ones as they are."""
+        read = commands.panel_wall_menu
+        first = iter([True])
+        return patch.object(
+            commands,
+            "panel_wall_menu",
+            side_effect=lambda png: None if next(first, False) else read(png),
+        )
+
     def test_a_walls_batch_is_paid_through_its_button_and_then_its_dialog(self) -> None:
         adb, report = self._run(
             ["night_wall_batch.png", "night_wall_dialog.png", "night_wall_menu.png"],
@@ -4122,16 +4134,17 @@ class PressAndConfirmTests(unittest.TestCase):
         assert report.offer is None
 
     def test_a_wall_menu_one_look_cannot_read_is_looked_at_again(self) -> None:
-        """The home village's plates are translucent: the first frame's gold price does not read."""
-        adb, report = self._run(
-            [
-                "home_wall_batch_unread.png",
-                "home_wall_batch.png",
-                "night_wall_dialog.png",
-                "hud_day_build_panel.png",
-            ],
-            lambda d: commands.confirm(26400000, d, "gold"),
-        )
+        """The home village's plates are translucent: a frame's price can fail to read."""
+        with self._first_look_unread():
+            adb, report = self._run(
+                [
+                    "home_wall_batch.png",
+                    "home_wall_batch.png",
+                    "night_wall_dialog.png",
+                    "hud_day_build_panel.png",
+                ],
+                lambda d: commands.confirm(26400000, d, "gold"),
+            )
         assert [call.args for call in adb.tap.call_args_list] == [
             (497, 790, DISPLAY),
             (973, 560, DISPLAY),
@@ -4143,22 +4156,43 @@ class PressAndConfirmTests(unittest.TestCase):
     def test_a_dialog_that_comes_up_between_two_looks_takes_the_wall_menu_away(self) -> None:
         """Every look is held to the standing-dialog test, not only the first."""
         standing = GameDialog(confirm=(973, 560), cancel=(623, 572))
-        with patch.object(commands, "game_dialog", side_effect=[None, standing]):
+        with (
+            self._first_look_unread(),
+            patch.object(commands, "game_dialog", side_effect=[None, standing]),
+        ):
             adb, report = self._run(
-                ["home_wall_batch_unread.png", "home_wall_batch.png"],
+                ["home_wall_batch.png", "home_wall_batch.png"],
                 lambda d: commands.confirm(26400000, d, "gold"),
             )
         adb.tap.assert_not_called()
         assert report.outcome == "no_wall_menu"
 
     def test_the_frame_kept_is_the_one_the_wall_menu_was_read_off(self) -> None:
-        adb, report = self._run(
-            ["home_wall_batch_unread.png", "home_wall_batch.png"],
-            lambda d: commands.confirm(26400001, d, "gold"),
-        )
+        with self._first_look_unread():
+            adb, report = self._run(
+                ["home_wall_batch_warm_edges.png", "home_wall_batch.png"],
+                lambda d: commands.confirm(26400001, d, "gold"),
+            )
         adb.tap.assert_not_called()
         assert report.outcome == "price_mismatch"
         assert report.frame.read_bytes() == (FRAMES / "home_wall_batch.png").read_bytes()
+
+    def test_a_wall_is_paid_in_the_resource_it_can_afford_beside_a_red_price(self) -> None:
+        """Five walls at 16 000 000 with 1 640 000 elixir held: gold in white, elixir in red."""
+        adb, report = self._run(
+            ["home_wall_batch_gold_only.png", "night_wall_dialog.png", "hud_day_build_panel.png"],
+            lambda d: commands.confirm(16000000, d, "gold"),
+        )
+        assert [call.args for call in adb.tap.call_args_list] == [
+            (497, 790, DISPLAY),
+            (973, 560, DISPLAY),
+        ]
+        assert report.outcome == "confirmed"
+        adb, report = self._run(
+            ["home_wall_batch_gold_only.png"], lambda d: commands.confirm(16000000, d, "elixir")
+        )
+        adb.tap.assert_not_called()
+        assert report.outcome == "cannot_afford"
 
     def test_a_panel_with_no_wall_menu_is_looked_at_a_few_times_and_no_more(self) -> None:
         adb, report = self._run(
