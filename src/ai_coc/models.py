@@ -3341,3 +3341,67 @@ class GeminiRequest(BaseModel):
 
     def body(self) -> dict[str, Any]:
         return self.model_dump(by_alias=True, exclude_none=True)
+
+
+class DecisionQuestion(BaseModel):
+    """One yes/no question, which the Decisions API calls `noul`."""
+
+    type: Literal["noul"] = "noul"
+    instructions: str
+
+
+class DecisionRequest(BaseModel):
+    """One `decisions.create` body: an image and the questions asked of it."""
+
+    model: str
+    input: list[GeminiImagePart]
+    questions: dict[str, DecisionQuestion]
+
+    def body(self) -> dict[str, Any]:
+        return self.model_dump()
+
+
+class DecisionAnswer(BaseModel):
+    """What the Decisions API made of one yes/no question.
+
+    `probability` is the chance of yes and `confidence` the chance of the likelier
+    answer, both None when the reply carried no answer. `seconds` is the call
+    alone, `attempts` the HTTP requests behind it and `tokens` the input billed.
+    """
+
+    probability: float | None = None
+    confidence: float | None = None
+    seconds: float
+    attempts: int
+    tokens: int | None = None
+
+
+YesNo = Literal["yes", "no"]
+DecisionOutcome = Literal["answered", "unclear", "no_image", "no_key", "failed"]
+
+
+class DecisionReport(BaseModel):
+    """What `ai_coc decision` asked the Decisions API about one image, and what came back.
+
+    A trial is tallied from these on the journal's `end` lines, so `sha256` and
+    `size` name the image once its file is gone. `ground_truth` is the caller's
+    own answer and `agrees` whether the two match, None unless both exist.
+    `seconds` is the API call alone and `total_seconds` this process's life up
+    to the report, the start-up an agent pays for the command included.
+    """
+
+    prompt: str
+    image: Path
+    sha256: str | None = None
+    size: int | None = None
+    model: str
+    answer: YesNo | None = None
+    probability: float | None = None
+    confidence: float | None = None
+    ground_truth: YesNo | None = None
+    agrees: bool | None = None
+    seconds: float | None = None
+    total_seconds: float | None = None
+    attempts: int | None = None
+    tokens: int | None = None
+    outcome: DecisionOutcome

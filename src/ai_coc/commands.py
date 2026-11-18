@@ -11,9 +11,11 @@ import re
 import math
 import time
 from typing import TYPE_CHECKING, Self, Literal
+import hashlib
 import logging
 from datetime import UTC, date, datetime, timedelta
 import itertools
+import mimetypes
 import threading
 from contextlib import suppress, contextmanager
 import statistics
@@ -30,6 +32,7 @@ from ai_coc.models import (
     Notes,
     Watch,
     World,
+    YesNo,
     Caller,
     MapEdge,
     Sailing,
@@ -123,10 +126,12 @@ from ai_coc.models import (
     BoundarySurvey,
     CollectOutcome,
     ConfirmOutcome,
+    DecisionReport,
     GameDataReport,
     GivebackReport,
     JournalConfirm,
     LootThresholds,
+    DecisionOutcome,
     GivebackOutcome,
     ListPriceReport,
     StandDownReport,
@@ -140,7 +145,7 @@ from ai_coc.models import (
     TurnaroundOutcome,
     labelled,
 )
-from ai_coc.constants import STATE_PATH, COC_PACKAGE, ACCOUNT_JSON_DIR
+from ai_coc.constants import STATE_PATH, COC_PACKAGE, DECISION_MODEL, ACCOUNT_JSON_DIR
 from ai_coc.adapters.ai import GeminiClient
 from ai_coc.adapters.adb import ZOOM_PINCHES, AdbController, AdbControlError
 from ai_coc.parsers.clan import donatable_cards
@@ -4929,6 +4934,8 @@ def answer_text(answer: BaseModel, within: int | None = None) -> str | None:
             text = search_text(answer)
         case NoteReport():
             text = note_text(answer)
+        case DecisionReport():
+            text = decision_text(answer)
         case _:
             text = None
     return text
@@ -5469,3 +5476,86 @@ def read(png: bytes) -> FrameReading:
         upgrade_sheet=upgrade_sheet(png),
         village_box=village_box(png),
     )
+
+
+# How long the Decisions API gets for one answer before the run ends `failed`.
+DECISION_TIMEOUT = 30
+# How sure the Decisions API has to be for its answer to count as a yes or a no:
+# a probability of yes this high is yes, one as far below a half is no, and
+# anything between ends the run `unclear`. Not measured: 0.7 is where the
+# API's own documentation hands an answer to a person instead. The report
+# keeps the probability, so a trial can tally it against any other cut.
+DECISION_CLEAR = 0.7
+
+DECISION_LINES: dict[DecisionOutcome, str] = {
+    "answered": "有明確的答案",
+    "unclear": "模型沒有給出明確的是或否",
+    "no_image": "找不到那張圖, 什麼都沒問",
+    "no_key": "沒有 Gemini API Key, 什麼都沒問",
+    "failed": "Decisions API 的呼叫失敗, 沒有答案",
+}
+
+
+def decision_text(report: DecisionReport) -> str:
+    """The answer alone on the first line, then the seconds, then how it sits with the caller's own."""
+    shown = [report.answer or DECISION_LINES[report.outcome]]
+    if report.probability is not None and report.answer is None:
+        shown[0] += f" (是的機率 {report.probability:.2f})"
+    if report.seconds is not None:
+        shown.append(f"API {report.seconds:.2f} 秒")
+    if report.agrees is not None:
+        same = "一致" if report.agrees else "不一致"
+        shown.append(f"ground truth 是 {report.ground_truth}, {same}")
+    return "\n".join(shown)
+
+
+def decision(prompt: str, image: Path, ground_truth: YesNo | None = None) -> DecisionReport:
+    """Ask the Decisions API one yes/no question about one image file.
+
+    It reads a file and the settings and calls the API: no emulator, no claim
+    on the state file. No flow calls it; it stands alone while it is on trial.
+    """
+    report = DecisionReport(
+        prompt=prompt,
+        image=image.resolve(),
+        model=DECISION_MODEL,
+        ground_truth=ground_truth,
+        outcome="no_image",
+    )
+    if image.is_file():
+        png = image.read_bytes()
+        report.sha256, report.size = hashlib.sha256(png).hexdigest(), len(png)
+        setting = ConfigStore().load().gemini.main
+        if not (key := gemini_key(setting)):
+            report.outcome = "no_key"
+        else:
+            report.outcome = _decide(report, GeminiClient(api_key=key, settings=setting), png)
+    if (born := started_at(os.getpid())) is not None:
+        report.total_seconds = round(time.time() - born, 3)
+    logger.info("Decision: %s", decision_text(report).replace("\n", ", "))
+    return report
+
+
+def _decide(report: DecisionReport, client: GeminiClient, png: bytes) -> DecisionOutcome:
+    """Put the question to the API and write what it said onto `report`."""
+    kind = mimetypes.guess_type(report.image.name)[0] or "image/png"
+    try:
+        said = client.decide(report.prompt, png, kind, DECISION_TIMEOUT)
+    # Whatever the SDK raised: a refused key, a blocked image, a timeout and a
+    # dead network are all a run with no answer, and the log says which.
+    except Exception:
+        logger.exception("The Decisions API call failed")
+        return "failed"
+    report.probability, report.confidence = said.probability, said.confidence
+    report.seconds, report.attempts, report.tokens = said.seconds, said.attempts, said.tokens
+    if said.probability is None:
+        return "unclear"
+    if said.probability >= DECISION_CLEAR:
+        report.answer = "yes"
+    elif said.probability <= 1 - DECISION_CLEAR:
+        report.answer = "no"
+    else:
+        return "unclear"
+    if report.ground_truth is not None:
+        report.agrees = report.answer == report.ground_truth
+    return "answered"

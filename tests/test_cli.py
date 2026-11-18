@@ -81,6 +81,7 @@ MINIMAL: dict[str, list[str]] = {
     "bounds": [],
     "capture": [],
     "read": ["shot.png"],
+    "decision": ["--prompt", "視窗開著嗎", "--image-path", "shot.png"],
     "export": [],
     "gamedata": [],
 }

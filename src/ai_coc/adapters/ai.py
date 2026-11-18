@@ -12,13 +12,23 @@ from google.genai import types, errors, interactions
 from ai_coc.models import (
     GeminiRequest,
     GeminiSetting,
+    DecisionAnswer,
     GeminiTextPart,
+    DecisionRequest,
     GeminiImagePart,
+    DecisionQuestion,
     GeminiResponseFormat,
     GeminiGenerationConfig,
 )
+from ai_coc.constants import DECISION_MODEL
 
 logger = logging.getLogger(__name__)
+
+# The name `decide`'s one question travels under, and its answer comes back under.
+DECISION_KEY = "q"
+# Where the Decisions API is served. The client's own default is `v1`, which
+# answered 404 (measured 2026-11-19, google-genai 3.3.0).
+DECISION_API_VERSION = "v1beta"
 
 T = TypeVar("T", bound=BaseModel)
 
@@ -160,6 +170,57 @@ class GeminiClient(BaseModel):
         if not text:
             raise RuntimeError(f"Gemini 沒有回傳內容，status={interaction.status}")
         return text
+
+    def decide(
+        self, question: str, image: bytes, mime_type: str, timeout: float
+    ) -> DecisionAnswer:
+        """Ask the Decisions API one yes/no question about one image.
+
+        The model is `DECISION_MODEL`, the only one that API has, whatever the
+        tier's own is. A failed call raises whatever the SDK raised, and a
+        blocked input a `RuntimeError`, for the caller to name. The clock starts with the client already built, so
+        `seconds` is the request and not this process importing the SDK.
+        """
+        request = DecisionRequest(
+            model=DECISION_MODEL,
+            input=[
+                GeminiImagePart(data=base64.b64encode(image).decode("ascii"), mime_type=mime_type)
+            ],
+            questions={DECISION_KEY: DecisionQuestion(instructions=question)},
+        )
+        logger.info(
+            "Decision request: model=%s prompt=%d chars image=%d bytes",
+            DECISION_MODEL,
+            len(question),
+            len(image),
+        )
+        logger.debug("Decision prompt: %s", question)
+        decisions = self.client.decisions
+        self._sends.clear()
+        started = time.monotonic()
+        reply = decisions.create(
+            **request.body(), api_version=DECISION_API_VERSION, timeout=timeout
+        )
+        spent = time.monotonic() - started
+        # A blocked input can come back as a reply with no answers instead of
+        # an error, and it is a failed call, not a model that could not say.
+        if reply.prompt_feedback and reply.prompt_feedback.block_reason:
+            raise RuntimeError(f"Decisions API 擋下了輸入：{reply.prompt_feedback.block_reason}")
+        said = (reply.answers or {}).get(DECISION_KEY)
+        answer = DecisionAnswer(
+            probability=getattr(said, "noul", None),
+            confidence=getattr(said, "confidence", None),
+            seconds=round(spent, 3),
+            attempts=len(self._sends),
+            tokens=reply.usage.total_input_tokens if reply.usage else None,
+        )
+        logger.info(
+            "Decision replied in %.2fs in %d HTTP attempt(s): %s",
+            spent,
+            answer.attempts,
+            answer.model_dump_json(),
+        )
+        return answer
 
     def generate_structured(
         self,

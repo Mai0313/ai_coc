@@ -20,6 +20,7 @@ from rich.console import Console
 # stay absolute even for same-layer modules.
 from ai_coc import plans, commands, __version__
 from ai_coc.models import (
+    YesNo,
     Caller,
     RunLog,
     RunEnded,
@@ -36,6 +37,7 @@ from ai_coc.models import (
     LootOverrides,
     SearchOptions,
     SearchSection,
+    DecisionReport,
     StandDownReport,
 )
 from ai_coc.constants import FRAME_RETENTION_DAYS
@@ -68,8 +70,9 @@ def _log_uncaught(kind: type[BaseException], value: BaseException, trace: Any) -
 # `growth` compares saved exports, `turnaround`, `farmed` and `tended` read the
 # journal, `listprice` writes a line into it, `wait` reads it and one run's
 # process, and `search` reads the kept tables and exports, none of them opening ADB;
-# `gamedata` opens it only to read the game's files, and `hold` claims the
-# emulator and does nothing with it. Every other one captures the screen, so
+# `gamedata` opens it only to read the game's files, `hold` claims the
+# emulator and does nothing with it, and `decision` sends a PNG off the disk
+# to the Decisions API. Every other one captures the screen, so
 # every other one takes `--debug` and `--shot-every`.
 NO_SCREEN = (
     "read",
@@ -86,6 +89,7 @@ NO_SCREEN = (
     "wait",
     "gamedata",
     "hold",
+    "decision",
 )
 
 # The sub-commands that hold no claim on the emulator, listed the way round
@@ -116,7 +120,17 @@ WITHOUT_CLAIM = (*(name for name in NO_SCREEN if name != "hold"), "capture")
 # because whoever reads their stdout is an agent about to write that report, and
 # every reshaping it did by hand was a step a skill had to spell out; a program
 # reads `result.json`, which is the model whatever the terminal was shown.
-TEXT_ANSWERS = ("attack", "status", "growth", "turnaround", "search", "farmed", "tended", "note")
+TEXT_ANSWERS = (
+    "attack",
+    "status",
+    "growth",
+    "turnaround",
+    "search",
+    "farmed",
+    "tended",
+    "note",
+    "decision",
+)
 
 
 # Every sub-command and the line `--help` gives it, under the heading the help
@@ -224,9 +238,24 @@ COMMANDS = (
             ("read", "不碰遊戲，把一張截圖交給每個判讀器，印出各自讀到什麼"),
             ("probe", "花一場戰鬥實測部署邊界，對照判讀器的結果"),
             ("bounds", "花一場戰鬥實測地圖邊緣，推回村莊範圍"),
+            (
+                "decision",
+                "不碰遊戲，拿一張圖問 Gemini Decisions API 一個是非題，印 yes 或 no 跟花了幾秒；試用中，沒有任何流程用它",
+            ),
         ),
     ),
 )
+
+
+def _decision_flags(asker: argparse.ArgumentParser) -> None:
+    """Its own function only because `_parser` is at Ruff's statement limit."""
+    asker.add_argument("--prompt", required=True, metavar="問題", help="要問的是非題")
+    asker.add_argument("--image-path", required=True, type=Path, metavar="圖", help="要問的那張圖")
+    asker.add_argument(
+        "--ground-truth",
+        choices=get_args(YesNo),
+        help="你自己對同一題的答案；給了就記下來，並記兩邊一不一致",
+    )
 
 
 def _watch_flags(
@@ -533,6 +562,7 @@ def _parser() -> argparse.ArgumentParser:
     shot.add_argument("--count", type=int, default=1, help="存幾張")
     shot.add_argument("--gap", type=float, default=1.5, metavar="秒", help="每張間隔幾秒")
     sub.choices["read"].add_argument("png", type=Path, help="要判讀的截圖")
+    _decision_flags(sub.choices["decision"])
     sub.choices["hold"].add_argument(
         "--for",
         dest="seconds",
@@ -683,6 +713,7 @@ def _answer(arguments: argparse.Namespace, run: RunLog) -> BaseModel | str:
             str(path) for path in commands.capture(run.frames, a.count, a.gap)
         ),
         "read": lambda: commands.read(a.png.read_bytes()),
+        "decision": lambda: commands.decision(a.prompt, a.image_path, a.ground_truth),
         "export": lambda: commands.export(run.frames, a.last),
         "gamedata": lambda: commands.gamedata(run.frames, a.refresh),
     }
@@ -768,7 +799,10 @@ def _run_command(arguments: argparse.Namespace, run: RunLog) -> int:
     # Still not zero, though: the stop meant nothing lined up behind the loan
     # runs, and a command chained after this one with `&&` would otherwise
     # start with no loan left to be cancelled.
-    code = 1 if cancelled else 0
+    # Nor is a decision that came back with no yes or no, so a caller reading
+    # the exit code never takes a failure for an answer.
+    unanswered = isinstance(answer, DecisionReport) and answer.outcome != "answered"
+    code = 1 if cancelled or unanswered else 0
     # An attack keeps its last round alone, the others having `round` lines.
     last = (
         answer.model_copy(update={"rounds": AttackSeries(answer.rounds.root[-1:])})

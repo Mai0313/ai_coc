@@ -127,6 +127,7 @@ ai_coc capture --count 30             # a burst off the live game, into this run
 ai_coc <any command> --label baseline # name this run's folder so it is findable later
 ai_coc <any command> --agent codex --session <id> --mission "farm"  # who asked; agents always pass these, a bare run logs a warning
 ai_coc read shot.png                  # what each reader makes of one frame
+ai_coc decision --prompt "<yes/no question>" --image-path shot.png  # ask Gemini's Decisions API one yes/no question about an image: prints yes or no and the seconds the call took; --ground-truth yes|no records your own answer beside it; touches nothing, stands alone and is on trial, so no flow uses it
 ai_coc export                         # the whole village out of the game, named, as JSON
 ai_coc export --table                 # the same, drawn as a table for a person
 ai_coc export --last                  # the last one off the disk, without touching the game
