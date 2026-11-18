@@ -34,6 +34,7 @@ from ai_coc.models import (
     Boosts,
     Caller,
     MapEdge,
+    Sailing,
     FrameLog,
     HoldStop,
     LoanStop,
@@ -309,9 +310,11 @@ class WorldCommandTests(unittest.TestCase):
             patch.object(commands, "_controller", return_value=adb) as driving,
             patch.object(commands, "_attached", return_value=adb) as looking,
             patch.object(commands, "current_world", return_value=seen),
-            patch.object(commands, "cross", return_value=crossed) as sailed,
+            patch.object(commands, "cross", return_value=Sailing(world=crossed)) as sailed,
+            patch.object(commands, "restart_game") as restarted,
         ):
             report = commands.world(go, _frames(self))
+        restarted.assert_not_called()
         # Reading only looks, and crossing drives: see `_attached`.
         assert (driving.called, looking.called) == ((True, False) if go else (False, True))
         return adb, sailed, report
@@ -347,6 +350,93 @@ class WorldCommandTests(unittest.TestCase):
         _, _, lost = self._world("day", go="night", crossed=None)
         assert lost.world is None
         assert "不明的畫面" in commands.world_line(lost)
+
+    # Where the restarted game came back, which on MuMu need not be where it was.
+    BACK_ON = DisplayTarget(logical_id="7", physical_id="8")
+
+    def _ignored(
+        self, second: Sailing, *, settled: bool = True, stop: bool = False
+    ) -> tuple[MagicMock, MagicMock, MagicMock, object]:
+        """A crossing whose marker tap the boat ignored, and what the one after the restart answers."""
+        adb = _adb()
+        adb.screenshot.return_value = b"frame"
+        with (
+            patch.object(commands, "_controller", return_value=adb),
+            patch.object(commands, "current_world", return_value="day"),
+            patch.object(
+                commands, "cross", side_effect=[Sailing(world="day", ignored=True), second]
+            ) as sailed,
+            patch.object(commands, "refuse_taken"),
+            patch.object(commands, "restart_game") as restarted,
+            patch.object(
+                commands, "_settle_game", return_value=self.BACK_ON if settled else None
+            ) as waited,
+        ):
+            self.frames = _frames(self)
+            report = commands.world("night", self.frames, lambda: stop)
+        return sailed, restarted, waited, report
+
+    frames: FrameLog
+
+    def test_a_boat_that_ignored_its_marker_gets_one_restart_and_one_more_crossing(self) -> None:
+        """By hand the restarted game crossed four times of four, and once from here (#665)."""
+        sailed, restarted, waited, report = self._ignored(Sailing(world="night"))
+        restarted.assert_called_once()
+        # The crossing parks for itself, and sails on the display the game came back on.
+        assert waited.call_args.kwargs == {"park": False}
+        assert sailed.call_count == 2
+        assert sailed.call_args.args[1:] == (self.BACK_ON, "night")
+        assert (report.outcome, report.crossed, report.restarted) == ("crossed", True, True)
+        assert commands.world_line(report) == f"從日世界切到夜世界{commands.RESTARTED_LINE}"
+
+    def test_a_stop_asked_by_then_begins_no_restart(self) -> None:
+        """A stop is usually the player taking over, and the restart would log in over them."""
+        sailed, restarted, waited, report = self._ignored(Sailing(world="night"), stop=True)
+        restarted.assert_not_called()
+        waited.assert_not_called()
+        assert sailed.call_count == 1
+        assert (report.outcome, report.world, report.restarted) == (
+            "crossing_failed",
+            "day",
+            False,
+        )
+
+    def test_a_second_ignored_tap_is_reported_and_not_restarted_again(self) -> None:
+        sailed, restarted, _, report = self._ignored(Sailing(world="day", ignored=True))
+        restarted.assert_called_once()
+        assert sailed.call_count == 2
+        assert (report.outcome, report.world, report.restarted) == ("crossing_failed", "day", True)
+        assert commands.world_line(report).endswith(commands.RESTARTED_LINE)
+
+    def test_a_restart_whose_village_never_came_up_sails_nowhere(self) -> None:
+        """Said as no village, with the screen kept, rather than as a second crossing that failed."""
+        sailed, restarted, _, report = self._ignored(Sailing(world="night"), settled=False)
+        restarted.assert_called_once()
+        assert sailed.call_count == 1
+        assert (report.outcome, report.world, report.restarted) == ("no_village", None, True)
+        assert (self.frames.directory / "no_village.png").exists()
+
+    def test_another_devices_login_is_never_restarted_over(self) -> None:
+        """The restart logs the account in, which would put the player's phone out."""
+        adb = _adb()
+        with (
+            patch.object(commands, "_controller", return_value=adb),
+            patch.object(commands, "current_world", return_value="day"),
+            patch.object(commands, "cross", return_value=Sailing(world="day", ignored=True)),
+            patch.object(
+                commands, "refuse_taken", side_effect=commands.SessionTakenError("taken")
+            ),
+            patch.object(commands, "restart_game") as restarted,
+            pytest.raises(commands.SessionTakenError),
+        ):
+            commands.world("night", _frames(self))
+        restarted.assert_not_called()
+
+    def test_a_crossing_that_failed_any_other_way_restarts_nothing(self) -> None:
+        """A camera that never parked, or measured spots that may have missed."""
+        _, _, report = self._world("day", go="night", crossed="day")
+        assert (report.outcome, report.restarted) == ("crossing_failed", False)
+        assert commands.RESTARTED_LINE not in commands.world_line(report)
 
     def test_a_game_with_no_window_yet_confirms_neither_village(self) -> None:
         _, sailed, report = self._world("day", go="night", display=False)

@@ -2962,6 +2962,21 @@ class Crossing(BaseModel):
     marked: bool
 
 
+class Sailing(BaseModel):
+    """Where one crossing left the game, and whether the boat took its tap and stayed.
+
+    `ignored` is the one failure a restart of the game answers (#665): the
+    marker over the boat was read and tapped, and the village it was tapped on
+    is still up. A camera that never parked, or measured spots that may have
+    missed, are not that.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    world: World | None
+    ignored: bool = False
+
+
 # How one `world` command ended. `here` is a read, or a crossing already at its
 # destination; `crossed` and `crossing_failed` are the two halves of a sail.
 # **`no_village` and `no_display` are separated because the answer differs**:
@@ -2979,6 +2994,10 @@ class WorldReport(BaseModel):
 
     Both are optional because "no village is on screen" is a real answer here
     rather than an error, and it is a different one from either village.
+
+    `restarted` is whether the boat ignored its tap and the game was restarted
+    for a second crossing, which `outcome` then answers for: `no_village` when
+    the restarted game showed none to sail from.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -2986,6 +3005,7 @@ class WorldReport(BaseModel):
     found: World | None
     world: World | None
     crossed: bool = False
+    restarted: bool = False
     outcome: WorldOutcome
 
 

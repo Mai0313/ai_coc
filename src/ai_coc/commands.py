@@ -32,6 +32,7 @@ from ai_coc.models import (
     World,
     Caller,
     MapEdge,
+    Sailing,
     FrameLog,
     HoldStop,
     LoanStop,
@@ -238,6 +239,7 @@ from .ui.runner import (
     relogin,
     spell_out,
     refuse_taken,
+    restart_game,
 )
 from .ui.upkeep import UpkeepRunner
 
@@ -3780,7 +3782,25 @@ def donate(options: DonateOptions, frames: FrameLog) -> DonateReport:
     return report
 
 
-def world(go: World | None, frames: FrameLog) -> WorldReport:
+def _sail_again(
+    adb: AdbController, display: DisplayTarget, go: World, should_stop: Callable[[], bool]
+) -> Sailing | None:
+    """Restart the game and cross once more; None when no village came up to sail from.
+
+    The restart logs the account in, so the screen is held to `refuse_taken`
+    first, and the wait after it stands down on another device's login as
+    `launch` does. That wait reads a stop, as `launch`'s does.
+    """
+    refuse_taken(adb.screenshot(display, "before-restart"))
+    restart_game(adb, display)
+    # The crossing parks for itself.
+    settled = _settle_game(adb, RESTART_POLLS, should_stop, park=False)
+    return None if settled is None else cross(adb, settled, go)
+
+
+def world(
+    go: World | None, frames: FrameLog, should_stop: Callable[[], bool] = stop_requested
+) -> WorldReport:
     """Which village the game is on, and sail to the other one when asked for it.
 
     Reading is the default and crossing is the exception: this is the question
@@ -3800,6 +3820,14 @@ def world(go: World | None, frames: FrameLog) -> WorldReport:
     **Reading takes no claim and starts nothing** (`_attached`): it runs beside a
     loop that holds the emulator without disturbing it. Crossing drives the game,
     so it goes through `_controller` and the claim like any other command.
+
+    **A boat that ignored the tap on its marker gets the game restarted and one
+    more crossing** (`Sailing.ignored`, #665, `_sail_again`), which is what the
+    agents did by hand, and the report says so (`restarted`). Once, since the
+    second answer is the one to report. A stop asked for by then is the one
+    thing this command reads one for: the restart is not begun, and the wait
+    for the village after it ends early, answered `no_village` like a village
+    that never came up, with that screen kept.
     """
     adb = _controller(frames) if go is not None else _attached(frames)
     try:
@@ -3814,13 +3842,33 @@ def world(go: World | None, frames: FrameLog) -> WorldReport:
     if go is None or go == found:
         report = WorldReport(found=found, world=found, outcome="here" if found else "no_village")
     else:
-        landed = cross(adb, display, go)
-        report = WorldReport(
-            found=found,
-            world=landed,
-            crossed=landed == go,
-            outcome="crossed" if landed == go else "crossing_failed",
-        )
+        sailing: Sailing | None = cross(adb, display, go)
+        restarted = False
+        if sailing.ignored and should_stop():
+            logger.info("The boat ignored the tap on its marker; a stop is asked, so no restart")
+        elif sailing.ignored:
+            logger.warning(
+                "The boat took the tap on its marker and the %s village stayed;"
+                " restarting the game to sail once more",
+                sailing.world,
+            )
+            restarted = True
+            sailing = _sail_again(adb, display, go, should_stop)
+        if sailing is None:
+            try:
+                frames.write("no_village", adb.screenshot(adb.display_for(COC_PACKAGE), None))
+            except AdbControlError:
+                logger.warning("The game is not on a display; there is no frame to keep")
+            report = WorldReport(found=found, world=None, restarted=True, outcome="no_village")
+        else:
+            landed = sailing.world
+            report = WorldReport(
+                found=found,
+                world=landed,
+                crossed=landed == go,
+                restarted=restarted,
+                outcome="crossed" if landed == go else "crossing_failed",
+            )
     logger.info("World: %s", world_line(report))
     return report
 
@@ -3837,13 +3885,15 @@ WORLD_LINES: dict[WorldOutcome, str] = {
     "no_village": "畫面不是村莊,無法判斷世界",
     "no_display": "遊戲還沒有畫面,無法判斷世界",
 }
+RESTARTED_LINE = "(船的標記點了沒反應,重開過遊戲)"
 
 
 def world_line(report: WorldReport) -> str:
     """The one line a person reads off a world check or a crossing."""
-    return WORLD_LINES[report.outcome].format(
+    line = WORLD_LINES[report.outcome].format(
         found=_WORLDS[report.found], world=_WORLDS[report.world]
     )
+    return f"{line}{RESTARTED_LINE}" if report.restarted else line
 
 
 VIEW_LINES: dict[ViewOutcome, str] = {

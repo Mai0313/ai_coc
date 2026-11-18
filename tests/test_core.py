@@ -2175,14 +2175,17 @@ class CrossingTests(unittest.TestCase):
             patch.object(world_ui, "reward_chest", return_value=0),
             patch.object(world_ui, "boat_marker", side_effect=self.markers) as self.looked,
         ):
-            landed = world_ui.cross(adb, DisplayTarget(logical_id="1", physical_id="2"), want)
-        return adb, landed
+            sailing = world_ui.cross(adb, DisplayTarget(logical_id="1", physical_id="2"), want)
+        self.ignored = sailing.ignored
+        return adb, sailing.world
 
     # What `boat_marker` answers on each look: the centred park's own, then the
     # crossing's; with none, the corner park's (a second one after its pinch,
     # when the first found none), then the crossing's again.
     markers: tuple[tuple[int, int] | None, ...] = (None, None, None)
     looked: MagicMock
+    # Whether the last crossing answered that the boat ignored its marker's tap.
+    ignored: bool
 
     def _leaving_home(self, *markers: tuple[int, int] | None) -> MagicMock:
         self.markers = markers
@@ -2199,6 +2202,45 @@ class CrossingTests(unittest.TestCase):
         """
         adb = self._leaving_home((442, 542), (442, 542))
         adb.tap.assert_called_once_with(442, 542, ANY)
+
+    def test_a_marker_tapped_with_the_village_still_up_is_an_ignored_boat(self) -> None:
+        """Seven crossings on 2026-11-17 and 18: the HUD flickered and the home village stayed (#665)."""
+        self.markers = ((442, 542), (442, 542))
+        adb, landed = self._cross(["day", *["day"] * world_ui.SAIL_POLLS, "day"], want="night")
+        adb.tap.assert_called_once_with(442, 542, ANY)
+        assert (landed, self.ignored) == ("day", True)
+
+    def test_a_crossing_that_landed_ignored_nothing(self) -> None:
+        self._leaving_home((442, 542), (442, 542))
+        assert not self.ignored
+
+    def test_a_marker_tap_that_sailed_under_a_cover_is_not_an_ignored_boat(self) -> None:
+        """The village asked for came up once the cover was pressed away: nothing to restart for."""
+        self.markers = ((442, 542), (442, 542))
+        adb, landed = self._cross(
+            ["day", *[None] * world_ui.SAIL_POLLS, None, "night"], want="night"
+        )
+        assert adb.tap.call_count == 1
+        assert (landed, self.ignored) == ("night", False)
+
+    def test_measured_spots_that_all_missed_are_not_an_ignored_boat(self) -> None:
+        """Nothing says a measured spot was on the boat, on either village."""
+        polls = ["night"] * (world_ui.SAIL_POLLS + 1)
+        spots = len(world_ui.CROSSINGS["day"].spots)
+        adb, landed = self._cross(["night", *polls * spots])
+        assert adb.tap.call_count == spots
+        assert (landed, self.ignored) == ("night", False)
+        self.markers = (None,) * 5
+        polls = ["day"] * (world_ui.SAIL_POLLS + 1)
+        adb, landed = self._cross(
+            ["day", *polls * len(world_ui.CROSSINGS["night"].spots)], want="night"
+        )
+        assert (landed, self.ignored) == ("day", False)
+
+    def test_a_camera_that_never_parked_is_not_an_ignored_boat(self) -> None:
+        adb, landed = self._cross(["day"], want="night", parked=False)
+        adb.tap.assert_not_called()
+        assert (landed, self.ignored) == ("day", False)
 
     def test_a_bought_scenery_finds_its_marker_once_the_park_brought_it_back(self) -> None:
         """The park's own pinch is what makes the marker drawn; the crossing only reads it."""
