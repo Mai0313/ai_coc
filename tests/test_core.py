@@ -1930,9 +1930,10 @@ class ParkCameraTests(unittest.TestCase):
     ) -> tuple[MagicMock, bool]:
         adb = MagicMock()
         with (
-            patch.object(world_ui.time, "sleep"),
+            patch.object(world_ui.time, "sleep") as self.slept,
             patch.object(world_ui, "view_shift", side_effect=shifts),
             patch.object(world_ui, "pinch_zoomed", side_effect=zooms, return_value=True),
+            patch.object(world_ui, "current_world", return_value=world if self.village else None),
             patch.object(world_ui, "boat_marker", side_effect=markers) as self.looked,
         ):
             parked = world_ui.park_camera(
@@ -1941,6 +1942,9 @@ class ParkCameraTests(unittest.TestCase):
         return adb, parked
 
     looked: MagicMock
+    slept: MagicMock
+    # Whether a village still reads on the frame after a pinch that slid.
+    village = True
     # A park pinches out, proves it with a pinch in, and pinches out again.
     OUT = ("out", "in", "out")
 
@@ -2071,12 +2075,39 @@ class ParkCameraTests(unittest.TestCase):
         assert parked is True
         assert [c.args[0] for c in adb.zoom.call_args_list] == ["out", "in", *self.OUT]
 
+    def test_the_games_activity_is_started_again_before_a_slid_pinch_is_repeated(self) -> None:
+        """Pinching again alone left the one-finger state once; the start did 5 times of 5.
+
+        Measured 2026-11-18 on the builder base: the state held through a second
+        test and a 20 s wait, and the first pinch after the start zoomed.
+        """
+        adb, parked = self._park([(0, 0), (0, 0)], world="night", markers=(), zooms=[False, True])
+        assert parked is True
+        adb.launch_app.assert_called_once_with(world_ui.COC_PACKAGE)
+        moves = [c for c in adb.mock_calls if c[0] in ("zoom", "launch_app")]
+        assert [c[0] for c in moves[:4]] == ["zoom", "zoom", "launch_app", "zoom"]
+        assert call(world_ui.FRONT_SETTLE) in self.slept.call_args_list
+
+    def test_nothing_is_started_over_a_screen_that_is_no_village(self) -> None:
+        """Another device's login sheet fails the pinch test too, and the launch would log back in."""
+        self.village = False
+        adb, parked = self._park([], world="night", markers=(), zooms=[False, True])
+        assert parked is False
+        adb.launch_app.assert_not_called()
+        assert [c.args[0] for c in adb.zoom.call_args_list] == ["out", "in"]
+
+    def test_a_pinch_that_zoomed_starts_nothing(self) -> None:
+        adb, parked = self._park([(0, 0), (0, 0)], world="night", markers=())
+        assert parked is True
+        adb.launch_app.assert_not_called()
+
     def test_a_park_whose_pinches_keep_sliding_is_not_parked(self) -> None:
         """Every coordinate after it would be tapped at a scale nobody read."""
         tries = world_ui.PINCH_TRIES
         adb, parked = self._park([], world="night", markers=(), zooms=[False] * tries)
         assert parked is False
         assert [c.args[0] for c in adb.zoom.call_args_list] == ["out", "in"] * tries
+        assert adb.launch_app.call_count == tries - 1
         adb.swipe.assert_not_called()
 
     def test_a_walk_full_of_spoilt_readings_still_has_room_to_finish(self) -> None:

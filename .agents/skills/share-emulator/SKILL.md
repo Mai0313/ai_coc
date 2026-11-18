@@ -111,7 +111,7 @@ user-invocable: false
 
 **`launch` 三種 scope 都會等村莊畫出來再把鏡頭放好**: 輪詢到村莊畫出來 (最久三分鐘, 等不到就放棄), pinch 回最遠, 再用 `park_camera` 滑到地圖角落, 從那裡把村莊拖到畫面中間停好 (花錢買的場景拖好後會以畫面中間為準再拉近一次, 回到免費場景的大小). `LaunchReport.at_village` 說村莊有沒有出現, `outcome` 說沒出現是等到放棄 (`no_village`) 還是等的時候收到 `ai_coc stop` (`stopped`). 其他指令等得短得多, 會等村莊的最多半分鐘上下, `capture` 跟不帶 `--day`、`--night` 的 `world` 不等, `world --day` / `--night` 不等村莊. 所以遊戲剛開而村莊還沒出來, 修法是 `launch` 而不是重跑原本的指令.
 
-log 裡的 `stopped moving after 2 swipe(s)` 是正常的. `camera was still moving` 的 warning 是鏡頭沒停好: 坐船跟收聖水車會因此收工, `launch` 的 `_settle_game` 不會 (後面點的是固定的畫面角落), 所以看到這行而指令仍回報成功不是矛盾. 攻擊迴圈開頭只拉遠不停鏡頭, 它的 run.log 裡這行只會來自夜世界的收聖水車. `The game read the pinch as a drag rather than a zoom` 是遊戲把 pinch 讀成單指拖曳 (夜世界打完一場之後常會這樣, 一直到下一場), 停鏡頭會自己再試, 只是回報; 試完還是這樣就是 `kept reading the pinch as a drag`, 跟沒停好一樣收工, 不在錯的大小上點地圖.
+log 裡的 `stopped moving after 2 swipe(s)` 是正常的. `camera was still moving` 的 warning 是鏡頭沒停好: 坐船跟收聖水車會因此收工, `launch` 的 `_settle_game` 不會 (後面點的是固定的畫面角落), 所以看到這行而指令仍回報成功不是矛盾. 攻擊迴圈開頭只拉遠不停鏡頭, 它的 run.log 裡這行只會來自夜世界的收聖水車. `The game read the pinch as a drag rather than a zoom` 是遊戲把 pinch 讀成單指拖曳 (夜世界打完一場之後常會這樣), 停鏡頭會把遊戲的畫面重新叫到前景再試, 通常一次就好, 只是回報; 試完還是這樣就是 `kept reading the pinch as a drag`, 跟沒停好一樣收工, 不在錯的大小上點地圖.
 
 遊戲卡在載入畫面是另一回事: `launch` 一樣只等三分鐘, 放棄的那一行是 `Gave up after 180s waiting for the game: the game is on its loading screen`. 那是伺服器的事, 攻擊迴圈自己會等 (最多 45 分鐘), 不要一直重跑 `launch`.
 

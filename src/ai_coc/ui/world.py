@@ -268,6 +268,25 @@ def park_camera(
 # battles until the next one (#667): 15 pinches over 90 s slid on 2026-11-17,
 # while one round earlier a park's first pinch slid and its second zoomed.
 PINCH_TRIES = 3
+# **Starting the game's activity again, with the game up, ends that state**,
+# where pinching again alone did once, above, and otherwise never: on
+# 2026-11-17 it held through 15 pinches and a one-finger drag, and on
+# 2026-11-18 through a second test 10 s later all three times and a 20 s wait
+# once. Measured on LDPlayer's builder base on 2026-11-18, the default plan: it
+# followed 5 of 8 battles, and the pinch after the start zoomed 5 times of 5,
+# three from a probe and two inside the attack's cart visit, which then parked
+# and read the cart. It is the launch every command opens with (`ensure_coc`),
+# which is why the first cart visit parked in each of the 14 builder base runs
+# checked. The game stays where it is, the village on screen; the wait is the
+# one the probe took, and no shorter one was tried. Not measured on MuMu, nor
+# on the home village, where no park has met the state.
+#
+# **Only over a village.** That launch logs the account in again when another
+# device has taken it (`AGENTS.md`'s phone paragraph), and its sheet, raised
+# between the caller's read and the pinch, would fail the test like a slid
+# pinch. So a frame no village reads on ends the park unparked and starts
+# nothing; the caller's next read is what names the sheet.
+FRONT_SETTLE = 3.0
 
 
 def _zoom_out(adb: AdbController, display: DisplayTarget) -> bytes | None:
@@ -276,16 +295,28 @@ def _zoom_out(adb: AdbController, display: DisplayTarget) -> bytes | None:
     **A pinch out cannot prove itself**: at the far limit it changes nothing,
     and so does a pinch read as one finger dragging the camera into a corner of
     the map. A pinch in from there always changes the scale, so it is the test,
-    and the pinches out after it put back what it took.
+    and the pinches out after it put back what it took. A pinch that slid is
+    sent again only after the game's activity was started again (`FRONT_SETTLE`).
     """
-    for _ in range(PINCH_TRIES):
+    after = b""
+    for attempt in range(PINCH_TRIES):
+        if attempt:
+            if current_world(after) is None:
+                logger.warning("No village is on screen after the pinch; the park ends here")
+                return None
+            logger.warning(
+                "The game read the pinch as a drag rather than a zoom;"
+                " starting its activity again before the next pinch"
+            )
+            adb.launch_app(COC_PACKAGE)
+            time.sleep(FRONT_SETTLE)
         adb.zoom("out", ZOOM_PINCHES, COC_PACKAGE, display)
         before = adb.screenshot(display, "pinch")
         adb.zoom("in", 1, COC_PACKAGE, display)
-        if pinch_zoomed(before, adb.screenshot(display, "pinch-in")):
+        after = adb.screenshot(display, "pinch-in")
+        if pinch_zoomed(before, after):
             adb.zoom("out", ZOOM_PINCHES, COC_PACKAGE, display)
             return adb.screenshot(display, "pinch")
-        logger.warning("The game read the pinch as a drag rather than a zoom; pinching again")
     logger.warning("The game kept reading the pinch as a drag; the camera is at no known scale")
     return None
 
