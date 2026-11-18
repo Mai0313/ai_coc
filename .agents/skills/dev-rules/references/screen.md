@@ -1,11 +1,3 @@
----
-trigger: glob
-globs: "src/**, tests/**"
-paths:
-  - "src/**"
-  - "tests/**"
----
-
 # Reading and driving the screen
 
 ## Cross-cutting rules

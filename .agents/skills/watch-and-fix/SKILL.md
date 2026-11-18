@@ -6,12 +6,12 @@ description: >-
 
 # watch-and-fix
 
-查出迴圈在遊戲裡哪裡做錯, 修掉. 盯的是**一輪的整條路**: 開起遊戲 -> 站上日世界或夜世界 -> 打完一場 -> 回到村莊 -> 開下一輪. 卡在載入、船沒坐成、彈窗蓋住攻擊鈕、結算畫面認不出來, 都跟戰術一樣是這裡的題目, 而在 log 上都像「這場打得爛」. 迴圈照 `takeover` 的 `references/farming.md` 開 (兩個 `--plan`, 要查的是 AI 規劃本身才不帶 `--plan`), 平常照它交給 subagent 跑; 使用者說「你親自監督執行」, 就是你自己跑, 不轉包給 subagent: 步驟照 `takeover` 的 `references/runner.md` (會佔模擬器的指令帶 `--yield`, 用 `ai_coc wait` 等, 每一步讀 `state.json`, 迴圈的指令帶 `<你的 session id>-farm`, 跟你自己驗證用的分開), 送背景照 `share-emulator` 的「背景跑」; runner.md 寫「回報」的地方, 就是該你判斷的時候. `--yield` 不能省: 沒帶的話, 你自己驗證用的指令會把這輪停掉而不是借走, 也沒有人會把它開回去. 改程式碼的規矩在 `.agents/rules/code.md`, 流程照 `AGENTS.md` 的 Development flow.
+查出迴圈在遊戲裡哪裡做錯, 修掉. 盯的是**一輪的整條路**: 開起遊戲 -> 站上日世界或夜世界 -> 打完一場 -> 回到村莊 -> 開下一輪. 卡在載入、船沒坐成、彈窗蓋住攻擊鈕、結算畫面認不出來, 都跟戰術一樣是這裡的題目, 而在 log 上都像「這場打得爛」. 迴圈照 `takeover` 的 `references/farming.md` 開 (兩個 `--plan`, 要查的是 AI 規劃本身才不帶 `--plan`), 平常照它交給 subagent 跑; 使用者說「你親自監督執行」, 就是你自己跑, 不轉包給 subagent: 步驟照 `takeover` 的 `references/runner.md` (會佔模擬器的指令帶 `--yield`, 用 `ai_coc wait` 等, 每一步讀 `state.json`, 迴圈的指令帶 `<你的 session id>-farm`, 跟你自己驗證用的分開), 送背景照 `share-emulator` 的「背景跑」; runner.md 寫「回報」的地方, 就是該你判斷的時候. `--yield` 不能省: 沒帶的話, 你自己驗證用的指令會把這輪停掉而不是借走, 也沒有人會把它開回去. 改程式碼的規矩在 `.agents/skills/dev-rules/references/code.md`, 流程照 `AGENTS.md` 的 Development flow.
 
 ## 做完的樣子
 
 - 要求裡有打資源的, 那一趟照 `takeover` 的「打資源 (一趟)」打到終點, 修東西的時候迴圈照跑
-- 找到的問題各自修好 merge 了, 每一個都有量過的證據 (`.agents/rules/code.md` 的 Measuring a change); merge 時迴圈還在跑的話, 照 `share-emulator` 的「merge 進來的修正, 迴圈怎麼用上」換上新程式
+- 找到的問題各自修好 merge 了, 每一個都有量過的證據 (`.agents/skills/dev-rules/references/code.md` 的 Measuring a change); merge 時迴圈還在跑的話, 照 `share-emulator` 的「merge 進來的修正, 迴圈怎麼用上」換上新程式
 - 或者一句「這批很順, 沒發現值得改的」: 那是結論, 不是空白
 - 背景沒有東西留著 (`AGENTS.md` 的 Check what subagents leave behind yourself); 這批 `frames/` 在證據用完之後刪掉, log 留著
 - 回報照「報告」
@@ -31,7 +31,7 @@ uv run --no-sync ai_coc attack --plan .runs/tuned.json
 
 ## 怎麼查
 
-**出兵沒有成本, 一場不是證據**: 練兵不花錢也不花時間, 整場拿去量測是正常支出; 有疑問就打一場來問, 不要從一張截圖推理, 下結論照 `.agents/rules/code.md` 的 Measuring a change (它不只管改程式碼, 換設定檔或戰術檔的對照也照它).
+**出兵沒有成本, 一場不是證據**: 練兵不花錢也不花時間, 整場拿去量測是正常支出; 有疑問就打一場來問, 不要從一張截圖推理, 下結論照 `.agents/skills/dev-rules/references/code.md` 的 Measuring a change (它不只管改程式碼, 換設定檔或戰術檔的對照也照它).
 
 **每一輪都成功也要找.** `outcome` 全是 `took_loot` 不代表迴圈沒事. 迴圈會自己救回來, 救的那一下只留在 log 裡: **每一行重試或修正都是上游某一步做錯了**, 結果對只說明救得回來. 一輪一輪數它們:
 
@@ -48,7 +48,7 @@ uv run --no-sync ai_coc attack --plan .runs/tuned.json
 **階梯是給「打得不夠好」用的**, 從便宜爬到貴, 每一層都比下一層便宜而且好回頭, 不要跳級. 迴圈做錯事 (讀錯, 點錯地方, 重試把技能燒掉) 是 bug, 量完直接修程式, 不用從設定檔爬起.
 
 1. **`~/.ai_coc/config.json`**: 戰利品門檻, 倉庫上限, 模型. 它只決定打誰跟打到什麼時候, **沒有任何數字決定怎麼打**, 所以「打得不夠好」從第二層開始
-2. **戰術檔案**: `--plan` 餵一份 JSON 進去**完全不呼叫 AI**, 只打它所屬的村莊. 寫 JSON 比改程式碼快, 而且拿掉 AI 這個變因才能對照. 預設的 `flat.json` 跟 prompt 的戰術是使用者定的 (`.agents/rules/attack.md`), 拿來對照的改法另存一份
+2. **戰術檔案**: `--plan` 餵一份 JSON 進去**完全不呼叫 AI**, 只打它所屬的村莊. 寫 JSON 比改程式碼快, 而且拿掉 AI 這個變因才能對照. 預設的 `flat.json` 跟 prompt 的戰術是使用者定的 (`.agents/skills/dev-rules/references/attack.md`), 拿來對照的改法另存一份
 3. **`src/ai_coc/prompts/attack_plan.md`**: AI 每次都畫爛線或漏欄位是 prompt 的事
 4. **`src/ai_coc/ui/attack.py` 頂端的常數**: 到這層才需要量測撐腰, 來歷寫在各常數旁邊. `TAP_GAP` 住在 `adapters/adb.py`
 5. **迴圈的邏輯**: 最後手段, 要跑測試, 要開 PR

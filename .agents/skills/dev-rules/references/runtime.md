@@ -1,20 +1,3 @@
----
-trigger: glob
-globs: "src/ai_coc/commands.py, src/ai_coc/cli.py, src/ai_coc/models.py, src/ai_coc/constants.py, src/ai_coc/ui/**, src/ai_coc/adapters/**, src/ai_coc/parsers/settings.py, src/ai_coc/parsers/village.py, src/ai_coc/parsers/gamedata.py, src/ai_coc/logging_setup.py, tests/**"
-paths:
-  - "src/ai_coc/commands.py"
-  - "src/ai_coc/cli.py"
-  - "src/ai_coc/models.py"
-  - "src/ai_coc/constants.py"
-  - "src/ai_coc/ui/**"
-  - "src/ai_coc/adapters/**"
-  - "src/ai_coc/parsers/settings.py"
-  - "src/ai_coc/parsers/village.py"
-  - "src/ai_coc/parsers/gamedata.py"
-  - "src/ai_coc/logging_setup.py"
-  - "tests/**"
----
-
 # State, launch, adapters and settings
 
 ## Stopping and the state file (`~/.ai_coc/state.json`, `StateFile`, `RunnerState`, `Watch`, `claim`, `read_state`)

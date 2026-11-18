@@ -61,7 +61,7 @@ This project uses [`uv`](https://docs.astral.sh/uv/) for Python and dependency m
 make uv-install
 
 # Clone your fork (on Windows add `-c core.symlinks=true`, which needs Developer Mode,
-# or .claude/skills and .claude/rules arrive as text files instead of links)
+# or .claude/skills arrives as a text file instead of a link)
 git clone https://github.com/<your-username>/<repo>.git
 cd <repo>
 
@@ -112,7 +112,7 @@ Prompts are one Markdown file each under `prompts/`, loaded once and filled in b
 
 Every structured value is a Pydantic model, collected in `models.py`: no `dataclass`, no `TypedDict`, and no bare `dict[str, Any]` travelling between functions.
 
-The comment beside each measured constant in these loops carries the reasoning behind its value, and `AGENTS.md` at the repo root, with `.agents/rules/`, carries the rules that span files. Read both before changing a constant, because most of them were paid for by a battle that went wrong.
+The comment beside each measured constant in these loops carries the reasoning behind its value, and `AGENTS.md` at the repo root, with the `dev-rules` skill under `.agents/skills/`, carries the rules that span files. Read both before changing a constant, because most of them were paid for by a battle that went wrong.
 
 ## Testing
 

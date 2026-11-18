@@ -1,0 +1,22 @@
+---
+name: dev-rules
+description: >-
+  The map of ai_coc's code and the rules for changing it: the layers and modules, the invariants that span files, the known defects nobody has fixed, the development and test commands, and the rules for models, reports, flags, tests and committed frames, measuring a change, screen readers, spending guards, the attack loop, the state-file lock, the adapters, the settings file, the village export and the upkeep commands. Load it before changing, planning or reviewing anything under src/, tests/, the workflows under .github/, the build, pyproject.toml, uv.lock, .pre-commit-config.yaml, the Makefile, scripts/, mkdocs.yml or the READMEs, however small: a one-line fix, a constant, a test, a review of a diff, or a plan made before any file is open. These rules are written nowhere else.
+user-invocable: false
+---
+
+# The code and its rules
+
+The references hold the map of the code, the invariants that span files, the known defects, the development commands and the rules for code. Before planning, changing or reviewing, read every reference whose paths cover the files involved, whole: for a plan made before any file is open, the files the change will touch; for a review, the files the diff touches. Each rule sits in the one reference that covers its code and is written nowhere else, so a reference skipped is a rule broken.
+
+| Reference                                                                                                                         | Covers                                                                                                                                                                                                                                                                   |
+| --------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| [references/code.md](references/code.md): commands, measuring a change, the architecture, code rules                              | `src/**`, `tests/**`, `pyproject.toml`, `uv.lock`, `.pre-commit-config.yaml`, `.github/**`, `Makefile`, `README.md`, `README.zh-TW.md`, `README.zh-CN.md`, `scripts/**`, `mkdocs.yml`                                                                                    |
+| [references/screen.md](references/screen.md): reading and driving the screen                                                      | `src/**`, `tests/**`                                                                                                                                                                                                                                                     |
+| [references/attack.md](references/attack.md): the attack loop, the builder base, storage limits                                   | `ui/attack.py`, `ui/world.py`, `ui/runner.py`, `parsers/scout.py`, `parsers/glyphs.py`, `parsers/boundary.py`, `parsers/field.py`, `parsers/home.py`, `plans/**`, `prompts/**`, `adapters/ai.py`, `adapters/config.py`, `commands.py`, `models.py`, `cli.py`, `tests/**` |
+| [references/runtime.md](references/runtime.md): the state file, launch, adapters, settings, the village export, the game's tables | `commands.py`, `cli.py`, `models.py`, `constants.py`, `ui/**`, `adapters/**`, `parsers/settings.py`, `parsers/village.py`, `parsers/gamedata.py`, `logging_setup.py`, `tests/**`                                                                                         |
+| [references/upkeep.md](references/upkeep.md): upkeep loops, the build panel, status, prices                                       | `ui/upkeep.py`, `ui/clan.py`, `ui/plates.py`, `commands.py`, `parsers/building.py`, `parsers/home.py`, `parsers/clan.py`, `parsers/village.py`, `parsers/glyphs.py`, `models.py`, `tests/**`                                                                             |
+
+In the last three rows every path but `tests/**` is under `src/ai_coc/`.
+
+A new rule goes into the reference whose paths cover the code it governs, and a new reference gets a row here. What belongs in a reference, and what goes beside the constant instead, is `AGENTS.md`'s.

@@ -132,7 +132,7 @@ def parse_village_text(text: str) -> VillageDocument:
     There used to be a written-down list of twelve sections, which is what a
     game that adds a section between releases silently drops. So a section is
     whatever the document holds a list under (`VillageDocument.sections`),
-    which is also what the tolerance rule in .agents/rules/runtime.md asks
+    which is also what the tolerance rule in .agents/skills/dev-rules/references/runtime.md asks
     for: a section nobody has heard of survives instead of needing a code
     change first.
     """

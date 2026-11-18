@@ -7,7 +7,7 @@ user-invocable: false
 
 # share-emulator
 
-只有一台模擬器, 而背景常常有一個打資源的迴圈在跑. 這份寫的是 agent 要怎麼做; 鎖在程式那一側的語意 (怎麼 claim, 借用怎麼記, 活著怎麼判) 在 `.agents/rules/runtime.md` 的 Stopping and the state file, 這裡不重抄. 每個 `ai_coc` 指令都帶 `--agent`、`--session`、`--mission` (`AGENTS.md` 的 Say who is driving), 從主 checkout 下的一律寫成 `uv run --no-sync ai_coc …` (`AGENTS.md` 的 The loop runs the main checkout); 下面的例子為了好讀省略了.
+只有一台模擬器, 而背景常常有一個打資源的迴圈在跑. 這份寫的是 agent 要怎麼做; 鎖在程式那一側的語意 (怎麼 claim, 借用怎麼記, 活著怎麼判) 在 `.agents/skills/dev-rules/references/runtime.md` 的 Stopping and the state file, 這裡不重抄. 每個 `ai_coc` 指令都帶 `--agent`、`--session`、`--mission` (`AGENTS.md` 的 Say who is driving), 從主 checkout 下的一律寫成 `uv run --no-sync ai_coc …` (`AGENTS.md` 的 The loop runs the main checkout); 下面的例子為了好讀省略了.
 
 ## 開工先讀 `state.json`
 
