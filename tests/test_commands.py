@@ -117,7 +117,7 @@ if TYPE_CHECKING:
     from contextlib import AbstractContextManager
     from collections.abc import Callable
 
-    from ai_coc.models import World, SearchReport, SearchSection
+    from ai_coc.models import World, NoteAction, NoteReport, SearchReport, SearchSection
 
 FRAMES = Path(__file__).parent / "frames"
 
@@ -178,6 +178,11 @@ def _frames(case: unittest.TestCase, *, recording: bool = False) -> FrameLog:
     """A run's frames in a directory of the test's own, removed when it ends."""
     folder = Path(case.enterContext(tempfile.TemporaryDirectory()))
     return FrameLog(directory=folder / "frames", recording=recording)
+
+
+def _edit(action: NoteAction, world: World | None, item: str) -> NoteReport:
+    """A note edit handed the revision a list just read, as an agent makes one."""
+    return commands.note(action, world, item, commands.note("list").revision)
 
 
 def _pair(
@@ -701,13 +706,14 @@ class StatusCommandTests(unittest.TestCase):
     def test_both_readings_carry_the_users_notes(self) -> None:
         """Off the state file in this test's tmp directory (conftest), which `--last` reads too."""
         commands._write_state(RunnerState())
-        commands.note("add", "day", "烈焰熔爐停在 3 級")
+        _edit("add", "day", "烈焰熔爐停在 3 級")
         with patch.object(
             commands, "_last_export", return_value=ExportReport(outcome="read_back")
         ):
             saved = commands.status(_frames(self), last=True)
         *_, live = self._status([self._counts("day")])
         assert saved.notes == live.notes == Notes(day=["烈焰熔爐停在 3 級"])
+        assert json.loads(saved.model_dump_json())["notes_revision"] == saved.notes.revision
 
 
 # The moment every `status_text` case reads from, on this machine's clock like
@@ -757,7 +763,7 @@ class StatusTextTests(unittest.TestCase):
         self,
     ) -> None:
         shown = commands.status_text(self._report(), NOW).splitlines()
-        assert shown[0] == "村莊匯出: 今天 11:58; 下一級是牌價"
+        assert shown[0] == "村莊匯出: 2026-11-11 (今天) 11:58; 下一級是牌價"
         assert (
             "日世界: 金幣 4370 萬 (150%)、聖水 980 萬 (33%)、黑水 0.6 萬; 工人 0/7、實驗室 讀不到;"
             " 護盾讀不到" in shown
@@ -852,7 +858,7 @@ class StatusTextTests(unittest.TestCase):
             ),
         )
         night = commands.status_text(later, NOW).split("夜世界")[1].splitlines()
-        assert night[-3:] == [
+        assert night[-5:-2] == [
             "| 明天 05:00 | 工人 | 建築1 (5/10), 下一級: 金幣 1 萬 |",
             "| 明天 12:00 | — | 鐘塔冷卻結束 |",
             "| 11-14 01:00 | 工人 | 建築2 (5/10), 下一級: 金幣 1 萬 |",
@@ -911,7 +917,8 @@ class StatusTextTests(unittest.TestCase):
             "| 今天 13:00 | 工人 | 建築1 (5/10), 下一級: 金幣 1 萬 |\n\n"
             "交代:\n1. 烈焰熔爐停在 3 級\n2. 憤怒法術 4 級等買了藥水再升\n\n"
         )
-        assert "交代" not in night
+        assert "交代:" not in night
+        assert night.endswith(f"\n\n交代版本: {notes.revision}")
         failed = self._report(export="settings_shut", exported_at=None, notes=notes)
         assert (
             commands
@@ -931,7 +938,10 @@ class StatusTextTests(unittest.TestCase):
             _timer(1, "13:00"), world=None, builder=None, lab=None, stock=None, export="read_back"
         )
         shown = commands.status_text(report, NOW).splitlines()
-        assert shown[0] == "村莊匯出: 今天 11:58 (存下的那份, 倉庫跟計數這次沒讀); 下一級是牌價"
+        assert (
+            shown[0]
+            == "村莊匯出: 2026-11-11 (今天) 11:58 (存下的那份, 倉庫跟計數這次沒讀); 下一級是牌價"
+        )
         assert shown[2] == "日世界"
         assert "夜世界" in shown
 
@@ -1449,6 +1459,8 @@ class UpkeepLineTests(unittest.TestCase):
                 "added": "記下這一條",
                 "done": "刪掉做完的",
                 "incomplete": "要給世界跟",
+                "unread": "要用 --seen",
+                "stale": "已經不是現在的",
                 "no_such_note": "沒有這一條",
             },
             get_args(NoteOutcome),
@@ -3180,27 +3192,66 @@ class NoteTests(unittest.TestCase):
         commands._write_state(RunnerState())
 
     def test_a_note_is_added_listed_and_dropped_by_its_number(self) -> None:
-        commands.note("add", "day", "冰人這一級升完改研究巨石投手")
-        commands.note("add", "day", "巨石投手滿級以後升空中戰車")
-        commands.note("add", "night", "  聖水瓶這一級升完改升建築大師訓練營  ")
+        _edit("add", "day", "冰人這一級升完改研究巨石投手")
+        _edit("add", "day", "巨石投手滿級以後升空中戰車")
+        _edit("add", "night", "  聖水瓶這一級升完改升建築大師訓練營  ")
         assert commands.note("list").notes.night == ["聖水瓶這一級升完改升建築大師訓練營"]
-        report = commands.note("done", "day", "1")
+        report = _edit("done", "day", "1")
         assert report.outcome == "done"
         assert commands.note("list").notes.day == ["巨石投手滿級以後升空中戰車"]
 
     def test_the_list_prints_the_number_done_takes(self) -> None:
-        commands.note("add", "day", "a")
-        commands.note("add", "day", "b")
-        assert (
-            commands.note_text(commands.note("list")) == "日世界\n1. a\n2. b\n\n夜世界\n沒有交代"
+        _edit("add", "day", "a")
+        _edit("add", "day", "b")
+        listed = commands.note("list")
+        assert commands.note_text(listed) == (
+            f"交代版本: {listed.revision}\n\n日世界\n1. a\n2. b\n\n夜世界\n沒有交代"
         )
-        dropped = commands.note_text(commands.note("done", "day", "2"))
-        assert dropped.splitlines()[0] == commands.NOTE_LINES["done"]
+        dropped = commands.note_text(_edit("done", "day", "2"))
+        assert dropped.splitlines()[0] == f"{commands.NOTE_LINES['done']}: b"
         assert "1. a" in dropped
         assert "2. b" not in dropped
 
+    def test_a_drop_names_the_text_it_removed(self) -> None:
+        _edit("add", "night", "聖水瓶升完改升訓練營")
+        report = _edit("done", "night", "1")
+        assert report.removed == "聖水瓶升完改升訓練營"
+        assert json.loads(report.model_dump_json())["removed"] == "聖水瓶升完改升訓練營"
+
+    def test_an_edit_without_the_current_revision_changes_nothing(self) -> None:
+        _edit("add", "day", "a")
+        read = commands.note("list").revision
+        # Another session's write after this one read the list.
+        _edit("add", "day", "b")
+        for seen, outcome in (("", "unread"), (read, "stale")):
+            for args in (("add", "day", "c"), ("done", "day", "1")):
+                report = commands.note(*args, seen=seen)
+                assert report.outcome == outcome, (args, seen)
+                assert report.notes.day == ["a", "b"]
+                text = commands.note_text(report)
+                assert text.splitlines()[:2] == [
+                    commands.NOTE_LINES[outcome],
+                    f"交代版本: {report.revision}",
+                ]
+                assert "2. b" in text
+        assert commands.note("list").notes.day == ["a", "b"]
+        assert (
+            commands.note("done", "day", "1", commands.note("list").revision.upper()).removed
+            == "a"
+        )
+
+    def test_the_revision_moves_with_every_write_and_survives_an_older_build(self) -> None:
+        """Worked out of the lists, so a writer that keeps only `day` and `night` keeps it too."""
+        seen = {commands.note("list").revision}
+        for args in (("add", "day", "a"), ("add", "day", "a"), ("add", "night", "a")):
+            seen.add(_edit(*args).revision)
+        assert len(seen) == 4
+        assert all(len(revision) == 4 for revision in seen)
+        state = json.loads(commands.STATE_PATH.read_text(encoding="utf-8"))
+        assert set(state["notes"]) == {"day", "night"}
+
     def test_a_note_that_cannot_be_named_changes_nothing(self) -> None:
-        commands.note("add", "day", "a")
+        _edit("add", "day", "a")
         for args, outcome in (
             (("done", "day", "2"), "no_such_note"),
             (("done", "day", "x"), "no_such_note"),
@@ -3208,25 +3259,25 @@ class NoteTests(unittest.TestCase):
             (("add", "day", " "), "incomplete"),
             (("done", None, "1"), "incomplete"),
         ):
-            assert commands.note(*args).outcome == outcome, args
+            assert _edit(*args).outcome == outcome, args
         assert commands.note("list").notes.day == ["a"]
 
     def test_the_emulator_and_watch_writes_carry_the_notes_over(self) -> None:
-        commands.note("add", "day", "a")
+        _edit("add", "day", "a")
         with commands.claim("attack"):
             commands._write_watch(Watch(status="idle"))
         assert commands.note("list").notes.day == ["a"]
 
     def test_a_file_that_will_not_read_carries_on_from_its_newest_backup(self) -> None:
         """Writing an empty file over it would lose the notes, which nothing writes back."""
-        commands.note("add", "day", "a")
+        _edit("add", "day", "a")
         commands.STATE_PATH.write_text('{"emulator": {"status": "runn', encoding="utf-8")
         with patch.object(commands, "TORN_GAP", 0):
             commands._write_state(RunnerState(command="attack"))
         assert commands.note("list").notes.day == ["a"]
 
     def test_a_file_deleted_by_hand_starts_afresh_but_keeps_its_notes(self) -> None:
-        commands.note("add", "night", "a")
+        _edit("add", "night", "a")
         with commands.claim("attack"):
             pass
         commands.STATE_PATH.unlink()
@@ -3238,18 +3289,18 @@ class NoteTests(unittest.TestCase):
 
     def test_a_note_is_not_written_into_a_file_deleted_by_hand(self) -> None:
         """Putting the file back would hide the stop its deletion is."""
-        commands.note("add", "day", "a")
+        _edit("add", "day", "a")
         with commands.claim("attack"):
             commands.STATE_PATH.unlink()
             with pytest.raises(commands.NoStateFileError):
-                commands.note("add", "day", "b")
+                _edit("add", "day", "b")
             assert commands.stop_requested()
         assert commands.note("list").notes.day == ["a"]
 
     def test_only_the_newest_copies_are_kept(self) -> None:
         with patch.object(commands, "STATE_BACKUPS", 3):
             for text in "abcde":
-                commands.note("add", "day", text)
+                _edit("add", "day", text)
         copies = sorted(commands.STATE_PATH.with_name("backups").glob("state-*.json"))
         assert len(copies) == 3
         assert json.loads(copies[-1].read_text(encoding="utf-8"))["notes"]["day"] == list("abcde")

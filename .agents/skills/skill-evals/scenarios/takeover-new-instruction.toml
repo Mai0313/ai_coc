@@ -30,7 +30,7 @@ id = "note"
 what = "keeps the instruction as a day note naming both buildings"
 anchor = [".agents/skills/takeover/SKILL.md", "交代的用 `ai_coc note add"]
 kind = "called"
-calls = { command = "note", args = { action = "add", world = "day" }, patterns = { item = "多人箭塔.*法師塔" } }
+calls = { command = "note", args = { action = "add", world = "day" }, patterns = { item = "多人箭塔.*法師塔" }, outcome = "^added$" }
 
 [[checks]]
 id = "reprint"

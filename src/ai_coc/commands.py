@@ -1644,22 +1644,34 @@ NOTE_LINES: dict[NoteOutcome, str] = {
     "added": "記下這一條交代",
     "done": "刪掉做完的那一條",
     "incomplete": "add 要給世界跟內容, done 要給世界跟第幾條, 什麼都沒改",
+    "unread": "add 跟 done 要用 --seen 給最後讀到的交代版本, 什麼都沒改",
+    "stale": "--seen 給的交代版本已經不是現在的, 什麼都沒改",
     "no_such_note": "那個世界沒有這一條, 什麼都沒改",
 }
 
 
-def note(action: NoteAction, world: World | None = None, item: str = "") -> NoteReport:
+def note(
+    action: NoteAction, world: World | None = None, item: str = "", seen: str = ""
+) -> NoteReport:
     """List the user's notes, add one to a village, or drop a done one by its number.
 
     `item` is the text to add, or the number `done` drops, counted from 1 the
-    way the list prints them.
+    way the list prints them. `seen` is the revision the caller last read
+    (`Notes.revision`): an `add` or `done` without the current one changes
+    nothing, so nobody edits a list they have not read, or drops a number that
+    has since moved onto another note.
     """
     text = item.strip()
+    removed = None
     with _turn():
         notes = _kept().notes
         outcome: NoteOutcome = "listed"
         if action != "list" and (world is None or not text):
             outcome = "incomplete"
+        elif action != "list" and not seen.strip():
+            outcome = "unread"
+        elif action != "list" and seen.strip().lower() != notes.revision:
+            outcome = "stale"
         elif action != "list" and world is not None:
             if _read_file() is None:
                 raise NoStateFileError
@@ -1668,21 +1680,27 @@ def note(action: NoteAction, world: World | None = None, item: str = "") -> Note
             if action == "add":
                 outcome, held = "added", [*held, text]
             elif 1 <= index <= len(held):
-                outcome, held = "done", held[: index - 1] + held[index:]
+                outcome, removed, held = "done", held[index - 1], held[: index - 1] + held[index:]
             else:
                 outcome = "no_such_note"
             if outcome != "no_such_note":
                 notes = notes.model_copy(update={world: held})
                 _write_notes(notes)
     logger.info(
-        "%s；日世界 %d 條，夜世界 %d 條", NOTE_LINES[outcome], len(notes.day), len(notes.night)
+        "%s；日世界 %d 條，夜世界 %d 條，版本 %s",
+        NOTE_LINES[outcome],
+        len(notes.day),
+        len(notes.night),
+        notes.revision,
     )
-    return NoteReport(notes=notes, outcome=outcome)
+    return NoteReport(notes=notes, outcome=outcome, revision=notes.revision, removed=removed)
 
 
 def note_text(report: NoteReport) -> str:
-    """Each village's notes numbered from 1, the number `note done` takes, under what this run changed."""
-    shown = [] if report.outcome == "listed" else [NOTE_LINES[report.outcome], ""]
+    """The notes' revision and each village's notes numbered from 1, the number `note done` takes, under what this run changed."""
+    said = NOTE_LINES[report.outcome] + (f": {report.removed}" if report.removed else "")
+    shown = [] if report.outcome == "listed" else [said]
+    shown += [f"交代版本: {report.revision}", ""]
     for world in ("day", "night"):
         held = getattr(report.notes, world)
         shown += [WORLD_NAMES[world], *(f"{at}. {item}" for at, item in enumerate(held, 1))]
@@ -3306,13 +3324,14 @@ def status_text(
     row finishing within `SHORT_WITHIN` hours continued, and nothing when they
     do; then the speed-ups running and when each ends. Each village's block
     ends with the user's notes for it, as written and numbered as `note`
-    numbers them, so `note done` takes the number printed here.
+    numbers them, so `note done` takes the number printed here, and the last
+    line is their revision, which `note add` and `note done` take.
     """
     now = now or datetime.now().astimezone()
     if report.exported_at is None:
         head = f"村莊匯出沒讀到: {EXPORT_LINES[report.export].format(tag='', count=0)}"
     else:
-        head = f"村莊匯出: {_moment(report.exported_at, now)}"
+        head = f"村莊匯出: {_dated(report.exported_at, now)}"
         if report.stock is None:
             head += " (存下的那份, 倉庫跟計數這次沒讀)"
         head += f"; {_paid_line(report.paid, report.timed, now)}"
@@ -3351,6 +3370,7 @@ def status_text(
         if world == "day" and helpers:
             shown += ["", f"助手: {'、'.join(helpers)}"]
         shown += noted
+    shown += ["", f"交代版本: {report.notes.revision}"]
     return "\n".join(shown)
 
 
@@ -3606,6 +3626,13 @@ def _moment(when: str, now: datetime) -> str:
     at = datetime.fromisoformat(when).astimezone()
     day = {0: "今天", 1: "明天"}.get((at.date() - now.date()).days, f"{at:%m-%d}")
     return f"{day} {at:%H:%M}"
+
+
+def _dated(when: str, now: datetime) -> str:
+    """`2026-11-19 (今天) 03:37`: the date first, so a report pasted later still says which day."""
+    at = datetime.fromisoformat(when).astimezone()
+    day = {0: " (今天)", 1: " (明天)"}.get((at.date() - now.date()).days, "")
+    return f"{at:%Y-%m-%d}{day} {at:%H:%M}"
 
 
 def _wan(amount: int) -> str:

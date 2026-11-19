@@ -4,6 +4,7 @@ import re
 import math
 import shutil
 from typing import TYPE_CHECKING, Any, Literal
+import hashlib
 import logging
 from pathlib import Path
 from datetime import UTC, datetime, timedelta
@@ -1653,6 +1654,15 @@ class Notes(BaseModel):
     day: list[str] = Field(default_factory=list)
     night: list[str] = Field(default_factory=list)
 
+    @property
+    def revision(self) -> str:
+        """Four hex digits of both lists, which `note add` and `note done` must be handed back.
+
+        Worked out of the lists rather than stored, so a loop running a build
+        from before it, which writes back only the lists, cannot leave it stale.
+        """
+        return hashlib.sha256(self.model_dump_json().encode()).hexdigest()[:4]
+
 
 class StatusReport(BaseModel):
     """Where both villages' upgrades stand, and what the village on screen holds.
@@ -1694,6 +1704,12 @@ class StatusReport(BaseModel):
     # The state file's, so whoever reads the report reads the user's
     # instructions with it; never applied to a row.
     notes: Notes = Field(default_factory=Notes)
+
+    @computed_field
+    @property
+    def notes_revision(self) -> str:
+        """`notes.revision`, which `note add` and `note done` take, in the JSON as in the text."""
+        return self.notes.revision
 
 
 # How one `view` command left the camera. `parked` is the whole job done;
@@ -2066,8 +2082,10 @@ class RunnerState(BaseModel):
 
 NoteAction = Literal["list", "add", "done"]
 # `incomplete` is an `add` without its text or a `done` without its number;
-# `no_such_note` is a number that names no item in that village.
-NoteOutcome = Literal["listed", "added", "done", "incomplete", "no_such_note"]
+# `unread` an `add` or `done` given no revision, `stale` one given a revision
+# the notes have moved past; `no_such_note` is a number that names no item in
+# that village.
+NoteOutcome = Literal["listed", "added", "done", "incomplete", "unread", "stale", "no_such_note"]
 
 
 class NoteReport(BaseModel):
@@ -2077,6 +2095,10 @@ class NoteReport(BaseModel):
 
     notes: Notes
     outcome: NoteOutcome
+    # `notes.revision`, the one the next `add` or `done` has to be given.
+    revision: str
+    # The text `done` dropped.
+    removed: str | None = None
 
 
 class StateFile(BaseModel):

@@ -26,6 +26,7 @@ from ai_coc.models import (
     RunEnded,
     AttackRun,
     NoteAction,
+    NoteReport,
     RunStarted,
     StopTarget,
     UpgradeRole,
@@ -393,6 +394,12 @@ def _note_flags(noter: argparse.ArgumentParser) -> None:
         help="不給就是 list，兩個世界的都列",
     )
     noter.add_argument("item", nargs="?", default="", help="add 是交代的內容，done 是第幾條")
+    noter.add_argument(
+        "--seen",
+        default="",
+        metavar="版本",
+        help="add 跟 done 必給：最後讀到的交代版本（note list 或 status 印的），不是現在的就什麼都不改",
+    )
     _village_flags(noter, "add 跟 done 的是日世界的交代", "add 跟 done 的是夜世界的交代")
 
 
@@ -678,7 +685,7 @@ def _answer(arguments: argparse.Namespace, run: RunLog) -> BaseModel | str:
             farms=a.farms,
             hold=a.hold,
         ),
-        "note": lambda: commands.note(a.action, a.world, a.item),
+        "note": lambda: commands.note(a.action, a.world, a.item, a.seen),
         "growth": lambda: commands.growth(a.start_date, a.end_date),
         "turnaround": lambda: commands.turnaround(a.since),
         "search": lambda: commands.search(
@@ -802,7 +809,10 @@ def _run_command(arguments: argparse.Namespace, run: RunLog) -> int:
     # Nor is a decision that came back with no yes or no, so a caller reading
     # the exit code never takes a failure for an answer.
     unanswered = isinstance(answer, DecisionReport) and answer.outcome != "answered"
-    code = 1 if cancelled or unanswered else 0
+    # Nor is a note edit refused for want of the current revision, so whoever
+    # chained work after it reads the list first.
+    refused = isinstance(answer, NoteReport) and answer.outcome in ("unread", "stale")
+    code = 1 if cancelled or unanswered or refused else 0
     # An attack keeps its last round alone, the others having `round` lines.
     last = (
         answer.model_copy(update={"rounds": AttackSeries(answer.rounds.root[-1:])})

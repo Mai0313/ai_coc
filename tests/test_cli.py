@@ -31,6 +31,7 @@ from ai_coc.models import (
     AppConfig,
     AttackRun,
     ViewReport,
+    RunnerState,
     WorldReport,
     AttackReport,
     AttackSeries,
@@ -202,8 +203,8 @@ class ParserTests(unittest.TestCase):
             "night",
             "冰人升完改研究巨石投手",
         )
-        done = _args("note", "done", "2", "--day")
-        assert (done.action, done.world, done.item) == ("done", "day", "2")
+        done = _args("note", "done", "2", "--seen", "3fa2", "--day")
+        assert (done.action, done.world, done.item, done.seen) == ("done", "day", "2", "3fa2")
         for line in (["note", "--day"], ["note", "list", "--night"]):
             with (
                 patch.object(sys, "argv", ["ai_coc", *line]),
@@ -430,6 +431,22 @@ class DispatchTests(unittest.TestCase):
         expected = ViewReport(outcome="parked").model_dump_json(indent=2)
         assert (self.run.directory / "result.json").read_text(encoding="utf-8") == expected
         assert out.getvalue() == f"{expected}\n"
+
+    def test_a_note_edit_refused_for_its_revision_exits_non_zero(self) -> None:
+        """So a command chained after it with `&&` waits for the list to be read."""
+        commands._write_state(RunnerState())
+        with patch("sys.stdout", new_callable=io.StringIO) as out:
+            assert _run_command(_args("note", "add", "a", "--day"), self.run) == 1
+            assert "1. a" not in out.getvalue()
+            revision = commands.note("list").revision
+            assert (
+                _run_command(_args("note", "add", "a", "--seen", revision, "--day"), self.run) == 0
+            )
+            assert (
+                _run_command(_args("note", "add", "b", "--seen", revision, "--day"), self.run) == 1
+            )
+        result = json.loads((self.run.directory / "result.json").read_text(encoding="utf-8"))
+        assert (result["outcome"], result["notes"]["day"]) == ("stale", ["a"])
 
     def test_text_answers_are_written_as_they_are(self) -> None:
         """`stop` and `capture` answer plain text rather than a model."""
