@@ -31,6 +31,7 @@ from ai_coc.models import (
     StopTarget,
     UpgradeRole,
     AttackSeries,
+    DecisionTier,
     ExportReport,
     RestartScope,
     AttackOptions,
@@ -241,7 +242,7 @@ COMMANDS = (
             ("bounds", "花一場戰鬥實測地圖邊緣，推回村莊範圍"),
             (
                 "decision",
-                "不碰遊戲，拿一張圖問 Gemini Decisions API 一個是非題，印 yes 或 no 跟花了幾秒；試用中，沒有任何流程用它",
+                "不碰遊戲，拿一張圖問 Gemini 一個是非題（Decisions API 或一般模型），印 yes 或 no 跟花了幾秒；試用中，沒有任何流程用它",
             ),
         ),
     ),
@@ -256,6 +257,12 @@ def _decision_flags(asker: argparse.ArgumentParser) -> None:
         "--ground-truth",
         choices=get_args(YesNo),
         help="你自己對同一題的答案；給了就記下來，並記兩邊一不一致",
+    )
+    asker.add_argument(
+        "--tier",
+        choices=get_args(DecisionTier),
+        default="decision",
+        help="問設定檔 gemini 底下哪一塊：decision 是 Decisions API，lite 是一般模型回是或否；不給就是 decision",
     )
 
 
@@ -720,7 +727,7 @@ def _answer(arguments: argparse.Namespace, run: RunLog) -> BaseModel | str:
             str(path) for path in commands.capture(run.frames, a.count, a.gap)
         ),
         "read": lambda: commands.read(a.png.read_bytes()),
-        "decision": lambda: commands.decision(a.prompt, a.image_path, a.ground_truth),
+        "decision": lambda: commands.decision(a.prompt, a.image_path, a.ground_truth, a.tier),
         "export": lambda: commands.export(run.frames, a.last),
         "gamedata": lambda: commands.gamedata(run.frames, a.refresh),
     }

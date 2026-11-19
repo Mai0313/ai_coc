@@ -127,7 +127,7 @@ ai_coc capture --count 30             # 从活着的游戏连续抓画面,存进
 ai_coc <任何命令> --label baseline    # 给这次的文件夹取名字,之后找得回来
 ai_coc <任何命令> --agent codex --session <id> --mission "打资源"  # 谁叫的; agent 一律要带, 没带会在 log 留 warning
 ai_coc read shot.png                  # 每个识别器从这张图读到什么
-ai_coc decision --prompt "<是非题>" --image-path shot.png  # 拿一张图问 Gemini Decisions API 一个是非题: 打印 yes 或 no 和那次调用花了几秒; --ground-truth yes|no 把你自己的答案记在旁边; 不碰游戏, 独立一个、试用中, 没有任何流程用它
+ai_coc decision --prompt "<是非题>" --image-path shot.png  # 拿一张图问 Gemini 一个是非题: 打印 yes 或 no 和那次调用花了几秒; --tier lite 改问一般模型、要它回是或否, 不问 Decisions API, 两边的模型和密钥设在设置文件的 `gemini` 底下; --ground-truth yes|no 把你自己的答案记在旁边; 不碰游戏, 独立一个、试用中, 没有任何流程用它
 ai_coc export                         # 从游戏里取出整个村庄,对照过名称,吐 JSON
 ai_coc export --table                 # 同一份东西,画成表格给人看
 ai_coc export --last                  # 直接读上一次的结果,完全不碰游戏

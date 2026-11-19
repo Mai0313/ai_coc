@@ -85,6 +85,7 @@ from ai_coc.models import (
     AttackReport,
     AttackSeries,
     BoostOutcome,
+    DecisionTier,
     DonateReport,
     EmulatorStop,
     ExportReport,
@@ -113,6 +114,7 @@ from ai_coc.models import (
     DonateOutcome,
     ExportOutcome,
     FarmedVillage,
+    GeminiSetting,
     GrowthOutcome,
     JournalTimers,
     LaunchOutcome,
@@ -128,6 +130,7 @@ from ai_coc.models import (
     ConfirmOutcome,
     DecisionReport,
     GameDataReport,
+    GeminiSettings,
     GivebackReport,
     JournalConfirm,
     LootThresholds,
@@ -145,7 +148,7 @@ from ai_coc.models import (
     TurnaroundOutcome,
     labelled,
 )
-from ai_coc.constants import STATE_PATH, COC_PACKAGE, DECISION_MODEL, ACCOUNT_JSON_DIR
+from ai_coc.constants import STATE_PATH, COC_PACKAGE, ACCOUNT_JSON_DIR
 from ai_coc.adapters.ai import GeminiClient
 from ai_coc.adapters.adb import ZOOM_PINCHES, AdbController, AdbControlError
 from ai_coc.parsers.clan import donatable_cards
@@ -5505,7 +5508,7 @@ def read(png: bytes) -> FrameReading:
     )
 
 
-# How long the Decisions API gets for one answer before the run ends `failed`.
+# How long either tier gets for one answer before the run ends `failed`.
 DECISION_TIMEOUT = 30
 # How sure the Decisions API has to be for its answer to count as a yes or a no:
 # a probability of yes this high is yes, one as far below a half is no, and
@@ -5519,7 +5522,7 @@ DECISION_LINES: dict[DecisionOutcome, str] = {
     "unclear": "模型沒有給出明確的是或否",
     "no_image": "找不到那張圖, 什麼都沒問",
     "no_key": "沒有 Gemini API Key, 什麼都沒問",
-    "failed": "Decisions API 的呼叫失敗, 沒有答案",
+    "failed": "Gemini 的呼叫失敗, 沒有答案",
 }
 
 
@@ -5536,23 +5539,29 @@ def decision_text(report: DecisionReport) -> str:
     return "\n".join(shown)
 
 
-def decision(prompt: str, image: Path, ground_truth: YesNo | None = None) -> DecisionReport:
-    """Ask the Decisions API one yes/no question about one image file.
+def decision(
+    prompt: str, image: Path, ground_truth: YesNo | None = None, tier: DecisionTier = "decision"
+) -> DecisionReport:
+    """Ask one yes/no question about one image file, of the settings file's `tier`.
 
-    It reads a file and the settings and calls the API: no emulator, no claim
-    on the state file. No flow calls it; it stands alone while it is on trial.
+    `decision` puts it to the Decisions API, `lite` to an ordinary model for a
+    structured boolean; both answer the same report, so one image and one
+    question can be set side by side. It reads a file and the settings and
+    calls the API: no emulator, no claim on the state file. No flow calls it;
+    it stands alone while it is on trial.
     """
+    setting = tier_setting(ConfigStore().load().gemini, tier)
     report = DecisionReport(
         prompt=prompt,
         image=image.resolve(),
-        model=DECISION_MODEL,
+        tier=tier,
+        model=setting.model,
         ground_truth=ground_truth,
         outcome="no_image",
     )
     if image.is_file():
         png = image.read_bytes()
         report.sha256, report.size = hashlib.sha256(png).hexdigest(), len(png)
-        setting = ConfigStore().load().gemini.main
         if not (key := gemini_key(setting)):
             report.outcome = "no_key"
         else:
@@ -5563,21 +5572,37 @@ def decision(prompt: str, image: Path, ground_truth: YesNo | None = None) -> Dec
     return report
 
 
+def tier_setting(gemini: GeminiSettings, tier: DecisionTier) -> GeminiSetting:
+    """The block `tier` names, with `main`'s key and address wherever its own are blank."""
+    own = getattr(gemini, tier)
+    return gemini.main.model_copy(
+        update={
+            "model": own.model,
+            "base_url": own.base_url or gemini.main.base_url,
+            "api_key": own.api_key or gemini.main.api_key,
+        }
+        | ({"thinking_level": own.thinking_level} if isinstance(own, GeminiSetting) else {})
+    )
+
+
 def _decide(report: DecisionReport, client: GeminiClient, png: bytes) -> DecisionOutcome:
-    """Put the question to the API and write what it said onto `report`."""
+    """Put the question to the tier and write what it said onto `report`."""
     kind = mimetypes.guess_type(report.image.name)[0] or "image/png"
+    ask = client.decide if report.tier == "decision" else client.ask_yes_no
     try:
-        said = client.decide(report.prompt, png, kind, DECISION_TIMEOUT)
+        said = ask(report.prompt, png, kind, DECISION_TIMEOUT)
     # Whatever the SDK raised: a refused key, a blocked image, a timeout and a
     # dead network are all a run with no answer, and the log says which.
     except Exception:
-        logger.exception("The Decisions API call failed")
+        logger.exception("The call to %s failed", report.model)
         return "failed"
     report.probability, report.confidence = said.probability, said.confidence
     report.seconds, report.attempts, report.tokens = said.seconds, said.attempts, said.tokens
-    if said.probability is None:
+    if said.yes is not None:
+        report.answer = "yes" if said.yes else "no"
+    elif said.probability is None:
         return "unclear"
-    if said.probability >= DECISION_CLEAR:
+    elif said.probability >= DECISION_CLEAR:
         report.answer = "yes"
     elif said.probability <= 1 - DECISION_CLEAR:
         report.answer = "no"

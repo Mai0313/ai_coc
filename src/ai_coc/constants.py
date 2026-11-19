@@ -7,8 +7,11 @@ ORGANISATION = "Mai0313"
 
 COC_PACKAGE = "com.supercell.clashofclans"
 DEFAULT_GEMINI_MODEL = "gemini-4-argon"
-# The only model the Decisions API has, which `ai_coc decision` asks.
+# The only model the Decisions API has, which `ai_coc decision` asks by default.
 DECISION_MODEL = "gemini-decision-1"
+# The ordinary model `ai_coc decision --tier lite` asks the same question for a
+# structured yes or no, to set against the Decisions API.
+LITE_MODEL = "gemini-3.5-flash-lite"
 DEFAULT_ADB_HOST = "127.0.0.1"
 
 
