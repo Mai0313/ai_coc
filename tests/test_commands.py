@@ -110,6 +110,7 @@ from ai_coc.constants import COC_PACKAGE
 from ai_coc.ui.runner import ScreenRunner
 from ai_coc.adapters.adb import PNG_MAGIC, AdbController, AdbControlError
 from ai_coc.parsers.home import PANEL_CLOSE, CLOCK_TOWER_BELOW
+from ai_coc.parsers.scout import EVENT_NOTICE_CLOSE
 from ai_coc.parsers.village import SECTIONS, merge
 from ai_coc.parsers.gamedata import READING, GameDataError
 
@@ -2816,7 +2817,17 @@ class SettleGameTests(unittest.TestCase):
         """活動已結束 comes once per event, over whichever village the game is on (#493)."""
         adb, display = self._settle([None, "day"], event=[True])
         assert display == DISPLAY
-        adb.back.assert_called_once_with(DISPLAY)
+        adb.tap.assert_called_once_with(*EVENT_NOTICE_CLOSE, DISPLAY)
+        adb.back.assert_not_called()
+
+    def test_an_events_end_notice_at_either_height_is_tapped_away(self) -> None:
+        """The one on 2026-11-19 stood higher, and `launch` waited 180 s beneath it."""
+        for name in ("event_ended.png", "event_ended_higher.png"):
+            adb = MagicMock()
+            said = commands._press_away(adb, DISPLAY, (FRAMES / name).read_bytes())
+            assert said == "an event's end notice was covering the village", name
+            adb.tap.assert_called_once_with(*EVENT_NOTICE_CLOSE, DISPLAY)
+            adb.back.assert_not_called()
 
     def test_the_build_panel_is_shut_with_its_own_x_rather_than_waited_under(self) -> None:
         """It shifts the corner column, so the village under it never reads, and `back` leaves it up."""

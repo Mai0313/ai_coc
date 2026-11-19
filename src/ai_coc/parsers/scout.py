@@ -860,12 +860,20 @@ STAR_PANEL_BLUE = 0.4
 # its title the event's name. Its one 確認 sits in `RETURN_HOME_BOX` too, so
 # `battle_over` took it for a result screen and `uncovered` refused to press
 # `back` at it, which ended a crossing (#493). Read off its pale sheet on both
-# sides of that button and across the top of the sheet: 1.000 in all three
-# boxes on the one recorded, 2026-10-27, against at most 0.816 beside the
-# button and 0.077 above it on every other frame whose button passes the 回營
-# test. Whether `back` closes it has not been tried: an event has to end.
-EVENT_NOTICE_BOXES = ((360, 705, 660, 830), (940, 705, 1240, 830), (360, 445, 1240, 520))
+# sides of that button and across the top of the sheet. **The sheet does not
+# always stand at one height**: the one on 2026-11-19 (`event_ended_higher.png`)
+# stood 28 px above the one on 2026-10-27, and the boxes beside the button,
+# which then reached y 830, ran past its foot (0.848) and left it read as a
+# result screen for eight minutes; they end above both feet now. Both notices
+# read 1.000 in all three boxes, against at most 0.077 above the button on
+# every other frame whose button passes the 回營 test; beside it
+# `welcome_back` reads 1.000 too, so the box above is the one that tells them
+# apart.
+EVENT_NOTICE_BOXES = ((360, 705, 660, 805), (940, 705, 1240, 805), (360, 445, 1240, 520))
 EVENT_NOTICE_PALE = 0.9
+# `back` at the notice has not been tried, while a tap on the dimmed map
+# outside its sheet closed it, live on 2026-11-19; this is that tap.
+EVENT_NOTICE_CLOSE = (300, 250)
 
 
 def _home_button(png: bytes) -> bool:

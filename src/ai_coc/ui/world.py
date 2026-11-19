@@ -47,6 +47,7 @@ from ai_coc.parsers.home import (
 )
 from ai_coc.parsers.field import view_shift, pinch_zoomed, screen_changed
 from ai_coc.parsers.scout import (
+    EVENT_NOTICE_CLOSE,
     in_battle,
     battle_over,
     card_groups,
@@ -768,10 +769,11 @@ def uncovered(adb: AdbController, display: DisplayTarget) -> World | None:
             open_chest(adb, display)
             continue
         if event_ended(png):
-            logger.info("An event's end notice is over the village; pressing back")
+            logger.info("An event's end notice is over the village; tapping outside it")
+            adb.tap(*EVENT_NOTICE_CLOSE, display)
         else:
             logger.info("Something is over the village; pressing back to get at it")
-        adb.back(display)
+            adb.back(display)
         time.sleep(UNCOVER_SETTLE)
     return current_world(adb.screenshot(display, "uncovered"))
 

@@ -135,6 +135,7 @@ from ai_coc.parsers.scout import (
     CART_COLLECT_BOX,
     CART_PLANK_ABOVE,
     CART_PLANK_BESIDE,
+    EVENT_NOTICE_CLOSE,
     LOOT_INK_BRIGHTNESS,
     STOCK_DIGIT_TOLERANCE,
     NIGHT_COUNT_WHITE_RATIO,
@@ -2375,16 +2376,22 @@ class CrossingTests(unittest.TestCase):
         assert here == "day"
         assert adb.back.call_count == 1
 
-    def test_an_events_end_notice_is_pressed_away(self) -> None:
-        """Its 確認 sits where 回營 does, and a result screen is never pressed at (#493)."""
-        adb = MagicMock()
-        adb.screenshot.side_effect = [
-            (FRAMES / name).read_bytes() for name in ("event_ended.png", "hud_day.png")
-        ]
-        with patch.object(world_ui.time, "sleep"):
-            here = world_ui.uncovered(adb, DisplayTarget(logical_id="1", physical_id="2"))
-        assert here == "day"
-        assert adb.back.call_count == 1
+    def test_an_events_end_notice_is_tapped_away_at_either_height(self) -> None:
+        """Its 確認 sits where 回營 does, and a result screen is never pressed at (#493).
+
+        A tap on the map outside its sheet closed it live; `back` was never tried.
+        """
+        display = DisplayTarget(logical_id="1", physical_id="2")
+        for notice in ("event_ended.png", "event_ended_higher.png"):
+            adb = MagicMock()
+            adb.screenshot.side_effect = [
+                (FRAMES / name).read_bytes() for name in (notice, "hud_day.png")
+            ]
+            with patch.object(world_ui.time, "sleep"):
+                here = world_ui.uncovered(adb, display)
+            assert here == "day", notice
+            adb.tap.assert_called_once_with(*EVENT_NOTICE_CLOSE, display)
+            adb.back.assert_not_called()
 
     def test_a_reward_chest_is_tapped_open_and_its_reward_continued(self) -> None:
         """`back` does nothing to it; each tap on the chest spends a hammer."""
@@ -3219,13 +3226,16 @@ class ScoutTests(unittest.TestCase):
         """活動已結束, whose one green 確認 sits where 回營 does.
 
         Read as a result screen, `uncovered` refused to press `back` at it and a
-        crossing gave up beneath it (#493).
+        crossing gave up beneath it (#493). The sheet on 2026-11-19 stood 28 px
+        higher, and held the village for eight minutes read as one.
         """
-        png = (FRAMES / "event_ended.png").read_bytes()
-        assert event_ended(png)
-        assert not battle_over(png)
+        notices = ("event_ended.png", "event_ended_higher.png")
+        for name in notices:
+            png = (FRAMES / name).read_bytes()
+            assert event_ended(png), name
+            assert not battle_over(png), name
         for path in FRAMES.glob("*.png"):
-            if path.name != "event_ended.png":
+            if path.name not in notices:
                 assert not event_ended(path.read_bytes()), path.name
 
     def test_the_speed_button_is_read_by_its_label(self) -> None:
