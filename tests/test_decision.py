@@ -89,7 +89,7 @@ def test_the_question_and_the_image_travel_to_the_decision_model() -> None:
     decisions = FakeDecisions({"q": SimpleNamespace(noul=0.97, confidence=0.97)})
     said = _client(decisions).decide("視窗開著嗎", PNG, "image/png", 30)
     assert (said.probability, said.confidence, said.tokens) == (0.97, 0.97, 1120)
-    # The tier's model, which `decision` hands it from the settings file.
+    # The model `decision` hands it from the settings file.
     assert decisions.body["model"] == "gemini-test"
     assert decisions.body["questions"] == {"q": {"type": "noul", "instructions": "視窗開著嗎"}}
     [part] = decisions.body["input"]
@@ -139,7 +139,9 @@ def test_the_report_holds_what_a_tally_needs_once_the_image_is_gone(image: Path)
     assert report.prompt == "視窗開著嗎"
     assert report.image == image.resolve()
     assert (report.sha256, report.size) == (hashlib.sha256(PNG).hexdigest(), len(PNG))
+    # The model names who answered, as on every earlier line.
     assert report.model == "gemini-decision-1"
+    assert "tier" not in report.model_dump()
     assert (report.seconds, report.attempts, report.tokens) == (0.42, 1, 1120)
     assert report.total_seconds is not None
     assert report.total_seconds > 0
@@ -205,13 +207,7 @@ def test_every_outcome_has_a_line_of_its_own() -> None:
 
 def test_the_text_is_the_answer_then_the_seconds_then_the_comparison(image: Path) -> None:
     report = DecisionReport(
-        prompt="p",
-        image=image,
-        tier="decision",
-        model="m",
-        answer="no",
-        seconds=0.42,
-        outcome="answered",
+        prompt="p", image=image, model="m", answer="no", seconds=0.42, outcome="answered"
     )
     assert commands.decision_text(report) == "no\nAPI 0.42 秒"
     compared = report.model_copy(update={"ground_truth": "yes", "agrees": False})
@@ -256,110 +252,89 @@ def test_a_ground_truth_is_yes_or_no_and_the_question_and_image_are_required(ima
             cli._parser().parse_args(bad)
 
 
-class FakeInteractions:
-    """Stands in for `client.interactions`, recording the body it was handed."""
-
-    def __init__(self, text: str) -> None:
-        self.text = text
-        self.body: dict[str, Any] = {}
-
-    def create(self, **body: object) -> object:
-        self.body = body
-        return SimpleNamespace(output_text=self.text, status="completed")
-
-
-def _lite(text: str) -> tuple[DecisionAnswer, dict[str, Any]]:
-    interactions = FakeInteractions(text)
-    client = GeminiClient(api_key="k", settings=GeminiSetting(model="gemini-3.5-flash-lite"))
-    client._client = SimpleNamespace(interactions=interactions)
-    return client.ask_yes_no("視窗開著嗎", PNG, "image/jpeg", 30), interactions.body
-
-
-def test_the_lite_tier_asks_its_model_for_a_structured_boolean() -> None:
-    said, body = _lite('{"answer": true}')
-    assert (said.yes, said.probability, said.attempts) == (True, None, 0)
-    assert body["model"] == "gemini-3.5-flash-lite"
-    assert body["generation_config"] == {"thinking_level": "low"}
-    schema = body["response_format"]["schema"]
-    assert schema["properties"]["answer"]["type"] == "boolean"
-    text, image = body["input"]
-    assert text["text"] == "視窗開著嗎"
-    assert (image["mime_type"], base64.b64decode(image["data"])) == ("image/jpeg", PNG)
-    assert body["timeout"] == 30
-    assert _lite('{"answer": false}')[0].yes is False
-
-
-def test_a_lite_reply_that_is_not_a_boolean_has_no_answer() -> None:
-    for text in ('{"answer": "maybe"}', "yes", '{"answer": null}'):
-        assert _lite(text)[0].yes is None, text
-
-
-@pytest.mark.usefixtures("key")
-def test_both_tiers_answer_the_same_report(image: Path) -> None:
-    sure = DecisionAnswer(yes=True, seconds=0.31, attempts=1)
-    with patch.object(GeminiClient, "ask_yes_no", return_value=sure) as asked:
-        lite = commands.decision("視窗開著嗎", image, "yes", "lite")
-    asked.assert_called_once()
-    assert (lite.tier, lite.model) == ("lite", "gemini-3.5-flash-lite")
-    assert (lite.answer, lite.probability, lite.agrees, lite.outcome) == (
-        "yes",
-        None,
-        True,
-        "answered",
-    )
-    api = _ask(image, 0.95, "yes")
-    assert (api.tier, api.model) == ("decision", "gemini-decision-1")
-    assert lite.model_dump().keys() == api.model_dump().keys()
-    assert commands.decision_text(lite) == commands.decision_text(api).replace("0.42", "0.31")
-    with patch.object(
-        GeminiClient, "ask_yes_no", return_value=sure.model_copy(update={"yes": None})
-    ):
-        assert commands.decision("視窗開著嗎", image, tier="lite").outcome == "unclear"
-
-
-def test_a_tier_left_blank_borrows_mains_key_and_address() -> None:
+def test_the_decision_block_left_blank_borrows_mains_key_and_address() -> None:
     main = GeminiSetting(model="gemini-main", base_url="https://proxy.example", api_key="mk")
-    blank = GeminiSettings(main=main)
-    for tier, model in (("decision", "gemini-decision-1"), ("lite", "gemini-3.5-flash-lite")):
-        setting = commands.tier_setting(blank, tier)
-        assert (setting.model, setting.base_url, setting.api_key) == (model, main.base_url, "mk")
+    setting = commands.decision_setting(GeminiSettings(main=main))
+    assert (setting.model, setting.base_url, setting.api_key) == (
+        "gemini-decision-1",
+        main.base_url,
+        "mk",
+    )
     own = GeminiSettings(
         main=main,
         decision=DecisionSetting(model="d", base_url="https://other.example", api_key="dk"),
-        lite=GeminiSetting(model="l", api_key="lk", thinking_level="minimal"),
     )
-    assert commands.tier_setting(own, "decision").model_dump() == {
+    assert commands.decision_setting(own).model_dump() == {
         "model": "d",
         "base_url": "https://other.example",
         "api_key": "dk",
         "thinking_level": "low",
     }
-    lite = commands.tier_setting(own, "lite")
-    assert (lite.api_key, lite.base_url, lite.thinking_level) == ("lk", main.base_url, "minimal")
 
 
 MAIN = {"model": "gemini-main", "base_url": "", "api_key": "mk", "thinking_level": "medium"}
+DECISION = {"model": "gemini-decision-1", "base_url": "https://other.example", "api_key": "dk"}
 
 
-def test_a_settings_file_from_before_the_tiers_keeps_main_and_gains_them() -> None:
+def test_a_settings_file_from_before_the_decision_block_keeps_main_and_gains_it() -> None:
     store = ConfigStore()
     store.path.write_text(
         json.dumps({"adb_serial": "s", "gemini": {"main": MAIN}}), encoding="utf-8"
     )
-    gemini = store.load().gemini
-    assert gemini.main.model_dump() == MAIN
-    assert (gemini.decision.model, gemini.lite.model) == (
-        "gemini-decision-1",
-        "gemini-3.5-flash-lite",
-    )
+    assert store.load().gemini.main.model_dump() == MAIN
     written = json.loads(store.path.read_text(encoding="utf-8"))["gemini"]
-    assert written["main"] == MAIN
-    assert written["lite"]["thinking_level"] == "low"
-    assert written["decision"] == {"model": "gemini-decision-1", "base_url": "", "api_key": ""}
+    assert written == {
+        "main": MAIN,
+        "decision": {"model": "gemini-decision-1", "base_url": "", "api_key": ""},
+    }
 
 
-def test_a_build_from_before_the_tiers_reads_the_new_file_and_keeps_main() -> None:
-    """`GeminiSettings` as it was, with `main` alone: the two new blocks are ignored, not an error."""
+def test_a_settings_file_with_a_lite_block_keeps_main_and_decision_and_drops_it() -> None:
+    """Written while `lite` was a tier beside `decision`: it loads, and the next write leaves it out."""
+    store = ConfigStore()
+    lite = {
+        "model": "gemini-3.5-flash-lite",
+        "base_url": "",
+        "api_key": "",
+        "thinking_level": "low",
+    }
+    store.path.write_text(
+        json.dumps({
+            "adb_serial": "s",
+            "gemini": {"main": MAIN, "decision": DECISION, "lite": lite},
+        }),
+        encoding="utf-8",
+    )
+    gemini = store.load().gemini
+    assert (gemini.main.model_dump(), gemini.decision.model_dump()) == (MAIN, DECISION)
+    written = json.loads(store.path.read_text(encoding="utf-8"))["gemini"]
+    assert written == {"main": MAIN, "decision": DECISION}
+
+
+def test_a_build_with_the_lite_block_reads_the_new_file_and_keeps_main_and_decision() -> None:
+    """`GeminiSettings` as it was with `lite` beside `decision`: the missing block is filled in."""
+
+    class LiteGemini(BaseModel):
+        main: GeminiSetting = GeminiSetting()
+        decision: DecisionSetting = DecisionSetting()
+        lite: GeminiSetting = GeminiSetting(model="gemini-3.5-flash-lite")
+
+    class LiteConfig(AppConfig):
+        gemini: LiteGemini = LiteGemini()  # ty: ignore[invalid-assignment]
+
+    new = AppConfig(
+        gemini=GeminiSettings(
+            main=GeminiSetting.model_validate(MAIN),
+            decision=DecisionSetting.model_validate(DECISION),
+        )
+    ).model_dump_json()
+    old = LiteConfig.model_validate_json(new)
+    assert (old.gemini.main.model_dump(), old.gemini.decision.model_dump()) == (MAIN, DECISION)
+    assert old.gemini.lite.model == "gemini-3.5-flash-lite"
+
+
+def test_a_build_from_before_the_decision_block_reads_the_new_file_and_keeps_main() -> None:
+    """`GeminiSettings` as it was, with `main` alone: the `decision` block is ignored, not an error."""
 
     class OldGemini(BaseModel):
         main: GeminiSetting = GeminiSetting()

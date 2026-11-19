@@ -28,7 +28,6 @@ from pydantic import (
 
 from .constants import (
     LOG_DIR,
-    LITE_MODEL,
     DECISION_MODEL,
     DEFAULT_ADB_HOST,
     DEFAULT_GEMINI_MODEL,
@@ -917,10 +916,9 @@ class GeminiSettings(BaseModel):
     on either village — so nothing there is racing anything and the better
     model is simply the right one.
 
-    `decision` and `lite` are the two ways `ai_coc decision` puts a yes/no
-    question, set side by side while that command is on trial: the Decisions
-    API, and an ordinary model asked for a structured boolean. A blank
-    `base_url` or `api_key` on either is `main`'s.
+    `decision` is what `ai_coc decision` puts its yes/no question to, the
+    Decisions API, while that command is on trial. A blank `base_url` or
+    `api_key` there is `main`'s.
 
     Named for the role rather than for the product: a key called `flash` holding
     `gemini-4-pro` is a lie the file keeps telling, and this project already has
@@ -929,7 +927,6 @@ class GeminiSettings(BaseModel):
 
     main: GeminiSetting = GeminiSetting()
     decision: DecisionSetting = DecisionSetting()
-    lite: GeminiSetting = GeminiSetting(model=LITE_MODEL)
 
 
 class AppConfig(BaseModel):
@@ -3422,43 +3419,32 @@ class DecisionAnswer(BaseModel):
 
     probability: float | None = None
     confidence: float | None = None
-    # The ordinary model's own yes or no, which carries no probability; None
-    # from the Decisions API, and from a reply that was not a boolean.
-    yes: bool | None = None
     seconds: float
     attempts: int
     tokens: int | None = None
 
 
-class YesNoReply(BaseModel):
-    """The structured answer the `lite` tier is asked for."""
-
-    answer: bool
-
-
 YesNo = Literal["yes", "no"]
-# Which block under `gemini` in the settings file `ai_coc decision` asks.
-DecisionTier = Literal["decision", "lite"]
 DecisionOutcome = Literal["answered", "unclear", "no_image", "no_key", "failed"]
 
 
 class DecisionReport(BaseModel):
-    """What `ai_coc decision` asked one tier about one image, and what came back, the same for both.
+    """What `ai_coc decision` asked the Decisions API about one image, and what came back.
 
     A trial is tallied from these on the journal's `end` lines, so `sha256` and
-    `size` name the image once its file is gone. `ground_truth` is the caller's
-    own answer and `agrees` whether the two match, None unless both exist.
-    `seconds` is the API call alone and `total_seconds` this process's life up
-    to the report, the start-up an agent pays for the command included.
-    `probability` and `confidence` come from the Decisions API alone, and stay
-    None on `lite`, whose model answers a bare yes or no.
+    `size` name the image once its file is gone, and `model` the model that
+    answered, which is what tells a line apart in every version (the `tier`
+    some lines of 2026-11-19 carry is not written any more). `ground_truth` is
+    the caller's own answer and `agrees` whether the two match, None unless
+    both exist. `seconds` is the API call alone and `total_seconds` this
+    process's life up to the report, the start-up an agent pays for the
+    command included.
     """
 
     prompt: str
     image: Path
     sha256: str | None = None
     size: int | None = None
-    tier: DecisionTier
     model: str
     answer: YesNo | None = None
     probability: float | None = None

@@ -10,7 +10,6 @@ from pydantic import BaseModel, PrivateAttr, ValidationError
 from google.genai import types, errors, interactions
 
 from ai_coc.models import (
-    YesNoReply,
     GeminiRequest,
     GeminiSetting,
     DecisionAnswer,
@@ -81,15 +80,10 @@ class GeminiClient(BaseModel):
         prompt: str,
         image_png: bytes | None,
         response_format: GeminiResponseFormat | None = None,
-        mime_type: str = "image/png",
     ) -> GeminiRequest:
         parts: list[GeminiTextPart | GeminiImagePart] = [GeminiTextPart(text=prompt)]
         if image_png:
-            parts.append(
-                GeminiImagePart(
-                    data=base64.b64encode(image_png).decode("ascii"), mime_type=mime_type
-                )
-            )
+            parts.append(GeminiImagePart(data=base64.b64encode(image_png).decode("ascii")))
         logger.info(
             "Gemini request: model=%s prompt=%d chars image=%s structured=%s thinking=%s",
             self.settings.model,
@@ -112,7 +106,6 @@ class GeminiClient(BaseModel):
         image_png: bytes | None,
         response_format: GeminiResponseFormat | None = None,
         timeout: float | None = None,
-        mime_type: str = "image/png",
     ) -> str:
         """One request; `timeout` is seconds, and giving up is the caller's to handle.
 
@@ -124,7 +117,7 @@ class GeminiClient(BaseModel):
         caller passing a deadline answers a failure by falling back to a plan it
         already has.
         """
-        request = self._request(prompt, image_png, response_format, mime_type)
+        request = self._request(prompt, image_png, response_format)
         started = time.monotonic()
         self._sends.clear()
         try:
@@ -182,8 +175,8 @@ class GeminiClient(BaseModel):
     ) -> DecisionAnswer:
         """Ask the Decisions API one yes/no question about one image.
 
-        The model is the tier's, which in the settings file defaults to the
-        only one that API has. A failed call raises whatever the SDK raised, and a
+        The model is the settings file's `gemini.decision`, which defaults to
+        the only one that API has. A failed call raises whatever the SDK raised, and a
         blocked input a `RuntimeError`, for the caller to name. The clock starts with the client already built, so
         `seconds` is the request and not this process importing the SDK.
         """
@@ -227,28 +220,6 @@ class GeminiClient(BaseModel):
             answer.model_dump_json(),
         )
         return answer
-
-    def ask_yes_no(
-        self, question: str, image: bytes, mime_type: str, timeout: float
-    ) -> DecisionAnswer:
-        """Ask an ordinary model the question `decide` asks, for a structured boolean.
-
-        The answer carries no probability, and a reply that is not a boolean
-        comes back with `yes` None for the caller to call unclear. A failed call
-        raises as `_create` does. The clock starts with the client built, as
-        `decide`'s does, so the two time the same thing.
-        """
-        reply_format = GeminiResponseFormat(json_schema=YesNoReply.model_json_schema())
-        _ = self.client
-        started = time.monotonic()
-        text = self._create(question, image, reply_format, timeout, mime_type)
-        spent = time.monotonic() - started
-        try:
-            yes: bool | None = YesNoReply.model_validate_json(text).answer
-        except ValidationError:
-            logger.warning("The reply was not a yes or no: %s", text[:500])
-            yes = None
-        return DecisionAnswer(yes=yes, seconds=round(spent, 3), attempts=len(self._sends))
 
     def generate_structured(
         self,

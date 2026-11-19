@@ -85,7 +85,6 @@ from ai_coc.models import (
     AttackReport,
     AttackSeries,
     BoostOutcome,
-    DecisionTier,
     DonateReport,
     EmulatorStop,
     ExportReport,
@@ -5536,7 +5535,7 @@ def read(png: bytes) -> FrameReading:
     )
 
 
-# How long either tier gets for one answer before the run ends `failed`.
+# How long the Decisions API gets for one answer before the run ends `failed`.
 DECISION_TIMEOUT = 30
 # How sure the Decisions API has to be for its answer to count as a yes or a no:
 # a probability of yes this high is yes, one as far below a half is no, and
@@ -5550,7 +5549,7 @@ DECISION_LINES: dict[DecisionOutcome, str] = {
     "unclear": "模型沒有給出明確的是或否",
     "no_image": "找不到那張圖, 什麼都沒問",
     "no_key": "沒有 Gemini API Key, 什麼都沒問",
-    "failed": "Gemini 的呼叫失敗, 沒有答案",
+    "failed": "Decisions API 的呼叫失敗, 沒有答案",
 }
 
 
@@ -5567,22 +5566,16 @@ def decision_text(report: DecisionReport) -> str:
     return "\n".join(shown)
 
 
-def decision(
-    prompt: str, image: Path, ground_truth: YesNo | None = None, tier: DecisionTier = "decision"
-) -> DecisionReport:
-    """Ask one yes/no question about one image file, of the settings file's `tier`.
+def decision(prompt: str, image: Path, ground_truth: YesNo | None = None) -> DecisionReport:
+    """Ask the Decisions API one yes/no question about one image file.
 
-    `decision` puts it to the Decisions API, `lite` to an ordinary model for a
-    structured boolean; both answer the same report, so one image and one
-    question can be set side by side. It reads a file and the settings and
-    calls the API: no emulator, no claim on the state file. No flow calls it;
-    it stands alone while it is on trial.
+    It reads a file and the settings and calls the API: no emulator, no claim
+    on the state file. No flow calls it; it stands alone while it is on trial.
     """
-    setting = tier_setting(ConfigStore().load().gemini, tier)
+    setting = decision_setting(ConfigStore().load().gemini)
     report = DecisionReport(
         prompt=prompt,
         image=image.resolve(),
-        tier=tier,
         model=setting.model,
         ground_truth=ground_truth,
         outcome="no_image",
@@ -5600,25 +5593,23 @@ def decision(
     return report
 
 
-def tier_setting(gemini: GeminiSettings, tier: DecisionTier) -> GeminiSetting:
-    """The block `tier` names, with `main`'s key and address wherever its own are blank."""
-    own = getattr(gemini, tier)
+def decision_setting(gemini: GeminiSettings) -> GeminiSetting:
+    """The `decision` block, with `main`'s key and address wherever its own are blank."""
+    own = gemini.decision
     return gemini.main.model_copy(
         update={
             "model": own.model,
             "base_url": own.base_url or gemini.main.base_url,
             "api_key": own.api_key or gemini.main.api_key,
         }
-        | ({"thinking_level": own.thinking_level} if isinstance(own, GeminiSetting) else {})
     )
 
 
 def _decide(report: DecisionReport, client: GeminiClient, png: bytes) -> DecisionOutcome:
-    """Put the question to the tier and write what it said onto `report`."""
+    """Put the question to the API and write what it said onto `report`."""
     kind = mimetypes.guess_type(report.image.name)[0] or "image/png"
-    ask = client.decide if report.tier == "decision" else client.ask_yes_no
     try:
-        said = ask(report.prompt, png, kind, DECISION_TIMEOUT)
+        said = client.decide(report.prompt, png, kind, DECISION_TIMEOUT)
     # Whatever the SDK raised: a refused key, a blocked image, a timeout and a
     # dead network are all a run with no answer, and the log says which.
     except Exception:
@@ -5626,11 +5617,9 @@ def _decide(report: DecisionReport, client: GeminiClient, png: bytes) -> Decisio
         return "failed"
     report.probability, report.confidence = said.probability, said.confidence
     report.seconds, report.attempts, report.tokens = said.seconds, said.attempts, said.tokens
-    if said.yes is not None:
-        report.answer = "yes" if said.yes else "no"
-    elif said.probability is None:
+    if said.probability is None:
         return "unclear"
-    elif said.probability >= DECISION_CLEAR:
+    if said.probability >= DECISION_CLEAR:
         report.answer = "yes"
     elif said.probability <= 1 - DECISION_CLEAR:
         report.answer = "no"
