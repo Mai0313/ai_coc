@@ -21,6 +21,8 @@ from ai_coc.constants import COC_PACKAGE
 from ai_coc.adapters.adb import ZOOM_PINCHES, AdbController, AdbControlError
 from ai_coc.parsers.home import PANEL_CLOSE, STORAGE_BARS, reward_chest, build_panel_open
 from ai_coc.parsers.scout import (
+    TOPUP_CLOSE,
+    topup_ad,
     in_battle,
     read_gems,
     read_stock,
@@ -427,14 +429,18 @@ class GameRunner(ScreenRunner):
             self._settled = True
 
     def _cleared(self, png: bytes) -> bool:
-        """Answer a dialog with 取消, shut the build panel, or tap a reward chest open.
+        """Answer a dialog with 取消, shut the build panel or a promotion, or tap a reward chest open.
 
         Both are pressed rather than backed out of: 取消 is the harmless answer
         to every dialog the game raises, and `back` leaves the build panel up,
-        measured on the builder base, where its own X shuts it.
+        measured on the builder base, where its own X shuts it. LDPlayer's 儲值
+        promotion sells for real money, so its X is the one press it gets.
         """
         dialog = game_dialog(png)
-        if dialog is not None:
+        if topup_ad(png):
+            logger.info("LDPlayer's top-up promotion is over the game; pressing its X")
+            self._tap(TOPUP_CLOSE)
+        elif dialog is not None:
             logger.info("A dialog is covering the village; answering 取消")
             self._tap(dialog.cancel)
         elif build_panel_open(png):

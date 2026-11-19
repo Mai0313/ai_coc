@@ -162,8 +162,10 @@ from ai_coc.parsers.home import (
 )
 from ai_coc.adapters.mumu import MuMuAdapter
 from ai_coc.parsers.scout import (
+    TOPUP_CLOSE,
     EVENT_NOTICE_CLOSE,
     NIGHT_COUNT_WHITE_RATIO,
+    topup_ad,
     in_battle,
     card_count,
     live_cards,
@@ -2140,7 +2142,9 @@ def _press_away(adb: AdbController, display: DisplayTarget, png: bytes) -> str |
     `back`, and so does the 勝利之星 reward sheet; an event's end notice gets a
     tap outside its sheet (`EVENT_NOTICE_CLOSE`). The build panel shifts the
     corner column, so the village under it never reads; `back` leaves it up,
-    and its own X shuts it.
+    and its own X shuts it. LDPlayer's 儲值 promotion, which a restart can
+    bring up over the game, is shut by its own X too: it sells for real money,
+    so that is the one press it gets.
     """
     if welcome_back(png):
         logger.info("The raid report is covering the village; pressing back")
@@ -2154,10 +2158,14 @@ def _press_away(adb: AdbController, display: DisplayTarget, png: bytes) -> str |
         logger.info("An event's end notice is covering the village; tapping outside it")
         adb.tap(*EVENT_NOTICE_CLOSE, display)
         return "an event's end notice was covering the village"
-    if build_panel_open(png):
-        logger.info("The build panel is covering the village; pressing its X")
-        adb.tap(*PANEL_CLOSE, display)
-        return "the build panel was covering the village"
+    for shut, close, cover in (
+        (topup_ad, TOPUP_CLOSE, "LDPlayer's top-up promotion"),
+        (build_panel_open, PANEL_CLOSE, "the build panel"),
+    ):
+        if shut(png):
+            logger.info("%s is covering the village; pressing its X", cover[0].upper() + cover[1:])
+            adb.tap(*close, display)
+            return f"{cover} was covering the village"
     if reward_chest(png):
         logger.info("A reward chest is covering the village; tapping it open")
         open_chest(adb, display)

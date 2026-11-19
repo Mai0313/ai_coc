@@ -112,7 +112,7 @@ from ai_coc.constants import COC_PACKAGE
 from ai_coc.ui.runner import ScreenRunner
 from ai_coc.adapters.adb import PNG_MAGIC, AdbController, AdbControlError
 from ai_coc.parsers.home import PANEL_CLOSE, CLOCK_TOWER_BELOW
-from ai_coc.parsers.scout import EVENT_NOTICE_CLOSE
+from ai_coc.parsers.scout import TOPUP_CLOSE, EVENT_NOTICE_CLOSE
 from ai_coc.parsers.village import SECTIONS, merge
 from ai_coc.parsers.gamedata import READING, GameDataError
 
@@ -2756,6 +2756,7 @@ class SettleGameTests(unittest.TestCase):
             patch.object(commands, "welcome_back", return_value=False),
             patch.object(commands, "star_bonus", return_value=False),
             patch.object(commands, "event_ended", return_value=False),
+            patch.object(commands, "topup_ad", return_value=False),
             patch.object(commands, "build_panel_open", return_value=False),
             patch.object(commands, "reward_chest", return_value=4),
             patch.object(commands, "open_chest") as opened,
@@ -2784,6 +2785,7 @@ class SettleGameTests(unittest.TestCase):
                 commands, "idle_disconnected", side_effect=screens.get("dropped") or [False] * 9
             ),
             patch.object(commands, "refuse_taken", side_effect=screens.get("taken")),
+            patch.object(commands, "topup_ad", return_value=False),
             patch.object(
                 commands, "welcome_back", side_effect=screens.get("welcome") or [False] * 9
             ),
@@ -2874,6 +2876,21 @@ class SettleGameTests(unittest.TestCase):
             assert said == "an event's end notice was covering the village", name
             adb.tap.assert_called_once_with(*EVENT_NOTICE_CLOSE, DISPLAY)
             adb.back.assert_not_called()
+
+    def test_ldplayers_topup_promotion_is_closed_by_its_x_rather_than_waited_under(self) -> None:
+        """A restart brought it up on 2026-11-20, and `world` waited 180 s beneath it."""
+        adb = MagicMock()
+        adb.display_for.return_value = DISPLAY
+        adb.screenshot.side_effect = [
+            (FRAMES / name).read_bytes() for name in ("ldplayer_topup.png", "hud_day.png")
+        ]
+        with (
+            patch.object(commands.time, "sleep"),
+            patch.object(commands, "park_camera", return_value=True),
+        ):
+            assert commands._settle_game(adb, 3) == DISPLAY
+        adb.tap.assert_called_once_with(*TOPUP_CLOSE, DISPLAY)
+        adb.back.assert_not_called()
 
     def test_the_build_panel_is_shut_with_its_own_x_rather_than_waited_under(self) -> None:
         """It shifts the corner column, so the village under it never reads, and `back` leaves it up."""

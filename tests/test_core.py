@@ -132,6 +132,7 @@ from ai_coc.parsers.scout import (
     SPEED_BOX,
     CART_PLANK,
     SPEED_GREEN,
+    TOPUP_CLOSE,
     CART_COLLECT_BOX,
     CART_PLANK_ABOVE,
     CART_PLANK_BESIDE,
@@ -139,6 +140,7 @@ from ai_coc.parsers.scout import (
     LOOT_INK_BRIGHTNESS,
     STOCK_DIGIT_TOLERANCE,
     NIGHT_COUNT_WHITE_RATIO,
+    topup_ad,
     _read_row,
     in_battle,
     read_gems,
@@ -2165,6 +2167,7 @@ class CrossingTests(unittest.TestCase):
             patch.object(world_ui, "card_groups", return_value=[[1]] if battle else []),
             patch.object(world_ui, "in_battle", return_value=battle),
             patch.object(world_ui, "battle_over", return_value=False),
+            patch.object(world_ui, "topup_ad", return_value=False),
             patch.object(world_ui, "event_ended", return_value=False),
             patch.object(world_ui, "loading_screen", return_value=loading),
             # A still frame is how the park knows it arrived; without this the
@@ -2393,6 +2396,19 @@ class CrossingTests(unittest.TestCase):
             assert here == "day", notice
             adb.tap.assert_called_once_with(*EVENT_NOTICE_CLOSE, display)
             adb.back.assert_not_called()
+
+    def test_ldplayers_topup_promotion_is_closed_by_its_x(self) -> None:
+        """Nothing on it but the X is pressed, and `back` at it was never tried."""
+        display = DisplayTarget(logical_id="1", physical_id="2")
+        adb = MagicMock()
+        adb.screenshot.side_effect = [
+            (FRAMES / name).read_bytes() for name in ("ldplayer_topup.png", "hud_day.png")
+        ]
+        with patch.object(world_ui.time, "sleep"):
+            here = world_ui.uncovered(adb, display)
+        assert here == "day"
+        adb.tap.assert_called_once_with(*TOPUP_CLOSE, display)
+        adb.back.assert_not_called()
 
     def test_a_reward_chest_is_tapped_open_and_its_reward_continued(self) -> None:
         """`back` does nothing to it; each tap on the chest spends a hammer."""
@@ -3238,6 +3254,22 @@ class ScoutTests(unittest.TestCase):
         for path in FRAMES.glob("*.png"):
             if path.name not in notices:
                 assert not event_ended(path.read_bytes()), path.name
+
+    def test_ldplayers_topup_promotion_is_read_and_its_x_is_where_it_is_closed(self) -> None:
+        """It sells for real money, so its X is the one thing ever pressed on it.
+
+        A wait for the village ran out beneath it on 2026-11-20, with nothing
+        the game draws reading through it.
+        """
+        png = (FRAMES / "ldplayer_topup.png").read_bytes()
+        assert topup_ad(png)
+        image = open_frame(png)
+        x, y = TOPUP_CLOSE
+        # The grey stroke of the X, against the pale header a few pixels off it.
+        assert sum(image.getpixel((x, y))) < sum(image.getpixel((x - 16, y))) - 200
+        for path in FRAMES.glob("*.png"):
+            if path.name != "ldplayer_topup.png":
+                assert not topup_ad(path.read_bytes()), path.name
 
     def test_the_speed_button_is_read_by_its_label(self) -> None:
         """It toggles between 1x and 4x, so which one it says decides whether to tap."""
@@ -7778,7 +7810,7 @@ class HomeTests(unittest.TestCase):
     def setUp(self) -> None:
         # The frames here are stand-ins, so the covers `_home` checks that no
         # case below is about read as absent; the cases about them patch them.
-        for name in ("build_panel_open", "in_battle", "reward_chest"):
+        for name in ("build_panel_open", "in_battle", "reward_chest", "topup_ad"):
             patcher = patch.object(shared, name, return_value=False)
             patcher.start()
             self.addCleanup(patcher.stop)

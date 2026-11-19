@@ -47,7 +47,9 @@ from ai_coc.parsers.home import (
 )
 from ai_coc.parsers.field import view_shift, pinch_zoomed, screen_changed
 from ai_coc.parsers.scout import (
+    TOPUP_CLOSE,
     EVENT_NOTICE_CLOSE,
+    topup_ad,
     in_battle,
     battle_over,
     card_groups,
@@ -768,7 +770,10 @@ def uncovered(adb: AdbController, display: DisplayTarget) -> World | None:
             logger.info("A reward chest is over the village; tapping it open")
             open_chest(adb, display)
             continue
-        if event_ended(png):
+        if topup_ad(png):
+            logger.info("LDPlayer's top-up promotion is over the game; pressing its X")
+            adb.tap(*TOPUP_CLOSE, display)
+        elif event_ended(png):
             logger.info("An event's end notice is over the village; tapping outside it")
             adb.tap(*EVENT_NOTICE_CLOSE, display)
         else:

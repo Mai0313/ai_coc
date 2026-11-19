@@ -874,6 +874,21 @@ EVENT_NOTICE_PALE = 0.9
 # `back` at the notice has not been tried, while a tap on the dimmed map
 # outside its sheet closed it, live on 2026-11-19; this is that tap.
 EVENT_NOTICE_CLOSE = (300, 250)
+# LDPlayer's own 儲值 promotion, which it draws over the game after a restart
+# (2026-10-25, 2026-11-06, 2026-11-20): a white sheet of product tiles with a
+# yellow 去儲值 button under them. Nothing the game draws reads under it, so a
+# wait for the village ran out beneath it (`ldplayer_topup.png`). It sells for
+# real money, so the only press it ever gets is its X, which closed it by hand
+# on 2026-11-20 with the village intact underneath. Read off the button's
+# yellow, 0.747 of its box against at most 0.127 (`miner_panel`) over 293
+# recorded frames, and the white margins left and right of the tiles, 0.969 and
+# 1.000, where every other frame has one of the two at 0.781 or less
+# (`hud_settings`).
+TOPUP_BUTTON_BOX = (640, 725, 960, 780)
+TOPUP_BUTTON_YELLOW = 0.5
+TOPUP_MARGIN_BOXES = ((364, 280, 382, 680), (1214, 280, 1236, 680))
+TOPUP_MARGIN_PALE = 0.9
+TOPUP_CLOSE = (1216, 167)
 
 
 def _home_button(png: bytes) -> bool:
@@ -913,6 +928,30 @@ def event_ended(png: bytes) -> bool:
             for i in range(0, len(sheet), 3)
         )
         if pale / (len(sheet) // 3) < EVENT_NOTICE_PALE:
+            return False
+    return True
+
+
+def topup_ad(png: bytes) -> bool:
+    """Whether LDPlayer's 儲值 promotion is covering the game."""
+    image = open_frame(png)
+    button = image.crop(TOPUP_BUTTON_BOX).tobytes()
+    yellow = sum(
+        button[i] > 230 and 140 < button[i + 1] < 240 and button[i] - button[i + 2] > 120
+        for i in range(0, len(button), 3)
+    )
+    if yellow / (len(button) // 3) < TOPUP_BUTTON_YELLOW:
+        return False
+    for box in TOPUP_MARGIN_BOXES:
+        margin = image.crop(box).tobytes()
+        pale = sum(
+            min(margin[i], margin[i + 1], margin[i + 2]) > 200
+            and max(margin[i], margin[i + 1], margin[i + 2])
+            - min(margin[i], margin[i + 1], margin[i + 2])
+            < 20
+            for i in range(0, len(margin), 3)
+        )
+        if pale / (len(margin) // 3) < TOPUP_MARGIN_PALE:
             return False
     return True
 

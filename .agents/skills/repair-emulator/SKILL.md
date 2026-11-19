@@ -103,7 +103,7 @@ description: >-
 
 處理: 再跑一次 `ai_coc launch`. 那天出事的那一次 log 有 `The session was dropped; restarting the game` (當時的程式還分不出是不是另一部裝置登入), 而且剛好是設定剛被洗成新機器之後; 當時沒留畫面, 原因沒查到, 之後重跑都正常. 再遇到就連拍留證據.
 
-**`look.py` 拍到的不是桌面而是雷電自己的儲值廣告**, 重跑 `launch` 就沒用: 它蓋在遊戲上, `launch` 一樣等滿 180 秒放棄, `--restart game` 也是 (2026-10-25 兩次). 點它右上角的 X (約 (1217, 167)) 就關掉, 遊戲就在底下. 焦點在廣告上時 `ai_coc tap` 找不到遊戲的 display (它照焦點找), 所以直接 `adb -s <adb_serial> shell input tap 1217 167`.
+**`look.py` 拍到的不是桌面而是雷電自己的儲值廣告**: 等村莊的指令 (`launch`、`world`、`status`、打資源回村莊) 現在認得它, 自己按它右上角的 X 關掉, log 是 `LDPlayer's top-up promotion is covering the village; pressing its X` (打資源回村莊、`world` 坐船前後的那一段寫 `is over the game`), 廣告上別的東西一律不按 (它賣真錢). 2026-11-06、11-20 兩次留下的紀錄都是 `the village has not painted yet`, 也就是找得到遊戲的 display, 這條路有效. 指令還是等滿 180 秒放棄而畫面是廣告, 就是廣告換了樣子讀不出來, 或者像 2026-10-25 那兩次寫的, 焦點在廣告上而找不到遊戲的 display (`the game is not on a display yet`, 那天沒留 log): 手動點 X 關掉 (`adb -s <adb_serial> shell input tap 1216 167`, `ai_coc tap` 照焦點找 display 一樣可能找不到), 把 `look.py` 那張圖留下來交給 `watch-and-fix` 修判讀.
 
 ### 5. 雷電說在跑, ADB 卻是 `device offline`
 

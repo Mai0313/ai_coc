@@ -208,6 +208,7 @@ class HomeCoverTests(unittest.TestCase):
             # for the village that then reads.
             patch.object(shared, "game_dialog", side_effect=[dialog, None, None]),
             patch.object(shared, "build_panel_open", return_value=False),
+            patch.object(shared, "topup_ad", return_value=False),
             patch.object(shared, "reward_chest", return_value=0),
             patch.object(shared, "current_world", return_value="day"),
             patch.object(shared, "read_stock", return_value=STOCK),
@@ -227,6 +228,7 @@ class HomeCoverTests(unittest.TestCase):
             patch.object(shared, "loading_screen", return_value=False),
             patch.object(shared, "game_dialog", return_value=None),
             patch.object(shared, "build_panel_open", side_effect=[True, False, False]),
+            patch.object(shared, "topup_ad", return_value=False),
             patch.object(shared, "reward_chest", return_value=0),
             patch.object(shared, "current_world", return_value="day"),
             patch.object(shared, "read_stock", return_value=STOCK),
@@ -236,6 +238,28 @@ class HomeCoverTests(unittest.TestCase):
         ):
             assert runner._home() == STOCK
         tapped.assert_called_once_with(shared.PANEL_CLOSE)
+        backed.assert_not_called()
+
+    def test_ldplayers_topup_promotion_is_closed_by_its_x(self) -> None:
+        """A restart out of a dropped session can bring it up, and it sells for real money."""
+        runner = self._runner()
+        with (
+            patch.object(shared.time, "sleep"),
+            patch.object(runner, "_frame", return_value=b""),
+            patch.object(shared, "idle_disconnected", return_value=False),
+            patch.object(shared, "loading_screen", return_value=False),
+            patch.object(shared, "game_dialog", return_value=None),
+            patch.object(shared, "topup_ad", side_effect=[True, False, False]),
+            patch.object(shared, "build_panel_open", return_value=False),
+            patch.object(shared, "reward_chest", return_value=0),
+            patch.object(shared, "current_world", return_value="day"),
+            patch.object(shared, "read_stock", return_value=STOCK),
+            patch.object(GameRunner, "_settle_zoom"),
+            patch.object(runner, "_tap") as tapped,
+            patch.object(AdbController, "back") as backed,
+        ):
+            assert runner._home() == STOCK
+        tapped.assert_called_once_with(shared.TOPUP_CLOSE)
         backed.assert_not_called()
 
     def test_a_reward_chest_over_the_village_is_tapped_open(self) -> None:
@@ -248,6 +272,7 @@ class HomeCoverTests(unittest.TestCase):
             patch.object(shared, "loading_screen", return_value=False),
             patch.object(shared, "game_dialog", return_value=None),
             patch.object(shared, "build_panel_open", return_value=False),
+            patch.object(shared, "topup_ad", return_value=False),
             patch.object(shared, "reward_chest", side_effect=[4, 0, 0]),
             patch.object(shared, "open_chest") as opened,
             patch.object(shared, "current_world", return_value="day"),
@@ -276,6 +301,7 @@ class HomeCoverTests(unittest.TestCase):
             patch.object(shared, "loading_screen", return_value=False),
             patch.object(shared, "game_dialog", return_value=None),
             patch.object(shared, "build_panel_open", return_value=False),
+            patch.object(shared, "topup_ad", return_value=False),
             patch.object(shared, "reward_chest", return_value=0),
             patch.object(shared, "current_world", return_value="day"),
             patch.object(shared, "read_stock", return_value=STOCK),
