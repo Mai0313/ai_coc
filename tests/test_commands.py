@@ -1602,6 +1602,8 @@ class UpkeepLineTests(unittest.TestCase):
             {
                 "boosted": "鐘塔開始加速",
                 "not_night": "遊戲不在夜世界",
+                "selected": "取消選取",
+                "never_settled": "鏡頭沒有停好",
                 "not_ready": "沒有鐘塔能開的時鐘標記",
                 "no_free_boost": "找不到沒標價的免費加速鈕",
                 "not_taken": "加速沒有生效",
@@ -3846,7 +3848,7 @@ class PressAndConfirmTests(unittest.TestCase):
     """The hands the agent drives the build panel with, and the one press that spends."""
 
     def _run(
-        self, frames: list[str], act: Callable[[FrameLog], object]
+        self, frames: list[str], act: Callable[[FrameLog], object], *, parks: bool = True
     ) -> tuple[MagicMock, object]:
         adb = _adb()
         pngs = [(FRAMES / name).read_bytes() for name in frames]
@@ -3856,6 +3858,8 @@ class PressAndConfirmTests(unittest.TestCase):
         with (
             patch.object(commands, "_attached", return_value=adb),
             patch.object(commands.time, "sleep"),
+            # `boost` parks first; the park reads its own frames.
+            patch.object(commands, "park_camera", return_value=parks) as adb.parked,
         ):
             report = act(_frames(self))
         assert report.frame.is_file()  # type: ignore[attr-defined]
@@ -3900,9 +3904,14 @@ class PressAndConfirmTests(unittest.TestCase):
             assert report.outcome == outcome, point
 
     def test_a_ready_clock_tower_is_selected_and_its_free_boost_pressed_once(self) -> None:
-        """The tower, its free boost, then the 加速 on the sheet that press raised."""
+        """Parked, then the tower, its free boost, and the 加速 on the sheet that press raised.
+
+        From the dock, where a crossing leaves the camera with the tower off
+        screen: read there, it answered `not_ready` on 2026-11-19.
+        """
         adb, report = self._run(
             [
+                "night_dock_view.png",
                 "night_clock_ready.png",
                 "night_clock_selected.png",
                 "night_clock_boost_sheet.png",
@@ -3915,6 +3924,7 @@ class PressAndConfirmTests(unittest.TestCase):
             (976, 700, DISPLAY),
             (804, 614, DISPLAY),
         ]
+        adb.parked.assert_called_once_with(adb, DISPLAY, "night")
         assert report.outcome == "boosted"  # type: ignore[attr-defined]
         assert report.frame.name == "after.png"  # type: ignore[attr-defined]
 
@@ -3927,8 +3937,24 @@ class PressAndConfirmTests(unittest.TestCase):
             # The rule `tap` follows: `after` only when something was pressed.
             assert report.frame.name == "refused.png", frame  # type: ignore[attr-defined]
 
+    def test_nothing_is_parked_or_pressed_with_a_selection_standing(self) -> None:
+        """A drag could start on its buttons, and a selected tower hides its own marker."""
+        adb, report = self._run(["night_clock_selected.png"], commands.boost)
+        adb.parked.assert_not_called()
+        adb.tap.assert_not_called()
+        assert report.outcome == "selected"  # type: ignore[attr-defined]
+
+    def test_a_park_that_fell_short_is_not_read_as_a_cooling_boost(self) -> None:
+        adb, report = self._run(
+            ["night_dock_view.png", "night_clock_ready.png"], commands.boost, parks=False
+        )
+        adb.tap.assert_not_called()
+        assert report.outcome == "never_settled"  # type: ignore[attr-defined]
+
     def test_a_tower_tap_that_opened_no_free_boost_presses_nothing_more(self) -> None:
-        adb, report = self._run(["night_clock_ready.png", "hud_night.png"], commands.boost)
+        adb, report = self._run(
+            ["hud_night.png", "night_clock_ready.png", "hud_night.png"], commands.boost
+        )
         assert adb.tap.call_count == 1
         assert report.outcome == "no_free_boost"  # type: ignore[attr-defined]
 
@@ -3939,14 +3965,20 @@ class PressAndConfirmTests(unittest.TestCase):
             ("night_sheet_hero.png", "unexpected"),
         ):
             adb, report = self._run(
-                ["night_clock_ready.png", "night_clock_selected.png", after], commands.boost
+                ["hud_night.png", "night_clock_ready.png", "night_clock_selected.png", after],
+                commands.boost,
             )
             assert adb.tap.call_count == 2
             assert report.outcome == outcome, after  # type: ignore[attr-defined]
 
     def test_a_boost_sheet_that_stays_is_not_pressed_again(self) -> None:
         adb, report = self._run(
-            ["night_clock_ready.png", "night_clock_selected.png", "night_clock_boost_sheet.png"],
+            [
+                "hud_night.png",
+                "night_clock_ready.png",
+                "night_clock_selected.png",
+                "night_clock_boost_sheet.png",
+            ],
             commands.boost,
         )
         assert adb.tap.call_count == 3

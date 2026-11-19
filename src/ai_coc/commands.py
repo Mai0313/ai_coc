@@ -5411,7 +5411,9 @@ def confirm(
 BOOST_LINES: dict[BoostOutcome, str] = {
     "boosted": "按了鐘塔的免費加速跟它的確認,鐘塔開始加速",
     "not_night": "遊戲不在夜世界,鐘塔在夜世界,什麼都沒按",
-    "not_ready": "畫面上沒有鐘塔能開的時鐘標記(冷卻中,或鐘塔被擋住、選著別的東西),什麼都沒按",
+    "not_ready": "停好鏡頭後,畫面上沒有鐘塔能開的時鐘標記(冷卻中,或標記被擋住),什麼都沒按",
+    "selected": "有建築或城牆還選著,停鏡頭的拖曳可能拖到它,沒有停鏡頭,什麼都沒按;先點一塊空地取消選取再來",
+    "never_settled": "鏡頭沒有停好,看不到整座村莊,不知道鐘塔能不能開,什麼都沒按",
     "no_free_boost": "點了鐘塔,選單上找不到沒標價的免費加速鈕,沒有按;鐘塔還選著",
     "not_taken": "按了但加速沒有生效(確認視窗或免費加速鈕還在),沒有再按",
     "unexpected": "按了免費加速,出現的不是它的確認視窗,沒有再按",
@@ -5435,6 +5437,13 @@ def boost(frames: FrameLog) -> BoostReport:
     first live run reported a boost on the press alone, with the sheet still
     standing. The tower is left selected either way, for the agent to clear as
     it clears any building it selected.
+
+    **The camera is parked before the marker is looked for**, since the game
+    leaves it where it was: after a crossing it sits by the dock with the tower
+    off screen, which read as a boost cooling down (2026-11-19), and the
+    marker's size and the tap below it were measured at the parked view. A
+    village with something selected is not parked, as `view` refuses it, since
+    a drag could start on that selection's buttons.
     """
     adb = _attached(frames)
     display = adb.display_for(COC_PACKAGE)
@@ -5444,7 +5453,11 @@ def boost(frames: FrameLog) -> BoostReport:
     outcome: BoostOutcome
     if current_world(before) != "night":
         outcome = "not_night"
-    elif (marker := clock_tower_marker(before)) is None:
+    elif selection_row(before):
+        outcome = "selected"
+    elif not park_camera(adb, display, "night"):
+        outcome = "never_settled"
+    elif (marker := clock_tower_marker(before := adb.screenshot(display, "parked"))) is None:
         outcome = "not_ready"
     else:
         adb.tap(marker[0], marker[1] + CLOCK_TOWER_BELOW, display)

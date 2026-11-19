@@ -1790,7 +1790,14 @@ class PressReport(BaseModel):
 
 
 BoostOutcome = Literal[
-    "boosted", "not_night", "not_ready", "no_free_boost", "not_taken", "unexpected"
+    "boosted",
+    "not_night",
+    "selected",
+    "never_settled",
+    "not_ready",
+    "no_free_boost",
+    "not_taken",
+    "unexpected",
 ]
 
 

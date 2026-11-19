@@ -1054,6 +1054,7 @@ class WorldTests(unittest.TestCase):
             "night_clock_ready.png": "night",
             "night_clock_selected.png": "night",
             "night_clock_boosting.png": "night",
+            "night_dock_view.png": "night",
             "night_cart_no_marker.png": "night",
             "night_cart_full.png": "night",
             "hud_day_shield_up.png": "day",
