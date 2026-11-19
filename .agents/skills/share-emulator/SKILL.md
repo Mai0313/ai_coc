@@ -30,7 +30,7 @@ user-invocable: false
 
 一輪進攻四到五分鐘起跳, `--repeat 0` 打到倉庫滿可能是好幾個小時. **主 session 的角色是監督, 不是執行**: 迴圈在背景跑, 你在前景讀 log、改東西、回答使用者, 他隨時插得了話. 打資源的迴圈交給一個 farm subagent 跑, 它照 `.agents/skills/takeover/references/runner.md` 在前景分段阻塞; 主 session 自己送背景的, 是 `watch-and-fix` 親自盯的迴圈跟其他會跑很久的指令.
 
-**會跑很久的都用背景送出去, 這裡是唯一一份清單**: `attack`; `donate --repeat 0`. `watch` 睡到它算出的醒來時間才結束, 一定背景跑. 幾秒就回來的前景跑: `world`, `read`, `collect`, `capture`, `view`, `tap`, `swipe`, `confirm`; `wait --for N` 最多 N 秒, 也前景跑; `world --day` / `--night` 真的坐船約一分鐘 (船不理標記時它自己重開遊戲再坐一次, 約兩分鐘; 開跑時停在斷線的對話框, 它先登入回來再坐船; 村莊出不來最久八分鐘, 那次呼叫的 timeout 要放得下), `status` 要走設定頁拿村莊匯出, 也約一分鐘, 都前景跑; 被借走之後開回去的那一次例外, 它可能要排隊很久. 迴圈在跑的時候, 其中會 claim 的要先等它打完那一場 (見「借, 用完還」).
+**會跑很久的都用背景送出去, 這裡是唯一一份清單**: `attack`; `donate --repeat 0`. `watch` 睡到它算出的醒來時間才結束, 一定背景跑. 幾秒就回來的前景跑: `world`, `read`, `collect`, `capture`, `view`, `tap`, `swipe`, `confirm`; `wait --for N` 最多 N 秒, 也前景跑; `world --day` / `--night` 真的坐船約一分鐘 (船不理標記時先拉近一格再點, 還是不理才自己重開遊戲再坐一次, 約兩分鐘; 開跑時停在斷線的對話框, 它先登入回來再坐船; 村莊出不來最久八分鐘, 那次呼叫的 timeout 要放得下), `status` 要走設定頁拿村莊匯出, 也約一分鐘, 都前景跑; 被借走之後開回去的那一次例外, 它可能要排隊很久. 迴圈在跑的時候, 其中會 claim 的要先等它打完那一場 (見「借, 用完還」).
 
 **送到背景只能用 runtime 自己管的背景執行** (跑完會通知你的那一種): 它是唯一跑完會把你叫醒的開法, harness 送進對話的那個通知就是接下一步的時刻. `Start-Process`, `nohup … &`, PowerShell 的 job, 任何 shell 層的 detach 都不行: 程序照跑, 但結束時沒有東西叫醒你, 輸出跟 exit code 也回不來 (量過: 夜世界打到 `stock_full` 自己收工之後, session 就停在原地).
 

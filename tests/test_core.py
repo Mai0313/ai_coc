@@ -2209,11 +2209,24 @@ class CrossingTests(unittest.TestCase):
         adb.tap.assert_called_once_with(442, 542, ANY)
 
     def test_a_marker_tapped_with_the_village_still_up_is_an_ignored_boat(self) -> None:
-        """Seven crossings on 2026-11-17 and 18: the HUD flickered and the home village stayed (#665)."""
-        self.markers = ((442, 542), (442, 542))
-        adb, landed = self._cross(["day", *["day"] * world_ui.SAIL_POLLS, "day"], want="night")
-        adb.tap.assert_called_once_with(442, 542, ANY)
+        """Seven crossings on 2026-11-17 and 18: the HUD flickered and the home village stayed (#665).
+
+        Only once the tap from one step closer is ignored too.
+        """
+        self.markers = ((442, 542), (442, 542), (426, 556))
+        stayed = ["day"] * (world_ui.SAIL_POLLS + 1)
+        adb, landed = self._cross(["day", *stayed, *stayed], want="night")
+        assert adb.tap.call_args_list == [call(442, 542, ANY), call(426, 556, ANY)]
         assert (landed, self.ignored) == ("day", True)
+
+    def test_an_ignored_marker_tap_is_tried_again_one_step_closer(self) -> None:
+        """Twice on 2026-11-20 the boat ignored its marker and sailed once pinched one step in."""
+        self.markers = ((442, 542), (442, 542), (426, 556))
+        stayed = ["day"] * (world_ui.SAIL_POLLS + 1)
+        adb, landed = self._cross(["day", *stayed, "night"], want="night")
+        assert adb.mock_calls.count(call.zoom("in", 1, ANY, ANY, world_ui.CLOSER_PINCH)) == 1
+        assert adb.tap.call_args_list == [call(442, 542, ANY), call(426, 556, ANY)]
+        assert (landed, self.ignored) == ("night", False)
 
     def test_a_crossing_that_landed_ignored_nothing(self) -> None:
         self._leaving_home((442, 542), (442, 542))

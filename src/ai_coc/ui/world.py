@@ -437,6 +437,18 @@ def _free_scale(adb: AdbController, display: DisplayTarget) -> bool:
 # case, since a crossing that already happened costs nothing to notice early.
 SAIL_POLLS = 8
 SAIL_GAP = 1.5
+# **One small pinch in, and the marker tapped again, after the boat ignored the
+# first tap** (#665). Measured by hand on LDPlayer on 2026-11-20, each time
+# after a game restart and a park: at (593, 620) the tap was ignored, and again
+# 22 s later with nothing between; one step closer the marker read at
+# (577, 634) and the boat sailed within 2 s. At (579, 618) the tap was ignored,
+# then a tap on empty ground and the marker, then a new park (marker
+# (579, 615)) and the marker; one step closer (marker (563, 629)) it sailed
+# within 2 s. So the step sailed 2 times of 2, where tapping again, tapping
+# the ground first and parking again sailed 0 times of 4. Why it works is not
+# known. The settle is the one the probe took.
+CLOSER_PINCH = Pinch(near=150, far=165, centre=(800, 450))
+CLOSER_SETTLE = 1.0
 
 # How many times to press `back` at whatever is covering the village. A building
 # panel goes in one, and the ceiling is there because a game still loading takes
@@ -826,18 +838,23 @@ def cross(adb: AdbController, display: DisplayTarget, want: World) -> Sailing:
     marker to read. A second try minutes later failed alike both times one was
     made, and a restarted game crossed at once four times of four by hand; one
     more crossed two hours on with no restart, the game having logged a dropped
-    session in twice by then. So that failure is told apart (`Sailing.ignored`)
-    for the caller to restart on; nothing here restarts.
+    session in twice by then.
+
+    **So an ignored marker tap is tried once more from one step closer in**
+    (`CLOSER_PINCH`), which sailed both times it was tried by hand, where
+    tapping again, tapping the ground first and parking again never did. Only
+    when that tap is ignored too, or no marker reads after the step, is the
+    failure told apart (`Sailing.ignored`) for the caller to restart on;
+    nothing here restarts. The zoom is left where the step put it: the
+    caller's next crossing parks, and the park pinches out first.
 
     **The restart is a second draw, not a cure.** On 2026-11-18 the command's
     own restart crossed once, and a crossing 39 s after another restart was
-    ignored like the rest. What the ignored taps share is the camera: on the
-    three whose frames were kept, the far zoom the park ended at was 4 to 8%
-    further out than on the two kept that sailed, which matched each other to
-    the pixel, and it was the game's own limit both ways (the pinch test left
-    it where it was). So some starts of the game seem to allow a further zoom,
-    and the boat ignores its marker there; nothing has tested tapping from a
-    step closer in.
+    ignored like the rest. The far zoom the park ends at varies between
+    starts of the game, by 4 to 8% on 11-18's kept frames, but it does not
+    tell an ignored tap from one that sails: on 2026-11-20 a marker at
+    (568, 610) sailed while ones at (570, 610) that day and (571, 611) on
+    11-17 were ignored.
     """
     here = uncovered(adb, display)
     if here == want:
@@ -870,12 +887,8 @@ def cross(adb: AdbController, display: DisplayTarget, want: World) -> Sailing:
     # where it started rather than nothing at all.
     cleared = here
     for spot in spots:
-        adb.tap(spot[0], spot[1], display)
-        for _ in range(SAIL_POLLS):
-            time.sleep(SAIL_GAP)
-            if (arrived := current_world(adb.screenshot(display, "sailing"))) == want:
-                logger.info("Landed on the %s village from the boat at %s", want, spot)
-                return Sailing(world=arrived)
+        if _sailed(adb, display, spot, want):
+            return Sailing(world=want)
         logger.info("The tap at %s did not sail; trying the next spot", spot)
         # A tap that opened a building instead of the boat leaves its panel over
         # the map, and every candidate after it lands on that panel rather than
@@ -891,6 +904,36 @@ def cross(adb: AdbController, display: DisplayTarget, want: World) -> Sailing:
             break
     else:
         logger.warning("None of the %d candidate spots found the boat", len(spots))
+    if marked and cleared == here:
+        cleared = _closer(adb, display, here, want)
     # What the last spot's own check already read, rather than a capture asking
     # the same question again: one of those is 0.6-0.8 s here.
     return Sailing(world=cleared, ignored=marked and cleared == here)
+
+
+def _closer(adb: AdbController, display: DisplayTarget, here: World, want: World) -> World | None:
+    """Pinch one step closer and tap the boat's marker again; the village it left the game on."""
+    logger.info("The boat ignored the tap on its marker; pinching one step closer")
+    adb.zoom("in", 1, COC_PACKAGE, display, CLOSER_PINCH)
+    time.sleep(CLOSER_SETTLE)
+    if (spot := boat_marker(adb.screenshot(display, "boat-marker"))) is None:
+        logger.info("No marker over the boat one step closer")
+        return here
+    if _sailed(adb, display, spot, want):
+        return want
+    if (cleared := uncovered(adb, display)) is None:
+        logger.warning("The village never came back; giving up on the crossing")
+    return cleared
+
+
+def _sailed(
+    adb: AdbController, display: DisplayTarget, spot: tuple[int, int], want: World
+) -> bool:
+    """Tap `spot` and poll for `want`; whether it came up."""
+    adb.tap(spot[0], spot[1], display)
+    for _ in range(SAIL_POLLS):
+        time.sleep(SAIL_GAP)
+        if current_world(adb.screenshot(display, "sailing")) == want:
+            logger.info("Landed on the %s village from the boat at %s", want, spot)
+            return True
+    return False
