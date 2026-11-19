@@ -3863,6 +3863,9 @@ def world(
     thing this command reads one for: the restart is not begun, and the wait
     for the village after it ends early, answered `no_village` like a village
     that never came up, with that screen kept.
+
+    **A crossing that starts on a dropped session logs it in first**, as
+    `launch` and `status` do, and stands down on another device's login.
     """
     adb = _controller(frames) if go is not None else _attached(frames)
     try:
@@ -3877,11 +3880,19 @@ def world(
     if go is None or go == found:
         report = WorldReport(found=found, world=found, outcome="here" if found else "no_village")
     else:
-        sailing: Sailing | None = cross(adb, display, go)
+        sailing: Sailing | None
+        # `cross` would press back at a dropped session, which does nothing;
+        # the wait logs it in again as `launch` does, and stands down on
+        # another device's login.
+        if found is None and idle_disconnected(png):
+            settled = _settle_game(adb, RESTART_POLLS, should_stop, park=False)
+            sailing = None if settled is None else cross(adb, display := settled, go)
+        else:
+            sailing = cross(adb, display, go)
         restarted = False
-        if sailing.ignored and should_stop():
+        if sailing is not None and sailing.ignored and should_stop():
             logger.info("The boat ignored the tap on its marker; a stop is asked, so no restart")
-        elif sailing.ignored:
+        elif sailing is not None and sailing.ignored:
             logger.warning(
                 "The boat took the tap on its marker and the %s village stayed;"
                 " restarting the game to sail once more",
@@ -3894,7 +3905,9 @@ def world(
                 frames.write("no_village", adb.screenshot(adb.display_for(COC_PACKAGE), None))
             except AdbControlError:
                 logger.warning("The game is not on a display; there is no frame to keep")
-            report = WorldReport(found=found, world=None, restarted=True, outcome="no_village")
+            report = WorldReport(
+                found=found, world=None, restarted=restarted, outcome="no_village"
+            )
         else:
             landed = sailing.world
             report = WorldReport(

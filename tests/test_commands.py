@@ -18,6 +18,7 @@ from pathlib import Path
 from datetime import UTC, date, datetime, timedelta
 import tempfile
 import unittest
+import contextlib
 from unittest.mock import MagicMock, patch
 
 from PIL import Image
@@ -64,6 +65,7 @@ from ai_coc.models import (
     ShieldState,
     StockReport,
     ViewOutcome,
+    WorldReport,
     AttackReport,
     AttackSeries,
     BoostOutcome,
@@ -436,6 +438,48 @@ class WorldCommandTests(unittest.TestCase):
         ):
             commands.world("night", _frames(self))
         restarted.assert_not_called()
+
+    def _dropped(self, sheet: str) -> tuple[MagicMock, MagicMock, MagicMock]:
+        """`world --night` started on a dropped-session sheet, its real frame read.
+
+        Answers the controller, `relogin` and `cross`, and leaves the report on
+        `self.report` unless the command raised.
+        """
+        adb = _adb()
+        dropped = (FRAMES / sheet).read_bytes()
+        adb.screenshot.side_effect = [dropped, dropped, (FRAMES / "hud_day.png").read_bytes()]
+        relogged = MagicMock(return_value=DISPLAY)
+        sailed = MagicMock(return_value=Sailing(world="night"))
+        with (
+            patch.object(commands, "_controller", return_value=adb),
+            patch.object(commands.time, "sleep"),
+            patch.object(commands, "relogin", relogged),
+            patch.object(commands, "cross", sailed),
+            contextlib.suppress(commands.SessionTakenError),
+        ):
+            self.report = None
+            self.report = commands.world("night", _frames(self))
+        return adb, relogged, sailed
+
+    report: WorldReport | None
+
+    def test_a_session_dropped_while_idle_is_logged_in_before_the_crossing(self) -> None:
+        """`back` does nothing at the sheet, which answered `crossing_failed` on 2026-11-19."""
+        adb, relogged, sailed = self._dropped("idle_dialog.png")
+        relogged.assert_called_once()
+        sailed.assert_called_once()
+        adb.back.assert_not_called()
+        assert self.report is not None
+        assert self.report.outcome == "crossed"
+
+    def test_another_devices_login_is_not_logged_in_over_before_a_crossing(self) -> None:
+        """The same sheet with the long title stands the command down, nothing pressed."""
+        adb, relogged, sailed = self._dropped("session_taken_battle.png")
+        assert self.report is None
+        relogged.assert_not_called()
+        sailed.assert_not_called()
+        adb.tap.assert_not_called()
+        adb.back.assert_not_called()
 
     def test_a_crossing_that_failed_any_other_way_restarts_nothing(self) -> None:
         """A camera that never parked, or measured spots that may have missed."""
