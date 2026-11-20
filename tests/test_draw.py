@@ -17,7 +17,7 @@ from pathlib import Path
 import itertools
 from unittest.mock import patch
 
-from PIL import Image, ImageChops
+from PIL import Image, ImageDraw, ImageChops
 import pytest
 
 from ai_coc import cli, plans, drawing, commands, logging_setup
@@ -318,9 +318,7 @@ class TestPlannedDrops:
 class TestPicture:
     def _picture(self, *, against: bool = False) -> Image.Image:
         tactic = planned_drops(plans.flat(), DAY, DAY_CAMERA)
-        png = draw_plan(
-            DAY, boundary_diamond(DAY), tactic.steps, tactic.steps if against else [], ["一行"]
-        )
+        png = draw_plan(DAY, boundary_diamond(DAY), tactic.steps, tactic.steps if against else [])
         return Image.open(io.BytesIO(png)).convert("RGB")
 
     def test_nothing_is_drawn_over_the_card_row(self) -> None:
@@ -332,11 +330,55 @@ class TestPicture:
         field = (0, 0, 1600, CARD_ROW_TOP)
         assert ImageChops.difference(picture.crop(field), frame.crop(field)).getbbox() is not None
 
-    def test_the_notes_go_on_a_strip_under_the_frame(self) -> None:
-        picture = self._picture()
-        assert picture.width == 1600
-        assert picture.height > 900
-        assert picture.crop((0, 900, 1600, picture.height)).getbbox() is not None
+    def test_the_picture_is_the_frame_with_nothing_added_to_it(self) -> None:
+        """No notes under it: what a picture assumes is what the discussion is about (the user, 2026-11-21)."""
+        assert self._picture().size == (1600, 900)
+
+    def test_a_steps_label_carries_its_second_once_for_steps_sharing_a_place(self) -> None:
+        """The first hero and the rest land on one spot at the opening; a comparison's marks have no clock."""
+        together = drawing._worded([("#1", 0), ("#3", 0)])
+        assert together.count("0") == 1
+        assert together.index("#1") < together.index("#3")
+        apart = drawing._worded([("#5", 7), ("#7", 16)])
+        assert apart.index("7") < apart.index("#7") < apart.index("16")
+        assert drawing._worded([(drawing.GHOST, None)]) == drawing.GHOST
+
+    def test_every_placed_step_is_labelled_with_the_plans_second(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        written: list[str] = []
+        tag = drawing._tag
+
+        def spy(draw: object, spots: object, text: str, *rest: object, **kw: object) -> object:
+            written.append(text)
+            return tag(draw, spots, text, *rest, **kw)
+
+        monkeypatch.setattr(drawing, "_tag", spy)
+        self._picture()
+        steps = [text for text in written if text.startswith("#")]
+        # One number a place a step lands on: two at the heroes' spot, the troops' line, the siege
+        # machine, then two, three and three places for the spells (one rage spot takes two bottles).
+        assert sum(text.count("#") for text in steps) == 2 + 1 + 1 + 2 + 3 + 3
+        for seconds in ("0", "7", "15", "16"):
+            assert any(text.split(" ")[-1].startswith(seconds) for text in steps), seconds
+
+    def test_a_label_stands_clear_of_what_is_already_written(self) -> None:
+        """A cell's number under a step's label would hide one of them."""
+        draw = ImageDraw.Draw(Image.new("RGBA", (1600, 900)))
+        font = drawing._font(20)
+        taken: list[tuple[float, float, float, float]] = []
+        first = drawing._tag(
+            draw, [(800, 400), (800, 450)], "#6 15秒", (255, 255, 255), font, taken=taken
+        )
+        second = drawing._tag(
+            draw, [(800, 400), (800, 450)], "5", (255, 255, 255), font, taken=taken
+        )
+        assert (first, second) == ((800, 400), (800, 450))
+        # With nowhere free it is written anyway, at its own place.
+        third = drawing._tag(
+            draw, [(800, 400), (800, 450)], "x", (255, 255, 255), font, taken=taken
+        )
+        assert third == (800, 400)
 
     def test_a_plan_held_against_itself_draws_nothing_twice(self) -> None:
         """Only what the other plan does differently is marked."""
@@ -622,17 +664,18 @@ class TestPointsWithNoBottle:
 def test_a_corners_label_steps_off_a_mark_standing_there(monkeypatch: pytest.MonkeyPatch) -> None:
     """The flat plan's siege machine sits just outside the left corner, where 左角 is written."""
     grid = BaseGrid(top=(799, 50), right=(1384, 489), bottom=(800, 927), left=(215, 488))
+    draw = ImageDraw.Draw(Image.new("RGBA", (1600, 900)))
     written: dict[str, tuple[float, float]] = {}
+    tag = drawing._tag
 
-    def tag(
-        _draw: object, at: tuple[float, float], text: str, *_rest: object, **_kw: object
-    ) -> None:
-        written[text] = at
+    def spy(*args: object, **kw: object) -> tuple[float, float]:
+        written[args[2]] = tag(*args, **kw)  # type: ignore[arg-type]
+        return written[args[2]]  # type: ignore[index]
 
-    monkeypatch.setattr(drawing, "_tag", tag)
-    drawing._grid_labels(None, grid, [])
+    monkeypatch.setattr(drawing, "_tag", spy)
+    drawing._grid_labels(draw, grid, [])
     alone = written["左角"]
-    drawing._grid_labels(None, grid, [(176, 489)])
+    assert alone == (215 - 62, 488)
+    drawing._grid_labels(draw, grid, [(176 - 18, 489 - 18, 176 + 18, 489 + 18)])
     assert written["左角"] != alone
-    assert max(abs(written["左角"][0] - 176), abs(written["左角"][1] - 489)) > 40
     assert written["右角"] == (1384 + 62, 489)

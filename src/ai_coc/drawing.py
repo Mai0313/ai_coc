@@ -4,7 +4,10 @@ Pure: a frame and what to mark go in, a PNG comes out. Where a plan lands is
 `ui.attack.planned_drops`'s and where the grid sits `parsers.boundary`'s; this
 only paints them, with labels in Traditional Chinese since the picture is for
 the user. Nothing is painted over the card row, which the picture is read
-against, and the notes go on a strip added under the frame.
+against, and the picture carries no prose: a step's mark has its number and
+the plan's second, and what the picture assumes or cannot show is the
+command's text to say (the user, 2026-11-21: those are what the discussion is
+about, so they do not belong on the picture).
 """
 
 from __future__ import annotations
@@ -85,14 +88,9 @@ CORNERS: tuple[tuple[str, GridCorner, tuple[int, int]], ...] = (
     ("下角", "bottom", (0, -30)),
     ("左角", "left", (-62, 0)),
 )
-# How far a corner's label keeps from a one-off drop's mark, and how far it
-# steps aside: the mark and its number are about this tall together.
-LABEL_CLEAR = 60
 # What marks the plan another is held against (`--against`).
 GHOST = "對照"
 TIMES = "\u00d7"
-NOTE_LINE = 34
-NOTE_PAD = 14
 
 
 def _font(size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
@@ -105,26 +103,56 @@ def _font(size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
     return ImageFont.load_default(size)
 
 
-def _tag(  # noqa: PLR0913 - one label: where, what, how it looks, how low it may sit
+Box = tuple[float, float, float, float]
+
+
+def _tag(  # noqa: PLR0913 - one label: where it may stand, what it says, how it looks, what it avoids
     draw: ImageDraw.ImageDraw,
-    point: tuple[float, float],
+    spots: list[tuple[float, float]],
     text: str,
     colour: Colour,
     font: ImageFont.FreeTypeFont | ImageFont.ImageFont,
     *,
+    taken: list[Box],
     lowest: int = PLAYFIELD[3] - 3,
-) -> None:
-    """A label on a dark plate, centred on `point` and kept on the playfield.
+) -> tuple[float, float]:
+    """A label on a dark plate, at the first of `spots` where it covers nothing in `taken`; answers where.
 
-    A grid's lower corner lies under the card row, so its labels are lifted
-    onto the ground above it, each kind to a height of its own (`lowest`) so
-    they do not land on one another.
+    Every spot is kept on the playfield first. A grid's lower corner lies under
+    the card row, so its labels are lifted onto the ground above it, each kind
+    to a height of its own (`lowest`). With no spot free the first one is used,
+    since a label over another still says more than a missing one. The plate
+    joins `taken`.
     """
     left, top, right, _bottom = PLAYFIELD
-    at = (min(max(point[0], left + 50), right - 50), min(max(point[1], top + 16), lowest))
-    box = draw.textbbox(at, text, font=font, anchor="mm")
-    draw.rectangle((box[0] - 5, box[1] - 3, box[2] + 5, box[3] + 3), fill=(0, 0, 0, 200))
+    plates: list[tuple[Box, tuple[float, float]]] = []
+    for x, y in spots:
+        at = (min(max(x, left + 50), right - 50), min(max(y, top + 16), lowest))
+        box = draw.textbbox(at, text, font=font, anchor="mm")
+        plates.append(((box[0] - 5, box[1] - 3, box[2] + 5, box[3] + 3), at))
+    plate, at = next(
+        (
+            (plate, at)
+            for plate, at in plates
+            if not any(
+                plate[0] < other[2]
+                and other[0] < plate[2]
+                and plate[1] < other[3]
+                and other[1] < plate[3]
+                for other in taken
+            )
+        ),
+        plates[0],
+    )
+    draw.rectangle(plate, fill=(0, 0, 0, 200))
     draw.text(at, text, font=font, fill=(*colour, 255), anchor="mm")
+    taken.append(plate)
+    return at
+
+
+def _beside(point: tuple[float, float], step: tuple[int, int]) -> list[tuple[float, float]]:
+    """A label's own place, then the places a step or two to either side of it."""
+    return [(point[0] + step[0] * k, point[1] + step[1] * k) for k in (0, -1, 1, -2, 2)]
 
 
 def _footprint(act: str) -> tuple[float, float]:
@@ -158,35 +186,28 @@ def _grid_lines(draw: ImageDraw.ImageDraw, grid: BaseGrid, *, alone: bool) -> No
         draw.line([grid.at(0, k / 3), grid.at(1, k / 3)], fill=(*WHITE, shade), width=3)
 
 
-def _grid_labels(draw: ImageDraw.ImageDraw, grid: BaseGrid, marks: list[tuple[int, int]]) -> None:
+def _grid_labels(draw: ImageDraw.ImageDraw, grid: BaseGrid, taken: list[Box]) -> None:
     """The four sides, the four corners and the nine cells, numbered row by row from the top corner.
 
-    A corner's label stands just outside it, which is where a plan can put a
-    one-off drop (the flat plan's siege machine sits outside the left corner),
-    so it is moved along the corner's other axis when a mark is under it.
+    Each stands clear of what is already written or marked (`taken`): a cell's
+    number moves up or down off a step's label, and a corner's label, which
+    stands just outside the corner where a plan can put a one-off drop (the
+    flat plan's siege machine sits outside the left corner), moves along the
+    corner's other axis.
     """
     big, mid = _font(34), _font(24)
     for cell in range(9):
         at = grid.at((cell % 3 + 0.5) / 3, (cell // 3 + 0.5) / 3)
-        _tag(draw, at, str(cell + 1), WHITE, big, lowest=655)
+        _tag(draw, _beside(at, (0, 46)), str(cell + 1), WHITE, big, taken=taken, lowest=655)
     for name, one, two, (dx, dy) in SIDES:
         a, b = getattr(grid, one), getattr(grid, two)
         at = ((a[0] + b[0]) / 2 + dx * 95, (a[1] + b[1]) / 2 + dy * 45)
-        _tag(draw, at, name, SIDE_COLOUR, mid, lowest=690)
+        _tag(draw, [at], name, SIDE_COLOUR, mid, taken=taken, lowest=690)
     for name, corner, (dx, dy) in CORNERS:
         x, y = getattr(grid, corner)
         text = f"{name} (空地)" if corner in grid.empty else name
-        side = (LABEL_CLEAR, 0) if dx == 0 else (0, LABEL_CLEAR)
-        spots = [(x + dx + side[0] * k, y + dy + side[1] * k) for k in (0, -1, 1)]
-        clear = [
-            spot
-            for spot in spots
-            if all(
-                abs(spot[0] - mx) > LABEL_CLEAR or abs(spot[1] - my) > LABEL_CLEAR
-                for mx, my in marks
-            )
-        ]
-        _tag(draw, (clear or spots)[0], text, CORNER_COLOUR, mid)
+        aside = (60, 0) if dx == 0 else (0, 60)
+        _tag(draw, _beside((x + dx, y + dy), aside), text, CORNER_COLOUR, mid, taken=taken)
 
 
 Label = tuple[tuple[float, float], str]
@@ -238,29 +259,40 @@ def _spots(
     return [((x, y + 34), label) for x, y in dict.fromkeys(step.at)]
 
 
+def _worded(entries: list[tuple[str, int | None]]) -> str:
+    """Steps sharing a place as one label: their numbers, then the second of the plan's clock they share."""
+    parts: list[str] = []
+    for seconds, group in itertools.groupby(entries, key=lambda entry: entry[1]):
+        tags = " ".join(tag for tag, _ in group)
+        parts.append(tags if seconds is None else f"{tags} {seconds}秒")
+    return " ".join(parts)
+
+
 def _marks(
     draw: ImageDraw.ImageDraw, steps: Iterable[PlannedDrop], *, ghost: bool
-) -> dict[tuple[float, float], tuple[list[str], Colour]]:
-    """Every step where it lands, and the number to write at each place.
+) -> dict[tuple[float, float], tuple[list[tuple[str, int | None]], Colour]]:
+    """Every step where it lands, and what to write at each place: its number and its second.
 
     A ghost is the plan another is held against: white dashes, each labelled
-    `GHOST`. The labels come back rather than being written here, so a later
-    step's shape does not cover them, and steps sharing a spot share one.
+    `GHOST` with no second. The labels come back rather than being written
+    here, so a later step's shape does not cover them, and steps sharing a
+    spot share one.
     """
-    labels: dict[tuple[float, float], tuple[list[str], Colour]] = {}
+    labels: dict[tuple[float, float], tuple[list[tuple[str, int | None]], Colour]] = {}
     placed = (step for step in steps if step.act != "ability")
     for number, step in enumerate(placed, 1):
         colour = WHITE if ghost else COLOURS[step.act]
         # A step the frame's row has no card for is still drawn where it would
-        # go, since the next army may carry it; the legend says it is missing.
+        # go, since the next army may carry it; the command's text says it is missing.
         label = GHOST if ghost else f"#{number}"
         shape = _bottles if step.act in SPELL_TILES else _spots
         named = _lines(draw, step, colour, label, ghost=ghost)
         named += shape(draw, step, colour, label, ghost=ghost)
         for at, text in named:
-            texts = labels.setdefault(at, ([], colour))[0]
-            if text not in texts:
-                texts.append(text)
+            entries = labels.setdefault(at, ([], colour))[0]
+            entry = (text, None if ghost else step.seconds)
+            if entry not in entries:
+                entries.append(entry)
     return labels
 
 
@@ -337,13 +369,9 @@ def legend(steps: list[PlannedDrop]) -> list[str]:
 
 
 def draw_plan(
-    frame: bytes,
-    grid: BaseGrid | None,
-    steps: list[PlannedDrop],
-    against: list[PlannedDrop],
-    notes: list[str],
+    frame: bytes, grid: BaseGrid | None, steps: list[PlannedDrop], against: list[PlannedDrop]
 ) -> bytes:
-    """The frame with the grid, a plan's steps and the plan it is held against, over a strip of notes."""
+    """The frame with the grid, a plan's steps and the plan it is held against, and nothing added to it."""
     image = open_frame(frame).convert("RGBA")
     over = Image.new("RGBA", image.size, (0, 0, 0, 0))
     draw = ImageDraw.Draw(over)
@@ -351,19 +379,21 @@ def draw_plan(
         _grid_lines(draw, grid, alone=not steps)
     small = _font(20)
     labels = _marks(draw, _only_in(against, steps), ghost=True)
-    for at, (texts, colour) in (labels | _marks(draw, steps, ghost=False)).items():
-        _tag(draw, at, " ".join(texts), colour, small)
+    labels |= _marks(draw, steps, ghost=False)
+    # A one-off drop's own mark is not to be written over; a spell's footprint may be.
+    taken: list[Box] = [
+        (x - 18, y - 18, x + 18, y + 18)
+        for step in steps
+        if step.act not in SPELL_TILES
+        for x, y in step.at
+    ]
+    for at, (entries, colour) in labels.items():
+        _tag(draw, _beside(at, (0, 28)), _worded(entries), colour, small, taken=taken)
     if grid is not None:
-        _grid_labels(draw, grid, [spot for step in steps for spot in step.at])
+        _grid_labels(draw, grid, taken)
     drawn = Image.alpha_composite(image, over)
     # The card row back on top of whatever reached it: a grid's lower corner does.
     drawn.paste(image.crop((0, CARD_ROW_TOP, *image.size)), (0, CARD_ROW_TOP))
-    sheet = Image.new("RGB", (image.width, image.height + NOTE_PAD * 2 + NOTE_LINE * len(notes)))
-    sheet.paste(drawn.convert("RGB"), (0, 0))
-    words = ImageDraw.Draw(sheet)
-    font = _font(22)
-    for row, text in enumerate(notes):
-        words.text((20, image.height + NOTE_PAD + row * NOTE_LINE), text, font=font, fill=WHITE)
     out = io.BytesIO()
-    sheet.save(out, format="PNG")
+    drawn.convert("RGB").save(out, format="PNG")
     return out.getvalue()

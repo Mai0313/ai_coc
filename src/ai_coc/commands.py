@@ -5636,7 +5636,11 @@ def _grid_places(grid: BaseGrid) -> dict[str, tuple[float, float]]:
 
 
 def _draw_notes(report: DrawReport) -> list[str]:
-    """What the picture's reader has to know beside the marks: what was assumed, and what it cannot show."""
+    """What goes with the picture and is not on it: the army assumed, each step, and what it cannot show.
+
+    The picture itself carries no prose, so this text is where an agent reads
+    what to say beside it.
+    """
     notes: list[str] = []
     if report.on is not None:
         notes.append(
@@ -5730,13 +5734,10 @@ def draw(asked: DrawOptions, frames: FrameLog) -> DrawReport:
         if asked.against is not None:
             report.against = asked.against
             against = planned_drops(plans.called(asked.against, report.world), png, camera).steps
-    notes = _draw_notes(report)
     canvas = asked.on.read_bytes() if asked.on else png
     report.image = frames.write(
         "drawn",
-        draw_plan(
-            canvas, report.grid, report.tactic.steps if report.tactic else [], against, notes
-        ),
+        draw_plan(canvas, report.grid, report.tactic.steps if report.tactic else [], against),
     )
     logger.info("Draw: %s, on %s", DRAW_LINES[report.outcome], source)
     return report
