@@ -119,7 +119,7 @@ The comment beside each measured constant in these loops carries the reasoning b
 - Tests are written with **pytest** and live under `tests/`.
 - Coverage is gated at **80%**. The parsers read recorded frames, the loops and commands run against a patched emulator, and new logic in either is expected to come with tests of the same shape. The gate sits in `addopts`, so a partial run cannot meet it: pass `--no-cov` when running a single file or test.
 - Use `pytest-xdist` for parallel execution where helpful.
-- Recorded frames under `tests/frames/` are the fixtures for the readers. Reduce a real capture to the region being read and fill the rest with a flat colour rather than re-encoding it: these readers turn on exact pixels, and requantising a frame makes a bad one pass and a good one fail.
+- Recorded frames under `tests/frames/` are the fixtures for the readers. A new one is a real capture kept whole, with only what identifies a player painted over in a flat colour (the `dev-rules` skill's `references/code.md` says what), since the rest of the frame is what the negative tests sweep; some older ones were reduced to the region being read with the rest filled flat. Never re-encode one: these readers turn on exact pixels, and requantising a frame makes a bad one pass and a good one fail.
 - After writing a test, take the fix back out and check it actually fails. A parser test that passes either way is the easiest kind to write by accident.
 
 Useful commands:
