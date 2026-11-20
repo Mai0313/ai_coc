@@ -25,10 +25,12 @@ from ai_coc.models import (
     RunLog,
     RunEnded,
     AttackRun,
+    DrawReport,
     NoteAction,
     NoteReport,
     RunStarted,
     StopTarget,
+    DrawOptions,
     UpgradeRole,
     AttackSeries,
     ExportReport,
@@ -72,9 +74,9 @@ def _log_uncaught(kind: type[BaseException], value: BaseException, trace: Any) -
 # journal, `listprice` writes a line into it, `wait` reads it and one run's
 # process, and `search` reads the kept tables and exports, none of them opening ADB;
 # `gamedata` opens it only to read the game's files, `hold` claims the
-# emulator and does nothing with it, and `decision` sends a PNG off the disk
-# to the Decisions API. Every other one captures the screen, so
-# every other one takes `--debug` and `--shot-every`.
+# emulator and does nothing with it, `decision` sends a PNG off the disk
+# to the Decisions API, and `draw` paints on one. Every other one captures the
+# screen, so every other one takes `--debug` and `--shot-every`.
 NO_SCREEN = (
     "read",
     "stop",
@@ -91,6 +93,7 @@ NO_SCREEN = (
     "gamedata",
     "hold",
     "decision",
+    "draw",
 )
 
 # The sub-commands that hold no claim on the emulator, listed the way round
@@ -131,6 +134,7 @@ TEXT_ANSWERS = (
     "tended",
     "note",
     "decision",
+    "draw",
 )
 
 
@@ -237,6 +241,11 @@ COMMANDS = (
         "開發與量測",
         (
             ("read", "不碰遊戲，把一張截圖交給每個判讀器，印出各自讀到什麼"),
+            (
+                "draw",
+                "不碰遊戲，在一張下兵前的戰鬥截圖上畫出一份戰術每一步會點在哪裡，跟對齊村莊紅線的九宮格，"
+                "印出圖檔的路徑；討論戰術時拿來指位置",
+            ),
             ("probe", "花一場戰鬥實測部署邊界，對照判讀器的結果"),
             ("bounds", "花一場戰鬥實測地圖邊緣，推回村莊範圍"),
             (
@@ -248,8 +257,68 @@ COMMANDS = (
 )
 
 
-def _decision_flags(asker: argparse.ArgumentParser) -> None:
-    """Its own function only because `_parser` is at Ruff's statement limit."""
+def _picture_flags(
+    reader: argparse.ArgumentParser,
+    asker: argparse.ArgumentParser,
+    drawer: argparse.ArgumentParser,
+) -> None:
+    """The commands that work on a picture off the disk: `read`, `decision` and `draw`.
+
+    Its own function only because `_parser` is at Ruff's statement limit.
+    """
+    reader.add_argument("png", type=Path, help="要判讀的截圖")
+    # One or the other, never both: a run's log says which of its frames and
+    # how far the camera had gone, which a lone frame cannot.
+    source = drawer.add_mutually_exclusive_group(required=True)
+    source.add_argument(
+        "png",
+        nargs="?",
+        type=Path,
+        help="要畫的那張戰鬥截圖（1600x900，下兵前、鏡頭已經停好的那一張）；不給就要給 --run",
+    )
+    source.add_argument(
+        "--run",
+        type=Path,
+        metavar="執行",
+        help="改從一次帶 --debug 的 attack 取圖：它的執行目錄、目錄名字，或開它時給的 --label（同一個標籤取最新的那次）；"
+        "取第一下兵之前最後存的那張，鏡頭拖了多少從它的 run.log 讀",
+    )
+    drawer.add_argument(
+        "--battle",
+        type=int,
+        metavar="N",
+        help="--run 那次執行裡的第幾場戰鬥（夜世界每個階段各算一場）；不給就是最後一場",
+    )
+    drawer.add_argument(
+        "--camera",
+        type=int,
+        nargs=2,
+        default=(0, 0),
+        metavar=("DX", "DY"),
+        help="png 那張圖拍下時，進攻迴圈已經把鏡頭拖了多少（run.log 的 now (x, y) off where the battle opened）；"
+        "不給當作沒拖過",
+    )
+    drawer.add_argument(
+        "--plan",
+        default="flat",
+        metavar="名稱或路徑",
+        help=f"要畫的戰術：名稱（{'、'.join(plans.NAMES)}）或 JSON 路徑，跟 attack --plan 一樣；預設 flat",
+    )
+    drawer.add_argument(
+        "--against",
+        metavar="名稱或路徑",
+        help="另一份戰術，它跟 --plan 不一樣的落點用白色虛線畫出來當對照，例如拿提案對現在的 flat",
+    )
+    drawer.add_argument(
+        "--only",
+        choices=("plan", "grid"),
+        help="plan 只畫戰術不畫九宮格，grid 只畫九宮格不畫戰術；不給就兩個都畫",
+    )
+    _village_flags(
+        drawer,
+        "--plan 跟 --against 給名稱時用日世界的那一份（預設）",
+        "給名稱時用夜世界的那一份；給路徑的那一份自己寫明是哪個村莊的",
+    )
     asker.add_argument("--prompt", required=True, metavar="問題", help="要問的是非題")
     asker.add_argument("--image-path", required=True, type=Path, metavar="圖", help="要問的那張圖")
     asker.add_argument(
@@ -568,8 +637,7 @@ def _parser() -> argparse.ArgumentParser:
     shot = sub.choices["capture"]
     shot.add_argument("--count", type=int, default=1, help="存幾張")
     shot.add_argument("--gap", type=float, default=1.5, metavar="秒", help="每張間隔幾秒")
-    sub.choices["read"].add_argument("png", type=Path, help="要判讀的截圖")
-    _decision_flags(sub.choices["decision"])
+    _picture_flags(sub.choices["read"], sub.choices["decision"], sub.choices["draw"])
     sub.choices["hold"].add_argument(
         "--for",
         dest="seconds",
@@ -720,6 +788,19 @@ def _answer(arguments: argparse.Namespace, run: RunLog) -> BaseModel | str:
             str(path) for path in commands.capture(run.frames, a.count, a.gap)
         ),
         "read": lambda: commands.read(a.png.read_bytes()),
+        "draw": lambda: commands.draw(
+            DrawOptions(
+                png=a.png,
+                run=a.run,
+                battle=a.battle,
+                camera=tuple(a.camera),
+                plan=a.plan,
+                world=a.world or "day",
+                against=a.against,
+                only=a.only,
+            ),
+            run.frames,
+        ),
         "decision": lambda: commands.decision(a.prompt, a.image_path, a.ground_truth),
         "export": lambda: commands.export(run.frames, a.last),
         "gamedata": lambda: commands.gamedata(run.frames, a.refresh),
@@ -812,7 +893,9 @@ def _run_command(arguments: argparse.Namespace, run: RunLog) -> int:
     # Nor is a note edit refused for want of the current revision, so whoever
     # chained work after it reads the list first.
     refused = isinstance(answer, NoteReport) and answer.outcome in ("unread", "stale")
-    code = 1 if cancelled or unanswered or refused else 0
+    # Nor is a picture that was not drawn.
+    undrawn = isinstance(answer, DrawReport) and answer.outcome != "drawn"
+    code = 1 if cancelled or unanswered or refused or undrawn else 0
     # An attack keeps its last round alone, the others having `round` lines.
     last = (
         answer.model_copy(update={"rounds": AttackSeries(answer.rounds.root[-1:])})

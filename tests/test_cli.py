@@ -83,6 +83,7 @@ MINIMAL: dict[str, list[str]] = {
     "capture": [],
     "read": ["shot.png"],
     "decision": ["--prompt", "視窗開著嗎", "--image-path", "shot.png"],
+    "draw": ["shot.png"],
     "export": [],
     "gamedata": [],
 }

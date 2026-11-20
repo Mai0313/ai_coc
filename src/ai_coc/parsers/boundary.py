@@ -15,10 +15,11 @@ from __future__ import annotations
 
 import math
 import logging
+import itertools
 
 from PIL import Image, ImageDraw, ImageChops
 
-from ai_coc.models import DEFAULT_MAP_CENTRE, MapFrame
+from ai_coc.models import DEFAULT_MAP_CENTRE, BaseGrid, MapFrame, GridCorner
 from ai_coc.parsers.frame import SCREEN_SIZE, open_frame
 
 logger = logging.getLogger(__name__)
@@ -205,6 +206,21 @@ def _trimmed(profile: list[int]) -> tuple[int, int] | None:
     return (low, high) if high > low else None
 
 
+def _stroke_mask(image: Image.Image) -> Image.Image:
+    """Every pixel in the stroke's red inside the playfield, the UI's own red blanked."""
+    red, green, blue = image.split()
+    score = ImageChops.subtract(red, ImageChops.lighter(green, blue))
+    mask = ImageChops.multiply(
+        score.point(lambda v: 255 if v >= STROKE_SCORE else 0),
+        red.point(lambda v: 255 if STROKE_RED[0] <= v <= STROKE_RED[1] else 0),
+    )
+    blank = ImageDraw.Draw(mask)
+    _left, top, _right, bottom = PLAYFIELD
+    for box in ((0, 0, image.width, top), (0, bottom, image.width, image.height), *UI_PANELS):
+        blank.rectangle(box, fill=0)
+    return mask
+
+
 def village_box(png: bytes) -> tuple[int, int, int, int] | None:
     """The screen rectangle the game's own red line encloses, or None if it will not read.
 
@@ -222,16 +238,7 @@ def village_box(png: bytes) -> tuple[int, int, int, int] | None:
     reads too.
     """
     image = open_frame(png)
-    red, green, blue = image.split()
-    score = ImageChops.subtract(red, ImageChops.lighter(green, blue))
-    mask = ImageChops.multiply(
-        score.point(lambda v: 255 if v >= STROKE_SCORE else 0),
-        red.point(lambda v: 255 if STROKE_RED[0] <= v <= STROKE_RED[1] else 0),
-    )
-    blank = ImageDraw.Draw(mask)
-    _left, top, _right, bottom = PLAYFIELD
-    for box in ((0, 0, image.width, top), (0, bottom, image.width, image.height), *UI_PANELS):
-        blank.rectangle(box, fill=0)
+    mask = _stroke_mask(image)
     width, height = image.size
     bands = mask.resize((width, PROFILE_BANDS), Image.Resampling.BOX).tobytes()
     columns = [sum(bands[row * width + x] for row in range(PROFILE_BANDS)) for x in range(width)]
@@ -309,3 +316,120 @@ def fitted_line(
         return None
     logger.info("Flank %s-%s fitted to the boundary as %s", start, end, moved)
     return tuple(moved)
+
+
+# The map's two directions on screen at the far zoom: an edge of the diamond
+# climbs or falls this many pixels for every pixel across. Read off the stroke
+# itself, whose straight runs fall into one bin of `y - slope * x` only at the
+# right slope: the fullest bin held 483 px at 0.75 against 166 at 0.76 and 161
+# at 0.74 (`tests/frames/battle_flat_reference.png`).
+MAP_SLOPE = 0.75
+# What tells the stroke from the rest of what passes its colour test, measured
+# 2026-11-21 over 18 frames of eleven villages taken before the first drop: the
+# two reference frames, `night_countdown.png`, and eight opponents of a farming
+# run, four of them again after the camera drag. The stroke
+# is at most three pixels tall, so a pixel with stroke red this far above or
+# below it is a patch of scenery or of a building instead: a red pier on one
+# scenery ran 47 to 49 px along an edge direction and put a corner 230 px out
+# before this dropped it.
+DIAMOND_THIN = 4
+# A straight run is read through gaps this wide, which the stroke's stair-steps
+# and its antialiasing leave, and counts as an edge of the outline from this
+# many pixels across. Of the 72 outermost edges on those frames the shortest
+# ran 51 px (the builder base reference's upper left); the longest run left
+# outside a diamond was 45, a one-tile step of one village's outline 19 px
+# further out, and nothing else outside ran past 34. A run that short moves an
+# edge by a tile or two at most, which a grid to point with does not need.
+DIAMOND_GAP = 3
+DIAMOND_RUN = 46
+# Two edges closer together than this are no village's outline: a battle well
+# under way leaves a few red runs of spell and troop art, and they read as a
+# sliver.
+DIAMOND_SPAN = 120
+# How far from a corner of the diamond the stroke may pass before the base no
+# longer reaches that corner. The outline cuts its own corners, so on those
+# frames a corner the base filled had stroke within 80 px of it, and the one
+# corner of bare ground among them (the builder base reference's right) had
+# none within 146; a third of a diamond's side is about 150 px.
+CORNER_REACH = 100
+
+
+def _edges(points: list[tuple[int, int]], sign: int) -> tuple[int, int] | None:
+    """The outermost two straight runs of the stroke along one of the map's directions.
+
+    Each is where its line meets the screen's left edge, `y - sign * slope * x`.
+    A line at this slope rounds into two neighbouring bins, so they are read
+    together and the fuller one names the line.
+    """
+    bins: dict[int, set[int]] = {}
+    for x, y in points:
+        bins.setdefault(round(y - sign * MAP_SLOPE * x), set()).add(x)
+    edges: list[int] = []
+    for line in sorted(bins):
+        beside = bins.get(line + 1, set())
+        across = sorted(bins[line] | beside)
+        run = longest = 1
+        for one, two in itertools.pairwise(across):
+            run = run + two - one if two - one <= DIAMOND_GAP else 1
+            longest = max(longest, run)
+        if longest >= DIAMOND_RUN:
+            edges.append(line if len(bins[line]) >= len(beside) else line + 1)
+    return (edges[0], edges[-1]) if edges else None
+
+
+def boundary_diamond(png: bytes) -> BaseGrid | None:
+    """The diamond the red deployment line fits in, or None where no outline reads.
+
+    The line follows the map's own two directions, so its bounding box along
+    them is a diamond whose edges are the outermost straight run each way: the
+    upper right and lower left edges fall to the right, the upper left and
+    lower right ones to the left. It is the frame to point at a village with,
+    and it is only as square as the base: `empty` names the corners on screen
+    the line stays away from. A corner can lie under the card row or off the
+    screen, since the line does.
+
+    For a frame taken before the first drop. Once troops are out the line
+    shrinks with every building lost and spell art passes its colour test.
+    """
+    image = open_frame(png)
+    data = _stroke_mask(image).tobytes()
+    width = image.width
+    lit: set[int] = set()
+    at = data.find(255)
+    while at >= 0:
+        lit.add(at)
+        at = data.find(255, at + 1)
+    reach = DIAMOND_THIN * width
+    left, top, right, bottom = PLAYFIELD
+    thin = [
+        (at % width, at // width)
+        for at in lit
+        if left <= at % width <= right and at - reach not in lit and at + reach not in lit
+    ]
+    falling, rising = _edges(thin, 1), _edges(thin, -1)
+    if (
+        falling is None
+        or rising is None
+        or min(falling[1] - falling[0], rising[1] - rising[0]) < DIAMOND_SPAN
+    ):
+        return None
+
+    def meet(fall: int, rise: int) -> tuple[int, int]:
+        return round((rise - fall) / (2 * MAP_SLOPE)), round((fall + rise) / 2)
+
+    corners: dict[GridCorner, tuple[int, int]] = {
+        "top": meet(falling[0], rising[0]),
+        "right": meet(falling[0], rising[1]),
+        "bottom": meet(falling[1], rising[1]),
+        "left": meet(falling[1], rising[0]),
+    }
+    empty: list[GridCorner] = [
+        name
+        for name, (x, y) in corners.items()
+        if left <= x <= right
+        and top <= y <= bottom
+        and not _on_panel(x, y)
+        and not any(abs(px - x) <= CORNER_REACH and abs(py - y) <= CORNER_REACH for px, py in thin)
+    ]
+    logger.info("The deployment line fits in %s, empty at %s", corners, empty)
+    return BaseGrid(**corners, empty=empty)

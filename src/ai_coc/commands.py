@@ -54,6 +54,7 @@ from ai_coc.models import (
     WatchStop,
     AttackPlan,
     CartReport,
+    DrawReport,
     HoldReport,
     NoteAction,
     NoteReport,
@@ -68,12 +69,15 @@ from ai_coc.models import (
     AdbEndpoint,
     BoostReport,
     CartOutcome,
+    DrawOptions,
+    DrawOutcome,
     GoblinOffer,
     JournalLine,
     LevelChange,
     LevelsTotal,
     NextUpgrade,
     NoteOutcome,
+    PlannedDrop,
     PressReport,
     RunnerState,
     ShieldState,
@@ -147,7 +151,8 @@ from ai_coc.models import (
     TurnaroundOutcome,
     labelled,
 )
-from ai_coc.constants import STATE_PATH, COC_PACKAGE, ACCOUNT_JSON_DIR
+from ai_coc.drawing import GHOST, legend, draw_plan
+from ai_coc.constants import LOG_DIR, STATE_PATH, COC_PACKAGE, ACCOUNT_JSON_DIR
 from ai_coc.adapters.ai import GeminiClient
 from ai_coc.adapters.adb import ZOOM_PINCHES, AdbController, AdbControlError
 from ai_coc.parsers.clan import donatable_cards
@@ -209,7 +214,13 @@ from ai_coc.parsers.village import (
 from ai_coc.parsers.village import growth as village_growth
 from ai_coc.parsers.village import search as village_search
 from ai_coc.parsers.village import closest as closest_names
-from ai_coc.parsers.boundary import PLAYFIELD, VILLAGE_CENTRE, village_box, boundary_reach
+from ai_coc.parsers.boundary import (
+    PLAYFIELD,
+    VILLAGE_CENTRE,
+    village_box,
+    boundary_reach,
+    boundary_diamond,
+)
 from ai_coc.parsers.building import (
     GOBLIN_X_BOX,
     MENU_ROW_BOX,
@@ -238,7 +249,14 @@ from ai_coc.adapters.clipboard import read_clipboard, clear_clipboard, write_cli
 
 from .ui.clan import ClanRunner
 from .ui.world import cross, uncovered, open_chest, park_camera, collect_cart
-from .ui.attack import CARD_ROW_Y, DROP_SETTLE, BATTLE_TIMEOUT, SINGLE_DROP_DELAY, AttackRunner
+from .ui.attack import (
+    CARD_ROW_Y,
+    DROP_SETTLE,
+    BATTLE_TIMEOUT,
+    SINGLE_DROP_DELAY,
+    AttackRunner,
+    planned_drops,
+)
 from .ui.plates import PlateRunner
 from .ui.runner import (
     BUY_SETTLE,
@@ -4969,28 +4987,20 @@ def answer_text(answer: BaseModel, within: int | None = None) -> str | None:
     The one place a report becomes text (`cli.TEXT_ANSWERS`); each report's own
     wording sits beside its command. `within` is `status --within`.
     """
-    match answer:
-        case StatusReport():
-            text = status_text(answer, within=within)
-        case AttackRun():
-            text = attack_text(answer)
-        case FarmedReport():
-            text = farmed_report_text(answer)
-        case TendedReport():
-            text = tended_text(answer)
-        case GrowthReport():
-            text = growth_text(answer)
-        case TurnaroundReport():
-            text = turnaround_text(answer)
-        case SearchReport():
-            text = search_text(answer)
-        case NoteReport():
-            text = note_text(answer)
-        case DecisionReport():
-            text = decision_text(answer)
-        case _:
-            text = None
-    return text
+    if isinstance(answer, StatusReport):
+        return status_text(answer, within=within)
+    texts: dict[type[BaseModel], Callable[..., str]] = {
+        AttackRun: attack_text,
+        FarmedReport: farmed_report_text,
+        TendedReport: tended_text,
+        GrowthReport: growth_text,
+        TurnaroundReport: turnaround_text,
+        SearchReport: search_text,
+        NoteReport: note_text,
+        DecisionReport: decision_text,
+        DrawReport: draw_text,
+    }
+    return next((text(answer) for kind, text in texts.items() if isinstance(answer, kind)), None)
 
 
 # The build panel's rows, its tabs and every sheet a row opens are driven by the
@@ -5541,6 +5551,154 @@ def read(png: bytes) -> FrameReading:
         upgrade_sheet=upgrade_sheet(png),
         village_box=village_box(png),
     )
+
+
+# What `draw` reads back out of a recorded run's `run.log` to find the frame a
+# battle's first drop followed: each frame as it was saved, the camera's shift
+# as `AttackRunner._pan` logged it, and any tap, since the loop moves the
+# camera by swipes and pinches and the first tap after the pinch is a drop.
+SAVED_LINE = re.compile(r"ai_coc\.models: Saved frame (\d{4,}_[\w-]+)\.png$")
+PANNED_LINE = re.compile(r"now \((-?\d+), (-?\d+)\) off where the battle opened$")
+DROP_LINE = re.compile(r"ai_coc\.adapters\.adb: Tap(?:ping)? ")
+
+DRAW_LINES: dict[DrawOutcome, str] = {
+    "drawn": "圖畫好了",
+    "no_frame": "找不到下兵前的畫面: 給的圖不存在, 或那次執行沒有帶 --debug、畫面已經清掉、沒有那一場",
+}
+
+
+def _run_called(run: Path, own: Path) -> Path | None:
+    """A run's directory from the directory itself, its name or its `--label`: the newest carrying it, never `own`."""
+    if run.is_dir():
+        return run
+    name = labelled(run.name)
+    named: list[Path] = []
+    with suppress(OSError):
+        named = sorted(
+            one
+            for one in LOG_DIR.iterdir()
+            if one != own and (one.name == run.name or one.name.endswith(f"-{name}"))
+        )
+    return named[-1] if named else None
+
+
+def _before_drop(asked: DrawOptions, own: Path) -> tuple[Path, tuple[int, int]] | None:
+    """The frame to draw on and how far the camera had been dragged by then; None with no such frame.
+
+    For a run, each battle in its log starts at the frame the pinch out saves
+    (`zoomed`), and the last frame saved before the next tap is the one the
+    first drop followed. `own` is this command's own run directory.
+    """
+    if asked.run is None:
+        return (asked.png, asked.camera) if asked.png is not None and asked.png.is_file() else None
+    if (log := _run_called(asked.run, own)) is None:
+        return None
+    battles: list[tuple[str, tuple[int, int]]] = []
+    dropping = True
+    with suppress(OSError), (log / "run.log").open(encoding="utf-8") as lines:
+        for line in lines:
+            if saved := SAVED_LINE.search(line):
+                if saved[1].endswith("_zoomed"):
+                    battles.append((saved[1], (0, 0)))
+                    dropping = False
+                elif not dropping:
+                    battles[-1] = (saved[1], battles[-1][1])
+            elif not dropping and (moved := PANNED_LINE.search(line)):
+                battles[-1] = (battles[-1][0], (int(moved[1]), int(moved[2])))
+            elif DROP_LINE.search(line):
+                dropping = True
+    if not battles or not 1 <= (asked.battle or len(battles)) <= len(battles):
+        return None
+    name, camera = battles[(asked.battle or len(battles)) - 1]
+    frame = log / "frames" / f"{name}.png"
+    return (frame, camera) if frame.is_file() else None
+
+
+def _draw_notes(report: DrawReport) -> list[str]:
+    """What the picture's reader has to know beside the marks: what was assumed, and what it cannot show."""
+    notes: list[str] = []
+    if (tactic := report.tactic) is not None:
+        world = WORLD_NAMES[report.world] if report.world else ""
+        moved = f", 鏡頭已經拖了 {report.camera}" if report.camera != (0, 0) else ""
+        notes.append(f"{world} {os.path.basename(report.plan or '')}{moved}")
+        notes += legend(tactic.steps)
+        if report.against:
+            notes.append(
+                f"白色虛線 (標「{GHOST}」) 是 {os.path.basename(report.against)} 跟這一份不一樣的落點"
+            )
+        notes.append(
+            "部隊的線照這張圖的紅線往外貼過"
+            if tactic.fitted
+            else "這張圖讀不到貼部隊線的紅線, 部隊的線是計畫寫的位置"
+        )
+        if tactic.drag:
+            notes.append(
+                f"迴圈在這張圖上會先把鏡頭往{'下' if tactic.drag > 0 else '上'}拖約 {abs(tactic.drag)} px 才下兵, "
+                "圖上是拖之前的位置"
+            )
+        notes.append(
+            "畫的是點下去的位置跟計畫自己的秒數: 遊戲拒絕或挪動的落點、每一步實際晚多少, 這張圖看不出來"
+        )
+    if report.grid is None:
+        if report.only != "plan":
+            notes.append("這張圖讀不到紅線, 沒有畫格線")
+    else:
+        notes.append(
+            "格線是紅線外框的菱形, 村莊不是正方形時它也不是"
+            + (", 標 (空地) 的角紅線沒有到" if report.grid.empty else "")
+        )
+    return notes
+
+
+def draw_text(report: DrawReport) -> str:
+    """The picture's path on the first line, then what it shows and what it cannot."""
+    if report.image is None:
+        return DRAW_LINES[report.outcome]
+    shown = [str(report.image), f"底圖 {report.frame}", *_draw_notes(report)]
+    if (grid := report.grid) is not None:
+        shown.append(f"上角 {grid.top}, 右角 {grid.right}, 下角 {grid.bottom}, 左角 {grid.left}")
+        # A cell is what the user answers in and a point is what a plan takes:
+        # a share of the screen, with the camera's drag taken back out.
+        cells = []
+        for cell in range(9):
+            x, y = grid.at((cell % 3 + 0.5) / 3, (cell // 3 + 0.5) / 3)
+            across, down = (x - report.camera[0]) / 16, (y - report.camera[1]) / 9
+            cells.append(f"{cell + 1} ({across:.1f}, {down:.1f})")
+        shown.append(f"九宮格每格中心寫成計畫的 (x_pct, y_pct): {', '.join(cells)}")
+    return "\n".join(shown)
+
+
+def draw(asked: DrawOptions, frames: FrameLog) -> DrawReport:
+    """Draw a plan's steps and the pointing grid on one battle frame, off the disk alone.
+
+    No emulator, no settings file and no claim: it reads a frame, a plan and
+    for a recorded run its `run.log`, and keeps the picture in this run's own
+    `frames/` as `drawn.png`.
+    """
+    found = _before_drop(asked, frames.directory.parent)
+    if found is None:
+        logger.info("Draw: %s", DRAW_LINES["no_frame"])
+        return DrawReport(outcome="no_frame", frame=asked.png)
+    source, camera = found
+    png = source.read_bytes()
+    report = DrawReport(outcome="drawn", frame=source.resolve(), camera=camera, only=asked.only)
+    if asked.only != "plan":
+        report.grid = boundary_diamond(png)
+    against: list[PlannedDrop] = []
+    if asked.only != "grid":
+        plan = plans.called(asked.plan, asked.world)
+        report.plan, report.world = asked.plan, _PLAN_WORLD[type(plan)]
+        report.tactic = planned_drops(plan, png, camera)
+        if asked.against is not None:
+            report.against = asked.against
+            against = planned_drops(plans.called(asked.against, report.world), png, camera).steps
+    notes = _draw_notes(report)
+    report.image = frames.write(
+        "drawn",
+        draw_plan(png, report.grid, report.tactic.steps if report.tactic else [], against, notes),
+    )
+    logger.info("Draw: %s, on %s", DRAW_LINES[report.outcome], source)
+    return report
 
 
 # How long the Decisions API gets for one answer before the run ends `failed`.

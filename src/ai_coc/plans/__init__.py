@@ -55,6 +55,11 @@ def named(name: str, world: World) -> AttackPlan | NightPlan:
     return load_any(PLAN_DIR / (f"{name}.json" if world == "day" else f"night_{name}.json"))
 
 
+def called(plan: str, world: World) -> AttackPlan | NightPlan:
+    """A plan as `--plan` writes one: one of `NAMES`, read for `world`, or a path."""
+    return named(plan, world) if plan in NAMES else load_any(Path(plan))
+
+
 def flat() -> AttackPlan:
     """The default plan, used when nothing better was supplied."""
     return load(PLAN_DIR / "flat.json")

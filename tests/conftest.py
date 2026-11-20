@@ -31,7 +31,7 @@ if TYPE_CHECKING:
 
 @pytest.fixture(autouse=True)
 def _state_file_in_tmp(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Point the state file, the settings file, the journal, the saved exports and the game's tables at paths of this test's own, for every test.
+    """Point the state file, the settings file, the journal, the saved exports, the run directories and the game's tables at paths of this test's own, for every test.
 
     `_held` goes back with it: it is module state that outlives one test, and
     left set by a test that claimed, the next test's `stop_requested` would read
@@ -50,6 +50,8 @@ def _state_file_in_tmp(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     exports = tmp_path / "account_json"
     exports.mkdir()
     monkeypatch.setattr(commands, "ACCOUNT_JSON_DIR", exports)
+    # `draw --run` looks a run up by its label among the run directories.
+    monkeypatch.setattr(commands, "LOG_DIR", tmp_path / "logs")
 
 
 @pytest.fixture(autouse=True)

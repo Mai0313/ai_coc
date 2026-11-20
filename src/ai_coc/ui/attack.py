@@ -28,10 +28,12 @@ from ai_coc.models import (
     AttackPlan,
     AttackStep,
     CartReport,
+    PlannedDrop,
     ScreenPoint,
     AttackReport,
     VillageStock,
     AttackOutcome,
+    PlannedTactic,
     LootThresholds,
     StorageCapacity,
 )
@@ -940,6 +942,167 @@ def night_drops(
     """
     spread = [drop_points(lane, seed, taps) for lane in lanes]
     return [spread[tap % len(spread)][tap] for tap in range(taps)]
+
+
+def planned_drops(
+    plan: AttackPlan | NightPlan, frame: bytes, panned: tuple[int, int] = (0, 0)
+) -> PlannedTactic:
+    """Where a plan's taps would go on one frame, for a picture rather than a battle.
+
+    `frame` is the battle as the camera stood for the first drop and `panned`
+    what `_pan` had recorded by then. On that pair this is what the runner
+    plays: `_flank`'s fit read off the frame, `_act`'s spots, `_cast`'s bottles
+    counted off the frame's own card row, the builder base's lanes. The tests
+    play the runner itself against it on the reference frames, since it repeats
+    how the runner strings those together rather than sharing it.
+
+    What it cannot say is what the game then does with a tap: a refused drop is
+    sent again somewhere else, a pass that lands nothing pushes the flank out,
+    and every step is played later than the plan's own clock by what the steps
+    before it took.
+    """
+    centre = (SCREEN_CENTRE[0] + panned[0], SCREEN_CENTRE[1] + panned[1])
+    preset = deploy_candidates(plan)[0]
+    flank = _shifted(preset, panned)
+    anchors = fitted_line(frame, flank[0], flank[1], centre=centre) or flank
+    line = deploy_line(LINE_POINTS, *push_line(anchors, 0, centre))
+    box = village_box(frame)
+    below = sum(y for _, y in preset) / len(preset) > SCREEN_CENTRE[1]
+    return PlannedTactic(
+        fitted=anchors is not flank,
+        # `_clear_flank`'s own arithmetic, which a camera already dragged has had.
+        drag=None
+        if box is None or panned != (0, 0)
+        else min(0, PLAYFIELD[3] - box[3] - FLANK_ROOM)
+        if below
+        else max(0, PLAYFIELD[1] - box[1] + FLANK_ROOM),
+        steps=_night_steps(plan, frame, anchors, line, panned)
+        if isinstance(plan, NightPlan)
+        else _day_steps(plan, frame, line, panned),
+    )
+
+
+def _shifted(
+    points: Iterable[tuple[int, int]], panned: tuple[int, int]
+) -> tuple[tuple[int, int], ...]:
+    """Points drawn for a centred village, where a camera dragged by `panned` shows them."""
+    return tuple((x + panned[0], y + panned[1]) for x, y in points)
+
+
+def _day_steps(
+    plan: AttackPlan, frame: bytes, line: list[tuple[int, int]], panned: tuple[int, int]
+) -> list[PlannedDrop]:
+    """A home village plan's steps as `_play_tactic` would place them."""
+    centre = (SCREEN_CENTRE[0] + panned[0], SCREEN_CENTRE[1] + panned[1])
+    middle = line[len(line) // 2]
+    groups = card_groups(frame)
+    spells = counted_cards(frame, [x for group in groups[1:] for x in group])
+    freezes = freeze_cards(frame, spells)
+    cards = {"freeze": list(freezes), "rage": [x for x in spells if x not in freezes]}
+    held = {x: card_count(frame, x) for x in spells}
+    steps = merged(plan.steps)
+    left = Counter(step.act for step in steps)
+    spent: dict[int, int] = {}
+    clock = 0
+    drops: list[PlannedDrop] = []
+    for step in steps:
+        if step.act == "wait":
+            clock += step.seconds
+            continue
+        points = _shifted((point.pixels() for point in step.at), panned)
+        drop = PlannedDrop(act=step.act, who=step.who, seconds=clock)
+        if step.act in ("siege", "hero"):
+            drop.at = [clear_of_controls(onto_line(points[0], line, centre) if points else middle)]
+        elif step.act == "troops":
+            drop.lines = [line]
+        elif step.act in ("rage", "freeze"):
+            own = cards[step.act]
+            unread = RAGE_BOTTLES if step.act == "rage" else 1
+            wanted = max(sum(held[x] or unread for x in own), 1)
+            targets = tuple(spaced(list(points))) or (middle,)
+            # A frame with no card row says nothing about the bottles, so every
+            # point of the plan is drawn; a row with no such card casts nothing.
+            if groups:
+                targets = targets[:wanted]
+                drop.at = _bottles(own, held, spent, targets, last=left[step.act] == 1)
+                drop.unused = [spot for spot in targets if spot not in drop.at]
+                drop.cards = len(own)
+            else:
+                drop.at = list(targets)
+        left[step.act] -= 1
+        drops.append(drop)
+    return drops
+
+
+def _bottles(
+    cards: list[int],
+    held: dict[int, int | None],
+    spent: dict[int, int],
+    targets: tuple[tuple[int, int], ...],
+    *,
+    last: bool,
+) -> list[tuple[int, int]]:
+    """Where each bottle of one spell step lands: `_cast_some` before the last step of its act, `_cast` on it.
+
+    `held` is each card's count off the opening frame and `spent` what earlier
+    steps took, which this adds to. A card whose count will not read is taken
+    to hold a bottle for every tap, as the runner takes it.
+    """
+
+    def remaining(x: int) -> int:
+        return max((held[x] or 0) - spent.get(x, 0), 0)
+
+    landed: list[tuple[int, int]] = []
+    if last:
+        pending = [x for x in cards if not held[x] or remaining(x)]
+        for index, x in enumerate(pending):
+            landed += [
+                targets[(index + i) % len(targets)] for i in range(remaining(x) or len(targets))
+            ]
+        return landed
+    cells = list(targets)
+    for x in cards:
+        taps = min(remaining(x) if held[x] else len(cells), len(cells))
+        landed += cells[:taps]
+        spent[x] = spent.get(x, 0) + taps
+        del cells[:taps]
+    return landed
+
+
+def _night_steps(
+    plan: NightPlan,
+    frame: bytes,
+    anchors: tuple[tuple[int, int], ...],
+    line: list[tuple[int, int]],
+    panned: tuple[int, int],
+) -> list[PlannedDrop]:
+    """A builder base plan as `_deploy_night` would place a first stage: the machine, then the lanes."""
+    centre = (SCREEN_CENTRE[0] + panned[0], SCREEN_CENTRE[1] + panned[1])
+    slots = [slot for group in card_groups(frame) for slot in group]
+    troops = counted_cards(frame, slots, NIGHT_COUNT_WHITE_RATIO)
+    machines = live_cards(frame, [slot for slot in slots if slot not in troops])
+    aimed = [
+        push_out(spot, 0, centre)
+        for spot in _shifted((point.pixels() for point in plan.hero_points), panned)
+    ]
+    shared = single_spots(line, centre)[0]
+    return [
+        PlannedDrop(
+            act="machine",
+            seconds=0,
+            # A row with no machine on it still gets the spot one would go to.
+            at=[*aimed, *[shared] * (max(len(machines), 1) - len(aimed))][: max(len(machines), 1)],
+            cards=len(machines) if slots else None,
+        ),
+        PlannedDrop(
+            act="troops",
+            seconds=plan.troops_after,
+            lines=[
+                deploy_line(LINE_POINTS, *push_line(anchors, lane, centre))
+                for lane in range(NIGHT_LANES)
+            ],
+        ),
+    ]
 
 
 PLAN_PROMPT = PROMPTS["attack_plan"]
