@@ -1055,9 +1055,11 @@ def _day_steps(
             targets = tuple(spaced(list(points))) or (middle,)
             # A frame with no card row says nothing about the bottles, so no
             # point of the plan is drawn as cast; a row with no such card casts nothing.
+            # The runner casts over as many points as the row has bottles; the
+            # plan's points past that count are as bare as the ones inside it.
             if groups:
-                targets = targets[:wanted]
-                drop.at = _bottles(own, held, spent, targets, last=left[step.act] == 1)
+                last = left[step.act] == 1
+                drop.at = _bottles(own, held, spent, targets[:wanted], last=last)
             drop.unused = [spot for spot in targets if spot not in drop.at]
             drop.cards = len(own)
         if row is None:

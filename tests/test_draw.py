@@ -20,7 +20,7 @@ from unittest.mock import patch
 from PIL import Image, ImageChops
 import pytest
 
-from ai_coc import cli, plans, commands, logging_setup
+from ai_coc import cli, plans, drawing, commands, logging_setup
 from ai_coc.ui import attack
 from ai_coc.models import (
     CardRow,
@@ -445,6 +445,10 @@ class TestDrawCommand:
         own.mkdir(parents=True)
         report = commands.draw(DrawOptions(run=Path("ref")), FrameLog(directory=own))
         assert (report.frame, report.camera) == (newest / "frames" / "opening.png", (0, 0))
+        # An earlier picture given the same label is newer than the battle and kept no such frame.
+        (tmp_path / "logs" / "2026-11-21-095000-draw-ref" / "frames").mkdir(parents=True)
+        again = commands.draw(DrawOptions(run=Path("ref")), FrameLog(directory=own))
+        assert again.frame == report.frame
         assert (
             commands.draw(DrawOptions(run=Path("nobody")), FrameLog(directory=own)).image is None
         )
@@ -583,3 +587,52 @@ class TestLaterFrame:
 
     def test_a_later_frame_that_is_not_there_draws_nothing(self, tmp_path: Path) -> None:
         assert self._draw(tmp_path, tmp_path / "gone.png").outcome == "no_frame"
+
+
+class TestPointsWithNoBottle:
+    """Every point of the plan a bottle does not reach is drawn as bare, whatever the row holds."""
+
+    def test_points_past_the_rows_bottles_are_bare_too(self) -> None:
+        """Eight rage points for six bottles on two cards: the last two are as bare as the two skipped."""
+        spots = [(x, y) for y in (30, 45) for x in (20, 35, 50, 65)]
+        plan = AttackPlan(
+            steps=[
+                AttackStep(
+                    act="rage",
+                    who="unknown",
+                    at=[ScreenPoint(x_pct=x, y_pct=y) for x, y in spots],
+                    seconds=0,
+                )
+            ]
+        )
+        [rage] = planned_drops(plan, DAY, DAY_CAMERA).steps
+        every = [(x * 16, y * 9 + DAY_CAMERA[1]) for x, y in spots]
+        assert len(rage.at) == 6
+        assert rage.unused == [spot for spot in every if spot not in rage.at]
+        assert len(rage.unused) == 4
+
+    def test_a_row_without_the_spell_leaves_every_point_bare(self) -> None:
+        with patch.object(attack, "counted_cards", return_value=[]):
+            tactic = planned_drops(plans.flat(), DAY, DAY_CAMERA)
+        spells = [step for step in tactic.steps if step.act in ("rage", "freeze")]
+        assert [len(step.unused) for step in spells] == [2, 3, 6]
+        assert all(step.at == [] and step.cards == 0 for step in spells)
+
+
+def test_a_corners_label_steps_off_a_mark_standing_there(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The flat plan's siege machine sits just outside the left corner, where 左角 is written."""
+    grid = BaseGrid(top=(799, 50), right=(1384, 489), bottom=(800, 927), left=(215, 488))
+    written: dict[str, tuple[float, float]] = {}
+
+    def tag(
+        _draw: object, at: tuple[float, float], text: str, *_rest: object, **_kw: object
+    ) -> None:
+        written[text] = at
+
+    monkeypatch.setattr(drawing, "_tag", tag)
+    drawing._grid_labels(None, grid, [])
+    alone = written["左角"]
+    drawing._grid_labels(None, grid, [(176, 489)])
+    assert written["左角"] != alone
+    assert max(abs(written["左角"][0] - 176), abs(written["左角"][1] - 489)) > 40
+    assert written["右角"] == (1384 + 62, 489)

@@ -5571,7 +5571,11 @@ DRAW_LINES: dict[DrawOutcome, str] = {
 
 
 def _run_called(run: Path, own: Path) -> Path | None:
-    """A run's directory from the directory itself, its name or its `--label`: the newest carrying it, never `own`."""
+    """A run's directory from the directory itself, its name or its `--label`.
+
+    A label is the newest run carrying it that kept an opening frame: a `draw`
+    or a `capture` given the same label afterwards is newer and kept none.
+    """
     if run.is_dir():
         return run
     name = labelled(run.name)
@@ -5580,7 +5584,9 @@ def _run_called(run: Path, own: Path) -> Path | None:
         named = sorted(
             one
             for one in LOG_DIR.iterdir()
-            if one != own and (one.name == run.name or one.name.endswith(f"-{name}"))
+            if one != own
+            and (one.name == run.name or one.name.endswith(f"-{name}"))
+            and (one / "frames" / f"{OPENING_FRAME}.png").is_file()
         )
     return named[-1] if named else None
 

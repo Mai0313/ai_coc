@@ -85,6 +85,9 @@ CORNERS: tuple[tuple[str, GridCorner, tuple[int, int]], ...] = (
     ("下角", "bottom", (0, -30)),
     ("左角", "left", (-62, 0)),
 )
+# How far a corner's label keeps from a one-off drop's mark, and how far it
+# steps aside: the mark and its number are about this tall together.
+LABEL_CLEAR = 60
 # What marks the plan another is held against (`--against`).
 GHOST = "對照"
 TIMES = "\u00d7"
@@ -155,8 +158,13 @@ def _grid_lines(draw: ImageDraw.ImageDraw, grid: BaseGrid, *, alone: bool) -> No
         draw.line([grid.at(0, k / 3), grid.at(1, k / 3)], fill=(*WHITE, shade), width=3)
 
 
-def _grid_labels(draw: ImageDraw.ImageDraw, grid: BaseGrid) -> None:
-    """The four sides, the four corners and the nine cells, numbered row by row from the top corner."""
+def _grid_labels(draw: ImageDraw.ImageDraw, grid: BaseGrid, marks: list[tuple[int, int]]) -> None:
+    """The four sides, the four corners and the nine cells, numbered row by row from the top corner.
+
+    A corner's label stands just outside it, which is where a plan can put a
+    one-off drop (the flat plan's siege machine sits outside the left corner),
+    so it is moved along the corner's other axis when a mark is under it.
+    """
     big, mid = _font(34), _font(24)
     for cell in range(9):
         at = grid.at((cell % 3 + 0.5) / 3, (cell // 3 + 0.5) / 3)
@@ -168,7 +176,17 @@ def _grid_labels(draw: ImageDraw.ImageDraw, grid: BaseGrid) -> None:
     for name, corner, (dx, dy) in CORNERS:
         x, y = getattr(grid, corner)
         text = f"{name} (空地)" if corner in grid.empty else name
-        _tag(draw, (x + dx, y + dy), text, CORNER_COLOUR, mid)
+        side = (LABEL_CLEAR, 0) if dx == 0 else (0, LABEL_CLEAR)
+        spots = [(x + dx + side[0] * k, y + dy + side[1] * k) for k in (0, -1, 1)]
+        clear = [
+            spot
+            for spot in spots
+            if all(
+                abs(spot[0] - mx) > LABEL_CLEAR or abs(spot[1] - my) > LABEL_CLEAR
+                for mx, my in marks
+            )
+        ]
+        _tag(draw, (clear or spots)[0], text, CORNER_COLOUR, mid)
 
 
 Label = tuple[tuple[float, float], str]
@@ -334,7 +352,7 @@ def draw_plan(
     for at, (texts, colour) in (labels | _marks(draw, steps, ghost=False)).items():
         _tag(draw, at, " ".join(texts), colour, small)
     if grid is not None:
-        _grid_labels(draw, grid)
+        _grid_labels(draw, grid, [spot for step in steps for spot in step.at])
     drawn = Image.alpha_composite(image, over)
     # The card row back on top of whatever reached it: a grid's lower corner does.
     drawn.paste(image.crop((0, CARD_ROW_TOP, *image.size)), (0, CARD_ROW_TOP))
