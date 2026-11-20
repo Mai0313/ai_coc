@@ -349,9 +349,9 @@ class TestPicture:
         assert [line.split(" ")[0] for line in lines] == ["0", "5", "7", "15", "16"]
         # Four placed steps at the opening, and the ability between them unnumbered.
         opening = [part.split(" ")[0] for part in lines[0].split(": ")[1].split(" → ")]
-        assert [part for part in opening if part.isdigit()] == ["1", "2", "3", "4"]
+        assert [part for part in opening if part.startswith("#")] == ["#1", "#2", "#3", "#4"]
         assert len(opening) == 5
-        assert not opening[1].isdigit()
+        assert not opening[1].startswith("#")
 
     def test_a_step_the_row_has_no_card_for_says_so(self) -> None:
         for act in ("machine", "siege", "hero"):

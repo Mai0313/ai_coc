@@ -235,7 +235,7 @@ def _marks(
         colour = WHITE if ghost else COLOURS[step.act]
         # A step the frame's row has no card for is still drawn where it would
         # go, since the next army may carry it; the legend says it is missing.
-        label = GHOST if ghost else str(number)
+        label = GHOST if ghost else f"#{number}"
         shape = _bottles if step.act in SPELL_TILES else _spots
         named = _lines(draw, step, colour, label, ghost=ghost)
         named += shape(draw, step, colour, label, ghost=ghost)
@@ -311,7 +311,7 @@ def legend(steps: list[PlannedDrop]) -> list[str]:
             sent += step.cards or 0
         if step.act != "ability":
             number += 1
-            name = f"{number} {name}"
+            name = f"#{number} {name}"
         lines.setdefault(step.seconds, []).append(name)
     return [f"{seconds} 秒: {' → '.join(names)}" for seconds, names in lines.items()]
 
