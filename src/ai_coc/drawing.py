@@ -288,7 +288,9 @@ def row_line(row: CardRow | None) -> str:
     def counts(held: list[int | None]) -> str:
         return " ".join("x?" if count is None else f"x{count}" for count in held) or "沒有"
 
-    parts = [f"部隊 {len(row.troops)} 張卡 ({counts(row.troops)})", f"單張的卡 {row.singles} 張"]
+    # The builder base's cards write their count another way and none of it reads.
+    held = f" ({counts(row.troops)})" if any(count is not None for count in row.troops) else ""
+    parts = [f"部隊 {len(row.troops)} 張卡{held}", f"單張的卡 {row.singles} 張"]
     if row.rages or row.freezes:
         parts += [f"狂暴 {counts(row.rages)}", f"冰凍 {counts(row.freezes)}"]
     return f"這張圖的卡片列: {', '.join(parts)}"
