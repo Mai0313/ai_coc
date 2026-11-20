@@ -280,14 +280,8 @@ def _picture_flags(
         "--run",
         type=Path,
         metavar="執行",
-        help="改從一次帶 --debug 的 attack 取圖：它的執行目錄、目錄名字，或開它時給的 --label（同一個標籤取最新的那次）；"
-        "取第一下兵之前最後存的那張，鏡頭拖了多少從它的 run.log 讀",
-    )
-    drawer.add_argument(
-        "--battle",
-        type=int,
-        metavar="N",
-        help="--run 那次執行裡的第幾場戰鬥（夜世界每個階段各算一場）；不給就是最後一場",
+        help="改從一次 attack 取圖：它的執行目錄、目錄名字，或開它時給的 --label（同一個標籤取最新的那次）；"
+        "每場進攻都會留下兵前的那一張（不用 --debug，一次執行只留最新那一場的），鏡頭拖了多少從它的 run.log 讀",
     )
     drawer.add_argument(
         "--camera",
@@ -295,7 +289,7 @@ def _picture_flags(
         nargs=2,
         default=(0, 0),
         metavar=("DX", "DY"),
-        help="png 那張圖拍下時，進攻迴圈已經把鏡頭拖了多少（run.log 的 now (x, y) off where the battle opened）；"
+        help="png 那張圖拍下時，進攻迴圈已經把鏡頭拖了多少（run.log 的 the camera (x, y) off where the battle opened）；"
         "不給當作沒拖過",
     )
     drawer.add_argument(
@@ -308,6 +302,13 @@ def _picture_flags(
         "--against",
         metavar="名稱或路徑",
         help="另一份戰術，它跟 --plan 不一樣的落點用白色虛線畫出來當對照，例如拿提案對現在的 flat",
+    )
+    drawer.add_argument(
+        "--on",
+        type=Path,
+        metavar="圖",
+        help="格線跟落點照下兵前那一張量，但畫在同一場稍後的這張截圖上（例如 --debug 存下的 cast 那一張），"
+        "看那一刻部隊走到哪一格",
     )
     drawer.add_argument(
         "--only",
@@ -792,12 +793,12 @@ def _answer(arguments: argparse.Namespace, run: RunLog) -> BaseModel | str:
             DrawOptions(
                 png=a.png,
                 run=a.run,
-                battle=a.battle,
                 camera=tuple(a.camera),
                 plan=a.plan,
                 world=a.world or "day",
                 against=a.against,
                 only=a.only,
+                on=a.on,
             ),
             run.frames,
         ),

@@ -1100,15 +1100,33 @@ class PlannedDrop(BaseModel):
     lines: list[list[tuple[int, int]]] = Field(default_factory=list)
     # Where each one-off card or bottle lands, a spot twice when two bottles do.
     at: list[tuple[int, int]] = Field(default_factory=list)
-    # Spell points of the plan that no bottle on this frame's card row reaches.
+    # Spell points of the plan no bottle is known to reach: the row has none
+    # left for them, or there is no row to count bottles off.
     unused: list[tuple[int, int]] = Field(default_factory=list)
-    # How many cards on the frame's row this step would send; None where nothing counted them.
+    # How many cards on the frame's row this step would send; None with no row to count.
     cards: int | None = None
+
+
+class CardRow(BaseModel):
+    """What a frame's card row holds, which is the army a picture of a plan assumes."""
+
+    # Each troop card's count, None where its corner would not read.
+    troops: list[int | None]
+    # The cards with no count: the siege machine and the heroes at home, the
+    # machines still alive on the builder base. Nothing on the row says which
+    # hero a card is.
+    singles: int
+    # Each spell card's bottles, own and donated cards apart as the row has them.
+    rages: list[int | None] = Field(default_factory=list)
+    freezes: list[int | None] = Field(default_factory=list)
 
 
 class PlannedTactic(BaseModel):
     """Where a whole plan would land on one frame (`ui.attack.planned_drops`)."""
 
+    # The card row the steps were worked out for; None on a frame with no row,
+    # where nothing says how many cards or bottles a step would have.
+    row: CardRow | None
     # Whether the troops' flank was bent onto the red line read off this frame.
     fitted: bool
     # How far the loop would drag the camera before its first drop were this
@@ -3310,13 +3328,12 @@ class DrawOptions(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    # The frame itself, or the recorded run to take one from: its directory,
-    # its name or its `--label`, and which of its battles, the last when None.
+    # The frame itself, or the attack run whose newest battle kept one: its
+    # directory, its name or its `--label`.
     png: Path | None = None
     run: Path | None = None
-    battle: int | None = None
     # How far the battle camera had been dragged when `png` was taken; a run's
-    # own log says so for its frames.
+    # own log says so for the frame it kept.
     camera: tuple[int, int] = (0, 0)
     # A plan by name (`plans.NAMES`), read for `world`, or by path.
     plan: str = "flat"
@@ -3325,6 +3342,9 @@ class DrawOptions(BaseModel):
     against: str | None = None
     # Draw the plan without the grid or the grid without a plan; None draws both.
     only: Literal["plan", "grid"] | None = None
+    # A later frame of the same battle to paint on instead, to see where the
+    # army stood against the grid and the plan read off the frame above.
+    on: Path | None = None
 
 
 DrawOutcome = Literal["drawn", "no_frame"]
@@ -3336,6 +3356,8 @@ class DrawReport(BaseModel):
     outcome: DrawOutcome
     image: Path | None = None
     frame: Path | None = None
+    # The later frame of the same battle the marks were painted on, when one was asked for.
+    on: Path | None = None
     # How far the battle camera had been dragged when the frame was taken.
     camera: tuple[int, int] = (0, 0)
     # The plan drawn and the village it is for; None for the grid alone.

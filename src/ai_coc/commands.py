@@ -36,6 +36,7 @@ from ai_coc.models import (
     Caller,
     MapEdge,
     Sailing,
+    BaseGrid,
     FrameLog,
     HoldStop,
     LoanStop,
@@ -151,7 +152,7 @@ from ai_coc.models import (
     TurnaroundOutcome,
     labelled,
 )
-from ai_coc.drawing import GHOST, legend, draw_plan
+from ai_coc.drawing import GHOST, legend, row_line, draw_plan
 from ai_coc.constants import LOG_DIR, STATE_PATH, COC_PACKAGE, ACCOUNT_JSON_DIR
 from ai_coc.adapters.ai import GeminiClient
 from ai_coc.adapters.adb import ZOOM_PINCHES, AdbController, AdbControlError
@@ -252,10 +253,13 @@ from .ui.world import cross, uncovered, open_chest, park_camera, collect_cart
 from .ui.attack import (
     CARD_ROW_Y,
     DROP_SETTLE,
+    OPENING_LINE,
+    OPENING_FRAME,
     BATTLE_TIMEOUT,
     SINGLE_DROP_DELAY,
     AttackRunner,
     planned_drops,
+    clear_of_controls,
 )
 from .ui.plates import PlateRunner
 from .ui.runner import (
@@ -5553,17 +5557,16 @@ def read(png: bytes) -> FrameReading:
     )
 
 
-# What `draw` reads back out of a recorded run's `run.log` to find the frame a
-# battle's first drop followed: each frame as it was saved, the camera's shift
-# as `AttackRunner._pan` logged it, and any tap, since the loop moves the
-# camera by swipes and pinches and the first tap after the pinch is a drop.
-SAVED_LINE = re.compile(r"ai_coc\.models: Saved frame (\d{4,}_[\w-]+)\.png$")
-PANNED_LINE = re.compile(r"now \((-?\d+), (-?\d+)\) off where the battle opened$")
-DROP_LINE = re.compile(r"ai_coc\.adapters\.adb: Tap(?:ping)? ")
+# The line `AttackRunner._keep_opening` logs for the frame every battle keeps
+# before its first drop, read back for the camera's shift.
+OPENING = re.compile(
+    re.escape(OPENING_LINE).replace("%s", "{}").format(OPENING_FRAME, r"\((-?\d+), (-?\d+)\)")
+    + "$"
+)
 
 DRAW_LINES: dict[DrawOutcome, str] = {
     "drawn": "圖畫好了",
-    "no_frame": "找不到下兵前的畫面: 給的圖不存在, 或那次執行沒有帶 --debug、畫面已經清掉、沒有那一場",
+    "no_frame": "找不到下兵前的畫面: 給的圖不存在, 或那次執行沒有打過一場、畫面已經清掉",
 }
 
 
@@ -5585,42 +5588,60 @@ def _run_called(run: Path, own: Path) -> Path | None:
 def _before_drop(asked: DrawOptions, own: Path) -> tuple[Path, tuple[int, int]] | None:
     """The frame to draw on and how far the camera had been dragged by then; None with no such frame.
 
-    For a run, each battle in its log starts at the frame the pinch out saves
-    (`zoomed`), and the last frame saved before the next tap is the one the
-    first drop followed. `own` is this command's own run directory.
+    A run keeps the frame its newest battle's first drop followed under one
+    name, and its log's last `OPENING` line is that frame's camera. `own` is
+    this command's own run directory.
     """
     if asked.run is None:
         return (asked.png, asked.camera) if asked.png is not None and asked.png.is_file() else None
     if (log := _run_called(asked.run, own)) is None:
         return None
-    battles: list[tuple[str, tuple[int, int]]] = []
-    dropping = True
+    camera: tuple[int, int] | None = None
     with suppress(OSError), (log / "run.log").open(encoding="utf-8") as lines:
         for line in lines:
-            if saved := SAVED_LINE.search(line):
-                if saved[1].endswith("_zoomed"):
-                    battles.append((saved[1], (0, 0)))
-                    dropping = False
-                elif not dropping:
-                    battles[-1] = (saved[1], battles[-1][1])
-            elif not dropping and (moved := PANNED_LINE.search(line)):
-                battles[-1] = (battles[-1][0], (int(moved[1]), int(moved[2])))
-            elif DROP_LINE.search(line):
-                dropping = True
-    if not battles or not 1 <= (asked.battle or len(battles)) <= len(battles):
-        return None
-    name, camera = battles[(asked.battle or len(battles)) - 1]
-    frame = log / "frames" / f"{name}.png"
-    return (frame, camera) if frame.is_file() else None
+            if kept := OPENING.search(line):
+                camera = (int(kept[1]), int(kept[2]))
+    frame = log / "frames" / f"{OPENING_FRAME}.png"
+    return (frame, camera) if camera is not None and frame.is_file() else None
+
+
+def _off_limits(point: tuple[float, float]) -> bool:
+    """Whether no tap can land here: under the card row, off the playfield or on a button."""
+    spot = (round(point[0]), round(point[1]))
+    return clear_of_controls(spot) != spot
+
+
+def _grid_places(grid: BaseGrid) -> dict[str, tuple[float, float]]:
+    """Every place on the grid the user can name: its corners, each cell's middle, and where four cells meet."""
+    places: dict[str, tuple[float, float]] = {
+        "上角": grid.top,
+        "右角": grid.right,
+        "下角": grid.bottom,
+        "左角": grid.left,
+    }
+    for cell in range(9):
+        places[f"{cell + 1}"] = grid.at((cell % 3 + 0.5) / 3, (cell // 3 + 0.5) / 3)
+    for down in (1, 2):
+        for across in (1, 2):
+            first = (down - 1) * 3 + across
+            name = "\u00b7".join(str(cell) for cell in (first, first + 1, first + 3, first + 4))
+            places[name] = grid.at(across / 3, down / 3)
+    return places
 
 
 def _draw_notes(report: DrawReport) -> list[str]:
     """What the picture's reader has to know beside the marks: what was assumed, and what it cannot show."""
     notes: list[str] = []
+    if report.on is not None:
+        notes.append(
+            f"格線跟落點是從下兵前那一張量的, 畫在同一場稍後的 {os.path.basename(report.on)} 上: "
+            "鏡頭在第一下之後沒再動才對得上"
+        )
     if (tactic := report.tactic) is not None:
         world = WORLD_NAMES[report.world] if report.world else ""
         moved = f", 鏡頭已經拖了 {report.camera}" if report.camera != (0, 0) else ""
         notes.append(f"{world} {os.path.basename(report.plan or '')}{moved}")
+        notes.append(row_line(tactic.row))
         notes += legend(tactic.steps)
         if report.against:
             notes.append(
@@ -5647,6 +5668,11 @@ def _draw_notes(report: DrawReport) -> list[str]:
             "格線是紅線外框的菱形, 村莊不是正方形時它也不是"
             + (", 標 (空地) 的角紅線沒有到" if report.grid.empty else "")
         )
+        blocked = [name for name, at in _grid_places(report.grid).items() if _off_limits(at)]
+        if blocked:
+            notes.append(
+                f"這張圖上點不到的地方 (卡片列下面、畫面外或按鈕上): {', '.join(blocked)}"
+            )
     return notes
 
 
@@ -5657,14 +5683,14 @@ def draw_text(report: DrawReport) -> str:
     shown = [str(report.image), f"底圖 {report.frame}", *_draw_notes(report)]
     if (grid := report.grid) is not None:
         shown.append(f"上角 {grid.top}, 右角 {grid.right}, 下角 {grid.bottom}, 左角 {grid.left}")
-        # A cell is what the user answers in and a point is what a plan takes:
-        # a share of the screen, with the camera's drag taken back out.
-        cells = []
-        for cell in range(9):
-            x, y = grid.at((cell % 3 + 0.5) / 3, (cell // 3 + 0.5) / 3)
+        # A place on the grid is what the user answers in and a point is what
+        # a plan takes: a share of the screen, the camera's drag taken back out.
+        points = []
+        for name, (x, y) in list(_grid_places(grid).items())[4:]:
             across, down = (x - report.camera[0]) / 16, (y - report.camera[1]) / 9
-            cells.append(f"{cell + 1} ({across:.1f}, {down:.1f})")
-        shown.append(f"九宮格每格中心寫成計畫的 (x_pct, y_pct): {', '.join(cells)}")
+            blocked = " 點不到" if _off_limits((x, y)) else ""
+            points.append(f"{name} ({across:.1f}, {down:.1f}){blocked}")
+        shown.append("格子中心跟四格交會的地方寫成計畫的 (x_pct, y_pct): " + ", ".join(points))
     return "\n".join(shown)
 
 
@@ -5672,16 +5698,22 @@ def draw(asked: DrawOptions, frames: FrameLog) -> DrawReport:
     """Draw a plan's steps and the pointing grid on one battle frame, off the disk alone.
 
     No emulator, no settings file and no claim: it reads a frame, a plan and
-    for a recorded run its `run.log`, and keeps the picture in this run's own
+    for an attack run its `run.log`, and keeps the picture in this run's own
     `frames/` as `drawn.png`.
     """
     found = _before_drop(asked, frames.directory.parent)
-    if found is None:
+    if found is None or (asked.on is not None and not asked.on.is_file()):
         logger.info("Draw: %s", DRAW_LINES["no_frame"])
-        return DrawReport(outcome="no_frame", frame=asked.png)
+        return DrawReport(outcome="no_frame", frame=asked.png, on=asked.on)
     source, camera = found
     png = source.read_bytes()
-    report = DrawReport(outcome="drawn", frame=source.resolve(), camera=camera, only=asked.only)
+    report = DrawReport(
+        outcome="drawn",
+        frame=source.resolve(),
+        camera=camera,
+        only=asked.only,
+        on=asked.on.resolve() if asked.on else None,
+    )
     if asked.only != "plan":
         report.grid = boundary_diamond(png)
     against: list[PlannedDrop] = []
@@ -5693,9 +5725,12 @@ def draw(asked: DrawOptions, frames: FrameLog) -> DrawReport:
             report.against = asked.against
             against = planned_drops(plans.called(asked.against, report.world), png, camera).steps
     notes = _draw_notes(report)
+    canvas = asked.on.read_bytes() if asked.on else png
     report.image = frames.write(
         "drawn",
-        draw_plan(png, report.grid, report.tactic.steps if report.tactic else [], against, notes),
+        draw_plan(
+            canvas, report.grid, report.tactic.steps if report.tactic else [], against, notes
+        ),
     )
     logger.info("Draw: %s, on %s", DRAW_LINES[report.outcome], source)
     return report

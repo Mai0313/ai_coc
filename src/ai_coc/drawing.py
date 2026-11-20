@@ -23,7 +23,7 @@ from ai_coc.parsers.boundary import MAP_SLOPE, PLAYFIELD
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
-    from ai_coc.models import BaseGrid, HeroKind, GridCorner, PlannedDrop
+    from ai_coc.models import CardRow, BaseGrid, HeroKind, GridCorner, PlannedDrop
 
 logger = logging.getLogger(__name__)
 
@@ -233,6 +233,8 @@ def _marks(
     placed = (step for step in steps if step.act != "ability")
     for number, step in enumerate(placed, 1):
         colour = WHITE if ghost else COLOURS[step.act]
+        # A step the frame's row has no card for is still drawn where it would
+        # go, since the next army may carry it; the legend says it is missing.
         label = GHOST if ghost else str(number)
         shape = _bottles if step.act in SPELL_TILES else _spots
         named = _lines(draw, step, colour, label, ghost=ghost)
@@ -260,20 +262,53 @@ def _only_in(other: list[PlannedDrop], steps: list[PlannedDrop]) -> list[Planned
     ]
 
 
+def row_line(row: CardRow | None) -> str:
+    """The army a picture assumes, as the frame's card row was counted."""
+    if row is None:
+        return "這張圖讀不到卡片列: 不知道有幾張卡、幾瓶法術, 法術的點都用虛線畫"
+
+    def counts(held: list[int | None]) -> str:
+        return " ".join("x?" if count is None else f"x{count}" for count in held) or "沒有"
+
+    parts = [f"部隊 {len(row.troops)} 張卡 ({counts(row.troops)})", f"單張的卡 {row.singles} 張"]
+    if row.rages or row.freezes:
+        parts += [f"狂暴 {counts(row.rages)}", f"冰凍 {counts(row.freezes)}"]
+    return f"這張圖的卡片列: {', '.join(parts)}"
+
+
+def _named(step: PlannedDrop, cards: dict[HeroKind, int], sent: int) -> str:
+    """One step as the legend names it: by the card it uses, since no card says which hero it is."""
+    name = ACT_NAMES[step.act]
+    if step.act == "hero" and step.who == "unknown":
+        name = "其餘英雄卡" + (f" {step.cards} 張" if step.cards else "")
+    elif step.act == "hero":
+        name = f"第 {sent + 1} 張英雄卡 (計畫寫{HERO_NAMES[step.who]})"
+    elif step.act == "ability":
+        name = f"第 {cards[step.who]} 張英雄卡{name}" if step.who in cards else f"英雄{name}"
+    elif step.act == "troops" and step.cards:
+        name += f" {step.cards} 張卡"
+    elif step.act in SPELL_TILES and step.cards is None:
+        name += " (卡片列讀不到, 瓶數不明)"
+    elif step.act in SPELL_TILES:
+        name += f" {len(step.at)} 瓶"
+        if step.unused:
+            name += f" (虛線 {len(step.unused)} 處沒有瓶子可放)"
+    if step.cards == 0:
+        name += " (這張圖的卡片列沒有這張卡)"
+    return name
+
+
 def legend(steps: list[PlannedDrop]) -> list[str]:
     """One line per moment of the plan's own clock, the placed steps numbered as on the picture."""
     lines: dict[int, list[str]] = {}
-    number = 0
+    cards: dict[HeroKind, int] = {}
+    number = sent = 0
     for step in steps:
-        name = ACT_NAMES[step.act]
-        if step.act in ("hero", "ability"):
-            name = f"{HERO_NAMES[step.who]}{'' if step.act == 'hero' else name}"
-        if step.act in SPELL_TILES:
-            name += f" {len(step.at)} 瓶"
-            if step.unused:
-                name += f" (虛線 {len(step.unused)} 處沒有瓶子可放)"
-        if step.act == "machine" and step.cards == 0:
-            name += " (這張圖的卡片列沒有機器)"
+        name = _named(step, cards, sent)
+        if step.act == "hero":
+            if step.who != "unknown" and step.cards != 0:
+                cards[step.who] = sent + 1
+            sent += step.cards or 0
         if step.act != "ability":
             number += 1
             name = f"{number} {name}"

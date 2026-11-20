@@ -12,6 +12,7 @@ import sys
 import json
 import math
 from typing import TYPE_CHECKING, get_args
+import logging
 from pathlib import Path
 import itertools
 from unittest.mock import patch
@@ -19,9 +20,10 @@ from unittest.mock import patch
 from PIL import Image, ImageChops
 import pytest
 
-from ai_coc import cli, plans, commands
+from ai_coc import cli, plans, commands, logging_setup
 from ai_coc.ui import attack
 from ai_coc.models import (
+    CardRow,
     BaseGrid,
     FrameLog,
     NightPlan,
@@ -35,7 +37,7 @@ from ai_coc.models import (
     DisplayTarget,
     LootThresholds,
 )
-from ai_coc.drawing import CARD_ROW_TOP, legend, draw_plan
+from ai_coc.drawing import CARD_ROW_TOP, legend, row_line, draw_plan
 from ai_coc.ui.attack import CARD_ROW_Y, AttackRunner, planned_drops
 from ai_coc.adapters.adb import AdbController
 from ai_coc.parsers.boundary import boundary_diamond
@@ -284,15 +286,33 @@ class TestPlannedDrops:
         assert planned_drops(plans.flat(), DAY).drag == 50
         assert planned_drops(plans.flat(), DAY, DAY_CAMERA).drag is None
 
-    def test_a_frame_with_no_card_row_keeps_every_point_of_the_plan(self) -> None:
-        """Nothing says how many bottles there are, so nothing is called unused."""
+    def test_the_army_is_counted_off_the_frames_own_card_row(self) -> None:
+        """Two troop cards, a siege machine and four heroes, two rage cards of four and two, one freeze of three."""
+        tactic = planned_drops(plans.flat(), DAY, DAY_CAMERA)
+        assert tactic.row == CardRow(troops=[12, 7], singles=5, rages=[4, 2], freezes=[3])
+        sent = {(step.act, step.who): step.cards for step in tactic.steps if step.act != "ability"}
+        # The plan names its first hero and nothing on the row says who a card is:
+        # the named step takes the first hero card and `unknown` the other three.
+        assert sent["hero", "queen"] == 1
+        assert sent["hero", "unknown"] == 3
+        assert sent["siege", "unknown"] == 1
+        assert sent["troops", "unknown"] == 2
+
+    def test_a_frame_with_no_card_row_draws_no_bottle_as_cast(self) -> None:
+        """Nothing says how many bottles there are, so every point of the plan stays unplaced."""
         blank = io.BytesIO()
         Image.new("RGB", (1600, 900), (40, 90, 40)).save(blank, format="PNG")
         tactic = planned_drops(plans.flat(), blank.getvalue())
         spells = [step for step in tactic.steps if step.act in ("rage", "freeze")]
-        assert [len(step.at) for step in spells] == [2, 3, 6]
-        assert all(step.unused == [] and step.cards is None for step in spells)
+        assert tactic.row is None
+        assert [len(step.unused) for step in spells] == [2, 3, 6]
+        assert all(step.at == [] for step in spells)
+        assert all(step.cards is None for step in tactic.steps)
         assert not tactic.fitted
+        # And the picture's notes tell that army from one that was counted.
+        counted = planned_drops(plans.flat(), DAY, DAY_CAMERA)
+        assert row_line(tactic.row) != row_line(counted.row)
+        assert legend(tactic.steps)[2:] != legend(counted.steps)[2:]
 
 
 class TestPicture:
@@ -328,54 +348,38 @@ class TestPicture:
         lines = legend(planned_drops(plans.flat(), DAY, DAY_CAMERA).steps)
         assert [line.split(" ")[0] for line in lines] == ["0", "5", "7", "15", "16"]
         # Four placed steps at the opening, and the ability between them unnumbered.
-        assert [part.split(" ")[0] for part in lines[0].split(": ")[1].split(" → ")] == [
-            "1",
-            part := lines[0].split(" → ")[1].split(" ")[0],
-            "2",
-            "3",
-            "4",
-        ]
-        assert not part.isdigit()
-        assert lines[1].split(": ")[1][0] not in "0123456789"
-        assert "3" in lines[4].split("瓶")[1]
+        opening = [part.split(" ")[0] for part in lines[0].split(": ")[1].split(" → ")]
+        assert [part for part in opening if part.isdigit()] == ["1", "2", "3", "4"]
+        assert len(opening) == 5
+        assert not opening[1].isdigit()
 
-    def test_a_row_with_no_machine_says_so(self) -> None:
-        steps = [PlannedDrop(act="machine", seconds=0, at=[(398, 257)], cards=0)]
-        assert legend(steps)[0] != legend([steps[0].model_copy(update={"cards": 1})])[0]
+    def test_a_step_the_row_has_no_card_for_says_so(self) -> None:
+        for act in ("machine", "siege", "hero"):
+            step = PlannedDrop(act=act, seconds=0, at=[(398, 257)], cards=0)
+            assert legend([step])[0] != legend([step.model_copy(update={"cards": 1})])[0], act
 
 
-def _run(tmp_path: Path, name: str, lines: list[str], frames: list[str]) -> Path:
-    """A recorded run's directory: its log, and `DAY` under each frame name."""
+def _attack_run(tmp_path: Path, name: str, cameras: list[tuple[int, int]]) -> Path:
+    """An attack run's directory as the runner leaves it: one battle a camera, each keeping its opening frame."""
     run = tmp_path / "logs" / name
-    (run / "frames").mkdir(parents=True)
-    (run / "run.log").write_text(
-        "".join(f"00:28:29 INFO    {line}\n" for line in lines), encoding="utf-8"
-    )
-    for frame in frames:
-        (run / "frames" / f"{frame}.png").write_bytes(DAY)
+    run.mkdir(parents=True)
+    handler = logging.FileHandler(run / "run.log", encoding="utf-8")
+    handler.setFormatter(logging.Formatter(logging_setup.LOG_FORMAT, logging_setup.TIME_FORMAT))
+    log = logging.getLogger("ai_coc")
+    level = log.level
+    log.addHandler(handler)
+    log.setLevel(logging.INFO)
+    try:
+        runner = _runner("day", plans.flat())
+        runner.adb.frames = FrameLog(directory=run / "frames")
+        for camera in cameras:
+            runner._panned = camera
+            runner._keep_opening(DAY)
+    finally:
+        log.removeHandler(handler)
+        log.setLevel(level)
+        handler.close()
     return run
-
-
-def _saved(name: str) -> str:
-    return f"ai_coc.models: Saved frame {name}.png"
-
-
-# One home battle as the loop logs it: a centring drag before the plan, the
-# flank's drag after it, then the first drop.
-BATTLE = [
-    "ai_coc.adapters.adb: Tap 127.0.0.1:5555 display 0 at (1411, 803)",
-    _saved("0010_scout"),
-    "ai_coc.adapters.adb: Pinch 127.0.0.1:5555 ((300, 450), (650, 450)) and ((1300, 450), (950, 450))",
-    _saved("0011_zoomed"),
-    _saved("0012_battle"),
-    "ai_coc.adapters.adb: Swipe 127.0.0.1:5555 (800, 400) -> (800, 499) in 350 ms",
-    _saved("0013_camera"),
-    "ai_coc.ui.attack: Dragged the camera by (0, 99); the village moved (0, 102), "
-    "now (0, 102) off where the battle opened",
-    "ai_coc.adapters.adb: Tapping 2 points on 127.0.0.1:5555 display 0: (555, 800) (340, 402)",
-    _saved("0014_settled"),
-    "ai_coc.adapters.adb: Tap 127.0.0.1:5555 display 0 at (165, 800)",
-]
 
 
 class TestDrawCommand:
@@ -421,48 +425,54 @@ class TestDrawCommand:
         assert (unread.outcome, unread.grid) == ("drawn", None)
         assert "讀不到紅線" in commands.draw_text(unread)
 
-    def test_a_recorded_run_gives_the_frame_before_its_first_drop_and_the_cameras_shift(
+    def test_an_attack_run_gives_the_frame_its_newest_battle_kept_and_the_cameras_shift(
         self, tmp_path: Path
     ) -> None:
-        run = _run(tmp_path, "2026-11-21-002800-attack-ref", BATTLE, ["0013_camera"])
+        """Through the runner's own log line, so the two cannot come apart."""
+        run = _attack_run(tmp_path, "2026-11-21-002800-attack-ref", [(0, 102), (0, -83)])
         report = self._draw(tmp_path, run=run)
-        assert report.frame == run / "frames" / "0013_camera.png"
-        assert report.camera == (0, 102)
+        assert report.frame == run / "frames" / "opening.png"
+        assert report.camera == (0, -83)
 
-    def test_a_run_is_found_by_its_label_and_a_battle_by_its_number(
+    def test_a_run_is_found_by_its_label(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """The newest run carrying the label, and never the drawing run's own directory."""
         monkeypatch.setattr(commands, "LOG_DIR", tmp_path / "logs")
-        _run(tmp_path, "2026-11-20-090000-attack-ref", BATTLE, ["0013_camera"])
-        second = [line.replace("001", "002") for line in BATTLE if "Dragged" not in line]
-        newest = _run(
-            tmp_path,
-            "2026-11-21-090000-attack-ref",
-            BATTLE + second,
-            ["0013_camera", "0023_camera"],
-        )
+        _attack_run(tmp_path, "2026-11-20-090000-attack-ref", [(0, 102)])
+        newest = _attack_run(tmp_path, "2026-11-21-090000-attack-ref", [(0, 0)])
         own = tmp_path / "logs" / "2026-11-21-100000-draw-ref" / "frames"
         own.mkdir(parents=True)
-
-        def draw(**asked: object) -> commands.DrawReport:
-            return commands.draw(DrawOptions(run=Path("ref"), **asked), FrameLog(directory=own))
-
-        last = draw()
-        assert (last.frame, last.camera) == (newest / "frames" / "0023_camera.png", (0, 0))
-        first = draw(battle=1)
-        assert (first.frame, first.camera) == (newest / "frames" / "0013_camera.png", (0, 102))
-        assert draw(battle=3).outcome == "no_frame"
+        report = commands.draw(DrawOptions(run=Path("ref")), FrameLog(directory=own))
+        assert (report.frame, report.camera) == (newest / "frames" / "opening.png", (0, 0))
+        assert (
+            commands.draw(DrawOptions(run=Path("nobody")), FrameLog(directory=own)).image is None
+        )
 
     def test_nothing_to_draw_on_is_an_outcome_of_its_own(self, tmp_path: Path) -> None:
-        """A missing file, and a run that kept no frames or whose frames are gone."""
+        """A missing file, a run that played no battle, and one whose frames are gone."""
         assert self._draw(tmp_path, png=tmp_path / "gone.png").outcome == "no_frame"
-        bare = _run(tmp_path, "bare", [line for line in BATTLE if "Saved" not in line], [])
-        assert self._draw(tmp_path, run=bare).outcome == "no_frame"
-        culled = _run(tmp_path, "culled", BATTLE, [])
+        assert self._draw(tmp_path, run=_attack_run(tmp_path, "idle", [])).outcome == "no_frame"
+        culled = _attack_run(tmp_path, "culled", [(0, 102)])
+        (culled / "frames" / "opening.png").unlink()
         report = self._draw(tmp_path, run=culled)
         assert (report.outcome, report.image) == ("no_frame", None)
         assert commands.draw_text(report) == commands.DRAW_LINES["no_frame"]
+
+    def test_the_grid_says_where_no_tap_can_land(self, tmp_path: Path) -> None:
+        """After the camera's drag the lower corner and the middle of cell 9 lie under the card row."""
+        report = self._draw(tmp_path, png=FRAMES / "battle_flat_reference.png", camera=DAY_CAMERA)
+        places = commands._grid_places(report.grid)
+        assert [name for name, at in places.items() if commands._off_limits(at)] == [
+            "上角",
+            "下角",
+            "9",
+        ]
+        # Where four cells meet is a place of its own, since that is how a spot gets pointed at.
+        assert places["5\u00b76\u00b78\u00b79"] == report.grid.at(2 / 3, 2 / 3)
+        with_camera = commands.draw_text(report).splitlines()
+        without = commands.draw_text(report.model_copy(update={"camera": (0, 0)})).splitlines()
+        assert with_camera[-1] != without[-1]
 
     def test_every_outcome_has_a_line_of_its_own(self) -> None:
         assert set(commands.DRAW_LINES) == set(get_args(DrawOutcome))
@@ -514,3 +524,62 @@ class TestDrawCli:
         asked = cli._parser().parse_args(["draw", "shot.png", "--camera", "0", "102"])
         assert tuple(asked.camera) == (0, 102)
         assert cli._parser().parse_args(["draw", "shot.png"]).plan == "flat"
+
+
+class TestOpeningFrame:
+    """The loop keeps the frame its first drop follows, with or without `--debug`."""
+
+    def _flanked(self, frames: FrameLog | None, after: bytes = b"after the drag") -> AttackRunner:
+        runner = _runner("day", plans.flat())
+        runner.adb.frames = frames
+        with (
+            patch.object(AttackRunner, "_clear_flank", return_value=after),
+            patch.object(attack, "fitted_line", return_value=None),
+        ):
+            runner._flank(b"as the battle opened", plans.flat())
+        return runner
+
+    def test_the_frame_after_the_cameras_drag_is_the_one_kept(self, tmp_path: Path) -> None:
+        """A run that is not recording keeps it too, under one name for the whole run."""
+        frames = FrameLog(directory=tmp_path / "frames", recording=False)
+        self._flanked(frames, b"first battle")
+        self._flanked(frames, b"second battle")
+        assert [path.name for path in frames.directory.iterdir()] == ["opening.png"]
+        assert (frames.directory / "opening.png").read_bytes() == b"second battle"
+
+    def test_a_frame_that_will_not_write_does_not_cost_the_battle(self, tmp_path: Path) -> None:
+        (tmp_path / "in-the-way").write_text("", encoding="utf-8")
+        self._flanked(FrameLog(directory=tmp_path / "in-the-way" / "frames"))
+
+    def test_a_runner_with_no_run_to_write_into_keeps_nothing(self) -> None:
+        self._flanked(None)
+
+
+class TestLaterFrame:
+    """`--on`: the opening frame's grid and plan painted on a later frame of the same battle."""
+
+    def _draw(self, tmp_path: Path, on: Path) -> commands.DrawReport:
+        asked = DrawOptions(png=FRAMES / "battle_flat_reference.png", camera=DAY_CAMERA, on=on)
+        return commands.draw(asked, FrameLog(directory=tmp_path / "own" / "frames"))
+
+    def test_the_marks_are_measured_on_the_opening_frame_and_painted_on_the_other(
+        self, tmp_path: Path
+    ) -> None:
+        later = FRAMES / "battle_in_progress.png"
+        report = self._draw(tmp_path, later)
+        assert report.grid == boundary_diamond(DAY)
+        assert report.tactic == planned_drops(plans.flat(), DAY, DAY_CAMERA)
+        picture = Image.open(report.image).convert("RGB")
+        row = (0, CARD_ROW_TOP, 1600, 900)
+        canvas = Image.open(later).convert("RGB")
+        assert ImageChops.difference(picture.crop(row), canvas.crop(row)).getbbox() is None
+        plain = commands.draw(
+            DrawOptions(png=FRAMES / "battle_flat_reference.png", camera=DAY_CAMERA),
+            FrameLog(directory=tmp_path / "plain" / "frames"),
+        )
+        assert len(commands.draw_text(report).splitlines()) == (
+            len(commands.draw_text(plain).splitlines()) + 1
+        )
+
+    def test_a_later_frame_that_is_not_there_draws_nothing(self, tmp_path: Path) -> None:
+        assert self._draw(tmp_path, tmp_path / "gone.png").outcome == "no_frame"
