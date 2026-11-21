@@ -330,6 +330,30 @@ class TestPicture:
         field = (0, 0, 1600, CARD_ROW_TOP)
         assert ImageChops.difference(picture.crop(field), frame.crop(field)).getbbox() is not None
 
+    @pytest.mark.parametrize(
+        ("spot", "tinted"),
+        [
+            ((120, 560), True),  # left of the diamond's left corner, on grass
+            ((1450, 300), True),  # past its upper right edge
+            ((800, 450), False),  # inside the red line
+            ((100, 200), False),  # the loot panel
+            ((100, 670), False),  # 結束戰鬥, which no drop reaches
+            ((1450, 590), False),  # over 下一個, where a drop is lifted off it
+            ((800, 800), False),  # the card row
+        ],
+    )
+    def test_the_ground_outside_the_diamond_where_a_tap_lands_is_tinted(
+        self, spot: tuple[int, int], tinted: bool
+    ) -> None:
+        """Only the plan's own marks are off, so the grid alone shows the tint as it is."""
+        grid = boundary_diamond(DAY)
+        bare = Image.open(io.BytesIO(draw_plan(DAY, None, [], []))).convert("RGB")
+        drawn = Image.open(
+            io.BytesIO(draw_plan(DAY, grid, [], [], commands.DRAW_BLOCKED))
+        ).convert("RGB")
+        changed = bare.getpixel(spot) != drawn.getpixel(spot)
+        assert changed == tinted
+
     def test_the_picture_is_the_frame_with_nothing_added_to_it(self) -> None:
         """No notes under it: what a picture assumes is what the discussion is about (the user, 2026-11-21)."""
         assert self._picture().size == (1600, 900)

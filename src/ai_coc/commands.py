@@ -253,6 +253,7 @@ from .ui.world import cross, uncovered, open_chest, park_camera, collect_cart
 from .ui.attack import (
     CARD_ROW_Y,
     DROP_SETTLE,
+    NEXT_BUTTON,
     OPENING_LINE,
     OPENING_FRAME,
     BATTLE_TIMEOUT,
@@ -5672,11 +5673,15 @@ def _draw_notes(report: DrawReport) -> list[str]:
         )
     if report.grid is None:
         if report.only != "plan":
-            notes.append("這張圖讀不到紅線, 沒有畫格線")
+            notes.append("這張圖讀不到紅線, 沒有畫格線, 也沒有塗淡黃")
     else:
         notes.append(
             "格線是紅線外框的菱形, 村莊不是正方形時它也不是"
             + (", 標 (空地) 的角紅線沒有到" if report.grid.empty else "")
+        )
+        notes.append(
+            "淡黃是白框外點得到的地面, 多半下得下去: 紅線一格大的凸角可能超出白框一點, "
+            "畫面四角最外面沒量過收不收; 白框裡紅線沒圍到的地方也收, 但沒有塗. 遊戲沒有畫地圖的邊, 圖上也沒標"
         )
         blocked = [name for name, at in _grid_places(report.grid).items() if _off_limits(at)]
         if blocked:
@@ -5702,6 +5707,11 @@ def draw_text(report: DrawReport) -> str:
             points.append(f"{name} ({across:.1f}, {down:.1f}){blocked}")
         shown.append("格子中心跟四格交會的地方寫成計畫的 (x_pct, y_pct): " + ", ".join(points))
     return "\n".join(shown)
+
+
+# What `clear_of_controls` lifts a drop off that the HUD's panels leave
+# uncovered: the strip of 下一個 above the panel's own box.
+DRAW_BLOCKED = ((NEXT_BUTTON[0] + 1, NEXT_BUTTON[1] + 1, PLAYFIELD[2], PLAYFIELD[3]),)
 
 
 def draw(asked: DrawOptions, frames: FrameLog) -> DrawReport:
@@ -5737,7 +5747,13 @@ def draw(asked: DrawOptions, frames: FrameLog) -> DrawReport:
     canvas = asked.on.read_bytes() if asked.on else png
     report.image = frames.write(
         "drawn",
-        draw_plan(canvas, report.grid, report.tactic.steps if report.tactic else [], against),
+        draw_plan(
+            canvas,
+            report.grid,
+            report.tactic.steps if report.tactic else [],
+            against,
+            DRAW_BLOCKED,
+        ),
     )
     logger.info("Draw: %s, on %s", DRAW_LINES[report.outcome], source)
     return report

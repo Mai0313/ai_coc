@@ -21,7 +21,7 @@ import itertools
 from PIL import Image, ImageDraw, ImageFont
 
 from ai_coc.parsers.frame import open_frame
-from ai_coc.parsers.boundary import MAP_SLOPE, PLAYFIELD
+from ai_coc.parsers.boundary import MAP_SLOPE, PLAYFIELD, UI_PANELS
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -47,6 +47,9 @@ SPELL_TILES = {"rage": 5.0, "freeze": 3.5}
 
 Colour = tuple[int, int, int]
 WHITE: Colour = (255, 255, 255)
+# The ground a drop is taken on, light yellow and faint enough to read the map through.
+GROUND_COLOUR: Colour = (255, 240, 130)
+GROUND_ALPHA = 70
 SIDE_COLOUR: Colour = (255, 220, 60)
 CORNER_COLOUR: Colour = (90, 230, 255)
 COLOURS: dict[str, Colour] = {
@@ -176,6 +179,33 @@ def _ring(
         return
     for start in range(0, 360, 30):
         draw.arc(box, start, start + 18, fill=(*colour, 255), width=4)
+
+
+def _ground(size: tuple[int, int], grid: BaseGrid, blocked: Iterable[Box]) -> Image.Image:
+    """Light yellow over the ground outside the red line's diamond where a tap lands.
+
+    Where a tap lands is the playfield less the HUD's panels and `blocked`,
+    the rest of what `ui.attack.clear_of_controls` keeps drops off, which the
+    caller passes in so this layer reads nothing of the attack loop. Not all of it is
+    sure to take a drop: a step of the line shorter than `DIAMOND_RUN` can
+    stand a tile outside the diamond, and the screen's far corners lie past
+    what `DEPLOY_BOUND`'s survey reached. Ground inside the diamond the line leaves bare
+    (an `empty` corner, a notch) takes a drop too and stays untinted: filling
+    from outside the stroke leaked into the village on 15 of 17 battle frames
+    of 2026-11-21, where the stroke over bright or teal ground fails
+    `boundary`'s colour test and leaves gaps up to 100 px long. Nor does the
+    tint stop at the map's edge, which the game draws nothing at (`dev-rules`'
+    attack reference).
+    """
+    alpha = Image.new("L", size, 0)
+    mask = ImageDraw.Draw(alpha)
+    mask.rectangle(PLAYFIELD, fill=GROUND_ALPHA)
+    for box in (*UI_PANELS, *blocked):
+        mask.rectangle(box, fill=0)
+    mask.polygon([grid.top, grid.right, grid.bottom, grid.left], fill=0)
+    tint = Image.new("RGBA", size, (*GROUND_COLOUR, 0))
+    tint.putalpha(alpha)
+    return tint
 
 
 def _grid_lines(draw: ImageDraw.ImageDraw, grid: BaseGrid, *, alone: bool) -> None:
@@ -369,10 +399,20 @@ def legend(steps: list[PlannedDrop]) -> list[str]:
 
 
 def draw_plan(
-    frame: bytes, grid: BaseGrid | None, steps: list[PlannedDrop], against: list[PlannedDrop]
+    frame: bytes,
+    grid: BaseGrid | None,
+    steps: list[PlannedDrop],
+    against: list[PlannedDrop],
+    blocked: Iterable[Box] = (),
 ) -> bytes:
-    """The frame with the grid, a plan's steps and the plan it is held against, and nothing added to it."""
+    """The frame with the ground a drop is taken on, the grid, a plan's steps and the plan it is held against, and nothing added to it.
+
+    `blocked` is ground no drop reaches beyond the HUD's panels, left untinted.
+    """
     image = open_frame(frame).convert("RGBA")
+    base = (
+        image if grid is None else Image.alpha_composite(image, _ground(image.size, grid, blocked))
+    )
     over = Image.new("RGBA", image.size, (0, 0, 0, 0))
     draw = ImageDraw.Draw(over)
     if grid is not None:
@@ -391,7 +431,7 @@ def draw_plan(
         _tag(draw, _beside(at, (0, 28)), _worded(entries), colour, small, taken=taken)
     if grid is not None:
         _grid_labels(draw, grid, taken)
-    drawn = Image.alpha_composite(image, over)
+    drawn = Image.alpha_composite(base, over)
     # The card row back on top of whatever reached it: a grid's lower corner does.
     drawn.paste(image.crop((0, CARD_ROW_TOP, *image.size)), (0, CARD_ROW_TOP))
     out = io.BytesIO()

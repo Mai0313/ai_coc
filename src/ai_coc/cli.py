@@ -313,7 +313,7 @@ def _picture_flags(
     drawer.add_argument(
         "--only",
         choices=("plan", "grid"),
-        help="plan 只畫戰術不畫九宮格，grid 只畫九宮格不畫戰術；不給就兩個都畫",
+        help="plan 只畫戰術不畫九宮格，grid 只畫九宮格跟淡黃的可下兵地面不畫戰術；不給就兩個都畫",
     )
     _village_flags(
         drawer,
