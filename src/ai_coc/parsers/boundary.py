@@ -383,8 +383,10 @@ def boundary_diamond(png: bytes) -> BaseGrid | None:
     The line follows the map's own two directions, so its bounding box along
     them is a diamond whose edges are the outermost straight run each way: the
     upper right and lower left edges fall to the right, the upper left and
-    lower right ones to the left. It is the frame to point at a village with,
-    and it is only as square as the base: `empty` names the corners on screen
+    lower right ones to the left. The corners are where those measured edges
+    cross, never picked by eye, since a corner is where the stroke is least
+    straight. It is the frame to point at a village with, and it is only as
+    square as the base: `empty` names the corners on screen
     the line stays away from. A corner can lie under the card row or off the
     screen, since the line does.
 
