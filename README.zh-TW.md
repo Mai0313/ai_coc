@@ -127,7 +127,7 @@ ai_coc capture --count 30             # 從活著的遊戲連續抓畫面,存進
 ai_coc <任何指令> --label baseline    # 給這次的資料夾取名字,之後找得回來
 ai_coc <任何指令> --agent codex --session <id> --mission "打資源"  # 誰叫的; agent 一律要帶, 沒帶會在 log 留 warning
 ai_coc read shot.png                  # 每個判讀器從這張圖讀到什麼
-ai_coc draw shot.png                  # 在一張下兵前的戰鬥截圖上畫出一份戰術每一步會點在哪裡 (標第幾步跟第幾秒), 加上對齊村莊紅線、拿來指位置的九宮格, 九宮格外點得到的地面塗淡黃; 印出圖檔路徑, 接著是它從卡片列數到的軍隊、每一步跟它讀不到的東西. --plan <名稱或 JSON> 選戰術 (預設 flat, 夜世界那一份加 --night), --against <戰術> 標出另一份不一樣的落點, --only plan|grid 只畫其中一樣, --camera DX DY 是戰鬥鏡頭已經被拖了多少; 改給 --run <標籤> 就用那次 `attack` 最新一場下兵前留下的那張圖跟鏡頭拖了多少. 不碰遊戲
+ai_coc draw shot.png                  # 在一張下兵前的戰鬥截圖上畫出一份戰術每一步會點在哪裡 (標第幾步跟第幾秒), 加上對齊村莊紅線、拿來指位置的九宮格; 印出圖檔路徑, 接著是它從卡片列數到的軍隊、每一步跟它讀不到的東西. --plan <名稱或 JSON> 選戰術 (預設 flat, 夜世界那一份加 --night), --against <戰術> 標出另一份不一樣的落點, --only plan|grid 只畫其中一樣, --camera DX DY 是戰鬥鏡頭已經被拖了多少; 改給 --run <標籤> 就用那次 `attack` 最新一場下兵前留下的那張圖跟鏡頭拖了多少. 不碰遊戲
 ai_coc decision --prompt "<是非題>" --image-path shot.png  # 拿一張圖問 Gemini Decisions API 一個是非題: 印 yes 或 no 跟那次呼叫花了幾秒; 模型跟金鑰設在設定檔的 `gemini.decision`; --ground-truth yes|no 把你自己的答案記在旁邊; 不碰遊戲, 獨立一支、試用中, 沒有任何流程用它
 ai_coc export                         # 從遊戲裡取出整個村莊,對照過名稱,吐 JSON
 ai_coc export --table                 # 同一份東西,畫成表格給人看

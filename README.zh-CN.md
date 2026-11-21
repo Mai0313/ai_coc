@@ -127,7 +127,7 @@ ai_coc capture --count 30             # 从活着的游戏连续抓画面,存进
 ai_coc <任何命令> --label baseline    # 给这次的文件夹取名字,之后找得回来
 ai_coc <任何命令> --agent codex --session <id> --mission "打资源"  # 谁叫的; agent 一律要带, 没带会在 log 留 warning
 ai_coc read shot.png                  # 每个识别器从这张图读到什么
-ai_coc draw shot.png                  # 在一张下兵前的战斗截图上画出一份战术每一步会点在哪里 (标第几步和第几秒), 加上对齐村庄红线、用来指位置的九宫格, 九宫格外点得到的地面涂淡黄; 打印图片路径, 接着是它从卡片列数到的军队、每一步和它读不到的东西. --plan <名称或 JSON> 选战术 (默认 flat, 夜世界那一份加 --night), --against <战术> 标出另一份不一样的落点, --only plan|grid 只画其中一样, --camera DX DY 是战斗镜头已经被拖了多少; 改给 --run <标签> 就用那次 `attack` 最新一场下兵前留下的那张图和镜头拖了多少. 不碰游戏
+ai_coc draw shot.png                  # 在一张下兵前的战斗截图上画出一份战术每一步会点在哪里 (标第几步和第几秒), 加上对齐村庄红线、用来指位置的九宫格; 打印图片路径, 接着是它从卡片列数到的军队、每一步和它读不到的东西. --plan <名称或 JSON> 选战术 (默认 flat, 夜世界那一份加 --night), --against <战术> 标出另一份不一样的落点, --only plan|grid 只画其中一样, --camera DX DY 是战斗镜头已经被拖了多少; 改给 --run <标签> 就用那次 `attack` 最新一场下兵前留下的那张图和镜头拖了多少. 不碰游戏
 ai_coc decision --prompt "<是非题>" --image-path shot.png  # 拿一张图问 Gemini Decisions API 一个是非题: 打印 yes 或 no 和那次调用花了几秒; 模型和密钥设在设置文件的 `gemini.decision`; --ground-truth yes|no 把你自己的答案记在旁边; 不碰游戏, 独立一个、试用中, 没有任何流程用它
 ai_coc export                         # 从游戏里取出整个村庄,对照过名称,吐 JSON
 ai_coc export --table                 # 同一份东西,画成表格给人看
