@@ -3467,6 +3467,27 @@ class ScoutTests(unittest.TestCase):
             read_scout(buffer.getvalue())
 
 
+class DoubleLootTests(unittest.TestCase):
+    """The double-loot event's panel: yellow digits, lower rows, a cupcake after each number.
+
+    Only the panel and the 下一個 button are the live capture; the rest, the
+    opponent's name and clan with it, is filled flat.
+    """
+
+    def test_the_event_panel_reads_with_its_dark_row_whole(self) -> None:
+        """At the ordinary rows the dark row's bottom is cut, and its 5 reads as 9."""
+        view = read_scout((FRAMES / "scout_double_loot.png").read_bytes())
+        assert view is not None
+        assert view.loot == LootOffer(gold=1232608, elixir=889944, dark=15824)
+        assert view.can_skip
+
+    def test_yellow_scenery_behind_the_event_panel_is_not_read_as_digits(self) -> None:
+        """Bright yellow ground fused with 984, and the trim cut 880 984 down to 880."""
+        view = read_scout((FRAMES / "scout_double_loot_bright.png").read_bytes())
+        assert view is not None
+        assert view.loot == LootOffer(gold=1650090, elixir=880984, dark=18410)
+
+
 class CeilingReadTests(unittest.TestCase):
     """Turning the tooltips into this village's ceilings, once a run."""
 

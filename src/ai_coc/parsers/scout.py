@@ -38,7 +38,7 @@ from ai_coc.parsers.glyphs import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Callable, Sequence
 
     from ai_coc.models import World
 
@@ -95,6 +95,29 @@ LOOT_INK_BRIGHTNESS = 190
 # `LOOT_DIGIT_TOLERANCE`. Widening that tolerance would be the change that makes
 # this unsafe, not lowering the floor further.
 DIM_INK_RATIO = 0.85
+
+# **The double-loot event (2026-11-21) paints the panel in another colour and
+# place**: a 可獲得2倍戰利品： line above it, a cupcake and 2倍 after each number,
+# the digits a saturated yellow (255, 255, 102) where the ordinary panel's are a
+# pale cream (255, 251, 204), and the rows lower, the digits running 120-137,
+# 172-189 and 220-238. `ink_mask`'s saturation ceiling drops every yellow digit,
+# so only the cupcake's white frosting was left and every opponent read as none;
+# the series skipped eleven a round and played nothing.
+#
+# So a panel that does not read the ordinary way is read again as the event's,
+# with its own rows and an ink test cut to that yellow: red and green within
+# `DOUBLE_INK_SPREAD` of each other and blue between 30% and 50% of red. Each
+# half was needed on the 56 frames of the first event run that showed an
+# opponent (12 opponents, every one checked against its image): at the ordinary
+# rows the dark row's bottom is cut and a 5 read as 9 (15 824 as 19 824); with
+# the ordinary test's spread and no blue band, the event's yellow scenery
+# (221, 217, 22) and the cupcake's wrapper (255, 223, 111) fused with the
+# elixir row's last three digits and the trim cut 880 984 to 880. Digit pixels
+# measured 0.38 to 0.40 blue, with red and green at most 2 apart in the core and
+# 19 on the outline, which the floor drops anyway.
+DOUBLE_ROW_BOUNDS = ((113, 143), (163, 193), (211, 241))
+DOUBLE_INK_SPREAD = 12
+DOUBLE_INK_BLUE = (0.30, 0.50)
 
 # How bright the loot panel is once the scout screen has finished fading in. The
 # game fades the whole screen up when it puts a new opponent on it, and a frame
@@ -1130,7 +1153,46 @@ def _read_row(image: Image.Image, box: tuple[int, int, int, int], tolerance: int
     return int("".join(digit for digit, _ in glyphs))
 
 
-def _read_loot_row(image: Image.Image, box: tuple[int, int, int, int]) -> int | None:
+def _double_ink(band: Image.Image, floor: int) -> list[list[bool]]:
+    """`ink_mask` for the double-loot event's yellow digits; see `DOUBLE_ROW_BOUNDS`."""
+    width, height = band.size
+    data = band.tobytes()
+    low, high = DOUBLE_INK_BLUE
+    return [
+        [
+            min(red, green) > floor
+            and abs(red - green) <= DOUBLE_INK_SPREAD
+            and low * red <= blue <= high * red
+            for red, green, blue in zip(
+                data[y * width * 3 : (y + 1) * width * 3 : 3],
+                data[y * width * 3 + 1 : (y + 1) * width * 3 : 3],
+                data[y * width * 3 + 2 : (y + 1) * width * 3 : 3],
+                strict=True,
+            )
+        ]
+        for y in range(height)
+    ]
+
+
+def _read_loot(
+    image: Image.Image,
+    rows: tuple[tuple[int, int], ...],
+    mask: Callable[[Image.Image, int], list[list[bool]]],
+) -> LootOffer | None:
+    """The three rows of the loot panel, or None when any of them does not read."""
+    gold, elixir, dark = (
+        _read_loot_row(image, (PANEL_LEFT, top, PANEL_RIGHT, bottom), mask) for top, bottom in rows
+    )
+    if gold is None or elixir is None or dark is None:
+        return None
+    return LootOffer(gold=gold, elixir=elixir, dark=dark)
+
+
+def _read_loot_row(
+    image: Image.Image,
+    box: tuple[int, int, int, int],
+    mask: Callable[[Image.Image, int], list[list[bool]]],
+) -> int | None:
     """One row of the loot panel, with the village showing through it dropped.
 
     The right of the digits is the one end a poor match can be dropped from,
@@ -1154,7 +1216,7 @@ def _read_loot_row(image: Image.Image, box: tuple[int, int, int, int]) -> int | 
     for floor in (_lit_floor(crop), _dimmed_floor(crop)):
         if floor is None:
             break
-        glyphs = list(row_glyphs(ink_mask(crop, floor)))
+        glyphs = list(row_glyphs(mask(crop, floor)))
         while glyphs and glyphs[-1][1] > LOOT_DIGIT_TOLERANCE:
             glyphs.pop()
         if any(distance > LOOT_DIGIT_TOLERANCE for _, distance in glyphs):
@@ -1854,15 +1916,12 @@ def read_scout(png: bytes) -> ScoutView | None:
     learns to keep waiting rather than a separate screen classifier.
     """
     image = open_frame(png)
-    gold, elixir, dark = (
-        _read_loot_row(image, (PANEL_LEFT, top, PANEL_RIGHT, bottom)) for top, bottom in ROW_BOUNDS
+    loot = _read_loot(image, ROW_BOUNDS, ink_mask) or _read_loot(
+        image, DOUBLE_ROW_BOUNDS, _double_ink
     )
-    if gold is None or elixir is None or dark is None:
+    if loot is None:
         return None
-    view = ScoutView(
-        loot=LootOffer(gold=gold, elixir=elixir, dark=dark),
-        can_skip=_orange_ratio(image, NEXT_BUTTON_BOX) >= BUTTON_ORANGE,
-    )
+    view = ScoutView(loot=loot, can_skip=_orange_ratio(image, NEXT_BUTTON_BOX) >= BUTTON_ORANGE)
     logger.info(
         "Scouted gold=%d elixir=%d dark=%d skippable=%s",
         view.loot.gold,
