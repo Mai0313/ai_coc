@@ -11,7 +11,7 @@ import unittest
 import itertools
 from contextlib import AbstractContextManager
 from unittest.mock import ANY, MagicMock, call, patch
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 
 from PIL import Image, ImageDraw, ImageChops
 import pytest
@@ -5128,6 +5128,118 @@ class AttackTests(unittest.TestCase):
         found = ScoutView(loot=LootOffer(gold=1, elixir=1, dark=1), can_skip=True)
         assert self._scouted([None] * UNREADABLE_SKIPS + [found], [True] * UNREADABLE_SKIPS) == 1
 
+    def _day(self, runner: AttackRunner, offered: Iterator[bool]) -> tuple[AttackReport, int]:
+        """One home village round whose loot never reads; the report and how many times 下一個 was tapped.
+
+        `offered` says, frame by frame, whether 下一個 is on screen; once it runs
+        out the search is still running, until `SEARCH_PATIENCE` on a clock that
+        only the loop's own sleeps move.
+        """
+        clock = [0.0]
+
+        def sleep(seconds: float) -> None:
+            clock[0] += seconds
+
+        with (
+            patch.object(AttackRunner, "_open_attack_menu", return_value=b"home"),
+            patch.object(AttackRunner, "_stood_down", return_value=None),
+            patch.object(AttackRunner, "_army_short", return_value=False),
+            patch.object(AttackRunner, "_frame", return_value=b"scout"),
+            patch.object(AttackRunner, "_tap") as tapped,
+            patch.object(AttackRunner, "_deploy") as deployed,
+            patch.object(AttackRunner, "_wait_out_battle", return_value=False) as waited,
+            patch.object(AttackRunner, "_outcome", return_value="loot_unread"),
+            patch.object(attack, "read_scout", return_value=None),
+            patch.object(attack, "skip_offered", side_effect=lambda _: next(offered, False)),
+            patch.object(attack.time, "sleep", side_effect=sleep),
+            patch.object(attack.time, "monotonic", side_effect=lambda: clock[0]),
+        ):
+            report = runner._run_day()
+        if report.attacked is not None:
+            deployed.assert_called_once_with(b"scout")
+            # No opening loot, so the battle is judged on its own readings.
+            waited.assert_called_once_with(None)
+        nexts = sum(c.args == (attack.NEXT_TARGET,) for c in tapped.call_args_list)
+        return report, nexts
+
+    def test_a_reader_that_stays_broken_attacks_blind_rather_than_skip_forever(self) -> None:
+        """The count runs across the series, so a search window running out does not reset it.
+
+        The user's rule (2026-11-21), after an event repainted the panel and
+        every round skipped every opponent: three unreadable opponents end one
+        search, two more start the next, and the sixth is attacked without the
+        thresholds, its loot unknown.
+        """
+        runner = self._runner()
+        skips = attack.UNREADABLE_OPPONENTS
+        first, nexts = self._day(runner, iter([True] * UNREADABLE_SKIPS * 3))
+        assert (first.outcome, first.attacked, nexts) == ("no_opponent", None, 3)
+        second, nexts = self._day(runner, iter([True] * UNREADABLE_SKIPS * (skips - 3 + 1)))
+        assert nexts == skips - 3
+        assert second.waived == "unreadable"
+        assert second.attacked == LootOffer(gold=0, elixir=0, dark=0)
+        assert (second.outcome, second.skipped) == ("loot_unread", skips - 3)
+        # And the battle starts the count over.
+        third, nexts = self._day(runner, iter([True] * UNREADABLE_SKIPS * 2))
+        assert (third.outcome, nexts) == ("no_opponent", 2)
+
+    def test_an_opponent_that_reads_starts_the_unreadable_count_over(self) -> None:
+        runner = self._runner()
+        runner._unread_row = attack.UNREADABLE_OPPONENTS - 1
+        runner._poor_row = 7
+        found = ScoutView(loot=LootOffer(gold=1, elixir=1, dark=1), can_skip=True)
+        with (
+            patch.object(AttackRunner, "_frame", return_value=b""),
+            patch.object(AttackRunner, "_tap"),
+            patch.object(attack, "read_scout", side_effect=[None] * UNREADABLE_SKIPS + [found]),
+            patch.object(attack, "skip_offered", return_value=True),
+            patch.object(attack, "panel_peak", return_value=247),
+            patch.object(attack.time, "sleep"),
+        ):
+            assert runner._scout(timeout=60) == (found, b"")
+        # The unreadable one swapped first broke the poor row; the one that read, the other.
+        assert (runner._unread_row, runner._poor_row) == (0, 0)
+
+    def _poor_day(self, readings: list[ScoutView]) -> tuple[AttackReport, MagicMock]:
+        """One home village round over canned opponents under a 500k gold threshold."""
+        runner = AttackRunner(
+            adb=AdbController(endpoint=AdbEndpoint(port=16384)),
+            display=DisplayTarget(logical_id="1", physical_id="2"),
+            thresholds=LootThresholds(min_gold=500_000),
+        )
+        with (
+            patch.object(AttackRunner, "_open_attack_menu", return_value=b"home"),
+            patch.object(AttackRunner, "_stood_down", return_value=None),
+            patch.object(AttackRunner, "_army_short", return_value=False),
+            patch.object(AttackRunner, "_tap"),
+            patch.object(
+                AttackRunner, "_scout", side_effect=[(view, b"") for view in readings]
+            ) as scouted,
+            patch.object(AttackRunner, "_deploy"),
+            patch.object(AttackRunner, "_wait_out_battle", return_value=True),
+            patch.object(AttackRunner, "_outcome", return_value="took_loot"),
+            patch.object(attack.time, "sleep"),
+        ):
+            report = runner._run_day()
+        return report, scouted
+
+    def test_a_search_too_poor_for_the_thresholds_attacks_anyway(self) -> None:
+        """The user's rule (2026-11-21): troops are free and every skip costs a fee."""
+        poor = [
+            ScoutView(loot=LootOffer(gold=100_000 + n, elixir=1, dark=1), can_skip=True)
+            for n in range(attack.POOR_SKIPS + 1)
+        ]
+        report, scouted = self._poor_day(poor)
+        assert scouted.call_count == attack.POOR_SKIPS + 1
+        assert (report.waived, report.attacked) == ("poor", poor[-1].loot)
+        assert report.skipped == attack.POOR_SKIPS
+
+    def test_one_short_of_the_poor_row_the_thresholds_still_decide(self) -> None:
+        poor = ScoutView(loot=LootOffer(gold=100_000, elixir=1, dark=1), can_skip=True)
+        rich = ScoutView(loot=LootOffer(gold=900_000, elixir=1, dark=1), can_skip=True)
+        report, _ = self._poor_day([poor] * (attack.POOR_SKIPS - 1) + [rich])
+        assert (report.waived, report.attacked) == (None, rich.loot)
+
     def test_the_button_separates_the_two_screens_read_scout_cannot(self) -> None:
         """The premise the swap rests on, on the two frames that actually differ.
 
@@ -5475,11 +5587,21 @@ class AttackTests(unittest.TestCase):
         assert report.outcome == "no_opponent"
         assert tapped.call_args_list[-1].args[0] == END_BATTLE
 
-    def _verdict(self, opening: LootOffer, readings: list[ScoutView | None]) -> bool:
+    def _verdict(self, opening: LootOffer | None, readings: list[ScoutView | None]) -> bool:
         return self._watched(opening, readings)[0]
 
+    def test_a_blind_battle_is_judged_from_its_own_first_reading(self) -> None:
+        """Its scout screen gave no loot, so a made-up opening would call any reading a win."""
+
+        def panel(gold: int) -> ScoutView:
+            return ScoutView(loot=LootOffer(gold=gold, elixir=1, dark=1), can_skip=False)
+
+        assert self._verdict(None, [panel(500), panel(400), None]) is True
+        assert self._verdict(None, [panel(500), panel(500), None]) is False
+        assert self._verdict(None, [None, panel(500), panel(500), None]) is False
+
     def _watched(
-        self, opening: LootOffer, readings: list[ScoutView | None]
+        self, opening: LootOffer | None, readings: list[ScoutView | None]
     ) -> tuple[bool, AttackRunner]:
         """Run the battle wait against canned panel readings, with the clock removed.
 

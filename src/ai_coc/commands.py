@@ -143,6 +143,7 @@ from ai_coc.models import (
     ListPriceReport,
     StandDownReport,
     StorageCapacity,
+    ThresholdWaiver,
     TurnaroundGroup,
     EmulatorInstance,
     StandDownOutcome,
@@ -252,11 +253,13 @@ from .ui.clan import ClanRunner
 from .ui.world import cross, uncovered, open_chest, park_camera, collect_cart
 from .ui.attack import (
     CARD_ROW_Y,
+    POOR_SKIPS,
     DROP_SETTLE,
     OPENING_LINE,
     OPENING_FRAME,
     BATTLE_TIMEOUT,
     SINGLE_DROP_DELAY,
+    UNREADABLE_OPPONENTS,
     AttackRunner,
     planned_drops,
     clear_of_controls,
@@ -2237,6 +2240,13 @@ ROUND_LINES: dict[AttackOutcome, str] = {
     "session_taken": "另一部裝置登入了這個帳號,沒有把登入搶回來,停止刷資源",
 }
 
+# Why a battle went in without the loot thresholds, said loudly because each
+# means something needs fixing: the reader, or the thresholds.
+WAIVED_LINES: dict[ThresholdWaiver, str] = {
+    "unreadable": f"連續 {UNREADABLE_OPPONENTS} 個對手讀不到戰利品,沒看門檻就打 (讀取器可能壞了,要修)",
+    "poor": f"連續 {POOR_SKIPS} 個對手都沒達門檻,沒看門檻就打 (門檻可能太高)",
+}
+
 # The round outcomes that end a series on their own, and the ending each gives it.
 ROUND_ENDINGS: dict[AttackOutcome, SeriesEnding] = {
     "stock_full": "stock_full",
@@ -2275,6 +2285,8 @@ def round_line(report: AttackReport) -> str:
     line = ROUND_LINES[report.outcome]
     if report.forced:
         line = f"倒數結束被強制開戰,{line}"
+    if report.waived:
+        line = f"{WAIVED_LINES[report.waived]},{line}"
     if report.skipped:
         line = f"{line}(跳過 {report.skipped} 個對手)"
     if report.phases > 1:
@@ -2302,6 +2314,8 @@ def farmed(series: AttackSeries, ending: SeriesEnding | None) -> FarmedVillage |
         cart_now=now,
         cart_capacity=next((cart.capacity for cart in reversed(carts) if cart.capacity), None),
         cart_unread=played[-1].since_cart or 0,
+        waived_unread=sum(one.waived == "unreadable" for one in played),
+        waived_poor=sum(one.waived == "poor" for one in played),
         ending=ending,
     )
     if read:
@@ -2364,6 +2378,10 @@ def farmed_text(village: FarmedVillage) -> str:
         shown += ["", f"有 {village.uncounted} 場打完之後沒讀到倉庫, 沒算進進帳"]
     if village.cart_unread:
         shown += [f"有 {village.cart_unread} 場的聖水在最後一次去聖水車之後才進車, 沒算進進帳"]
+    if village.waived_unread:
+        shown += [f"有 {village.waived_unread} 場{WAIVED_LINES['unreadable']}"]
+    if village.waived_poor:
+        shown += [f"有 {village.waived_poor} 場{WAIVED_LINES['poor']}"]
     return "\n".join(shown)
 
 
@@ -2479,6 +2497,8 @@ def _summed(villages: list[FarmedVillage]) -> FarmedVillage:
                 (one.cart_now for one in reversed(villages) if one.cart_now is not None), None
             ),
             "cart_unread": sum(one.cart_unread for one in villages),
+            "waived_unread": sum(one.waived_unread for one in villages),
+            "waived_poor": sum(one.waived_poor for one in villages),
         }
     )
 

@@ -74,10 +74,11 @@ runtime 沒有 subagent 的話, 你自己照 `runner.md` 跑; 指令照 `share-e
 - `no_loot` (兵出去了而戰利品整場沒動) 是**戰術**的問題, `nothing_deployed` (一張卡都沒出去) 是**迴圈**的問題, 都歸 `watch-and-fix`, 查的地方完全不同
 - `army_short`: 軍隊不到兵營的一半, 整個 series 到此為止. 造兵是即時的, 這種軍隊不會自己變好, 要人進遊戲改配置. 抓一張軍隊畫面附在回報裡
 - `other_village`: 遊戲停在這一批沒在打的村莊, 多半是有人切過, 例如使用者在手機上玩
+- `waived` 不是空的: 這一場沒看門檻就打 (`attack` 的報告最後也會印「有 N 場…沒看門檻就打」). `unreadable` 是連續 5 個對手讀不到戰利品, 判讀器壞了, 歸 `watch-and-fix`, 也要跟使用者講; `poor` 是一次搜尋裡連續 10 個對手都沒達門檻, 門檻對現在的獎盃區間太高, 跟使用者講, 改不改 `config.json` 由他決定
 
 **值得警覺的樣態**, 連續幾輪才算:
 
-- 每輪 `skipped` 都是幾十: 門檻對現在的獎盃區間太高, 跟使用者講, 改不改 `config.json` 由他決定
+- 每輪 `skipped` 都接近 10, 或好幾輪 `waived` 是 `poor`: 門檻對現在的獎盃區間太高, 跟使用者講, 改不改 `config.json` 由他決定
 - **入庫的進帳遠小於 `attacked`**: 進攻打不動人家, 是 `watch-and-fix` 的題目, 這裡只報告. 看落差而不是 `attacked` 大不大 (它只說對手**擺出**多少)
 - `The session was dropped`: 迴圈自己會點對話框的按鈕重新登入, 點了沒用才重開遊戲 (log 有 `did not clear it; restarting the game` 就是重開了). 一直重複才要查
 - `waiting for the server rather than tapping`: 卡在載入畫面, 伺服器的事. 迴圈每次載入最多等 45 分鐘; 等不到的那輪是 `server_loading` 或 `server_flapping`. **不要**重開遊戲或模擬器, 量過兩次都是自己回來的. 連續兩輪都是這兩種再停下來講

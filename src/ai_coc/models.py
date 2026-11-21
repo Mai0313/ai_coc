@@ -1193,6 +1193,7 @@ AttackOutcome = Literal[
     "other_village",
     "session_taken",
 ]
+ThresholdWaiver = Literal["unreadable", "poor"]
 
 
 class AttackReport(BaseModel):
@@ -1228,6 +1229,12 @@ class AttackReport(BaseModel):
     # exactly as a chosen one can, and `can_skip` — the reading it comes from —
     # is not on the report.
     forced: bool = False
+    # Why this battle went in without the loot thresholds, None where they
+    # decided it: `unreadable` after `UNREADABLE_OPPONENTS` opponents in a row
+    # whose loot would not read (the reader is broken, so `attacked` is all
+    # zeros rather than a reading), `poor` after `POOR_SKIPS` in a row that
+    # read under them (the thresholds may be too high for the league).
+    waived: ThresholdWaiver | None = None
     # What the round read around it, so a series says what it brought home on
     # its own: the storages before its search (None where it never got that
     # far), the village's ceilings as the run read them, the builder base's
@@ -1341,7 +1348,9 @@ class FarmedVillage(BaseModel):
     (0 after one that emptied it) and `cart_gained` what it held more than
     after the first, each None where a trip could not say, and `cart_capacity`
     its ceiling where a trip read one; `cart_unread` is the battles since the
-    last trip, whose elixir is in the cart and in neither reading. `ending` is
+    last trip, whose elixir is in the cart and in neither reading.
+    `waived_unread` and `waived_poor` are the battles fought without the loot
+    thresholds, by `AttackReport.waived`. `ending` is
     how the series ended, None for one still going, killed, or recorded before
     series named their endings with a last round that does not say.
     """
@@ -1356,6 +1365,8 @@ class FarmedVillage(BaseModel):
     cart_now: int | None = None
     cart_capacity: int | None = None
     cart_unread: int = 0
+    waived_unread: int = 0
+    waived_poor: int = 0
     ending: SeriesEnding | None = None
 
 

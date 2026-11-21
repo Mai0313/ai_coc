@@ -37,6 +37,7 @@ from ai_coc.models import (
     PlannedTactic,
     LootThresholds,
     StorageCapacity,
+    ThresholdWaiver,
 )
 from ai_coc.prompts import PROMPTS
 from ai_coc.ui.world import uncovered, collect_cart
@@ -463,6 +464,20 @@ PLAN_TIMEOUT = 30
 # battle that ended 戰敗 at 0% with nothing deployed. Asking for another opponent
 # costs 1400 gold.
 UNREADABLE_SKIPS = 5
+# **Opponents in a row whose loot will not read before the next one is attacked
+# blind**, counted across the series rather than one search, since a reader that
+# stays broken would otherwise skip every opponent and pay a search fee for each
+# forever: on 2026-11-21 a game event repainted the panel and every series
+# skipped eleven and played nothing. The user's rule (2026-11-21): the army is
+# free, so play on and say loudly that the reader needs fixing. Five skips take
+# about 65 s, well inside one search window. A row that reads resets it, and so
+# does the battle it forces.
+UNREADABLE_OPPONENTS = 5
+# **Opponents in a row in one search that read under the thresholds before the
+# next one is attacked anyway**, the user's rule too (2026-11-21): troops cost
+# nothing while each skip costs a fee, so a league too poor for the thresholds
+# should still be farmed. Reset by an unreadable opponent and by a new search.
+POOR_SKIPS = 10
 # How long the opponent just skipped is not believed again. The game answers
 # 下一個 a moment late, and the next frame can still be that opponent: measured
 # 2026-09-26, the frame after the tap was the same panel, same countdown, button
@@ -537,6 +552,25 @@ MIN_ARMY_RATIO = 0.5
 def _too_small(strength: tuple[int, int]) -> bool:
     """Whether a reading of the army screen is too far under the camp to fight with."""
     return strength[0] < strength[1] * MIN_ARMY_RATIO
+
+
+def _waived(
+    view: ScoutView | None, poor: int, thresholds: LootThresholds
+) -> ThresholdWaiver | None:
+    """Why this opponent is attacked without the thresholds, None where they decide it.
+
+    None for a forced battle as well, which the countdown decided.
+    """
+    if view is None:
+        return "unreadable"
+    if poor < POOR_SKIPS or not view.can_skip or thresholds.accepts(view.loot):
+        return None
+    logger.warning(
+        "%d opponents in a row read under the thresholds; attacking this one anyway. "
+        "The thresholds may be too high for this league",
+        poor,
+    )
+    return "poor"
 
 
 def _matched(png: bytes) -> bool:
@@ -1221,6 +1255,10 @@ class AttackRunner(ScreenRunner):
     # skips like any other — a search fee each — so they belong in the report
     # rather than only in the log, which is the number a run is judged on.
     _swapped: int = PrivateAttr(default=0)
+    # Unreadable opponents in a row across the series; see `UNREADABLE_OPPONENTS`.
+    _unread_row: int = PrivateAttr(default=0)
+    # Opponents in a row this search read under the thresholds; see `POOR_SKIPS`.
+    _poor_row: int = PrivateAttr(default=0)
     # Whatever `_plan` settled on, kept so a run can be written down and replayed.
     _played: AttackPlan | NightPlan | None = PrivateAttr(default=None)
     # How far the village has moved on screen since the attack opened, which is
@@ -1782,12 +1820,15 @@ class AttackRunner(ScreenRunner):
 
     def _scout(
         self, timeout: float = 30, leaving: LootOffer | None = None
-    ) -> tuple[ScoutView, bytes] | None:
+    ) -> tuple[ScoutView | None, bytes] | None:
         """Poll until an opponent is on screen; 正在搜尋對手 reads as nothing at all.
 
         `leaving` is the loot of the opponent 下一個 was just pressed on, which
         can still be on screen for a moment and is not a new opponent; see
         `NEXT_SETTLE`.
+
+        A None view is an opponent whose loot will not read, handed back to be
+        attacked blind after `UNREADABLE_OPPONENTS` such in a row.
 
         The frame comes back with the view because `_settle_zoom` measures the
         village on it before the pinch; the card row is read later, off the
@@ -1872,6 +1913,7 @@ class AttackRunner(ScreenRunner):
                             "so this opponent's countdown really has ended",
                             peak,
                         )
+                    self._unread_row = 0
                     return view, png
                 logger.info(
                     "The scout screen is still fading in (panel peak %d, drawn is %d); "
@@ -1888,7 +1930,17 @@ class AttackRunner(ScreenRunner):
             # is an opponent on screen whether or not it has finished painting.
             self._offered = skip_offered(png) or view is not None
             unread = unread + 1 if self._offered else 0
+            if unread >= UNREADABLE_SKIPS and self._unread_row >= UNREADABLE_OPPONENTS:
+                logger.warning(
+                    "%d opponents in a row would not read their loot, nor would this one: "
+                    "attacking it without the thresholds. The loot reader needs fixing",
+                    self._unread_row,
+                )
+                self._unread_row = 0
+                return None, png
             if unread >= UNREADABLE_SKIPS:
+                self._unread_row += 1
+                self._poor_row = 0
                 logger.warning(
                     "An opponent is on screen but %d frames running would not read its loot, "
                     "or would not finish painting; asking for another rather than letting the "
@@ -2809,8 +2861,11 @@ class AttackRunner(ScreenRunner):
             if not cells:
                 return
 
-    def _wait_out_battle(self, opening: LootOffer) -> bool:
+    def _wait_out_battle(self, opening: LootOffer | None) -> bool:
         """Sit through the battle and leave through 回營; False if no loot ever moved.
+
+        `opening` is None for a battle attacked blind (`UNREADABLE_OPPONENTS`),
+        whose loot moving is judged from the first reading the battle gave.
 
         Loot that never drops is how a deployment nothing came of shows up, and
         it costs nothing extra because the panel is already being polled. The
@@ -2830,11 +2885,13 @@ class AttackRunner(ScreenRunner):
         which is worth less than no check at all.
         """
         deadline = time.monotonic() + BATTLE_TIMEOUT
+        first = opening or self._seen
         while time.monotonic() < deadline:
             time.sleep(10)
             # The result screen is the first one with no loot panel on it.
             if self._battle_ended("battle"):
                 break
+            first = first or self._seen
             # The battle carries on under the dialog with nobody here to see it,
             # and the loot panel read through the dimming, so waiting it out
             # reported a round the player took over as one that took loot.
@@ -2845,7 +2902,7 @@ class AttackRunner(ScreenRunner):
                 self._tap(SPEED_UP)
             self._dump_leftovers()
         self._leave_result()
-        return self._seen is not None and self._seen != opening
+        return self._seen is not None and self._seen != first
 
     def _dump_leftovers(self) -> None:
         """Anything still sitting in a card mid-battle, poured along the line.
@@ -2909,7 +2966,7 @@ class AttackRunner(ScreenRunner):
         logger.info("%d card(s) still hold something; emptying them", len(extra))
         self._cast(extra, tuple(self._line), self._last)
 
-    def _fought(self, opening: LootOffer) -> AttackOutcome:
+    def _fought(self, opening: LootOffer | None) -> AttackOutcome:
         """How the battle went, a takeover by another device included.
 
         Answered here rather than left to `commands._round`, so the round still
@@ -3521,6 +3578,7 @@ class AttackRunner(ScreenRunner):
             return AttackReport(outcome="army_short")
         self._tap(ARMY_ATTACK)
         skipped = 0
+        self._poor_row = 0
         leaving: LootOffer | None = None
         while True:
             scouted = self._scout(SEARCH_PATIENCE, leaving=leaving)
@@ -3533,7 +3591,9 @@ class AttackRunner(ScreenRunner):
                     self._tap(END_BATTLE)
                 return AttackReport(skipped=skipped + self._swapped, outcome="no_opponent")
             view, frame = scouted
-            forced = not view.can_skip
+            loot = view.loot if view else LootOffer(gold=0, elixir=0, dark=0)
+            forced = view is not None and not view.can_skip
+            waived = _waived(view, self._poor_row, thresholds)
             # Leaving is only safe on an opponent that can still be skipped: 結束
             # 戰鬥 is on that screen, and the search fee is already spent, so
             # walking out of 正在搜尋對手 would pay for a battle nothing is
@@ -3541,7 +3601,7 @@ class AttackRunner(ScreenRunner):
             stopping = self.should_stop() and not forced
             if stopping:
                 logger.info("Stop pressed; leaving the search after %d skip(s)", skipped)
-            if not stopping and (forced or thresholds.accepts(view.loot)):
+            if not stopping and (forced or waived or thresholds.accepts(loot)):
                 # `forced` is an inference from an absent 下一個 rather than
                 # something the loop can see, and a report carrying only the
                 # inference is what let six rounds of one evening read as the
@@ -3552,9 +3612,10 @@ class AttackRunner(ScreenRunner):
                 self._deploy(frame)
                 return AttackReport(
                     skipped=skipped + self._swapped,
-                    attacked=view.loot,
+                    attacked=loot,
                     forced=forced,
-                    outcome=self._fought(view.loot),
+                    waived=waived,
+                    outcome=self._fought(loot if view else None),
                 )
             if stopping or skipped >= self.max_skips:
                 self._tap(END_BATTLE)
@@ -3563,5 +3624,6 @@ class AttackRunner(ScreenRunner):
                     outcome="stopped" if stopping else "all_skipped",
                 )
             skipped += 1
+            self._poor_row += 1
             self._tap(NEXT_TARGET)
-            leaving = view.loot
+            leaving = loot

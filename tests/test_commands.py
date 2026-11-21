@@ -102,6 +102,7 @@ from ai_coc.models import (
     LootThresholds,
     GivebackOutcome,
     StorageCapacity,
+    ThresholdWaiver,
     VillageDocument,
     StandDownOutcome,
     PlateCountOutcome,
@@ -1940,6 +1941,18 @@ class RoundLineTests(unittest.TestCase):
             others = [commands.ROUND_LINES[other] for other in own if other != outcome]
             assert not any(fragment in other for other in others), outcome
 
+    def test_a_battle_fought_without_the_thresholds_says_which_rule_waived_them(self) -> None:
+        """Each points somewhere else to fix: the loot reader, or the thresholds."""
+        own = {"unreadable": "讀取器可能壞了", "poor": "門檻可能太高"}
+        assert set(own) == set(get_args(ThresholdWaiver))
+        for waived, fragment in own.items():
+            line = commands.round_line(AttackReport(outcome="took_loot", waived=waived))
+            assert line.startswith(commands.WAIVED_LINES[waived]), waived
+            assert fragment in line, waived
+            assert commands.ROUND_LINES["took_loot"] in line, waived
+            others = [commands.WAIVED_LINES[other] for other in own if other != waived]
+            assert not any(fragment in other for other in others), waived
+
     def test_the_counts_are_appended_rather_than_written_into_each_sentence(self) -> None:
         """Because they are orthogonal: a forced battle can end any of four ways."""
         plain = commands.round_line(AttackReport(outcome="took_loot"))
@@ -2219,6 +2232,27 @@ class AttackSummaryTests(unittest.TestCase):
         )
         assert lost is not None
         assert (lost.cart_gained, lost.cart_now) == (None, None)
+
+    def test_battles_fought_without_the_thresholds_are_counted_and_said(self) -> None:
+        series = _played(
+            "day",
+            ("loot_unread", (1, 1, 1)),
+            ("took_loot", (2, 2, 2)),
+            ("took_loot", (3, 3, 3)),
+            ("took_loot", (4, 4, 4)),
+        )
+        series.root[0].waived = "unreadable"
+        series.root[1].waived = "poor"
+        series.root[2].waived = "poor"
+        village = commands.farmed(series, "repeat_done")
+        assert village is not None
+        assert (village.waived_unread, village.waived_poor) == (1, 2)
+        text = commands.farmed_text(village)
+        assert f"有 1 場{commands.WAIVED_LINES['unreadable']}" in text
+        assert f"有 2 場{commands.WAIVED_LINES['poor']}" in text
+        plain = commands.farmed(_played("day", ("took_loot", (1, 1, 1))), "repeat_done")
+        assert plain is not None
+        assert "沒看門檻" not in commands.farmed_text(plain)
 
     def test_a_round_on_neither_village_counts_towards_none(self) -> None:
         series = AttackSeries([

@@ -56,9 +56,9 @@
 
 ## 一直跳過對手
 
-`skipped` 每輪幾十, 多半是 `~/.ai_coc/config.json` 的 `thresholds` 對現在的獎盃區間太高. 那是設定不是 bug, 跟使用者講, 改不改由他決定.
+`skipped` 每輪接近 10, 或 `AttackReport.waived` 是 `poor` (一次搜尋裡連續 `POOR_SKIPS` 個對手沒達門檻, 迴圈就不看門檻打下一個), 多半是 `~/.ai_coc/config.json` 的 `thresholds` 對現在的獎盃區間太高. 那是設定不是 bug, 跟使用者講, 改不改由他決定.
 
-**先確認真的是跳過**: `skipped` 包含 `_swapped`, 也就是連續 `UNREADABLE_SKIPS` 格讀不到之後迴圈自己按的 `下一個`. `run.log` 有那幾格的紀錄, 調門檻就沒用.
+**先確認真的是跳過**: `skipped` 包含 `_swapped`, 也就是連續 `UNREADABLE_SKIPS` 格讀不到之後迴圈自己按的 `下一個`. `run.log` 有那幾格的紀錄, 調門檻就沒用. 整個 series 連續 `UNREADABLE_OPPONENTS` 個對手都這樣, 迴圈就不看門檻打下一個, 那一場的 `waived` 是 `unreadable`: 判讀器壞了, 照「戰利品讀錯」修.
 
 那個警告有兩種原因, log 分得開: `read_scout` 讀不出戰利品, 或畫面還在淡入被擋掉 (`The scout screen is still fading in (panel peak N, drawn is M)`). 峰值離門檻很遠是保護機制在做事; 一批峰值全貼著門檻 (`PANEL_DRAWN_BRIGHTNESS`), 才是門檻要重量.
 
