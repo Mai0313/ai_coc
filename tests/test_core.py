@@ -5999,6 +5999,45 @@ class AttackTests(unittest.TestCase):
         assert [c.args[:2] for c in tapped.call_args_list] == [(1060, attack.CARD_ROW_Y)]
         assert placed.call_args.args[0] == [late[0], late[1]]
 
+    SIX = ((500, 300), (700, 300), (900, 300), (500, 420), (700, 420), (900, 420))
+
+    def _bursts(self, counts: dict[int, int], targets: tuple[tuple[int, int], ...]) -> list:
+        """What `_cast` taps for each card, the card's slack tap included, given each card's count."""
+        runner = self._runner()
+        with (
+            patch.object(attack.time, "sleep"),
+            patch.object(AttackRunner, "_frame", return_value=b""),
+            patch.object(AttackRunner, "_tap"),
+            patch.object(attack, "in_battle", return_value=True),
+            patch.object(attack, "card_count", side_effect=lambda _frame, x: counts[x]),
+            patch.object(attack, "live_cards", return_value=()),
+            patch.object(AdbController, "tap_many") as placed,
+        ):
+            runner._cast(list(counts), targets, b"")
+        return [c.args[0] for c in placed.call_args_list]
+
+    def test_two_cards_of_one_spell_cover_distinct_points(self) -> None:
+        """Own rage plus donated rage, two bottles each, over six points (#693).
+
+        The second card used to start one point after the first, so its first
+        bottle landed on the first card's second point and the last points
+        stayed bare.
+        """
+        t = self.SIX
+        assert self._bursts({939: 2, 1060: 2}, t) == [[t[0], t[1], t[2]], [t[2], t[3], t[4]]]
+
+    def test_an_uneven_split_still_covers_distinct_points(self) -> None:
+        t = self.SIX
+        assert self._bursts({939: 3, 1060: 1}, t) == [[t[0], t[1], t[2], t[3]], [t[3], t[4]]]
+
+    def test_more_bottles_than_points_give_every_point_one_before_a_second(self) -> None:
+        t = self.SIX[:3]
+        assert self._bursts({939: 2, 1060: 2}, t) == [[t[0], t[1], t[2]], [t[2], t[0], t[1]]]
+
+    def test_one_card_wraps_over_fewer_points_than_it_holds(self) -> None:
+        t = self.SIX[:3]
+        assert self._bursts({939: 5}, t) == [[t[0], t[1], t[2], t[0], t[1], t[2]]]
+
     def test_a_planned_bottle_landing_inside_another_is_moved_off_it(self) -> None:
         """The planner is given the footprint and overlaps its points regardless.
 

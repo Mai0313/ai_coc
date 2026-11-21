@@ -1124,10 +1124,12 @@ def _bottles(
     landed: list[tuple[int, int]] = []
     if last:
         pending = [x for x in cards if not held[x] or remaining(x)]
-        for index, x in enumerate(pending):
+        start = 0
+        for x in pending:
             landed += [
-                targets[(index + i) % len(targets)] for i in range(remaining(x) or len(targets))
+                targets[(start + i) % len(targets)] for i in range(remaining(x) or len(targets))
             ]
+            start += remaining(x)
         return landed
     cells = list(targets)
     for x in cards:
@@ -2805,10 +2807,14 @@ class AttackRunner(ScreenRunner):
         for _attempt in range(SPELL_ATTEMPTS):
             if not pending:
                 return
-            for index, x in enumerate(pending):
+            # Each card starts where the one before it ran out, so the bottles of
+            # several cards cover every point once before any point gets a second.
+            start = 0
+            for x in pending:
                 count = self._left(frame, x)
                 cast_count = count + 1 if count else len(targets)
-                cells = [targets[(index + i) % len(targets)] for i in range(cast_count)]
+                cells = [targets[(start + i) % len(targets)] for i in range(cast_count)]
+                start += count
                 self._tap((x, CARD_ROW_Y))
                 time.sleep(SPELL_SELECT_DELAY)
                 self.adb.tap_many(cells, self.display, gap=SPELL_PLACE_GAP)

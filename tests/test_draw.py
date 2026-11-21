@@ -163,10 +163,10 @@ class TestPlannedDrops:
         assert drops["siege", 0].at == [(176, 506)]
         assert drops["rage", 7].at == [(550, 429), (390, 519)]
         assert drops["freeze", 15].at == [(800, 522), (640, 402), (960, 402)]
-        # Four bottles over two cards of two: the second card starts one
-        # target along, so one spot takes two and three of the plan's six none.
-        assert drops["rage", 16].at == [(710, 519), (550, 609), (550, 609), (870, 429)]
-        assert drops["rage", 16].unused == [(870, 609), (1030, 519), (710, 339)]
+        # Four bottles over two cards of two: the second card starts where the
+        # first ran out, so four of the plan's six points take one each (#693).
+        assert drops["rage", 16].at == [(710, 519), (550, 609), (870, 429), (870, 609)]
+        assert drops["rage", 16].unused == [(1030, 519), (710, 339)]
 
     def _played_as_drawn(self, plan: AttackPlan) -> list[PlannedDrop]:
         """Play `plan` through the runner on the home reference and hold every step's taps to the picture's."""
@@ -357,8 +357,8 @@ class TestPicture:
         self._picture()
         steps = [text for text in written if text.startswith("#")]
         # One number a place a step lands on: two at the heroes' spot, the troops' line, the siege
-        # machine, then two, three and three places for the spells (one rage spot takes two bottles).
-        assert sum(text.count("#") for text in steps) == 2 + 1 + 1 + 2 + 3 + 3
+        # machine, then two, three and four places for the spells.
+        assert sum(text.count("#") for text in steps) == 2 + 1 + 1 + 2 + 3 + 4
         for seconds in ("0", "7", "15", "16"):
             assert any(text.split(" ")[-1].startswith(seconds) for text in steps), seconds
 
@@ -635,7 +635,7 @@ class TestPointsWithNoBottle:
     """Every point of the plan a bottle does not reach is drawn as bare, whatever the row holds."""
 
     def test_points_past_the_rows_bottles_are_bare_too(self) -> None:
-        """Eight rage points for six bottles on two cards: the last two are as bare as the two skipped."""
+        """Eight rage points for six bottles on two cards: the two past the bottles are bare."""
         spots = [(x, y) for y in (30, 45) for x in (20, 35, 50, 65)]
         plan = AttackPlan(
             steps=[
@@ -649,9 +649,8 @@ class TestPointsWithNoBottle:
         )
         [rage] = planned_drops(plan, DAY, DAY_CAMERA).steps
         every = [(x * 16, y * 9 + DAY_CAMERA[1]) for x, y in spots]
-        assert len(rage.at) == 6
-        assert rage.unused == [spot for spot in every if spot not in rage.at]
-        assert len(rage.unused) == 4
+        assert rage.at == every[:6]
+        assert rage.unused == every[6:]
 
     def test_a_row_without_the_spell_leaves_every_point_bare(self) -> None:
         with patch.object(attack, "counted_cards", return_value=[]):
