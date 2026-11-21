@@ -28,6 +28,8 @@ The skills under `.agents/skills/` own the judgement of driving the game, and th
 
 **A code change during a takeover may go to a session of its own.** When a session running `takeover` needs to change the code, it decides by itself whether to make the change itself or hand it to a new session it starts. A session it starts stays under its control from start to finish, works in a worktree of its own and follows `gh-dev-flow`. Its brief may be in English, but it ends by asking for every report back, turn-end notes and the final report alike, in Traditional Chinese, since English reports reaching the takeover session made its replies to the user drift into English.
 
+**The session that starts others is their hub.** It reads the state itself (`state.json`, `status`, their transcripts and PRs) instead of asking the user, decides who drives the emulator when and in what order work lands, decides the forks they raise, and tells him the plan with times as its own decision. What he says about their work is weighed and turned into instructions that fit that plan, never forwarded word for word (the user: 「你是中樞, 要自己讀狀態、自己排順序」「你不是單純的傳話筒」).
+
 **Taking the game for a live test.** There is one emulator, so a test and the loop cannot both drive it. Take it whenever a test needs it and give it back afterwards with `giveback`, lent loop or not, without asking either time, the way `share-emulator`'s 借, 用完還 says. Three rules it does not hold:
 
 - A test spends nothing the user has not asked to spend. Testing `confirm` buys what it confirms, so a wall still needs him to have named walls (「順便測試升級牆壁」 is that); otherwise list walls among the options in the reply rather than buying one.
