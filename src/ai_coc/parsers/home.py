@@ -269,6 +269,9 @@ COUNTER_TOLERANCE = 29
 # **`back` does not shut it**, measured on the builder base: the panel stayed up
 # and only the camera moved. Its own red X does.
 PANEL_CLOSE = (1572, 30)
+# 建造 itself, and the home village panel's builders' and laboratory tabs.
+BUILD_BUTTON = (1495, 800)
+PANEL_TABS: dict[PlateRole, tuple[int, int]] = {"builder": (1222, 850), "lab": (1330, 850)}
 # The X is a red plate, which no other screen draws there: it fills 0.36 of this
 # box on every panel recorded and under 0.1 on every other frame, committed or
 # recorded. The title bar beside it is the second reading, a flat grey-brown

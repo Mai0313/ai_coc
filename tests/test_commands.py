@@ -52,6 +52,7 @@ from ai_coc.models import (
     ClockTower,
     GameDialog,
     GameEntity,
+    HelperSlot,
     PlateCount,
     SearchNeed,
     SheetOffer,
@@ -74,6 +75,7 @@ from ai_coc.models import (
     ExportReport,
     FarmedReport,
     GameEntities,
+    HelperReport,
     LaunchReport,
     PressOutcome,
     RestartScope,
@@ -91,6 +93,7 @@ from ai_coc.models import (
     DonateOutcome,
     ExportOutcome,
     GrowthOutcome,
+    HelperOutcome,
     LaunchOutcome,
     SearchOptions,
     SearchOutcome,
@@ -1613,6 +1616,27 @@ class UpkeepLineTests(unittest.TestCase):
             get_args(BoostOutcome),
         )
 
+    def test_every_helper_outcome_has_a_line_of_its_own(self) -> None:
+        self._each(
+            commands.HELPER_LINES,
+            {
+                "sent": "派出去了",
+                "unconfirmed": "沒有在幫任何一件",
+                "on_night": "遊戲在夜世界",
+                "no_village": "回不到村莊",
+                "no_export": "村莊匯出沒讀到",
+                "no_helper": "沒有這個助手",
+                "cooling": "還在冷卻",
+                "not_running": "沒有叫這個名字的",
+                "ambiguous": "好幾件叫這個名字",
+                "no_hut": "助手小屋沒有開在它那一頁",
+                "rows_disagree": "對不上",
+                "no_dialog": "沒有跳出指派的視窗",
+                "not_ticked": "勾不起來",
+            },
+            get_args(HelperOutcome),
+        )
+
     def test_every_view_outcome_has_a_line_of_its_own(self) -> None:
         self._each(
             commands.VIEW_LINES,
@@ -2463,7 +2487,7 @@ class FarmedRunsTests(unittest.TestCase):
 
 
 class TendedTests(unittest.TestCase):
-    """A session's upgrades, boosts and lost logins, off the journal alone (conftest's tmp copy)."""
+    """A session's upgrades, boosts, helpers and lost logins, off the journal alone (conftest's tmp copy)."""
 
     def setUp(self) -> None:
         self.lines: list[dict[str, object]] = []
@@ -2609,8 +2633,29 @@ class TendedTests(unittest.TestCase):
 
     def test_nothing_done_says_so_line_by_line(self) -> None:
         assert commands.tended_text(self._tended(by="s1")) == (
-            "- 升級: 0 件\n- 鐘塔: 沒開\n- 被搶登: 沒有"
+            "- 升級: 0 件\n- 鐘塔: 沒開\n- 助手: 沒派\n- 被搶登: 沒有"
         )
+
+    def test_a_helper_counts_once_the_export_afterwards_has_it_on_the_job(self) -> None:
+        """Under the job that export names, which is what it went to whatever it was asked."""
+        sent = {"slot": "builder", "item": "神盾勇者", "helping": "神盾勇者", "recurrent": True}
+        self._run("helper", "01:53", "sent", {**sent, "outcome": "sent"})
+        self._run("helper", "01:58", "cooling", {**sent, "outcome": "cooling", "helping": None})
+        unconfirmed = {"slot": "lab", "item": "野豬騎士", "outcome": "unconfirmed"}
+        self._run("helper", "02:00", "unconfirmed", unconfirmed)
+        [only] = self._tended(by="s1").helpers
+        assert (only.at, only.slot, only.item) == (
+            datetime.fromisoformat("2026-11-11T01:53:10+08:00"),
+            "builder",
+            "神盾勇者",
+        )
+        [line] = [
+            line
+            for line in commands.tended_text(self._tended(by="s1")).splitlines()
+            if line.startswith("- 助手")
+        ]
+        assert line.startswith("- 助手: 派了 1 次 (")
+        assert line.endswith(f"{only.at.astimezone():%H:%M} 建築工人學徒 → 神盾勇者)")
 
 
 class AttackSeriesMenuTests(unittest.TestCase):
@@ -3954,6 +3999,18 @@ class PressAndConfirmTests(unittest.TestCase):
             adb.tap.assert_not_called()
             assert report.outcome == outcome, point
 
+    def test_the_helper_dialog_takes_its_x_and_box_and_never_its_confirm(self) -> None:
+        """Its 確認 carries the helper's face, which read as 取消 and let a press there through."""
+        for point, outcome in (
+            ((1211, 140), "pressed"),
+            ((511, 588), "pressed"),
+            ((669, 695), "green_button"),
+            ((800, 715), "green_button"),
+        ):
+            adb, report = self._run(["helper_dialog.png"], lambda d, p=point: commands.tap(p, d))
+            assert report.outcome == outcome, point
+            assert adb.tap.called == (outcome == "pressed"), point
+
     def test_a_ready_clock_tower_is_selected_and_its_free_boost_pressed_once(self) -> None:
         """Parked, then the tower, its free boost, and the 加速 on the sheet that press raised.
 
@@ -4573,6 +4630,229 @@ class PressAndConfirmTests(unittest.TestCase):
         )
         assert adb.tap.call_count == 2
         assert report.outcome == "unexpected"
+
+
+# The running jobs of 2026-11-24 01:53, as the Helper Hut listed them: longest
+# time left first, seven builder jobs, the goblin's first, and two researches.
+BUILDER_JOBS = (
+    ("投石機", 524364),
+    ("神盾勇者", 366152),
+    ("弓箭女皇", 174107),
+    ("野蠻人之王", 143104),
+    ("聖水瓶", 116741),
+    ("聖水瓶", 114125),
+    ("防空火箭", 101531),
+)
+LAB_JOBS = (("野豬騎士", 336572), ("掘地礦工", 8982))
+
+
+def _helper_export(
+    builder: tuple[tuple[str, int], ...] = BUILDER_JOBS,
+    *,
+    cooldown: int | None = None,
+    helped: str | None = None,
+) -> ExportReport:
+    """An export of these jobs, written shortest first to prove the order is the timers'.
+
+    `cooldown` is the helpers', and `helped` the job a helper works on with
+    將被指派直到升級完成 ticked, as an export taken after a dispatch has them.
+    """
+
+    def rows(jobs: tuple[tuple[str, int], ...], first: int) -> list[dict[str, object]]:
+        return [
+            {"data": first + index, "lvl": 1, "timer": timer, "zh": name}
+            | ({"helper_timer": 3600, "helper_recurrent": True} if name == helped else {})
+            for index, (name, timer) in reversed(list(enumerate(jobs)))
+        ]
+
+    helper = {"helper_cooldown": cooldown} if cooldown else {}
+    document = VillageDocument.model_validate({
+        "tag": "#TEST",
+        "timestamp": 1795452818,
+        "buildings": rows(builder, 1000100),
+        "units": rows(LAB_JOBS, 4000100),
+        "helpers": [
+            {"data": 93000000, "lvl": 8, **helper},
+            {"data": 93000001, "lvl": 12, **helper},
+        ],
+    })
+    return ExportReport(outcome="exported", export=merge(document, None, 1795452818))
+
+
+class HelperCommandTests(unittest.TestCase):
+    """`helper`: the export picks the row, the hut's list must agree, the export after says what came of it.
+
+    The hut, its dialog and what it shows after a dispatch are the frames of
+    the first two dispatches, 2026-11-24.
+    """
+
+    def _run(
+        self,
+        frames: list[str],
+        exports: list[ExportReport],
+        slot: HelperSlot = "builder",
+        item: str = "神盾勇者",
+    ) -> tuple[MagicMock, MagicMock, HelperReport]:
+        adb = _adb()
+        pngs = [(FRAMES / name).read_bytes() for name in frames]
+        adb.screenshot.side_effect = lambda *_: pngs.pop(0) if len(pngs) > 1 else pngs[0]
+        with (
+            patch.object(commands, "_controller", return_value=adb),
+            patch.object(commands, "_settle_game", return_value=DISPLAY),
+            patch.object(commands, "_exported", side_effect=exports) as walk,
+            patch.object(commands.time, "sleep"),
+        ):
+            report = commands.helper(slot, item, _frames(self))
+        assert report.frame is not None
+        assert report.frame.is_file()
+        return adb, walk, report
+
+    @staticmethod
+    def _taps(adb: MagicMock) -> list[tuple[int, int]]:
+        return [call.args[:2] for call in adb.tap.call_args_list]
+
+    def test_the_named_job_is_sent_with_the_box_ticked_and_read_back(self) -> None:
+        adb, walk, report = self._run(
+            [
+                "hud_day.png",
+                "hud_day_build_panel_apprentice.png",
+                "hud_day_build_panel_apprentice.png",
+                "helper_hut_builder.png",
+                "helper_dialog.png",
+                "helper_dialog_ticked.png",
+                "helper_hut_sent.png",
+                "helper_hut_sent.png",
+                "hud_day_build_panel_apprentice.png",
+                "hud_day.png",
+            ],
+            [_helper_export(), _helper_export(cooldown=79800, helped="神盾勇者")],
+        )
+        assert self._taps(adb) == [
+            (1495, 800),
+            (1222, 850),
+            (1060, 377),
+            (1347, 458),
+            (511, 588),
+            (840, 715),
+            (1413, 70),
+            (1572, 30),
+        ]
+        assert walk.call_count == 2
+        assert (report.outcome, report.helping, report.recurrent) == ("sent", "神盾勇者", True)
+        assert report.running == [name for name, _ in BUILDER_JOBS]
+        assert report.dialog is not None
+        assert (report.dialog.name, report.frame.name) == ("dialog.png", "after.png")
+
+    def test_a_box_left_ticked_is_not_pressed_again(self) -> None:
+        """The game keeps it as each helper last had it, and a second press would untick it."""
+        adb, _, report = self._run(
+            [
+                "hud_day.png",
+                "hud_day_lab_panel.png",
+                "hud_day_lab_panel.png",
+                "helper_hut_lab.png",
+                "helper_dialog_ticked.png",
+                "helper_hut_sent.png",
+                "hud_day.png",
+            ],
+            [_helper_export(), _helper_export(cooldown=79800, helped="野豬騎士")],
+            slot="lab",
+            item="野豬騎士",
+        )
+        assert (1330, 850) in self._taps(adb)
+        assert (1347, 373) in self._taps(adb)
+        assert (511, 588) not in self._taps(adb)
+        assert (report.outcome, report.helping) == ("sent", "野豬騎士")
+
+    def test_a_hut_open_on_the_other_helper_is_switched_by_its_portrait(self) -> None:
+        adb, _, report = self._run(
+            [
+                "hud_day.png",
+                "hud_day_build_panel_apprentice.png",
+                "hud_day_build_panel_apprentice.png",
+                "helper_hut_lab.png",
+                "helper_hut_builder.png",
+                "helper_dialog_ticked.png",
+                "helper_hut_sent.png",
+                "hud_day.png",
+            ],
+            [_helper_export(), _helper_export(cooldown=79800, helped="神盾勇者")],
+        )
+        assert self._taps(adb)[3:5] == [(380, 760), (1347, 458)]
+        assert report.outcome == "sent"
+
+    def test_a_job_past_the_fourth_is_reached_at_the_end_of_the_list(self) -> None:
+        adb, _, report = self._run(
+            [
+                "hud_day.png",
+                "hud_day_build_panel_apprentice.png",
+                "hud_day_build_panel_apprentice.png",
+                "helper_hut_builder.png",
+                "helper_hut_builder_end.png",
+                "helper_dialog_ticked.png",
+                "helper_hut_sent.png",
+                "hud_day.png",
+            ],
+            [_helper_export(), _helper_export(cooldown=79800, helped="防空火箭")],
+            item="防空火箭",
+        )
+        assert adb.swipe.call_count == 2
+        assert (1347, 662) in self._taps(adb)
+        assert report.outcome == "sent"
+
+    def test_a_list_that_does_not_line_up_with_the_export_gets_no_assign(self) -> None:
+        """Three jobs in the export against four buttons: the row the export picked is no one's."""
+        adb, walk, report = self._run(
+            [
+                "hud_day.png",
+                "hud_day_build_panel_apprentice.png",
+                "hud_day_build_panel_apprentice.png",
+                "helper_hut_builder.png",
+                "helper_hut_builder.png",
+                "hud_day_build_panel_apprentice.png",
+                "hud_day.png",
+            ],
+            [_helper_export(BUILDER_JOBS[:3])],
+        )
+        assert not [point for point in self._taps(adb) if point[0] == 1347]
+        assert self._taps(adb)[-2:] == [(1413, 70), (1572, 30)]
+        assert walk.call_count == 1
+        assert (report.outcome, report.dialog, report.frame.name) == (
+            "rows_disagree",
+            None,
+            "refused.png",
+        )
+
+    def test_a_press_the_export_afterwards_does_not_show_is_unconfirmed(self) -> None:
+        _, _, report = self._run(
+            [
+                "hud_day.png",
+                "hud_day_build_panel_apprentice.png",
+                "hud_day_build_panel_apprentice.png",
+                "helper_hut_builder.png",
+                "helper_dialog_ticked.png",
+                "helper_hut_sent.png",
+                "hud_day.png",
+            ],
+            [_helper_export(), _helper_export()],
+        )
+        assert (report.outcome, report.helping, report.recurrent) == ("unconfirmed", None, None)
+
+    def test_nothing_is_opened_where_the_export_or_the_village_says_no(self) -> None:
+        for frame, export, item, outcome in (
+            ("hud_night.png", _helper_export(), "神盾勇者", "on_night"),
+            ("hud_day.png", ExportReport(outcome="settings_shut"), "神盾勇者", "no_export"),
+            ("hud_day.png", _helper_export(cooldown=600), "神盾勇者", "cooling"),
+            ("hud_day.png", _helper_export(), "亡靈王子", "not_running"),
+            ("hud_day.png", _helper_export(), "聖水瓶", "ambiguous"),
+        ):
+            adb, _, report = self._run([frame], [export], item=item)
+            adb.tap.assert_not_called()
+            assert (report.outcome, report.frame.name) == (outcome, "refused.png"), outcome
+        assert report.running == [name for name, _ in BUILDER_JOBS]
+        assert report.ready_at is not None
+        _, _, cooling = self._run(["hud_day.png"], [_helper_export(cooldown=600)])
+        assert "才能派" in commands.helper_line(cooling)
 
 
 class SurveyRunnerTests(unittest.TestCase):

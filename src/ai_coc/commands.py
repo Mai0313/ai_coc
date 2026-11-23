@@ -56,6 +56,7 @@ from ai_coc.models import (
     AttackPlan,
     CartReport,
     DrawReport,
+    HelperSlot,
     HoldReport,
     NoteAction,
     NoteReport,
@@ -97,6 +98,7 @@ from ai_coc.models import (
     FrameReading,
     GameEntities,
     GrowthReport,
+    HelperReport,
     JournalRound,
     LaunchReport,
     LegacyExport,
@@ -105,6 +107,7 @@ from ai_coc.models import (
     SearchReport,
     SeriesEnding,
     StatusReport,
+    TendedHelper,
     TendedReport,
     UpgradeTimer,
     VillageStock,
@@ -120,6 +123,7 @@ from ai_coc.models import (
     FarmedVillage,
     GeminiSetting,
     GrowthOutcome,
+    HelperOutcome,
     JournalTimers,
     LaunchOutcome,
     PanelWallMenu,
@@ -159,7 +163,9 @@ from ai_coc.adapters.ai import GeminiClient
 from ai_coc.adapters.adb import ZOOM_PINCHES, AdbController, AdbControlError
 from ai_coc.parsers.clan import donatable_cards
 from ai_coc.parsers.home import (
+    PANEL_TABS,
     PANEL_CLOSE,
+    BUILD_BUTTON,
     CLOCK_TOWER_BELOW,
     reward_chest,
     free_builders,
@@ -224,17 +230,32 @@ from ai_coc.parsers.boundary import (
     boundary_diamond,
 )
 from ai_coc.parsers.building import (
+    HUT_CLOSE,
+    HUT_SCROLL,
     GOBLIN_X_BOX,
+    HELPER_PLATE,
+    HUT_ASSIGN_X,
+    HUT_ROWS_END,
+    HUT_ROWS_TOP,
     MENU_ROW_BOX,
+    HUT_PORTRAITS,
+    HUT_ROW_SLACK,
+    HELPER_CONFIRM,
+    HELPER_CHECKBOX,
     SHEET_CLOSE_BOX,
+    HELPER_PROMPT_CLOSE,
     free_boost,
+    helper_hut,
     sheet_open,
     boost_sheet,
     game_dialog,
+    helper_rows,
     sheet_offer,
     goblin_offer,
     goblin_prompt,
     green_buttons,
+    helper_prompt,
+    helper_ticked,
     selection_row,
     sheet_running,
     upgrade_sheet,
@@ -3333,7 +3354,7 @@ ROLE_NAMES: dict[UpgradeRole, str] = {"builder": "工人", "lab": "實驗室", "
 # The Builder's Apprentice and the Lab Assistant, the two helpers that speed up
 # the upgrades the report lists; the Alchemist and the Prospector do not, and an
 # unused one reads as ready on every export.
-UPGRADE_HELPERS = (93000000, 93000001)
+UPGRADE_HELPERS: dict[HelperSlot, int] = {"builder": 93000000, "lab": 93000001}
 # How many hours ahead the shortfall lines sum the next levels: the takeover's
 # farm check interval (`watch --minutes 180`), the longest it goes without
 # reading again. Replayed over the 60 home village `status` runs of 2026-11-11
@@ -3419,7 +3440,7 @@ def status_text(
                 else f"{_moment(helper.ready_at, now)} 能派"
             )
             for helper in report.helpers
-            if helper.data_id in UPGRADE_HELPERS
+            if helper.data_id in UPGRADE_HELPERS.values()
         ]
         if world == "day" and helpers:
             shown += ["", f"助手: {'、'.join(helpers)}"]
@@ -4630,14 +4651,21 @@ def tended(by: str | None = None, since: datetime | None = None) -> TendedReport
             continue
         if start.command == "boost" and end.outcome == "boosted":
             report.boosts.append(end.at)
+        elif start.command == "helper" and end.outcome == "sent":
+            with suppress(ValueError):
+                sent = HelperReport.model_validate(end.result)
+                report.helpers.append(
+                    TendedHelper(at=end.at, slot=sent.slot, item=sent.helping or sent.item)
+                )
         elif start.command == "confirm":
             with suppress(ValueError):
                 paid = ConfirmReport.model_validate(end.result)
                 pressed = _bought(report, paid, end.at, paid.item or start.caller.mission, pressed)
     logger.info(
-        "Tended: %d upgrade(s), %d boost(s), %d lost login(s)",
+        "Tended: %d upgrade(s), %d boost(s), %d helper(s) sent, %d lost login(s)",
         len(report.upgrades),
         len(report.boosts),
+        len(report.helpers),
         len(report.lost),
     )
     return report
@@ -4687,7 +4715,7 @@ def _bought(
 
 
 def tended_text(report: TendedReport, now: datetime | None = None) -> str:
-    """The upgrade, clock tower and lost login lines of the takeover's stop report."""
+    """The upgrade, clock tower, helper and lost login lines of the takeover's stop report."""
     now = now or datetime.now().astimezone()
 
     def when(at: datetime) -> str:
@@ -4706,6 +4734,10 @@ def tended_text(report: TendedReport, now: datetime | None = None) -> str:
     shown = [f"- 升級: {len(report.upgrades)} 件", *rows]
     boosts = ", ".join(when(at) for at in report.boosts)
     shown.append(f"- 鐘塔: 開了 {len(report.boosts)} 次 ({boosts})" if boosts else "- 鐘塔: 沒開")
+    sent = ", ".join(
+        f"{when(one.at)} {HELPER_NAMES[one.slot]} → {one.item}" for one in report.helpers
+    )
+    shown.append(f"- 助手: 派了 {len(report.helpers)} 次 ({sent})" if sent else "- 助手: 沒派")
     losses = ", ".join(
         f"{when(one.taken)} 被搶, "
         + ("還沒接回" if one.back is None else f"{when(one.back)} 接回")
@@ -5527,6 +5559,205 @@ def boost(frames: FrameLog) -> BoostReport:
     report = BoostReport(marker=marker, button=button, outcome=outcome, frame=frame)
     logger.info("Boost: %s", boost_line(report))
     return report
+
+
+HELPER_NAMES: dict[HelperSlot, str] = {"builder": "建築工人學徒", "lab": "實驗助手"}
+HELPER_LINES: dict[HelperOutcome, str] = {
+    "sent": "按了確認,派出去了",
+    "unconfirmed": "按了確認,但之後讀的村莊匯出上它沒有在幫任何一件 (或匯出沒讀到),沒有再按",
+    "on_night": "遊戲在夜世界,助手在日世界,什麼都沒按",
+    "no_village": "回不到村莊,什麼都沒按",
+    "no_export": "村莊匯出沒讀到,不知道哪幾件在升,什麼都沒按",
+    "no_helper": "村莊裡沒有這個助手,什麼都沒按",
+    "cooling": "它還在冷卻,什麼都沒按",
+    "not_running": "那一格正在升的沒有叫這個名字的,什麼都沒按",
+    "ambiguous": "那一格正在升的有好幾件叫這個名字,分不出是哪一件,什麼都沒按",
+    "no_hut": "助手小屋沒有開在它那一頁 (面板沒開、旁邊沒有它的牌子,或頭像點不過去),沒有按指派",
+    "rows_disagree": "小屋裡指派鈕的數目或位置跟匯出上在升的對不上,沒有按指派",
+    "no_dialog": "按了指派,沒有跳出指派的視窗,沒有再按",
+    "not_ticked": "「將被指派直到升級完成」勾不起來,沒有按確認",
+}
+
+
+def helper_line(report: HelperReport, now: datetime | None = None) -> str:
+    """Which helper was asked to which job, what came of it, and where the export afterwards has it."""
+    said = HELPER_LINES[report.outcome]
+    if report.outcome == "cooling" and report.ready_at is not None:
+        said += f", {_moment(report.ready_at, now or datetime.now().astimezone())} 才能派"
+    if report.helping is not None:
+        said += f"; 匯出上它在幫 {report.helping}, " + (
+            "升完這一級之前每次冷卻完都會回來" if report.recurrent else "只幫這一趟"
+        )
+    return f"{HELPER_NAMES[report.slot]} → {report.item}: {said}"
+
+
+def helper(slot: HelperSlot, item: str, frames: FrameLog) -> HelperReport:
+    """Send the helper that speeds `slot` to the running home village upgrade named `item`.
+
+    **The row is found by its place, not by its name**, since nothing here
+    reads text: the Helper Hut lists the slot's running jobs by time left,
+    longest first, which is the order the export's timers put them in (normal
+    speed, like the hut's countdowns). So the export is read first, and it also
+    says whether the helper can be sent and whether `item` is running, by the
+    game's own name (`zh` or `en`). Before anything that sends the helper is
+    pressed, the list has to line up with the export (as many whole 指派
+    buttons as running jobs, at their heights), 指派 has to raise the dispatch
+    dialog, and 將被指派直到升級完成 has to read ticked, ticking it only where
+    it is not, since the game keeps it as last left. 確認 is pressed once.
+
+    **The export is read again afterwards**, and that is what `sent` rests on:
+    the dialog names the job only in text, so which job the helper took and
+    whether it comes back are read off the row it now works on. Which job to
+    help is the caller's to decide; this hands over the facts.
+    """
+    adb = _controller(frames)
+    settled = _settle_game(adb, WORLD_SETTLE_POLLS, park=False)
+    display = settled or adb.display_for(COC_PACKAGE)
+    frame = adb.screenshot(display, "village")
+    world = current_world(frame) if settled is not None else None
+    running: list[UpgradeTimer] = []
+    ready_at = helping = None
+    recurrent = dialog = None
+    outcome: HelperOutcome
+    if world != "day":
+        outcome = "on_night" if world == "night" else "no_village"
+    elif (village := _exported(adb, display).export) is None:
+        outcome = "no_export"
+    else:
+        cooldown = next(
+            (one for one in helper_cooldowns(village) if one.data_id == UPGRADE_HELPERS[slot]),
+            None,
+        )
+        ready_at = cooldown.ready_at if cooldown is not None else None
+        running = sorted(
+            (one for one in upgrade_timers(village) if one.world == "day" and one.role == slot),
+            key=lambda one: one.timer,
+            reverse=True,
+        )
+        named = [index for index, one in enumerate(running) if item in (one.zh, one.en)]
+        if cooldown is None:
+            outcome = "no_helper"
+        elif cooldown.ready_in > 0:
+            outcome = "cooling"
+        elif len(named) != 1:
+            outcome = "ambiguous" if named else "not_running"
+        else:
+            outcome, frame, dialog = _dispatch(adb, display, slot, named[0], len(running))
+            closed = _close_hut(adb, display)
+            if outcome == "sent":
+                helping, recurrent = _helping(adb, display, slot, closed)
+                outcome = "sent" if helping is not None else "unconfirmed"
+    report = HelperReport(
+        slot=slot,
+        item=item,
+        outcome=outcome,
+        ready_at=ready_at,
+        running=[one.zh or one.en or f"#{one.data_id}" for one in running],
+        helping=helping,
+        recurrent=recurrent,
+        dialog=None if dialog is None else frames.write("dialog", dialog),
+        frame=frames.write("after" if dialog is not None else "refused", frame),
+    )
+    logger.info("Helper: %s", helper_line(report))
+    return report
+
+
+def _dispatch(
+    adb: AdbController, display: DisplayTarget, slot: HelperSlot, index: int, count: int
+) -> tuple[HelperOutcome, bytes, bytes | None]:
+    """Open the hut on `slot`'s helper and press 指派 and 確認 on the `index`th of its `count` jobs.
+
+    Hands back the outcome (`sent` once 確認 is pressed, which the caller
+    holds to the export), the frame it ended on, and the dialog as it stood
+    before 確認, None short of it.
+    """
+
+    def pressed(point: tuple[int, int], label: str) -> bytes:
+        adb.tap(*point, display)
+        time.sleep(PRESS_SETTLE)
+        return adb.screenshot(display, label)
+
+    frame = pressed(BUILD_BUTTON, "panel")
+    if not build_panel_open(frame):
+        return "no_hut", frame, None
+    pressed(PANEL_TABS[slot], "tab")
+    frame = pressed(HELPER_PLATE, "hut")
+    if helper_hut(frame) not in (None, slot):
+        frame = pressed(HUT_PORTRAITS[slot], "portrait")
+    if helper_hut(frame) != slot:
+        return "no_hut", frame, None
+    row, frame = _hut_row(adb, display, frame, index, count)
+    if row is None:
+        return "rows_disagree", frame, None
+    frame = pressed((HUT_ASSIGN_X, row), "dialog")
+    if not helper_prompt(frame):
+        return "no_dialog", frame, None
+    if not helper_ticked(frame):
+        frame = pressed(HELPER_CHECKBOX, "ticked")
+        if not (helper_prompt(frame) and helper_ticked(frame)):
+            return "not_ticked", frame, None
+    return "sent", pressed(HELPER_CONFIRM, "sent"), frame
+
+
+def _hut_row(
+    adb: AdbController, display: DisplayTarget, frame: bytes, index: int, count: int
+) -> tuple[int | None, bytes]:
+    """How high the `index`th of the hut's `count` 指派 buttons is, and the frame that says so.
+
+    A job past the fourth is reached by scrolling to the end of the list. None
+    where the whole buttons the list shows do not line up with `count` jobs.
+    """
+    shown = HUT_ROWS_TOP[:count]
+    if index >= len(HUT_ROWS_TOP):
+        for _ in range(2):
+            adb.swipe(*HUT_SCROLL, SWIPE_TIME, display)
+        time.sleep(PRESS_SETTLE)
+        frame = adb.screenshot(display, "scrolled")
+        shown, index = HUT_ROWS_END, index - (count - len(HUT_ROWS_END))
+    rows = helper_rows(frame)
+    lined_up = len(rows) == len(shown) and all(
+        abs(row - want) <= HUT_ROW_SLACK for row, want in zip(rows, shown, strict=True)
+    )
+    return (rows[index] if lined_up else None), frame
+
+
+def _close_hut(adb: AdbController, display: DisplayTarget) -> bytes:
+    """Shut the dispatch dialog, the hut and the build panel, each by its own X, and hand back what is left."""
+    for _ in range(3):
+        frame = adb.screenshot(display, "closing")
+        if helper_prompt(frame):
+            point = HELPER_PROMPT_CLOSE
+        elif helper_hut(frame) is not None:
+            point = HUT_CLOSE
+        elif build_panel_open(frame):
+            point = PANEL_CLOSE
+        else:
+            return frame
+        adb.tap(*point, display)
+        time.sleep(PRESS_SETTLE)
+    return adb.screenshot(display, "closed")
+
+
+def _helping(
+    adb: AdbController, display: DisplayTarget, slot: HelperSlot, frame: bytes
+) -> tuple[str | None, bool | None]:
+    """The job `slot`'s helper works on, and whether it comes back to it, off an export read now.
+
+    Read only on the home village `frame` shows, for the reason `status` gives.
+    """
+    if current_world(frame) != "day" or (village := _exported(adb, display).export) is None:
+        return None, None
+    row = next(
+        (
+            row
+            for world, _, row in village.rows()
+            if world == "day" and row.role == slot and row.helper_timer
+        ),
+        None,
+    )
+    if row is None:
+        return None, None
+    return row.zh or row.en or f"#{row.data}", bool(row.helper_recurrent)
 
 
 def read(png: bytes) -> FrameReading:

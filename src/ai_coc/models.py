@@ -308,7 +308,7 @@ class ExportRow(BaseModel):
     """One row of a village export: every key the game wrote, and what its tables add to it.
 
     The game's own keys stay as it wrote them, the undeclared ones (`types`,
-    `gear_up`, `helper_recurrent`, whatever a release adds) as extras. **A row
+    `gear_up`, whatever a release adds) as extras. **A row
     writes back only the fields set on it**, so a key the game left out stays
     out and an added one is there only where it applies: `next` is null past
     the last level and absent where the table prices nothing (guardians,
@@ -335,6 +335,9 @@ class ExportRow(BaseModel):
     helper_cooldown: int | None = None
     # Seconds a helper still works on this job, written only while one does.
     helper_timer: int | None = None
+    # True on the job a helper was sent to with 將被指派直到升級完成 ticked; it
+    # stays on the row after the job is done.
+    helper_recurrent: bool | None = None
     zh: str | None = None
     en: str | None = None
     role: UpgradeRole | None = None
@@ -1903,6 +1906,56 @@ class BoostReport(BaseModel):
     frame: Path
 
 
+# The slots a helper of the Helper Hut speeds: the Builder's Apprentice the
+# builders', the Lab Assistant the laboratory's.
+HelperSlot = Literal["builder", "lab"]
+
+# How one `helper` run ended. `sent` and `unconfirmed` pressed 確認, and the
+# export read afterwards does or does not show the helper on a job; every
+# other one pressed nothing that sends a helper.
+HelperOutcome = Literal[
+    "sent",
+    "unconfirmed",
+    "on_night",
+    "no_village",
+    "no_export",
+    "no_helper",
+    "cooling",
+    "not_running",
+    "ambiguous",
+    "no_hut",
+    "rows_disagree",
+    "no_dialog",
+    "not_ticked",
+]
+
+
+class HelperReport(BaseModel):
+    """What one `helper` run did with the helper speeding `slot`, and the frames it left.
+
+    `item` is the name it was asked for. `ready_at` is when the export read
+    first says the helper can be sent, `running` the slot's running jobs as the
+    hut lists them, longest left first. `helping` and `recurrent` come off the
+    export read after the press, on `sent` only: the job the helper works on
+    now, and whether it comes back to it after each cooldown until the level
+    is done. `dialog` is the dispatch dialog as it stood right before 確認,
+    `frame` the screen the hut showed after it, or the one a run that pressed
+    nothing stopped on.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    slot: HelperSlot
+    item: str
+    outcome: HelperOutcome
+    ready_at: str | None = None
+    running: list[str] = Field(default_factory=list)
+    helping: str | None = None
+    recurrent: bool | None = None
+    dialog: Path | None = None
+    frame: Path | None = None
+
+
 RunnerStatus = Literal["running", "stopping", "idle"]
 
 
@@ -2595,19 +2648,28 @@ class LostLogin(BaseModel):
     back: datetime | None = None
 
 
+class TendedHelper(BaseModel):
+    """One helper a session sent: when its `helper` run ended, which slot's, and to which job."""
+
+    at: datetime
+    slot: HelperSlot
+    item: str
+
+
 class TendedReport(BaseModel):
     """What one session did to the village besides farming over a stretch, off the journal alone.
 
     `by` and `since` are what was asked, either None where it was not.
     `upgrades` is each upgrade it confirmed, `boosts` when each clock tower
-    boost it started began, and `lost` each time another device took the
-    login from it, all oldest first.
+    boost it started began, `helpers` each helper it sent, and `lost` each
+    time another device took the login from it, all oldest first.
     """
 
     by: str | None = None
     since: datetime | None = None
     upgrades: list[TendedUpgrade] = Field(default_factory=list)
     boosts: list[datetime] = Field(default_factory=list)
+    helpers: list[TendedHelper] = Field(default_factory=list)
     lost: list[LostLogin] = Field(default_factory=list)
 
 

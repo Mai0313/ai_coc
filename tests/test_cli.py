@@ -76,6 +76,7 @@ MINIMAL: dict[str, list[str]] = {
     "swipe": ["1385", "740", "1385", "240"],
     "confirm": ["--price", "10800"],
     "boost": [],
+    "helper": ["builder", "神盾勇者"],
     "launch": [],
     "donate": [],
     "probe": [],
@@ -663,7 +664,7 @@ class DispatchTests(unittest.TestCase):
             _run_command(_args("tended", "--by", "s1"), self.run)
         claimed.assert_not_called()
         assert listed.call_args.args[0] == "s1"
-        assert out.getvalue() == "- 升級: 0 件\n- 鐘塔: 沒開\n- 被搶登: 沒有\n"
+        assert out.getvalue() == "- 升級: 0 件\n- 鐘塔: 沒開\n- 助手: 沒派\n- 被搶登: 沒有\n"
 
     def test_a_search_for_nothing_is_refused_before_a_run_opens(self) -> None:
         with (
