@@ -93,7 +93,7 @@ uv run --no-sync ai_coc helper cancel apprentice                     # 停掉它
 2. 剩下的工作量不夠一小時就不派, 也不列成選項 (或標明會浪費): `status` 表下「助手一小時抵正常速度」那一行列在「剩不到這麼多的」的就是
 3. 換對象先 `cancel` (它正在做的那一小時, 或冷卻結束到它回去之前), 冷卻完再派: 他改了交代, 或連續指派著的那一件 (「目標」寫著它幾點冷卻完) 在它回去之後一小時內就會好, 下一次回去會浪費; 停不停由你判斷
 
-`outcome`: `sent`、`cancelled` 是按了確認、之後的匯出也對得上: `helping` 是它在幫的那一件, `recurrent` 是連續指派還在不在, 都要跟你要的一樣, 不一樣就停下來跟他講; `dialog` 跟 `frame` 發給他. `unconfirmed` 是按了但之後的匯出看不出來: 重跑 `status` 看, 不要再按. `cooling` (`ready_at` 是幾點能派)、`not_running`、`ambiguous` (同名好幾件)、`no_recurring` 什麼都沒按. `no_hut`、`rows_disagree`、`no_dialog`、`box_stuck` 是畫面對不上, 確認沒按, 視窗已關: 附 `frame` 照 `watch-and-fix` 查.
+`outcome`: `sent`、`cancelled` 是按了確認、之後的匯出也對得上: `helping` 是它在幫的那一件, `recurrent` 是連續指派還在不在, 要跟你要的一樣, 不一樣就停下來跟他講; `dialog` 跟 `frame` 發給他. `sent_elsewhere` 是派出去了但匯出上它在幫別件 (超過四件時小屋跟匯出差一件就會這樣): 這一小時改不了, 跟他講, 連續指派的話照第 3 條換. `unconfirmed` 是按了但之後的匯出看不出來: 重跑 `status` 看, 不要再按. `cooling` (`ready_at` 是幾點能派)、`not_running`、`ambiguous` (同名好幾件)、`no_recurring` 什麼都沒按. `no_hut`、`rows_disagree`、`no_dialog`、`box_stuck` 是畫面對不上, 確認沒按, 視窗已關: 附 `frame` 照 `watch-and-fix` 查.
 
 ## 先確認在哪個村莊, 有沒有空
 

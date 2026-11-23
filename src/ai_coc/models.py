@@ -1926,11 +1926,13 @@ HelperName = Literal["apprentice", "assistant"]
 # recurring dispatch (將被指派直到升級完成) it is on.
 HelperAction = Literal["send", "cancel"]
 
-# How one `helper` run ended. `sent`, `cancelled` and `unconfirmed` pressed the
-# dialog's 確認, and the export read afterwards does or does not show what it
-# was for; every other one pressed nothing that sends or stops a helper.
+# How one `helper` run ended. `sent`, `sent_elsewhere`, `cancelled` and
+# `unconfirmed` pressed the dialog's 確認, and the export read afterwards shows
+# what it was for, the helper on another job, or neither; every other one
+# pressed nothing that sends or stops a helper.
 HelperOutcome = Literal[
     "sent",
+    "sent_elsewhere",
     "cancelled",
     "unconfirmed",
     "on_night",

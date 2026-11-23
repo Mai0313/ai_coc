@@ -951,6 +951,10 @@ class StatusTextTests(unittest.TestCase):
             in day
         )
         assert not [line for line in day if line.startswith("助手:")]
+        # A builder potion with 10 minutes left adds its extra rate for those
+        # 10 minutes alone: 1 + 8 + 9 x 600 / 3600 hours.
+        boosted = report.model_copy(update={"boosts": Boosts(builder_boost=600)})
+        assert "建築工人學徒 10.5 小時、實驗助手 13 小時" in commands.status_text(boosted, NOW)
 
     def test_rows_past_the_window_fold_into_one_line(self) -> None:
         """How the report a stop hands over lists what nobody will continue."""
@@ -1641,7 +1645,8 @@ class UpkeepLineTests(unittest.TestCase):
         self._each(
             commands.HELPER_LINES,
             {
-                "sent": "派出去了",
+                "sent": "派到要的那一件",
+                "sent_elsewhere": "不是要的那一件",
                 "cancelled": "連續指派停了",
                 "unconfirmed": "看不出來",
                 "on_night": "遊戲在夜世界",
@@ -4890,6 +4895,21 @@ class HelperCommandTests(unittest.TestCase):
             None,
             "refused.png",
         )
+
+    def test_a_helper_the_export_afterwards_has_on_another_job_is_said_so(self) -> None:
+        """Past four jobs a list one job off still lines up, so `sent` waits for the export to name it."""
+        _, _, report = self._run(
+            [
+                *OPENING,
+                "helper_hut_builder.png",
+                "helper_dialog.png",
+                "helper_hut_sent.png",
+                "hud_day.png",
+            ],
+            [_helper_export(), _helper_export(cooldown=79800, helped="弓箭女皇")],
+            item="神盾勇者",
+        )
+        assert (report.outcome, report.helping) == ("sent_elsewhere", "弓箭女皇")
 
     def test_a_press_the_export_afterwards_does_not_show_is_unconfirmed(self) -> None:
         _, _, report = self._run(

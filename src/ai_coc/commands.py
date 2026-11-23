@@ -3582,12 +3582,17 @@ def _timer_rows(
     return sorted(rows, key=lambda row: row[0])
 
 
+HOUR = 3600
+
+
 def _helper_lines(report: StatusReport) -> list[str]:
     """What one hour of each helper covers at the export's speed-ups, and the jobs it would outlast.
 
-    The hour runs its slot's job at the speed-up's rate plus the helper's
-    multiplier, so it does that many hours of the job's normal-speed time; a
-    running job with less than that left (`timer`) would end inside the hour.
+    The hour runs its slot's job at one plus the helper's multiplier, and the
+    speed-up's extra rate for as much of the hour as it still runs, so it does
+    that many hours of the job's normal-speed time, as `_real_seconds` counts
+    the two; a running job with less than that left (`timer`) would end inside
+    the hour.
     """
     worth: dict[UpgradeRole, tuple[str, int]] = {}
     for name, slot in HELPER_SLOTS.items():
@@ -3597,19 +3602,17 @@ def _helper_lines(report: StatusReport) -> list[str]:
         if helper is None or helper.multiplier is None:
             continue
         boost, rate = SPEED_UPS[("day", slot)]
-        worth[slot] = (
-            HELPER_NAMES[name],
-            (rate if getattr(report.boosts, boost) else 1) + helper.multiplier,
-        )
+        left = min(getattr(report.boosts, boost) or 0, HOUR)
+        worth[slot] = (HELPER_NAMES[name], (1 + helper.multiplier) * HOUR + (rate - 1) * left)
     if not worth:
         return []
     short = [
         f"{one.zh or one.en or f'#{one.data_id}'} ({ROLE_NAMES[one.role]})"
         for one in report.timers
-        if one.world == "day" and one.role in worth and one.timer < worth[one.role][1] * 3600
+        if one.world == "day" and one.role in worth and one.timer < worth[one.role][1]
     ]
     line = "助手一小時抵正常速度 (照匯出時的藥水): " + "、".join(
-        f"{name} {hours} 小時" for name, hours in worth.values()
+        f"{name} {round(seconds / HOUR, 1):g} 小時" for name, seconds in worth.values()
     )
     return [line + (f"; 剩不到這麼多的: {'、'.join(short)}" if short else "")]
 
@@ -5656,7 +5659,8 @@ HELPER_NAMES: dict[HelperName, str] = {"apprentice": "建築工人學徒", "assi
 # role of the jobs its hut lists.
 HELPER_SLOTS: dict[HelperName, PlateRole] = {"apprentice": "builder", "assistant": "lab"}
 HELPER_LINES: dict[HelperOutcome, str] = {
-    "sent": "按了確認,派出去了",
+    "sent": "按了確認,派到要的那一件了",
+    "sent_elsewhere": "按了確認,派出去了,但匯出上它在幫的不是要的那一件",
     "cancelled": "按了確認,連續指派停了;這一趟照做完,冷卻完不再回去",
     "unconfirmed": "按了確認,但之後讀的村莊匯出上看不出來 (或匯出沒讀到),沒有再按",
     "on_night": "遊戲在夜世界,助手在日世界,什麼都沒按",
@@ -5708,7 +5712,8 @@ def helper(
     game's own name (`zh` or `en`), and which job a recurring dispatch stands
     on. Before `send` presses anything that sends the helper, the list has to
     line up with the export (as many whole 指派 buttons as running jobs, at
-    their heights), 指派 has to raise the dispatch dialog, and
+    their heights, which proves the count only up to the four the hut shows),
+    指派 has to raise the dispatch dialog, and
     將被指派直到升級完成 has to read as `recurring` asks, pressed only where it
     does not, since the game keeps it as each helper last had it. `cancel`
     taps the helper's face on the job's row and presses 確認 on the dialog
@@ -5758,7 +5763,8 @@ def helper(
             )
             closed = _close_hut(adb, display)
             if dialog is not None:
-                helping, recurrent, outcome = _afterwards(adb, display, name, action, closed)
+                target = running[index] if action == "send" else None
+                helping, recurrent, outcome = _afterwards(adb, display, name, target, closed)
     report = HelperReport(
         action=action,
         helper=name,
@@ -5936,14 +5942,16 @@ def _afterwards(
     adb: AdbController,
     display: DisplayTarget,
     name: HelperName,
-    action: HelperAction,
+    target: UpgradeTimer | None,
     frame: bytes,
 ) -> tuple[str | None, bool | None, HelperOutcome]:
     """What an export read now says of `name` after the press: the job it works on, whether one recurs, the outcome.
 
     Read only on the home village `frame` shows, for the reason `status` gives.
-    `send` is `sent` once the helper works on a job, `cancel` `cancelled` once
-    no job of its slot recurs.
+    `send` (the `target` job) is `sent` once the helper works on that job, and
+    `sent_elsewhere` on another, which past four jobs a list the export no
+    longer matches can lead to; `cancel` (no target) is `cancelled` once no
+    job of its slot recurs.
     """
     if current_world(frame) != "day" or (village := _exported(adb, display).export) is None:
         return None, None, "unconfirmed"
@@ -5956,9 +5964,11 @@ def _afterwards(
         None,
     )
     helping = None if row is None else row.zh or row.en or f"#{row.data}"
-    if action == "send":
-        recurs = None if row is None else bool(row.helper_recurrent)
-        return helping, recurs, "unconfirmed" if row is None else "sent"
+    if target is not None:
+        if row is None:
+            return None, None, "unconfirmed"
+        took = "sent" if helping in (target.zh, target.en) else "sent_elsewhere"
+        return helping, bool(row.helper_recurrent), took
     stands = any(
         one.recurring for one in helper_cooldowns(village) if one.data_id == UPGRADE_HELPERS[name]
     )

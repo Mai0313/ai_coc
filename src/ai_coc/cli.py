@@ -231,7 +231,7 @@ COMMANDS = (
             ),
             (
                 "watch",
-                "睡到 --next、--upgrades、--tower、--minutes 裡最早的那個時間才結束，期間在狀態檔記下是誰在盯升級；丟到背景跑，結束時叫醒你",
+                "睡到 --next、--upgrades、--tower、--helpers、--minutes 裡最早的那個時間才結束，期間在狀態檔記下是誰在盯升級；丟到背景跑，結束時叫醒你",
             ),
             (
                 "wait",
