@@ -324,6 +324,7 @@ def upgrade_timers(export: VillageExport) -> list[UpgradeTimer]:
                 helper_until=_clock(export.timestamp + row.helper_timer)
                 if row.helper_timer
                 else None,
+                recurrent=bool(row.helper_recurrent),
                 seconds=seconds,
                 done_at=_clock(export.timestamp + seconds),
             )

@@ -3501,8 +3501,10 @@ def _timer_rows(
 
     Each is the instant it finishes, its three cells, and what its next level
     asks as the tail of the item cell. A helper working on a row is named in
-    its slot with the time its work there ends, and one an old export could
-    not count is said beside the time.
+    its slot with the time its work there ends, or as recurring there between
+    its rounds, and one an old export could not count is said beside the time.
+    A helper with no recurring job is a row of its own, like the clock tower,
+    at the time it can be sent again: one that recurs is already on its job.
     """
     share = report.paid[world].share if world in report.paid else 1.0
     spent = report.timed[world].share if world in report.timed else 1.0
@@ -3512,8 +3514,8 @@ def _timer_rows(
             (
                 index
                 for index, (first, _) in enumerate(merged)
-                if (first.data_id, first.level, first.extra, first.helper_until)
-                == (timer.data_id, timer.level, timer.extra, timer.helper_until)
+                if (first.data_id, first.level, first.extra, first.helper_until, first.recurrent)
+                == (timer.data_id, timer.level, timer.extra, timer.helper_until, timer.recurrent)
                 and timer.seconds - first.seconds <= MERGE_WITHIN
             ),
             None,
@@ -3524,6 +3526,7 @@ def _timer_rows(
             first, count = merged[same]
             merged[same] = (first, count + 1)
     helpers = {helper.data_id: helper.zh or helper.en for helper in report.helpers}
+    recurs = {slot: HELPER_NAMES[name] for name, slot in HELPER_SLOTS.items()}
     rows = [
         (
             done := datetime.fromisoformat(first.done_at),
@@ -3537,6 +3540,8 @@ def _timer_rows(
                 f" ({helpers.get(first.helper) or f'#{first.helper}'}幫到"
                 f"{_moment(first.helper_until, now)})"
                 if first.helper is not None and first.helper_until
+                else f" ({recurs[first.role]}連續指派)"
+                if first.recurrent and first.role in recurs
                 else ""
             ),
             (first.zh or first.en or f"#{first.data_id}")
@@ -3551,16 +3556,13 @@ def _timer_rows(
         ready = datetime.fromisoformat(tower.ready_at)
         when = "現在" if ready <= now else _moment(tower.ready_at, now)
         rows.append((ready, when, "—", "鐘塔冷卻結束", ""))
-    # The helpers live on the home village. A recurring one goes back to its job
-    # on its own some time after its cooldown, which is said beside it.
     for helper in report.helpers if world == "day" else []:
-        if helper.data_id not in UPGRADE_HELPERS.values():
+        if helper.data_id not in UPGRADE_HELPERS.values() or helper.recurring:
             continue
         ready = datetime.fromisoformat(helper.ready_at)
         when = "現在" if ready <= now else _moment(helper.ready_at, now)
         name = helper.zh or helper.en or f"#{helper.data_id}"
-        recurs = f" (連續指派: {helper.recurring})" if helper.recurring else ""
-        rows.append((ready, when, "—", f"{name}冷卻結束{recurs}", ""))
+        rows.append((ready, when, "—", f"{name}冷卻結束", ""))
     return sorted(rows, key=lambda row: row[0])
 
 

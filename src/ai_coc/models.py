@@ -1682,7 +1682,9 @@ class UpgradeTimer(BaseModel):
     bought. `helper` is the data_id of the helper working on it, counted in
     `seconds`, and `helper_until` the instant its work there ends; a row an
     export saved before helper rows carried their `multiplier` has the second
-    without the first, and its helper is not counted.
+    without the first, and its helper is not counted. `recurrent` is a job its
+    slot's helper was sent to with 將被指派直到升級完成 ticked, which it goes
+    back to after each cooldown until this level is done.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -1707,6 +1709,7 @@ class UpgradeTimer(BaseModel):
     boost: str | None = None
     helper: int | None = None
     helper_until: str | None = None
+    recurrent: bool = False
     seconds: int
     done_at: str
 

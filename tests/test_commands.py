@@ -916,8 +916,8 @@ class StatusTextTests(unittest.TestCase):
         ready = self._report(clock_tower=ClockTower(ready_in=0, ready_at=NOW.isoformat()))
         assert "| 現在 | — | 鐘塔冷卻結束 |" in commands.status_text(ready, NOW)
 
-    def test_each_helper_that_speeds_upgrades_is_a_home_village_row_in_its_turn(self) -> None:
-        """Like the clock tower: when it can be sent, and the job a recurring dispatch takes it back to."""
+    def test_a_helper_is_a_row_of_its_own_only_when_it_will_come_free(self) -> None:
+        """Like the clock tower then; one that recurs is said on its job's row between rounds."""
 
         def helper(data_id: int, ready_in: int, recurring: str | None = None) -> HelperCooldown:
             ready_at = (NOW + timedelta(seconds=ready_in)).isoformat()
@@ -930,17 +930,20 @@ class StatusTextTests(unittest.TestCase):
             )
 
         report = self._report(
-            _timer(1, "12:05"),
-            helpers=[helper(93000000, 0), helper(93000001, 600, "野豬騎士"), helper(93000002, 0)],
+            _timer(1, "12:05", recurrent=True),
+            _timer(2, "12:30", role="lab", section="units"),
+            helpers=[helper(93000000, 600, "建築1"), helper(93000001, 0), helper(93000002, 0)],
         )
         day = commands.status_text(report, NOW).split("夜世界")[0].splitlines()
-        assert day[-4:-1] == [
-            "| 現在 | — | 助手93000000冷卻結束 |",
-            "| 今天 12:05 | 工人 | 建築1 (5/10), 下一級: 金幣 1 萬 |",
-            "| 今天 12:10 | — | 助手93000001冷卻結束 (連續指派: 野豬騎士) |",
+        rows = [line for line in day if line.startswith("| ") and "---" not in line]
+        # The recurring one has no row of its own, and the Alchemist and the
+        # Prospector speed nothing.
+        assert rows[1:] == [
+            "| 現在 | — | 助手93000001冷卻結束 |",
+            "| 今天 12:05 | 工人 (建築工人學徒連續指派) | 建築1 (5/10), 下一級: 金幣 1 萬 |",
+            "| 今天 12:30 | 實驗室 | 建築2 (5/10), 下一級: 金幣 1 萬 |",
         ]
-        # The Alchemist and the Prospector speed nothing, and no line repeats the rows.
-        assert "助手93000002" not in "".join(day)
+        # And no line under the table repeats the rows.
         assert not [line for line in day if line.startswith("助手")]
 
     def test_rows_past_the_window_fold_into_one_line(self) -> None:
