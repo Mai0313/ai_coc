@@ -204,6 +204,7 @@ from ai_coc.parsers.building import (
     game_dialog,
     helper_rows,
     sheet_offer,
+    helper_plate,
     helper_prompt,
     helper_ticked,
     selection_row,
@@ -8056,6 +8057,10 @@ class HelperHutTests(unittest.TestCase):
             "helper_hut_sent.png": [],
         }
 
+    def test_only_the_panel_with_a_helper_plate_reads_as_one(self) -> None:
+        plates = {path.name for path in FRAMES.glob("*.png") if helper_plate(path.read_bytes())}
+        assert plates == {"helper_panel_plate.png"}
+
     def test_only_the_dispatch_dialog_reads_as_one(self) -> None:
         prompts = {path.name for path in FRAMES.glob("*.png") if helper_prompt(path.read_bytes())}
         assert prompts == {"helper_dialog.png", "helper_dialog_ticked.png"}
@@ -8457,6 +8462,7 @@ class HomeHudTests(unittest.TestCase):
             "stock_white_behind_dark_bar.png",
             "wall_menu_elixir_only.png",
             "hud_day_lab_panel.png",
+            "helper_panel_plate.png",
             "hud_day_shield_split.png",
             "hud_tip_day_gold_pale.png",
             "hud_tip_day_elixir_pale.png",
@@ -8568,6 +8574,7 @@ class HomeHudTests(unittest.TestCase):
             "hud_day_build_panel.png",
             "hud_day_build_panel_apprentice.png",
             "hud_day_lab_panel.png",
+            "helper_panel_plate.png",
             "hud_night_build_panel.png",
             "night_menu_finishing.png",
             "night_wall_menu.png",

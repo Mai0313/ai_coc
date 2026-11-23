@@ -926,11 +926,12 @@ class StatusTextTests(unittest.TestCase):
                 zh=f"助手{data_id}",
                 ready_in=ready_in,
                 ready_at=ready_at,
+                multiplier=8 if data_id == 93000000 else 12,
                 recurring=recurring,
             )
 
         report = self._report(
-            _timer(1, "12:05", recurrent=True),
+            _timer(1, "12:05", recurrent=True, timer=40_000),
             _timer(2, "12:30", role="lab", section="units"),
             helpers=[helper(93000000, 600, "建築1"), helper(93000001, 0), helper(93000002, 0)],
         )
@@ -940,11 +941,16 @@ class StatusTextTests(unittest.TestCase):
         # Prospector speed nothing.
         assert rows[1:] == [
             "| 現在 | — | 助手93000001冷卻結束 |",
-            "| 今天 12:05 | 工人 (建築工人學徒連續指派) | 建築1 (5/10), 下一級: 金幣 1 萬 |",
+            "| 今天 12:05 | 工人 (建築工人學徒連續指派, 今天 12:10冷卻完) | 建築1 (5/10), 下一級: 金幣 1 萬 |",
             "| 今天 12:30 | 實驗室 | 建築2 (5/10), 下一級: 金幣 1 萬 |",
         ]
-        # And no line under the table repeats the rows.
-        assert not [line for line in day if line.startswith("助手")]
+        # What an hour of each covers, and the job too short for one: the
+        # research has 1 s of normal-speed time left, the building 11 hours.
+        assert (
+            "助手一小時抵正常速度 (照匯出時的藥水): 建築工人學徒 9 小時、實驗助手 13 小時; 剩不到這麼多的: 建築2 (實驗室)"
+            in day
+        )
+        assert not [line for line in day if line.startswith("助手:")]
 
     def test_rows_past_the_window_fold_into_one_line(self) -> None:
         """How the report a stop hands over lists what nobody will continue."""
@@ -3527,10 +3533,12 @@ class WatchTests(unittest.TestCase):
 
         timers = [_timer(1, at(120)), _timer(2, at(60), role="lab"), _timer(4, at(3), role="pet")]
         tower = ClockTower(ready_in=1, ready_at=at(50))
-        # The Alchemist's is left out, and so is a helper that can be sent now.
+        # The Alchemist's is left out, and so is a helper on a recurring
+        # dispatch, which goes back by itself, and one that can be sent now.
         helpers = [
             HelperCooldown(data_id=93000002, ready_in=60, ready_at=at(1)),
             HelperCooldown(data_id=93000000, ready_in=2400, ready_at=at(40)),
+            HelperCooldown(data_id=93000001, ready_in=1200, ready_at=at(20), recurring="X"),
             HelperCooldown(data_id=93000001, ready_in=0, ready_at=at(-5)),
         ]
 
@@ -4721,13 +4729,9 @@ def _helper_export(
     return ExportReport(outcome="exported", export=merge(document, None, 1795452818))
 
 
-# What a run that opens the hut on the Builder's Apprentice sees first: the
-# village, the panel opened and turned to its tab, then the hut on its page.
-OPENING = [
-    "hud_day.png",
-    "hud_day_build_panel_apprentice.png",
-    "hud_day_build_panel_apprentice.png",
-]
+# What a run that opens the hut sees first: the village, the panel opened,
+# then turned to the helper's tab with its plate, before the hut on its page.
+OPENING = ["hud_day.png", "hud_day_build_panel.png", "helper_panel_plate.png"]
 
 
 class HelperCommandTests(unittest.TestCase):
@@ -4807,7 +4811,7 @@ class HelperCommandTests(unittest.TestCase):
             ("helper_dialog_ticked.png", "helper_dialog.png", False, True),
             ("helper_dialog.png", "helper_hut_sent.png", False, False),
         ):
-            frames = ["hud_day.png", "hud_day_lab_panel.png", "hud_day_lab_panel.png"]
+            frames = ["hud_day.png", "hud_day_lab_panel.png", "helper_panel_plate.png"]
             adb, _, report = self._run(
                 [
                     *frames,
@@ -4955,6 +4959,16 @@ class HelperCommandTests(unittest.TestCase):
         assert self._taps(adb)[-3:] == [(1211, 140), (1413, 70), (1572, 30)]
         assert walk.call_count == 1
         assert (report.outcome, report.dialog) == ("no_dialog", None)
+
+    def test_no_plate_beside_the_tab_takes_no_tap_on_the_map_under_it(self) -> None:
+        """A helper cooling down floats none, and the map lies under the plate's point."""
+        adb, _, report = self._run(
+            [*OPENING[:2], *["hud_day_build_panel_apprentice.png"] * 2, "hud_day.png"],
+            [_helper_export(recurs="神盾勇者")],
+            action="cancel",
+        )
+        assert self._taps(adb) == [(1495, 800), (1222, 850), (1572, 30)]
+        assert (report.outcome, report.dialog) == ("no_hut", None)
 
     def test_a_stop_dialog_left_standing_is_shut_by_its_cancel(self) -> None:
         """The hut's X shuts the hut under it and leaves the dialog up (2026-11-24)."""

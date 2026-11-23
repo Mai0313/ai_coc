@@ -257,6 +257,7 @@ from ai_coc.parsers.building import (
     helper_rows,
     sheet_offer,
     goblin_offer,
+    helper_plate,
     goblin_prompt,
     green_buttons,
     helper_prompt,
@@ -1833,11 +1834,16 @@ def wake_at(  # noqa: PLR0913 - one per watch flag
 
 
 def _helper_wakes(village: VillageExport, now: datetime) -> list[tuple[datetime, str]]:
-    """When the Builder's Apprentice and the Lab Assistant can next be sent, past `now` only."""
+    """When the Builder's Apprentice and the Lab Assistant can next be sent, past `now` only.
+
+    One on a recurring dispatch goes back to its job by itself, so its
+    cooldown is nothing to wake for, as it is no row of `status`'s table.
+    """
     return [
         (at, helper.en or str(helper.data_id))
         for helper in helper_cooldowns(village)
         if helper.data_id in UPGRADE_HELPERS.values()
+        and not helper.recurring
         and (at := datetime.fromisoformat(helper.ready_at)) > now
     ]
 
@@ -3451,7 +3457,11 @@ def status_text(
             shown += ["", f"之後還有 {names}, 最晚 {later[-1][1]}"]
         if not rows:
             shown.append("沒有在升的")
-        for block in (_short_lines(report, world, now), _boost_lines(report, world, now)):
+        for block in (
+            _short_lines(report, world, now),
+            _boost_lines(report, world, now),
+            _helper_lines(report) if world == "day" else [],
+        ):
             shown += ["", *block] if block else []
         shown += noted
     shown += ["", f"交代版本: {report.notes.revision}"]
@@ -3526,7 +3536,13 @@ def _timer_rows(
             first, count = merged[same]
             merged[same] = (first, count + 1)
     helpers = {helper.data_id: helper.zh or helper.en for helper in report.helpers}
-    recurs = {slot: HELPER_NAMES[name] for name, slot in HELPER_SLOTS.items()}
+    names = {slot: HELPER_NAMES[name] for name, slot in HELPER_SLOTS.items()}
+    back = {
+        slot: _moment(helper.ready_at, now)
+        for helper in report.helpers
+        for name, slot in HELPER_SLOTS.items()
+        if helper.data_id == UPGRADE_HELPERS[name]
+    }
     rows = [
         (
             done := datetime.fromisoformat(first.done_at),
@@ -3540,8 +3556,8 @@ def _timer_rows(
                 f" ({helpers.get(first.helper) or f'#{first.helper}'}幫到"
                 f"{_moment(first.helper_until, now)})"
                 if first.helper is not None and first.helper_until
-                else f" ({recurs[first.role]}連續指派)"
-                if first.recurrent and first.role in recurs
+                else f" ({names[first.role]}連續指派, {back.get(first.role, '—')}冷卻完)"
+                if first.recurrent and first.role in names
                 else ""
             ),
             (first.zh or first.en or f"#{first.data_id}")
@@ -3564,6 +3580,38 @@ def _timer_rows(
         name = helper.zh or helper.en or f"#{helper.data_id}"
         rows.append((ready, when, "—", f"{name}冷卻結束", ""))
     return sorted(rows, key=lambda row: row[0])
+
+
+def _helper_lines(report: StatusReport) -> list[str]:
+    """What one hour of each helper covers at the export's speed-ups, and the jobs it would outlast.
+
+    The hour runs its slot's job at the speed-up's rate plus the helper's
+    multiplier, so it does that many hours of the job's normal-speed time; a
+    running job with less than that left (`timer`) would end inside the hour.
+    """
+    worth: dict[UpgradeRole, tuple[str, int]] = {}
+    for name, slot in HELPER_SLOTS.items():
+        helper = next(
+            (one for one in report.helpers if one.data_id == UPGRADE_HELPERS[name]), None
+        )
+        if helper is None or helper.multiplier is None:
+            continue
+        boost, rate = SPEED_UPS[("day", slot)]
+        worth[slot] = (
+            HELPER_NAMES[name],
+            (rate if getattr(report.boosts, boost) else 1) + helper.multiplier,
+        )
+    if not worth:
+        return []
+    short = [
+        f"{one.zh or one.en or f'#{one.data_id}'} ({ROLE_NAMES[one.role]})"
+        for one in report.timers
+        if one.world == "day" and one.role in worth and one.timer < worth[one.role][1] * 3600
+    ]
+    line = "助手一小時抵正常速度 (照匯出時的藥水): " + "、".join(
+        f"{name} {hours} 小時" for name, hours in worth.values()
+    )
+    return [line + (f"; 剩不到這麼多的: {'、'.join(short)}" if short else "")]
 
 
 def _next_cost(timer: UpgradeTimer, share: float) -> dict[str, int]:
@@ -5757,11 +5805,16 @@ def _press(
 
 
 def _open_hut(adb: AdbController, display: DisplayTarget, name: HelperName) -> tuple[bool, bytes]:
-    """Open the Helper Hut on `name`'s page off the plate beside its tab, and the frame that says whether it did."""
+    """Open the Helper Hut on `name`'s page off the plate beside its tab, and the frame that says whether it did.
+
+    No plate, no tap: a helper cooling down floats none, and the point is the map.
+    """
     frame = _press(adb, display, BUILD_BUTTON, "panel")
     if not build_panel_open(frame):
         return False, frame
-    _press(adb, display, PANEL_TABS[HELPER_SLOTS[name]], "tab")
+    frame = _press(adb, display, PANEL_TABS[HELPER_SLOTS[name]], "tab")
+    if not helper_plate(frame):
+        return False, frame
     frame = _press(adb, display, HELPER_PLATE, "hut")
     if helper_hut(frame) not in (None, name):
         frame = _press(adb, display, HUT_PORTRAITS[name], "portrait")

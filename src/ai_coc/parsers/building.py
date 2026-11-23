@@ -935,10 +935,20 @@ def goblin_offer(png: bytes) -> GoblinOffer | None:
 
 
 # **The Helper Hut's window**, which the plate the build panel floats left of
-# itself opens while the open tab's helper can be sent (可用 beside its face,
-# 2026-11-24): the builders' tab floats the Builder's Apprentice's, the
-# laboratory's the Lab Assistant's, both at this point.
+# itself opens (2026-11-24): the builders' tab floats the Builder's
+# Apprentice's, the laboratory's the Lab Assistant's, both at this point. It
+# shows while the helper can be sent (可用 beside its face) or works (its
+# countdown), and not while it cools down, when the map lies under the point.
+# So it is read before it is tapped: the face's yellow headgear and the white
+# writing beside it. Over every panel frame committed or recorded, the plate
+# reads 0.240 to 0.296 yellow and 0.025 to 0.098 white, and no frame without
+# it passes both: the most yellow reads 0.185 (with no white), the most white
+# 0.037 (with 0.045 yellow).
 HELPER_PLATE = (1060, 377)
+PLATE_FACE_BOX = (1100, 345, 1150, 380)
+PLATE_TEXT_BOX = (990, 365, 1095, 392)
+PLATE_YELLOW = 0.21
+PLATE_WHITE = 0.015
 # Its X sits where a home village sheet's does (0.273 red in this box on the
 # hut, 0.247 on `hud_settings`, the sheets 0.273), so what tells the hut is the
 # white frame round the portrait of the helper it shows: 0.677 white along the
@@ -994,6 +1004,16 @@ HELPER_CONFIRM = (840, 715)
 HELPER_CHECKBOX = (511, 588)
 HELPER_CHECK_BOX = (485, 560, 540, 615)
 HELPER_CHECK_GREEN = 0.12
+
+
+def helper_plate(png: bytes) -> bool:
+    """Whether the build panel floats the open tab's helper plate beside itself."""
+    image = open_frame(png)
+    return (
+        _share(image, PLATE_FACE_BOX, lambda r, g, b: r > 200 and 120 < g < 215 and b < 120)
+        >= PLATE_YELLOW
+        and _share(image, PLATE_TEXT_BOX, lambda r, g, b: min(r, g, b) >= 235) >= PLATE_WHITE
+    )
 
 
 def helper_hut(png: bytes) -> HelperName | None:
