@@ -48,10 +48,10 @@ kind = "nothing_claims"
 
 [[checks]]
 id = "watch-five"
-what = "sleeps five minutes on a watch with no upgrade or tower wake, still farming"
+what = "sleeps five minutes on a watch with no upgrade, tower or helper wake, still farming"
 anchor = [".agents/skills/takeover/SKILL.md", "重掛 `ai_coc watch --minutes 5 --hold`"]
 kind = "called"
-calls = { command = "watch", args = { minutes = 5, farms = true }, unset = ["upgrades", "tower", "next"] }
+calls = { command = "watch", args = { minutes = 5, farms = true }, unset = ["upgrades", "tower", "helpers", "next"] }
 
 [[checks]]
 id = "watch-holds"

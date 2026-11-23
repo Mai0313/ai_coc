@@ -108,9 +108,9 @@ pattern = "先不要動"
 [[checks]]
 id = "watch"
 what = "sleeps on one watch that works out the wake itself"
-anchor = [".agents/skills/takeover/SKILL.md", "ai_coc watch --upgrades --lead 5 --tower --minutes 180 --farms"]
+anchor = [".agents/skills/takeover/SKILL.md", "ai_coc watch --upgrades --lead 5 --tower --helpers --minutes 180 --farms"]
 kind = "called"
-calls = { command = "watch", args = { upgrades = [], lead = 5, tower = true, minutes = 180, farms = true }, patterns = { about = '\S' } }
+calls = { command = "watch", args = { upgrades = [], lead = 5, tower = true, helpers = true, minutes = 180, farms = true }, patterns = { about = '\S' } }
 
 [[checks]]
 id = "watch-mission"

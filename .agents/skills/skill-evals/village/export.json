@@ -30,6 +30,7 @@
       {
         "data": 93000000,
         "lvl": 8,
+        "helper_cooldown": 50000,
         "zh": "建築工人學徒",
         "en": "Builder's Apprentice",
         "max_lvl": 8,
@@ -38,6 +39,7 @@
       {
         "data": 93000001,
         "lvl": 12,
+        "helper_cooldown": 60000,
         "zh": "實驗助手",
         "en": "Lab Assistant",
         "max_lvl": 12,

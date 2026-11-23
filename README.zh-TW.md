@@ -94,7 +94,8 @@ ai_coc confirm --price 10800                 # 確認視窗要的價格剛好是
 ai_coc confirm --price 1600000 --pay gold    # 從面板選起來的那面牆, 用金幣付
 ai_coc confirm --price 10800 --item "加農炮 12 級"  # 一樣, 再把買的是什麼記進紀錄給 tended 列
 ai_coc listprice --day                      # 面板上的價格旁沒有劃掉的原價了: status 不再照之前的折扣估
-ai_coc helper builder 神盾勇者               # 派建築工人學徒 (lab 是實驗助手) 去幫日世界那件正在升的, 勾著「將被指派直到升級完成」; 不花資源
+ai_coc helper send apprentice 神盾勇者 --recurring  # 派建築工人學徒 (assistant 是實驗助手) 去幫日世界那件正在升的; --recurring 勾「將被指派直到升級完成」, 冷卻完自己回去; 不花資源
+ai_coc helper cancel apprentice              # 停掉它的連續指派: 正在做的這一小時照做完, 冷卻完不再回去
 ```
 
 升級都走建造面板, 城牆也是: `tap` 跟 `swipe` 負責點跟捲, 並留下按完的畫面; `confirm` 是唯一會花錢的那一下, 只有確認視窗要的價格跟給的一樣、而且是金幣聖水黑水才按。加 `--pay` 時從面板點出來的城牆選單開始: 那顆升級鈕要的價格跟給的一樣、而且買得起才按, 再按它跳出來的確認視窗或批次的對話框。
@@ -105,7 +106,7 @@ ai_coc helper builder 神盾勇者               # 派建築工人學徒 (lab �
 ai_coc collect                        # 把有東西的採集器全部收掉
 ai_coc status                         # 兩個世界的升級實際幾點好（藥水算進去），加上這個世界的倉庫、寶石跟護盾，每個世界印成一張表，每件附下一級要多少、要多久（照那個世界一天內最近一次實付的折數估），三小時內到點的都續升而倉庫付不完的每一項另印一行，還有還在跑的藥水，跟每個世界用 `note` 記下的交代；--json 印欄位
 ai_coc status --last                  # 不碰遊戲，從存下的最新匯出印同樣的表；--within 24 把之後才好的併成一行
-ai_coc watch --upgrades --lead 5 --tower --minutes 180   # 睡到這幾個 (或 --next) 裡最早的那個時間才結束，期間在 state.json 記下是誰在盯升級；丟到背景跑
+ai_coc watch --upgrades --lead 5 --tower --helpers --minutes 180   # 睡到這幾個 (或 --next) 裡最早的那個時間才結束，期間在 state.json 記下是誰在盯升級；丟到背景跑
 ai_coc note add "..." --seen 3fa2 --day   # 在 state.json 記下使用者對一個世界的一條交代；`note` 連同交代版本列出來，`note done 1 --seen 3fa2 --day` 刪掉一條；沒帶現在的版本就什麼都不改
 ai_coc donate                         # 部落裡有人要兵就捐
 ai_coc donate --dry-run               # 走完整個流程但停在真的捐出去之前

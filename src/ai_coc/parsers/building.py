@@ -30,7 +30,7 @@ from PIL import Image
 from ai_coc.models import (
     World,
     GameDialog,
-    HelperSlot,
+    HelperName,
     SheetOffer,
     GoblinOffer,
     PanelWallMenu,
@@ -947,12 +947,15 @@ HELPER_PLATE = (1060, 377)
 # Builder's Apprentice (8), then the Alchemist and the Prospector.
 HUT_X_BOX = (1390, 47, 1436, 93)
 HUT_X_RED = 0.2
-HUT_RIMS: dict[HelperSlot, tuple[int, int, int, int]] = {
-    "lab": (190, 694, 290, 700),
-    "builder": (330, 694, 430, 700),
+HUT_RIMS: dict[HelperName, tuple[int, int, int, int]] = {
+    "assistant": (190, 694, 290, 700),
+    "apprentice": (330, 694, 430, 700),
 }
 HUT_RIM_WHITE = 0.5
-HUT_PORTRAITS: dict[HelperSlot, tuple[int, int]] = {"lab": (240, 760), "builder": (380, 760)}
+HUT_PORTRAITS: dict[HelperName, tuple[int, int]] = {
+    "assistant": (240, 760),
+    "apprentice": (380, 760),
+}
 HUT_CLOSE = (1413, 70)
 # Under 進行中的升級 each running job of the slot is a row with its green 指派
 # on the right, longest time left first, four rows showing at once. A whole
@@ -993,17 +996,17 @@ HELPER_CHECK_BOX = (485, 560, 540, 615)
 HELPER_CHECK_GREEN = 0.12
 
 
-def helper_hut(png: bytes) -> HelperSlot | None:
+def helper_hut(png: bytes) -> HelperName | None:
     """Whose page the Helper Hut's window is open on, or None where it is not open on one of the two."""
     image = open_frame(png)
     if _share(image, HUT_X_BOX, lambda r, g, b: r >= 180 and g <= 80 and b <= 80) < HUT_X_RED:
         return None
     white = {
-        slot: _share(image, box, lambda r, g, b: min(r, g, b) >= 245)
-        for slot, box in HUT_RIMS.items()
+        name: _share(image, box, lambda r, g, b: min(r, g, b) >= 245)
+        for name, box in HUT_RIMS.items()
     }
-    slot = max(white, key=lambda one: white[one])
-    return slot if white[slot] >= HUT_RIM_WHITE else None
+    shown = max(white, key=lambda one: white[one])
+    return shown if white[shown] >= HUT_RIM_WHITE else None
 
 
 def helper_rows(png: bytes) -> list[int]:
@@ -1030,6 +1033,38 @@ def helper_prompt(png: bytes) -> bool:
 def helper_ticked(png: bytes) -> bool:
     """Whether 將被指派直到升級完成 is ticked on the dispatch dialog."""
     return _share(open_frame(png), HELPER_CHECK_BOX, _goblin_green) >= HELPER_CHECK_GREEN
+
+
+# **A recurring dispatch is stopped from the helper's face on the job's row**,
+# which carries a circling arrow while it recurs (2026-11-24, the helper at
+# work, its row first in the list). The tap raises 要停止連續作業嗎？, the
+# game's own two-button dialog: its 確認 stops the recurrence and leaves the
+# hour of work running and the cooldown as they are. Its boxes read exactly as
+# the wall dialogs' do (1.000 pale, 0.540 orange, 0.320 green), over the hut or
+# over the panel, so nothing tells the two questions apart and `helper` presses
+# its 確認 only right after its own tap on the face raised it. No other frame
+# passes two of the three: next come 0.066 orange on `battle_in_progress` and
+# 0.417 green on `goblin_builder_two_buttons`, whose panel box reads 0.601.
+# `game_dialog` misses it over the hut, whose grass and bars lie inside its span.
+HUT_RECURRING = (1345, 375)
+STOP_PANEL_BOX = (445, 232, 1165, 252)
+STOP_CANCEL_BOX = (500, 545, 750, 615)
+STOP_CONFIRM_BOX = (850, 545, 1100, 615)
+STOP_PALE = 0.95
+STOP_ORANGE = 0.4
+STOP_GREEN = 0.25
+STOP_CANCEL = (623, 580)
+STOP_CONFIRM = (973, 580)
+
+
+def helper_stop_prompt(png: bytes) -> bool:
+    """Whether the two-button dialog that stops a recurring dispatch is up, whatever lies behind it."""
+    image = open_frame(png)
+    return (
+        _share(image, STOP_PANEL_BOX, _goblin_pale) >= STOP_PALE
+        and _share(image, STOP_CANCEL_BOX, _is_cancel) >= STOP_ORANGE
+        and _share(image, STOP_CONFIRM_BOX, _goblin_green) >= STOP_GREEN
+    )
 
 
 # **A wall picked off the build panel opens a menu of its own beside it**, in

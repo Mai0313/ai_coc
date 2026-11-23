@@ -1726,7 +1726,12 @@ class ClockTower(BaseModel):
 
 
 class HelperCooldown(BaseModel):
-    """When one helper of the Helper Hut can be sent again; `ready_in` 0 is now."""
+    """When one helper of the Helper Hut can be sent again; `ready_in` 0 is now.
+
+    `multiplier` is the extra work per second its level adds to the slot it
+    speeds, and `recurring` the running job of that slot it was sent to with
+    將被指派直到升級完成 ticked, which it goes back to after its cooldown.
+    """
 
     model_config = ConfigDict(frozen=True)
 
@@ -1736,6 +1741,8 @@ class HelperCooldown(BaseModel):
     level: int | None = None
     ready_in: int
     ready_at: str
+    multiplier: int | None = None
+    recurring: str | None = None
 
 
 class PaidShare(BaseModel):
@@ -1906,15 +1913,22 @@ class BoostReport(BaseModel):
     frame: Path
 
 
-# The slots a helper of the Helper Hut speeds: the Builder's Apprentice the
-# builders', the Lab Assistant the laboratory's.
-HelperSlot = Literal["builder", "lab"]
+# The Helper Hut's helpers `helper` drives: the Builder's Apprentice, which
+# speeds the builders' jobs, and the Lab Assistant, the laboratory's. The hut
+# has two more, the Alchemist and the Prospector, which convert resources
+# rather than speed a job; one added later gets a name here and an action of
+# its own.
+HelperName = Literal["apprentice", "assistant"]
+# What `helper` does with one: `send` it to a running job, `cancel` the
+# recurring dispatch (將被指派直到升級完成) it is on.
+HelperAction = Literal["send", "cancel"]
 
-# How one `helper` run ended. `sent` and `unconfirmed` pressed 確認, and the
-# export read afterwards does or does not show the helper on a job; every
-# other one pressed nothing that sends a helper.
+# How one `helper` run ended. `sent`, `cancelled` and `unconfirmed` pressed the
+# dialog's 確認, and the export read afterwards does or does not show what it
+# was for; every other one pressed nothing that sends or stops a helper.
 HelperOutcome = Literal[
     "sent",
+    "cancelled",
     "unconfirmed",
     "on_night",
     "no_village",
@@ -1923,30 +1937,35 @@ HelperOutcome = Literal[
     "cooling",
     "not_running",
     "ambiguous",
+    "no_recurring",
     "no_hut",
     "rows_disagree",
     "no_dialog",
-    "not_ticked",
+    "box_stuck",
 ]
 
 
 class HelperReport(BaseModel):
-    """What one `helper` run did with the helper speeding `slot`, and the frames it left.
+    """What one `helper` run did with one helper, and the frames it left.
 
-    `item` is the name it was asked for. `ready_at` is when the export read
-    first says the helper can be sent, `running` the slot's running jobs as the
-    hut lists them, longest left first. `helping` and `recurrent` come off the
-    export read after the press, on `sent` only: the job the helper works on
-    now, and whether it comes back to it after each cooldown until the level
-    is done. `dialog` is the dispatch dialog as it stood right before 確認,
-    `frame` the screen the hut showed after it, or the one a run that pressed
-    nothing stopped on.
+    `item` is the job: the name `send` was given, or the job whose recurring
+    dispatch `cancel` found. `recurring` is what `send` was asked to leave
+    將被指派直到升級完成 at. `ready_at` is when the export read first says the
+    helper can be sent, `running` the slot's running jobs as the hut lists
+    them, longest left first. `helping` and `recurrent` come off the export
+    read after the press: the job the helper works on now, and whether a
+    recurring dispatch stands for it after this run (on `send`, the job it
+    went to carries one; on `cancel`, any job of its slot still does). `dialog`
+    is the dialog as it stood right before its 確認, `frame` the screen after
+    that press, or the one a run that pressed nothing stopped on.
     """
 
     model_config = ConfigDict(frozen=True)
 
-    slot: HelperSlot
-    item: str
+    action: HelperAction
+    helper: HelperName
+    item: str | None = None
+    recurring: bool = False
     outcome: HelperOutcome
     ready_at: str | None = None
     running: list[str] = Field(default_factory=list)
@@ -2649,11 +2668,12 @@ class LostLogin(BaseModel):
 
 
 class TendedHelper(BaseModel):
-    """One helper a session sent: when its `helper` run ended, which slot's, and to which job."""
+    """One helper a session sent or stopped: when its `helper` run ended, which, and its job."""
 
     at: datetime
-    slot: HelperSlot
-    item: str
+    action: HelperAction
+    helper: HelperName
+    item: str | None = None
 
 
 class TendedReport(BaseModel):
@@ -2661,7 +2681,7 @@ class TendedReport(BaseModel):
 
     `by` and `since` are what was asked, either None where it was not.
     `upgrades` is each upgrade it confirmed, `boosts` when each clock tower
-    boost it started began, `helpers` each helper it sent, and `lost` each
+    boost it started began, `helpers` each helper it sent or stopped, and `lost` each
     time another device took the login from it, all oldest first.
     """
 

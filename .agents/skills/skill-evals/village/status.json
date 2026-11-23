@@ -358,16 +358,16 @@
       "zh": "建築工人學徒",
       "en": "Builder's Apprentice",
       "level": 8,
-      "ready_in": 0,
-      "ready_at": "2026-11-12T16:11:26+08:00"
+      "ready_in": 50000,
+      "ready_at": "2026-11-13T06:04:46+08:00"
     },
     {
       "data_id": 93000001,
       "zh": "實驗助手",
       "en": "Lab Assistant",
       "level": 12,
-      "ready_in": 0,
-      "ready_at": "2026-11-12T16:11:26+08:00"
+      "ready_in": 60000,
+      "ready_at": "2026-11-13T08:51:26+08:00"
     },
     {
       "data_id": 93000002,

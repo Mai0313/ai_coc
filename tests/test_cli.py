@@ -76,7 +76,7 @@ MINIMAL: dict[str, list[str]] = {
     "swipe": ["1385", "740", "1385", "240"],
     "confirm": ["--price", "10800"],
     "boost": [],
-    "helper": ["builder", "神盾勇者"],
+    "helper": ["send", "apprentice", "神盾勇者"],
     "launch": [],
     "donate": [],
     "probe": [],
@@ -676,6 +676,22 @@ class DispatchTests(unittest.TestCase):
             cli.main()
         assert stopped.value.code != 0
         opened.open.assert_not_called()
+
+    def test_a_helper_line_whose_job_or_flag_does_not_fit_its_action_opens_no_run(self) -> None:
+        for line in (
+            ["helper", "send", "apprentice"],
+            ["helper", "cancel", "assistant", "野豬騎士"],
+            ["helper", "cancel", "assistant", "--recurring"],
+        ):
+            with (
+                patch.object(sys, "argv", ["ai_coc", *line]),
+                patch.object(cli, "RunLog") as opened,
+                patch("sys.stderr", new_callable=io.StringIO),
+                pytest.raises(SystemExit) as stopped,
+            ):
+                cli.main()
+            assert stopped.value.code != 0, line
+            opened.open.assert_not_called()
 
     def test_a_queue_a_stop_ended_answers_rather_than_crashes(self) -> None:
         """`takeover` reads a run with no `result.json` as a killed process, so the

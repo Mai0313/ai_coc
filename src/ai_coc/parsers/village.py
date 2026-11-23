@@ -358,8 +358,15 @@ def helper_cooldowns(export: VillageExport) -> list[HelperCooldown]:
 
     One with no `helper_cooldown` can be sent now: the Lab Assistant carried
     none in both exports of 2026-11-07, while the player had not sent it, and
-    69437 the next day, after he had.
+    69437 the next day, after he had. Its recurring job is the running one of
+    its slot that carries `helper_recurrent`; a finished job keeps the key too
+    (攻城滾木車 on 2026-11-12), so one with no `timer` is none.
     """
+    recurring = {
+        row.role: row.zh or row.en or f"#{row.data}"
+        for world, _, row in export.rows()
+        if world == "day" and row.role and row.timer is not None and row.helper_recurrent
+    }
     return sorted(
         (
             HelperCooldown(
@@ -369,6 +376,8 @@ def helper_cooldowns(export: VillageExport) -> list[HelperCooldown]:
                 level=row.lvl,
                 ready_in=row.helper_cooldown or 0,
                 ready_at=_clock(export.timestamp + (row.helper_cooldown or 0)),
+                multiplier=row.multiplier,
+                recurring=recurring.get(row.speeds) if row.speeds else None,
             )
             for row in export.day.get("helpers", [])
         ),
