@@ -10,7 +10,7 @@
 
 **在主 checkout (預設分支) 上跑, 每個指令都寫成 `uv run --no-sync ai_coc …`**, `stop` 也一樣: 開發在另一個 worktree 做, 理由在 `AGENTS.md` 的 The loop runs the main checkout. 真的要同步 (merge 帶進新的依賴, 指令 import 失敗) 就等手上的程序結束再 `uv sync`; sync 要等沒有任何 `ai_coc` 程序在跑, 睡著的 `ai_coc watch` 也算, 那不是你的就停下來回報.
 
-**每一個 `ai_coc` 指令都帶 `--agent`、`--session`、`--mission`**: 你自己的名字 (`claude-code`、`antigravity`、`codex`), 派你的 session id 加上 `-farm` 後綴 (`<派工的 session id>-farm`), 這一趟在做什麼 (一句話). 一定要跟派工的不一樣: 排隊不看 session, 借用卻是照 session 認借的人, 用同一個 id 的話, 你不帶 `--yield` 的指令會被當成借的那一邊, 把借用一直撐著不還給你自己的迴圈.
+**每一個 `ai_coc` 指令都帶 `--agent`、`--session`、`--mission`**: 你自己的名字 (`claude-code`、`antigravity`、`codex`), `--session` 的值, 這一趟在做什麼 (一句話). 交辦已經給了 `--session` 的值 (已經帶 `-farm`) 就照抄, 每一個指令都用那個值, `capture` 也一樣, 不要再加一個 `-farm`; 沒有交辦可抄 (派工的 session 自己照這份跑) 才自己組成 `<派工的 session id>-farm`. 一定要跟派工的不一樣: 排隊不看 session, 借用卻是照 session 認借的人, 用同一個 id 的話, 你不帶 `--yield` 的指令會被當成借的那一邊, 把借用一直撐著不還給你自己的迴圈.
 
 **會佔模擬器的指令都帶 `--yield`**, `world --day` / `--night` 跟 `attack` 都要: 那是背景工作, 不會把別人的 run 停掉, 模擬器有人在用就排隊等; 別人要用時它是被借走, 不是被停掉 (見「被叫停, 被借走」). 不佔模擬器的 `capture`、`wait` 跟 `stop` 沒有這個旗標, 帶了指令會被拒絕 (exit code 2, 什麼都沒跑).
 
