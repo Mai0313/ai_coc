@@ -3533,8 +3533,9 @@ class WatchTests(unittest.TestCase):
 
         timers = [_timer(1, at(120)), _timer(2, at(60), role="lab"), _timer(4, at(3), role="pet")]
         tower = ClockTower(ready_in=1, ready_at=at(50))
-        # The Alchemist's is left out, and so is a helper on a recurring
-        # dispatch, which goes back by itself, and one that can be sent now.
+        # The Alchemist's is left out, and so is one that can be sent now; a
+        # recurring one counts, since its dispatch is changed only before it
+        # goes back.
         helpers = [
             HelperCooldown(data_id=93000002, ready_in=60, ready_at=at(1)),
             HelperCooldown(data_id=93000000, ready_in=2400, ready_at=at(40)),
@@ -3553,7 +3554,7 @@ class WatchTests(unittest.TestCase):
             patch.object(commands, "clock_tower", return_value=tower),
             patch.object(commands, "helper_cooldowns", return_value=helpers),
         ):
-            assert minutes([], ["builder"], lead=5, helpers=True) == 40
+            assert minutes([], ["builder"], lead=5, helpers=True) == 20
             # The pet's lead has run out, so it wakes at its own time.
             assert minutes([], [], lead=5) == 3
             assert minutes([], ["lab", "builder"], lead=5) == 55
@@ -3577,7 +3578,7 @@ class WatchTests(unittest.TestCase):
             assert minutes([], ["builder"]) == 0
             assert commands.wake_at([], tower=True) is None
             assert commands.wake_at([], ["lab"], tower=True) is None
-            with patch.object(commands, "helper_cooldowns", return_value=helpers[2:]):
+            with patch.object(commands, "helper_cooldowns", return_value=helpers[3:]):
                 assert commands.wake_at([], helpers=True) is None
 
     def _pressed(self, run: str, at: datetime, outcome: str = "confirmed") -> None:
@@ -4926,7 +4927,7 @@ class HelperCommandTests(unittest.TestCase):
             (1495, 800),
             (1222, 850),
             (1060, 377),
-            (1345, 375),
+            (1345, 373),
             (973, 580),
             (1413, 70),
             (1572, 30),
@@ -4941,7 +4942,11 @@ class HelperCommandTests(unittest.TestCase):
         assert report.dialog is not None
 
     def test_a_face_tap_that_raised_no_stop_dialog_is_shut_and_nothing_pressed(self) -> None:
-        """On a page with 指派 standing the same tap lands on one; its dialog takes its X."""
+        """Between rounds the job is aimed at by its place in the list, second here.
+
+        Were 指派 standing there instead of the face, the tap opens its dialog,
+        which takes its X.
+        """
         adb, walk, report = self._run(
             [
                 *OPENING,
@@ -4955,6 +4960,7 @@ class HelperCommandTests(unittest.TestCase):
             [_helper_export(recurs="神盾勇者")],
             action="cancel",
         )
+        assert (1345, 458) in self._taps(adb)
         assert (973, 580) not in self._taps(adb)
         assert self._taps(adb)[-3:] == [(1211, 140), (1413, 70), (1572, 30)]
         assert walk.call_count == 1

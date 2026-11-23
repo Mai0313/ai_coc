@@ -1056,8 +1056,9 @@ def helper_ticked(png: bytes) -> bool:
 
 
 # **A recurring dispatch is stopped from the helper's face on the job's row**,
-# which carries a circling arrow while it recurs (2026-11-24, the helper at
-# work, its row first in the list). The tap raises 要停止連續作業嗎？, the
+# which carries a circling arrow while it recurs, where 指派 stands on the
+# other rows (2026-11-24, the helper at work, its row pinned first; between
+# its cooldown and its return it has not been seen). The tap raises 要停止連續作業嗎？, the
 # game's own two-button dialog: its 確認 stops the recurrence and leaves the
 # hour of work running and the cooldown as they are. Its boxes read exactly as
 # the wall dialogs' do (1.000 pale, 0.540 orange, 0.320 green), over the hut or
@@ -1066,7 +1067,7 @@ def helper_ticked(png: bytes) -> bool:
 # passes two of the three: next come 0.066 orange on `battle_in_progress` and
 # 0.417 green on `goblin_builder_two_buttons`, whose panel box reads 0.601.
 # `game_dialog` misses it over the hut, whose grass and bars lie inside its span.
-HUT_RECURRING = (1345, 375)
+HUT_RECURRING_X = 1345
 STOP_PANEL_BOX = (445, 232, 1165, 252)
 STOP_CANCEL_BOX = (500, 545, 750, 615)
 STOP_CONFIRM_BOX = (850, 545, 1100, 615)

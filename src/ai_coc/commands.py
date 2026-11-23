@@ -243,10 +243,10 @@ from ai_coc.parsers.building import (
     MENU_ROW_BOX,
     STOP_CONFIRM,
     HUT_PORTRAITS,
-    HUT_RECURRING,
     HUT_ROW_SLACK,
     HELPER_CONFIRM,
     HELPER_CHECKBOX,
+    HUT_RECURRING_X,
     SHEET_CLOSE_BOX,
     HELPER_PROMPT_CLOSE,
     free_boost,
@@ -1836,14 +1836,14 @@ def wake_at(  # noqa: PLR0913 - one per watch flag
 def _helper_wakes(village: VillageExport, now: datetime) -> list[tuple[datetime, str]]:
     """When the Builder's Apprentice and the Lab Assistant can next be sent, past `now` only.
 
-    One on a recurring dispatch goes back to its job by itself, so its
-    cooldown is nothing to wake for, as it is no row of `status`'s table.
+    A recurring one's too: it goes back by itself some time after, and until
+    then is the one window, besides its hour of work, when the hut opens to
+    stop or change its dispatch (no plate floats while it cools down).
     """
     return [
         (at, helper.en or str(helper.data_id))
         for helper in helper_cooldowns(village)
         if helper.data_id in UPGRADE_HELPERS.values()
-        and not helper.recurring
         and (at := datetime.fromisoformat(helper.ready_at)) > now
     ]
 
@@ -5754,7 +5754,7 @@ def helper(
             outcome, frame, dialog = (
                 _dispatch(adb, display, name, (index, len(running)), recurring)
                 if action == "send"
-                else _stop_recurring(adb, display, name)
+                else _stop_recurring(adb, display, name, (index, len(running)))
             )
             closed = _close_hut(adb, display)
             if dialog is not None:
@@ -5782,12 +5782,20 @@ def _helper_refusal(
     cooldown: HelperCooldown | None,
     running: list[UpgradeTimer],
 ) -> tuple[HelperOutcome | None, int]:
-    """Why the export says not to open the hut at all, None where it may; and which row `item` is."""
+    """Why the export says not to open the hut at all, None where it may; and which row is the job.
+
+    The row `send` presses 指派 on is `item`'s place in the list. The one
+    `cancel` taps is the recurring job's: first while the helper works on it,
+    which the hut pins to the top, and otherwise its place among the rest.
+    """
     named = [index for index, one in enumerate(running) if item in (one.zh, one.en)]
     if cooldown is None:
         return "no_helper", 0
     if action == "cancel":
-        return (None, 0) if cooldown.recurring else ("no_recurring", 0)
+        recurs = [index for index, one in enumerate(running) if one.recurrent]
+        if not cooldown.recurring or not recurs:
+            return "no_recurring", 0
+        return None, 0 if any(one.helper_until for one in running) else recurs[0]
     if cooldown.ready_in > 0:
         return "cooling", 0
     if len(named) != 1:
@@ -5851,17 +5859,20 @@ def _dispatch(
 
 
 def _stop_recurring(
-    adb: AdbController, display: DisplayTarget, name: HelperName
+    adb: AdbController, display: DisplayTarget, name: HelperName, place: tuple[int, int]
 ) -> tuple[HelperOutcome, bytes, bytes | None]:
-    """Tap `name`'s face on the job it recurs on and press 確認 on the dialog that tap raised.
+    """Tap `name`'s face on the job it recurs on, the `index`th of `count` (`place`), and press 確認 on the dialog that tap raised.
 
     Shaped as `_dispatch`'s answer: `cancelled` once 確認 is pressed, which
-    the caller holds to the export, and the dialog before it.
+    the caller holds to the export, and the dialog before it. Whatever else
+    the tap raised, a dispatch dialog where the row's 指派 still stands among
+    them, takes no press.
     """
     opened, frame = _open_hut(adb, display, name)
     if not opened:
         return "no_hut", frame, None
-    frame = _press(adb, display, HUT_RECURRING, "stop")
+    shown, index, frame = _scroll_to(adb, display, frame, *place)
+    frame = _press(adb, display, (HUT_RECURRING_X, shown[index]), "stop")
     if not helper_stop_prompt(frame):
         return "no_dialog", frame, None
     return "cancelled", _press(adb, display, STOP_CONFIRM, "stopped"), frame
@@ -5872,21 +5883,30 @@ def _hut_row(
 ) -> tuple[int | None, bytes]:
     """How high the `index`th of the hut's `count` 指派 buttons is, and the frame that says so.
 
-    A job past the fourth is reached by scrolling to the end of the list. None
-    where the whole buttons the list shows do not line up with `count` jobs.
+    None where the whole buttons the list shows do not line up with `count` jobs.
     """
-    shown = HUT_ROWS_TOP[:count]
-    if index >= len(HUT_ROWS_TOP):
-        for _ in range(2):
-            adb.swipe(*HUT_SCROLL, SWIPE_TIME, display)
-        time.sleep(PRESS_SETTLE)
-        frame = adb.screenshot(display, "scrolled")
-        shown, index = HUT_ROWS_END, index - (count - len(HUT_ROWS_END))
+    shown, index, frame = _scroll_to(adb, display, frame, index, count)
     rows = helper_rows(frame)
     lined_up = len(rows) == len(shown) and all(
         abs(row - want) <= HUT_ROW_SLACK for row, want in zip(rows, shown, strict=True)
     )
     return (rows[index] if lined_up else None), frame
+
+
+def _scroll_to(
+    adb: AdbController, display: DisplayTarget, frame: bytes, index: int, count: int
+) -> tuple[tuple[int, ...], int, bytes]:
+    """The heights the list's whole rows stand at with the `index`th of its `count` jobs among them, its place there, and the frame.
+
+    A job past the fourth is reached by scrolling to the end of the list.
+    """
+    if index < len(HUT_ROWS_TOP):
+        return HUT_ROWS_TOP[:count], index, frame
+    for _ in range(2):
+        adb.swipe(*HUT_SCROLL, SWIPE_TIME, display)
+    time.sleep(PRESS_SETTLE)
+    frame = adb.screenshot(display, "scrolled")
+    return HUT_ROWS_END, index - (count - len(HUT_ROWS_END)), frame
 
 
 def _close_hut(adb: AdbController, display: DisplayTarget) -> bytes:
