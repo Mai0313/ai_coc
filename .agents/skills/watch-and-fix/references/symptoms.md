@@ -101,7 +101,7 @@
 依序看:
 
 - `_flank` 不花兵, 只讓開卡片列, 把線彎到紅線上
-- `_spread_troops` 在整個 pass 沒消耗時把線往外推 (村莊外圍**不是凸的**, 兩端在外面的線中間仍可能穿過去)
+- `_spread_troops` 在整個 pass 沒消耗時把線往外推 (村莊外圍**不是凸的**, 兩端在外面的線中間仍可能穿過去); 那條線是 `fitted_line` 彎出來的, 就先退回沒彎的預設側翼 (`back to the preset flank`), 不往外推
 - `push_out` 推到 `DEPLOY_BOUND` 邊緣就不動, 一直推同一點是可能的
 - `boundary_reach` 跟 `fitted_line` 把 plan 自己畫的線 (`planned_line` 拒絕時才是它指名的預設側翼) 彎到真實邊界, 三個錨點的理由 `ui/attack.py` 搜 `chord`
 
@@ -118,6 +118,8 @@
 ## 整場一隻兵都沒下去
 
 **症狀**: `After the burst: N of N one-off card(s) never landed`, 重試也是 `0 of N retry card(s) landed at`, 而且兵卡都還有貨 (`troop card(s) still hold something`), 連著幾輪.
+
+只有一輪, 而且 `fitted to the boundary as` 的錨點貼在螢幕最左邊 (x 0 到 300), 同一輪 `spanning` 的寬 1470 以上 (或置中拖到次數用完, 沒有 `spanning` 那行): 對手的場景在地圖外畫了細的紅色 (碼頭欄杆、屋簷), `boundary_reach` 取最外面那一道, 線就彎到遊戲不收的地方. 現在第一個整 pass 沒消耗就退回預設側翼, log 有 `back to the preset flank`, 那是救回來了, 不用追; 退回之後還是整場沒下去才是新問題.
 
 log 的 `The camera was not at the far zoom` 量的是拉遠之前的鏡頭, 只是回報: 所有座標都在最遠的 zoom 量, 而 `_settle_zoom` 每場 (夜世界每個階段) 讀卡片之前都先拉遠 (`ZOOM_PINCHES` 兩下, 從拉到最近也到得了最遠), 所以它不會讓這場落空. 拉遠有沒有生效看 `--debug` 的 `zoomed` 畫面. **這條警告只在主村問** (高度門檻拿主村量的, 夜世界每張都比它短, 換門檻也分不開).
 

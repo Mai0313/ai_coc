@@ -35,7 +35,7 @@ uv run --no-sync ai_coc attack --plan .runs/tuned.json
 
 **每一輪都成功也要找.** `outcome` 全是 `took_loot` 不代表迴圈沒事. 迴圈會自己救回來, 救的那一下只留在 log 裡: **每一行重試或修正都是上游某一步做錯了**, 結果對只說明救得回來. 一輪一輪數它們:
 
-- `After the burst: N of M one-off card(s) never landed` 而 N 不是 0 (主村每一場開打的都有, 夜世界沒有), `retry card(s) landed at`, `took nothing`, `still hold something`, `flank pushed out`: 出兵有東西被拒, 或被判成沒下去. 大部分輪都有就是上游的問題, 不是運氣
+- `After the burst: N of M one-off card(s) never landed` 而 N 不是 0 (主村每一場開打的都有, 夜世界沒有), `retry card(s) landed at`, `took nothing`, `still hold something`, `flank pushed out`, `back to the preset flank`: 出兵有東西被拒, 或被判成沒下去. 大部分輪都有就是上游的問題, 不是運氣
 - 每次都落在**同一個**重試點: 本來該分開的英雄被擠到一起, 攻城機器晚到
 - `WARNING`: 每一條都對一次畫面
 

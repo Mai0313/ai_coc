@@ -1305,6 +1305,9 @@ class AttackRunner(ScreenRunner):
     # taking anyway on a second question: is anything still sitting in a card.
     _last: bytes = PrivateAttr(default=b"")
     _line: list[tuple[int, int]] = PrivateAttr(default_factory=list)
+    # The flank `_flank` started from, before `fitted_line` bent it, which is
+    # where `_spread_troops` goes back to when the bent one takes nothing.
+    _preset: tuple[tuple[int, int], ...] = PrivateAttr(default=())
     # What this village's storages hold when full, read off their own tooltips
     # the first time a round reaches the village and kept for the rest of the
     # run. A storage only grows when a builder finishes upgrading one, which is
@@ -1973,12 +1976,14 @@ class AttackRunner(ScreenRunner):
         cannot be read the preset stands as it is. A line the village has grown
         over is then answered by `_spread_troops`, which pushes it out when a
         whole pass drains nothing — the same backstop that was always underneath
-        the probing, now carrying it alone.
+        the probing, now carrying it alone — and a bent line that takes nothing
+        goes back to this preset first.
         """
         preset = deploy_candidates(plan)[0]
         battle = self._clear_flank(battle, preset)
         self._keep_opening(battle)
         flank = self._onscreen(preset)
+        self._preset = flank
         return fitted_line(battle, flank[0], flank[1], centre=self._middle) or flank
 
     def _keep_opening(self, frame: bytes) -> None:
@@ -2008,7 +2013,9 @@ class AttackRunner(ScreenRunner):
         the ground around it is not convex and a line whose ends are both clear
         can still cut through it. A pass that empties nothing at all is a line
         the village has grown over, so the flank is pushed out for the passes
-        that follow.
+        that follow. A line `fitted_line` bent is the exception: one that takes
+        nothing was bent past the ground the game accepts, and goes back to the
+        preset instead.
 
         A pass is judged on the cards, not on the screen. The red warning was
         what drove this before, and it pushed the flank out twice in every one
@@ -2060,7 +2067,21 @@ class AttackRunner(ScreenRunner):
             before, shot = shot, self._frame("pass")
             drained = card_drained(before, shot, remaining)
             self._deployed |= bool(drained)
-            if not drained and pushed + 1 < DEPLOY_ATTEMPTS:
+            # **A bent line that takes nothing goes back to the preset, not
+            # further out.** `boundary_reach` takes the outermost thin red on a
+            # ray, and on a scenery with red railings past the map's edge that
+            # is the railing: the flank lands on ground the game refuses, and
+            # pushing it out only clamps it against `DEPLOY_BOUND` there.
+            # Measured over the farming runs of 2026-11-17 to 11-25, 1,577 home
+            # rounds: 26 bent lines took nothing and pushing rescued none of
+            # them, each battle lost whole, while 517 rounds whose boundary would
+            # not read played their line unbent and every one landed, the 6 a
+            # pass refused after a single push.
+            if not drained and self._preset and anchors != self._preset:
+                anchors, pushed = self._preset, 0
+                logger.info("The whole pass landed nothing; back to the preset flank %s", anchors)
+                line = deploy_line(LINE_POINTS, *push_line(anchors, pushed, self._middle))
+            elif not drained and pushed + 1 < DEPLOY_ATTEMPTS:
                 pushed += 1
                 logger.info("The whole pass landed nothing; flank pushed out to %d", pushed)
                 line = deploy_line(LINE_POINTS, *push_line(anchors, pushed, self._middle))
@@ -2558,6 +2579,7 @@ class AttackRunner(ScreenRunner):
                         # and the row still owes its reading until it is.
                         self._settle_drops([] if left["troops"] else row.troops, line, anchors)
                         settled = not left["troops"]
+                        line = self._line
                     elif self._battle_ended("playing"):
                         logger.info("The battle ended with %d step(s) still to play", len(steps))
                         return
@@ -2727,8 +2749,9 @@ class AttackRunner(ScreenRunner):
         checked deployment took, once instead of six times.
 
         A whole row of troops still holding something is the line rather than
-        the taps: `_spread_troops` answers that by pushing the flank further out,
-        which is the backstop that was always underneath the probing.
+        the taps: `_spread_troops` answers that by moving the flank, back to the
+        preset where `fitted_line` bent it and further out otherwise, which is
+        the backstop that was always underneath the probing.
 
         **The bars are given `HERO_SETTLE` from the last drop before anything
         reads them.** This used to capture the moment the pause began, which on
@@ -2769,7 +2792,10 @@ class AttackRunner(ScreenRunner):
             len(holding),
         )
         if holding:
-            self._spread_troops(holding, anchors, 0)
+            # The cards still to send, and the leftovers the battle poll pours,
+            # follow the troops to whichever line ended up taking them.
+            line = self._spread_troops(holding, anchors, 0)
+            self._line = line
         if missing:
             again, _ = self._drop_singles(
                 missing, line, "retry", refused=[spots[card] for card in missing]

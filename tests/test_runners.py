@@ -1581,6 +1581,58 @@ class DeploymentTests(unittest.TestCase):
         ):
             assert runner._flank(b"battle", None) == DEPLOY_LINES["top_left"]
 
+    def _two_passes(
+        self, runner: AttackRunner, anchors: tuple[tuple[int, int], ...]
+    ) -> tuple[list[tuple[int, int]], list[list[tuple[int, int]]]]:
+        """One troop card over a pass that drains nothing and one that empties it.
+
+        Hands back the line `_spread_troops` ended on and where each pass dropped.
+        """
+        drops: list[list[tuple[int, int]]] = []
+
+        def tapped(
+            _self: object, points: list[tuple[int, int]], display: object, **_: object
+        ) -> None:
+            drops.append(points[1:])
+
+        with (
+            patch.object(attack.time, "sleep"),
+            patch.object(runner, "_frame", return_value=b""),
+            patch.object(attack, "card_count", return_value=3),
+            patch.object(attack, "card_drained", side_effect=[[], [100]]),
+            patch.object(attack, "live_cards", side_effect=[[100], []]),
+            patch.object(AdbController, "tap_many", autospec=True, side_effect=tapped),
+        ):
+            used = runner._spread_troops([100], anchors, 0)
+        return used, drops
+
+    def test_a_bent_flank_that_takes_nothing_goes_back_to_the_preset(self) -> None:
+        """Bent onto a red railing past the map's edge, as on 2026-11-24 at 23:47.
+
+        Every pass along it was refused, and each push only clamped it against
+        the map's bound where it already sat, so the whole army stayed in its
+        cards. The preset flank is what the rounds that could not bend one play.
+        """
+        runner = self._runner()
+        bent = ((300, 208), (24, 297), (42, 438))
+        with (
+            patch.object(runner, "_clear_flank", side_effect=lambda frame, preset: frame),
+            patch.object(attack, "fitted_line", return_value=bent),
+        ):
+            assert runner._flank(b"battle", None) == bent
+        used, drops = self._two_passes(runner, bent)
+        preset = deploy_line(LINE_POINTS, *attack.push_line(DEPLOY_LINES["top_left"], 0))
+        assert used == preset
+        assert set(drops[0]) <= set(deploy_line(LINE_POINTS, *attack.push_line(bent, 0)))
+        assert set(drops[1]) <= set(preset)
+
+    def test_a_preset_flank_that_takes_nothing_is_still_pushed_out(self) -> None:
+        """A village grown over the preset is what the push was always for."""
+        runner = self._runner()
+        runner._preset = DEPLOY_LINES["top_left"]
+        used, _ = self._two_passes(runner, DEPLOY_LINES["top_left"])
+        assert used == deploy_line(LINE_POINTS, *attack.push_line(DEPLOY_LINES["top_left"], 1))
+
     def test_each_act_reaches_its_own_tap(self) -> None:
         runner = self._runner()
         line = deploy_line(LINE_POINTS, *DEPLOY_LINES["top_left"])
@@ -1706,12 +1758,13 @@ class DeploymentTests(unittest.TestCase):
     ) -> None:
         runner = self._runner()
         line = deploy_line(LINE_POINTS)
+        moved = deploy_line(LINE_POINTS, *attack.push_line(DEPLOY_LINES["top_left"], 1))
         runner._sending = {500: (1, 1), 600: (2, 2)}
         with (
             patch.object(runner, "_frame", return_value=b""),
             patch.object(attack, "field_units", return_value=[500]),
             patch.object(attack, "live_cards", return_value=[100]),
-            patch.object(runner, "_spread_troops") as spread,
+            patch.object(runner, "_spread_troops", return_value=moved) as spread,
             patch.object(runner, "_drop_singles", return_value=([600], [600])) as singles,
         ):
             runner._settle_drops([100, 200], line, DEPLOY_LINES["top_left"])
@@ -1719,6 +1772,9 @@ class DeploymentTests(unittest.TestCase):
         assert runner._onfield == [500, 600]
         spread.assert_called_once_with([100], DEPLOY_LINES["top_left"], 0)
         assert singles.call_args.args[0] == [600]
+        # The retry and the leftovers go where the troops ended up landing.
+        assert singles.call_args.args[1] == moved
+        assert runner._line == moved
         # Where it was refused goes along, so the retry does not aim there again.
         assert singles.call_args.kwargs["refused"] == [(2, 2)]
 

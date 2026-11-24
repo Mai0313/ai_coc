@@ -4839,6 +4839,34 @@ class AttackTests(unittest.TestCase):
         # drops after its first pause used to go unchecked from there on.
         assert acts == ["siege", "troops", "hero", "settle", "rage", "hero", "settle"]
 
+    def test_a_drop_after_the_reading_goes_on_the_line_the_troops_ended_up_on(self) -> None:
+        """The reading can move the troops off a bent flank that took nothing."""
+        runner = self._runner()
+        moved = deploy_line(LINE_POINTS, *DEPLOY_LINES["bottom_right"])
+        lines: list[list[tuple[int, int]]] = []
+
+        def settle(*_: object) -> None:
+            runner._sending = {}
+            runner._line = moved
+
+        def act(
+            step: AttackStep, row: BattleRow, line: list[tuple[int, int]], **_: object
+        ) -> None:
+            lines.append(line)
+            runner._sending[row.heroes[0]] = (0, 0)
+
+        plan = AttackPlan(
+            steps=[_step("hero", (25, 25)), _step("wait", seconds=3), _step("hero", (28, 28))]
+        )
+        with (
+            patch.object(AttackRunner, "_act", side_effect=act),
+            patch.object(AttackRunner, "_settle_drops", side_effect=settle),
+            patch.object(attack.time, "sleep"),
+        ):
+            runner._play_tactic(plan, DEPLOY_LINES["top_left"], self._row())
+        assert lines[0] != moved
+        assert lines[1] == moved
+
     def test_a_pause_is_counted_from_the_move_before_it_finishing(self) -> None:
         """Which is what makes the whole tactic immune to how slowly it got here.
 
