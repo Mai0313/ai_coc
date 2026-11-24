@@ -56,6 +56,7 @@
       {
         "data": 93000003,
         "lvl": 1,
+        "helper_cooldown": 70000,
         "zh": "探礦者",
         "en": "Prospector",
         "max_lvl": 7,
