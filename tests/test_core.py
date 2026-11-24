@@ -28,6 +28,7 @@ from ai_coc.models import (
     RunLog,
     LoanEnd,
     FrameLog,
+    OreStock,
     ProbeRay,
     AppConfig,
     BattleRow,
@@ -143,6 +144,7 @@ from ai_coc.parsers.scout import (
     topup_ad,
     _read_row,
     in_battle,
+    ore_stock,
     read_gems,
     _lit_floor,
     card_count,
@@ -154,12 +156,14 @@ from ai_coc.parsers.scout import (
     card_groups,
     event_ended,
     field_units,
+    ore_tooltip,
     panel_drawn,
     _plank_ratio,
     battle_speed,
     card_drained,
     freeze_cards,
     open_tooltip,
+    ore_capacity,
     shield_sheet,
     skip_offered,
     welcome_back,
@@ -197,6 +201,7 @@ from ai_coc.parsers.boundary import DEPLOY_BOUND, fitted_line, village_box, boun
 from ai_coc.parsers.building import (
     PRICE_ROWS,
     PRICE_TOLERANCE,
+    reel_ore,
     free_boost,
     helper_hut,
     sheet_open,
@@ -210,7 +215,9 @@ from ai_coc.parsers.building import (
     selection_row,
     sheet_running,
     upgrade_sheet,
+    convert_offered,
     panel_wall_menu,
+    prospector_plate,
     research_running,
     helper_stop_prompt,
 )
@@ -8064,6 +8071,7 @@ class HelperHutTests(unittest.TestCase):
             "helper_hut_lab.png": "assistant",
             # The hut stands under its stop dialog, which `_close_hut` answers first.
             "helper_stop_dialog.png": "apprentice",
+            **dict.fromkeys(PROSPECTOR_WINDOWS, "prospector"),
         }
 
     def test_each_whole_assign_button_is_found_and_one_the_list_cuts_off_is_not(self) -> None:
@@ -8115,6 +8123,61 @@ class HelperHutTests(unittest.TestCase):
         """Read as one, `tap` let a press on 確認 through and `_home` would have answered with it."""
         for name in ("helper_dialog.png", "helper_dialog_ticked.png"):
             assert game_dialog((FRAMES / name).read_bytes()) is None, name
+
+
+# The Prospector's window as the first look opened it (2026-11-25), the reels
+# turned by hand, and an older frame of it cooling down (`miner_panel`): left
+# ore, right ore (None for a right reel greyed on the left's ore), and whether
+# 轉換 is green.
+PROSPECTOR_WINDOWS = {
+    "prospector_window.png": ("starry", "glowy", True),
+    "prospector_same_ore.png": ("glowy", None, False),
+    "prospector_glowy_shiny.png": ("glowy", "shiny", True),
+    "prospector_shiny_greyed.png": ("shiny", None, False),
+    "miner_panel.png": ("starry", "shiny", False),
+    "prospector_converted.png": ("starry", "glowy", False),
+}
+ORE_CAPS = {"ore_cap_shiny.png": 0, "ore_cap_glowy.png": 1, "ore_cap_starry.png": 2}
+
+
+class ProspectorTests(unittest.TestCase):
+    """The build panel's hero equipment tab, its ore tooltips and the Prospector's window (2026-11-25)."""
+
+    def test_the_ores_read_only_on_the_equipment_tab(self) -> None:
+        held = {path.name: ore_stock(path.read_bytes()) for path in FRAMES.glob("*.png")}
+        assert {name: stock for name, stock in held.items() if stock} == {
+            **{
+                name: OreStock(shiny=20716, glowy=1317, starry=944)
+                for name in ("ore_tab.png", "ore_cap_starry.png")
+            },
+            # After the first conversion, starry 2 into glowy 120.
+            "ore_tab_after.png": OreStock(shiny=20716, glowy=1437, starry=942),
+        }
+
+    def test_each_ores_cap_reads_only_off_its_own_tooltip(self) -> None:
+        """Glowy's bottom edge lies where starry's top would, so its frame reads no starry cap."""
+        for path in FRAMES.glob("*.png"):
+            png = path.read_bytes()
+            caps = [ore_capacity(png, row) for row in range(3)]
+            want = [None] * 3
+            if path.name in ORE_CAPS:
+                want[ORE_CAPS[path.name]] = (50_000, 5_000, 1_000)[ORE_CAPS[path.name]]
+            assert caps == want, path.name
+        assert {name: ore_tooltip((FRAMES / name).read_bytes()) for name in ORE_CAPS} == ORE_CAPS
+
+    def test_the_plate_reads_beside_the_equipment_tab(self) -> None:
+        assert prospector_plate((FRAMES / "ore_tab.png").read_bytes())
+        assert not prospector_plate((FRAMES / "prospector_window.png").read_bytes())
+        assert not prospector_plate((FRAMES / "hud_day.png").read_bytes())
+
+    def test_each_reel_reads_its_centred_ore_and_a_greyed_one_reads_none(self) -> None:
+        for name, (left, right, _) in PROSPECTOR_WINDOWS.items():
+            png = (FRAMES / name).read_bytes()
+            assert (reel_ore(png, 0), reel_ore(png, 1)) == (left, right), name
+
+    def test_convert_is_offered_only_on_two_different_ores_with_the_prospector_free(self) -> None:
+        for name, (*_, offered) in PROSPECTOR_WINDOWS.items():
+            assert convert_offered((FRAMES / name).read_bytes()) == offered, name
 
 
 class HomeTests(unittest.TestCase):
@@ -8498,6 +8561,11 @@ class HomeHudTests(unittest.TestCase):
             "world_day_boat_marker.png",
             "world_day_occluded.png",
             "world_day_shield_only.png",
+            "ore_tab.png",
+            "ore_tab_after.png",
+            "ore_cap_shiny.png",
+            "ore_cap_glowy.png",
+            "ore_cap_starry.png",
         }
         found = {
             frame.name
@@ -8613,6 +8681,11 @@ class HomeHudTests(unittest.TestCase):
             "home_wall_batch.png",
             "home_wall_batch_warm_edges.png",
             "home_wall_batch_gold_only.png",
+            "ore_tab.png",
+            "ore_tab_after.png",
+            "ore_cap_shiny.png",
+            "ore_cap_glowy.png",
+            "ore_cap_starry.png",
         }
         for path in sorted(FRAMES.glob("*.png")):
             try:
@@ -8886,8 +8959,13 @@ class UpgradeSheetOfferTests(unittest.TestCase):
         }
         opened = {path.name for path in FRAMES.glob("*.png") if sheet_open(path.read_bytes())}
         # The Helper Hut's stop dialog stands over the hut, whose X is a sheet's
-        # and whose green its 確認: `tap` takes only that X, and nothing prices it.
-        assert opened == sheets | {"helper_stop_dialog.png"}
+        # and whose green its 確認, and so does the Prospector's window while
+        # 轉換 is green: `tap` takes only that X, and nothing prices it.
+        assert opened == sheets | {
+            "helper_stop_dialog.png",
+            "prospector_window.png",
+            "prospector_glowy_shiny.png",
+        }
         offered = {path.name for path in FRAMES.glob("*.png") if sheet_offer(path.read_bytes())}
         assert offered == sheets - {
             "sheet_running_gems.png",

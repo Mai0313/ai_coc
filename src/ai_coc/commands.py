@@ -27,6 +27,7 @@ from pydantic import BaseModel, PrivateAttr
 
 from ai_coc import plans, logging_setup
 from ai_coc.models import (
+    Ore,
     Hold,
     Loan,
     Notes,
@@ -40,6 +41,7 @@ from ai_coc.models import (
     FrameLog,
     HoldStop,
     LoanStop,
+    OreStock,
     ProbeRay,
     AppConfig,
     AttackRun,
@@ -152,10 +154,13 @@ from ai_coc.models import (
     ThresholdWaiver,
     TurnaroundGroup,
     EmulatorInstance,
+    ProspectorReport,
     StandDownOutcome,
+    TendedConversion,
     TurnaroundReport,
     TurnaroundSample,
     PlateCountOutcome,
+    ProspectorOutcome,
     TurnaroundOutcome,
     labelled,
 )
@@ -168,6 +173,7 @@ from ai_coc.parsers.home import (
     PANEL_TABS,
     PANEL_CLOSE,
     BUILD_BUTTON,
+    EQUIPMENT_TAB,
     CLOCK_TOWER_BELOW,
     reward_chest,
     free_builders,
@@ -177,11 +183,13 @@ from ai_coc.parsers.home import (
 )
 from ai_coc.adapters.mumu import MuMuAdapter
 from ai_coc.parsers.scout import (
+    ORE_SHIFT,
     TOPUP_CLOSE,
     EVENT_NOTICE_CLOSE,
     NIGHT_COUNT_WHITE_RATIO,
     topup_ad,
     in_battle,
+    ore_stock,
     card_count,
     live_cards,
     read_scout,
@@ -194,6 +202,7 @@ from ai_coc.parsers.scout import (
     panel_drawn,
     card_drained,
     freeze_cards,
+    ore_capacity,
     skip_offered,
     welcome_back,
     army_strength,
@@ -232,7 +241,10 @@ from ai_coc.parsers.boundary import (
     boundary_diamond,
 )
 from ai_coc.parsers.building import (
+    REELS,
+    CONVERT,
     HUT_CLOSE,
+    REEL_STEP,
     HUT_SCROLL,
     STOP_CANCEL,
     GOBLIN_X_BOX,
@@ -249,6 +261,7 @@ from ai_coc.parsers.building import (
     HUT_RECURRING_X,
     SHEET_CLOSE_BOX,
     HELPER_PROMPT_CLOSE,
+    reel_ore,
     free_boost,
     helper_hut,
     sheet_open,
@@ -265,9 +278,12 @@ from ai_coc.parsers.building import (
     selection_row,
     sheet_running,
     upgrade_sheet,
+    convert_prompt,
+    convert_offered,
     panel_wall_menu,
     green_button_row,
     menu_spends_gems,
+    prospector_plate,
     research_running,
     helper_stop_prompt,
 )
@@ -296,6 +312,9 @@ from .ui.plates import PlateRunner
 from .ui.runner import (
     BUY_SETTLE,
     BACK_SETTLE,
+    STOCK_BAR_X,
+    STOCK_BAR_Y,
+    CAPACITY_TRIES,
     ScreenRunner,
     SessionTakenError,
     on_hud,
@@ -1791,8 +1810,8 @@ def wake_at(  # noqa: PLR0913 - one per watch flag
     done wakes it now. `tower` adds the clock tower's `ready_at`, except a tower
     ready now, which the `status` before this read and which would otherwise
     wake the session at once on every watch when it will not boost. `helpers`
-    adds when the Builder's Apprentice and the Lab Assistant can next be sent,
-    except one that can be sent now, for the same reason.
+    adds when the Builder's Apprentice and the Lab Assistant can next be sent
+    and the Prospector is next free, except one free now, for the same reason.
 
     **`upgrades` stands down on an export older than the newest confirmed
     press** (`StaleExportError`), any session's: that export still lists the
@@ -1834,7 +1853,7 @@ def wake_at(  # noqa: PLR0913 - one per watch flag
 
 
 def _helper_wakes(village: VillageExport, now: datetime) -> list[tuple[datetime, str]]:
-    """When the Builder's Apprentice and the Lab Assistant can next be sent, past `now` only.
+    """When the Builder's Apprentice and the Lab Assistant can next be sent and the Prospector is next free, past `now` only.
 
     A recurring one's too: it goes back by itself some time after, and until
     then is the one window, besides its hour of work, when the hut opens to
@@ -1843,7 +1862,7 @@ def _helper_wakes(village: VillageExport, now: datetime) -> list[tuple[datetime,
     return [
         (at, helper.en or str(helper.data_id))
         for helper in helper_cooldowns(village)
-        if helper.data_id in UPGRADE_HELPERS.values()
+        if helper.data_id in (*UPGRADE_HELPERS.values(), PROSPECTOR)
         and (at := datetime.fromisoformat(helper.ready_at)) > now
     ]
 
@@ -3382,6 +3401,9 @@ ROLE_NAMES: dict[UpgradeRole, str] = {"builder": "工人", "lab": "實驗室", "
 # the upgrades the report lists; the Alchemist and the Prospector do not, and an
 # unused one reads as ready on every export.
 UPGRADE_HELPERS: dict[HelperName, int] = {"apprentice": 93000000, "assistant": 93000001}
+# The Prospector, which `prospector` converts ore with and whose cooldown
+# `status` and `watch --helpers` time beside theirs.
+PROSPECTOR = 93000003
 # How many hours ahead the shortfall lines sum the next levels: the takeover's
 # farm check interval (`watch --minutes 180`), the longest it goes without
 # reading again. Replayed over the 60 home village `status` runs of 2026-11-11
@@ -3573,7 +3595,7 @@ def _timer_rows(
         when = "現在" if ready <= now else _moment(tower.ready_at, now)
         rows.append((ready, when, "—", "鐘塔冷卻結束", ""))
     for helper in report.helpers if world == "day" else []:
-        if helper.data_id not in UPGRADE_HELPERS.values() or helper.recurring:
+        if helper.data_id not in (*UPGRADE_HELPERS.values(), PROSPECTOR) or helper.recurring:
             continue
         ready = datetime.fromisoformat(helper.ready_at)
         when = "現在" if ready <= now else _moment(helper.ready_at, now)
@@ -4734,18 +4756,44 @@ def tended(by: str | None = None, since: datetime | None = None) -> TendedReport
                         item=(done.action == "send" and done.helping) or done.item,
                     )
                 )
+        elif start.command == "prospector" and end.outcome == "converted":
+            with suppress(ValueError):
+                report.conversions.append(
+                    _conversion(ProspectorReport.model_validate(end.result), end.at)
+                )
         elif start.command == "confirm":
             with suppress(ValueError):
                 paid = ConfirmReport.model_validate(end.result)
                 pressed = _bought(report, paid, end.at, paid.item or start.caller.mission, pressed)
     logger.info(
-        "Tended: %d upgrade(s), %d boost(s), %d helper(s) sent, %d lost login(s)",
+        "Tended: %d upgrade(s), %d boost(s), %d helper(s) sent, %d conversion(s), %d lost login(s)",
         len(report.upgrades),
         len(report.boosts),
         len(report.helpers),
+        len(report.conversions),
         len(report.lost),
     )
     return report
+
+
+def _conversion(done: ProspectorReport, at: datetime) -> TendedConversion:
+    """What one `converted` run moved, off the bars it read before and after.
+
+    Validated rather than built, so a report naming no ores is refused as a
+    `ValueError` like any other line that does not parse.
+    """
+    give, take, held, after = done.give, done.take, done.held, done.after
+    given = received = None
+    if give and take and held and after:
+        given = getattr(held, give) - getattr(after, give)
+        received = getattr(after, take) - getattr(held, take)
+    return TendedConversion.model_validate({
+        "at": at,
+        "give": give,
+        "take": take,
+        "given": given,
+        "received": received,
+    })
 
 
 def _lost_login(report: TendedReport, end: JournalLine, claimed: bool) -> bool:
@@ -4792,7 +4840,7 @@ def _bought(
 
 
 def tended_text(report: TendedReport, now: datetime | None = None) -> str:
-    """The upgrade, clock tower, helper and lost login lines of the takeover's stop report."""
+    """The upgrade, clock tower, helper, Prospector and lost login lines of the takeover's stop report."""
     now = now or datetime.now().astimezone()
 
     def when(at: datetime) -> str:
@@ -4831,6 +4879,18 @@ def tended_text(report: TendedReport, now: datetime | None = None) -> str:
             + ")"
         )
     shown.append(f"- 助手: {'; '.join(helpers)}")
+    conversions = ", ".join(
+        f"{when(one.at)} {ORE_NAMES[one.give]}"
+        + (f" {one.given:,}" if one.given is not None else "")
+        + f" → {ORE_NAMES[one.take]}"
+        + (f" {one.received:,}" if one.received is not None else "")
+        for one in report.conversions
+    )
+    shown.append(
+        f"- 探礦者: 換了 {len(report.conversions)} 次 ({conversions})"
+        if conversions
+        else "- 探礦者: 沒換"
+    )
     losses = ", ".join(
         f"{when(one.taken)} 被搶, "
         + ("還沒接回" if one.back is None else f"{when(one.back)} 接回")
@@ -5925,7 +5985,7 @@ def _close_hut(adb: AdbController, display: DisplayTarget) -> bytes:
         frame = adb.screenshot(display, "closing")
         if helper_stop_prompt(frame):
             point = STOP_CANCEL
-        elif helper_prompt(frame):
+        elif helper_prompt(frame) or convert_prompt(frame) is not None:
             point = HELPER_PROMPT_CLOSE
         elif helper_hut(frame) is not None:
             point = HUT_CLOSE
@@ -5973,6 +6033,230 @@ def _afterwards(
         one.recurring for one in helper_cooldowns(village) if one.data_id == UPGRADE_HELPERS[name]
     )
     return helping, stands, "unconfirmed" if stands else "cancelled"
+
+
+ORES: tuple[Ore, ...] = ("shiny", "glowy", "starry")
+ORE_NAMES: dict[Ore, str] = {"shiny": "藍礦", "glowy": "紫礦", "starry": "星礦"}
+# A drag that steps a reel one ore, measured 2026-11-25 (`REEL_STEP`), and how
+# many a reel gets before the run gives up: two steps cross the whole reel.
+REEL_SWIPE = 400
+REEL_TRIES = 4
+PROSPECTOR_LINES: dict[ProspectorOutcome, str] = {
+    "converted": "按了轉換, 之後讀的村莊匯出上探礦者開始冷卻了",
+    "unconfirmed": "按了轉換, 但之後讀的村莊匯出上看不出探礦者在冷卻 (或匯出沒讀到), 沒有再按",
+    "read": "只讀了礦石跟上限, 什麼都沒按",
+    "on_night": "遊戲在夜世界, 探礦者在日世界, 什麼都沒按",
+    "no_village": "回不到村莊, 什麼都沒按",
+    "no_export": "村莊匯出沒讀到, 不知道探礦者有沒有空, 什麼都沒按",
+    "no_prospector": "村莊匯出上沒有探礦者, 什麼都沒按",
+    "cooling": "探礦者還在冷卻, 什麼都沒按",
+    "no_tab": "建造面板的英雄裝備分頁沒開成, 或那裡的礦石讀不到, 什麼都沒按",
+    "no_ceilings": "有礦石的上限讀不到, 什麼都沒按",
+    "no_plate": "裝備分頁旁邊沒有探礦者的牌子, 什麼都沒按",
+    "no_window": "點了牌子, 探礦者的視窗沒有開在它那一頁, 什麼都沒按",
+    "reels_stuck": "轉盤轉不到要的兩種礦石, 沒有按轉換",
+    "not_offered": "兩種礦石轉好了, 但轉換鈕不是綠的, 沒有按",
+    "no_prompt": "按了轉換, 跳出的確認視窗不是要的兩種礦石 (或沒跳出來), 沒有按確認",
+}
+
+
+def prospector_line(report: ProspectorReport, now: datetime | None = None) -> str:
+    """What the Prospector was asked to do, what came of it, the ores against their caps, and its cooldown."""
+    now = now or datetime.now().astimezone()
+    said = PROSPECTOR_LINES[report.outcome]
+    if report.outcome == "cooling" and report.ready_at is not None:
+        said += f", {_moment(report.ready_at, now)} 才有空"
+    if report.held is not None:
+        caps = report.ceilings
+        said += "; 礦石 " + "、".join(
+            f"{ORE_NAMES[ore]} {getattr(report.held, ore):,}"
+            + (f"/{getattr(caps, ore):,}" if caps is not None else "")
+            for ore in ORES
+        )
+    if report.after is not None and report.held is not None:
+        said += "; 之後 " + "、".join(
+            f"{ORE_NAMES[ore]} {getattr(report.after, ore):,} "
+            f"({getattr(report.after, ore) - getattr(report.held, ore):+,})"
+            for ore in ORES
+        )
+    if report.ready_after is not None:
+        said += f"; 下次有空 {_moment(report.ready_after, now)}"
+    asked = (
+        "只讀礦石"
+        if report.give is None or report.take is None
+        else f"把{ORE_NAMES[report.give]}換成{ORE_NAMES[report.take]}"
+    )
+    return f"探礦者 {asked}: {said}"
+
+
+def prospector(give: Ore | None, take: Ore | None, frames: FrameLog) -> ProspectorReport:
+    """Convert hero equipment ore with the Prospector at the slider's maximum, `give` into `take`, or only read the ores.
+
+    **Which ores is the caller's** (the `takeover` and `upgrades` skills say
+    how to pick them); this hands over the facts: the ores on the build
+    panel's hero equipment tab, what each holds when full, read off its bar's
+    tooltip every run since the cap rises with the village, and what came of
+    the press. The export is read first, and a conversion opens the window
+    only while it says the Prospector is free; a read needs no Prospector.
+
+    **Spending is guarded by the reels and the confirmation**: 轉換 is pressed
+    once, only after both reels read the ores asked for and the button is
+    green, which it is only on two different ores with the Prospector free;
+    it raises 要轉換資源嗎？, whose 確認 is pressed once, only when it names
+    the same two ores. The amount is the slider's own maximum, where the
+    window opens it. The export read afterwards is what `converted` rests on:
+    the Prospector carries a cooldown there once a conversion went through.
+    """
+    adb = _controller(frames)
+    settled = _settle_game(adb, WORLD_SETTLE_POLLS, park=False)
+    display = settled or adb.display_for(COC_PACKAGE)
+    frame = adb.screenshot(display, "village")
+    world = current_world(frame) if settled is not None else None
+    held = ceilings = after = None
+    ready_at = ready_after = dialog = None
+    outcome: ProspectorOutcome
+    if world != "day":
+        outcome = "on_night" if world == "night" else "no_village"
+    elif (village := _exported(adb, display).export) is None:
+        outcome = "no_export"
+    else:
+        free = _prospector_free(village)
+        ready_at = None if free is None else free.ready_at
+        if give is not None and free is None:
+            outcome = "no_prospector"
+        elif give is not None and free is not None and free.ready_in > 0:
+            outcome = "cooling"
+        else:
+            outcome, frame, held, ceilings, dialog = _prospect(adb, display, give, take)
+            if dialog is not None:
+                after = ore_stock(adb.screenshot(display, "ores-after"))
+            closed = _close_hut(adb, display)
+            if dialog is not None:
+                outcome, ready_after = "unconfirmed", None
+                if (
+                    current_world(closed) == "day"
+                    and (again := _exported(adb, display).export) is not None
+                ):
+                    done = _prospector_free(again)
+                    if done is not None and done.ready_in > 0:
+                        outcome, ready_after = "converted", done.ready_at
+    report = ProspectorReport(
+        give=give,
+        take=take,
+        outcome=outcome,
+        ready_at=ready_at,
+        held=held,
+        ceilings=ceilings,
+        after=after,
+        ready_after=ready_after,
+        dialog=None if dialog is None else frames.write("dialog", dialog),
+        frame=frames.write("after" if dialog is not None else "refused", frame),
+    )
+    logger.info("Prospector: %s", prospector_line(report))
+    return report
+
+
+def _prospector_free(village: VillageExport) -> HelperCooldown | None:
+    """The Prospector's row of the export's helpers, None where the village has none."""
+    return next((one for one in helper_cooldowns(village) if one.data_id == PROSPECTOR), None)
+
+
+def _prospect(
+    adb: AdbController, display: DisplayTarget, give: Ore | None, take: Ore | None
+) -> tuple[ProspectorOutcome, bytes, OreStock | None, OreStock | None, bytes | None]:
+    """Read the ores and their caps off the equipment tab and, with ores asked, convert one into the other.
+
+    Hands back the outcome, the frame it ended on, the ores and caps, and the
+    confirmation as it stood before its 確認, None short of that press; the
+    window is shut behind the press, the panel left for the caller.
+    """
+    frame = _press(adb, display, BUILD_BUTTON, "panel")
+    if not build_panel_open(frame):
+        return "no_tab", frame, None, None, None
+    frame = _press(adb, display, EQUIPMENT_TAB, "tab")
+    if (held := ore_stock(frame)) is None:
+        return "no_tab", frame, None, None, None
+    ceilings, frame = _ore_ceilings(adb, display)
+    if ceilings is None:
+        return "no_ceilings", frame, held, None, None
+    if give is None or take is None:
+        return "read", frame, held, ceilings, None
+    outcome, frame, dialog = _convert(adb, display, frame, give, take)
+    return outcome, frame, held, ceilings, dialog
+
+
+def _convert(
+    adb: AdbController, display: DisplayTarget, frame: bytes, give: Ore, take: Ore
+) -> tuple[ProspectorOutcome, bytes, bytes | None]:
+    """Open the Prospector off its plate, turn the reels to `give` and `take`, and press 轉換 once.
+
+    轉換 raises 要轉換資源嗎？ naming the two ores, whose 確認 is pressed
+    only when it names the ores asked, as `confirm` presses a dialog it raised
+    itself. Hands back the outcome, the frame it ended on, and that dialog as
+    it stood before its 確認, None short of it.
+    """
+    if not prospector_plate(frame):
+        return "no_plate", frame, None
+    frame = _press(adb, display, HELPER_PLATE, "window")
+    if helper_hut(frame) != "prospector":
+        return "no_window", frame, None
+    frame = _turn_reels(adb, display, frame, give, take)
+    if (reel_ore(frame, 0), reel_ore(frame, 1)) != (give, take):
+        return "reels_stuck", frame, None
+    if not convert_offered(frame):
+        return "not_offered", frame, None
+    asked = _press(adb, display, CONVERT, "convert-prompt")
+    if convert_prompt(asked) != (give, take):
+        return "no_prompt", asked, None
+    pressed = _press(adb, display, HELPER_CONFIRM, "converted")
+    if helper_hut(pressed) is not None:
+        _press(adb, display, HUT_CLOSE, "window-shut")
+    return "converted", pressed, asked
+
+
+def _ore_ceilings(adb: AdbController, display: DisplayTarget) -> tuple[OreStock | None, bytes]:
+    """What each ore holds when full, off its bar's tooltip, and the frame after the last one is shut.
+
+    The tooltip is the translucent one a second tap on its bar shuts. A tap
+    that reads nothing may have shut one left open instead, so it is tried
+    again, as the storages' ceilings are (`CAPACITY_TRIES`).
+    """
+    found: list[int] = []
+    frame = b""
+    for row, ore in enumerate(ORES):
+        point = (STOCK_BAR_X - ORE_SHIFT, STOCK_BAR_Y[row])
+        held = None
+        for _ in range(CAPACITY_TRIES):
+            frame = _press(adb, display, point, f"ceiling-{ore}")
+            if (held := ore_capacity(frame, row)) is not None:
+                break
+        if held is None:
+            return None, frame
+        found.append(held)
+        frame = _press(adb, display, point, "tooltip-shut")
+    shiny, glowy, starry = found
+    return OreStock(shiny=shiny, glowy=glowy, starry=starry), frame
+
+
+def _turn_reels(
+    adb: AdbController, display: DisplayTarget, frame: bytes, give: Ore, take: Ore
+) -> bytes:
+    """Step the left reel onto `give` and the right onto `take`, and hand back the frame after.
+
+    A right reel drawn grey is on the left's ore. A reel that reads no ore is
+    left alone.
+    """
+    for side, want in ((0, give), (1, take)):
+        for _ in range(REEL_TRIES):
+            shown = reel_ore(frame, side) or (give if side == 1 else None)
+            if shown is None or shown == want:
+                break
+            x, y = REELS[side]
+            step = REEL_STEP if ORES.index(want) < ORES.index(shown) else -REEL_STEP
+            adb.swipe((x, y), (x, y + step), REEL_SWIPE, display)
+            time.sleep(PRESS_SETTLE)
+            frame = adb.screenshot(display, "reel")
+    return frame
 
 
 def read(png: bytes) -> FrameReading:

@@ -20,6 +20,7 @@ from rich.console import Console
 # stay absolute even for same-layer modules.
 from ai_coc import plans, commands, __version__
 from ai_coc.models import (
+    Ore,
     YesNo,
     Caller,
     RunLog,
@@ -173,7 +174,7 @@ COMMANDS = (
             ),
             (
                 "tended",
-                "不碰遊戲，從紀錄列出一個 session 升了什麼、各花多少，開了幾次鐘塔，派了幾次助手，被搶登幾次",
+                "不碰遊戲，從紀錄列出一個 session 升了什麼、各花多少，開了幾次鐘塔，派了幾次助手，探礦者換了幾次，被搶登幾次",
             ),
             (
                 "search",
@@ -202,6 +203,11 @@ COMMANDS = (
                 "helper",
                 "send 派建築工人學徒（apprentice）或實驗助手（assistant）去幫日世界一件正在升的，"
                 "cancel 停掉它的連續指派；不花資源，按之前跟之後各讀一次村莊匯出",
+            ),
+            (
+                "prospector",
+                "探礦者有空時把一種英雄裝備礦石換成另一種，滑桿停在上限；不給礦石就只讀三種礦石跟各自的上限。"
+                "按之前跟之後各讀一次村莊匯出",
             ),
             (
                 "listprice",
@@ -490,8 +496,9 @@ def _press_flags(
     drag: argparse.ArgumentParser,
     buy: argparse.ArgumentParser,
     sender: argparse.ArgumentParser,
+    converter: argparse.ArgumentParser,
 ) -> None:
-    """The hands the agent drives the build panel with, and `helper`, which drives it alone.
+    """The hands the agent drives the build panel with, and `helper` and `prospector`, which drive it alone.
 
     They press where they are told and refuse only where a press would spend;
     reading the screen is the agent's, off the frame each one leaves. Their own
@@ -528,6 +535,14 @@ def _press_flags(
         action="store_true",
         help="send 時勾「將被指派直到升級完成」：冷卻完自己回到同一件，直到這一級升完；不給就只幫這一趟",
     )
+    for which, said in (("give", "換掉的那一種"), ("take", "換成的那一種")):
+        converter.add_argument(
+            which,
+            nargs="?",
+            choices=get_args(Ore),
+            metavar=which,
+            help=f"{said}：shiny 藍、glowy 紫、starry 星；兩個都不給就只讀",
+        )
     buy.add_argument("--item", metavar="名稱", help="買的是哪一件、升到幾級，記進紀錄給 tended 列")
     how = buy.add_mutually_exclusive_group()
     how.add_argument(
@@ -646,7 +661,11 @@ def _parser() -> argparse.ArgumentParser:
     )
     camera.add_argument("--times", type=int, default=3, help="做幾次，已經到底的話多做無害")
     _press_flags(
-        sub.choices["tap"], sub.choices["swipe"], sub.choices["confirm"], sub.choices["helper"]
+        sub.choices["tap"],
+        sub.choices["swipe"],
+        sub.choices["confirm"],
+        sub.choices["helper"],
+        sub.choices["prospector"],
     )
     # The game's own village export, which is the only complete account of what
     # the village holds and far more than any screen reader can see.
@@ -822,6 +841,7 @@ def _answer(arguments: argparse.Namespace, run: RunLog) -> BaseModel | str:
         "helper": lambda: commands.helper(
             a.action, a.helper, run.frames, a.item or None, a.recurring
         ),
+        "prospector": lambda: commands.prospector(a.give, a.take, run.frames),
         "launch": lambda: commands.launch(a.restart, commands.stop_requested, run.frames),
         "donate": lambda: commands.donate(
             DonateOptions(dry_run=a.dry_run, rounds=a.repeat), run.frames
@@ -1002,7 +1022,13 @@ def _claim_for(arguments: argparse.Namespace, run: RunLog) -> AbstractContextMan
 
 
 def _check_helper(parser: argparse.ArgumentParser, arguments: argparse.Namespace) -> None:
-    """Refuse a `helper` line whose item or flag does not fit its action, before a run opens."""
+    """Refuse a `helper` line whose item or flag does not fit its action, or a `prospector` line with one ore or the same twice, before a run opens."""
+    if arguments.command == "prospector":
+        if (arguments.give is None) != (arguments.take is None) or (
+            arguments.give is not None and arguments.give == arguments.take
+        ):
+            parser.error("prospector 要給兩種不同的礦石，或都不給")
+        return
     if arguments.command != "helper":
         return
     if (arguments.action == "send") != bool(arguments.item):

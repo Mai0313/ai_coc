@@ -17,7 +17,7 @@ import logging
 
 from PIL import Image
 
-from ai_coc.models import LootOffer, ScoutView, VillageStock
+from ai_coc.models import OreStock, LootOffer, ScoutView, VillageStock
 from ai_coc.parsers.frame import open_frame
 
 # The digit reader every number on these screens goes through. It used to live
@@ -2071,3 +2071,76 @@ def read_stock(png: bytes) -> VillageStock | None:
     stock = VillageStock(gold=gold, elixir=elixir, dark=dark)
     logger.info("Village holds gold=%d elixir=%d dark=%d", stock.gold, stock.elixir, stock.dark)
     return stock
+
+
+# **The build panel's hero equipment tab draws the ores where the village draws
+# its storages, slid left with the panel** (2026-11-25): shiny, glowy and starry
+# on the gold, elixir and dark rows, in the same digits, and a tapped bar drops
+# the translucent tooltip the builder base's storages draw. So the frame is slid
+# back and read by the storages' own readers: every shift from 420 to 444 read
+# all three ores on the tab's four frames, and 420 to 436 the builders' tab's
+# storages, so the shift sits where both overlap. The tooltip under shiny starts
+# 4 px lower than the builder base's (80, measured; glowy 142 and starry 205 sit
+# where its own do), so its line is read that much lower too.
+ORE_SHIFT = 432
+ORE_EDGES = (80, 142, 205)
+# Which tab is open is told by the shiny ore's blue gem at the end of the first
+# bar: 0.509 of this box on every equipment tab frame, at most 0.065 on any
+# other frame committed or recorded (`world_day_occluded`), where the builders'
+# tab paints its gold coin.
+ORE_ICON_BOX = (1095, 30, 1140, 65)
+ORE_ICON_BLUE = 0.3
+
+
+def _slid_back(image: Image.Image) -> Image.Image:
+    """The frame moved right by `ORE_SHIFT`, so the equipment tab's bars stand where the storages do."""
+    slid = Image.new("RGB", image.size)
+    slid.paste(image, (ORE_SHIFT, 0))
+    return slid
+
+
+def ore_stock(png: bytes) -> OreStock | None:
+    """The ores on the build panel's hero equipment tab, or None where that tab's three bars do not read."""
+    image = open_frame(png)
+    data = image.crop(ORE_ICON_BOX).tobytes()
+    blue = sum(
+        1
+        for at in range(0, len(data), 3)
+        if data[at + 2] > 200 and data[at] < 120 and data[at + 1] > 120
+    )
+    if blue / (len(data) // 3) < ORE_ICON_BLUE:
+        return None
+    slid = _slid_back(image)
+    shiny, glowy, starry = (
+        _read_row(slid, (STOCK_LEFT, top, STOCK_RIGHT, bottom), STOCK_DIGIT_TOLERANCE)
+        for top, bottom in STOCK_ROW_BOUNDS
+    )
+    if shiny is None or glowy is None or starry is None:
+        return None
+    logger.info("Ores held shiny=%d glowy=%d starry=%d", shiny, glowy, starry)
+    return OreStock(shiny=shiny, glowy=glowy, starry=starry)
+
+
+def ore_capacity(png: bytes, row: int) -> int | None:
+    """What this ore's tooltip says it holds when full, or None where it is not the one open; `row` 0 to 2, shiny first.
+
+    The tooltip above has to be shut: glowy's bottom edge runs at 207, where
+    starry's top would, over the dark gems bar, and its line read 12 807 there.
+    """
+    if ore_tooltip(png) != row:
+        return None
+    slid = _slid_back(open_frame(png))
+    top, bottom = CAPACITY_ROWS[row]
+    drop = ORE_EDGES[row] - CAPACITY_EDGES[row]
+    mask = ink_mask(
+        slid.crop((CAPACITY_X[0], top + drop, CAPACITY_X[1], bottom + drop)),
+        saturation=STOCK_INK_SATURATION,
+    )
+    found = split_numbers(mask, CAPACITY_TOLERANCE)
+    return found[-1] if found else None
+
+
+def ore_tooltip(png: bytes) -> int | None:
+    """The ore whose tooltip is open on this frame, shiny 0, or None with none open."""
+    slid = _slid_back(open_frame(png))
+    return next((row for row, edge in enumerate(ORE_EDGES) if _tooltip_edge(slid, edge)), None)

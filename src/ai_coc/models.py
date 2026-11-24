@@ -1919,9 +1919,10 @@ class BoostReport(BaseModel):
 # The Helper Hut's helpers `helper` drives: the Builder's Apprentice, which
 # speeds the builders' jobs, and the Lab Assistant, the laboratory's. The hut
 # has two more, the Alchemist and the Prospector, which convert resources
-# rather than speed a job; one added later gets a name here and an action of
-# its own.
+# rather than speed a job: the Prospector has its own command, `prospector`.
 HelperName = Literal["apprentice", "assistant"]
+# The hut's pages `helper` and `prospector` open, one per helper they drive.
+HutPage = Literal["apprentice", "assistant", "prospector"]
 # What `helper` does with one: `send` it to a running job, `cancel` the
 # recurring dispatch (將被指派直到升級完成) it is on.
 HelperAction = Literal["send", "cancel"]
@@ -1976,6 +1977,72 @@ class HelperReport(BaseModel):
     running: list[str] = Field(default_factory=list)
     helping: str | None = None
     recurrent: bool | None = None
+    dialog: Path | None = None
+    frame: Path | None = None
+
+
+# The hero equipment ores, top to bottom on the Prospector's reels and the
+# equipment tab's bars: Shiny, Glowy and Starry Ore.
+Ore = Literal["shiny", "glowy", "starry"]
+
+
+class OreStock(BaseModel):
+    """One number per ore: what the equipment tab's bars hold, or what their tooltips say they hold when full."""
+
+    model_config = ConfigDict(frozen=True)
+
+    shiny: int
+    glowy: int
+    starry: int
+
+
+# How one `prospector` run ended. `converted` and `unconfirmed` pressed the
+# confirmation's 確認, and the export read afterwards carries the Prospector's
+# cooldown or does not; `read` was asked to convert nothing and read the ores;
+# every other one pressed nothing that converts (`no_prompt` pressed 轉換,
+# which only raises the confirmation).
+ProspectorOutcome = Literal[
+    "converted",
+    "unconfirmed",
+    "read",
+    "on_night",
+    "no_village",
+    "no_export",
+    "no_prospector",
+    "cooling",
+    "no_tab",
+    "no_ceilings",
+    "no_plate",
+    "no_window",
+    "reels_stuck",
+    "not_offered",
+    "no_prompt",
+]
+
+
+class ProspectorReport(BaseModel):
+    """What one `prospector` run read and converted, and the frames it left.
+
+    `give` and `take` are the ores it was asked to convert from and into, both
+    None on a run asked only to read. `ready_at` is when the export read first
+    says the Prospector is free, `held` and `ceilings` the ores on the
+    equipment tab before any press and what each holds when full, `after` the
+    ores once the window has shut, and `ready_after` the cooldown's end on the
+    export read after the press. `dialog` is the confirmation 轉換 raised as
+    it stood right before its 確認, `frame` the screen after that press, or
+    the one a run that pressed nothing stopped on.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    give: Ore | None = None
+    take: Ore | None = None
+    outcome: ProspectorOutcome
+    ready_at: str | None = None
+    held: OreStock | None = None
+    ceilings: OreStock | None = None
+    after: OreStock | None = None
+    ready_after: str | None = None
     dialog: Path | None = None
     frame: Path | None = None
 
@@ -2681,13 +2748,28 @@ class TendedHelper(BaseModel):
     item: str | None = None
 
 
+class TendedConversion(BaseModel):
+    """One conversion a session made with the Prospector: when its run ended, the two ores, and how each moved.
+
+    `given` and `received` are the bars read before and after, None where the
+    bars did not read after.
+    """
+
+    at: datetime
+    give: Ore
+    take: Ore
+    given: int | None = None
+    received: int | None = None
+
+
 class TendedReport(BaseModel):
     """What one session did to the village besides farming over a stretch, off the journal alone.
 
     `by` and `since` are what was asked, either None where it was not.
     `upgrades` is each upgrade it confirmed, `boosts` when each clock tower
-    boost it started began, `helpers` each helper it sent or stopped, and `lost` each
-    time another device took the login from it, all oldest first.
+    boost it started began, `helpers` each helper it sent or stopped, `conversions`
+    each conversion it made with the Prospector, and `lost` each time another
+    device took the login from it, all oldest first.
     """
 
     by: str | None = None
@@ -2695,6 +2777,7 @@ class TendedReport(BaseModel):
     upgrades: list[TendedUpgrade] = Field(default_factory=list)
     boosts: list[datetime] = Field(default_factory=list)
     helpers: list[TendedHelper] = Field(default_factory=list)
+    conversions: list[TendedConversion] = Field(default_factory=list)
     lost: list[LostLogin] = Field(default_factory=list)
 
 

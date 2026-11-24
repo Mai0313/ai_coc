@@ -96,6 +96,8 @@ ai_coc confirm --price 10800 --item "Cannon 12"  # the same, recording what was 
 ai_coc listprice --day                      # the panel shows no struck-through list price any more: status stops scaling by the old discount
 ai_coc helper send apprentice "Royal Champion" --recurring  # send the Builder's Apprentice (assistant: the Lab Assistant) to that running home village upgrade; --recurring has it come back after every cooldown until the level is done; spends nothing
 ai_coc helper cancel apprentice              # stop its recurring dispatch: the hour under way still finishes, and after its cooldown it stays free
+ai_coc prospector                           # read the hero equipment ores and what each holds when full, off the build panel's equipment tab; converts nothing
+ai_coc prospector starry glowy              # convert with the Prospector once it is free, Starry Ore into Glowy Ore (shiny, glowy, starry) at the slider's maximum
 ```
 
 Every upgrade goes through the build panel, walls included: `tap` and `swipe` press and scroll and keep the frame they left, and `confirm` is the one press that spends, made only when the sheet asks exactly the price given, in gold, elixir or dark elixir. With `--pay` it starts on the menu of a wall picked from the panel: it presses that wall's price button only when it asks the price given and the village can pay, then the sheet or the batch's dialog that button raises.
@@ -137,7 +139,7 @@ ai_coc export --last                  # the last one off the disk, without touch
 ai_coc growth                         # what was upgraded on each village between the oldest and newest saved exports; --start-date / --end-date narrow it
 ai_coc turnaround                     # seconds from each upgrade finishing to the confirm for its next level, per slot, off the run journal; --since narrows it
 ai_coc farmed --by <session> --since <time>  # one session's farming summed over every attack run, per village, off the run journal; touches nothing
-ai_coc tended --by <session> --since <time>  # one session's upgrades with what each cost, clock tower boosts, helpers sent and lost logins, off the run journal; touches nothing
+ai_coc tended --by <session> --since <time>  # one session's upgrades with what each cost, clock tower boosts, helpers sent, Prospector conversions and lost logins, off the run journal; touches nothing
 ai_coc gamedata                       # the game's own tables (zh and en names, max levels, each level's requirements, list price and time), read off the emulator once per game version into ~/.ai_coc/game_data/<version>/; --refresh reads them again
 ai_coc search "Electro Dragon"        # look a thing up by data_id or by a piece of its Chinese or English name in those tables (the nearest names, labelled as such, when no name contains it), with the levels, running upgrades and next list price of the ones the village has, what every level up to the max or the hall's cap asks in all (with an estimate at the newest purchases' discount when there is one), and what unlocks the troops and spells it lacks; --rows lists each row; touches nothing
 ai_coc search --section builder --day --skip-max-lvl  # list what the village holds of one section (builder, lab, pets, equipment, helpers, or all), each village in its own block, what a copy can start now first, quickest upgrade first; --day / --night keep one village, --skip-max-lvl leaves out what is at its last level, and a name narrows it further

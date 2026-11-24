@@ -96,6 +96,8 @@ ai_coc confirm --price 10800 --item "加农炮 12 级"  # 一样, 再把买的�
 ai_coc listprice --day                      # 面板上的价格旁没有划掉的原价了: status 不再照之前的折扣估
 ai_coc helper send apprentice 神盾勇者 --recurring  # 派建筑工人学徒 (assistant 是实验助手) 去帮日世界那件正在升的; --recurring 勾「将被指派直到升级完成」, 冷却完自己回去; 不花资源
 ai_coc helper cancel apprentice              # 停掉它的连续指派: 正在做的这一小时照做完, 冷却完不再回去
+ai_coc prospector                           # 从建造面板的英雄装备分页读三种矿石跟各自的上限; 不换
+ai_coc prospector starry glowy              # 探矿者有空时把星矿换成紫矿 (shiny 蓝、glowy 紫、starry 星), 滑杆停在上限
 ```
 
 升级都走建造面板, 城墙也是: `tap` 跟 `swipe` 负责点跟滚, 并留下按完的画面; `confirm` 是唯一会花钱的那一下, 只有确认窗口要的价格跟给的一样、而且是金币圣水黑水才按。加 `--pay` 时从面板点出来的城墙菜单开始: 那颗升级钮要的价格跟给的一样、而且买得起才按, 再按它跳出来的确认窗口或批次的对话框。
@@ -137,7 +139,7 @@ ai_coc export --last                  # 直接读上一次的结果,完全不碰
 ai_coc growth                         # 比对存下的最旧跟最新两份导出,列出两个世界升了什么;--start-date / --end-date 缩小范围
 ai_coc turnaround                     # 从运行记录算每次升级从到点到按下确认花了几秒,按王、实验室、建筑、战宠分;--since 指定起算时间 (ISO)
 ai_coc farmed --by <session> --since <时间>  # 从运行记录把一个 session 每一次打资源加起来, 每个世界一段; 不碰游戏
-ai_coc tended --by <session> --since <时间>  # 从运行记录列出一个 session 升了什么、各花多少, 开了几次钟塔, 派了几次助手, 被抢登几次; 不碰游戏
+ai_coc tended --by <session> --since <时间>  # 从运行记录列出一个 session 升了什么、各花多少, 开了几次钟塔, 派了几次助手, 探矿者换了几次, 被抢登几次; 不碰游戏
 ai_coc gamedata                       # 从模拟器上的游戏文件读出游戏自己的表(中英文名称、最高等级、每级的要求、标价和时间),每个游戏版本读一次,存在 ~/.ai_coc/game_data/<版本>/;--refresh 重新读
 ai_coc search "Electro Dragon"        # 按 data_id 或中英文名称的一段查那份表 (没有名字含这一段的就列名字最接近的几种, 并标明不是符合的),村庄里有的再列出等级、升级中几点好、下一级的标价和升到满级或上限总共要多少多久 (有最近实付的折数就附估计),没有的兵种和法术列出解锁要什么;--rows 每一行分开列;不碰游戏
 ai_coc search --section builder --day --skip-max-lvl  # 按分类列村庄里有的 (builder、lab、pets、equipment、helpers, 或 all), 两个世界各一段, 现在能升的按标价时间由短到长排前面; --day / --night 只留一个世界, --skip-max-lvl 不列满级的, 再给名称就在里面找

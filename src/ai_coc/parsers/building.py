@@ -28,7 +28,9 @@ from collections import Counter
 from PIL import Image
 
 from ai_coc.models import (
+    Ore,
     World,
+    HutPage,
     GameDialog,
     HelperName,
     SheetOffer,
@@ -954,12 +956,14 @@ PLATE_WHITE = 0.015
 # white frame round the portrait of the helper it shows: 0.677 white along the
 # top of the frame on all eight hut frames, at most 0.333 in either box on every
 # other frame committed or recorded. The portraits run Lab Assistant (12) then
-# Builder's Apprentice (8), then the Alchemist and the Prospector.
+# Builder's Apprentice (8), then the Alchemist and the Prospector, whose page
+# reads 0.650 white along its rim (2026-11-25).
 HUT_X_BOX = (1390, 47, 1436, 93)
 HUT_X_RED = 0.2
-HUT_RIMS: dict[HelperName, tuple[int, int, int, int]] = {
+HUT_RIMS: dict[HutPage, tuple[int, int, int, int]] = {
     "assistant": (190, 694, 290, 700),
     "apprentice": (330, 694, 430, 700),
+    "prospector": (600, 694, 700, 700),
 }
 HUT_RIM_WHITE = 0.5
 HUT_PORTRAITS: dict[HelperName, tuple[int, int]] = {
@@ -1016,8 +1020,8 @@ def helper_plate(png: bytes) -> bool:
     )
 
 
-def helper_hut(png: bytes) -> HelperName | None:
-    """Whose page the Helper Hut's window is open on, or None where it is not open on one of the two."""
+def helper_hut(png: bytes) -> HutPage | None:
+    """Whose page the Helper Hut's window is open on, or None where it is not open on one of the three."""
     image = open_frame(png)
     if _share(image, HUT_X_BOX, lambda r, g, b: r >= 180 and g <= 80 and b <= 80) < HUT_X_RED:
         return None
@@ -1076,6 +1080,123 @@ STOP_ORANGE = 0.4
 STOP_GREEN = 0.25
 STOP_CANCEL = (623, 580)
 STOP_CONFIRM = (973, 580)
+
+
+# **The Prospector's plate** floats at `HELPER_PLATE` beside the build panel's
+# hero equipment tab (2026-11-25), showing 可用 while it is free. Its face is
+# bearded rather than yellow-capped, so the plate is told by the warm cream of
+# a helper's face, which every plate carries: 0.303 to 0.308 of this box on the
+# Prospector's and the Apprentice's and Assistant's plates alike, and the white
+# writing beside it at a lower floor than theirs (0.079 against 0.025 at
+# `helper_plate`'s). Which helper the plate is the caller knows by the tab.
+PLATE_CREAM_BOX = (1115, 350, 1145, 400)
+PLATE_CREAM = 0.2
+PLATE_LABEL_BOX = (1010, 365, 1065, 392)
+PLATE_LABEL_WHITE = 0.04
+# **The Prospector's window** is the hut on its own page: 目前礦石 with the three
+# counts, then two reels, the ore given on the left and the ore received on
+# the right, each centred on one ore with its neighbours peeking above and
+# below, shiny, glowy and starry top to bottom, no wrap. A tap on a reel does
+# nothing; a 110 px drag over 400 ms steps it one ore, downwards bringing the
+# one above into the middle. The centred ore is told by its colour over this
+# box: shiny 0.67 blue, glowy 0.50 purple, starry 0.45 orange, the others
+# under 0.16; a right reel on the left's ore is drawn grey (0.00 of all three)
+# under red 無法轉換為相同類型的礦石.
+REELS = ((910, 430), (1280, 430))
+REEL_HALF = 35
+REEL_STEP = 110
+REEL_SHARE = 0.25
+# The slider starts at its maximum and 轉換 is green only on two different ores
+# with the Prospector free: 0.587 of this box against 0.000 greyed. Other green
+# buttons fill it too (0.974 on a squad's research sheet), so it is read only
+# on the window.
+CONVERT_BOX = (1250, 638, 1405, 676)
+CONVERT_GREEN = 0.4
+CONVERT = (1326, 656)
+# **轉換 raises 要轉換資源嗎？** (2026-11-25), naming both ores with their
+# amounts on two grey boxes over a pale panel, and one green 確認 carrying the
+# Prospector's face where the helper dispatch dialog draws its own, the X at
+# the same place too. Four readings, all of the dispatch dialog's boxes but
+# the panel's top strip, clear of the question, and the grey boxes: 0.401 red,
+# 1.000 pale, 0.945 grey and 0.841 green on it, where the dispatch dialog reads
+# 0.68 pale and 0.03 grey, and no other frame committed or recorded passes
+# three (the next grey is 0.164, on a running research's sheet). Each box's
+# ore is read as a reel's is, off its icon.
+CONVERT_PANEL_BOX = (360, 205, 1240, 250)
+CONVERT_GREY_BOX = (390, 365, 770, 530)
+CONVERT_PALE = 0.9
+CONVERT_GREY = 0.6
+CONVERT_PROMPT_ORES = ((585, 420), (1010, 420))
+
+
+def prospector_plate(png: bytes) -> bool:
+    """Whether a helper's plate floats beside the build panel, the Prospector's on the equipment tab."""
+    image = open_frame(png)
+    return (
+        _share(
+            image,
+            PLATE_CREAM_BOX,
+            lambda r, g, b: r >= 200 and 150 <= g <= 240 and 120 <= b <= 215 and r - b >= 25,
+        )
+        >= PLATE_CREAM
+        and _share(image, PLATE_LABEL_BOX, lambda r, g, b: min(r, g, b) >= 220)
+        >= PLATE_LABEL_WHITE
+    )
+
+
+def reel_ore(png: bytes, side: int) -> Ore | None:
+    """The ore centred on the Prospector's left reel (0) or right (1), None where it is greyed or unread."""
+    return _ore_at(open_frame(png), REELS[side])
+
+
+def convert_prompt(png: bytes) -> tuple[Ore | None, Ore | None] | None:
+    """The ores 要轉換資源嗎？ would convert from and into, or None where it is not up."""
+    image = open_frame(png)
+    if not (
+        _share(image, HELPER_PROMPT_X_BOX, lambda r, g, b: r >= 180 and g <= 80 and b <= 80)
+        >= HELPER_PROMPT_X_RED
+        and _share(image, CONVERT_PANEL_BOX, _goblin_pale) >= CONVERT_PALE
+        and _share(
+            image,
+            CONVERT_GREY_BOX,
+            lambda r, g, b: (
+                min(r, g, b) >= 150 and max(r, g, b) <= 200 and max(r, g, b) - min(r, g, b) <= 12
+            ),
+        )
+        >= CONVERT_GREY
+        and _share(image, HELPER_PROMPT_BUTTON_BOX, _goblin_green) >= HELPER_PROMPT_GREEN
+    ):
+        return None
+    give, take = (_ore_at(image, centre) for centre in CONVERT_PROMPT_ORES)
+    return give, take
+
+
+def _ore_at(image: Image.Image, centre: tuple[int, int]) -> Ore | None:
+    """Which ore's icon is centred here, by its colour; None where none clears `REEL_SHARE`."""
+    x, y = centre
+    box = (x - REEL_HALF, y - REEL_HALF, x + REEL_HALF, y + REEL_HALF)
+    shares: dict[Ore, float] = {
+        "shiny": _share(
+            image, box, lambda r, g, b: max(r, g, b) - min(r, g, b) >= 60 and b > r + 40 and b > g
+        ),
+        "glowy": _share(
+            image,
+            box,
+            lambda r, g, b: max(r, g, b) - min(r, g, b) >= 60 and r > g + 40 and b > g + 40,
+        ),
+        "starry": _share(
+            image,
+            box,
+            lambda r, g, b: max(r, g, b) - min(r, g, b) >= 60 and r > b + 80 and g > b + 20,
+        ),
+    }
+    ore = max(shares, key=lambda one: shares[one])
+    return ore if shares[ore] >= REEL_SHARE else None
+
+
+def convert_offered(png: bytes) -> bool:
+    """Whether the Prospector's 轉換 is green; read only on its window."""
+    return _share(open_frame(png), CONVERT_BOX, _goblin_green) >= CONVERT_GREEN
 
 
 def helper_stop_prompt(png: bytes) -> bool:

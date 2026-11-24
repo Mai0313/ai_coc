@@ -272,6 +272,8 @@ PANEL_CLOSE = (1572, 30)
 # 建造 itself, and the home village panel's builders' and laboratory tabs.
 BUILD_BUTTON = (1495, 800)
 PANEL_TABS: dict[PlateRole, tuple[int, int]] = {"builder": (1222, 850), "lab": (1330, 850)}
+# The hero equipment tab, the anvil, whose plate is the Prospector's.
+EQUIPMENT_TAB = (1435, 850)
 # The X is a red plate, which no other screen draws there: it fills 0.36 of this
 # box on every panel recorded and under 0.1 on every other frame, committed or
 # recorded. The title bar beside it is the second reading, a flat grey-brown

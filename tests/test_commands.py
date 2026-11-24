@@ -30,6 +30,7 @@ from ai_coc import plans, commands, logging_setup
 from ai_coc.ui import world as world_ui
 from ai_coc.models import (
     SESSION_TAKEN_SENTENCE,
+    Ore,
     Notes,
     Watch,
     Boosts,
@@ -39,6 +40,7 @@ from ai_coc.models import (
     FrameLog,
     HoldStop,
     LoanStop,
+    OreStock,
     ProbeRay,
     AppConfig,
     AttackRun,
@@ -108,8 +110,10 @@ from ai_coc.models import (
     StorageCapacity,
     ThresholdWaiver,
     VillageDocument,
+    ProspectorReport,
     StandDownOutcome,
     PlateCountOutcome,
+    ProspectorOutcome,
     TurnaroundOutcome,
 )
 from ai_coc.adapters import gamedata
@@ -933,14 +937,20 @@ class StatusTextTests(unittest.TestCase):
         report = self._report(
             _timer(1, "12:05", recurrent=True, timer=40_000),
             _timer(2, "12:30", role="lab", section="units"),
-            helpers=[helper(93000000, 600, "建築1"), helper(93000001, 0), helper(93000002, 0)],
+            helpers=[
+                helper(93000000, 600, "建築1"),
+                helper(93000001, 0),
+                helper(93000002, 0),
+                helper(93000003, 0),
+            ],
         )
         day = commands.status_text(report, NOW).split("夜世界")[0].splitlines()
         rows = [line for line in day if line.startswith("| ") and "---" not in line]
-        # The recurring one has no row of its own, and the Alchemist and the
-        # Prospector speed nothing.
+        # The recurring one has no row of its own, and the Alchemist, whose
+        # conversions nothing drives, has none either; the Prospector has.
         assert rows[1:] == [
             "| 現在 | — | 助手93000001冷卻結束 |",
+            "| 現在 | — | 助手93000003冷卻結束 |",
             "| 今天 12:05 | 工人 (建築工人學徒連續指派, 今天 12:10冷卻完) | 建築1 (5/10), 下一級: 金幣 1 萬 |",
             "| 今天 12:30 | 實驗室 | 建築2 (5/10), 下一級: 金幣 1 萬 |",
         ]
@@ -1663,6 +1673,29 @@ class UpkeepLineTests(unittest.TestCase):
                 "box_stuck": "勾不成要的樣子",
             },
             get_args(HelperOutcome),
+        )
+
+    def test_every_prospector_outcome_has_a_line_of_its_own(self) -> None:
+        self._each(
+            commands.PROSPECTOR_LINES,
+            {
+                "converted": "開始冷卻了",
+                "unconfirmed": "看不出探礦者在冷卻",
+                "read": "只讀了礦石跟上限",
+                "on_night": "遊戲在夜世界",
+                "no_village": "回不到村莊",
+                "no_export": "村莊匯出沒讀到",
+                "no_prospector": "匯出上沒有探礦者",
+                "cooling": "還在冷卻",
+                "no_tab": "英雄裝備分頁沒開成",
+                "no_ceilings": "上限讀不到",
+                "no_plate": "沒有探礦者的牌子",
+                "no_window": "視窗沒有開在它那一頁",
+                "reels_stuck": "轉盤轉不到",
+                "not_offered": "轉換鈕不是綠的",
+                "no_prompt": "確認視窗不是要的兩種礦石",
+            },
+            get_args(ProspectorOutcome),
         )
 
     def test_every_view_outcome_has_a_line_of_its_own(self) -> None:
@@ -2661,8 +2694,29 @@ class TendedTests(unittest.TestCase):
 
     def test_nothing_done_says_so_line_by_line(self) -> None:
         assert commands.tended_text(self._tended(by="s1")) == (
-            "- 升級: 0 件\n- 鐘塔: 沒開\n- 助手: 沒派\n- 被搶登: 沒有"
+            "- 升級: 0 件\n- 鐘塔: 沒開\n- 助手: 沒派\n- 探礦者: 沒換\n- 被搶登: 沒有"
         )
+
+    def test_a_conversion_counts_once_the_export_afterwards_bears_it_out(self) -> None:
+        """Only `converted`; how much moved is the bars' before and after."""
+        ores = {
+            "give": "starry",
+            "take": "glowy",
+            "held": {"shiny": 20716, "glowy": 1317, "starry": 944},
+            "after": {"shiny": 20716, "glowy": 1437, "starry": 942},
+        }
+        self._run("prospector", "01:42", "converted", {**ores, "outcome": "converted"})
+        self._run("prospector", "01:38", "unconfirmed", {**ores, "outcome": "unconfirmed"})
+        self._run("prospector", "01:34", "read", {"outcome": "read"})
+        [only] = self._tended(by="s1").conversions
+        assert (only.give, only.take, only.given, only.received) == ("starry", "glowy", 2, 120)
+        [line] = [
+            line
+            for line in commands.tended_text(self._tended(by="s1")).splitlines()
+            if line.startswith("- 探礦者")
+        ]
+        assert line.startswith("- 探礦者: 換了 1 次 (")
+        assert line.endswith(f"{only.at.astimezone():%H:%M} 星礦 2 → 紫礦 120)")
 
     def test_a_helper_counts_once_the_export_afterwards_bears_the_press_out(self) -> None:
         """A send under the job that export names, which is what it went to whatever it was asked."""
@@ -3540,9 +3594,10 @@ class WatchTests(unittest.TestCase):
         tower = ClockTower(ready_in=1, ready_at=at(50))
         # The Alchemist's is left out, and so is one that can be sent now; a
         # recurring one counts, since its dispatch is changed only before it
-        # goes back.
+        # goes back, and so does the Prospector.
         helpers = [
             HelperCooldown(data_id=93000002, ready_in=60, ready_at=at(1)),
+            HelperCooldown(data_id=93000003, ready_in=900, ready_at=at(15)),
             HelperCooldown(data_id=93000000, ready_in=2400, ready_at=at(40)),
             HelperCooldown(data_id=93000001, ready_in=1200, ready_at=at(20), recurring="X"),
             HelperCooldown(data_id=93000001, ready_in=0, ready_at=at(-5)),
@@ -3559,7 +3614,7 @@ class WatchTests(unittest.TestCase):
             patch.object(commands, "clock_tower", return_value=tower),
             patch.object(commands, "helper_cooldowns", return_value=helpers),
         ):
-            assert minutes([], ["builder"], lead=5, helpers=True) == 20
+            assert minutes([], ["builder"], lead=5, helpers=True) == 15
             # The pet's lead has run out, so it wakes at its own time.
             assert minutes([], [], lead=5) == 3
             assert minutes([], ["lab", "builder"], lead=5) == 55
@@ -3583,7 +3638,7 @@ class WatchTests(unittest.TestCase):
             assert minutes([], ["builder"]) == 0
             assert commands.wake_at([], tower=True) is None
             assert commands.wake_at([], ["lab"], tower=True) is None
-            with patch.object(commands, "helper_cooldowns", return_value=helpers[3:]):
+            with patch.object(commands, "helper_cooldowns", return_value=helpers[4:]):
                 assert commands.wake_at([], helpers=True) is None
 
     def _pressed(self, run: str, at: datetime, outcome: str = "confirmed") -> None:
@@ -6037,3 +6092,149 @@ class StorageCeilingTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def _prospector_export(cooldown: int | None = None) -> ExportReport:
+    """An export whose Prospector is free, or cooling for `cooldown` seconds."""
+    prospector = {"data": 93000003, "lvl": 1} | ({"helper_cooldown": cooldown} if cooldown else {})
+    document = VillageDocument.model_validate({
+        "tag": "#TEST",
+        "timestamp": 1795452818,
+        "helpers": [prospector],
+    })
+    return ExportReport(outcome="exported", export=merge(document, None, 1795452818))
+
+
+# The equipment tab and each ore's tooltip opened and shut, as the first live
+# conversion read them (2026-11-25), and the taps that read them.
+ORE_READS = [
+    "hud_day.png",
+    "hud_day_build_panel.png",
+    "ore_tab.png",
+    "ore_cap_shiny.png",
+    "ore_tab.png",
+    "ore_cap_glowy.png",
+    "ore_tab.png",
+    "ore_cap_starry.png",
+    "ore_tab.png",
+]
+ORE_TAPS = [(1495, 800), (1435, 850), *((968, y) for y in (46, 46, 108, 108, 170, 170))]
+
+
+class ProspectorCommandTests(unittest.TestCase):
+    """`prospector`: the export says it is free, the reels and the confirmation must name the ores asked."""
+
+    def _run(
+        self, frames: list[str], exports: list[ExportReport], give: Ore | None, take: Ore | None
+    ) -> tuple[MagicMock, ProspectorReport]:
+        adb = _adb()
+        pngs = [(FRAMES / frame).read_bytes() for frame in frames]
+        adb.screenshot.side_effect = lambda *_: pngs.pop(0) if len(pngs) > 1 else pngs[0]
+        with (
+            patch.object(commands, "_controller", return_value=adb),
+            patch.object(commands, "_settle_game", return_value=DISPLAY),
+            patch.object(commands, "_exported", side_effect=exports),
+            patch.object(commands.time, "sleep"),
+        ):
+            report = commands.prospector(give, take, _frames(self))
+        assert report.frame is not None
+        assert report.frame.is_file()
+        return adb, report
+
+    @staticmethod
+    def _taps(adb: MagicMock) -> list[tuple[int, int]]:
+        return [call.args[:2] for call in adb.tap.call_args_list]
+
+    def test_a_conversion_is_confirmed_on_the_ores_asked_and_read_back(self) -> None:
+        adb, report = self._run(
+            [
+                *ORE_READS,
+                "prospector_window.png",
+                "prospector_convert_dialog.png",
+                "prospector_converted.png",
+                "ore_tab_after.png",
+                "ore_tab_after.png",
+                "ore_tab_after.png",
+                "hud_day.png",
+            ],
+            [_prospector_export(), _prospector_export(cooldown=77480)],
+            "starry",
+            "glowy",
+        )
+        assert self._taps(adb) == [
+            *ORE_TAPS,
+            (1060, 377),
+            (1326, 656),
+            (840, 715),
+            (1413, 70),
+            (1572, 30),
+        ]
+        adb.swipe.assert_not_called()
+        assert report.outcome == "converted"
+        assert report.held == OreStock(shiny=20716, glowy=1317, starry=944)
+        assert report.ceilings == OreStock(shiny=50000, glowy=5000, starry=1000)
+        assert report.after == OreStock(shiny=20716, glowy=1437, starry=942)
+        assert report.ready_after is not None
+        assert report.dialog is not None
+        assert (report.dialog.name, report.frame.name) == ("dialog.png", "after.png")
+
+    def test_reels_are_stepped_toward_the_ores_asked(self) -> None:
+        """Up for the next ore down the reel; a right reel greyed is on the left's ore."""
+        adb, report = self._run(
+            [
+                *ORE_READS,
+                "prospector_shiny_greyed.png",
+                "prospector_glowy_shiny.png",
+                "prospector_window.png",
+                "prospector_convert_dialog.png",
+                "prospector_converted.png",
+                "ore_tab_after.png",
+                "hud_day.png",
+            ],
+            [_prospector_export(), _prospector_export(cooldown=77480)],
+            "starry",
+            "glowy",
+        )
+        assert [call.args[:2] for call in adb.swipe.call_args_list] == [
+            ((910, 430), (910, 320)),
+            ((910, 430), (910, 320)),
+        ]
+        assert report.outcome == "converted"
+
+    def test_a_confirmation_naming_other_ores_gets_no_confirm(self) -> None:
+        adb, report = self._run(
+            [
+                *ORE_READS,
+                "prospector_glowy_shiny.png",
+                "prospector_convert_dialog.png",
+                "prospector_convert_dialog.png",
+                "prospector_window.png",
+                "ore_tab.png",
+                "hud_day.png",
+            ],
+            [_prospector_export()],
+            "glowy",
+            "shiny",
+        )
+        assert (840, 715) not in self._taps(adb)
+        # Shut by its X, then the window and the panel by theirs.
+        assert self._taps(adb)[-3:] == [(1211, 140), (1413, 70), (1572, 30)]
+        assert (report.outcome, report.dialog) == ("no_prompt", None)
+
+    def test_reading_only_opens_no_window_and_needs_no_free_prospector(self) -> None:
+        for export in (_prospector_export(), _prospector_export(cooldown=600)):
+            adb, report = self._run([*ORE_READS, "hud_day.png"], [export], None, None)
+            assert (1060, 377) not in self._taps(adb)
+            assert (report.outcome, report.ceilings) == (
+                "read",
+                OreStock(shiny=50000, glowy=5000, starry=1000),
+            )
+
+    def test_a_prospector_cooling_down_gets_no_tap(self) -> None:
+        adb, report = self._run(
+            ["hud_day.png"], [_prospector_export(cooldown=600)], "starry", "glowy"
+        )
+        adb.tap.assert_not_called()
+        assert report.outcome == "cooling"
+        assert report.ready_at is not None
+        assert "才有空" in commands.prospector_line(report)
