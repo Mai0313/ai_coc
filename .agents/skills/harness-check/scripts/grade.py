@@ -2,7 +2,7 @@
 
     uv run --no-sync python .agents/skills/harness-check/scripts/grade.py <command> ...
 
-``stamp`` appends a turn line to ``<dir>/turns.log`` on this script's clock. ``wakes`` decides check 7's rows from the exit lines of ``<dir>/t7-*.log`` and those stamps. ``plan`` writes a check 8 brief's plan, which ``job.py`` reads and the commands do not show, and prints the numbered commands. ``report`` decides check 8's rows from that plan, the journal ``job.py`` kept and the subagent's reply saved verbatim.
+``stamp`` appends a turn line to ``<dir>/turns.log`` on this script's clock. ``wakes`` decides how the story's timed ends reached the actor each was for, from the exit lines of their ``sleeper.py`` logs and the actors' stamps. ``plan`` writes a brief's plan, which ``job.py`` reads and the commands do not show, and prints the numbered commands. ``report`` decides a brief's rows from that plan, the journal ``job.py`` kept and the subagent's reply saved verbatim. ``table`` holds the takeover start table against the ``status`` output it was built from.
 """
 
 import re
@@ -13,16 +13,23 @@ from pathlib import Path
 from datetime import datetime
 
 KINDS = ("turn", "mid", "user")
-STEPS = ("s1", "s2", "s3", "s4")
+STEP_COUNT = 4
 STEP_SECONDS = 20
+# Each brief's steps carry its own letter, so one reply can answer both briefs.
+PREFIX = {"error": "e", "stop": "s"}
 # An exit this many seconds or fewer after another counts as right behind it.
 CLOSE_SECONDS = 30
-# The check 7 task another session plays.
-SESSION_TASK = "g"
+# The story's timed ends, each with the actor directory whose turns.log it has to reach. The
+# subagent's long command reaches the main session through the subagent's report.
+ENDS = (("p.log", "."), ("q.log", "."), ("side/timer.log", "side"), ("sub/long.log", "."))
+# An end relayed in a report arrives as late as the report takes to write, so it is left out of the
+# rows that compare when ends arrived.
+RELAYED = {"sub/long.log"}
+# The main session's long foreground wait.
+WAIT = "wait.log"
 JOB = ".agents/skills/harness-check/scripts/job.py"
-STEP_LINE = re.compile(r"\b(s\d+) exit=(-?\d+) outcome=(\w+) token=(\w+)")
-NOT_RUN = re.compile(r"\b(s\d+) not run\b")
-ENDED = re.compile(r"\bended:\W*(.+)")
+STATUS_HEADER = ["時間", "目標", "項目"]
+TABLE_HEADER = [*STATUS_HEADER, "後續"]
 
 Stamp = tuple[datetime, str, str]
 Said = tuple[int, str, str] | None
@@ -65,101 +72,95 @@ def stamp(args: argparse.Namespace) -> None:
 
 
 def wakes(args: argparse.Namespace) -> None:
-    tasks = args.tasks.split(",")
-    logs = {name: _sleep_log(args.dir / f"t7-{name}.log") for name in tasks}
-    ends = {name: (end, token) for name, (_, end, token) in logs.items() if end and token}
-    begun = min((start for start, _, _ in logs.values() if start), default=None)
-    stamps = _stamps(args.dir)
-    # The user's message starts a turn too; nothing after it can be told apart from a wake. The
-    # user turn that starts the check can share a second with the first start, so it is not one.
-    cutoff = next((t for t, kind, _ in stamps if kind == "user" and begun and t > begun), None)
+    ends: dict[str, tuple[datetime, str, str]] = {}
     first: dict[str, Stamp] = {}
-    for name, (end, token) in ends.items():
-        for s in stamps:
-            if cutoff and s[0] >= cutoff:
-                break
-            if s[1] != "user" and s[0] >= end and token in s[2]:
-                first[name] = s
-                break
+    missing = []
+    for log, actor in ENDS:
+        _, end, token = _sleep_log(args.dir / log)
+        if not (end and token):
+            missing.append(log)
+            continue
+        ends[log] = (end, token, actor)
+        # A user turn cannot carry a token nobody had before the exit, so only wakes count.
+        hit = next((s for s in _stamps(args.dir / actor) if s[1] != "user" and s[0] >= end and token in s[2]), None)
+        if hit:
+            first[log] = hit
     late = {n: int((first[n][0] - ends[n][0]).total_seconds()) for n in first}
-    by_exit = sorted(ends, key=lambda n: ends[n][0])
-    woken = [n for n in by_exit if n in first]
 
     def how(n: str) -> str:
         if n not in first:
-            return "never woke"
-        shared = [m for m in woken if m != n and first[m] == first[n]]
-        if first[n][1] == "mid":
-            way = "arrived inside a turn"
-        elif shared:
-            way = f"shared a turn with {', '.join(shared)}"
-        else:
-            way = "a turn of its own"
+            return "never reached its actor"
+        way = "arrived inside a turn" if first[n][1] == "mid" else "started a turn"
         return f"{way}, +{late[n]}s"
 
-    unwoken = [n for n in by_exit if n not in first]
-    unended = [n for n in tasks if n not in ends]
-    detail = ", ".join(f"{n} +{late[n]}s" for n in woken) or "none woke"
-    if woken:
-        worst = max(woken, key=lambda n: late[n])
+    for n in ends:
+        print(f"  {n} -> {ends[n][2]}: {how(n)}")
+    unreached = [n for n in ends if n not in first]
+    detail = ", ".join(f"{n} +{late[n]}s" for n in first) or "none reached"
+    if first:
+        worst = max(first, key=lambda n: late[n])
         detail += f"; worst {worst} +{late[worst]}s"
-    if unwoken:
-        detail += f"; not woken: {', '.join(unwoken)}"
-    if unended:
-        detail += f"; no exit line: {', '.join(unended)}"
-    if cutoff:
-        detail += f"; a user turn at {cutoff:%H:%M:%S} ended the check"
-    _row("every end woke the session", "fail" if unwoken or unended else "pass", detail)
+    if unreached:
+        detail += f"; not reached: {', '.join(unreached)}"
+    if missing:
+        detail += f"; no exit line: {', '.join(missing)}"
+    _row("every end reached its actor", "fail" if unreached or missing else "pass", detail)
 
-    swapped = [f"{b} before {a}" for a, b in zip(woken, woken[1:]) if first[b][0] < first[a][0]]
-    _row(
-        "woken in the order they ended",
-        "fail" if swapped else "pass",
-        ", ".join(swapped) or f"in exit order: {' '.join(woken)}",
-    )
+    by_exit = sorted(ends, key=lambda n: ends[n][0])
+    direct = [n for n in by_exit if n not in RELAYED]
+    swapped = []
+    for actor in dict.fromkeys(ends[n][2] for n in direct):
+        mine = [n for n in direct if n in first and ends[n][2] == actor]
+        swapped += [f"{b} before {a}" for a, b in zip(mine, mine[1:]) if first[b][0] < first[a][0]]
+    _row("reached in the order they ended", "fail" if swapped else "pass", ", ".join(swapped) or "in exit order")
 
-    behind = [
-        (a, b, int((ends[b][0] - ends[a][0]).total_seconds()))
-        for a, b in zip(by_exit, by_exit[1:])
-        if (ends[b][0] - ends[a][0]).total_seconds() <= CLOSE_SECONDS
-    ]
+    # Two close ends only test anything when the same actor has to take both.
+    behind = []
+    for actor in dict.fromkeys(ends[n][2] for n in direct):
+        mine = [n for n in direct if ends[n][2] == actor]
+        behind += [
+            (a, b, int((ends[b][0] - ends[a][0]).total_seconds()))
+            for a, b in zip(mine, mine[1:])
+            if (ends[b][0] - ends[a][0]).total_seconds() <= CLOSE_SECONDS
+        ]
     if behind:
         _row(
             "an end right behind another",
-            "fail" if any(b not in first for _, b, _ in behind) else "pass",
-            "; ".join(f"{b} {gap}s after {a}: {how(b)}" for a, b, gap in behind),
+            "fail" if any(n not in first for a, b, _ in behind for n in (a, b)) else "pass",
+            "; ".join(f"{b} {gap}s after {a}: {a} {how(a)}, {b} {how(b)}" for a, b, gap in behind),
         )
     else:
-        _row("an end right behind another", "not exercised", f"no exit came within {CLOSE_SECONDS}s of another")
+        _row("an end right behind another", "not exercised", f"no exit came within {CLOSE_SECONDS}s of another for the same actor")
 
-    hold_start, hold_end, _ = _sleep_log(args.dir / "t7-hold.log")
-    inside = [n for n in by_exit if hold_start and hold_end and hold_start <= ends[n][0] <= hold_end]
-    if inside and hold_end:
-        parts = []
-        for n in inside:
-            if n not in first:
-                parts.append(f"{n} never woke")
-                continue
-            way = "arrived inside that turn" if first[n][1] == "mid" else "started the next turn"
-            after = int((first[n][0] - hold_end).total_seconds())
-            parts.append(f"{n} {way}, {after}s after the hold returned")
-        _row("an end during a busy turn", "fail" if any(n not in first for n in inside) else "pass", "; ".join(parts))
-    else:
-        _row("an end during a busy turn", "not exercised", "no exit fell inside the hold")
-
-    if SESSION_TASK not in tasks:
-        _row("another session's report wakes", "not run", f"{SESSION_TASK} is not in --tasks")
-    else:
-        _row("another session's report wakes", "pass" if SESSION_TASK in first else "fail", how(SESSION_TASK))
+    wait_start, wait_end, _ = _sleep_log(args.dir / WAIT)
+    if not (wait_start and wait_end):
+        _row("ends during the long wait", "not exercised", f"{WAIT} has no start and exit line")
+        return
+    # Only the main session's own ends meet its busy thread; the side session's timer wakes the side session.
+    mine = [n for n in by_exit if ends[n][2] == "."]
+    inside = [n for n in mine if wait_start <= ends[n][0] <= wait_end]
+    parts = []
+    for n in inside:
+        if n not in first:
+            parts.append(f"{n} never reached its actor")
+            continue
+        way = "came with the call's result" if first[n][1] == "mid" else "started a turn after the call"
+        parts.append(f"{n} {way}, {int((first[n][0] - wait_end).total_seconds())}s after the wait returned")
+    before = [n for n in mine if ends[n][0] < wait_start]
+    if before:
+        parts.append(f"ended before the wait began: {', '.join(before)}")
+    verdict = "not exercised" if not inside else "fail" if any(n not in first for n in inside) else "pass"
+    _row("ends during the long wait", verdict, "; ".join(parts) or "no end fell inside the wait")
 
 
 def plan(args: argparse.Namespace) -> None:
     # A fresh directory per brief keeps its journal to that brief alone.
     args.runs.mkdir(parents=True)
-    fated = random.choice(STEPS[1:-1])
-    plan = {"fate": args.fate, "fated": fated, "steps": STEPS, "seconds": STEP_SECONDS}
+    steps = [f"{PREFIX[args.fate]}{i}" for i in range(1, STEP_COUNT + 1)]
+    fated = random.choice(steps[1:-1])
+    plan = {"fate": args.fate, "fated": fated, "steps": steps, "seconds": STEP_SECONDS}
     (args.runs / "plan.json").write_text(json.dumps(plan), encoding="utf-8")
-    for i, label in enumerate(STEPS, 1):
+    for i, label in enumerate(steps, 1):
         print(f"{i}. uv run --no-sync python {JOB} --runs {args.runs.as_posix()} --label {label} --seconds {STEP_SECONDS}")
 
 
@@ -182,6 +183,10 @@ def _ending(steps: list[str], ends: dict[str, dict]) -> str:
 def report(args: argparse.Namespace) -> None:
     plan = json.loads((args.runs / "plan.json").read_text(encoding="utf-8"))
     steps, fated, fate = plan["steps"], plan["fated"], plan["fate"]
+    prefix = PREFIX[fate]
+    step_line = re.compile(rf"\b({prefix}\d+) exit=(-?\d+) outcome=(\w+) token=(\w+)")
+    not_run = re.compile(rf"\b({prefix}\d+) not run\b")
+    ended_line = re.compile(rf"\bended {prefix}:\W*(.+)")
     journal = args.runs / "journal.jsonl"
     events = [json.loads(line) for line in journal.read_text(encoding="utf-8").splitlines()] if journal.exists() else []
     reply = args.report.read_text(encoding="utf-8") if args.report.exists() else ""
@@ -189,14 +194,14 @@ def report(args: argparse.Namespace) -> None:
     ended = None
     # Markdown and a closing full stop are formatting, not a wrong report.
     for line in reply.replace("`", "").replace("*", "").splitlines():
-        if m := STEP_LINE.search(line):
+        if m := step_line.search(line):
             said[m[1]] = (int(m[2]), m[3], m[4])
-        elif m := NOT_RUN.search(line):
+        elif m := not_run.search(line):
             said[m[1]] = None
-        if m := ENDED.search(line):
+        if m := ended_line.search(line):
             ended = m[1].strip(" .")
     ends = {e["label"]: e for e in events if e["event"] == "end"}
-    print(f"check 8, {fate} brief, {args.runs.as_posix()}")
+    print(f"{fate} brief, {args.runs.as_posix()}")
 
     wrong = []
     for label in steps:
@@ -208,7 +213,7 @@ def report(args: argparse.Namespace) -> None:
             wrong.append(f"{label} said {_said(said[label])}, was {_said(real)}")
     truth = _ending(steps, ends)
     if ended != truth:
-        wrong.append(f"ended: {ended or 'no line'}, the files say {truth}")
+        wrong.append(f"ended {prefix}: {ended or 'no line'}, the files say {truth}")
     if reply.strip():
         _row("reported each step as it ended", "fail" if wrong else "pass", "; ".join(wrong) or "every line matches the journal")
     else:
@@ -275,6 +280,41 @@ def report(args: argparse.Namespace) -> None:
     _row("ran the brief as written", "fail" if issues else "pass", detail)
 
 
+def _tables(text: str) -> list[list[list[str]]]:
+    """Return every markdown table in ``text`` as rows of cells, header first, separator dropped."""
+    tables: list[list[list[str]]] = []
+    rows: list[list[str]] = []
+    for line in [*text.splitlines(), ""]:
+        line = line.strip()
+        if line.startswith("|"):
+            if not re.fullmatch(r"\|[\s:|-]+\|", line):
+                rows.append([cell.strip() for cell in line.strip("|").split("|")])
+        elif rows:
+            tables.append(rows)
+            rows = []
+    return tables
+
+
+def table(args: argparse.Namespace) -> None:
+    status = args.status.read_text(encoding="utf-8") if args.status.exists() else ""
+    want = [t for t in _tables(status) if t[0] == STATUS_HEADER]
+    got = _tables(args.table.read_text(encoding="utf-8")) if args.table.exists() else []
+    wrong = []
+    if not got:
+        wrong.append(f"no table in {args.table.as_posix()}")
+    elif len(got) != len(want):
+        wrong.append(f"{len(got)} tables, status printed {len(want)}")
+    for i, (w, g) in enumerate(zip(want, got), 1):
+        if g[0] != TABLE_HEADER:
+            wrong.append(f"table {i} header {' | '.join(g[0])}")
+        if [row[:3] for row in g[1:]] != w[1:]:
+            wrong.append(f"table {i} rows differ from status")
+        empty = [row[0] for row in g[1:] if len(row) != 4 or not row[3]]
+        if empty:
+            wrong.append(f"table {i} has no 後續 on {', '.join(empty)}")
+    _row("takeover start table", "fail" if wrong else "pass","; ".join(wrong) or f"{len(got)} tables match status")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Decide harness-check's rows from the files its scripts wrote.")
     sub = parser.add_subparsers(required=True)
@@ -284,18 +324,21 @@ def main() -> None:
     p.add_argument("text")
     p.add_argument("--log", type=Path, action="append", default=[], help="a sleeper.py log whose exit token to add")
     p.set_defaults(run=stamp)
-    p = sub.add_parser("wakes", help="decide check 7's rows")
+    p = sub.add_parser("wakes", help="decide how the timed ends reached their actors")
     p.add_argument("--dir", type=Path, required=True)
-    p.add_argument("--tasks", required=True, help="the check 7 tasks this run started, comma-separated")
     p.set_defaults(run=wakes)
-    p = sub.add_parser("plan", help="write a check 8 brief's plan and print its commands")
+    p = sub.add_parser("plan", help="write a brief's plan and print its commands")
     p.add_argument("--runs", type=Path, required=True)
-    p.add_argument("--fate", choices=("error", "stop"), required=True)
+    p.add_argument("--fate", choices=tuple(PREFIX), required=True)
     p.set_defaults(run=plan)
-    p = sub.add_parser("report", help="decide check 8's rows for one brief")
+    p = sub.add_parser("report", help="decide one brief's rows")
     p.add_argument("--runs", type=Path, required=True)
     p.add_argument("--report", type=Path, required=True)
     p.set_defaults(run=report)
+    p = sub.add_parser("table", help="hold the takeover start table against status")
+    p.add_argument("--status", type=Path, required=True)
+    p.add_argument("--table", type=Path, required=True)
+    p.set_defaults(run=table)
     args = parser.parse_args()
     args.run(args)
 

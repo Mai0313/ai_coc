@@ -1,4 +1,4 @@
-"""Play one step of a check 8 brief, standing in for one `ai_coc` command.
+"""Play one step of a harness-check brief, standing in for one `ai_coc` command.
 
 Each run leaves the files a real run does: `<runs>/<label>/result.json`, the stand-in state file `<runs>/state.json`, and a start and an end line in `<runs>/journal.jsonl`. How the step ends comes from `<runs>/plan.json`, which `grade.py plan` wrote and which the commands do not show: an ordinary step exits 0 with `done`, the failing one exits 1 with `error`, and the stopped one ends early and still exits 0 with `done`, leaving the stop only in the state file's `stop_by`, as a stopped `attack` does.
 """
