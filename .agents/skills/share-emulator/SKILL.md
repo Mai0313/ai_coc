@@ -69,7 +69,7 @@ user-invocable: false
 
 **借的指令通常要等一場戰鬥 (五分鐘上下) 才開始**, 對方等滿 `TAKEOVER_WAIT` (約 12 分鐘) 還不收工才會被結束: 前景跑的話那次呼叫的 timeout 給 runtime 允許的最長, 不然就背景跑. 被砍了就 `giveback`, 不然借用會留 30 分鐘, 迴圈白等.
 
-**不 claim 的腳本自己借不到**: 任何自己寫、走 `commands._controller()` 的腳本 (點畫面用會 claim 的 `ai_coc tap` / `swipe` 就沒有這個問題), 都不碰 `state.json`, 迴圈在跑的時候照樣點得下去, 兩邊搶同一個畫面. 所以先下 `ai_coc hold --for <秒>` (帶 `--session`), 看 `state.json` 的 `hold.holder` 是你、`hold.ended` 是 null, 才跑腳本; 它回 `held` 就是別人在用, 等它. 迴圈在跑的話 `hold` 也把它借走了 (`loan`); 沒有 `loan` 是迴圈剛好在兩個指令之間, 保留還是擋得住它下一個指令以外的人, 它下一個指令會在你保留到期後開跑, 要擋它就再 `hold` 一次借到它. 保留最多十分鐘, 借用 30 分鐘, 腳本用得久就中間再 `hold` 一次續上. 用完照樣 `giveback`.
+**不 claim 的腳本自己借不到**: 任何自己寫、走 `commands._controller()` 的腳本, 跟直接下的 `adb shell input` (`tap` 在視窗開著時回 `sheet_up`、點 HUD 回 `on_hud` 而改用它的時候也一樣; 點畫面用會 claim 的 `ai_coc tap` / `swipe` 就沒有這個問題), 都不碰 `state.json`, 迴圈在跑的時候照樣點得下去, 兩邊搶同一個畫面. 所以先下 `ai_coc hold --for <秒>` (帶 `--session`), 看 `state.json` 的 `hold.holder` 是你、`hold.ended` 是 null, 才跑腳本; 它回 `held` 就是別人在用, 等它. 迴圈在跑的話 `hold` 也把它借走了 (`loan`); 沒有 `loan` 是迴圈剛好在兩個指令之間, 保留還是擋得住它下一個指令以外的人, 它下一個指令會在你保留到期後開跑, 要擋它就再 `hold` 一次借到它. 保留最多十分鐘, 借用 30 分鐘, 腳本用得久就中間再 `hold` 一次續上. 用完照樣 `giveback`.
 
 **你自己決定測試要中途停**, 下 `ai_coc stop emulator`: 只停你的指令, 盯升級不動, 借用跟保留都還在, 用完一樣要還 (「停」的兩層). 是使用者叫停就不還, 見下面「用完一定要還」的例外.
 
