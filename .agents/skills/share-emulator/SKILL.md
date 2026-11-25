@@ -34,7 +34,7 @@ user-invocable: false
 
 **送到背景只能用 runtime 自己管的背景執行** (跑完會通知你的那一種): 它是唯一跑完會把你叫醒的開法, harness 送進對話的那個通知就是接下一步的時刻. `Start-Process`, `nohup … &`, PowerShell 的 job, 任何 shell 層的 detach 都不行: 程序照跑, 但結束時沒有東西叫醒你, 輸出跟 exit code 也回不來 (量過: 夜世界打到 `stock_full` 自己收工之後, session 就停在原地).
 
-**背景指令跑完叫不醒你的 runtime, 改用它自己的排程叫醒自己.** 有的 runtime 背景指令結束不會通知你, 只有排程叫得醒對話 (量過: 一個 `ai_coc watch` 在 `--next` 那一刻結束, 對話一直到排程觸發才醒). 在那種 runtime 上要睡到某個時間 (`takeover` 的第 2 步、派 farm subagent 時的心跳):
+**背景指令跑完叫不醒你的 runtime, 改用它自己的排程叫醒自己.** 有的 runtime 背景指令結束不會通知你, 只有排程叫得醒對話 (量過: 一個 `ai_coc watch` 在 `--next` 那一刻結束, 對話一直到排程觸發才醒). 在那種 runtime 上要睡到某個時間 (`takeover` 一輪的第 7 步、派 farm subagent 時的心跳):
 
 - `takeover` 的 `ai_coc watch` 照開: 別的 session 靠它知道有人在顧, `ai_coc stop` 也停得到它. 心跳不開 watch, 只設排程: 新開的 watch 會把別的 session 睡著的那個請下來
 - 另外設一個排程叫醒你, 用「每天 HH:MM」這種固定時刻, 取它要醒的那一分鐘 (`state.json` 的 `watch.next_at`) 的下一分鐘 (排程只到分鐘, 準時響的話會比 watch 早幾十秒). 不要用「每隔 N 小時」: 固定間隔照它自己的節奏走, 對不準升級好的時間. 固定時刻的排程哪次忘了改, 隔天同一時間還會叫醒你, 圈不會就此斷掉
