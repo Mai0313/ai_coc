@@ -42,6 +42,8 @@ The skills under `.agents/skills/` own the judgement of driving the game, and th
 
 **The user playing on their phone logs the emulator out**, and the file's `emulator` section does not show it. A run that cannot reach a village while somebody might be playing is a reason to stop and say so, not to retry. The game says so on the dropped-session sheet (另一部裝置正在連接到這座村莊), and `session_taken` tells it from the dropped sessions a restart answers: the attack loop ends its series `session_taken`, mid-battle included, and `_home` and `_settle_game` stand down instead of restarting. Starting any command still logs the emulator back in (`ensure_coc`'s launch, measured 2026-10-09), so after a `session_taken` nothing that touches the emulator runs until the user says so. A borrower whose command stood down on it runs `ai_coc stop` rather than `giveback`: a giveback, or the loan lapsing, lets the lender's queued command through. The one exception to both is `takeover`, which logs back in by itself five minutes later, borrowing or not, as that skill says.
 
+**Pending work goes in the agent memory's `coc-todo.md`**: one line each, when it is due and what done looks like, deleted once done. Read it before ai_coc work and at each takeover wake. Not in `state.json` notes, which hold the user's orders.
+
 **Check what subagents leave behind yourself; their word is not evidence.** Before calling a task finished: `state.json`'s `emulator` back to `idle`, no `ai_coc` process, no shell left polling; a watch left sleeping on purpose is one to name. Say out loud what stays deliberately; kill and name the rest. A wait with no upper bound cannot end on its own; `share-emulator` owns what a wait looks like.
 
 ## Development flow
