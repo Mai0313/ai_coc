@@ -144,6 +144,24 @@ Logical Displays: size=2
 """
 
 
+# LDPlayer keeps the game on its one display, measured with the game up; the
+# second is the same display with another app in front, as after the game left
+# a battle on 2026-11-27.
+LD_GAME_IN_FRONT = """WINDOW MANAGER DISPLAY CONTENTS (dumpsys window displays)
+  Display: mDisplayId=0 (organized)
+    mCurrentFocus=Window{9360291 u0 com.supercell.clashofclans/com.supercell.titan.GameApp}
+    mFocusedApp=ActivityRecord{eeb1a7c u0 com.supercell.clashofclans/com.supercell.titan.GameApp t11}
+"""
+LD_OTHER_IN_FRONT = """WINDOW MANAGER DISPLAY CONTENTS (dumpsys window displays)
+  Display: mDisplayId=0 (organized)
+    mCurrentFocus=Window{51c0a2e u0 com.android.vending/com.google.android.finsky.activities.MainActivity}
+    mFocusedApp=ActivityRecord{7d3e9f1 u0 com.android.vending/com.google.android.finsky.activities.MainActivity t14}
+"""
+
+# The real check, kept before `conftest` answers it for every test.
+IN_FRONT = AdbController.in_front
+
+
 def _controller() -> AdbController:
     return AdbController(endpoint=AdbEndpoint(port=16384))
 
@@ -249,6 +267,20 @@ class AdbConnectionTests(unittest.TestCase):
     def test_the_display_is_found_through_both_id_schemes(self) -> None:
         with patch.object(AdbController, "shell", side_effect=[WINDOW_DISPLAYS, DISPLAY_DEVICES]):
             assert _controller().display_for(COC_PACKAGE) == DISPLAY
+
+    def test_the_game_holds_its_display_only_while_it_is_the_app_in_front_there(self) -> None:
+        """What every battle tap asks first, so a tap never reaches the app that replaced it."""
+        ld = DisplayTarget(logical_id="0", physical_id="0")
+        for dump, display, held in (
+            (LD_GAME_IN_FRONT, ld, True),
+            (LD_OTHER_IN_FRONT, ld, False),
+            # MuMu: the game on its own display, the launcher holding display 0.
+            (WINDOW_DISPLAYS, DISPLAY, True),
+            (WINDOW_DISPLAYS, ld, False),
+        ):
+            with patch.object(AdbController, "shell", return_value=dump) as shell:
+                assert IN_FRONT(_controller(), COC_PACKAGE, display) is held
+            assert shell.call_args.args[0] == ["dumpsys", "window", "displays"]
 
     def test_a_package_with_no_window_has_no_display(self) -> None:
         with (

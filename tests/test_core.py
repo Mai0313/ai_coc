@@ -87,6 +87,8 @@ from ai_coc.ui.attack import (
     RESULT_ATTEMPTS,
     UNREADABLE_SKIPS,
     AttackRunner,
+    GameLeftError,
+    BattleGoneError,
     merged,
     spaced,
     push_out,
@@ -2927,7 +2929,8 @@ class ScoutTests(unittest.TestCase):
         on those cannot fail whatever the threshold or the box later becomes,
         which reads as coverage without being any. What is left is measured: the
         two panels this change fixes, the lit result screen, the army screen and
-        the attack menu all keep real content there.
+        the attack menu all keep real content there, and so does LDPlayer's
+        launcher, which a home battle on 2026-11-27 dropped to two seconds in.
         """
         for name in (
             "miner_panel.png",
@@ -2935,6 +2938,7 @@ class ScoutTests(unittest.TestCase):
             "battle_result_lit.png",
             "attack_menu.png",
             "army_screen.png",
+            "ldplayer_launcher.png",
         ):
             assert not in_battle((FRAMES / name).read_bytes()), name
 
@@ -4693,6 +4697,7 @@ class AttackTests(unittest.TestCase):
 
         with (
             patch.object(AttackRunner, "_frame", return_value=b""),
+            patch.object(attack, "in_battle", return_value=True),
             patch.object(attack, "card_count", side_effect=lambda _png, slot: counts[slot]),
             patch.object(attack, "card_drained", return_value=True),
             patch.object(attack, "live_cards", return_value=[]),
@@ -4804,6 +4809,7 @@ class AttackTests(unittest.TestCase):
             patch.object(AttackRunner, "_act", side_effect=act),
             patch.object(AttackRunner, "_settle_drops", side_effect=settle),
             patch.object(AttackRunner, "_battle_ended", return_value=False),
+            patch.object(attack, "in_battle", return_value=True),
             patch.object(attack.time, "sleep", side_effect=pauses.append),
         ):
             runner._play_tactic(plan, DEPLOY_LINES["top_left"], row)
@@ -4905,6 +4911,7 @@ class AttackTests(unittest.TestCase):
             patch.object(AttackRunner, "_act", side_effect=act),
             patch.object(AttackRunner, "_settle_drops"),
             patch.object(AttackRunner, "_battle_ended", return_value=False),
+            patch.object(attack, "in_battle", return_value=True),
             patch.object(attack.time, "monotonic", side_effect=lambda: clock[0]),
             patch.object(attack.time, "sleep", side_effect=pauses.append),
         ):
@@ -5601,6 +5608,24 @@ class AttackTests(unittest.TestCase):
             True,
         )
 
+    def test_a_battle_whose_game_left_the_screen_still_counts_and_says_so(self) -> None:
+        """Left mid-tactic, it is not waited out: there is no battle on screen to wait on."""
+        runner = self._runner()
+        rich = ScoutView(loot=LootOffer(gold=900_000, elixir=900_000, dark=1), can_skip=True)
+        with (
+            patch.object(AttackRunner, "_open_attack_menu", return_value=b"home"),
+            patch.object(AttackRunner, "_stood_down", return_value=None),
+            patch.object(AttackRunner, "_army_short", return_value=False),
+            patch.object(AttackRunner, "_tap"),
+            patch.object(AttackRunner, "_scout", return_value=(rich, b"")),
+            patch.object(AttackRunner, "_deploy", side_effect=GameLeftError),
+            patch.object(AttackRunner, "_wait_out_battle") as waited,
+            patch.object(attack.time, "sleep"),
+        ):
+            report = runner._run_day()
+        assert (report.outcome, report.attacked) == ("game_left", rich.loot)
+        waited.assert_not_called()
+
     def test_a_search_that_ran_out_on_a_fading_frame_still_leaves_through_the_button(self) -> None:
         """A frame refused for still fading is an opponent all the same.
 
@@ -5805,6 +5830,7 @@ class AttackTests(unittest.TestCase):
         runner = self._runner()
         with (
             patch.object(AttackRunner, "_frame", return_value=b""),
+            patch.object(attack, "in_battle", return_value=True),
             patch.object(AttackRunner, "_spread_troops", return_value=[]),
             patch.object(attack, "field_units", return_value=[]),
             patch.object(attack, "live_cards", return_value=[105]),
@@ -5815,6 +5841,7 @@ class AttackTests(unittest.TestCase):
         stuck = self._runner()
         with (
             patch.object(AttackRunner, "_frame", return_value=b""),
+            patch.object(attack, "in_battle", return_value=True),
             patch.object(AttackRunner, "_spread_troops", return_value=[]),
             patch.object(attack, "field_units", return_value=[]),
             patch.object(attack, "live_cards", return_value=[105, 269]),
@@ -6231,14 +6258,14 @@ class AttackTests(unittest.TestCase):
             dragged = [attack.clear_of_controls((x, y + drag)) for x, y in grid]
             assert spaced(dragged) == dragged, drag
 
-    def _casts(self, alive: list[list[int]], fighting: bool = True) -> int:
+    def _casts(self, alive: list[list[int]]) -> int:
         """How many passes `_cast` makes, given what the row reads after each one."""
         runner = self._runner()
         with (
             patch.object(AttackRunner, "_frame", return_value=b""),
             patch.object(AttackRunner, "_tap"),
             patch.object(type(runner.adb), "tap_many"),
-            patch.object(attack, "in_battle", return_value=fighting),
+            patch.object(attack, "in_battle", return_value=True),
             patch.object(attack, "card_count", return_value=5),
             patch.object(attack, "live_cards", side_effect=alive) as reads,
             patch.object(attack.time, "sleep"),
@@ -6260,10 +6287,22 @@ class AttackTests(unittest.TestCase):
 
         Measured live on the 探礦者 sheet: the battle had ended, every attempt
         reported the bottles still in their cards, and each one tapped the panel
-        again. The row is never read at all now, so the count is zero rather
-        than one.
+        again. The row is never read at all now, and the casting ends the
+        tactic rather than handing it its next step to tap.
         """
-        assert self._casts([[1060], []], fighting=False) == 0
+        runner = self._runner()
+        with (
+            patch.object(AttackRunner, "_frame", return_value=b""),
+            patch.object(AttackRunner, "_tap"),
+            patch.object(type(runner.adb), "tap_many"),
+            patch.object(attack, "in_battle", return_value=False),
+            patch.object(attack, "card_count", return_value=5),
+            patch.object(attack, "live_cards") as reads,
+            patch.object(attack.time, "sleep"),
+            pytest.raises(BattleGoneError),
+        ):
+            runner._cast([1060], ((520, 300), (760, 300)), b"")
+        reads.assert_not_called()
 
     def test_a_one_off_drop_keeps_pushing_out_while_that_moves_it(self) -> None:
         """The middle of the line first, then further from the village, as it always was."""
@@ -6312,6 +6351,7 @@ class AttackTests(unittest.TestCase):
 
         with (
             patch.object(AttackRunner, "_frame", return_value=b""),
+            patch.object(attack, "in_battle", return_value=True),
             patch.object(AttackRunner, "_landed", return_value=([], [])),
             patch.object(attack, "live_cards", side_effect=lambda _png, slots: list(slots)),
             patch.object(AdbController, "tap_many", autospec=True, side_effect=refuse),
@@ -6342,6 +6382,7 @@ class AttackTests(unittest.TestCase):
 
         with (
             patch.object(AttackRunner, "_frame", return_value=b""),
+            patch.object(attack, "in_battle", return_value=True),
             patch.object(AttackRunner, "_landed", return_value=([], [])),
             patch.object(attack, "live_cards", side_effect=lambda _png, slots: list(slots)),
             patch.object(AdbController, "tap_many", autospec=True, side_effect=refuse),
@@ -6368,6 +6409,7 @@ class AttackTests(unittest.TestCase):
 
         with (
             patch.object(AttackRunner, "_frame", return_value=b""),
+            patch.object(attack, "in_battle", return_value=True),
             patch.object(AttackRunner, "_landed", return_value=([], [])),
             patch.object(attack, "live_cards", return_value=[557]),
             patch.object(AdbController, "tap_many", autospec=True, side_effect=tap),
@@ -6383,6 +6425,7 @@ class AttackTests(unittest.TestCase):
         runner = self._runner()
         with (
             patch.object(AttackRunner, "_frame", return_value=b""),
+            patch.object(attack, "in_battle", return_value=True),
             patch.object(attack, "live_cards", return_value=[]),
             patch.object(AdbController, "tap_many", autospec=True) as tapped,
             self.assertLogs("ai_coc.ui.attack") as logged,

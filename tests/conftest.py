@@ -24,6 +24,7 @@ import adbutils
 
 from ai_coc import commands, logging_setup
 from ai_coc.adapters import config, gamedata
+from ai_coc.adapters.adb import AdbController
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -71,3 +72,13 @@ def _no_emulator(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(commands, "MuMuAdapter", unreachable)
     monkeypatch.setattr(commands, "LDPlayerAdapter", unreachable)
     monkeypatch.setattr(adbutils.AdbClient, "make_connection", unreachable)
+
+
+@pytest.fixture(autouse=True)
+def _game_in_front(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Answer that the game holds its display, which a battle asks Android before every tap.
+
+    A test that fakes the frames and the taps has no Android to ask, and the
+    game in front is the ordinary state; a test of the other one patches it.
+    """
+    monkeypatch.setattr(AdbController, "in_front", lambda *_args: True)

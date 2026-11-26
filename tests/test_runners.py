@@ -1598,6 +1598,7 @@ class DeploymentTests(unittest.TestCase):
         with (
             patch.object(attack.time, "sleep"),
             patch.object(runner, "_frame", return_value=b""),
+            patch.object(attack, "in_battle", return_value=True),
             patch.object(attack, "card_count", return_value=3),
             patch.object(attack, "card_drained", side_effect=[[], [100]]),
             patch.object(attack, "live_cards", side_effect=[[100], []]),
@@ -1763,6 +1764,7 @@ class DeploymentTests(unittest.TestCase):
         runner._sending = {500: (1, 1), 600: (2, 2)}
         with (
             patch.object(runner, "_frame", return_value=b""),
+            patch.object(attack, "in_battle", return_value=True),
             patch.object(attack, "field_units", return_value=[500]),
             patch.object(attack, "live_cards", return_value=[100]),
             patch.object(runner, "_spread_troops", return_value=moved) as spread,
@@ -1794,6 +1796,7 @@ class DeploymentTests(unittest.TestCase):
         moved = deploy_line(LINE_POINTS, *attack.push_line(self.PRESET, 1))
         with (
             patch.object(runner, "_frame", return_value=b""),
+            patch.object(attack, "in_battle", return_value=True),
             patch.object(attack, "field_units", return_value=landed),
             patch.object(attack, "live_cards", return_value=holding),
             patch.object(runner, "_spread_troops", return_value=moved) as spread,
@@ -1851,6 +1854,7 @@ class DeploymentTests(unittest.TestCase):
                 attack.time, "sleep", side_effect=lambda s: order.append(f"sleep {s:.1f}")
             ),
             patch.object(runner, "_frame", side_effect=lambda label: order.append(label) or b""),
+            patch.object(attack, "in_battle", return_value=True),
             patch.object(attack, "field_units", return_value=[500]),
             patch.object(attack, "live_cards", return_value=[]),
         ):
@@ -1865,6 +1869,166 @@ class DeploymentTests(unittest.TestCase):
         assert runner._outcome(False) == "nothing_deployed"
         runner._deployed = True
         assert runner._outcome(False) == "no_loot"
+
+
+class GameLeftTests(unittest.TestCase):
+    """A battle the game left: nothing more is tapped, and the round says so.
+
+    On 2026-11-27 the game left LDPlayer two seconds into a home battle. The
+    settled frame was the launcher, read as four heroes refused; their retries
+    tapped its promotion icons, and the abilities and spells after them landed
+    on a Play Store install sheet and a paid app's page.
+    """
+
+    LAUNCHER = (FRAMES / "ldplayer_launcher.png").read_bytes()
+    POPUP = (FRAMES / "battle_dimmed_by_popup.png").read_bytes()
+
+    def _runner(self, world: str = "day") -> AttackRunner:
+        return AttackRunner(adb=_adb(), display=DISPLAY, world=world, thresholds=LootThresholds())
+
+    def _gone(self) -> object:
+        return patch.object(AdbController, "in_front", return_value=False)
+
+    def test_the_launcher_after_the_burst_is_judged_by_no_reader_and_tapped_by_nothing(
+        self,
+    ) -> None:
+        runner = self._runner()
+        runner._sending = {557: (176, 499), 683: (334, 384), 804: (334, 384), 927: (334, 384)}
+        with (
+            self._gone(),
+            patch.object(runner, "_frame", return_value=self.LAUNCHER),
+            patch.object(attack, "field_units") as bars,
+            patch.object(attack, "live_cards") as cards,
+            patch.object(AdbController, "tap_many") as bursts,
+            patch.object(AdbController, "tap") as taps,
+            patch.object(attack.time, "sleep"),
+            pytest.raises(attack.GameLeftError),
+        ):
+            runner._settle_drops(
+                [172, 293, 413], deploy_line(LINE_POINTS), DEPLOY_LINES["top_left"]
+            )
+        bars.assert_not_called()
+        cards.assert_not_called()
+        bursts.assert_not_called()
+        taps.assert_not_called()
+
+    def test_every_kind_of_battle_input_asks_before_it_goes(self) -> None:
+        """A card's select, a burst, a camera drag and the pinch, each refused on its own."""
+        runner = self._runner()
+        line = deploy_line(LINE_POINTS)
+        with (
+            self._gone(),
+            patch.object(attack, "card_count", return_value=3),
+            patch.object(attack, "village_box", return_value=(0, 0, 400, 300)),
+            patch.object(AdbController, "tap") as taps,
+            patch.object(AdbController, "tap_many") as bursts,
+            patch.object(AdbController, "swipe") as swipes,
+            patch.object(AdbController, "zoom") as pinches,
+        ):
+            for move in (
+                lambda: runner._pour([100], line, b""),
+                lambda: runner._offer_for(3, [164]),
+                lambda: runner._pan(b"", (0, 50)),
+                lambda: runner._settle_camera(b""),
+                lambda: runner._settle_zoom(b""),
+            ):
+                with pytest.raises(attack.GameLeftError):
+                    move()
+        taps.assert_not_called()
+        bursts.assert_not_called()
+        swipes.assert_not_called()
+        pinches.assert_not_called()
+
+    def test_a_builder_base_battle_the_game_left_ends_the_round_on_its_first_look(self) -> None:
+        runner = self._runner("night")
+        with (
+            self._gone(),
+            patch.object(runner, "_open_attack_menu", return_value=b"home"),
+            patch.object(runner, "_stood_down", return_value=None),
+            patch.object(runner, "_find_opponent", return_value=b"battle"),
+            patch.object(runner, "_deploy_night", return_value=([164], [307])),
+            patch.object(runner, "_frame", return_value=self.LAUNCHER),
+            patch.object(attack, "card_drained") as drained,
+            patch.object(AdbController, "tap_many") as bursts,
+            patch.object(attack.time, "sleep"),
+        ):
+            report = runner.run()
+        assert (report.outcome, report.phases) == ("game_left", 1)
+        drained.assert_not_called()
+        bursts.assert_not_called()
+        # Left while the army was still going down: no stage was played.
+        with (
+            patch.object(runner, "_open_attack_menu", return_value=b"home"),
+            patch.object(runner, "_stood_down", return_value=None),
+            patch.object(runner, "_find_opponent", return_value=b"battle"),
+            patch.object(runner, "_deploy_night", side_effect=attack.GameLeftError),
+        ):
+            report = runner.run()
+        assert (report.outcome, report.phases) == ("game_left", 0)
+
+    def test_a_home_frame_with_no_battle_on_it_plays_no_further_step(self) -> None:
+        """A popup or a result screen: the game is there, and the tactic's taps would land on it."""
+        runner = self._runner()
+        row = BattleRow(
+            troops=[100],
+            machine=[],
+            heroes=[500],
+            rages=[900],
+            freezes=[],
+            rage_count=4,
+            freeze_count=0,
+            frame=b"",
+        )
+        # One reading after a drop, and one in a pause with nothing sent.
+        for steps in (
+            [_step("hero", (25, 25)), _step("wait", seconds=3), _step("rage", (40, 40))],
+            [
+                _step("troops", (37.5, 12), (14, 42)),
+                _step("wait", seconds=4),
+                _step("rage", (40, 40)),
+            ],
+        ):
+            with (
+                patch.object(runner, "_frame", return_value=self.POPUP),
+                patch.object(attack, "card_count", return_value=4),
+                patch.object(AdbController, "tap"),
+                patch.object(AdbController, "tap_many") as bursts,
+                patch.object(attack.time, "sleep"),
+                pytest.raises(attack.BattleGoneError),
+            ):
+                runner._play_tactic(AttackPlan(steps=steps), DEPLOY_LINES["top_left"], row)
+            # The first step's burst and nothing of the rage after the pause.
+            assert bursts.call_count == 1, steps[0].act
+
+    def test_a_battle_that_goes_while_its_leftovers_are_emptied_is_still_waited_out(self) -> None:
+        runner = self._runner()
+        runner._line, runner._last = [(300, 300)], b"battle"
+        with (
+            patch.object(attack, "in_battle", return_value=True),
+            patch.object(attack, "card_groups", return_value=[[100]]),
+            patch.object(attack, "counted_cards", return_value=[100]),
+            patch.object(runner, "_cast", side_effect=attack.BattleGoneError) as cast,
+        ):
+            runner._dump_leftovers()
+        cast.assert_called_once()
+
+    def test_a_tactic_cut_short_by_no_battle_hands_the_round_to_the_battle_wait(self) -> None:
+        runner = self._runner()
+        with (
+            patch.object(runner, "_settle_zoom", side_effect=lambda frame: frame),
+            patch.object(runner, "_settle_camera", side_effect=lambda frame: frame),
+            patch.object(attack, "card_groups", return_value=[[171], [557]]),
+            patch.object(attack, "counted_cards", return_value=[]),
+            patch.object(attack, "freeze_cards", return_value=[]),
+            patch.object(runner, "_plan", return_value=plans.flat()),
+            patch.object(runner, "_frame", return_value=b"battle"),
+            patch.object(runner, "_flank", return_value=DEPLOY_LINES["top_left"]),
+            patch.object(runner, "_play_tactic", side_effect=attack.BattleGoneError),
+            patch.object(runner, "_wait_out_battle", return_value=False) as waited,
+            patch.object(runner, "_outcome", return_value="loot_unread"),
+        ):
+            assert runner._fought(b"opening", None) == "loot_unread"
+        waited.assert_called_once()
 
 
 if __name__ == "__main__":

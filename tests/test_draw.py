@@ -188,8 +188,9 @@ class TestPlannedDrops:
                 patch.object(AttackRunner, "_act", step),
                 patch.object(AttackRunner, "_settle_drops", settled),
                 patch.object(AttackRunner, "_battle_ended", return_value=False),
+                patch.object(attack, "in_battle", return_value=True),
                 # One attempt per cast: the cards on a still frame never empty.
-                patch.object(attack, "in_battle", return_value=False),
+                patch.object(attack, "SPELL_ATTEMPTS", 1),
             ):
                 runner._deploy(DAY)
 

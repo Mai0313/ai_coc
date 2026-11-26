@@ -1885,6 +1885,11 @@ class AttackSeriesEndingTests(unittest.TestCase):
             run = self._ending([AttackReport(outcome=outcome)])
             assert (run.ending, run.rounds.root[-1].outcome) == (ending, outcome)
 
+    def test_a_battle_the_game_left_ends_the_series_at_once(self) -> None:
+        """The next round would press at whatever app is in front, which the player may have opened."""
+        run = self._ending([AttackReport(outcome="game_left", attacked=self.FOUGHT)] * 2)
+        assert (run.ending, len(run.rounds.root)) == ("game_left", 1)
+
 
 class WaitTests(unittest.TestCase):
     """Where one run stands, off the journal (conftest's tmp copy) and its process."""
@@ -2018,6 +2023,7 @@ class RoundLineTests(unittest.TestCase):
             "emulator_silent": "模擬器沒有回應",
             "other_village": "遊戲停在另一個村莊",
             "session_taken": "另一部裝置登入",
+            "game_left": "遊戲不在畫面上",
         }
         assert set(own) == set(get_args(AttackOutcome))
         for outcome, fragment in own.items():
@@ -5095,20 +5101,42 @@ class SurveyRunnerTests(unittest.TestCase):
     def _map(self) -> commands._MapSurvey:
         return commands._MapSurvey(adb=_controller(), display=DISPLAY, thresholds=LootThresholds())
 
-    def test_a_survey_another_device_took_over_stands_down(self) -> None:
-        """Otherwise it hands back rays measured under the dialog and exits 0."""
-        taken = AttackReport(outcome="session_taken")
-        for command, survey in (
-            (commands.probe, commands._BoundarySurvey),
-            (commands.bounds, commands._MapSurvey),
+    def test_a_survey_another_device_took_over_or_the_game_left_stands_down(self) -> None:
+        """Otherwise it hands back the rays it measured before either and exits 0."""
+        for outcome, error in (
+            ("session_taken", commands.SessionTakenError),
+            ("game_left", commands.GameLeftError),
         ):
-            with (
-                patch.object(commands, "_session", return_value=(_controller(), DISPLAY)),
-                patch.object(commands, "_village_now", return_value="day"),
-                patch.object(survey, "run", return_value=taken),
-                pytest.raises(commands.SessionTakenError),
+            for command, survey in (
+                (commands.probe, commands._BoundarySurvey),
+                (commands.bounds, commands._MapSurvey),
             ):
-                command(_frames(self))
+                with (
+                    patch.object(commands, "_session", return_value=(_controller(), DISPLAY)),
+                    patch.object(commands, "_village_now", return_value="day"),
+                    patch.object(survey, "run", return_value=AttackReport(outcome=outcome)),
+                    pytest.raises(error),
+                ):
+                    command(_frames(self))
+
+    def test_neither_survey_taps_once_the_game_has_left(self) -> None:
+        """Both spend a whole battle tapping drops, which is what a launcher must not take."""
+        boundary, map_survey = self._boundary(), self._map()
+        map_survey._troops = [171]
+        with (
+            patch.object(AdbController, "in_front", return_value=False),
+            patch.object(commands, "SURVEY_RAYS", (0.0,)),
+            patch.object(commands, "card_groups", return_value=[[171]]),
+            patch.object(commands, "boundary_reach", return_value=(1200, 400)),
+            patch.object(commands, "live_cards", return_value=[171]),
+            patch.object(commands._BoundarySurvey, "_wait_for_battle", return_value=b"battle"),
+            patch.object(AdbController, "screenshot", return_value=b""),
+            patch.object(AdbController, "tap_many") as tapped,
+        ):
+            for move in (lambda: boundary._deploy(b""), lambda: map_survey._edge(0.0, b"opening")):
+                with pytest.raises(commands.GameLeftError):
+                    move()
+        tapped.assert_not_called()
 
     def test_a_ray_agrees_when_the_inside_drop_is_refused_and_the_outside_one_lands(self) -> None:
         runner = self._boundary()

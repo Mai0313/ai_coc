@@ -312,6 +312,19 @@ class AdbController(BaseModel):
         logger.debug("%s is on display %s (physical %s)", package, logical, physical)
         return DisplayTarget(logical_id=logical, physical_id=physical)
 
+    def in_front(self, package: str, display: DisplayTarget) -> bool:
+        """Whether the package still holds this display, which is where `input -d` lands.
+
+        Android's own answer rather than a frame's, so it holds whatever the screen
+        in front looks like: on 2026-11-27 the game left LDPlayer mid-battle and the
+        frames that followed were its launcher, a Play Store sheet and a screenshot
+        viewer, each read as cards to send again. One `dumpsys`, measured at 30 to
+        60 ms, against 0.7 s for a capture.
+        """
+        return focused_display(self.shell(["dumpsys", "window", "displays"]), package) == (
+            display.logical_id
+        )
+
     def screenshot(self, display: DisplayTarget, label: str | None) -> bytes:
         """Name the display: with several of them screencap prefixes the PNG with a warning.
 

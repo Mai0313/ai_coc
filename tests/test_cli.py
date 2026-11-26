@@ -710,6 +710,7 @@ class DispatchTests(unittest.TestCase):
             (commands.NoHoldError, "no_hold"),
             (commands.HoldCancelledError, "hold_cancelled"),
             (commands.StaleExportError, "stale_export"),
+            (commands.GameLeftError, "game_left"),
         ):
             with (
                 patch.object(commands, "claim", side_effect=error),
