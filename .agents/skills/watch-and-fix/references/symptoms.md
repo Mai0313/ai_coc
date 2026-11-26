@@ -101,7 +101,7 @@
 依序看:
 
 - `_flank` 不花兵, 只讓開卡片列, 把線彎到紅線上
-- `_spread_troops` 在整個 pass 沒消耗時把線往外推 (村莊外圍**不是凸的**, 兩端在外面的線中間仍可能穿過去); 那條線是 `fitted_line` 彎出來的, 就先退回沒彎的預設側翼 (`back to the preset flank`), 不往外推
+- `_spread_troops` 在整個 pass 沒消耗時把線往外推 (村莊外圍**不是凸的**, 兩端在外面的線中間仍可能穿過去); 那條線是 `fitted_line` 彎出來的, 就先退回沒彎的預設側翼 (`back to the preset flank`), 不往外推. 彎線上第一輪讀到兩張以上的英雄或攻城機器沒下去 (`one-off card(s) refused on the bent flank`), `_settle_drops` 在推兵之前就退回預設側翼, 還沒下的兵、重試跟之後的投放都改走預設側翼
 - `push_out` 推到 `DEPLOY_BOUND` 邊緣就不動, 一直推同一點是可能的
 - `boundary_reach` 跟 `fitted_line` 把 plan 自己畫的線 (`planned_line` 拒絕時才是它指名的預設側翼) 彎到真實邊界, 三個錨點的理由 `ui/attack.py` 搜 `chord`
 
@@ -119,7 +119,7 @@
 
 **症狀**: `After the burst: N of N one-off card(s) never landed`, 重試也是 `0 of N retry card(s) landed at`, 而且兵卡都還有貨 (`troop card(s) still hold something`), 連著幾輪.
 
-只有一輪, 而且 `fitted to the boundary as` 的錨點貼在螢幕最左邊 (x 0 到 300), 同一輪 `spanning` 的寬 1470 以上 (或置中拖到次數用完, 沒有 `spanning` 那行): 對手的場景在地圖外畫了細的紅色 (碼頭欄杆、屋簷), `boundary_reach` 取最外面那一道, 線就彎到遊戲不收的地方. 現在第一個整 pass 沒消耗就退回預設側翼, log 有 `back to the preset flank`, 那是救回來了, 不用追; 退回之後還是整場沒下去才是新問題.
+只有一輪, 而且 `fitted to the boundary as` 的錨點貼在螢幕最左邊 (x 0 到 300), 同一輪 `spanning` 的寬 1470 以上 (或置中拖到次數用完, 沒有 `spanning` 那行): 對手的場景在地圖外畫了細的紅色 (碼頭欄杆、屋簷), `boundary_reach` 取最外面那一道, 線就彎到遊戲不收的地方. 現在第一輪讀到彎線上兩張以上的英雄或攻城機器沒下去, 或第一個整 pass 沒消耗, 就退回預設側翼, log 有 `back to the preset flank`, 那是救回來了, 不用追; 退回之後還是整場沒下去, 或英雄重試到 `never landed`, 才是新問題.
 
 log 的 `The camera was not at the far zoom` 量的是拉遠之前的鏡頭, 只是回報: 所有座標都在最遠的 zoom 量, 而 `_settle_zoom` 每場 (夜世界每個階段) 讀卡片之前都先拉遠 (`ZOOM_PINCHES` 兩下, 從拉到最近也到得了最遠), 所以它不會讓這場落空. 拉遠有沒有生效看 `--debug` 的 `zoomed` 畫面. **這條警告只在主村問** (高度門檻拿主村量的, 夜世界每張都比它短, 換門檻也分不開).
 
@@ -141,7 +141,7 @@ log 的 `The camera was not at the far zoom` 量的是拉遠之前的鏡頭, 只
 
 `field_units` 讀卡片上方的血條, 靠藍色分辨血條跟草地. 英雄卡不會清空 (變成技能按鈕), 不能用 `card_drained`. 假陰性有代價: 重試再點那張卡就是放技能. 看 `_drop_singles`, `_landed`, `HERO_SETTLE`.
 
-第一次投放用 plan 那個 `siege` / `hero` 步驟自己的 `at`, 但點若正對著部隊實際那條線、在線的內側 `ONTO_LINE_SLACK` 到 `ONTO_LINE_REACH` 之間 (更遠的當成刻意放在別處, 不動), `onto_line` 先把它搬到線上的垂足 (AI 照抄 prompt 的基準線, 部隊的線卻被 `_flank` 貼到真正的紅線上, 內側的點多半被拒); 線端外面的點不動, 那是清邊英雄的位置. 搬了會有一行 `aimed inside the line`, 所以 `runs.jsonl` 裡 `plan` 的座標跟畫面對不上時先找這行. 被拒的一律走 `single_spots` 的共用階梯重試, 從線的中點開始 (不是單純再往外, 理由同 `push_out`), 不再用 plan 的點; 但離剛被拒的那個點 `REFUSED_NEAR` 以內的階梯會跳過 (平鋪的英雄瞄的就是線的中點, 中點那一階等於同一塊被拒的地), 所以 log 的重試座標可能直接是往外推的那一階. 重試前卡片已經灰掉的不再送 (`already spent, not sent again`): 單位已經在場上或死在場上, 只是血條一下場就掉到紅色, `field_units` 沒認到綠條.
+第一次投放用 plan 那個 `siege` / `hero` 步驟自己的 `at`, 但點若正對著部隊實際那條線、在線的內側 `ONTO_LINE_SLACK` 到 `ONTO_LINE_REACH` 之間 (更遠的當成刻意放在別處, 不動), `onto_line` 先把它搬到線上的垂足 (AI 照抄 prompt 的基準線, 部隊的線卻被 `_flank` 貼到真正的紅線上, 內側的點多半被拒); 線端外面的點不動, 那是清邊英雄的位置. 搬了會有一行 `aimed inside the line`, 所以 `runs.jsonl` 裡 `plan` 的座標跟畫面對不上時先找這行. 被拒的一律走 `single_spots` 的共用階梯重試, 從線的中點開始 (不是單純再往外, 理由同 `push_out`), 不再用 plan 的點; 線是彎過的而第一輪有兩張以上被拒, 階梯改在沒彎的預設側翼上 (`back to the preset flank`); 但離剛被拒的那個點 `REFUSED_NEAR` 以內的階梯會跳過 (平鋪的英雄瞄的就是線的中點, 中點那一階等於同一塊被拒的地), 所以 log 的重試座標可能直接是往外推的那一階. 重試前卡片已經灰掉的不再送 (`already spent, not sent again`): 單位已經在場上或死在場上, 只是血條一下場就掉到紅色, `field_units` 沒認到綠條.
 
 ## 攻城機器整場亮著沒下去
 

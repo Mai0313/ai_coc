@@ -1625,6 +1625,7 @@ class DeploymentTests(unittest.TestCase):
         assert used == preset
         assert set(drops[0]) <= set(deploy_line(LINE_POINTS, *attack.push_line(bent, 0)))
         assert set(drops[1]) <= set(preset)
+        assert runner._anchors == DEPLOY_LINES["top_left"]
 
     def test_a_preset_flank_that_takes_nothing_is_still_pushed_out(self) -> None:
         """A village grown over the preset is what the push was always for."""
@@ -1777,6 +1778,60 @@ class DeploymentTests(unittest.TestCase):
         assert runner._line == moved
         # Where it was refused goes along, so the retry does not aim there again.
         assert singles.call_args.kwargs["refused"] == [(2, 2)]
+
+    # The flank of 2026-11-27 at 02:22, bent onto red scenery past the map's edge,
+    # and the preset it was bent from.
+    BENT = ((298, 236), (115, 345), (97, 469))
+    PRESET = ((450, 314), (230, 474))
+
+    def _settle_bent(
+        self, sending: dict[int, tuple[int, int]], landed: list[int], holding: list[int]
+    ) -> tuple[AttackRunner, MagicMock, MagicMock]:
+        """One reading of a burst along `BENT`; hands back the runner and the two resends."""
+        runner = self._runner()
+        runner._preset = self.PRESET
+        runner._sending = dict(sending)
+        moved = deploy_line(LINE_POINTS, *attack.push_line(self.PRESET, 1))
+        with (
+            patch.object(runner, "_frame", return_value=b""),
+            patch.object(attack, "field_units", return_value=landed),
+            patch.object(attack, "live_cards", return_value=holding),
+            patch.object(runner, "_spread_troops", return_value=moved) as spread,
+            patch.object(runner, "_drop_singles", return_value=([], [])) as singles,
+        ):
+            runner._settle_drops([172, 293], deploy_line(LINE_POINTS, *self.BENT), self.BENT)
+        return runner, spread, singles
+
+    def test_heroes_refused_on_a_bent_flank_take_the_troops_back_to_the_preset(self) -> None:
+        """Two heroes refused on the bent line, while some of its points took troops.
+
+        No pass drained nothing, so the troops stayed on the bent line and the
+        heroes climbed its retry ladder, every rung refused.
+        """
+        runner, spread, singles = self._settle_bent(
+            {557: (176, 498), 683: (287, 276), 804: (287, 276)}, [557], [172]
+        )
+        spread.assert_called_once_with([172], self.PRESET, 0)
+        assert singles.call_args.args[0] == [683, 804]
+        assert singles.call_args.args[1] == spread.return_value
+        assert runner._line == spread.return_value
+        assert runner._anchors == self.PRESET
+
+    def test_heroes_refused_on_a_bent_flank_retry_on_the_preset_with_no_troops_left(self) -> None:
+        runner, spread, singles = self._settle_bent(
+            {683: (287, 276), 804: (287, 276), 927: (287, 276)}, [], []
+        )
+        preset = deploy_line(LINE_POINTS, *attack.push_line(self.PRESET, 0))
+        spread.assert_not_called()
+        assert singles.call_args.args[1] == preset
+        assert runner._line == preset
+
+    def test_an_empty_siege_machine_alone_keeps_the_bent_flank(self) -> None:
+        """The game refuses a machine nobody is in wherever it goes."""
+        _, spread, _ = self._settle_bent(
+            {620: (176, 498), 683: (287, 276), 804: (287, 276)}, [683, 804], [172]
+        )
+        spread.assert_called_once_with([172], self.BENT, 0)
 
     def test_the_one_reading_gives_the_last_drop_its_health_bar_first(self) -> None:
         """Read the instant a pause opens, a hero that landed has no bar yet.

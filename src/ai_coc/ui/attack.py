@@ -343,6 +343,17 @@ SPOT_APART = 20
 # each cost a retry of about three seconds before a push out landed. The one rung
 # further away, 52 px out, took all five cards the first time.
 REFUSED_NEAR = 40
+# How many one-off cards the burst has to leave behind on a bent flank before
+# the bend is taken for refused ground and the preset flank takes over. One is
+# the siege machine with nobody in it, which the game refuses wherever it goes.
+# Measured over the home battles of 2026-11-17 to 11-27: of 1,154 on a bent
+# flank, 74 bursts left one card, 32 of them refused at every retry (21 the
+# empty machine at x 620), and 57 left two or more; outside the 26 whose whole
+# army stayed home, the bent line's retry ladder put those cards down within two
+# rungs on 8 of 31, needed three to five on 13 and lost one to three cards on 10.
+# Of 554 on the preset flank, 17 bursts left two or more and every one-off but
+# one empty machine landed on the first or second rung.
+MISREAD_REFUSALS = 2
 # How far inside the troops' line a siege machine or hero has to be aimed before
 # `onto_line` moves it onto the line. Over eleven recorded rounds the spots 1 to
 # 9 px inside all landed and refusals began at 13. The line is not the boundary,
@@ -1306,8 +1317,12 @@ class AttackRunner(ScreenRunner):
     _last: bytes = PrivateAttr(default=b"")
     _line: list[tuple[int, int]] = PrivateAttr(default_factory=list)
     # The flank `_flank` started from, before `fitted_line` bent it, which is
-    # where `_spread_troops` goes back to when the bent one takes nothing.
+    # where `_settle_drops` and `_spread_troops` go back to when the bent one
+    # refuses what was sent along it.
     _preset: tuple[tuple[int, int], ...] = PrivateAttr(default=())
+    # The flank `_line` was drawn along, which those two move to `_preset`, so a
+    # later reading in the same battle starts from where an earlier one ended.
+    _anchors: tuple[tuple[int, int], ...] = PrivateAttr(default=())
     # What this village's storages hold when full, read off their own tooltips
     # the first time a round reaches the village and kept for the rest of the
     # run. A storage only grows when a builder finishes upgrading one, which is
@@ -1976,8 +1991,8 @@ class AttackRunner(ScreenRunner):
         cannot be read the preset stands as it is. A line the village has grown
         over is then answered by `_spread_troops`, which pushes it out when a
         whole pass drains nothing — the same backstop that was always underneath
-        the probing, now carrying it alone — and a bent line that takes nothing
-        goes back to this preset first.
+        the probing, now carrying it alone — and a bent line that takes nothing,
+        or refuses the heroes, goes back to this preset first.
         """
         preset = deploy_candidates(plan)[0]
         battle = self._clear_flank(battle, preset)
@@ -2079,6 +2094,7 @@ class AttackRunner(ScreenRunner):
             # pass refused after a single push.
             if not drained and self._preset and anchors != self._preset:
                 anchors, pushed = self._preset, 0
+                self._anchors = anchors
                 logger.info("The whole pass landed nothing; back to the preset flank %s", anchors)
                 line = deploy_line(LINE_POINTS, *push_line(anchors, pushed, self._middle))
             elif not drained and pushed + 1 < DEPLOY_ATTEMPTS:
@@ -2556,7 +2572,7 @@ class AttackRunner(ScreenRunner):
         that fits inside it is free.
         """
         line = deploy_line(LINE_POINTS, *push_line(anchors, 0, self._middle))
-        self._line = line
+        self._line, self._anchors = line, anchors
         steps = merged(plan.steps)
         self._sending, self._unsent, self._onfield = {}, list(row.heroes), []
         self._named, self._spent = {}, {}
@@ -2579,7 +2595,7 @@ class AttackRunner(ScreenRunner):
                         # and the row still owes its reading until it is.
                         self._settle_drops([] if left["troops"] else row.troops, line, anchors)
                         settled = not left["troops"]
-                        line = self._line
+                        line, anchors = self._line, self._anchors
                     elif self._battle_ended("playing"):
                         logger.info("The battle ended with %d step(s) still to play", len(steps))
                         return
@@ -2751,7 +2767,9 @@ class AttackRunner(ScreenRunner):
         A whole row of troops still holding something is the line rather than
         the taps: `_spread_troops` answers that by moving the flank, back to the
         preset where `fitted_line` bent it and further out otherwise, which is
-        the backstop that was always underneath the probing.
+        the backstop that was always underneath the probing. `MISREAD_REFUSALS`
+        one-off cards refused on a bent line take the troops and the retries
+        back to the preset before any pass.
 
         **The bars are given `HERO_SETTLE` from the last drop before anything
         reads them.** This used to capture the moment the pause began, which on
@@ -2791,6 +2809,22 @@ class AttackRunner(ScreenRunner):
             len(sent),
             len(holding),
         )
+        # **One-off cards refused on a bent line send everything still to go
+        # back to the preset.** They went down along the line, so two refused
+        # there (one alone is the empty siege machine) is the line bent onto
+        # scenery past the map's edge (see `_spread_troops`), even where some of
+        # its points take troops and no pass drains nothing: on 2026-11-27 at
+        # 02:22 the troop passes stayed on it and the heroes climbed its retry
+        # ladder, every rung refused.
+        if len(missing) >= MISREAD_REFUSALS and self._preset and anchors != self._preset:
+            anchors = self._anchors = self._preset
+            line = deploy_line(LINE_POINTS, *push_line(anchors, 0, self._middle))
+            self._line = line
+            logger.info(
+                "%d one-off card(s) refused on the bent flank; back to the preset flank %s",
+                len(missing),
+                anchors,
+            )
         if holding:
             # The cards still to send, and the leftovers the battle poll pours,
             # follow the troops to whichever line ended up taking them.
