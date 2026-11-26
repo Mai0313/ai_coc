@@ -9,7 +9,7 @@ things are swapped:
 - The home directory is the scenario's `home`, set before `ai_coc` is imported, so
   every path under `~/.ai_coc` lands in the sandbox; it refuses to run otherwise.
 - Nothing reaches an emulator. A command that walks the game (`status`, `world --day`,
-  `stock`, ...) answers the scenario's scripted report, rendered by the real text
+  `stock`, `helper`, `prospector`, ...) answers the scenario's scripted report, rendered by the real text
   code; one with no script answers that the recording ends there. The commands that
   only attach (`tap`, `swipe`, `confirm`, `capture`, a plain `world`) run for real on
   the scenario's `tests/frames/` screens: a tap inside a box the current screen lists
@@ -155,7 +155,9 @@ def _scripted(sim: Simulator, arguments: argparse.Namespace) -> Any:  # noqa: AN
         WorldReport,
         LaunchReport,
         StatusReport,
+        HelperReport,
         CollectReport,
+        ProspectorReport,
     )
 
     key = _key(arguments)
@@ -173,6 +175,8 @@ def _scripted(sim: Simulator, arguments: argparse.Namespace) -> Any:  # noqa: AN
         "boost": BoostReport,
         "collect": CollectReport,
         "attack": AttackRun,
+        "helper": HelperReport,
+        "prospector": ProspectorReport,
     }
     if arguments.command != "status":
         return models[arguments.command].model_validate(entry)

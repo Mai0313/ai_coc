@@ -1,7 +1,7 @@
 ---
 name: skill-evals
 description: >-
-  Run the dry-run evals that check whether an agent following this project's skills (takeover, upgrades, share-emulator) makes the decisions they prescribe: which upgrade each slot picks, a goblin's gems against the cap and the agent's own reading, the takeover's watch and farm brief, a new instruction kept as a note, stopping on another device's login or the user's stop, waiting out another session's hold or holding again after one was lost. Each scenario hands a fresh agent a brief inside a sandbox whose ai_coc replays recorded screens and reports, and a grader scores the commands it ran and the reply it wrote. Nothing reaches the emulator or the real ~/.ai_coc. Use it before and after a change to those skills, to compare models or runtimes, or when the user asks how well an agent follows the skills.
+  Run the dry-run evals that check whether an agent following this project's skills (takeover, upgrades, share-emulator) makes the decisions they prescribe: which upgrade each slot picks, a goblin's gems against the cap and the agent's own reading, the takeover's watch and farm brief, a new instruction kept as a note, stopping on another device's login or the user's stop, waiting out another session's hold or holding again after one was lost, sending the helpers, converting ore with the Prospector, waking early on a speed-up the export does not show, and a wake that fills every freed slot. Each scenario hands a fresh agent a brief inside a sandbox whose ai_coc replays recorded screens and reports, and a grader scores the commands it ran and the reply it wrote. Nothing reaches the emulator or the real ~/.ai_coc. Use it before and after a change to those skills, to compare models or runtimes, or when the user asks how well an agent follows the skills.
 ---
 
 # Skill evals
@@ -21,6 +21,8 @@ From the checkout root:
 ```bash
 uv run --no-sync python .agents/skills/skill-evals/scripts/evals.py setup [--only <names>] [--repeat N]
 ```
+
+**After a change, set up only the scenarios it can reach**: those with a check anchored in a file the change touches (`grep -l '"<file>"' .agents/skills/skill-evals/scenarios/*.toml` lists them), passed to `--only`, on the commit before the change for `--against` and on the change itself. Every scenario anchors `AGENTS.md`, so a change there reaches only the scenarios whose `AGENTS.md` phrase sits in a passage it touches. The whole set runs only when the change is broad, such as a restructure of a whole skill; a change to a skill no scenario anchors gets no eval run.
 
 It builds one sandbox per scenario under the system's temp directory (about a second each, longer on a cold `uv` cache) and prints the results directory and each sandbox's `brief.md`. Each sandbox is a checkout of its own: copies of `AGENTS.md`, `.agents/` and `src/`, a `uv` project whose `ai_coc` is the stand-in, and a `home/.ai_coc` the brief tells the agent to read in place of its own.
 
@@ -42,11 +44,12 @@ uv run --no-sync python .agents/skills/skill-evals/scripts/evals.py grade <resul
 
 `scenarios/<name>.toml`, one bounded slice each that ends at a reply: the situation and the user's words, the fixture edits that stage the case, the scripted reports, the frames, and the checks. `scripts/standin.py`'s docstring says what the sandbox's `ai_coc` runs for real and what it replays; `scripts/evals.py`'s `Scenario`, `Check` and `Select` say what a scenario and a check can hold.
 
-- **Every expected value comes from the fixture and the skill's text**, never from what an agent answered. `village/export.json` is a real village export with the player tag replaced, and `village/status.json` the `status` run recorded with it; times in fixtures are shifted at setup so they read as now. A scripted report has to be what the current CLI returns: take it from a real `result.json`.
+- **Every expected value comes from the fixture and the skill's text**, never from what an agent answered. `village/export.json` is a real village export with the player tag replaced, and `village/status.json` the `status` run recorded with it; times in fixtures are shifted at setup so they read as now, and a `{<instant>}` in a situation is written as `status` writes times. A scripted report has to be what the current CLI returns: take it from a real `result.json`.
 - **Frames are named from `tests/frames/`, never copied**, and only frames whose readings a test pins: a scenario that leans on a reading nobody checks can pass for the wrong reason.
 - **A screen lists the taps that lead on from it, and nothing else does.** Frames come from different recordings, so one shown after an input that would not have produced it changes the HUD under the agent, which then takes it for the user playing and stops: on 2026-11-12 two agents did. End the recording where no frame of the next screen exists; a check that needs the screen after it cannot be graded there.
 - **The sandbox carries `village/entities.json.gz`**, the game's tables for the export's version trimmed to what the village holds. Without them `search` answers a name with `no_tables` and the agent goes to `ai_coc gamedata`, which the recording cannot answer.
 - **A check is deterministic**: a command run or not, its arguments, nothing claiming after a call, a cell of the upgrade table the skill prescribes, a pattern in the reply or in a file the brief has the agent write (`out/`). Each carries an anchor, the skill file and a phrase of the rule it pins, so a rule that moves shows up as stale rather than as a silent pass or fail.
+- **The scenarios follow the skills.** A change to `takeover`, `upgrades` or `share-emulator` that adds or changes a decision an agent could get wrong adds a scenario for it, or updates the one whose check pins it, in the same PR, and runs it as above; a rule that only moved gets its anchors updated.
 - `tests/test_skill_evals.py` stages every scenario, checks its anchors and replies, and runs the stand-in and the grader.
 
 Left out of the first set: buying through the build panel end to end and the five-minute prep, which need one coherent recorded frame sequence from a live upgrade; the night builder's pick; and the other skills.
