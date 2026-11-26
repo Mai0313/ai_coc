@@ -1,11 +1,12 @@
 # Mid-takeover the user says what a maxing building should give way to: it is kept as a
-# note and the table comes back with that row's next step filled in.
+# note and the table comes back with that row's next step filled in. Taking 法師塔 on to
+# its max is what continuing the same item does anyway, so that half is not written down.
 skill = "takeover"
-about = "A new instruction mid-takeover: kept as a note, and the table reprinted"
+about = "A new instruction mid-takeover: kept as a note without its default half, and the table reprinted"
 situation = """
 你在託管中 (今天 15:30 開始, session 一直是你的). 上一次醒來是 16:11, 你重讀了 `status` 再掛上 `ai_coc watch`, 它還在睡. 打資源的 subagent 在背景打夜世界. 這段對話之前的內容已經被壓縮掉了.
 """
-user = "多人箭塔升完改升法師塔"
+user = "多人箭塔升完改升法師塔, 法師塔之後就一路升到滿級"
 live = [900001, 900002]
 
 [state.emulator]
@@ -31,6 +32,13 @@ what = "keeps the instruction as a day note naming both buildings"
 anchor = [".agents/skills/takeover/SKILL.md", "交代的用 `ai_coc note add"]
 kind = "called"
 calls = { command = "note", args = { action = "add", world = "day" }, patterns = { item = "多人箭塔.*法師塔" }, outcome = "^added$" }
+
+[[checks]]
+id = "no-default"
+what = "leaves out taking 法師塔 to its max, which continuing it does anyway"
+anchor = [".agents/skills/takeover/SKILL.md", "一條 note 只寫跟預設不一樣的那一部分"]
+kind = "not_called"
+calls = { command = "note", args = { action = "add" }, patterns = { item = "法師塔.*滿" } }
 
 [[checks]]
 id = "reprint"
