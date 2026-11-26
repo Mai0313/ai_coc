@@ -1,0 +1,92 @@
+# A takeover wakes on its three-hour look with the weekly usage at 97%, resetting in about four hours, and the five-hour window barely used. `status` reads gold at 87% and elixir at 94%, every slot busy and nothing due before the reset. Low usage only stretches the three-hour look to the reset; a storage short of full is refilled on whatever wake reads it, so the farm brief goes out now. On 2026-11-26 a wake at 97% weekly left the refill until the reset.
+# The builder potion and the clock tower boost are taken off the fixture, so the earliest row (弓箭女皇) finishes after the reset.
+skill = "takeover"
+about = "Usage nearly spent: stretch the three-hour look to the reset, but refill the short storages now"
+situation = """
+你在託管中 (今天稍早開始, session 一直是你的). 打資源的 subagent 上一趟兩個世界都打到 `stock_full`, 照交辦開回日世界收工了. 你掛的 `ai_coc watch` 剛醒來, 這一回合是它叫醒你的, 它印的是:
+
+{"outcome": "due", "about": "每三小時看一眼倉庫", "stop_by": null}
+
+第 1 步讀到的帳號用量: 5 小時那一格用了 15%, {2026-11-12T18:40:00+08:00} 重置; 這一週的用了 97%, {2026-11-12T20:15:00+08:00} 重置. 託管以外沒有別的工作在跑.
+
+上一輪是三小時前, 那時你印給使用者的表是:
+
+日世界
+
+| 時間 | 目標 | 項目 | 後續 |
+| --- | --- | --- | --- |
+| {2026-11-12T21:38:56+08:00} | 工人 | 弓箭女皇 (70/110), 下一級: 黑水 13 萬; 4天 | 續升 (lv 70 → lv 71) |
+| {2026-11-13T05:18:11+08:00} | 實驗室 (哥布林) | 亡靈 (13/14), 下一級: 黑水 33.5 萬; 14天 | 再聘哥布林, 續升 (lv 13 → lv 14); 超過 350 寶石改升野蠻人 (lv 4 → lv 5) |
+| {2026-11-13T06:04:46+08:00} | — | 建築工人學徒冷卻結束 | 派給亡靈王子 (連續指派) |
+| {2026-11-13T08:51:26+08:00} | — | 實驗助手冷卻結束 | 派給那時一般實驗室在升的那一件 (連續指派) |
+| {2026-11-13T11:38:06+08:00} | — | 探礦者冷卻結束 | 換礦 (照當時最滿 → 最空) |
+| {2026-11-13T14:47:00+08:00} | 工人 | 野蠻人之王 (68/110), 下一級: 黑水 12.3 萬; 4天 | 續升 (lv 68 → lv 69) |
+| {2026-11-13T21:41:09+08:00} | 實驗室 | 棘木騎士 (4/4), 下一級: — | 改升隕石戈侖 (lv 2 → lv 3) |
+| {2026-11-14T01:34:22+08:00} | 工人 | 亡靈王子 (82/95), 下一級: 黑水 31 萬; 8天 | 續升 (lv 82 → lv 83) |
+| {2026-11-14T12:12:14+08:00} | 工人 | 神盾勇者 (46/55), 下一級: 黑水 35 萬; 8天 | 續升 (lv 46 → lv 47) |
+| {2026-11-14T20:23:24+08:00} | 工人 | 彈跳加農炮 (2/4), 下一級: 金幣 1750 萬; 9天 | 續升 (lv 2 → lv 3) |
+| {2026-11-14T20:45:18+08:00} | 工人 (哥布林) | 彈跳加農炮 (2/4), 下一級: 金幣 1750 萬; 9天 | 再聘哥布林, 續升 (lv 2 → lv 3); 超過 350 寶石改升隱形炸彈 (lv 4 → lv 5) |
+| {2026-11-15T09:26:52+08:00} | 工人 | 多人箭塔 (4/4), 下一級: — | 改升隱形炸彈 (lv 4 → lv 5) |
+| {2026-11-15T17:16:04+08:00} | 戰寵 | 阿啾 (8/10), 下一級: 黑水 34 萬; 8天 | 續升 (lv 8 → lv 9) |
+
+夜世界
+
+| 時間 | 目標 | 項目 | 後續 |
+| --- | --- | --- | --- |
+| {2026-11-13T14:40:57+08:00} | — | 鐘塔冷卻結束 | 開加速 |
+| {2026-11-14T01:42:33+08:00} | 工人 | 戰鬥直升機 (30/35), 下一級: 聖水 410 萬; 7天 | 續升 (lv 30 → lv 31) |
+| {2026-11-14T07:36:29+08:00} | 實驗室 | 暗夜女巫 (14/20), 下一級: 聖水 350 萬; 5天12小時 | 續升 (lv 14 → lv 15) |
+| {2026-11-15T13:17:29+08:00} | 工人 | 建築大師訓練營 (12/12), 下一級: — | 改升彈射陷阱 (lv 1 → lv 2) |
+| {2026-11-16T23:56:20+08:00} | 工人 | 戰爭機器 (28/35), 下一級: 聖水 390 萬; 6天 | 續升 (lv 28 → lv 29) |
+"""
+boosts = { clocktower_cooldown = 80971 }
+screens = [{ frame = "hud_day.png" }]
+
+[replies]
+status = [{ world = "day", builder = { world = "day", role = "builder", free = 0, total = 7, outcome = "counted" }, lab = { world = "day", role = "lab", free = 0, total = 2, outcome = "counted" }, stock = { world = "day", held = { gold = 25230000, elixir = 27260000, dark = 470000 }, capacity = { gold = 29000000, elixir = 29000000, dark = 470000 }, filled = { gold = "87%", elixir = "94%", dark = "100%" }, gems = 7171 }, shield = { remaining = 4980, up = true } }]
+
+[state.emulator]
+status = "idle"
+pid = 41200
+command = "world"
+started = "2026-11-12T15:40:00+08:00"
+ended = "2026-11-12T15:41:10+08:00"
+caller = { agent = "claude-code", session = "eval-takeover-low-usage-refill-farm", mission = "打日夜世界資源" }
+
+[state.watch]
+status = "idle"
+pid = 41500
+started = "2026-11-12T13:12:20+08:00"
+ended = "2026-11-12T16:12:21+08:00"
+next_at = "2026-11-12T16:12:20+08:00"
+about = "每三小時看一眼倉庫"
+farms = true
+caller = { agent = "claude-code", session = "eval-takeover-low-usage-refill", mission = "全天候託管到他叫停" }
+
+[[checks]]
+id = "status-reread"
+what = "reads status again on waking"
+anchor = [".agents/skills/takeover/SKILL.md", "再重跑 `status`"]
+kind = "called"
+calls = { command = "status", args = { last = false } }
+
+[[checks]]
+id = "refill-now"
+what = "with gold and elixir short of full, the farm run goes out on this wake, not after the usage resets"
+anchor = [".agents/skills/takeover/SKILL.md", "第 3 步讀到倉庫沒滿, 第 5 步照樣當場派打資源"]
+kind = "exists"
+file = "*brief.md"
+
+[[checks]]
+id = "watch-to-reset"
+what = "the weekly window nearly spent and resetting past three hours, the three-hour look stretches to the reset and no further"
+anchor = [".agents/skills/takeover/SKILL.md", "或週額度快用完, 而它重置在三小時以後"]
+kind = "called"
+calls = { command = "watch", args = { farms = true }, patterns = { minutes = '^(18[1-9]|19\d|2\d\d)$' }, wake_within = 250 }
+
+[[checks]]
+id = "named"
+what = "every command says who ran it and why"
+anchor = ["AGENTS.md", "Every `ai_coc` command an agent runs carries `--agent`"]
+kind = "every_call_has"
+fields = ["agent", "session", "mission"]
