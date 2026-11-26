@@ -63,6 +63,7 @@ uv run --no-sync ai_coc wait <標籤> --for 150 --agent <名字> --session <--se
 - **`session_taken`**: 使用者在手機 (或另一台模擬器) 登入了, 迴圈沒有搶回來就收工. 停下來回報, **之後一個 `ai_coc` 指令都不要下**, 也不要先把遊戲弄回村莊: 每個指令開跑時都會重新登入, 把他踢下線
 - **`emulator_silent`**: 模擬器連續三輪沒回應, 整個 series 收工, 回報. 夾在中間一兩輪沒回應不是事, 迴圈照打
 - **`no_attack_menu`**: 攻擊選單連續五輪打不開, 整個 series 收工, 回報
+- **`game_left`**: 戰鬥中遊戲離開了畫面 (當掉, 或別的程式跑到前面), 迴圈之後什麼都沒點就收工. 停下來回報, 不要自己 `launch` 或開回去: 可能是使用者切走的, 看畫面是派你的 session 的事
 - **`army_short`, `other_village`**: 整個 series 到此為止, 回報
 - **其他** (`interrupted`、`builder_free`、`lab_free`, 交辦沒叫你這樣開): 回報 `run_outcome` 跟 `run.log` 最後一條 `WARNING` / `ERROR`
 

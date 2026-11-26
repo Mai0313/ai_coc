@@ -96,7 +96,7 @@
 
 - `nothing_deployed`: 一張卡都出不去, 迴圈的問題, 看這一節
 - `no_loot`: 兵下去了, 位置不對, **戰術**的問題, 先讀那一輪在 `runs.jsonl` 的 `plan`, 再照 SKILL.md 的「調整的階梯」從戰術檔開始 (實測過: 32%, 卡全清空, 英雄全落地, 打進了沒有倉庫的那一側). 從哪一側打是使用者定的, 見 `.agents/skills/dev-rules/references/attack.md` 的 The plan
-- `no_loot` 而且那一輪拖滿四分鐘, 戰鬥中每十秒一行 `No battle on screen; nothing here is a card to empty`: 戰鬥畫面不見了而結算畫面也沒出來, 迴圈沒有這個狀態, 只能等 `BATTLE_TIMEOUT` 用完. 彈出視窗蓋住戰鬥會這樣; 打到一半登入被搶走以前也是, 現在報成 `session_taken`, 所以畫面上是被擠掉的對話框的話, 是 `session_taken` 沒認出來. 先看那一輪的畫面, 不要調戰術
+- `no_loot` 而且那一輪拖滿四分鐘, 戰鬥中每十秒一行 `No battle on screen; nothing here is a card to empty`: 戰鬥畫面不見了而結算畫面也沒出來, 迴圈沒有這個狀態, 只能等 `BATTLE_TIMEOUT` 用完. 彈出視窗蓋住戰鬥會這樣; 打到一半登入被搶走以前也是, 現在報成 `session_taken`, 所以畫面上是被擠掉的對話框的話, 是 `session_taken` 沒認出來. 遊戲本身離開畫面 (當掉, 被切到別的程式) 也不再走到這裡, 見下一節「戰鬥中遊戲離開了畫面」. 先看那一輪的畫面, 不要調戰術
 
 依序看:
 
@@ -106,6 +106,14 @@
 - `boundary_reach` 跟 `fitted_line` 把 plan 自己畫的線 (`planned_line` 拒絕時才是它指名的預設側翼) 彎到真實邊界, 三個錨點的理由 `ui/attack.py` 搜 `chord`
 
 偵察倒數中丟兵會直接開打 (2026-09-26 實測), 所以攻擊不等倒數; 只有 `probe` 跟 `bounds` 還用 `_wait_for_battle` 等.
+
+## 戰鬥中遊戲離開了畫面
+
+**症狀**: 這一輪 (跟整個 series) 收工在 `game_left`, log 有 `The game is no longer on screen; this round taps nothing more`.
+
+戰鬥裡每一下點擊、拖曳、pinch 之前, 跟每一張截圖之後, 迴圈都問 Android 遊戲還握著它的 display (`in_front`), 不在就不再點任何東西. 那是保護在做事, 要查的是遊戲為什麼不見: 看那一輪最後幾張 `--debug` 畫面, 停在桌面多半是遊戲當掉, 停在別的程式是有人切走, 或是前一下點到了遊戲外面. 一次 `tap_many` 送出去就收不回來, 所以最後一次問過之後, 最多還有一張卡那一整串會落在新畫面上 (兵卡是卡片加最多 `DROPS_PER_PASS` 下, 約 1.5 秒; 法術卡是瓶數多一下).
+
+主村戰鬥畫面沒有 放棄 (`in_battle` 讀 false: 彈窗、結算) 是另一回事: 遊戲還在, 出兵跟法術停在那一步, 交給等戰鬥結束的那段, log 是 `No battle on screen; the rest of the tactic is left unplayed`. 夜世界倒數時本來就沒有那顆按鈕, 所以夜世界只問遊戲在不在.
 
 ## 下兵線畫穿村莊
 
