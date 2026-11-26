@@ -305,6 +305,7 @@ from .ui.attack import (
     SINGLE_DROP_DELAY,
     UNREADABLE_OPPONENTS,
     AttackRunner,
+    GameLeftError,
     planned_drops,
     clear_of_controls,
 )
@@ -795,6 +796,7 @@ STAND_DOWNS: dict[type[RuntimeError], StandDownOutcome] = {
     NoHoldError: "no_hold",
     HoldCancelledError: "hold_cancelled",
     StaleExportError: "stale_export",
+    GameLeftError: "game_left",
 }
 STAND_DOWN_LINES: dict[StandDownOutcome, str] = {
     "loan_cancelled": "借用被 ai_coc stop 取消了,這個指令沒有開跑",
@@ -804,6 +806,7 @@ STAND_DOWN_LINES: dict[StandDownOutcome, str] = {
     "no_hold": "這個 session 的保留已經不在(過期、被 stop 取消,或別人寫過狀態檔),什麼都沒按",
     "hold_cancelled": "排在後面等的那個保留被 ai_coc stop 取消了,這個指令沒有開跑",
     "stale_export": "最新那份村莊匯出比最後一次按成功的確認還舊,沒有睡;重讀 status 再掛",
+    "game_left": "戰鬥中遊戲離開了畫面,之後什麼都沒點,量到的不算數",
 }
 
 
@@ -2305,6 +2308,7 @@ ROUND_LINES: dict[AttackOutcome, str] = {
     "emulator_silent": "模擬器沒有回應",
     "other_village": "遊戲停在另一個村莊,這一批不打那邊;換村莊用 ai_coc world --day 或 --night",
     "session_taken": "另一部裝置登入了這個帳號,沒有把登入搶回來,停止刷資源",
+    "game_left": "戰鬥中遊戲不在畫面上了(當掉或被切到別的程式),之後什麼都沒再點,停止刷資源",
 }
 
 # Why a battle went in without the loot thresholds, said loudly because each
@@ -2321,6 +2325,7 @@ ROUND_ENDINGS: dict[AttackOutcome, SeriesEnding] = {
     "lab_free": "lab_free",
     "other_village": "other_village",
     "session_taken": "session_taken",
+    "game_left": "game_left",
     "army_short": "army_short",
 }
 
@@ -2335,6 +2340,7 @@ ENDING_LINES: dict[SeriesEnding, str] = {
     "army_short": "兵力不到兵營的一半",
     "other_village": "遊戲停在這一批沒在打的另一個村莊",
     "session_taken": "另一部裝置登入了這個帳號",
+    "game_left": "戰鬥中遊戲離開了畫面",
     "emulator_silent": f"模擬器連續 {ADAPTER_FAILURES} 輪沒有回應",
     "no_attack_menu": f"攻擊選單連續 {MENU_FAILURES} 輪打不開",
 }
@@ -2697,14 +2703,16 @@ def _round_event(runner: AttackRunner, series: AttackSeries) -> dict[str, RoundE
 def _series_over(report: AttackReport, played: int) -> SeriesEnding | None:
     """How this round's outcome ends the whole series, saying why; None where it does not.
 
-    Six outcomes do (`ROUND_ENDINGS`). A full storage is the goal being met, and `takeover` owns where
+    Seven outcomes do (`ROUND_ENDINGS`). A full storage is the goal being met, and `takeover` owns where
     that leads; there is nothing left for the round loop to farm for either
     way. An idle builder or research slot on a run asked to watch them is the
     other goal. The game
     standing on the other village is the third: nothing here sails, so every
-    round after would find it there too. Another device logging in, the one of
-    these that can come mid-battle, is the fourth: the player is on, and the
-    next round would log them out.
+    round after would find it there too. Another device logging in, one of the
+    two that can come mid-battle, is the fourth: the player is on, and the
+    next round would log them out. The game leaving its display mid-battle is
+    the fifth: the next round would press at whatever app is in front, and the
+    player may be the one who opened it.
 
     **An army short of the camp is the last one, and it is a fault rather than
     a goal.** The wait between rounds was written for an army still training,
@@ -2923,10 +2931,10 @@ class _BoundarySurvey(AttackRunner):
                     round(VILLAGE_CENTRE[0] + dx * (radius + offset)),
                     round(VILLAGE_CENTRE[1] + dy * (radius + offset)),
                 )
-                before = self._frame(f"{degrees:03.0f}deg-{offset:+d}-before")
-                self.adb.tap_many([(card, CARD_ROW_Y), point], self.display, gap=SINGLE_DROP_DELAY)
+                before = self._look(f"{degrees:03.0f}deg-{offset:+d}-before")
+                self._taps([(card, CARD_ROW_Y), point], gap=SINGLE_DROP_DELAY)
                 time.sleep(DROP_SETTLE)
-                after = self._frame(f"{degrees:03.0f}deg-{offset:+d}")
+                after = self._look(f"{degrees:03.0f}deg-{offset:+d}")
                 # The card is what the survey measures, because the warning
                 # banner it used to read is raised by four different things and
                 # not raised at all by a tap the game simply swallows.
@@ -2953,10 +2961,15 @@ def _survey_battle(runner: AttackRunner) -> None:
 
     The round reports a takeover as an outcome, which a survey would otherwise
     ignore: it handed back rays measured under the dialog and exited 0, leaving
-    a borrower nothing that says to run `ai_coc stop` rather than give back.
+    a borrower nothing that says to run `ai_coc stop` rather than give back. A
+    game that left the screen mid-survey stands it down the same way, rather
+    than reading as a survey that measured what it could.
     """
-    if runner.run().outcome == "session_taken":
+    outcome = runner.run().outcome
+    if outcome == "session_taken":
         raise SessionTakenError
+    if outcome == "game_left":
+        raise GameLeftError
 
 
 def probe(frames: FrameLog) -> BoundarySurvey:
@@ -3029,9 +3042,9 @@ class _MapSurvey(AttackRunner):
             if card is None:
                 logger.info("Every troop card is spent; the survey stops here")
                 return None, shot
-            self.adb.tap_many([(card, CARD_ROW_Y), point], self.display, gap=SINGLE_DROP_DELAY)
+            self._taps([(card, CARD_ROW_Y), point], gap=SINGLE_DROP_DELAY)
             time.sleep(DROP_SETTLE)
-            before, shot = shot, self._frame(f"{degrees:03.0f}deg-{round(radius):04d}")
+            before, shot = shot, self._look(f"{degrees:03.0f}deg-{round(radius):04d}")
             if card_drained(before, shot, [card]):
                 logger.info("Ray %.0f: accepted at %d of %d", degrees, radius, limit)
                 # Accepted at the very first probe means the screen ran out

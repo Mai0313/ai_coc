@@ -44,7 +44,7 @@ from ai_coc.ui.world import uncovered, collect_cart
 from ai_coc.constants import COC_PACKAGE
 from ai_coc.ui.runner import ScreenRunner, SessionTakenError, relogin, refuse_taken
 from ai_coc.adapters.ai import GeminiClient
-from ai_coc.adapters.adb import ZOOM_PINCHES
+from ai_coc.adapters.adb import TAP_GAP, ZOOM_PINCHES
 from ai_coc.parsers.home import plate_count
 from ai_coc.parsers.field import view_shift
 from ai_coc.parsers.scout import (
@@ -1206,6 +1206,21 @@ PLAN_PROMPT = PROMPTS["attack_plan"]
 NIGHT_PROMPT = PROMPTS["night_plan"]
 
 
+class GameLeftError(RuntimeError):
+    """The game no longer held its display mid-battle, so the round taps nothing more."""
+
+
+class BattleGoneError(RuntimeError):
+    """A home village battle frame drew no 放棄 plate, so the tactic stops tapping."""
+
+
+# The outcome a round reports when its battle stands down on one of these.
+STOOD_DOWN: dict[type[RuntimeError], AttackOutcome] = {
+    SessionTakenError: "session_taken",
+    GameLeftError: "game_left",
+}
+
+
 class AttackRunner(ScreenRunner):
     """Drives one attack from the home village and back.
 
@@ -1518,6 +1533,63 @@ class AttackRunner(ScreenRunner):
         logger.warning("The cart would not say how full it is; the storages decide alone")
         return False
 
+    def _in_front(self) -> None:
+        """Raise `GameLeftError` unless the game still holds its display.
+
+        **Asked before every input of a battle and after every capture of one**,
+        on both villages, from the pinch that opens it to the wait that ends it.
+        On 2026-11-27 the game left LDPlayer two seconds into a home battle, and
+        the loop played on into the launcher behind it: the settled frame read as
+        four heroes refused, their retries tapped the launcher's promotion icons,
+        and the abilities and spells after them landed on a Play Store install
+        sheet and a paid app's page. Frames could not have caught it, since a
+        launcher, a store page and a viewer share nothing a reader could rule out.
+
+        Not asked outside the battle: the menus and the result screen tap only
+        after reading the game's own screens, and `uncovered` has to press at
+        the covers that hide them.
+        """
+        if not self.adb.in_front(COC_PACKAGE, self.display):
+            logger.warning("The game is no longer on screen; this round taps nothing more")
+            raise GameLeftError
+
+    def _look(self, label: str) -> bytes:
+        """A capture of the battle, the game asked after it, so no reader judges another app's screen."""
+        png = self._frame(label)
+        self._in_front()
+        return png
+
+    def _battle_frame(self, label: str) -> bytes:
+        """`_look`, and on the home village `BattleGoneError` where the frame draws no 放棄 plate.
+
+        Every home battle frame from the scout screen on draws it; a frame
+        without it is a result screen, a panel or a popup, where the tactic's
+        taps would land on whatever that put up. The builder base draws none
+        through its countdown, which is when its first drop goes, so there only
+        the game is asked.
+        """
+        png = self._look(label)
+        if self.world == "day" and not in_battle(png):
+            raise BattleGoneError
+        return png
+
+    def _taps(self, points: list[tuple[int, int]], gap: float = TAP_GAP) -> None:
+        """A burst of battle taps, sent only while the game still holds its display.
+
+        Asked once for the burst: it is one shell command, and nothing stops it
+        once sent, so the rest of a burst the game left in the middle of still
+        goes out onto whatever replaced it. A burst is one card's worth: a troop
+        card and up to `DROPS_PER_PASS` drops, about 1.5 s, or a spell card's
+        bottles and one more, `SPELL_PLACE_GAP` apart.
+        """
+        self._in_front()
+        self.adb.tap_many(points, self.display, gap=gap)
+
+    def _press(self, point: tuple[int, int]) -> None:
+        """One battle tap, sent only while the game still holds its display."""
+        self._in_front()
+        self._tap(point)
+
     def _battle_ended(self, label: str) -> bool:
         """Whether the result screen is up, and the loot on the way past.
 
@@ -1538,7 +1610,7 @@ class AttackRunner(ScreenRunner):
         including the ones the abilities took, on a battle short enough that this
         poll never saw the panel at all.
         """
-        png = self._frame(label)
+        png = self._look(label)
         view = read_scout(png)
         if view is not None:
             self._seen = view.loot
@@ -2044,7 +2116,7 @@ class AttackRunner(ScreenRunner):
         """
         remaining = list(troops)
         line = deploy_line(LINE_POINTS, *push_line(anchors, pushed, self._middle))
-        shot = self._frame("before-pass")
+        shot = self._battle_frame("before-pass")
         for index in range(DEPLOY_PASSES):
             # **A counted card says how many taps it wants, in its own corner.**
             # Tapping that many plus one empties it, where a fixed pass spends
@@ -2077,9 +2149,9 @@ class AttackRunner(ScreenRunner):
                     index * len(remaining) + card,
                     min(count + 1, DROPS_PER_PASS) if count else DROPS_PER_PASS,
                 )
-                self.adb.tap_many([(x, CARD_ROW_Y), *drops], self.display)
+                self._taps([(x, CARD_ROW_Y), *drops])
             time.sleep(DROP_SETTLE)
-            before, shot = shot, self._frame("pass")
+            before, shot = shot, self._battle_frame("pass")
             drained = card_drained(before, shot, remaining)
             self._deployed |= bool(drained)
             # **A bent line that takes nothing goes back to the preset, not
@@ -2199,7 +2271,7 @@ class AttackRunner(ScreenRunner):
         for aim in rounds:
             if not pending:
                 break
-            before = self._frame("before-drop")
+            before = self._battle_frame("before-drop")
             # A card already grey has nothing left to send: its unit is on the
             # field, or died there, under a bar `field_units` did not read as one.
             # Measured 2026-10-08, a queen that landed straight into a red bar was
@@ -2216,13 +2288,12 @@ class AttackRunner(ScreenRunner):
                 pending = [card for card in pending if card in live]
                 if not pending:
                     break
-            self.adb.tap_many(
+            self._taps(
                 [tap for card in pending for tap in ((card, CARD_ROW_Y), aim[card])],
-                self.display,
                 gap=SINGLE_DROP_DELAY,
             )
             time.sleep(HERO_SETTLE)
-            down, bars = self._landed(before, self._frame("dropped"), pending)
+            down, bars = self._landed(before, self._battle_frame("dropped"), pending)
             landed += down
             onfield += bars
             pending = [card for card in pending if card not in down]
@@ -2291,6 +2362,7 @@ class AttackRunner(ScreenRunner):
         point somewhere else. `_panned` is that record and `_onscreen` is how
         everything reads it.
         """
+        self._in_front()
         self.adb.swipe(
             SCREEN_CENTRE,
             clear_of_controls((SCREEN_CENTRE[0] + drift[0], SCREEN_CENTRE[1] + drift[1])),
@@ -2298,7 +2370,7 @@ class AttackRunner(ScreenRunner):
             self.display,
         )
         time.sleep(CAMERA_SETTLE)
-        moved = self._frame("camera")
+        moved = self._look("camera")
         shift = view_shift(frame, moved, drift)
         if shift is None:
             # **Left alone rather than folded in as nothing.** A box with
@@ -2371,6 +2443,7 @@ class AttackRunner(ScreenRunner):
         camera is never left off the limit for a frame anyone kept.
         """
         before = village_box(frame)
+        self._in_front()
         self.adb.zoom("out", ZOOM_PINCHES, COC_PACKAGE, self.display)
         if self.world == "day" and before is not None and before[3] - before[1] < ZOOM_CLIPPED:
             logger.warning(
@@ -2379,7 +2452,7 @@ class AttackRunner(ScreenRunner):
                 before[3] - before[1],
                 ZOOM_CLIPPED,
             )
-        return self._frame("zoomed")
+        return self._look("zoomed")
 
     def _settle_camera(self, frame: bytes) -> bytes:
         """Put the village in the middle of the screen, and hand back what it looks like.
@@ -2422,6 +2495,7 @@ class AttackRunner(ScreenRunner):
             # every preset flank off by the drag, since a preset is drawn for a
             # centred village and the village is centred again by the time this
             # returns.
+            self._in_front()
             self.adb.swipe(
                 SCREEN_CENTRE,
                 clear_of_controls((SCREEN_CENTRE[0] + drift[0], SCREEN_CENTRE[1] + drift[1])),
@@ -2429,7 +2503,7 @@ class AttackRunner(ScreenRunner):
                 self.display,
             )
             time.sleep(CAMERA_SETTLE)
-            frame = self._frame("camera")
+            frame = self._look("camera")
         return frame
 
     def _clear_flank(self, frame: bytes, preset: tuple[tuple[int, int], ...]) -> bytes:
@@ -2532,11 +2606,16 @@ class AttackRunner(ScreenRunner):
         # last countdown frame as off the first battle frame. Waiting cost the
         # rest of the 30 s every round, 14 s when the plan came back in 12. This
         # used to say nothing could be placed then, from a run with no key.
-        battle = self._frame("battle")
+        battle = self._look("battle")
         # `_flank` bends the plan's own line onto the boundary the game draws,
         # and the tactic is played against whatever comes back.
         anchors = self._flank(battle, plan)
-        self._play_tactic(plan, anchors, row)
+        try:
+            self._play_tactic(plan, anchors, row)
+        except BattleGoneError:
+            # The battle wait takes it from here, which leaves through the
+            # result screen and empties a card once a battle shows again.
+            logger.info("No battle on screen; the rest of the tactic is left unplayed")
 
     def _play_tactic(
         self, plan: AttackPlan, anchors: tuple[tuple[int, int], ...], row: BattleRow
@@ -2599,6 +2678,8 @@ class AttackRunner(ScreenRunner):
                     elif self._battle_ended("playing"):
                         logger.info("The battle ended with %d step(s) still to play", len(steps))
                         return
+                    elif not in_battle(self._last):
+                        raise BattleGoneError
                 if (remaining := done + step.seconds - time.monotonic()) > 0:
                     time.sleep(remaining)
                 continue
@@ -2684,14 +2765,11 @@ class AttackRunner(ScreenRunner):
                 wanted = list(row.heroes)
             # A tap on a card whose hero never landed deploys it instead, with
             # nothing around it, so only what is out gets offered one.
-            self.adb.tap_many(
-                [
-                    (card, CARD_ROW_Y)
-                    for card in wanted
-                    if card in self._onfield or card in self._sending
-                ],
-                self.display,
-            )
+            self._taps([
+                (card, CARD_ROW_Y)
+                for card in wanted
+                if card in self._onfield or card in self._sending
+            ])
         elif step.act == "troops":
             self._pour(row.troops, line, row.frame, remaining)
         elif step.act in ("rage", "freeze"):
@@ -2715,10 +2793,8 @@ class AttackRunner(ScreenRunner):
         spot = clear_of_controls(spot)
         if not cards:
             return
-        self.adb.tap_many(
-            [tap for card in cards for tap in ((card, CARD_ROW_Y), spot)],
-            self.display,
-            gap=SINGLE_DROP_DELAY,
+        self._taps(
+            [tap for card in cards for tap in ((card, CARD_ROW_Y), spot)], gap=SINGLE_DROP_DELAY
         )
         self._sending.update(dict.fromkeys(cards, spot))
         self._sent_at = time.monotonic()
@@ -2751,8 +2827,8 @@ class AttackRunner(ScreenRunner):
                 taps = DROPS_PER_PASS
             if not taps:
                 continue
-            self._tap((card, CARD_ROW_Y))
-            self.adb.tap_many(drop_points(line, seed, taps), self.display)
+            self._press((card, CARD_ROW_Y))
+            self._taps(drop_points(line, seed, taps))
 
     def _settle_drops(
         self, troops: list[int], line: list[tuple[int, int]], anchors: tuple[tuple[int, int], ...]
@@ -2783,7 +2859,7 @@ class AttackRunner(ScreenRunner):
         out of the pause the reading already sits in.
         """
         time.sleep(max(0.0, self._sent_at + HERO_SETTLE - time.monotonic()))
-        after = self._frame("settled")
+        after = self._battle_frame("settled")
         spots = dict(self._sending)
         sent = list(spots)
         # Emptied here rather than by the caller, because that is what makes a
@@ -2875,25 +2951,23 @@ class AttackRunner(ScreenRunner):
                 cast_count = count + 1 if count else len(targets)
                 cells = [targets[(start + i) % len(targets)] for i in range(cast_count)]
                 start += count
-                self._tap((x, CARD_ROW_Y))
+                self._press((x, CARD_ROW_Y))
                 time.sleep(SPELL_SELECT_DELAY)
-                self.adb.tap_many(cells, self.display, gap=SPELL_PLACE_GAP)
+                self._taps(cells, gap=SPELL_PLACE_GAP)
                 logger.info("Spell card at %d held %s, tapped %d", x, count or None, cast_count)
             time.sleep(DROP_SETTLE)
             # One reading for the whole row rather than one per card: `live_cards`
             # decodes the frame it is handed, so asking it per card decodes it
             # per card.
-            after = self._frame("cast")
+            #
             # **A card that will not empty and a battle that has gone look the
             # same from here**, and the retries used to spend themselves on the
             # second. Measured live on the 探礦者 sheet: the battle had ended,
             # every attempt reported the bottles still in their cards, and each
-            # one tapped the panel again. The frame is already taken for
-            # `live_cards`, so this asks the question that separates them for
-            # nothing.
-            if not in_battle(after):
-                logger.info("The battle went while casting; %d card(s) keep theirs", len(pending))
-                return
+            # one tapped the panel again. `_battle_frame` asks the question that
+            # separates them off the frame already taken, and ends the casting
+            # on the second.
+            after = self._battle_frame("cast")
             pending = list(live_cards(after, pending))
             if pending:
                 logger.info("%d spell card(s) held on to their bottles", len(pending))
@@ -2918,9 +2992,9 @@ class AttackRunner(ScreenRunner):
             taps = min(self._left(frame, x) if card_count(frame, x) else len(cells), len(cells))
             if not taps:
                 continue
-            self._tap((x, CARD_ROW_Y))
+            self._press((x, CARD_ROW_Y))
             time.sleep(SPELL_SELECT_DELAY)
-            self.adb.tap_many(cells[:taps], self.display, gap=SPELL_PLACE_GAP)
+            self._taps(cells[:taps], gap=SPELL_PLACE_GAP)
             self._spent[x] = self._spent.get(x, 0) + taps
             logger.info("Spell card at %d cast %d of its bottles", x, taps)
             del cells[:taps]
@@ -2965,7 +3039,7 @@ class AttackRunner(ScreenRunner):
             # The button toggles, so it is pressed only while it reads 1x.
             if battle_speed(self._last) == 1:
                 logger.info("Playing the last minute at 4x")
-                self._tap(SPEED_UP)
+                self._press(SPEED_UP)
             self._dump_leftovers()
         self._leave_result()
         return self._seen is not None and self._seen != first
@@ -3030,18 +3104,22 @@ class AttackRunner(ScreenRunner):
         if not extra:
             return
         logger.info("%d card(s) still hold something; emptying them", len(extra))
-        self._cast(extra, tuple(self._line), self._last)
+        try:
+            self._cast(extra, tuple(self._line), self._last)
+        except BattleGoneError:
+            logger.info("The battle went while emptying; the cards keep what is left")
 
-    def _fought(self, opening: LootOffer | None) -> AttackOutcome:
-        """How the battle went, a takeover by another device included.
+    def _fought(self, frame: bytes, opening: LootOffer | None) -> AttackOutcome:
+        """Play the battle and say how it went, a takeover or the game leaving the screen included.
 
         Answered here rather than left to `commands._round`, so the round still
         carries the opponent it fought: `takeover` counts battles by `attacked`.
         """
         try:
+            self._deploy(frame)
             return self._outcome(self._wait_out_battle(opening))
-        except SessionTakenError:
-            return "session_taken"
+        except (SessionTakenError, GameLeftError) as error:
+            return STOOD_DOWN[type(error)]
 
     def _outcome(self, took: bool) -> AttackOutcome:
         """How a battle that was actually fought is reported.
@@ -3300,7 +3378,7 @@ class AttackRunner(ScreenRunner):
     def _offer_ability(self, machines: list[int]) -> None:
         """One tap on each machine card, which the game takes if the ability is ready."""
         if machines:
-            self.adb.tap_many([(slot, CARD_ROW_Y) for slot in machines], self.display)
+            self._taps([(slot, CARD_ROW_Y) for slot in machines])
 
     def _hold(self, seconds: int, machines: list[int]) -> None:
         """Wait out the head start the plan gave the machine, using it rather than sleeping.
@@ -3333,9 +3411,9 @@ class AttackRunner(ScreenRunner):
         ability offer only toggled the selection.
         """
         for spot in spots[:DEPLOY_ATTEMPTS]:
-            self.adb.tap(*spot, self.display)
+            self._press(spot)
             time.sleep(DROP_SETTLE)
-            if card not in selected_cards(self._frame("sent"), [card]):
+            if card not in selected_cards(self._look("sent"), [card]):
                 return True
             logger.info("The preselected machine is still in its card after %s", spot)
         logger.warning("The preselected machine never left its card")
@@ -3390,14 +3468,14 @@ class AttackRunner(ScreenRunner):
         fought and `commands.attack` counts it.
         """
         lanes = self._lanes(anchors, pushed)
-        shot = self._frame("before-pass")
+        shot = self._look("before-pass")
         landed = False
         for index in range(DEPLOY_PASSES):
             for card, slot in enumerate(troops):
                 drops = night_drops(lanes, index * len(troops) + card, DROPS_PER_PASS)
-                self.adb.tap_many([(slot, CARD_ROW_Y), *drops], self.display)
+                self._taps([(slot, CARD_ROW_Y), *drops])
             time.sleep(DROP_SETTLE)
-            before, shot = shot, self._frame("pass")
+            before, shot = shot, self._look("pass")
             drained = card_drained(before, shot, troops)
             logger.info("Pass %d drained %d of %d card(s)", index + 1, len(drained), len(troops))
             if drained:
@@ -3424,7 +3502,7 @@ class AttackRunner(ScreenRunner):
         capture is paced, at `ABILITY_POLL`, because that is what costs.
         """
         deadline = time.monotonic() + BATTLE_TIMEOUT
-        shot = self._frame("night-battle")
+        shot = self._look("night-battle")
         while time.monotonic() < deadline:
             if battle_over(shot):
                 return
@@ -3440,7 +3518,7 @@ class AttackRunner(ScreenRunner):
             # two frames, once into the second stage and once into the result,
             # against none at all in between; the run without a second stage
             # moved them once. `_next_stage` is what tells the two apart.
-            following = self._frame("night-battle")
+            following = self._look("night-battle")
             refuse_taken(following)
             moved = card_drained(shot, following, troops) if troops else []
             # **A card that was selected or let go repaints its corner too**, and
@@ -3462,7 +3540,7 @@ class AttackRunner(ScreenRunner):
             shot = following
             if battle_speed(shot) == 1:
                 logger.info("Playing the last minute at 4x")
-                self._tap(SPEED_UP)
+                self._press(SPEED_UP)
             self._offer_for(ABILITY_POLL, machines)
         logger.warning("The battle never ended; leaving it to the result screen")
 
@@ -3477,7 +3555,7 @@ class AttackRunner(ScreenRunner):
         on it is another stage to play.
         """
         self._leave_result()
-        png = self._frame("after-stage")
+        png = self._look("after-stage")
         if current_world(png) is not None:
             return None
         if card_groups(png):
@@ -3522,17 +3600,17 @@ class AttackRunner(ScreenRunner):
             self._since_cart += 1
         played = 0
         for stage in range(NIGHT_PHASES):
-            deployed = self._deploy_night(battle, stage)
-            if deployed is None:
-                break
-            played += 1
             # The stages already played count, as `phases` is what `takeover`
             # counts this village's battles by.
             try:
+                deployed = self._deploy_night(battle, stage)
+                if deployed is None:
+                    break
+                played += 1
                 self._wait_out_night(*deployed)
-            except SessionTakenError:
-                return AttackReport(world="night", phases=played, outcome="session_taken")
-            following = self._next_stage()
+                following = self._next_stage()
+            except (SessionTakenError, GameLeftError) as error:
+                return AttackReport(world="night", phases=played, outcome=STOOD_DOWN[type(error)])
             if following is None:
                 break
             battle = following
@@ -3675,13 +3753,12 @@ class AttackRunner(ScreenRunner):
                 # finished painting, and `_scout` says that where it measured
                 # it — restating `can_skip` here would be the same bit twice.
                 logger.info("Attacking after %d skips (forced=%s)", skipped, forced)
-                self._deploy(frame)
                 return AttackReport(
                     skipped=skipped + self._swapped,
                     attacked=loot,
                     forced=forced,
                     waived=waived,
-                    outcome=self._fought(loot if view else None),
+                    outcome=self._fought(frame, loot if view else None),
                 )
             if stopping or skipped >= self.max_skips:
                 self._tap(END_BATTLE)

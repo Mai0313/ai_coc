@@ -1176,6 +1176,9 @@ class PlannedTactic(BaseModel):
 # sails, and `ai_coc world --day` / `--night` is how the game gets moved. `session_taken` is
 # another device logging in to the account, between rounds or mid-battle, which
 # ends the series too: the player is on, and logging back in would log them out.
+# `game_left` is the game no longer holding its display mid-battle (it crashed,
+# or something else came to the front), which ends the series as well: every tap
+# after it lands on another app, and the player may be the one who switched.
 AttackOutcome = Literal[
     "took_loot",
     "deployed",
@@ -1195,6 +1198,7 @@ AttackOutcome = Literal[
     "emulator_silent",
     "other_village",
     "session_taken",
+    "game_left",
 ]
 ThresholdWaiver = Literal["unreadable", "poor"]
 
@@ -1328,6 +1332,7 @@ SeriesEnding = Literal[
     "army_short",
     "other_village",
     "session_taken",
+    "game_left",
     "emulator_silent",
     "no_attack_menu",
 ]
@@ -2232,8 +2237,9 @@ class GivebackReport(BaseModel):
 # the account, `watch` or `note` found no state file to write into, another
 # session holds the emulator between its commands, this session's own hold no
 # longer stands under a `tap`, `swipe`, `confirm` or `watch --hold`, the hold
-# it queued behind was cancelled by `ai_coc stop`, or `watch --upgrades` found
-# the newest saved export taken before the newest confirmed press.
+# it queued behind was cancelled by `ai_coc stop`, `watch --upgrades` found
+# the newest saved export taken before the newest confirmed press, or a survey's
+# battle (`probe`, `bounds`) lost the game from the screen.
 StandDownOutcome = Literal[
     "loan_cancelled",
     "session_taken",
@@ -2242,6 +2248,7 @@ StandDownOutcome = Literal[
     "no_hold",
     "hold_cancelled",
     "stale_export",
+    "game_left",
 ]
 
 
