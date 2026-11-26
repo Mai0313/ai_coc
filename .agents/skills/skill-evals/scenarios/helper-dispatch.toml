@@ -7,8 +7,9 @@
 #
 # The `helper` reply is the `result.json` of the apprentice run of 2026-11-25 23:18
 # (`helper send apprentice 神盾勇者 --recurring`, `sent`), its hut list replaced by the
-# fixture's builder jobs, longest left first; its frames are deleted, so `dialog` and
-# `frame` are left out.
+# fixture's builder jobs, longest left first, and `recurring` and `recurrent` turned off
+# for a send without `--recurring`; its frames are deleted, so `dialog` and `frame` are
+# left out.
 skill = "upgrades"
 about = "Both helpers ready: send the apprentice where the note says, not the assistant"
 situation = """
@@ -18,7 +19,7 @@ user = "學徒跟助手可以派了吧, 能派就幫我派"
 
 [replies]
 status = [{ world = "day", builder = { world = "day", role = "builder", free = 0, total = 7, outcome = "counted" }, lab = { world = "day", role = "lab", free = 0, total = 2, outcome = "counted" }, stock = { world = "day", held = { gold = 29808400, elixir = 29000000, dark = 470000 }, capacity = { gold = 29000000, elixir = 29000000, dark = 470000 }, filled = { gold = "102%", elixir = "100%", dark = "100%" }, gems = 7171 }, shield = { remaining = 4980, up = true } }]
-helper = [{ action = "send", helper = "apprentice", item = "神盾勇者", recurring = true, outcome = "sent", ready_at = "2026-11-12T16:11:26+08:00", running = ["多人箭塔", "彈跳加農炮", "彈跳加農炮", "神盾勇者", "亡靈王子", "野蠻人之王", "弓箭女皇"], helping = "神盾勇者", recurrent = true }]
+helper = [{ action = "send", helper = "apprentice", item = "神盾勇者", recurring = false, outcome = "sent", ready_at = "2026-11-12T16:11:26+08:00", running = ["多人箭塔", "彈跳加農炮", "彈跳加農炮", "神盾勇者", "亡靈王子", "野蠻人之王", "弓箭女皇"], helping = "神盾勇者", recurrent = false }]
 
 [state.emulator]
 status = "idle"
@@ -53,11 +54,11 @@ kind = "called"
 calls = { command = "helper", args = { action = "send", helper = "apprentice", item = "神盾勇者" } }
 
 [[checks]]
-id = "recurring"
-what = "sends it recurring"
-anchor = [".agents/skills/upgrades/SKILL.md", "預設帶 `--recurring`"]
-kind = "called"
-calls = { command = "helper", args = { action = "send", helper = "apprentice", recurring = true } }
+id = "not-recurring"
+what = "sends it without the game's recurring assignment, since the agent sends it again itself"
+anchor = [".agents/skills/upgrades/SKILL.md", "不帶 `--recurring`, 每次冷卻完由你再派一次"]
+kind = "not_called"
+calls = { command = "helper", args = { action = "send", recurring = true } }
 
 [[checks]]
 id = "assistant-held"
