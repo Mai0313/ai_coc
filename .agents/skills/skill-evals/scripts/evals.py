@@ -29,6 +29,7 @@ RESULTS = CHECKOUT / ".runs" / "skill-evals"
 SANDBOXES = Path(tempfile.gettempdir()) / "ai_coc-skill-evals"
 # An ISO instant with its offset, the only form the fixtures write times in.
 INSTANT = re.compile(r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d+)?[+-]\d\d:\d\d$")
+MOMENT = re.compile(r"\{(" + INSTANT.pattern[1:-1] + r")\}")
 # The files a dry run leaves for the grader, under the sandbox.
 OUT = "out"
 REPLY = "reply.md"
@@ -75,7 +76,8 @@ class Select(BaseModel):
 
     `args` are exact values of the parsed arguments, `unset` arguments left at the
     parser's default, `patterns` regular expressions over arguments, `outcome` one
-    over the reported outcome, and `box` the `x0 y0 x1 y1` a tap landed inside.
+    over the reported outcome, `box` the `x0 y0 x1 y1` a tap landed inside, and
+    `wake_within` the minutes after the call ran that the watch it set wakes by.
     """
 
     command: str | None = None
@@ -84,6 +86,7 @@ class Select(BaseModel):
     patterns: dict[str, str] = Field(default_factory=dict)
     outcome: str | None = None
     box: tuple[int, int, int, int] | None = None
+    wake_within: int | None = None
 
 
 CheckKind = Literal[
@@ -160,6 +163,8 @@ class Scenario(BaseModel):
     live: list[int] = Field(default_factory=list)
     journal: list[dict[str, JsonValue]] = Field(default_factory=list)
     edits: list[Edit] = Field(default_factory=list)
+    # The export's speed-ups in place of the fixture's, where the case turns on what runs.
+    boosts: dict[str, int] | None = None
     checks: list[Check]
 
 
@@ -191,6 +196,23 @@ def staged(export: dict[str, Any], edits: list[Edit]) -> dict[str, Any]:
     return export
 
 
+def retimed(export: dict[str, Any]) -> None:
+    """Each running row's saved finish worked out again as the export's save does, since an edit or the speed-ups may have moved it.
+
+    `search` reads the saved one where `status` works it out afresh, so a stale one has the two disagree.
+    """
+    from ai_coc.models import Boosts, ExportRow
+    from ai_coc.parsers import village
+
+    boosts = Boosts.model_validate(export["boosts"])
+    helpers = [ExportRow.model_validate(row) for row in export["day"].get("helpers", [])]
+    helping = village._helping(helpers)  # noqa: SLF001 - the save's own steps
+    for world in ("day", "night"):
+        for rows in export[world].values():
+            for row in rows:
+                row.update(village._done(ExportRow.model_validate(row), world, boosts, helping, export["timestamp"]))  # noqa: SLF001
+
+
 def _copy(source: Path, target: Path, skip: tuple[str, ...] = ()) -> None:
     shutil.copytree(source, target, ignore=shutil.ignore_patterns("__pycache__", *skip))
 
@@ -220,10 +242,13 @@ def stage(sandbox: Path, name: str, scenario: Scenario, now: datetime) -> None:
     home = sandbox / "home" / ".ai_coc"
     (sandbox / OUT).mkdir(parents=True)
     export = staged(json.loads((SKILL / "village" / "export.json").read_text(encoding="utf-8")), scenario.edits)
+    if scenario.boosts is not None:
+        export["boosts"] = scenario.boosts
     exported = datetime.fromisoformat(export["exported_at"])
     delta = now - exported - timedelta(minutes=scenario.minutes_after_export)
     export = shifted(export, delta)
     export["timestamp"] += round(delta.total_seconds())
+    retimed(export)
     village = VillageExport.model_validate(export)
     (home / "account_json").mkdir(parents=True)
     name_on_disk = commands._export_path(village.tag, datetime.fromisoformat(export["exported_at"])).name  # noqa: SLF001
@@ -259,6 +284,11 @@ def stage(sandbox: Path, name: str, scenario: Scenario, now: datetime) -> None:
         kept.mkdir(parents=True)
         shutil.copy2(FRAMES / scenario.last_frame, kept / "after.png")
         situation = situation.replace("{last_frame}", str(kept / "after.png"))
+    # `{<instant>}` in the situation is a moment of the fixture, written as `status` writes times.
+    situation = MOMENT.sub(
+        lambda found: commands._moment(shifted(found[1], delta), now),  # noqa: SLF001 - status's own wording
+        situation,
+    )
     brief = BRIEF.format(
         sandbox=sandbox, home=home, session=f"eval-{name}", out=sandbox / OUT, situation=situation
     )
@@ -322,6 +352,11 @@ def _matches(call: dict[str, Any], select: Select) -> bool:
     if select.box is not None:
         left, top, right, bottom = select.box
         if not (left <= (args.get("x") or -1) <= right and top <= (args.get("y") or -1) <= bottom):
+            return False
+    if select.wake_within is not None:
+        wake = call.get("wake")
+        late = datetime.fromisoformat(call["at"]) + timedelta(minutes=select.wake_within)
+        if wake is None or datetime.fromisoformat(wake) > late:
             return False
     return all(re.search(pattern, str(args.get(key) or "")) for key, pattern in select.patterns.items())
 

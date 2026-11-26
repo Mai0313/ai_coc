@@ -1,0 +1,74 @@
+# One-off: both helpers are off cooldown and the user asks for them to be sent. A note
+# names 神盾勇者 for the apprentice, where the default would be 亡靈王子, the first hero
+# of the order that is upgrading. The assistant's only candidate, 棘木騎士 (亡靈 is the
+# goblin's), has less left than an hour of help covers (36 hours with the lab potion), so
+# it is not sent. The rows carry the multiplier the game's tables give each level, which
+# the trimmed tables leave out.
+#
+# The `helper` reply is the `result.json` of the apprentice run of 2026-11-25 23:18
+# (`helper send apprentice 神盾勇者 --recurring`, `sent`), its hut list replaced by the
+# fixture's builder jobs, longest left first; its frames are deleted, so `dialog` and
+# `frame` are left out.
+skill = "upgrades"
+about = "Both helpers ready: send the apprentice where the note says, not the assistant"
+situation = """
+沒有之前的對話. 背景沒有東西在跑, 遊戲停在日世界.
+"""
+user = "學徒跟助手可以派了吧, 能派就幫我派"
+
+[replies]
+status = [{ world = "day", builder = { world = "day", role = "builder", free = 0, total = 7, outcome = "counted" }, lab = { world = "day", role = "lab", free = 0, total = 2, outcome = "counted" }, stock = { world = "day", held = { gold = 29808400, elixir = 29000000, dark = 470000 }, capacity = { gold = 29000000, elixir = 29000000, dark = 470000 }, filled = { gold = "102%", elixir = "100%", dark = "100%" }, gems = 7171 }, shield = { remaining = 4980, up = true } }]
+helper = [{ action = "send", helper = "apprentice", item = "神盾勇者", recurring = true, outcome = "sent", ready_at = "2026-11-12T16:11:26+08:00", running = ["多人箭塔", "彈跳加農炮", "彈跳加農炮", "神盾勇者", "亡靈王子", "野蠻人之王", "弓箭女皇"], helping = "神盾勇者", recurrent = true }]
+
+[state.emulator]
+status = "idle"
+pid = 41000
+command = "status"
+started = "2026-11-12T16:10:30+08:00"
+ended = "2026-11-12T16:11:40+08:00"
+caller = { agent = "claude-code", session = "an-earlier-session", mission = "讀升級時間" }
+
+[state.notes]
+day = ["建築工人學徒一直幫神盾勇者"]
+
+[[edits]]
+world = "day"
+section = "helpers"
+data = 93000000
+set = { speeds = "builder", multiplier = 8 }
+drop = ["helper_cooldown"]
+
+[[edits]]
+world = "day"
+section = "helpers"
+data = 93000001
+set = { speeds = "lab", multiplier = 12 }
+drop = ["helper_cooldown"]
+
+[[checks]]
+id = "send-noted"
+what = "sends the apprentice to the item the note names"
+anchor = [".agents/skills/upgrades/SKILL.md", "幫哪一件是他的交代, 跟升級的交代一樣記、一樣刪"]
+kind = "called"
+calls = { command = "helper", args = { action = "send", helper = "apprentice", item = "神盾勇者" } }
+
+[[checks]]
+id = "recurring"
+what = "sends it recurring"
+anchor = [".agents/skills/upgrades/SKILL.md", "預設帶 `--recurring`"]
+kind = "called"
+calls = { command = "helper", args = { action = "send", helper = "apprentice", recurring = true } }
+
+[[checks]]
+id = "assistant-held"
+what = "does not send the assistant to a job with less left than its hour covers"
+anchor = [".agents/skills/upgrades/SKILL.md", "剩下的工作量不夠一小時就不派"]
+kind = "not_called"
+calls = { command = "helper", args = { action = "send", helper = "assistant" } }
+
+[[checks]]
+id = "named"
+what = "every command says who ran it and why"
+anchor = ["AGENTS.md", "Every `ai_coc` command an agent runs carries `--agent`"]
+kind = "every_call_has"
+fields = ["agent", "session", "mission"]

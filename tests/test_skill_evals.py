@@ -9,12 +9,13 @@ hands its arguments to the same script these tests run directly.
 from __future__ import annotations
 
 import os
+import re
 import sys
 import json
 from typing import TYPE_CHECKING, Any
 from pathlib import Path
 import argparse
-from datetime import datetime
+from datetime import datetime, timedelta
 import subprocess
 import importlib.util
 
@@ -73,7 +74,9 @@ def test_every_scenario_stages_and_its_checks_point_at_the_skills(
     """Its fixtures validate, its frames exist, its patterns compile, and every rule it pins is still in the text."""
     scenario = evals.scenarios()[name]
     sandbox = _staged(tmp_path, name)
-    assert "{last_frame}" not in (sandbox / "brief.md").read_text(encoding="utf-8")
+    brief = (sandbox / "brief.md").read_text(encoding="utf-8")
+    assert "{last_frame}" not in brief
+    assert not evals.MOMENT.search(brief)
     for screen in scenario.screens:
         assert (evals.FRAMES / screen.frame).exists(), screen.frame
         assert all(tap.to < len(scenario.screens) for tap in screen.taps), screen.frame
@@ -187,6 +190,53 @@ def test_the_status_script_is_printed_by_the_real_text_code(tmp_path: Path) -> N
     assert "實驗室 (哥布林) | 亡靈 (13/14)" in out
 
 
+def test_helper_and_prospector_answer_their_scripts_in_order(tmp_path: Path) -> None:
+    sandbox = _staged(tmp_path, "helper-dispatch")
+    code, out, call = _run(sandbox, "helper", "send", "apprentice", "神盾勇者", "--recurring")
+    assert (code, call["outcome"], call["scripted"], json.loads(out)["helping"]) == (
+        0,
+        "sent",
+        True,
+        "神盾勇者",
+    )
+    sandbox = _staged(tmp_path, "prospector-convert")
+    _, _, call = _run(sandbox, "prospector")
+    assert call["outcome"] == "read"
+    _, out, call = _run(sandbox, "prospector", "starry", "shiny")
+    assert (call["outcome"], json.loads(out)["after"]["shiny"]) == ("converted", 24316)
+
+
+def test_a_situation_reads_its_moments_as_status_writes_them_and_boosts_can_be_swapped(
+    tmp_path: Path,
+) -> None:
+    """The previous round's rows land three hours after this read's, and no speed-up is printed."""
+    sandbox = _staged(tmp_path, "takeover-unseen-speedup")
+    brief = (sandbox / "brief.md").read_text(encoding="utf-8")
+    _, out, _ = _run(sandbox, "status")
+    assert "加速" not in out
+    row = r"\| (\S+ \d\d:\d\d) \| 工人 \| 弓箭女皇"
+    read, before = re.search(row, out), re.search(row, brief)
+    assert read
+    assert before
+    now = datetime.now().astimezone()
+    assert _moment(before[1], now) - _moment(read[1], now) == timedelta(hours=3)
+    # The saved finish `search` reads is worked out again under the swapped speed-ups.
+    _, out, _ = _run(sandbox, "search", "弓箭女皇")
+    assert re.search(r"(\d\d:\d\d) 好", out)[1] == read[1].split()[1]
+
+
+def _moment(text: str, now: datetime) -> datetime:
+    """A time as `status` writes it (`今天 21:09`, `11-28 07:30`), back to a naive instant."""
+    day, clock = text.split()
+    offset = {"今天": 0, "明天": 1}
+    date = (
+        now.date() + timedelta(days=offset[day])
+        if day in offset
+        else datetime.strptime(f"{now.year}-{day}", "%Y-%m-%d").date()
+    )
+    return datetime.combine(date, datetime.strptime(clock, "%H:%M").time())
+
+
 def _call(command: str, **args: Any) -> dict[str, Any]:  # noqa: ANN401 - any argument value
     return {
         "argv": [command],
@@ -238,6 +288,16 @@ def test_calls_are_matched_on_values_unset_arguments_boxes_and_outcomes(tmp_path
         "",
         tmp_path,
     )[0]
+
+
+def test_a_watch_is_matched_on_how_soon_after_it_ran_it_wakes(tmp_path: Path) -> None:
+    calls = [
+        {**_call("watch"), "at": "2026-11-26T19:00:00+08:00", "wake": "2026-11-26T19:30:00+08:00"}
+    ]
+    soon = _check(kind="called", calls={"command": "watch", "wake_within": 30})
+    assert evals.judge(soon, calls, "", tmp_path)[0]
+    sooner = _check(kind="called", calls={"command": "watch", "wake_within": 29})
+    assert not evals.judge(sooner, calls, "", tmp_path)[0]
 
 
 def test_nothing_claims_counts_from_the_call_it_is_after(tmp_path: Path) -> None:

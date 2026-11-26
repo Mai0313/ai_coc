@@ -1,0 +1,82 @@
+# A takeover wakes on its three-hour look. No speed-up is running on the export, yet every
+# day builder row finishes three hours earlier than the read three hours ago said: an item
+# the export does not write runs the builders at twice the speed ((180 + 180) / 180). 弓箭女皇
+# reads two hours off, so it really finishes in about one, and the watch wakes by `--next`
+# five minutes before that, no later than thirty minutes on; sleeping on the new time would
+# wake at nearly two hours. The builder potion and the clock tower boost are taken off the
+# fixture so `status` prints no 加速 line, and 弓箭女皇's timer is two hours.
+skill = "takeover"
+about = "Finish times moved earlier with no speed-up shown: wake early by --next"
+situation = """
+你在託管中 (今天稍早開始, session 一直是你的). 打資源的 subagent 上一趟兩個世界都打到 `stock_full` 收工了. 你掛的 `ai_coc watch` 剛醒來, 這一回合是它叫醒你的, 它印的是:
+
+{"outcome": "due", "about": "每三小時看一眼倉庫", "stop_by": null}
+
+上一輪是三小時前, 那時重跑的 `status` 兩個世界都沒有「加速」那一行, 日世界工人那幾列是:
+
+| 時間 | 目標 | 項目 |
+| --- | --- | --- |
+| {2026-11-12T21:12:26+08:00} | 工人 | 弓箭女皇 (70/110), 下一級: 黑水 13 萬; 4天 |
+| {2026-11-13T17:47:00+08:00} | 工人 | 野蠻人之王 (68/110), 下一級: 黑水 12.3 萬; 4天 |
+| {2026-11-14T04:34:22+08:00} | 工人 | 亡靈王子 (82/95), 下一級: 黑水 31 萬; 8天 |
+| {2026-11-14T15:12:14+08:00} | 工人 | 神盾勇者 (46/55), 下一級: 黑水 35 萬; 8天 |
+| {2026-11-14T23:23:24+08:00} | 工人 | 彈跳加農炮 (2/4), 下一級: 金幣 1750 萬; 9天 |
+| {2026-11-14T23:45:18+08:00} | 工人 (哥布林) | 彈跳加農炮 (2/4), 下一級: 金幣 1750 萬; 9天 |
+| {2026-11-15T12:26:52+08:00} | 工人 | 多人箭塔 (4/4), 下一級: — |
+"""
+boosts = { clocktower_cooldown = 80971 }
+
+[replies]
+status = [{ world = "day", builder = { world = "day", role = "builder", free = 0, total = 7, outcome = "counted" }, lab = { world = "day", role = "lab", free = 0, total = 2, outcome = "counted" }, stock = { world = "day", held = { gold = 29808400, elixir = 29000000, dark = 470000 }, capacity = { gold = 29000000, elixir = 29000000, dark = 470000 }, filled = { gold = "102%", elixir = "100%", dark = "100%" }, gems = 7171 }, shield = { remaining = 4980, up = true } }]
+
+[state.emulator]
+status = "idle"
+pid = 41200
+command = "world"
+started = "2026-11-12T15:40:00+08:00"
+ended = "2026-11-12T15:41:10+08:00"
+caller = { agent = "claude-code", session = "eval-takeover-unseen-speedup-farm", mission = "打日夜世界資源" }
+
+[state.watch]
+status = "idle"
+pid = 41500
+started = "2026-11-12T13:12:20+08:00"
+ended = "2026-11-12T16:12:21+08:00"
+next_at = "2026-11-12T16:12:20+08:00"
+about = "每三小時看一眼倉庫"
+farms = true
+caller = { agent = "claude-code", session = "eval-takeover-unseen-speedup", mission = "全天候託管到他叫停" }
+
+[[edits]]
+world = "day"
+section = "heroes"
+data = 28000001
+set = { timer = 7260 }
+
+[[checks]]
+id = "status-reread"
+what = "reads status again on waking"
+anchor = [".agents/skills/takeover/SKILL.md", "再重跑 `status`"]
+kind = "called"
+calls = { command = "status", args = { last = false } }
+
+[[checks]]
+id = "next"
+what = "arms the watch with --next for the projected finish"
+anchor = [".agents/skills/takeover/SKILL.md", "掛 watch 時用 `--next` 醒在最早那一件推出來的時間五分鐘前, 不超過三十分鐘以後"]
+kind = "called"
+calls = { command = "watch", patterns = { next = '\d' } }
+
+[[checks]]
+id = "wake-early"
+what = "the watch wakes within thirty minutes, not on the time status reads"
+anchor = [".agents/skills/takeover/SKILL.md", "完成時間比上一次讀的提早, 而 `status` 沒印「加速」, 就當成有一個讀不到的加速還在跑"]
+kind = "called"
+calls = { command = "watch", wake_within = 35 }
+
+[[checks]]
+id = "named"
+what = "every command says who ran it and why"
+anchor = ["AGENTS.md", "Every `ai_coc` command an agent runs carries `--agent`"]
+kind = "every_call_has"
+fields = ["agent", "session", "mission"]

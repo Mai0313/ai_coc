@@ -1,0 +1,68 @@
+# One-off: the Prospector is off cooldown and a note fixes the ore it converts into, 藍礦
+# (shiny). The read holds 22,316 / 50,000 shiny, 1,534 / 5,000 glowy and 945 / 1,000
+# starry: of the other two, starry is the fuller by count over cap (94.5% against 30.7%),
+# though glowy holds more, so the conversion is starry into shiny.
+#
+# Both replies are the `result.json` files of 2026-11-25: the read at 23:20 verbatim, and
+# the conversion at 23:21 (starry into glowy, `converted`) turned into starry into shiny
+# at the game's rate (2 starry = 2,000 shiny); their times are moved to the fixture's
+# export and their frames, deleted since, are left out.
+skill = "upgrades"
+about = "The Prospector is free and a note fixes the target: read, then convert from the fuller of the other two"
+situation = """
+沒有之前的對話. 背景沒有東西在跑, 遊戲停在日世界.
+"""
+user = "探礦者好了, 幫我換一下礦"
+
+[replies]
+status = [{ world = "day", builder = { world = "day", role = "builder", free = 0, total = 7, outcome = "counted" }, lab = { world = "day", role = "lab", free = 0, total = 2, outcome = "counted" }, stock = { world = "day", held = { gold = 29808400, elixir = 29000000, dark = 470000 }, capacity = { gold = 29000000, elixir = 29000000, dark = 470000 }, filled = { gold = "102%", elixir = "100%", dark = "100%" }, gems = 7171 }, shield = { remaining = 4980, up = true } }]
+prospector = [
+    { outcome = "read", ready_at = "2026-11-12T16:11:26+08:00", held = { shiny = 22316, glowy = 1534, starry = 945 }, ceilings = { shiny = 50000, glowy = 5000, starry = 1000 } },
+    { give = "starry", take = "shiny", outcome = "converted", ready_at = "2026-11-12T16:11:26+08:00", held = { shiny = 22316, glowy = 1534, starry = 945 }, ceilings = { shiny = 50000, glowy = 5000, starry = 1000 }, after = { shiny = 24316, glowy = 1534, starry = 943 }, ready_after = "2026-11-13T15:08:55+08:00" },
+]
+
+[state.emulator]
+status = "idle"
+pid = 41000
+command = "status"
+started = "2026-11-12T16:10:30+08:00"
+ended = "2026-11-12T16:11:40+08:00"
+caller = { agent = "claude-code", session = "an-earlier-session", mission = "讀升級時間" }
+
+[state.notes]
+day = ["探礦者固定換成藍礦"]
+
+[[edits]]
+world = "day"
+section = "helpers"
+data = 93000003
+drop = ["helper_cooldown"]
+
+[[checks]]
+id = "read-first"
+what = "reads the ores once before converting"
+anchor = [".agents/skills/upgrades/SKILL.md", "先跑一次只讀的"]
+kind = "called"
+calls = { command = "prospector", unset = ["give", "take"] }
+
+[[checks]]
+id = "give-fullest"
+what = "after the read, converts from the fuller of the other two by count over cap (starry), not by count"
+anchor = [".agents/skills/upgrades/SKILL.md", "照它印的礦石跟上限算每一種的「數量 / 上限」"]
+kind = "called"
+# The replies are a queue, so a conversion run before any read is answered `read`.
+calls = { command = "prospector", args = { give = "starry" }, outcome = "^converted$" }
+
+[[checks]]
+id = "take-noted"
+what = "converts into the ore the note fixes (shiny)"
+anchor = [".agents/skills/upgrades/SKILL.md", "交代固定了換成哪一種"]
+kind = "called"
+calls = { command = "prospector", args = { take = "shiny" }, outcome = "^converted$" }
+
+[[checks]]
+id = "named"
+what = "every command says who ran it and why"
+anchor = ["AGENTS.md", "Every `ai_coc` command an agent runs carries `--agent`"]
+kind = "every_call_has"
+fields = ["agent", "session", "mission"]
