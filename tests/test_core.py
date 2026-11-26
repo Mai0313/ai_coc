@@ -4847,14 +4847,19 @@ class AttackTests(unittest.TestCase):
         assert acts == ["siege", "troops", "hero", "settle", "rage", "hero", "settle"]
 
     def test_a_drop_after_the_reading_goes_on_the_line_the_troops_ended_up_on(self) -> None:
-        """The reading can move the troops off a bent flank that took nothing."""
+        """The reading can move the troops off a bent flank that refused them.
+
+        The next reading starts from that flank too, rather than the bent one.
+        """
         runner = self._runner()
         moved = deploy_line(LINE_POINTS, *DEPLOY_LINES["bottom_right"])
         lines: list[list[tuple[int, int]]] = []
+        flanks: list[object] = []
 
-        def settle(*_: object) -> None:
+        def settle(_troops: object, _line: object, anchors: object) -> None:
+            flanks.append(anchors)
             runner._sending = {}
-            runner._line = moved
+            runner._line, runner._anchors = moved, DEPLOY_LINES["bottom_right"]
 
         def act(
             step: AttackStep, row: BattleRow, line: list[tuple[int, int]], **_: object
@@ -4873,6 +4878,7 @@ class AttackTests(unittest.TestCase):
             runner._play_tactic(plan, DEPLOY_LINES["top_left"], self._row())
         assert lines[0] != moved
         assert lines[1] == moved
+        assert flanks == [DEPLOY_LINES["top_left"], DEPLOY_LINES["bottom_right"]]
 
     def test_a_pause_is_counted_from_the_move_before_it_finishing(self) -> None:
         """Which is what makes the whole tactic immune to how slowly it got here.
