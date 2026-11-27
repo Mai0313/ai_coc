@@ -6629,6 +6629,42 @@ class AttackTests(unittest.TestCase):
         rest = [slot for group in groups[1:] for slot in group]
         assert counted_cards(png, rest) == [939, 1060]
 
+    def test_the_machine_and_the_hero_beside_it_stay_apart_over_dark_ground(self) -> None:
+        """Over dark ground the cart's last piece and the first hero's first piece read as one card.
+
+        The row read one hero short and the machine at 620, between the two
+        cards, where it never landed. The second frame is another army with the
+        same pair at other places. Blacked out outside the card row, like
+        `cards_dark_hero.png`.
+        """
+        for name, troops, singles, spells in [
+            ("cards_dark_gaps.png", [172, 293, 413], [557, 683, 804, 927], [1060, 1181]),
+            ("cards_dark_gaps_two_troops.png", [172, 293], [436, 562, 683, 807], [939, 1060]),
+        ]:
+            png = (FRAMES / name).read_bytes()
+            groups = card_groups(png)
+            assert groups[0] == troops, name
+            rest = [slot for group in groups[1:] for slot in group]
+            assert counted_cards(png, rest) == spells, name
+            assert [slot for slot in rest if slot not in spells] == singles, name
+
+    def test_pieces_either_side_of_the_space_between_cards_stay_apart(self) -> None:
+        """Each of the gap's width, its ground and the pieces' width is needed to keep two cards apart."""
+        halves = [(567, 612), (628, 674)]
+        columns = bytearray([55] * 1600)
+        columns[612:628] = [19] * 16
+        assert scout_parser._rejoined(halves, bytes(columns)) == halves
+        # A seam inside a card is narrower than the space between two cards,
+        lit = [(567, 618), (628, 674)]
+        assert scout_parser._rejoined(lit, bytes(columns)) == [(567, 674)]
+        # artwork stays above the outline line,
+        columns[612:628] = [50] * 16
+        assert scout_parser._rejoined(halves, bytes(columns)) == [(567, 674)]
+        # and a dark card's lit edges are narrow.
+        columns[600:640] = [19] * 40
+        edges = [(570, 592), (648, 680)]
+        assert scout_parser._rejoined(edges, bytes(columns)) == [(570, 680)]
+
     def test_only_a_run_of_unoutlined_narrow_seams_one_card_wide_is_joined(self) -> None:
         """A card's outline, a wide gap or a run short of a card leaves the pieces apart."""
         columns = bytearray([55] * 1600)

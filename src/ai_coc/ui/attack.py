@@ -348,8 +348,9 @@ REFUSED_NEAR = 40
 # the bend is taken for refused ground and the preset flank takes over. One is
 # the siege machine with nobody in it, which the game refuses wherever it goes.
 # Measured over the home battles of 2026-11-17 to 11-27: of 1,154 on a bent
-# flank, 74 bursts left one card, 32 of them refused at every retry (21 the
-# empty machine at x 620), and 57 left two or more; outside the 26 whose whole
+# flank, 74 bursts left one card, 32 of them refused at every retry (21 a
+# machine read at x 620, between two cards, which `CARD_SPACING` has since
+# fixed), and 57 left two or more; outside the 26 whose whole
 # army stayed home, the bent line's retry ladder put those cards down within two
 # rungs on 8 of 31, needed three to five on 13 and lost one to three cards on 10.
 # Of 554 on the preset flank, 17 bursts left two or more and every one-off but

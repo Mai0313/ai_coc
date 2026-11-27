@@ -145,6 +145,10 @@ log 的 `The camera was not at the far zoom` 量的是拉遠之前的鏡頭, 只
 
 `card_groups` 只在**完整**的卡片列上有效, 所以 `_deploy` 只讀一次, 讀的是縮放 (跟置中) 之後自己截的那張, 在任何東西丟下去之前.
 
+## 少讀到一張卡
+
+卡片自己的圖案有暗帶, 會把一張卡切成幾塊, `card_groups` 再把它們拼回去. 卡片列後面的地面暗的時候, 兩張卡中間的空隙也是暗的, 前一張的最後一塊跟下一張的第一塊就可能被拼成一張, 兩邊剩下的碎塊太窄被丟掉: log 的 `hero(es)` 比卡片上少一個, 機器的位置落在兩張卡中間, 接著 `retry card at <x> never landed`. 以前攻城機器跟第一個英雄就是這樣被拼在 x 620. 拿那一輪讀卡片列的畫面丟 `ai_coc read`, 對照 `card_groups` 看拼錯的是哪兩張, 再看 `parsers/scout.py` 的 `CARD_SPACING`.
+
 ## 英雄沒下去
 
 `field_units` 讀卡片上方的血條, 靠藍色分辨血條跟草地. 英雄卡不會清空 (變成技能按鈕), 不能用 `card_drained`. 假陰性有代價: 重試再點那張卡就是放技能. 看 `_drop_singles`, `_landed`, `HERO_SETTLE`.
