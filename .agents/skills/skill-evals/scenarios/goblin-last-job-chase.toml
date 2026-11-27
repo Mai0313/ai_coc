@@ -1,0 +1,77 @@
+# Mid-takeover, the user answers how long the goblin event has left: about 3 hours. The
+# goblin researcher's 亡靈 finishes about 2.5 hours from now and its next level takes 14
+# days, and no research is short enough to pad the half hour left, so the next hire is the
+# event's last job: the end is kept as a note, the last job is asked now by push, and the
+# watch wakes within 30 minutes to push again until he answers. 弓箭女皇 and 亡靈 get
+# timers that outlast the fixture's potions and finish about 2.5 hours after the export,
+# so that nothing is due within the hour (棘木騎士 is first, at about 74 minutes).
+skill = "takeover"
+about = "The goblin event's last job: asked ahead by push, and the watch wakes within 30 minutes to push again"
+situation = """
+你在託管中 (今天稍早開始, session 一直是你的). 打資源的 subagent 上一趟兩個世界都打到 `stock_full`, 照交辦開回日世界收工了. 你這一回合稍早讀了 `status`, 讀到哥布林活動在跑 (工人 0/7、實驗室 0/2), 交代裡沒有活動幾點結束, 就推播問了他活動還剩多久, 掛了 watch. 他現在回你.
+"""
+user = "活動還剩大概 3 小時"
+screens = [{ frame = "hud_day.png" }]
+live = [41500]
+
+[replies]
+status = [{ world = "day", builder = { world = "day", role = "builder", free = 0, total = 7, outcome = "counted" }, lab = { world = "day", role = "lab", free = 0, total = 2, outcome = "counted" }, stock = { world = "day", held = { gold = 29808400, elixir = 29000000, dark = 470000 }, capacity = { gold = 29000000, elixir = 29000000, dark = 470000 }, filled = { gold = "102%", elixir = "100%", dark = "100%" }, gems = 7171 }, shield = { remaining = 4980, up = true } }]
+
+[state.emulator]
+status = "idle"
+pid = 41200
+command = "status"
+started = "2026-11-12T16:10:00+08:00"
+ended = "2026-11-12T16:11:10+08:00"
+caller = { agent = "claude-code", session = "eval-goblin-last-job-chase", mission = "全天候託管到他叫停" }
+
+[state.watch]
+status = "running"
+pid = 41500
+started = "2026-11-12T16:11:30+08:00"
+next_at = "2026-11-12T17:20:11+08:00"
+about = "每三小時看一眼倉庫; 棘木騎士到點前五分鐘"
+farms = true
+caller = { agent = "claude-code", session = "eval-goblin-last-job-chase", mission = "全天候託管到他叫停" }
+
+[[edits]]
+world = "day"
+section = "heroes"
+data = 28000001
+set = { timer = 56631 }
+
+[[edits]]
+world = "day"
+section = "units"
+data = 4000010
+set = { timer = 213126 }
+
+[[checks]]
+id = "end-noted"
+what = "keeps the event's end as a day note"
+anchor = [".agents/skills/upgrades/SKILL.md", "他的回答照第 6 步記成 note"]
+kind = "called"
+calls = { command = "note", args = { action = "add", world = "day" }, patterns = { item = "活動|哥布林" } }
+
+[[checks]]
+id = "ask-last"
+what = "pushes the question of the goblin researcher's last job now"
+anchor = [".agents/skills/upgrades/SKILL.md", "不用墊的, 是讀到下一次聘的就是最後一件時) 就問"]
+kind = "lines"
+file = "push.md"
+select = "亡靈|最後|研究員|實驗室"
+must = "哥布林|最後|亡靈"
+
+[[checks]]
+id = "chase"
+what = "the watch wakes within 30 minutes to push the question again"
+anchor = [".agents/skills/takeover/SKILL.md", "每次掛 watch 都加 `--next <30 分鐘後, ISO>`"]
+kind = "called"
+calls = { command = "watch", wake_within = 31 }
+
+[[checks]]
+id = "named"
+what = "every command says who ran it and why"
+anchor = ["AGENTS.md", "Every `ai_coc` command an agent runs carries `--agent`"]
+kind = "every_call_has"
+fields = ["agent", "session", "mission"]

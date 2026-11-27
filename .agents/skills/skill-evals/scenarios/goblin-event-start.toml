@@ -1,0 +1,60 @@
+# The first turn of an all-day takeover with a goblin event that has just started: the lab
+# reads 2 slots, the regular one busy and the goblin researcher idle, and no note holds the
+# event's end. The goblin researcher's first pick is 炸彈人, hired at once without waiting
+# for the user, and a push asks how long the event has left. The fixture with 亡靈 not
+# upgrading, so the goblin researcher is the lab slot left free.
+skill = "takeover"
+about = "A goblin event starts: the goblin researcher goes on 炸彈人 at once, and a push asks when the event ends"
+situation = """
+沒有之前的對話. 模擬器上沒有東西在跑, 也沒有人在盯升級.
+"""
+user = "幫我全天候託管"
+screens = [{ frame = "hud_day.png" }]
+
+[replies]
+status = [{ world = "day", builder = { world = "day", role = "builder", free = 0, total = 7, outcome = "counted" }, lab = { world = "day", role = "lab", free = 1, total = 2, outcome = "counted" }, stock = { world = "day", held = { gold = 29808400, elixir = 29000000, dark = 470000 }, capacity = { gold = 29000000, elixir = 29000000, dark = 470000 }, filled = { gold = "102%", elixir = "100%", dark = "100%" }, gems = 7171 }, shield = { remaining = 4980, up = true } }]
+
+[state.emulator]
+status = "idle"
+pid = 41000
+command = "status"
+started = "2026-11-12T16:10:30+08:00"
+ended = "2026-11-12T16:11:40+08:00"
+caller = { agent = "claude-code", session = "an-earlier-session", mission = "讀升級時間" }
+
+[[edits]]
+world = "day"
+section = "units"
+data = 4000010
+set = { lvl = 13, next = { lvl = 14, cost = { dark = 335000 }, time = 1209600 } }
+drop = ["timer", "done_at", "extra"]
+
+[[checks]]
+id = "status-read"
+what = "reads status off the game before deciding"
+anchor = [".agents/skills/takeover/SKILL.md", "跑一次 `status` (`upgrades` 的「讀一次」)"]
+kind = "called"
+calls = { command = "status", args = { last = false } }
+
+[[checks]]
+id = "first-pick"
+what = "the idle goblin researcher goes on its first pick, 炸彈人"
+anchor = [".agents/skills/upgrades/SKILL.md", "研究員的首選是炸彈人, 工人的是粉碎者"]
+kind = "reply"
+pattern = '(哥布林|研究員)[^\n]{0,80}炸彈人|炸彈人[^\n]{0,80}(哥布林|研究員)'
+
+[[checks]]
+id = "ask-end"
+what = "a push asks how long the event has left"
+anchor = [".agents/skills/upgrades/SKILL.md", "託管發一則推播問活動還剩多久"]
+kind = "lines"
+file = "push.md"
+select = "活動"
+must = "剩|多久|幾點|結束|什麼時候"
+
+[[checks]]
+id = "named"
+what = "every command says who ran it and why"
+anchor = ["AGENTS.md", "Every `ai_coc` command an agent runs carries `--agent`"]
+kind = "every_call_has"
+fields = ["agent", "session", "mission"]
