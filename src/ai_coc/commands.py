@@ -2779,6 +2779,15 @@ def _stars_since(since: datetime | None) -> int:
     return won
 
 
+def _star_goal(options: AttackOptions, before: int, series: AttackSeries) -> SeriesEnding | None:
+    """`stars_won` once `before` and the series' own stars reach `--until-stars`; None short of it, or with no goal."""
+    won = before + sum(one.stars or 0 for one in series.root)
+    if not options.until_stars or won < options.until_stars:
+        return None
+    logger.info("%d star(s) won of the %d asked for", won, options.until_stars)
+    return "stars_won"
+
+
 def _handed_plan(options: AttackOptions) -> tuple[AttackPlan | NightPlan | None, World | None]:
     """The plan `--plan` handed in, and the village it was written for, which the series plays.
 
@@ -2871,6 +2880,11 @@ def attack(
             logger.info("Stop requested; ending the series after %d round(s)", len(series.root))
             ending = "stopped"
             break
+        # Asked before the first round too: the runs since `--since` may have
+        # met the goal already.
+        if (met := _star_goal(options, before, series)) is not None:
+            ending = met
+            break
         logger.info("Round %d of %s", len(series.root) + 1, rounds or "no limit")
         report = _round(runner, series)
         if isinstance(report, str):
@@ -2884,13 +2898,11 @@ def attack(
         fighting = report.attacked is not None or report.phases > 0
         logger.info("Attack finished: %s", round_line(report), extra=_round_event(runner, series))
         _write_plan(options.plan_out, runner.played)
-        if (over := _series_over(report, len(series.root))) is not None:
+        # The goal after the last round, which no next round asks.
+        if (
+            over := _series_over(report, len(series.root)) or _star_goal(options, before, series)
+        ) is not None:
             ending = over
-            break
-        won = before + sum(one.stars or 0 for one in series.root)
-        if options.until_stars and won >= options.until_stars:
-            logger.info("%d star(s) won of the %d asked for", won, options.until_stars)
-            ending = "stars_won"
             break
         # A stop is let through first, so the series ends `stopped` and a loan
         # reads as one rather than as a run that gave up.

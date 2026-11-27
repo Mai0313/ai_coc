@@ -2982,6 +2982,13 @@ class AttackSeriesStarsTests(unittest.TestCase):
             )
         summed.assert_called_once_with(since=start)
         assert (run.ending, len(run.rounds.root)) == ("stars_won", 2)
+        # A goal the earlier runs already met plays no battle at all.
+        with patch.object(commands, "farmed_runs", return_value=earlier):
+            run, _ = self._attack(
+                [AttackReport(outcome="took_loot", attacked=fought, stars=1)],
+                AttackOptions(rounds=0, until_stars=13, since=start),
+            )
+        assert (run.ending, run.rounds.root) == ("stars_won", [])
 
     def test_without_a_goal_the_stars_end_nothing(self) -> None:
         fought = LootOffer(gold=1, elixir=1, dark=1)
