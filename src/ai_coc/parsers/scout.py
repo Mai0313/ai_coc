@@ -374,6 +374,30 @@ CARD_SEAM = 2
 CARD_OUTLINE = 42
 CARD_SPLIT = 5
 CARD_LIT_BRIGHTNESS = 60
+# **Over dark ground the space between two cards goes unlit too**, and then a
+# piece off the end of one card and a piece off the start of the next can add up
+# to one card wide. The siege machine's cart breaks into 46, 17 and 45 px pieces
+# and the first hero beside it into 46 and 63; the 16 px between the two cards
+# lights up over bright ground and keeps them apart, but over dark ground the
+# cart's last piece and the hero's first were joined into one card at x 620,
+# and the pieces either side were dropped as too narrow. The row then read one
+# hero short and sent the machine at 620, where it never landed: 57 of 267 home
+# rounds over 2026-11-25 to 11-28.
+#
+# So two pieces stay apart where the gap between them is at least the space
+# between two cards, drops to the ground beneath the outline line, and has a
+# piece over a third of a card wide on either side. Every join the old reading
+# made across a wider seam sits outside one of those: a dark card's lit edges
+# measure 23 px or less, and the widest seam inside a card, on the builder
+# base's first card, is 10 px at 41 between pieces of 30 and 69
+# (`night_countdown.png`). A selected card's seam is wider and darker again, 12
+# px at 39 once its sliver is stepped over, with a 34 px piece before it, so a
+# selected card is joined whatever these say.
+# Swept over 1 238 recorded frames, the 33 rows misread this way are the only
+# ones that change; a spacing from 10 to 16, a third from 20 to 45 and an
+# outline line from 19 to 52 read them all the same.
+CARD_SPACING = 11
+CARD_THIRD = 38
 # Every real card carries its level in a badge at the bottom-left corner. The
 # empty slot the row ends with does not: it is a dashed outline with the
 # battlefield showing through, so it segments as a card of its own whenever the
@@ -1679,11 +1703,21 @@ def _rejoined(spans: list[tuple[int, int]], columns: bytes) -> list[tuple[int, i
             fragment
             and right - left < CARD_SPAN[0]
             and CARD_SPAN[0] <= right - joined[-1][0] <= ceiling
+            and (selected or not _two_cards(joined[-1], (left, right), columns))
         ):
             joined[-1] = (joined[-1][0], right)
         else:
             joined.append((left, right))
     return joined
+
+
+def _two_cards(before: tuple[int, int], after: tuple[int, int], columns: bytes) -> bool:
+    """Whether two pieces stand either side of the space between two cards; see `CARD_SPACING`."""
+    return (
+        after[0] - before[1] >= CARD_SPACING
+        and min(columns[before[1] : after[0]]) <= CARD_OUTLINE
+        and min(before[1] - before[0], after[1] - after[0]) >= CARD_THIRD
+    )
 
 
 def _unseamed(spans: list[tuple[int, int]], columns: bytes) -> list[tuple[int, int]]:
