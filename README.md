@@ -62,6 +62,8 @@ ai_coc giveback                  # end this session's hold and hand a borrowed e
 ai_coc attack --stop-at 0        # attack however full the storages are
 ai_coc attack --repeat 0 --until-idle  # stop as well once a builder or research slot here is idle
 ai_coc attack --repeat 0 --until-idle builder  # only the builders (`lab` for the laboratory)
+ai_coc attack --until-stars 15 --stop-at 0  # home village battles until the stars read off their result screens add up to 15
+ai_coc attack --until-stars 15 --since <time> --stop-at 0  # the stars of the home village attacks started since then count too, so the same line resumes a cut-short goal
 ```
 
 `stop` marks `~/.ai_coc/state.json` and returns at once. The loop reads it between battles and between opponents, never mid-battle, so the worst case is one more battle: abandoning one halfway would leave the army on the field and the game on a screen the next run cannot get home from. It stops the upgrade watch in the same go; `ai_coc stop emulator` or `ai_coc stop watch` stops only one. With nothing running it says so, rather than leaving a request nobody will take.
@@ -138,7 +140,7 @@ ai_coc export --table                 # the same, drawn as a table for a person
 ai_coc export --last                  # the last one off the disk, without touching the game
 ai_coc growth                         # what was upgraded on each village between the oldest and newest saved exports; --start-date / --end-date narrow it
 ai_coc turnaround                     # seconds from each upgrade finishing to the confirm for its next level, per slot, off the run journal; --since narrows it
-ai_coc farmed --by <session> --since <time>  # one session's farming summed over every attack run, per village, off the run journal; touches nothing
+ai_coc farmed --by <session> --since <time>  # one session's farming summed over every attack run, per village, with the home village's stars, off the run journal; touches nothing
 ai_coc tended --by <session> --since <time>  # one session's upgrades with what each cost, clock tower boosts, helpers sent, Prospector conversions and lost logins, off the run journal; touches nothing
 ai_coc gamedata                       # the game's own tables (zh and en names, max levels, each level's requirements, list price and time), read off the emulator once per game version into ~/.ai_coc/game_data/<version>/; --refresh reads them again
 ai_coc search "Electro Dragon"        # look a thing up by data_id or by a piece of its Chinese or English name in those tables (the nearest names, labelled as such, when no name contains it), with the levels, running upgrades and next list price of the ones the village has, what every level up to the max or the hall's cap asks in all (with an estimate at the newest purchases' discount when there is one), and what unlocks the troops and spells it lacks; --rows lists each row; touches nothing

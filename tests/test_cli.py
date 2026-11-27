@@ -338,6 +338,35 @@ class DispatchTests(unittest.TestCase):
                 _answer(_args("attack", *flags), self.run)
             assert attacked.call_args.args[0].until_idle == watched, flags
 
+    def test_a_star_goal_plays_until_it_is_met_unless_the_rounds_are_given(self) -> None:
+        for flags, rounds, stars in (
+            ((), 1, 0),
+            (("--until-stars", "15"), 0, 15),
+            (("--until-stars", "15", "--repeat", "3"), 3, 15),
+        ):
+            with patch.object(
+                commands, "attack", return_value=AttackRun(ending="repeat_done")
+            ) as attacked:
+                _answer(_args("attack", *flags), self.run)
+            options = attacked.call_args.args[0]
+            assert (options.rounds, options.until_stars) == (rounds, stars), flags
+        start = "2026-11-29T15:25:00+08:00"
+        with patch.object(
+            commands, "attack", return_value=AttackRun(ending="repeat_done")
+        ) as attacked:
+            _answer(_args("attack", "--until-stars", "15", "--since", start), self.run)
+        assert attacked.call_args.args[0].since == datetime.fromisoformat(start)
+        # Without a star goal it would count nothing, so the line is refused before a run opens.
+        with (
+            patch.object(sys, "argv", ["ai_coc", "attack", "--since", start]),
+            patch.object(cli, "RunLog") as opened,
+            patch("sys.stderr", new_callable=io.StringIO),
+            pytest.raises(SystemExit) as stopped,
+        ):
+            cli.main()
+        assert stopped.value.code != 0
+        opened.open.assert_not_called()
+
     def test_a_plan_is_a_shipped_name_or_a_path(self) -> None:
         for given, path, name in (("flat", None, "flat"), ("a.json", Path("a.json"), None)):
             with patch.object(

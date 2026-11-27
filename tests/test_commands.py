@@ -95,6 +95,7 @@ from ai_coc.models import (
     DonateOptions,
     DonateOutcome,
     ExportOutcome,
+    FarmedVillage,
     GrowthOutcome,
     HelperOutcome,
     LaunchOutcome,
@@ -2362,10 +2363,11 @@ class AttackSummaryTests(unittest.TestCase):
             ("took_loot", (1_000_000, 2_000_000, 6_000)),
             ("stock_full", (10_000_000, 2_760_000, 12_000)),
         )
+        day.root[0].stars = 2
         village = commands.farmed(day, "stock_full")
         assert village is not None
         assert commands.farmed_text(village).splitlines() == [
-            f"日世界: 1 場, {commands.ENDING_LINES['stock_full']}",
+            f"日世界: 1 場, 2 星, {commands.ENDING_LINES['stock_full']}",
             "",
             "| 資源 | 進帳 | 現在 |",
             "| --- | --- | --- |",
@@ -2923,6 +2925,94 @@ class AttackSeriesArmyShortTests(unittest.TestCase):
         ])
         assert [report.outcome for report in rounds] == ["no_opponent", "stock_full"]
         rest.assert_called_once()
+
+
+class AttackSeriesStarsTests(unittest.TestCase):
+    """`--until-stars`: the stars read off the result screens end a home village series."""
+
+    def _attack(
+        self, played: list[AttackReport], options: AttackOptions
+    ) -> tuple[AttackRun, MagicMock]:
+        runner = MagicMock(name="AttackRunner")
+        runner.configure_mock(played=None, holding=None, capacity=None, cart=None)
+        runner.run.side_effect = played
+        runner.lost = 0
+        with (
+            patch.object(commands, "_controller", return_value=_adb()),
+            patch.object(commands.ConfigStore, "load", return_value=AppConfig()),
+            patch.object(commands, "_planner", return_value=None),
+            patch.object(commands, "_settle_game", return_value=DISPLAY),
+            patch.object(commands, "AttackRunner", return_value=runner) as built,
+            patch.object(commands, "_rest", return_value=None),
+        ):
+            run = commands.attack(options, _frames(self), MagicMock(return_value=False))
+        return run, built
+
+    def test_the_series_ends_once_the_stars_read_reach_the_goal(self) -> None:
+        fought = LootOffer(gold=1, elixir=1, dark=1)
+        run, built = self._attack(
+            [
+                AttackReport(outcome="took_loot", attacked=fought, stars=1),
+                AttackReport(outcome="no_loot", attacked=fought),
+                AttackReport(outcome="took_loot", attacked=fought, stars=2),
+                AttackReport(outcome="took_loot", attacked=fought, stars=3),
+            ],
+            AttackOptions(rounds=0, until_stars=3, plan_name="flat"),
+        )
+        assert run.ending == "stars_won"
+        assert [one.stars for one in run.rounds.root] == [1, None, 2]
+        # The home village's result screen is the one read, so the series plays it.
+        assert built.call_args.kwargs["world"] == "day"
+        assert built.call_args.kwargs["plan"] == plans.named("flat", "day")
+
+    def test_the_stars_won_since_a_time_count_toward_the_goal(self) -> None:
+        """A series started again after a loan or a stop plays only what is left."""
+        fought = LootOffer(gold=1, elixir=1, dark=1)
+        start = datetime(2026, 11, 29, 15, 25).astimezone()
+        earlier = FarmedReport(
+            villages=[
+                FarmedVillage(world="day", battles=9, stars=13, stars_unread=1),
+                FarmedVillage(world="night", battles=3),
+            ]
+        )
+        with patch.object(commands, "farmed_runs", return_value=earlier) as summed:
+            run, _ = self._attack(
+                [AttackReport(outcome="took_loot", attacked=fought, stars=1)] * 3,
+                AttackOptions(rounds=0, until_stars=15, since=start),
+            )
+        summed.assert_called_once_with(since=start)
+        assert (run.ending, len(run.rounds.root)) == ("stars_won", 2)
+
+    def test_without_a_goal_the_stars_end_nothing(self) -> None:
+        fought = LootOffer(gold=1, elixir=1, dark=1)
+        run, built = self._attack(
+            [AttackReport(outcome="took_loot", attacked=fought, stars=3)] * 2,
+            AttackOptions(rounds=2),
+        )
+        assert (run.ending, len(run.rounds.root)) == ("repeat_done", 2)
+        assert built.call_args.kwargs["world"] is None
+
+    def test_the_round_line_and_the_farming_report_carry_the_stars(self) -> None:
+        series = _played(
+            "day",
+            ("took_loot", None),
+            ("no_loot", None),
+            ("took_loot", None),
+            ("no_opponent", None),
+        )
+        series.root[0].stars = 2
+        series.root[2].stars = 0
+        assert commands.round_line(series.root[0]).endswith("(2 星)")
+        assert "星" not in commands.round_line(series.root[1])
+        village = commands.farmed(series, None)
+        assert village is not None
+        assert (village.stars, village.stars_unread) == (2, 1)
+        assert (
+            commands.farmed_text(village).splitlines()[0]
+            == "日世界: 3 場, 2 星 (有 1 場讀不到星數)"
+        )
+        summed = commands._summed([village, village])
+        assert (summed.stars, summed.stars_unread) == (4, 2)
 
 
 class SettleGameTests(unittest.TestCase):

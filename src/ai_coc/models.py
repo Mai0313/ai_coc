@@ -1242,6 +1242,10 @@ class AttackReport(BaseModel):
     # zeros rather than a reading), `poor` after `POOR_SKIPS` in a row that
     # read under them (the thresholds may be too high for the league).
     waived: ThresholdWaiver | None = None
+    # The stars the home village's result screen showed, None where the round
+    # fought no battle, ended without the result screen, or the stars never
+    # settled on it. The builder base reads none.
+    stars: int | None = None
     # What the round read around it, so a series says what it brought home on
     # its own: the storages before its search (None where it never got that
     # far), the village's ceilings as the run read them, the builder base's
@@ -1301,6 +1305,13 @@ class AttackOptions(BaseModel):
     # shows an idle slot, which is how a farming session waits on a builder or
     # the laboratory without a clock of its own. Empty watches neither.
     until_idle: list[IdleRole] = Field(default_factory=list)
+    # Also stands the series down once its home village battles have won this
+    # many stars between them, counting only the stars read; 0 watches none.
+    # With `since`, the stars of the home village attack runs started since
+    # then count too, so a series cut short is started again with the same
+    # flags and plays only what is left.
+    until_stars: int = 0
+    since: datetime | None = None
 
 
 class AttackSeries(RootModel[list[AttackReport]]):
@@ -1318,7 +1329,8 @@ class AttackSeries(RootModel[list[AttackReport]]):
 # stopped between rounds, one whose `--repeat` ran out and one interrupted all
 # end on an ordinary round. `repeat_done` is the rounds asked for played out,
 # `stopped` the state file asking it to stand down (`ai_coc stop`, or another
-# command borrowing the emulator), `interrupted` a Ctrl-C. `emulator_silent`
+# command borrowing the emulator), `interrupted` a Ctrl-C, `stars_won` the
+# stars `--until-stars` asked for read off the result screens. `emulator_silent`
 # and `no_attack_menu` are rounds failing back to back (`ADAPTER_FAILURES`,
 # `MENU_FAILURES`), and the rest are the round outcomes that end a series on
 # their own.
@@ -1326,6 +1338,7 @@ SeriesEnding = Literal[
     "repeat_done",
     "stopped",
     "interrupted",
+    "stars_won",
     "stock_full",
     "builder_free",
     "lab_free",
@@ -1358,7 +1371,9 @@ class FarmedVillage(BaseModel):
     its ceiling where a trip read one; `cart_unread` is the battles since the
     last trip, whose elixir is in the cart and in neither reading.
     `waived_unread` and `waived_poor` are the battles fought without the loot
-    thresholds, by `AttackReport.waived`. `ending` is
+    thresholds, by `AttackReport.waived`. `stars` is what the home village's
+    battles won between them as their result screens showed it, and
+    `stars_unread` the battles whose stars did not read. `ending` is
     how the series ended, None for one still going, killed, or recorded before
     series named their endings with a last round that does not say.
     """
@@ -1375,6 +1390,8 @@ class FarmedVillage(BaseModel):
     cart_unread: int = 0
     waived_unread: int = 0
     waived_poor: int = 0
+    stars: int = 0
+    stars_unread: int = 0
     ending: SeriesEnding | None = None
 
 

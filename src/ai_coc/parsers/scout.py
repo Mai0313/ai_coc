@@ -740,6 +740,32 @@ PALE_INK_BRIGHTNESS = 232
 RETURN_HOME_BOX = (690, 738, 910, 796)
 RETURN_HOME_GREEN = 0.23
 
+# The three stars across the top of the home village's result screen, one box
+# inside each slot's body, the middle one above its 摧毀率 text. A slot not won
+# is a dark translucent star over the dimmed village; a won one is silver, not
+# the gold it is easy to expect. Measured on a 100% battle's result
+# (`battle_result_three_stars.png`) and its animation, a 57% one's
+# (`battle_result_two_stars.png`), a 74% one's (`battle_result_one_star.png`)
+# and `battle_result_lit.png` (0 stars, 49%), every frame of five live
+# result screens included: every won slot 0.997 to 1.000 silver, every other
+# 0.000, with mean brightness 43.0 to 87.3 on a slot not won and 0.0 on
+# `battle_result.png`, caught before any star was drawn.
+STAR_BOXES = ((620, 160, 680, 220), (785, 60, 815, 100), (920, 160, 980, 220))
+STAR_DRAWN = 25
+STAR_SILVER_FLOOR = 150
+STAR_SILVER_SPREAD = 45
+STAR_SILVER = 0.5
+# **`battle_over` alone answers on more than the result screen**: the Helper
+# Hut's dialog, the Prospector's, a reward chest and the builder base menu all
+# pass it, and their slots read as no stars won. So the gold ribbon the stars
+# stand on has to be there too, read off both its ends: 0.825 to 0.839 gold on
+# every result frame of both recordings, against at most 0.000 at one end or
+# the other on every other frame `battle_over` takes (the helper dialog reads
+# 0.728 at the left). A star still landing covers the right end (0.274), which
+# only leaves that frame unread.
+STAR_RIBBON_BOXES = ((460, 200, 580, 280), (1020, 200, 1140, 280))
+STAR_RIBBON_GOLD = 0.5
+
 # The 放棄 plate, which is what says a battle is still being fought. **A card row
 # is not that, and reading it as one is what left a loop tapping inside the
 # shop.** `card_groups` segments a band across the bottom of the frame into
@@ -934,6 +960,41 @@ def battle_over(png: bytes) -> bool:
         and not star_bonus(png)
         and not event_ended(png)
     )
+
+
+def battle_stars(png: bytes) -> int | None:
+    """How many stars the battle result screen shows, None where they cannot be read off this frame.
+
+    The three slots fill in left to right, so a gold slot right of a grey one
+    is a star still flying in, and so is a slot not drawn yet: both read None.
+    """
+    if not battle_over(png):
+        return None
+    image = open_frame(png)
+    for box in STAR_RIBBON_BOXES:
+        ribbon = image.crop(box).tobytes()
+        gold = sum(
+            ribbon[i] >= 190
+            and ribbon[i + 1] >= 140
+            and ribbon[i + 2] <= 140
+            and ribbon[i] - ribbon[i + 2] >= 90
+            for i in range(0, len(ribbon), 3)
+        )
+        if gold / (len(ribbon) // 3) < STAR_RIBBON_GOLD:
+            return None
+    earned = []
+    for box in STAR_BOXES:
+        data = image.crop(box).tobytes()
+        if sum(data) / len(data) < STAR_DRAWN:
+            return None
+        silver = sum(
+            min(data[i : i + 3]) >= STAR_SILVER_FLOOR
+            and max(data[i : i + 3]) - min(data[i : i + 3]) <= STAR_SILVER_SPREAD
+            for i in range(0, len(data), 3)
+        )
+        earned.append(silver / (len(data) // 3) >= STAR_SILVER)
+    stars = sum(earned)
+    return stars if earned == [True] * stars + [False] * (3 - stars) else None
 
 
 def event_ended(png: bytes) -> bool:

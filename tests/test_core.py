@@ -73,6 +73,7 @@ from ai_coc.ui.attack import (
     CARD_ROW_Y,
     DEPLOY_END,
     END_BATTLE,
+    STAR_LOOKS,
     DROP_STRIDE,
     LINE_POINTS,
     NEXT_BUTTON,
@@ -82,6 +83,7 @@ from ai_coc.ui.attack import (
     PLAN_TIMEOUT,
     REFUSED_NEAR,
     ABANDON_BUTTON,
+    BATTLE_TIMEOUT,
     DROPS_PER_PASS,
     DEPLOY_ATTEMPTS,
     RESULT_ATTEMPTS,
@@ -162,6 +164,7 @@ from ai_coc.parsers.scout import (
     panel_drawn,
     _plank_ratio,
     battle_speed,
+    battle_stars,
     card_drained,
     freeze_cards,
     open_tooltip,
@@ -3184,6 +3187,33 @@ class ScoutTests(unittest.TestCase):
         assert not battle_over((FRAMES / "attack_menu.png").read_bytes())
         assert not battle_over((FRAMES / "scout_in_battle.png").read_bytes())
 
+    def test_the_stars_are_read_off_the_result_screen_and_only_there(self) -> None:
+        """A star won is silver, one not won dark, and they land left to right.
+
+        `battle_result_landing.png` is the 100% battle's result a second before
+        `battle_result_three_stars.png`, with its first star in; the black
+        `battle_result.png` is caught before any star is drawn.
+        """
+        for name, stars in (
+            ("battle_result_three_stars", 3),
+            ("battle_result_two_stars", 2),
+            ("battle_result_one_star", 1),
+            ("battle_result_landing", 1),
+            ("battle_result_lit", 0),
+            ("battle_result", None),
+        ):
+            assert battle_stars((FRAMES / f"{name}.png").read_bytes()) == stars, name
+        # Each of these passes `battle_over`, and none is a result screen.
+        for name in (
+            "helper_dialog",
+            "prospector_convert_dialog",
+            "reward_chest_pins_prize",
+            "night_menu_finishing",
+        ):
+            png = (FRAMES / f"{name}.png").read_bytes()
+            assert battle_over(png), name
+            assert battle_stars(png) is None, name
+
     def test_the_loading_screen_is_read_off_its_bar_and_nothing_else_is(self) -> None:
         """正在載入, which is where a game sits while the server will not answer.
 
@@ -5608,6 +5638,35 @@ class AttackTests(unittest.TestCase):
             True,
         )
 
+    def test_a_round_reports_its_own_stars_and_none_left_from_the_round_before(self) -> None:
+        """A battle another device took over never reached its result screen."""
+        runner = self._runner()
+        rich = ScoutView(loot=LootOffer(gold=900_000, elixir=900_000, dark=1), can_skip=False)
+
+        battles = iter(("won", "taken"))
+
+        def waited(opening: LootOffer | None) -> bool:
+            if next(battles) == "taken":
+                raise SessionTakenError("taken")
+            runner._stars = 2
+            return True
+
+        with (
+            patch.object(AttackRunner, "_open_attack_menu", return_value=b"home"),
+            patch.object(AttackRunner, "_stood_down", return_value=None),
+            patch.object(AttackRunner, "_army_short", return_value=False),
+            patch.object(AttackRunner, "_tap"),
+            patch.object(AttackRunner, "_scout", return_value=(rich, b"")),
+            patch.object(AttackRunner, "_deploy"),
+            patch.object(AttackRunner, "_wait_out_battle", side_effect=waited),
+            patch.object(AttackRunner, "_outcome", return_value="took_loot"),
+            patch.object(attack.time, "sleep"),
+        ):
+            first = runner._run_day()
+            second = runner._run_day()
+        assert (first.outcome, first.stars) == ("took_loot", 2)
+        assert (second.outcome, second.stars) == ("session_taken", None)
+
     def test_a_battle_whose_game_left_the_screen_still_counts_and_says_so(self) -> None:
         """Left mid-tactic, it is not waited out: there is no battle on screen to wait on."""
         runner = self._runner()
@@ -5712,6 +5771,7 @@ class AttackTests(unittest.TestCase):
                 "battle_over",
                 side_effect=[view is None for view in readings] + [False] * RESULT_ATTEMPTS,
             ),
+            patch.object(attack, "battle_stars", return_value=0),
             patch.object(attack, "battle_speed", return_value=None),
             patch.object(attack.time, "sleep"),
         ):
@@ -5739,6 +5799,43 @@ class AttackTests(unittest.TestCase):
         tapped.assert_not_called()
         left.assert_not_called()
 
+    def test_the_stars_are_taken_once_two_looks_agree(self) -> None:
+        """They land one at a time, so the first look can hold one of three."""
+        runner = self._runner()
+        with (
+            patch.object(AttackRunner, "_frame", return_value=b""),
+            patch.object(attack, "battle_stars", side_effect=[None, 1, 2, 3, 3, 0]) as read,
+            patch.object(attack.time, "sleep"),
+        ):
+            assert runner._settled_stars() == 3
+        assert read.call_count == 5
+        with (
+            patch.object(AttackRunner, "_frame", return_value=b""),
+            patch.object(attack, "battle_stars", side_effect=[None, 1] * STAR_LOOKS),
+            patch.object(attack.time, "sleep"),
+        ):
+            assert runner._settled_stars() is None
+
+    def test_only_a_battle_that_reached_its_result_screen_reads_stars(self) -> None:
+        opening = LootOffer(gold=1031321, elixir=420990, dark=2525)
+        during = ScoutView(loot=LootOffer(gold=149101, elixir=19976, dark=120), can_skip=False)
+        assert self._watched(opening, [during, None])[1]._stars == 0
+        runner = self._runner()
+        with (
+            patch.object(AttackRunner, "_frame", return_value=b""),
+            patch.object(AttackRunner, "_tap"),
+            patch.object(attack, "refuse_taken"),
+            patch.object(attack, "read_scout", return_value=during),
+            patch.object(attack, "battle_over", return_value=False),
+            patch.object(attack, "battle_speed", return_value=None),
+            patch.object(attack, "battle_stars") as read,
+            patch.object(attack.time, "sleep"),
+            patch.object(attack.time, "monotonic", side_effect=[0, 0, BATTLE_TIMEOUT + 1]),
+        ):
+            runner._wait_out_battle(opening)
+        read.assert_not_called()
+        assert runner._stars is None
+
     def test_the_last_minute_is_put_on_4x_once(self) -> None:
         """The button toggles, so a second tap would put the battle back on 1x."""
         runner = self._runner()
@@ -5750,6 +5847,7 @@ class AttackTests(unittest.TestCase):
             patch.object(attack, "read_scout", return_value=panel),
             # Four polls of the battle, the result screen, and it gone on the first tap.
             patch.object(attack, "battle_over", side_effect=[False] * 4 + [True, False]),
+            patch.object(attack, "battle_stars", return_value=0),
             patch.object(attack, "battle_speed", side_effect=[None, 1, 4, 4]),
             patch.object(attack.time, "sleep"),
         ):

@@ -594,7 +594,9 @@ def _parser() -> argparse.ArgumentParser:
         "給 JSON 路徑就照那一份，它寫明是哪個村莊的，遊戲停在另一邊就不打；不給就每場問 AI",
     )
     run.add_argument("--plan-out", type=Path, help="把實際用的戰術寫成 JSON")
-    run.add_argument("--repeat", type=int, default=1, help="打幾輪，0 代表打到叫停為止")
+    run.add_argument(
+        "--repeat", type=int, help="打幾輪，0 代表打到叫停為止；預設 1，給了 --until-stars 預設 0"
+    )
     # Omitted means "whatever the config file says", like the loot thresholds
     # below; 0 is how a test run attacks a village the farming has already
     # filled, where the file's percentage would stand it down first.
@@ -610,6 +612,20 @@ def _parser() -> argparse.ArgumentParser:
         choices=("builder", "lab"),
         metavar="builder|lab",
         help="這個村莊有工人或實驗室閒著也收工；只給旗標就兩個都看，倉庫的收工條件照舊",
+    )
+    run.add_argument(
+        "--until-stars",
+        type=int,
+        default=0,
+        metavar="N",
+        help="只打日世界，結算畫面讀到的星數加起來到 N 就收工；讀不到的那場不算，倉庫的收工條件照舊",
+    )
+    run.add_argument(
+        "--since",
+        type=datetime.fromisoformat,
+        metavar="時間",
+        help="跟 --until-stars 一起給：這個時間起開跑的日世界進攻已經讀到的星數也算進去，ISO 格式；"
+        "中斷後用同一行指令開回去就只打剩下的",
     )
     # Omitted means "whatever the config file says". Three zeros is how a run
     # being studied gets back to attacking the first opponent it is shown.
@@ -794,9 +810,11 @@ def _answer(arguments: argparse.Namespace, run: RunLog) -> BaseModel | str:
                 minimums=LootOverrides(
                     min_gold=a.min_gold, min_elixir=a.min_elixir, min_dark=a.min_dark
                 ),
-                rounds=a.repeat,
+                rounds=a.repeat if a.repeat is not None else 0 if a.until_stars else 1,
                 stop_at=a.stop_at,
                 until_idle=[] if a.until_idle is None else a.until_idle or ["builder", "lab"],
+                until_stars=a.until_stars,
+                since=a.since,
             ),
             run.frames,
         ),
@@ -1037,6 +1055,12 @@ def _check_helper(parser: argparse.ArgumentParser, arguments: argparse.Namespace
         parser.error("--recurring 只給 helper send")
 
 
+def _check_attack(parser: argparse.ArgumentParser, arguments: argparse.Namespace) -> None:
+    """`--since` counts stars toward `--until-stars`, so alone it would count toward nothing."""
+    if arguments.command == "attack" and arguments.since and not arguments.until_stars:
+        parser.error("attack 的 --since 要跟 --until-stars 一起給")
+
+
 def main() -> int:
     sys.excepthook = _log_uncaught
     parser = _parser()
@@ -1052,6 +1076,7 @@ def main() -> int:
         parser.error("search 要給名稱、data_id 或 --section")
     if arguments.command in ("farmed", "tended") and not (arguments.by or arguments.since):
         parser.error(f"{arguments.command} 要給 --by 或 --since")
+    _check_attack(parser, arguments)
     if arguments.command == "watch" and not (
         arguments.next
         or arguments.upgrades is not None
