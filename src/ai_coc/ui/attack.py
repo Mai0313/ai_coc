@@ -60,6 +60,7 @@ from ai_coc.parsers.scout import (
     card_groups,
     field_units,
     battle_speed,
+    battle_stars,
     card_drained,
     freeze_cards,
     skip_offered,
@@ -544,6 +545,12 @@ SERVER_POLLS = 270
 # it is a poll rather than a tap.
 RESULT_ATTEMPTS = 4
 RESULT_RETRY_DELAY = 3
+# The stars land one at a time, so a count is taken once two looks this far
+# apart agree on it, looking no more than this many times. Measured on a 100%
+# battle shot every second: one star on the first frame of the result screen,
+# two on the next and three on the one after, all within about two seconds.
+STAR_POLL = 1.0
+STAR_LOOKS = 12
 # The army screen comes up before the search fee is charged, so an army too
 # small to attack with backs out for free rather than paying for a battle it
 # cannot fight.
@@ -1351,6 +1358,8 @@ class AttackRunner(ScreenRunner):
     # where the round never got that far. Two rounds' readings apart is what
     # the round between them brought home.
     _holding: VillageStock | None = PrivateAttr(default=None)
+    # The stars this round's result screen settled on, None where it never did.
+    _stars: int | None = PrivateAttr(default=None)
     # Why the last `_open_attack_menu` gave up, when the reason is worth more
     # than the round simply not finding its menu: a loading screen that
     # outlasted `SERVER_POLLS`, one that came back after a wait, or a stop that
@@ -3026,10 +3035,11 @@ class AttackRunner(ScreenRunner):
         """
         deadline = time.monotonic() + BATTLE_TIMEOUT
         first = opening or self._seen
+        ended = False
         while time.monotonic() < deadline:
             time.sleep(10)
             # The result screen is the first one with no loot panel on it.
-            if self._battle_ended("battle"):
+            if ended := self._battle_ended("battle"):
                 break
             first = first or self._seen
             # The battle carries on under the dialog with nobody here to see it,
@@ -3041,8 +3051,27 @@ class AttackRunner(ScreenRunner):
                 logger.info("Playing the last minute at 4x")
                 self._press(SPEED_UP)
             self._dump_leftovers()
+        if ended:
+            self._stars = self._settled_stars()
         self._leave_result()
         return self._seen is not None and self._seen != first
+
+    def _settled_stars(self) -> int | None:
+        """The stars the result screen settles on, read before 回營 takes it away; None if it never settles.
+
+        Two frames `STAR_POLL` apart have to agree, since one taken between two
+        stars landing shows the first and not yet the second.
+        """
+        last = None
+        for _ in range(STAR_LOOKS):
+            stars = battle_stars(self._frame("stars"))
+            if stars is not None and stars == last:
+                logger.info("The result screen shows %d star(s)", stars)
+                return stars
+            last = stars
+            time.sleep(STAR_POLL)
+        logger.warning("The stars on the result screen never settled; this battle's stay unread")
+        return None
 
     def _dump_leftovers(self) -> None:
         """Anything still sitting in a card mid-battle, poured along the line.
@@ -3700,9 +3729,10 @@ class AttackRunner(ScreenRunner):
         # filed holding the previous round's plan. That is worse than no file:
         # a `--plan` or flat-fallback series writes identical plans round
         # after round, so nothing downstream can tell a stale copy from a real
-        # one. The storages are this round's for the same reason.
+        # one. The storages and the stars are this round's for the same reason.
         self._played = None
         self._holding = None
+        self._stars = None
         home = self._open_attack_menu() if home is None else home
         if home is None:
             logger.warning(
@@ -3753,12 +3783,14 @@ class AttackRunner(ScreenRunner):
                 # finished painting, and `_scout` says that where it measured
                 # it — restating `can_skip` here would be the same bit twice.
                 logger.info("Attacking after %d skips (forced=%s)", skipped, forced)
+                outcome = self._fought(frame, loot if view else None)
                 return AttackReport(
                     skipped=skipped + self._swapped,
                     attacked=loot,
                     forced=forced,
                     waived=waived,
-                    outcome=self._fought(frame, loot if view else None),
+                    stars=self._stars,
+                    outcome=outcome,
                 )
             if stopping or skipped >= self.max_skips:
                 self._tap(END_BATTLE)

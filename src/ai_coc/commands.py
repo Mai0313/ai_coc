@@ -2334,6 +2334,7 @@ ENDING_LINES: dict[SeriesEnding, str] = {
     "repeat_done": "打完交代的輪數",
     "stopped": "被叫停",
     "interrupted": "被 Ctrl-C 中斷",
+    "stars_won": "讀到的星數到了交代的數目",
     "stock_full": "倉庫都滿過設定的百分比",
     "builder_free": "這個村莊有工人閒著",
     "lab_free": "這個村莊的實驗室有空檔",
@@ -2360,6 +2361,8 @@ def round_line(report: AttackReport) -> str:
         line = f"倒數結束被強制開戰,{line}"
     if report.waived:
         line = f"{WAIVED_LINES[report.waived]},{line}"
+    if report.stars is not None:
+        line = f"{line}({report.stars} 星)"
     if report.skipped:
         line = f"{line}(跳過 {report.skipped} 個對手)"
     if report.phases > 1:
@@ -2374,6 +2377,7 @@ def farmed(series: AttackSeries, ending: SeriesEnding | None) -> FarmedVillage |
     if world is None:
         return None
     fought = [at for at, one in enumerate(played) if one.attacked is not None or one.phases > 0]
+    stars = [played[at].stars for at in fought] if world == "day" else []
     read = [(at, one.holding) for at, one in enumerate(played) if one.holding is not None]
     carts = [one.cart for one in played if one.cart is not None]
     start = _cart_level(carts[0]) if carts else None
@@ -2389,6 +2393,8 @@ def farmed(series: AttackSeries, ending: SeriesEnding | None) -> FarmedVillage |
         cart_unread=played[-1].since_cart or 0,
         waived_unread=sum(one.waived == "unreadable" for one in played),
         waived_poor=sum(one.waived == "poor" for one in played),
+        stars=sum(won for won in stars if won is not None),
+        stars_unread=stars.count(None),
         ending=ending,
     )
     if read:
@@ -2440,8 +2446,13 @@ def farmed_text(village: FarmedVillage) -> str:
         gain = "讀不到" if village.cart_gained is None else _signed(village.cart_gained)
         rows.append(("聖水車", gain, held))
     ended = "" if village.ending is None else f", {ENDING_LINES[village.ending]}"
+    stars = ""
+    if village.world == "day" and village.battles:
+        stars = f", {village.stars} 星"
+        if village.stars_unread:
+            stars += f" (有 {village.stars_unread} 場讀不到星數)"
     shown = [
-        f"{WORLD_NAMES[village.world]}: {village.battles} 場{ended}",
+        f"{WORLD_NAMES[village.world]}: {village.battles} 場{stars}{ended}",
         "",
         "| 資源 | 進帳 | 現在 |",
         "| --- | --- | --- |",
@@ -2572,6 +2583,8 @@ def _summed(villages: list[FarmedVillage]) -> FarmedVillage:
             "cart_unread": sum(one.cart_unread for one in villages),
             "waived_unread": sum(one.waived_unread for one in villages),
             "waived_poor": sum(one.waived_poor for one in villages),
+            "stars": sum(one.stars for one in villages),
+            "stars_unread": sum(one.stars_unread for one in villages),
         }
     )
 
@@ -2755,12 +2768,38 @@ def _menu_out_of_reach(series: AttackSeries) -> bool:
     return True
 
 
+def _stars_since(since: datetime | None) -> int:
+    """The stars the home village attack runs started since `since` read, as `farmed` sums them; 0 without one."""
+    if since is None:
+        return 0
+    won = sum(
+        village.stars for village in farmed_runs(since=since).villages if village.world == "day"
+    )
+    logger.info("Home village battles since %s have won %d star(s)", since.isoformat(), won)
+    return won
+
+
+def _star_goal(options: AttackOptions, before: int, series: AttackSeries) -> SeriesEnding | None:
+    """`stars_won` once `before` and the series' own stars reach `--until-stars`; None short of it, or with no goal."""
+    won = before + sum(one.stars or 0 for one in series.root)
+    if not options.until_stars or won < options.until_stars:
+        return None
+    logger.info("%d star(s) won of the %d asked for", won, options.until_stars)
+    return "stars_won"
+
+
 def _handed_plan(options: AttackOptions) -> tuple[AttackPlan | NightPlan | None, World | None]:
-    """The plan `--plan` handed in, and the village it was written for, which the series plays."""
-    if options.plan is None:
-        return None, None
-    plan = plans.load_any(options.plan)
-    return plan, _PLAN_WORLD[type(plan)]
+    """The plan `--plan` handed in, and the village it was written for, which the series plays.
+
+    A series counting stars plays the home village, whose result screen is the
+    one they are read off, and ends on the other.
+    """
+    if options.plan is not None:
+        plan = plans.load_any(options.plan)
+        return plan, _PLAN_WORLD[type(plan)]
+    if options.until_stars:
+        return (plans.named(options.plan_name, "day") if options.plan_name else None), "day"
+    return None, None
 
 
 def attack(
@@ -2796,6 +2835,7 @@ def attack(
     marks the run as under way for anybody looking from outside.
     """
     plan, world = _handed_plan(options)
+    before = _stars_since(options.since)
     adb = _controller(frames)
     config = ConfigStore().load()
     # **Which village to play cannot be asked until one has painted.**
@@ -2840,6 +2880,11 @@ def attack(
             logger.info("Stop requested; ending the series after %d round(s)", len(series.root))
             ending = "stopped"
             break
+        # Asked before the first round too: the runs since `--since` may have
+        # met the goal already.
+        if (met := _star_goal(options, before, series)) is not None:
+            ending = met
+            break
         logger.info("Round %d of %s", len(series.root) + 1, rounds or "no limit")
         report = _round(runner, series)
         if isinstance(report, str):
@@ -2853,7 +2898,10 @@ def attack(
         fighting = report.attacked is not None or report.phases > 0
         logger.info("Attack finished: %s", round_line(report), extra=_round_event(runner, series))
         _write_plan(options.plan_out, runner.played)
-        if (over := _series_over(report, len(series.root))) is not None:
+        # The goal after the last round, which no next round asks.
+        if (
+            over := _series_over(report, len(series.root)) or _star_goal(options, before, series)
+        ) is not None:
             ending = over
             break
         # A stop is let through first, so the series ends `stopped` and a loan

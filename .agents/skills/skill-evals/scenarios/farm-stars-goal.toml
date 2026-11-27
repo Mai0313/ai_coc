@@ -1,0 +1,70 @@
+# A hero task that counts stars: one farm run on the home village that ends on the stars
+# read, whatever the storages hold, and no builder base leg. The game on the home village;
+# nothing running.
+skill = "takeover"
+about = "A star goal for a hero task: the home village alone, until the stars read reach it"
+situation = """
+沒有之前的對話. 模擬器上沒有東西在跑, 也沒有人在盯升級. 野蠻人之王沒在升級, 他已經把王排進隊伍.
+"""
+user = "幫我在日世界打到野蠻人之王贏 15 顆星 (英雄任務), 倉庫滿了也照打, 打完跟我說"
+screens = [{ frame = "world_day.png" }]
+
+[state.emulator]
+status = "idle"
+pid = 41000
+command = "status"
+started = "2026-11-12T16:10:30+08:00"
+ended = "2026-11-12T16:11:40+08:00"
+caller = { agent = "claude-code", session = "an-earlier-session", mission = "讀升級時間" }
+
+[[checks]]
+id = "brief-stars"
+what = "the brief's attack ends on the 15 stars asked for"
+anchor = [".agents/skills/takeover/references/farming.md", "`attack` 那一行寫成 `attack --until-stars <N> --since <起點>"]
+kind = "lines"
+file = "*brief.md"
+select = 'uv run --no-sync ai_coc attack\b'
+must = '--until-stars 15\b'
+
+[[checks]]
+id = "brief-since"
+what = "the brief's attack counts from a start written into it, so a restart plays only what is left"
+anchor = [".agents/skills/takeover/references/farming.md", "所以被借走開回去、被叫停或被搶登之後再派, 都照抄同一行"]
+kind = "lines"
+file = "*brief.md"
+select = 'uv run --no-sync ai_coc attack\b'
+must = '--since \d{4}-\d\d-\d\d'
+
+[[checks]]
+id = "brief-stop-at"
+what = "the brief's attack plays whatever the storages hold"
+anchor = [".agents/skills/takeover/references/farming.md", "不看倉庫滿不滿才給 `--stop-at 0`"]
+kind = "lines"
+file = "*brief.md"
+select = 'uv run --no-sync ai_coc attack\b'
+must = '--stop-at 0\b'
+
+[[checks]]
+id = "brief-day-only"
+what = "no step of the brief goes to the builder base"
+anchor = [".agents/skills/takeover/references/farming.md", "只打日世界, `attack` 那一行寫成"]
+kind = "lines"
+file = "*brief.md"
+select = 'uv run --no-sync ai_coc (world|attack)\b'
+must_not = '--night'
+
+[[checks]]
+id = "brief-flat"
+what = "the brief's attack plays the flat plan"
+anchor = [".agents/skills/takeover/references/farming.md", "兩個 `attack` 都要寫 `--plan flat`"]
+kind = "lines"
+file = "*brief.md"
+select = 'uv run --no-sync ai_coc attack\b'
+must = '--plan flat\b'
+
+[[checks]]
+id = "named"
+what = "every command says who ran it and why"
+anchor = ["AGENTS.md", "Every `ai_coc` command an agent runs carries `--agent`"]
+kind = "every_call_has"
+fields = ["agent", "session", "mission"]

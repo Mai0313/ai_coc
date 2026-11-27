@@ -62,6 +62,8 @@ ai_coc giveback                  # 放掉這個 session 的保留, 把借來的�
 ai_coc attack --stop-at 0        # 不管倉庫多滿都照打
 ai_coc attack --repeat 0 --until-idle  # 這個村莊有工人或實驗室閒著也收工
 ai_coc attack --repeat 0 --until-idle builder  # 只看工人 (`lab` 只看實驗室)
+ai_coc attack --until-stars 15 --stop-at 0  # 打日世界, 結算畫面讀到的星數加起來到 15 就收工
+ai_coc attack --until-stars 15 --since <時間> --stop-at 0  # 那個時間起開跑的日世界進攻讀到的星數也算, 中斷後同一行開回去只打剩下的
 ```
 
 `stop` 在 `~/.ai_coc/state.json` 上做個記號就回來。迴圈在回合之間跟對手之間讀它, 絕不會在戰鬥中途停, 所以最壞是多打一場: 打到一半棄權會把軍隊丟在場上, 遊戲停在下一輪回不了家的畫面。盯升級的也一起停; `ai_coc stop emulator` 或 `ai_coc stop watch` 只停其中一個。沒有東西在跑的時候它會直接說沒有, 而不是留一個沒人會收的請求。
@@ -138,7 +140,7 @@ ai_coc export --table                 # 同一份東西,畫成表格給人看
 ai_coc export --last                  # 直接讀上一次的結果,完全不碰遊戲
 ai_coc growth                         # 比對存下的最舊跟最新兩份匯出,列出兩個世界升了什麼;--start-date / --end-date 縮小範圍
 ai_coc turnaround                     # 從打資源紀錄算每次升級從到點到按下確認花了幾秒,依王、實驗室、建築、戰寵分;--since 指定起算時間 (ISO)
-ai_coc farmed --by <session> --since <時間>  # 從執行紀錄把一個 session 每一次打資源加起來, 每個世界一段; 不碰遊戲
+ai_coc farmed --by <session> --since <時間>  # 從執行紀錄把一個 session 每一次打資源加起來, 每個世界一段, 日世界附星數; 不碰遊戲
 ai_coc tended --by <session> --since <時間>  # 從執行紀錄列出一個 session 升了什麼、各花多少, 開了幾次鐘塔, 派了幾次助手, 探礦者換了幾次, 被搶登幾次; 不碰遊戲
 ai_coc gamedata                       # 從模擬器上的遊戲檔讀出遊戲自己的表(中英文名稱、最高等級、每級的要求、牌價和時間),每個遊戲版本讀一次,存在 ~/.ai_coc/game_data/<版本>/;--refresh 重新讀
 ai_coc search "Electro Dragon"        # 照 data_id 或中英文名稱的一段查那份表 (沒有名字含這一段的就列名字最接近的幾種, 並標明不是符合的),村莊裡有的再列出等級、升級中幾點好、下一級的牌價跟升到滿級或上限總共要多少多久 (有最近實付的折數就附估計),沒有的兵種跟法術列出解鎖要什麼;--rows 每一列分開列;不碰遊戲
