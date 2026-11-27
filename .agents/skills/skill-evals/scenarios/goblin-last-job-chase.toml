@@ -2,8 +2,9 @@
 # goblin researcher's 亡靈 finishes about 2.5 hours from now and its next level takes 14
 # days, and no research is short enough to pad the half hour left, so the next hire is the
 # event's last job: the end is kept as a note, the last job is asked now by push, and the
-# watch wakes within 30 minutes to push again until he answers. 弓箭女皇 and 亡靈 are
-# moved two hours later so that nothing else is due within the hour (棘木騎士 is first).
+# watch wakes within 30 minutes to push again until he answers. 弓箭女皇 and 亡靈 get
+# timers that outlast the fixture's potions and finish about 2.5 hours after the export,
+# so that nothing is due within the hour (棘木騎士 is first, at about 74 minutes).
 skill = "takeover"
 about = "The goblin event's last job: asked ahead by push, and the watch wakes within 30 minutes to push again"
 situation = """
@@ -37,13 +38,13 @@ caller = { agent = "claude-code", session = "eval-goblin-last-job-chase", missio
 world = "day"
 section = "heroes"
 data = 28000001
-set = { timer = 26850 }
+set = { timer = 56631 }
 
 [[edits]]
 world = "day"
 section = "units"
 data = 4000010
-set = { timer = 54405 }
+set = { timer = 213126 }
 
 [[checks]]
 id = "end-noted"
