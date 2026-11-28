@@ -7,19 +7,19 @@ Run from the checkout root with `uv run --no-sync python .agents/skills/skill-ev
 from __future__ import annotations
 
 import re
-import gzip
 import sys
+import gzip
 import json
 import shutil
-import tomllib
-import argparse
-import tempfile
-import subprocess
 from typing import Any, Literal
 from pathlib import Path
+import tomllib
+import argparse
 from datetime import datetime, timedelta
+import tempfile
+import subprocess
 
-from pydantic import BaseModel, Field, JsonValue
+from pydantic import Field, BaseModel, JsonValue
 
 SKILL = Path(__file__).resolve().parents[1]
 CHECKOUT = SKILL.parents[2]
@@ -34,13 +34,13 @@ MOMENT = re.compile(r"\{(" + INSTANT.pattern[1:-1] + r")\}")
 OUT = "out"
 REPLY = "reply.md"
 
-LAUNCHER = '''import subprocess
+LAUNCHER = """import subprocess
 import sys
 
 
 def main():
     return subprocess.call([{python!r}, {standin!r}, {scenario!r}, *sys.argv[1:]])
-'''
+"""
 PYPROJECT = """[project]
 name = "ai-coc-eval-sandbox"
 version = "0"
@@ -374,7 +374,7 @@ def _tables(reply: str) -> list[list[str]]:
     return rows
 
 
-def judge(check: Check, calls: list[dict[str, Any]], reply: str, out: Path) -> tuple[bool, str]:  # noqa: C901, PLR0911, PLR0912 - one branch per kind
+def judge(check: Check, calls: list[dict[str, Any]], reply: str, out: Path) -> tuple[bool, str]:  # noqa: C901, PLR0911 - one branch per kind
     """Whether one check passed, and the evidence for it."""
     if check.kind in ("called", "not_called"):
         assert check.calls is not None

@@ -76,6 +76,7 @@ from ai_coc.models import (
     DrawOptions,
     DrawOutcome,
     GoblinOffer,
+    GoblinSlots,
     JournalLine,
     LevelChange,
     LevelsTotal,
@@ -228,6 +229,7 @@ from ai_coc.parsers.village import (
     merge,
     clock_tower,
     from_legacy,
+    regular_slots,
     upgrade_timers,
     helper_cooldowns,
     parse_village_text,
@@ -3277,11 +3279,42 @@ def _timed(report: StatusReport, village: VillageExport | None) -> StatusReport:
         report.timers = upgrade_timers(village)
         report.clock_tower = clock_tower(village)
         report.helpers = helper_cooldowns(village)
+        report.regular = regular_slots(village)
+        report.goblins = _goblin_slots(report)
         # Its own timers too: the `status` after a purchase is the first to list it,
         # and its line is not on the journal yet.
         own = (datetime.fromisoformat(village.exported_at), report.timers)
         report.paid, report.timed = _paid_shares(_kept_tables(), datetime.now().astimezone(), own)
     return report
+
+
+def _goblin_slots(report: StatusReport) -> list[GoblinSlots]:
+    """Each home village counter that reads more slots than the village's buildings give, with how many of those extra slots no goblin job fills.
+
+    Only the counters read on the home village count: the builder base's are
+    its own, and a counter that did not read says nothing.
+    """
+    found = []
+    for count in (report.builder, report.lab):
+        if count is None or count.world != "day" or count.total is None:
+            continue
+        regular = report.regular.get(count.role, 0)
+        if not regular or count.total <= regular:
+            continue
+        busy = sum(
+            1
+            for one in report.timers
+            if one.world == "day" and one.role == count.role and one.extra
+        )
+        found.append(
+            GoblinSlots(
+                role=count.role,
+                regular=regular,
+                total=count.total,
+                idle=max(count.total - regular - busy, 0),
+            )
+        )
+    return found
 
 
 # `confirm --item` as the `upgrades` skill writes it: the game's name, then the level bought.
@@ -3503,7 +3536,10 @@ def status_text(
     `result.json` and behind `--json`. Each row is facts only: when, whose slot
     (a goblin's marked), the item with its levels, and what its next level
     asks. What follows a row (continue it, switch, ask) is the agent's to
-    decide and add. Times are read against `now`, since `--last`
+    decide and add. A goblin slot the home village's counters read past its
+    buildings (`goblins`) is a row at the top while no job fills it, and a
+    line after the table says how many slots each counter reads against the
+    usual. Times are read against `now`, since `--last`
     prints an export taken a while ago. `within` keeps the rows finishing in
     that many hours and folds the rest into one line, as the report a stop
     hands over lists them.
@@ -3536,7 +3572,13 @@ def status_text(
         if report.exported_at is None:
             shown += noted
             continue
-        rows = _timer_rows(report, world, now)
+        idle = [
+            (now, "現在", f"{COUNT_NAMES[one.role]} (哥布林)", "閒著, 聘要寶石", "")
+            for one in report.goblins
+            if world == "day"
+            for _ in range(one.idle)
+        ]
+        rows = idle + _timer_rows(report, world, now)
         near = [row for row in rows if within is None or row[0] <= now + timedelta(hours=within)]
         if near:
             shown += ["", "| 時間 | 目標 | 項目 |", "| --- | --- | --- |"]
@@ -3547,6 +3589,7 @@ def status_text(
         if not rows:
             shown.append("沒有在升的")
         for block in (
+            _goblin_lines(report) if world == "day" else [],
             _short_lines(report, world, now),
             _boost_lines(report, world, now),
             _helper_lines(report) if world == "day" else [],
@@ -3806,6 +3849,16 @@ def _paid_line(
 
 def _discounted(paid: dict[World, PaidShare], timed: dict[World, PaidShare]) -> bool:
     return any(one.share < 1 for one in (*paid.values(), *timed.values()))
+
+
+def _goblin_lines(report: StatusReport) -> list[str]:
+    """`哥布林活動中: 工人 7 格 (平常 6), 實驗室 2 格 (平常 1)`, or nothing with no goblin slot read."""
+    if not report.goblins:
+        return []
+    parts = (
+        f"{COUNT_NAMES[one.role]} {one.total} 格 (平常 {one.regular})" for one in report.goblins
+    )
+    return [f"哥布林活動中: {', '.join(parts)}"]
 
 
 def _short_lines(report: StatusReport, world: World, now: datetime) -> list[str]:

@@ -56,7 +56,7 @@ calls = { command = "note", args = { action = "add", world = "day" }, patterns =
 [[checks]]
 id = "ask-last"
 what = "pushes the question of the goblin researcher's last job now"
-anchor = [".agents/skills/upgrades/SKILL.md", "不用墊的, 是讀到下一次聘的就是最後一件時) 就問"]
+anchor = [".agents/skills/upgrades/SKILL.md", "把排程提給他就是在問最後一件"]
 kind = "lines"
 file = "push.md"
 select = "亡靈|最後|研究員|實驗室"

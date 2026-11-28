@@ -867,6 +867,56 @@ class StatusTextTests(unittest.TestCase):
         ):
             assert row in text, row
 
+    def test_goblin_slots_the_counters_read_past_the_buildings_are_said_and_an_idle_one_is_a_row(
+        self,
+    ) -> None:
+        """The home village of 2026-11-28: six builders and a laboratory, its counters 0/7 and 0/2, only the builder's goblin hired."""
+        document = VillageDocument.model_validate({
+            "tag": "#TEST",
+            "buildings": [
+                {"data": 1000015, "lvl": 1, "cnt": 5},
+                {"data": 1000064, "lvl": 1, "cnt": 1},
+                {"data": 1000007, "lvl": 17, "cnt": 1},
+                {"data": 1000067, "lvl": 3, "timer": 35733, "extra": True},
+            ],
+        })
+        export = merge(document, None, int(NOW.timestamp()))
+
+        def counted(role: str, world: World, total: int) -> PlateCount:
+            return PlateCount.model_validate({
+                "role": role,
+                "world": world,
+                "free": 0,
+                "total": total,
+                "outcome": "counted",
+            })
+
+        report = commands._timed(
+            self._report(builder=counted("builder", "day", 7), lab=counted("lab", "day", 2)),
+            export,
+        )
+        assert report.regular == {"builder": 6, "lab": 1}
+        assert [(one.role, one.total, one.regular, one.idle) for one in report.goblins] == [
+            ("builder", 7, 6, 0),
+            ("lab", 2, 1, 1),
+        ]
+        day = commands.status_text(report, NOW).split("夜世界")[0].splitlines()
+        rows = [line for line in day if line.startswith("| ") and "---" not in line]
+        assert rows[1] == "| 現在 | 實驗室 (哥布林) | 閒著, 聘要寶石 |"
+        assert not [row for row in rows if row.startswith("| 現在 | 工人 (哥布林)")]
+        assert "哥布林活動中: 工人 7 格 (平常 6), 實驗室 2 格 (平常 1)" in day
+        # Counters at the usual, read on the builder base, or not read say nothing.
+        for builder, lab in (
+            (counted("builder", "day", 6), counted("lab", "day", 1)),
+            (counted("builder", "night", 2), None),
+            (None, None),
+        ):
+            quiet = commands._timed(self._report(builder=builder, lab=lab), export)
+            assert quiet.goblins == []
+            text = commands.status_text(quiet, NOW)
+            assert "哥布林活動中" not in text
+            assert "閒著" not in text
+
     def test_alike_rows_finishing_within_a_wake_are_one_row(self) -> None:
         text = commands.status_text(
             self._report(
