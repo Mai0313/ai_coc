@@ -136,6 +136,7 @@ from ai_coc.parsers.frame import open_frame
 from ai_coc.parsers.scout import (
     SPEED_BOX,
     CART_PLANK,
+    SEARCH_HOME,
     SPEED_GREEN,
     TOPUP_CLOSE,
     CART_COLLECT_BOX,
@@ -160,6 +161,7 @@ from ai_coc.parsers.scout import (
     card_groups,
     event_ended,
     field_units,
+    home_search,
     ore_tooltip,
     panel_drawn,
     _plank_ratio,
@@ -1334,6 +1336,11 @@ class NightAttackTests(unittest.TestCase):
         for other in ("night_menu", "night_cards", "world_day", "battle_result"):
             assert not searching_opponent((FRAMES / f"{other}.png").read_bytes()), other
 
+    def test_the_home_search_is_read_off_its_return_plate(self) -> None:
+        """Searching or given up, by the 回營 plate over the blur, and on no other committed frame."""
+        found = {path.name for path in FRAMES.glob("*.png") if home_search(path.read_bytes())}
+        assert found == {"search_failed.png", "searching_home.png"}
+
     def test_the_card_row_puts_the_machine_first_where_the_home_village_puts_it_last(self) -> None:
         """Which is why the split is read off the `xN` corner rather than off a group index.
 
@@ -2264,6 +2271,7 @@ class CrossingTests(unittest.TestCase):
             patch.object(world_ui, "pinch_zoomed", return_value=True),
             patch.object(world_ui, "build_panel_open", return_value=False),
             patch.object(world_ui, "reward_chest", return_value=0),
+            patch.object(world_ui, "home_search", return_value=False),
             patch.object(world_ui, "boat_marker", side_effect=self.markers) as self.looked,
         ):
             sailing = world_ui.cross(adb, DisplayTarget(logical_id="1", physical_id="2"), want)
@@ -2467,6 +2475,18 @@ class CrossingTests(unittest.TestCase):
             here = world_ui.uncovered(adb, DisplayTarget(logical_id="1", physical_id="2"))
         assert here == "day"
         assert adb.back.call_count == 1
+
+    def test_the_search_screen_is_left_by_its_return_plate(self) -> None:
+        """`back` does nothing there; its 回營 took the game home live (2026-11-28)."""
+        adb = MagicMock()
+        adb.screenshot.side_effect = [
+            (FRAMES / name).read_bytes() for name in ("search_failed.png", "hud_day.png")
+        ]
+        with patch.object(world_ui.time, "sleep"):
+            here = world_ui.uncovered(adb, DisplayTarget(logical_id="1", physical_id="2"))
+        assert here == "day"
+        adb.back.assert_not_called()
+        adb.tap.assert_called_once_with(*SEARCH_HOME, ANY)
 
     def test_the_star_bonus_sheet_is_pressed_away(self) -> None:
         """Its 確定 sits where 回營 does; `back` closed it live."""
@@ -5305,6 +5325,7 @@ class AttackTests(unittest.TestCase):
             patch.object(attack, "skip_offered", side_effect=lambda _: next(offered, False)),
             patch.object(attack.time, "sleep", side_effect=sleep),
             patch.object(attack.time, "monotonic", side_effect=lambda: clock[0]),
+            patch.object(attack, "uncovered", return_value="day"),
         ):
             report = runner._run_day()
         if report.attacked is not None:
@@ -8418,7 +8439,7 @@ class HomeTests(unittest.TestCase):
     def setUp(self) -> None:
         # The frames here are stand-ins, so the covers `_home` checks that no
         # case below is about read as absent; the cases about them patch them.
-        for name in ("build_panel_open", "in_battle", "reward_chest", "topup_ad"):
+        for name in ("build_panel_open", "in_battle", "reward_chest", "topup_ad", "home_search"):
             patcher = patch.object(shared, name, return_value=False)
             patcher.start()
             self.addCleanup(patcher.stop)

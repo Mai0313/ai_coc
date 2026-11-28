@@ -184,6 +184,7 @@ from ai_coc.parsers.home import (
 from ai_coc.adapters.mumu import MuMuAdapter
 from ai_coc.parsers.scout import (
     ORE_SHIFT,
+    SEARCH_HOME,
     TOPUP_CLOSE,
     EVENT_NOTICE_CLOSE,
     NIGHT_COUNT_WHITE_RATIO,
@@ -199,6 +200,7 @@ from ai_coc.parsers.scout import (
     card_groups,
     event_ended,
     field_units,
+    home_search,
     panel_drawn,
     card_drained,
     freeze_cards,
@@ -2239,7 +2241,8 @@ def _press_away(adb: AdbController, display: DisplayTarget, png: bytes) -> str |
     corner column, so the village under it never reads; `back` leaves it up,
     and its own X shuts it. LDPlayer's 儲值 promotion, which a restart can
     bring up over the game, is shut by its own X too: it sells for real money,
-    so that is the one press it gets.
+    so that is the one press it gets. The search screen ignores `back` and is
+    left by its 回營.
     """
     if welcome_back(png):
         logger.info("The raid report is covering the village; pressing back")
@@ -2253,12 +2256,15 @@ def _press_away(adb: AdbController, display: DisplayTarget, png: bytes) -> str |
         logger.info("An event's end notice is covering the village; tapping outside it")
         adb.tap(*EVENT_NOTICE_CLOSE, display)
         return "an event's end notice was covering the village"
-    for shut, close, cover in (
-        (topup_ad, TOPUP_CLOSE, "LDPlayer's top-up promotion"),
-        (build_panel_open, PANEL_CLOSE, "the build panel"),
+    for shut, close, cover, button in (
+        (topup_ad, TOPUP_CLOSE, "LDPlayer's top-up promotion", "X"),
+        (build_panel_open, PANEL_CLOSE, "the build panel", "X"),
+        (home_search, SEARCH_HOME, "the search screen", "回營"),
     ):
         if shut(png):
-            logger.info("%s is covering the village; pressing its X", cover[0].upper() + cover[1:])
+            logger.info(
+                "%s is covering the village; pressing its %s", cover[0].upper() + cover[1:], button
+            )
             adb.tap(*close, display)
             return f"{cover} was covering the village"
     if reward_chest(png):

@@ -171,6 +171,22 @@ FIND_MATCH_BOX = (150, 635, 400, 695)
 SEARCHING_BOX = (720, 768, 880, 806)
 SEARCHING_RED = 0.5
 
+# The home village's search screen, 正在搜尋對手 or the 無法攻擊村莊 notice it
+# ends on when no opponent comes, is a grey-blue blur with one beige 回營
+# plate in the bottom left, and `back` does nothing on it: a round that gave up
+# its search left the game there, and the next pressed `back` for three minutes
+# (2026-11-28). The plate's top band, above the portrait, reads 0.605 beige on
+# both screens (`search_failed.png`, `searching_home.png`) against at most 0.111
+# over 1194 other recorded frames, the committed ones included. The blur to its
+# right reads 1.000 on both, and also on the fade into the search where the
+# plate has not painted yet, so it only backs the plate up.
+SEARCH_PLATE_BOX = (32, 724, 180, 760)
+SEARCH_PLATE_BEIGE = 0.4
+SEARCH_BLUR_BOX = (220, 730, 600, 870)
+SEARCH_BLUR_GREY = 0.8
+# Where the 回營 plate is pressed; a tap there took the game home (2026-11-28).
+SEARCH_HOME = (105, 800)
+
 # **The dialog takes two**, and the reason is measured: its 立即尋找 reads 0.63
 # of button green, and a battlefield read through the same box reads up to 0.69.
 # A village is mostly grass, so one green button is not a screen. What no
@@ -1666,6 +1682,28 @@ def searching_opponent(png: bytes) -> bool:
     """
     image = open_frame(png)
     return _button_ratio(image, SEARCHING_BOX, "red") >= SEARCHING_RED
+
+
+def home_search(png: bytes) -> bool:
+    """Whether the home village's search screen is up, by its 回營 plate over the blur.
+
+    Still searching or given up, the way out is the same plate, which `back`
+    does not reach.
+    """
+    image = open_frame(png)
+    plate = image.crop(SEARCH_PLATE_BOX).tobytes()
+    beige = sum(
+        r >= 190 and g >= 170 and 130 <= b <= 170 and r - b >= 40
+        for r, g, b in zip(plate[::3], plate[1::3], plate[2::3], strict=True)
+    )
+    if beige / (len(plate) // 3) < SEARCH_PLATE_BEIGE:
+        return False
+    blur = image.crop(SEARCH_BLUR_BOX).tobytes()
+    grey = sum(
+        50 <= b <= 130 and b > max(r, g) + 5 and b - min(r, g) <= 40
+        for r, g, b in zip(blur[::3], blur[1::3], blur[2::3], strict=True)
+    )
+    return grey / (len(blur) // 3) >= SEARCH_BLUR_GREY
 
 
 def _badged(image: Image.Image, centre: int) -> bool:
