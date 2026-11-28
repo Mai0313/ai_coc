@@ -641,6 +641,38 @@ class UpgradeTimerTests(unittest.TestCase):
         assert timer.next is not None
         assert timer.next.lvl == 4
 
+    def test_a_guardian_is_a_builders_job_the_builder_potion_speeds_up(self) -> None:
+        """The Smasher's row of 2026-11-28, upgrading 1 to 2 under a builder potion."""
+        smasher = GameEntity(
+            data_id=107000001,
+            zh="粉碎者",
+            en="Smasher",
+            world="day",
+            table="guardians",
+            max_lvl=3,
+            levels=[
+                GameLevel(lvl=1),
+                GameLevel(lvl=2, cost={"elixir": 13_000_000}, time=432_000),
+                GameLevel(lvl=3, cost={"elixir": 16_000_000}, time=604_800),
+            ],
+        )
+        row = {"data": 107000001, "lvl": 1, "timer": 343046, "helper_timer": 0}
+        export = merge(_village({"guardians": [row]}, builder_boost=7000), _tables(smasher), AT)
+        [timer] = upgrade_timers(export)
+        assert (timer.role, timer.boost) == ("builder", "builder_boost")
+        assert timer.seconds == 7000 + 343046 - 10 * 7000
+        assert timer.next is not None
+        assert (timer.next.lvl, timer.next.cost) == (3, {"elixir": 16_000_000})
+        # A file saved while guardians had no slot is timed as one that has it.
+        old = export.model_copy(
+            update={
+                "day": {
+                    "guardians": [export.day["guardians"][0].model_copy(update={"role": None})]
+                }
+            }
+        )
+        assert upgrade_timers(old) == [timer]
+
     def test_the_clock_tower_is_ready_when_neither_of_its_counters_is_running(self) -> None:
         tower = ("buildings2", 1000039, None)
         ready = clock_tower(_exported(tower))
@@ -752,7 +784,14 @@ class MergeTests(unittest.TestCase):
             _village({"guardians": [{"data": 107000000, "lvl": 1}]}), _tables(guardian), AT
         )
         assert json.loads(export.model_dump_json())["day"]["guardians"] == [
-            {"data": 107000000, "lvl": 1, "zh": "遠襲者", "en": "Longshot", "max_lvl": 5}
+            {
+                "data": 107000000,
+                "lvl": 1,
+                "zh": "遠襲者",
+                "en": "Longshot",
+                "role": "builder",
+                "max_lvl": 5,
+            }
         ]
 
     def test_the_builder_base_goes_under_night_and_what_is_bought_or_cleared_is_left_out(

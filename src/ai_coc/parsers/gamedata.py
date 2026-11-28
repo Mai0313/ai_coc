@@ -126,8 +126,22 @@ TABLES = (
         boost="BoostMultiplier",
         speeds="Type",
     ),
-    # Some guardians write their level on the first row only.
-    GameTableSpec(table="guardians", prefix=107, level="Level"),
+    # Some guardians write their level on the first row only. Their prices are
+    # `upgrade_data`'s (`UPGRADE_DATA`).
+    GameTableSpec(table="guardians", prefix=107, level="Level", upgrades="UpgradeData"),
+)
+# The prices a table that writes none names a group of (`GameTableSpec.upgrades`),
+# read here as each row writes them. The row of level L buys L+1 and carries the
+# town hall that level asks: on 19.32.4 the Smasher's 5th row asks 19, and its
+# 6th level is the one `guardians` previews as `GuardianSmasherTH19`.
+UPGRADE_DATA = GameTableSpec(
+    table="upgrade_data",
+    level="UpgradeLevel",
+    cost="UpgradeCost",
+    resource="UpgradeResource",
+    time="UpgradeTime",
+    buys_own_level=True,
+    needs={"RequiredTownHallLevel": "town_hall"},
 )
 
 # A builder base entity has `VillageType` 1 or an internal name starting with
@@ -184,7 +198,13 @@ RESOURCES = {
     "RareOre": "glowy_ore",
     "EpicOre": "starry_ore",
 }
-TIME_UNITS = (("D", 86_400), ("H", 3_600), ("M", 60), ("S", 1))
+# Each unit as a time column ends in it, by letter or, in `upgrade_data`, by word.
+TIME_UNITS = (
+    ("D", "Days", 86_400),
+    ("H", "Hours", 3_600),
+    ("M", "Minutes", 60),
+    ("S", "Seconds", 1),
+)
 # The slot each helper `Type` speeds up. The Alchemist and the Prospector
 # convert resources and speed nothing.
 SPEEDS: dict[str, UpgradeRole] = {"BUILDER": "builder", "RESEARCHER": "lab"}
@@ -192,7 +212,7 @@ SPEEDS: dict[str, UpgradeRole] = {"BUILDER": "builder", "RESEARCHER": "lab"}
 # another is read again from the emulator rather than used, so raise this with
 # any change to what `build` writes from the same tables, a value as much as
 # the shape.
-READING = 3
+READING = 4
 # A table with no `GlobalID` numbers its entities from its class times this.
 CLASS_SIZE = 1_000_000
 
@@ -251,30 +271,45 @@ def _price(cost: str, resource: str) -> dict[str, int]:
     }
 
 
-def _seconds(row: Row, prefix: str, header: list[str]) -> int | None:
-    cells = [
-        (row.get(prefix + unit, "").strip(), size)
-        for unit, size in TIME_UNITS
-        if prefix + unit in header
+def _time_columns(prefix: str, header: list[str]) -> list[tuple[str, int]]:
+    """Each time column a table has, with its unit in seconds."""
+    return [
+        (prefix + name, size)
+        for unit, word, size in TIME_UNITS
+        for name in (unit, word)
+        if prefix + name in header
     ]
+
+
+def _seconds(row: Row, prefix: str, header: list[str]) -> int | None:
+    cells = [(row.get(column, "").strip(), size) for column, size in _time_columns(prefix, header)]
     if not any(cell for cell, _ in cells):
         return None
     return sum(int(cell) * size for cell, size in cells if cell)
 
 
 def _check_columns(spec: GameTableSpec, header: list[str]) -> None:
-    wanted = ["Name", "TID", *spec.needs]
+    # `upgrade_data` is no entity's: it has neither text nor ids.
+    entity = spec is not UPGRADE_DATA
+    wanted = ["Name", *spec.needs] + (["TID"] if entity else [])
     wanted += [
         column
-        for column in (spec.level, spec.cost, spec.resource, spec.boost, spec.speeds)
+        for column in (
+            spec.level,
+            spec.cost,
+            spec.resource,
+            spec.boost,
+            spec.speeds,
+            spec.upgrades,
+        )
         if column
     ]
     if spec.unlock:
         wanted += [TRAINED_IN, spec.unlock, *spec.untrained]
-    if spec.prefix is None:
+    if entity and spec.prefix is None:
         wanted.append("GlobalID")
     missing = [column for column in wanted if column not in header]
-    if spec.time and not any(spec.time + unit in header for unit, _ in TIME_UNITS):
+    if spec.time and not _time_columns(spec.time, header):
         missing.append(f"{spec.time}*")
     if missing:
         raise GameDataError(f"{spec.table} 少了欄位 {missing}")
@@ -341,19 +376,44 @@ def _unlock(spec: GameTableSpec, row: Row) -> dict[Hall, int]:
     return {hall: level}
 
 
-def _entities(
-    spec: GameTableSpec, text: str, zh: dict[str, str], en: dict[str, str]
-) -> Iterator[tuple[str, GameEntity]]:
-    """Each entity of one logic table with its internal name: a row with a `Name` starts one."""
-    header, rows = _rows(text)
-    _check_columns(spec, header)
+def _groups(rows: list[Row]) -> list[list[Row]]:
+    """A table's rows by entity: a row with a `Name` starts one."""
     groups: list[list[Row]] = []
     for row in rows:
         if row.get("Name"):
             groups.append([row])
         elif groups:
             groups[-1].append(row)
-    for index, group in enumerate(groups):
+    return groups
+
+
+def _priced(text: str) -> dict[str, dict[int, GameLevel]]:
+    """`upgrade_data`'s groups by name, each level as its own row writes it."""
+    header, rows = _rows(text)
+    _check_columns(UPGRADE_DATA, header)
+    return {
+        group[0]["Name"]: {
+            level.lvl: level for level in _levels(UPGRADE_DATA, group, header, night=False)
+        }
+        for group in _groups(rows)
+    }
+
+
+def _entities(
+    spec: GameTableSpec,
+    text: str,
+    zh: dict[str, str],
+    en: dict[str, str],
+    priced: dict[str, dict[int, GameLevel]],
+) -> Iterator[tuple[str, GameEntity]]:
+    """Each entity of one logic table with its internal name.
+
+    Where the table names its prices' group in `upgrade_data` (`priced`), each
+    level takes the price, time and requirements of the group's level below it.
+    """
+    header, rows = _rows(text)
+    _check_columns(spec, header)
+    for index, group in enumerate(_groups(rows)):
         first = group[0]
         name = first["Name"]
         if spec.prefix is not None:
@@ -364,6 +424,20 @@ def _entities(
             raise GameDataError(f"{spec.table} 的 {name} 沒有 GlobalID")
         night = first.get("VillageType") == NIGHT_VILLAGE or name.startswith(NIGHT_PREFIX)
         levels = _levels(spec, group, header, night)
+        if spec.upgrades and (upgrades := first.get(spec.upgrades, "").strip()):
+            if upgrades not in priced:
+                raise GameDataError(
+                    f"{spec.table} 的 {name} 的價格在 {upgrades}, upgrade_data 沒有"
+                )
+            bought = priced[upgrades]
+            levels = [
+                level.model_copy(
+                    update={"needs": paid.needs, "cost": paid.cost, "time": paid.time}
+                )
+                if (paid := bought.get(level.lvl - 1))
+                else level
+                for level in levels
+            ]
         yield (
             name,
             GameEntity(
@@ -387,10 +461,11 @@ def build(version: str, zh: str, en: str, tables: dict[GameTable, str]) -> GameE
     longer hold — rather than writing a file that is quietly short.
     """
     names, texts = _texts(zh), _texts(en)
+    priced = _priced(tables[UPGRADE_DATA.table])
     entities: list[GameEntity] = []
     buildings: dict[str, int] = {}
     for spec in TABLES:
-        for name, entity in _entities(spec, tables[spec.table], names, texts):
+        for name, entity in _entities(spec, tables[spec.table], names, texts, priced):
             entities.append(entity)
             if spec.table == "buildings":
                 buildings.setdefault(name, entity.data_id)

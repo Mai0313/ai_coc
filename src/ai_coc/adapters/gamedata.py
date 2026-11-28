@@ -13,7 +13,7 @@ import logging
 
 from ai_coc.models import GameEntities, GameDataReport
 from ai_coc.constants import COC_PACKAGE, GAME_DATA_DIR
-from ai_coc.parsers.gamedata import TABLES, READING, GameDataError, build, decode
+from ai_coc.parsers.gamedata import TABLES, READING, UPGRADE_DATA, GameDataError, build, decode
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -67,7 +67,10 @@ def _extract(adb: AdbController, version: str) -> GameEntities:
     """
     apk = _asset_pack(adb)
     texts = {name: _member(adb, apk, member) for name, member in LOCALIZATION.items()}
-    tables = {spec.table: _member(adb, apk, f"assets/logic/{spec.table}.csv") for spec in TABLES}
+    tables = {
+        spec.table: _member(adb, apk, f"assets/logic/{spec.table}.csv")
+        for spec in (*TABLES, UPGRADE_DATA)
+    }
     entities = build(
         version,
         texts["cnt"].decode("utf-8"),

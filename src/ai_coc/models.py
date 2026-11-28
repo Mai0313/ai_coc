@@ -311,8 +311,7 @@ class ExportRow(BaseModel):
     `gear_up`, whatever a release adds) as extras. **A row
     writes back only the fields set on it**, so a key the game left out stays
     out and an added one is there only where it applies: `next` is null past
-    the last level and absent where the table prices nothing (guardians,
-    helpers). `role` is whose slot upgrading the row takes
+    the last level and absent where the table prices nothing (helpers). `role` is whose slot upgrading the row takes
     (`parsers.village.ROLES`), `limited_lvl` the highest level the village's
     halls allow, and `done_at` and `ready_at` the instants its `timer` and
     `helper_cooldown` run out, speed-ups and a working helper included. A
@@ -2934,6 +2933,7 @@ GameTable = Literal[
     "character_items",
     "villager_apprentices",
     "guardians",
+    "upgrade_data",
 ]
 
 
@@ -2973,6 +2973,9 @@ class GameTableSpec(BaseModel):
     # the one naming the slot it speeds, written on an entity's first row.
     boost: str | None = None
     speeds: str | None = None
+    # For a table that prices nothing itself: the column, written on an
+    # entity's first row, naming the group of `upgrade_data` that does.
+    upgrades: str | None = None
 
 
 class GameLevel(BaseModel):

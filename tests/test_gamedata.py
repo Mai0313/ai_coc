@@ -33,7 +33,8 @@ COLUMNS: dict[GameTable, str] = {
     "pets": "Name,TroopLevel,TID,LaboratoryLevel,UpgradeTimeH,UpgradeTimeM,UpgradeResource,UpgradeCost",
     "character_items": "Name,Level,TID,RequiredBlacksmithLevel,UpgradeResources,UpgradeCosts",
     "villager_apprentices": "Name,TID,RequiredTownHallLevel,Type,BoostMultiplier",
-    "guardians": "Name,Level,TID",
+    "guardians": "Name,Level,TID,UpgradeData",
+    "upgrade_data": "Name,UpgradeLevel,UpgradeTimeDays,UpgradeTimeHours,UpgradeResource,UpgradeCost,RequiredTownHallLevel",
 }
 ZH = "TID,CNT\nstring,string\nTID_TH,大本營\nTID_HERO,神盾勇者\nTID_GONE,\n"
 EN = "TID,EN\nstring,string\nTID_TH,Town Hall\nTID_HERO,Royal Champion\n"
@@ -240,6 +241,30 @@ class BuildTests(unittest.TestCase):
             None,
         ]
         assert _entity(tables, 93000002).levels[0].multiplier is None
+
+    def test_a_guardian_is_priced_by_the_upgrade_data_group_it_names(self) -> None:
+        """19.32.4's Smasher, trimmed: the row of level L buys L+1, with the town hall that level asks."""
+        tables = _build(
+            buildings=_table("buildings", TOWN_HALL),
+            guardians=_table(
+                "guardians", "MeleeAreaaaa,1,,GuardianSmasher", ",2,,", ",3,,", "Logger,1,,"
+            ),
+            upgrade_data=_table(
+                "upgrade_data", "GuardianSmasher,1,5,0,Elixir,13000000,18", ",2,6,12,,25000000,19"
+            ),
+        )
+        smasher = _entity(tables, 107000000)
+        assert [(level.needs, level.cost, level.time) for level in smasher.levels] == [
+            ({}, {}, None),
+            ({"town_hall": 18}, {"elixir": 13_000_000}, 5 * 86_400),
+            ({"town_hall": 19}, {"elixir": 25_000_000}, 6 * 86_400 + 12 * 3_600),
+        ]
+        # One that names no group stays unpriced.
+        assert _entity(tables, 107000001).levels[0].cost == {}
+
+    def test_a_guardian_naming_a_group_upgrade_data_lacks_is_refused(self) -> None:
+        with pytest.raises(GameDataError, match="GuardianGone"):
+            _build(guardians=_table("guardians", "Smasher,1,,GuardianGone"))
 
     def test_a_builder_base_entity_is_night_and_names_its_own_halls(self) -> None:
         tables = _build(
