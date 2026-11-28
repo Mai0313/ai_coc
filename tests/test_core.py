@@ -200,6 +200,7 @@ from ai_coc.parsers.village import (
     clock_tower,
     from_legacy,
     parse_village,
+    regular_slots,
     upgrade_timers,
     helper_cooldowns,
     parse_village_text,
@@ -629,6 +630,27 @@ class UpgradeTimerTests(unittest.TestCase):
             _village({"units": [{"data": 4000059, "lvl": 4, "timer": 9, "extra": True}]}), None, AT
         )
         assert [timer.extra for timer in upgrade_timers(export)] == [True]
+
+    def test_the_regular_slots_are_the_huts_bobs_hut_and_the_laboratory(self) -> None:
+        """The rows of the export of 2026-11-28, a hut being upgraded added; the builder base's lab is not one."""
+        export = merge(
+            _village({
+                "buildings": [
+                    {"data": 1000015, "lvl": 1, "cnt": 4},
+                    {"data": 1000015, "lvl": 1, "timer": 600},
+                    {"data": 1000064, "lvl": 1, "cnt": 1},
+                    {"data": 1000007, "lvl": 17, "cnt": 1},
+                ],
+                "buildings2": [{"data": 1000046, "lvl": 10, "cnt": 1}],
+            }),
+            None,
+            AT,
+        )
+        assert regular_slots(export) == {"builder": 6, "lab": 1}
+        # Before B.O.B. Control is unlocked there is no hut for it.
+        assert regular_slots(
+            merge(_village({"buildings": [{"data": 1000015, "lvl": 1, "cnt": 5}]}), None, AT)
+        ) == {"builder": 5, "lab": 0}
 
     def test_rows_with_no_timer_are_not_upgrades(self) -> None:
         assert upgrade_timers(_exported(("buildings", 1000015, None))) == []

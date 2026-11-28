@@ -1,0 +1,83 @@
+# Mid-takeover, the user answers how long the goblin event has left: about 2 days 19
+# hours, as on 2026-11-28. Both goblins are busy (彈跳加農炮 for the builder, 亡靈 for the
+# researcher), each finishing well before the end, so each slot gets a chain: pads, then
+# a long last job that starts before the end with a generous buffer and runs past it. The
+# plan is proposed and printed after the table as the 哥布林排程 block, and not kept as a
+# note until he agrees. 弓箭女皇 gets the timer goblin-last-job-chase gives it, so that
+# nothing is due within the hour.
+skill = "takeover"
+about = "A goblin event's schedule once its end is known: pads, a buffered last job flagged, proposed after the table and not yet noted"
+situation = """
+你在託管中 (今天稍早開始, session 一直是你的). 打資源的 subagent 上一趟兩個世界都打到 `stock_full`, 照交辦開回日世界收工了. 你這一回合稍早讀了 `status`, 讀到哥布林活動在跑 (工人 0/7、實驗室 0/2), 交代裡沒有活動幾點結束, 就推播問了他活動還剩多久, 掛了 watch. 他現在回你.
+"""
+user = "活動還剩大概 2 天 19 小時"
+screens = [{ frame = "hud_day.png" }]
+live = [41500]
+
+[replies]
+status = [{ world = "day", builder = { world = "day", role = "builder", free = 0, total = 7, outcome = "counted" }, lab = { world = "day", role = "lab", free = 0, total = 2, outcome = "counted" }, stock = { world = "day", held = { gold = 29808400, elixir = 29000000, dark = 470000 }, capacity = { gold = 29000000, elixir = 29000000, dark = 470000 }, filled = { gold = "102%", elixir = "100%", dark = "100%" }, gems = 7171 }, shield = { remaining = 4980, up = true } }]
+
+[state.emulator]
+status = "idle"
+pid = 41200
+command = "status"
+started = "2026-11-12T16:10:00+08:00"
+ended = "2026-11-12T16:11:10+08:00"
+caller = { agent = "claude-code", session = "eval-goblin-schedule", mission = "全天候託管到他叫停" }
+
+[state.watch]
+status = "running"
+pid = 41500
+started = "2026-11-12T16:11:30+08:00"
+next_at = "2026-11-12T17:20:11+08:00"
+about = "每三小時看一眼倉庫; 棘木騎士到點前五分鐘"
+farms = true
+caller = { agent = "claude-code", session = "eval-goblin-schedule", mission = "全天候託管到他叫停" }
+
+[[edits]]
+world = "day"
+section = "heroes"
+data = 28000001
+set = { timer = 56631 }
+
+[[checks]]
+id = "block-after-table"
+what = "prints the 哥布林排程 block after the upgrade table and before the next-online line"
+anchor = [".agents/skills/takeover/SKILL.md", "表後面都接一段「哥布林排程」"]
+kind = "reply"
+pattern = '\| 後續 \|[\s\S]*\*\*哥布林排程\*\*[\s\S]*下次上線'
+
+[[checks]]
+id = "padded"
+what = "at least one goblin slot's chain pads the gap before its last job"
+anchor = [".agents/skills/upgrades/SKILL.md", "前面的空檔用短的墊滿"]
+kind = "reply"
+pattern = '正在做[^\n]*\n\|(?![^\n]*最後一件)[^\n]*\|\s*\n'
+
+[[checks]]
+id = "last-flagged"
+what = "flags each chain's last job as the event's last, running past the end"
+anchor = [".agents/skills/upgrades/SKILL.md", "最後一件標明是活動最後一件、會加班"]
+kind = "reply"
+pattern = "最後一件, 加班"
+
+[[checks]]
+id = "buffer"
+what = "the last job starts some 3 to 7 hours before the end, not minutes"
+anchor = [".agents/skills/upgrades/SKILL.md", "抓 3 到 6 小時左右"]
+kind = "reply"
+pattern = '最後一件, 加班[^\n]*\|\s*[3-7] 小時[^|\n]*\|\s*$'
+
+[[checks]]
+id = "not-noted-yet"
+what = "keeps no note of the plan before the user agrees to it"
+anchor = [".agents/skills/upgrades/SKILL.md", "**他同意了才記**"]
+kind = "not_called"
+calls = { command = "note", args = { action = "add" }, patterns = { item = "最後一件|加班" } }
+
+[[checks]]
+id = "named"
+what = "every command says who ran it and why"
+anchor = ["AGENTS.md", "Every `ai_coc` command an agent runs carries `--agent`"]
+kind = "every_call_has"
+fields = ["agent", "session", "mission"]

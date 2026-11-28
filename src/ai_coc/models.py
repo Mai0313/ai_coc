@@ -1769,6 +1769,21 @@ class HelperCooldown(BaseModel):
     recurring: str | None = None
 
 
+class GoblinSlots(BaseModel):
+    """A home village counter holding more slots than its buildings give, which is an event's goblin.
+
+    `total` is the counter's, `regular` the export's huts or laboratory, and
+    `idle` the goblin slots with no job marked `extra`.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    role: PlateRole
+    regular: int
+    total: int
+    idle: int
+
+
 class PaidShare(BaseModel):
     """What one purchase on a village paid against the tables' list price or list time for that level.
 
@@ -1839,6 +1854,11 @@ class StatusReport(BaseModel):
     # None where the export has no clock tower, or one being upgraded.
     clock_tower: ClockTower | None = None
     helpers: list[HelperCooldown] = Field(default_factory=list)
+    # The home village's builders and research slots without an event's
+    # goblins, off the export; `goblins` the counters read past them, only
+    # where the home village's counters were read.
+    regular: dict[PlateRole, int] = Field(default_factory=dict)
+    goblins: list[GoblinSlots] = Field(default_factory=list)
     # The newest purchase per village within `DISCOUNT_FRESH` whose price
     # resolves against the tables, and the newest whose charged time does; a
     # village with none has its next levels at list price and list time.

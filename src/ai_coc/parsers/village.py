@@ -33,6 +33,7 @@ if TYPE_CHECKING:
         Boosts,
         ExportRow,
         GameTable,
+        PlateRole,
         GameEntity,
         UpgradeRole,
         GameEntities,
@@ -115,6 +116,15 @@ DROPPED = frozenset({"decos", "obstacles", "house_parts", "skins", "sceneries"})
 
 # The builder base's clock tower, by its `GlobalID` in the game's buildings table.
 CLOCK_TOWER = 1000039
+
+# The home village buildings that each hold one of its regular slots: the
+# Builder's Huts and B.O.B's Hut, which the builder base's B.O.B. Control puts
+# there once unlocked, and the Laboratory. A goblin event's builder and
+# researcher add to the counters without a building of their own.
+SLOT_BUILDINGS: dict[PlateRole, tuple[int, ...]] = {
+    "builder": (1000015, 1000064),
+    "lab": (1000007,),
+}
 
 # The tables whose first level `search` says what unlocks: the troops' and
 # spells', where rows that building does not unlock are told apart. Elsewhere
@@ -358,6 +368,18 @@ def _tower(buildings: list[ExportRow], boosts: Boosts, at: int) -> ClockTower | 
     return ClockTower(
         ready_in=ready_in, ready_at=_clock(at + ready_in), boosting=boosts.clocktower_boost
     )
+
+
+def regular_slots(export: VillageExport) -> dict[PlateRole, int]:
+    """How many builders and research slots the home village has without an event's goblins.
+
+    A row the game wrote without `cnt` is one building, an upgrading one included.
+    """
+    buildings = export.day.get("buildings", [])
+    return {
+        role: sum(row.cnt or 1 for row in buildings if row.data in ids and row.lvl)
+        for role, ids in SLOT_BUILDINGS.items()
+    }
 
 
 def helper_cooldowns(export: VillageExport) -> list[HelperCooldown]:
