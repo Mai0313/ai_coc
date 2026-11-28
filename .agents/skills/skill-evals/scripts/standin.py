@@ -149,13 +149,13 @@ def _scripted(sim: Simulator, arguments: argparse.Namespace) -> Any:  # noqa: AN
     from ai_coc import commands
     from ai_coc.models import (
         AttackRun,
-        ViewReport,
         BoostReport,
+        ViewReport,
         StockReport,
         WorldReport,
-        HelperReport,
         LaunchReport,
         StatusReport,
+        HelperReport,
         CollectReport,
         ProspectorReport,
     )
