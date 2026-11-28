@@ -48,12 +48,15 @@ logger = logging.getLogger(__name__)
 # eight sections were seen carrying a `timer`. Traps and siege machines have
 # not been yet, but a trap is always a builder's job and a siege machine always
 # a research slot's, and leaving them out would hide a builder they hold.
-# Helpers, guardians and hero equipment take none of the three. The order is
-# the one `growth` lists in: heroes first, as the user reads it.
+# A guardian takes a builder too, the builder potion speeding it up like a
+# building (粉碎者 on 2026-11-28). Helpers and hero equipment take none of the
+# three. The order is the one `growth` lists in: heroes first, as the user
+# reads it.
 ROLES: dict[str, UpgradeRole] = {
     "heroes": "builder",
     "buildings": "builder",
     "traps": "builder",
+    "guardians": "builder",
     "units": "lab",
     "spells": "lab",
     "siege_machines": "lab",
@@ -61,8 +64,7 @@ ROLES: dict[str, UpgradeRole] = {
 }
 
 # Which `search --section` each export section is listed under, as the build
-# panel groups them (the user's grouping of 2026-11-12): the builders' tab
-# holds the guardians too, though `ROLES` gives them no slot. A section missing
+# panel groups them (the user's grouping of 2026-11-12). A section missing
 # here is listed under its own name.
 SECTIONS: dict[str, SearchSection] = {
     "heroes": "builder",
@@ -298,12 +300,16 @@ def upgrade_timers(export: VillageExport) -> list[UpgradeTimer]:
     to a job with `helper_recurrent` some time after its cooldown ends (30 to
     70 minutes later on 2026-11-10 and 11-11), which cannot be timed, so such
     a row can still finish earlier than this says.
+
+    A row saved before its section had a slot gets the slot it has now.
     """
     helping = _helping(export.day.get("helpers", []))
     timers: list[UpgradeTimer] = []
-    for world, section, row in export.rows():
-        if row.timer is None:
+    for world, section, saved in export.rows():
+        if saved.timer is None:
             continue
+        role = saved.role or ROLES.get(section)
+        row = saved if role == saved.role else saved.model_copy(update={"role": role})
         boost, helper, seconds = _finish(world, row, export.boosts, helping)
         timers.append(
             UpgradeTimer(
@@ -317,7 +323,7 @@ def upgrade_timers(export: VillageExport) -> list[UpgradeTimer]:
                 max_lvl=row.max_lvl,
                 limited_lvl=row.limited_lvl,
                 next=row.next,
-                timer=row.timer,
+                timer=saved.timer,
                 extra=bool(row.extra),
                 boost=boost,
                 helper=helper.data if helper else None,
@@ -692,7 +698,8 @@ def _levels(
     levels: dict[tuple[World, int], Counter[int]] = {}
     kinds: dict[tuple[World, int], tuple[UpgradeRole, str, str | None]] = {}
     for world, section, row in export.rows():
-        role = row.role
+        # A row saved before its section had a slot counts with the slot it has now.
+        role = row.role or ROLES.get(section)
         if role not in ("builder", "lab") or row.lvl is None:
             continue
         key = (world, row.data)
