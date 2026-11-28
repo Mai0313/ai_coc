@@ -210,6 +210,7 @@ class HomeCoverTests(unittest.TestCase):
             patch.object(shared, "build_panel_open", return_value=False),
             patch.object(shared, "topup_ad", return_value=False),
             patch.object(shared, "reward_chest", return_value=0),
+            patch.object(shared, "home_search", return_value=False),
             patch.object(shared, "current_world", return_value="day"),
             patch.object(shared, "read_stock", return_value=STOCK),
             patch.object(GameRunner, "_settle_zoom"),
@@ -230,6 +231,7 @@ class HomeCoverTests(unittest.TestCase):
             patch.object(shared, "build_panel_open", side_effect=[True, False, False]),
             patch.object(shared, "topup_ad", return_value=False),
             patch.object(shared, "reward_chest", return_value=0),
+            patch.object(shared, "home_search", return_value=False),
             patch.object(shared, "current_world", return_value="day"),
             patch.object(shared, "read_stock", return_value=STOCK),
             patch.object(GameRunner, "_settle_zoom"),
@@ -252,6 +254,7 @@ class HomeCoverTests(unittest.TestCase):
             patch.object(shared, "topup_ad", side_effect=[True, False, False]),
             patch.object(shared, "build_panel_open", return_value=False),
             patch.object(shared, "reward_chest", return_value=0),
+            patch.object(shared, "home_search", return_value=False),
             patch.object(shared, "current_world", return_value="day"),
             patch.object(shared, "read_stock", return_value=STOCK),
             patch.object(GameRunner, "_settle_zoom"),
@@ -274,6 +277,7 @@ class HomeCoverTests(unittest.TestCase):
             patch.object(shared, "build_panel_open", return_value=False),
             patch.object(shared, "topup_ad", return_value=False),
             patch.object(shared, "reward_chest", side_effect=[4, 0, 0]),
+            patch.object(shared, "home_search", return_value=False),
             patch.object(shared, "open_chest") as opened,
             patch.object(shared, "current_world", return_value="day"),
             patch.object(shared, "read_stock", return_value=STOCK),
@@ -303,6 +307,7 @@ class HomeCoverTests(unittest.TestCase):
             patch.object(shared, "build_panel_open", return_value=False),
             patch.object(shared, "topup_ad", return_value=False),
             patch.object(shared, "reward_chest", return_value=0),
+            patch.object(shared, "home_search", return_value=False),
             patch.object(shared, "current_world", return_value="day"),
             patch.object(shared, "read_stock", return_value=STOCK),
             patch.object(shared, "park_camera") as parked,
@@ -1221,6 +1226,7 @@ class DayRoundTests(unittest.TestCase):
             patch.object(runner, "_deploy") as deployed,
             patch.object(runner, "_wait_out_battle", return_value=took),
             patch.object(AdbController, "back") as back,
+            patch.object(attack, "uncovered", return_value="day") as self.uncovered,
         ):
             report = runner.run()
         return report, taps, deployed, back
@@ -1305,10 +1311,17 @@ class DayRoundTests(unittest.TestCase):
         assert report.outcome == "no_opponent"
         assert END_BATTLE not in taps
 
+    def test_a_search_given_up_on_is_left_for_the_village(self) -> None:
+        """Left on its screen, the next round pressed `back` at it for three minutes (2026-11-28)."""
+        report, _, _, _ = self._round([None])
+        assert report.outcome == "no_opponent"
+        self.uncovered.assert_called_once()
+
     def test_a_search_is_waited_out_as_long_as_the_builder_bases(self) -> None:
         """Walking away at 30 s left the game to find an opponent and start the battle alone."""
         runner = AttackRunner(adb=_adb(), display=DISPLAY, thresholds=THRESHOLDS)
         with (
+            patch.object(attack, "uncovered", return_value="day"),
             patch.object(attack.time, "sleep"),
             patch.object(runner, "_open_attack_menu", return_value=b"home"),
             patch.object(runner, "_stood_down", return_value=None),

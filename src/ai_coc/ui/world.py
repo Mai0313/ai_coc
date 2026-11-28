@@ -47,6 +47,7 @@ from ai_coc.parsers.home import (
 )
 from ai_coc.parsers.field import view_shift, pinch_zoomed, screen_changed
 from ai_coc.parsers.scout import (
+    SEARCH_HOME,
     TOPUP_CLOSE,
     EVENT_NOTICE_CLOSE,
     topup_ad,
@@ -54,6 +55,7 @@ from ai_coc.parsers.scout import (
     battle_over,
     card_groups,
     event_ended,
+    home_search,
     loading_screen,
     loot_cart_load,
     loot_cart_open,
@@ -785,6 +787,9 @@ def uncovered(adb: AdbController, display: DisplayTarget) -> World | None:
         if topup_ad(png):
             logger.info("LDPlayer's top-up promotion is over the game; pressing its X")
             adb.tap(*TOPUP_CLOSE, display)
+        elif home_search(png):
+            logger.info("The game is on the search screen; pressing its 回營")
+            adb.tap(*SEARCH_HOME, display)
         elif event_ended(png):
             logger.info("An event's end notice is over the village; tapping outside it")
             adb.tap(*EVENT_NOTICE_CLOSE, display)

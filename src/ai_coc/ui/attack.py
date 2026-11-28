@@ -3704,6 +3704,19 @@ class AttackRunner(ScreenRunner):
         )
         return False
 
+    def _give_up_search(self) -> None:
+        """Leave a search that ran out of window, by whichever way out its screen has."""
+        # An opponent still offering 下一個 has a countdown of its own
+        # running, and leaving it to expire is what starts a battle the
+        # army sits out. 結束戰鬥 is on that screen for exactly this.
+        if self._offered:
+            logger.info("Leaving through 結束戰鬥 rather than letting the countdown run")
+            self._tap(END_BATTLE)
+        # A search with no opponent stays on its screen, which only its 回營
+        # leaves; `uncovered` presses it and says whether a village came back.
+        elif uncovered(self.adb, self.display) is None:
+            logger.warning("No village came back after leaving the search")
+
     def _run_day(self, home: bytes | None = None) -> AttackReport:
         """One home village attack: scout opponents, weigh their loot, fight one."""
         # The same runner plays round after round, and the loot it last saw is
@@ -3758,12 +3771,7 @@ class AttackRunner(ScreenRunner):
         while True:
             scouted = self._scout(SEARCH_PATIENCE, leaving=leaving)
             if scouted is None:
-                # An opponent still offering 下一個 has a countdown of its own
-                # running, and leaving it to expire is what starts a battle the
-                # army sits out. 結束戰鬥 is on that screen for exactly this.
-                if self._offered:
-                    logger.info("Leaving through 結束戰鬥 rather than letting the countdown run")
-                    self._tap(END_BATTLE)
+                self._give_up_search()
                 return AttackReport(skipped=skipped + self._swapped, outcome="no_opponent")
             view, frame = scouted
             loot = view.loot if view else LootOffer(gold=0, elixir=0, dark=0)

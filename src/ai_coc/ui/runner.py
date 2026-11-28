@@ -21,11 +21,13 @@ from ai_coc.constants import COC_PACKAGE
 from ai_coc.adapters.adb import ZOOM_PINCHES, AdbController, AdbControlError
 from ai_coc.parsers.home import PANEL_CLOSE, STORAGE_BARS, reward_chest, build_panel_open
 from ai_coc.parsers.scout import (
+    SEARCH_HOME,
     TOPUP_CLOSE,
     topup_ad,
     in_battle,
     read_gems,
     read_stock,
+    home_search,
     open_tooltip,
     session_taken,
     loading_screen,
@@ -429,7 +431,7 @@ class GameRunner(ScreenRunner):
             self._settled = True
 
     def _cleared(self, png: bytes) -> bool:
-        """Answer a dialog with 取消, shut the build panel or a promotion, or tap a reward chest open.
+        """Answer a dialog with 取消, shut the build panel or a promotion, tap a reward chest open, or leave the search screen.
 
         Both are pressed rather than backed out of: 取消 is the harmless answer
         to every dialog the game raises, and `back` leaves the build panel up,
@@ -449,6 +451,9 @@ class GameRunner(ScreenRunner):
         elif reward_chest(png):
             logger.info("A reward chest is over the village; tapping it open")
             open_chest(self.adb, self.display)
+        elif home_search(png):
+            logger.info("The game is on the search screen; pressing its 回營")
+            self._tap(SEARCH_HOME)
         else:
             return False
         time.sleep(BACK_SETTLE)
