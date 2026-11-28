@@ -956,6 +956,16 @@ class GrowthTests(unittest.TestCase):
         [change] = growth(_levels(), _levels(("buildings", 9, 1, 1)))
         assert (change.before, change.after) == ({}, {1: 1})
 
+    def test_a_guardian_saved_before_it_had_a_slot_is_no_new_building(self) -> None:
+        start = _levels(("guardians", 107000001, 1, 1))
+        old = start.model_copy(
+            update={
+                "day": {"guardians": [start.day["guardians"][0].model_copy(update={"role": None})]}
+            }
+        )
+        [change] = growth(old, _levels(("guardians", 107000001, 2, 1)))
+        assert (change.role, change.before, change.after) == ("builder", {1: 1}, {2: 1})
+
     def test_a_row_with_no_level_is_not_counted(self) -> None:
         """The Crafting Station writes no `lvl`."""
         start = merge(_village({"buildings": [{"data": 1000097}]}), None, AT)

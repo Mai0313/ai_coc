@@ -698,7 +698,8 @@ def _levels(
     levels: dict[tuple[World, int], Counter[int]] = {}
     kinds: dict[tuple[World, int], tuple[UpgradeRole, str, str | None]] = {}
     for world, section, row in export.rows():
-        role = row.role
+        # A row saved before its section had a slot counts with the slot it has now.
+        role = row.role or ROLES.get(section)
         if role not in ("builder", "lab") or row.lvl is None:
             continue
         key = (world, row.data)
